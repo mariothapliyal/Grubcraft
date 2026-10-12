@@ -1,20 +1,29 @@
 //! The simulation must not touch the heap while ticking (docs/12-performance.md,
 //! PRF-5). A counting allocator wraps the system allocator for this test binary.
+//! It counts only the test's own thread: the test harness allocates on other
+//! threads while tests run, which made a process-wide count flaky.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gc_sim::scenario::Drill;
 use gc_sim::{Capacities, MatchSetup, World};
 
 struct Counting;
 
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+fn counting() -> bool {
+    COUNTING.try_with(Cell::get).unwrap_or(false)
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if counting() {
             ALLOCS.fetch_add(1, Ordering::Relaxed);
         }
         unsafe { System.alloc(layout) }
@@ -25,7 +34,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
+        if counting() {
             ALLOCS.fetch_add(1, Ordering::Relaxed);
         }
         unsafe { System.realloc(ptr, layout, new_size) }
@@ -45,10 +54,10 @@ fn ticking_never_allocates() {
     let mut commands = Vec::with_capacity(512);
     for _ in 0..1_000 {
         drill.commands_for(&world, &mut commands);
-        COUNTING.store(true, Ordering::SeqCst);
+        COUNTING.set(true);
         world.tick(&commands);
         let _ = world.state_hash();
-        COUNTING.store(false, Ordering::SeqCst);
+        COUNTING.set(false);
     }
     assert_eq!(
         ALLOCS.load(Ordering::SeqCst),
