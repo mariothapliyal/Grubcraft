@@ -2,7 +2,9 @@
 
 The calls only Mario can make. Each has a recommendation; work proceeds on the recommendation unless told otherwise. Once decided, record the outcome here (and in an ADR for technical ones).
 
-| # | Decision | Recommendation | Why it matters |
+> **Decided 2026-10-12:** Mario accepted every recommendation in the table below (decisions 1 to 12). The "Smaller questions for later" remain open.
+
+| # | Decision | Outcome (accepted recommendation) | Why it matters |
 |---|---|---|---|
 | 1 | **Engine and language** | Custom engine in Rust on `wgpu` ([ADR 0001](adr/0001-engine-and-language.md)) | Sets everything else; the memory target is only realistic if we own the floor |
 | 2 | **Units as regiments in Conquest too** (not only in Field Battle) | Yes, regiments everywhere | Gives the Total War feel in the main mode, reduces clicking, and makes the performance plan work |

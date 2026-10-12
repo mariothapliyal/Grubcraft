@@ -1,6 +1,6 @@
 # ADR 0001 · Engine and language
 
-- **Status:** Proposed (awaiting Mario's approval)
+- **Status:** Accepted (approved by Mario, 2026-10-12)
 - **Date:** 2026-10-12
 
 ## Context
