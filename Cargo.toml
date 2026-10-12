@@ -9,6 +9,7 @@ members = [
     "crates/gc_platform",
     "crates/gc_render",
     "crates/gc_game",
+    "tools/gc_artbake",
     "tools/gc_bake",
     "tools/gc_bench",
     "tools/gc_sfx",
