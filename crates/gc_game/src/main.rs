@@ -14,6 +14,7 @@
 //! parts of the frame off to measure what they cost.
 
 mod camera;
+mod data;
 mod terrain_gen;
 
 use std::sync::Arc;
@@ -22,7 +23,9 @@ use std::time::{Duration, Instant};
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{FrameParams, RegimentInstance, Renderer, RendererOptions, Terrain};
 use gc_sim::scenario::Drill;
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, World};
+use gc_sim::{
+    Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitStats, World,
+};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -124,6 +127,8 @@ struct Running {
     /// Positions at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2)>>,
     instances: Vec<RegimentInstance>,
+    /// Block size (frontage, height, depth) in tiles per unit type.
+    unit_sizes: Vec<[f32; 3]>,
     selected: Option<RegimentHandle>,
     sim_clock: Duration,
     last_frame: Instant,
@@ -216,12 +221,24 @@ impl App {
         });
         self.memory_timeline.mark("map generated + uploaded");
 
+        let game_data = data::load();
+        let unit_stats: Vec<UnitStats> = game_data
+            .units
+            .iter()
+            .map(|u| UnitStats { speed: u.speed() })
+            .collect();
+        let unit_sizes = game_data
+            .units
+            .iter()
+            .map(|u| [fx_to_f32(u.frontage()), 0.8, fx_to_f32(u.depth())])
+            .collect();
         let capacities = Capacities::default();
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
                 World::new(&MatchSetup {
                     seed: opts.seed,
                     capacities,
+                    units: &unit_stats,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -252,6 +269,17 @@ impl App {
                 (false, false) => "none",
             }
         );
+        eprintln!(
+            "grubcraft: game data {:016x}, {} unit types ({})",
+            game_data.short_hash(),
+            game_data.units.len(),
+            game_data
+                .units
+                .iter()
+                .map(|u| u.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         let now = Instant::now();
         self.running = Some(Running {
@@ -265,6 +293,7 @@ impl App {
             human_orders: Vec::with_capacity(64),
             prev_positions,
             instances: Vec::with_capacity(gc_render::MAX_REGIMENT_INSTANCES),
+            unit_sizes,
             selected: None,
             sim_clock: Duration::ZERO,
             last_frame: now,
@@ -511,7 +540,7 @@ impl Running {
             self.instances.push(RegimentInstance {
                 pos: pos.to_array(),
                 facing: from_fx_vec(r.facing).normalize_or(Vec2::Y).to_array(),
-                size: [5.0, 0.8, 2.4],
+                size: self.unit_sizes[r.unit as usize],
                 color: [cr, cg, cb, highlight],
             });
         }
@@ -625,8 +654,12 @@ fn to_fx(v: f32) -> gc_fixed::Fx {
     gc_fixed::Fx::from_raw((v * 65536.0) as i32)
 }
 
+fn fx_to_f32(v: gc_fixed::Fx) -> f32 {
+    v.raw() as f32 / 65536.0
+}
+
 fn from_fx_vec(v: gc_fixed::FxVec2) -> Vec2 {
-    Vec2::new(v.x.raw() as f32 / 65536.0, v.y.raw() as f32 / 65536.0)
+    Vec2::new(fx_to_f32(v.x), fx_to_f32(v.y))
 }
 
 fn main() {

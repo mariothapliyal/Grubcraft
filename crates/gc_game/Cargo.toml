@@ -12,6 +12,8 @@ name = "grubcraft"
 path = "src/main.rs"
 
 [dependencies]
+gc_assets.workspace = true
+gc_data.workspace = true
 gc_fixed.workspace = true
 gc_platform.workspace = true
 gc_render.workspace = true
@@ -19,6 +21,9 @@ gc_sim.workspace = true
 glam.workspace = true
 pollster.workspace = true
 winit.workspace = true
+
+[build-dependencies]
+gc_bake.workspace = true
 
 [lints]
 workspace = true
