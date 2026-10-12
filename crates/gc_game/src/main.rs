@@ -116,6 +116,13 @@ const ARROW_HEIGHT: f32 = 0.9;
 /// Peak of an arrow's arc as a fraction of the distance it flies.
 const ARROW_ARC: f32 = 0.22;
 
+/// Game speeds the sandbox steps through with - and =, and the normal one.
+const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
+const NORMAL_SPEED: usize = 3;
+/// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
+/// 30 fps needs about 3).
+const MAX_TICKS_PER_FRAME: u32 = 8;
+
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 
 struct Options {
@@ -219,6 +226,9 @@ struct Running {
     /// The enemy regiment last ordered attacked, marked on the ground briefly.
     attack_mark: Option<(RegimentHandle, Instant)>,
     sim_clock: Duration,
+    /// Game speed, an index into `SPEEDS`, and whether the game is paused (P).
+    speed: usize,
+    paused: bool,
     last_frame: Instant,
     started: Instant,
     input: Input,
@@ -442,6 +452,8 @@ impl App {
             last_group_key: None,
             attack_mark: None,
             sim_clock: Duration::ZERO,
+            speed: NORMAL_SPEED,
+            paused: false,
             last_frame: now,
             started: now,
             input: Input {
@@ -549,6 +561,16 @@ impl ApplicationHandler for App {
                             r.memory_timeline.print();
                             print_memory(&r.renderer);
                         }
+                        KeyCode::KeyP | KeyCode::Pause if down && !event.repeat => {
+                            r.paused = !r.paused;
+                        }
+                        KeyCode::Minus | KeyCode::NumpadSubtract if down => {
+                            r.speed = r.speed.saturating_sub(1);
+                        }
+                        KeyCode::Equal | KeyCode::NumpadAdd if down => {
+                            r.speed = (r.speed + 1).min(SPEEDS.len() - 1);
+                        }
+                        KeyCode::Backspace if down && !event.repeat => r.speed = NORMAL_SPEED,
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
@@ -921,10 +943,16 @@ impl Running {
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
 
-        // Fixed-rate simulation; render interpolates between the last two ticks.
-        self.sim_clock += dt;
+        // Fixed-rate simulation; render interpolates between the last two
+        // ticks. Pause and slow motion scale game time, not the camera.
+        let game_dt = if self.paused {
+            Duration::ZERO
+        } else {
+            dt.mul_f32(SPEEDS[self.speed])
+        };
+        self.sim_clock += game_dt;
         let mut ticks_this_frame = 0;
-        while self.sim_clock >= TICK && ticks_this_frame < 5 {
+        while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
             ticks_this_frame += 1;
             for r in self.world.regiments.iter() {
@@ -955,7 +983,7 @@ impl Running {
             self.plan_order(order);
             self.push_order_preview();
         }
-        self.puppets.advance(dt.as_secs_f32());
+        self.puppets.advance(game_dt.as_secs_f32());
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -1024,15 +1052,16 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
-            self.puppets.update(&block, r.owner, dt.as_secs_f32(), |s| {
-                instances.push(BoxInstance {
-                    pos: s.pos.to_array(),
-                    facing: s.facing.to_array(),
-                    size,
-                    color,
-                    lift: 0.0,
+            self.puppets
+                .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                    instances.push(BoxInstance {
+                        pos: s.pos.to_array(),
+                        facing: s.facing.to_array(),
+                        size,
+                        color,
+                        lift: 0.0,
+                    });
                 });
-            });
         }
         self.push_corpses();
         self.push_arrows(alpha);
@@ -1252,6 +1281,17 @@ impl Running {
         self.renderer.set_overlay(Some(&text), scale);
     }
 
+    /// " · paused" or " · speed 0.25x"; empty at normal speed.
+    fn speed_label(&self) -> String {
+        if self.paused {
+            " · paused".into()
+        } else if self.speed != NORMAL_SPEED {
+            format!(" · speed {}x", SPEEDS[self.speed])
+        } else {
+            String::new()
+        }
+    }
+
     fn stats_line(&self) -> String {
         let secs = self.stats.window_start.elapsed().as_secs_f32().max(1e-3);
         let fps = self.stats.window_frames as f32 / secs;
@@ -1263,7 +1303,8 @@ impl Running {
         let mem = gc_platform::memory::process_memory();
         let rs = self.renderer.stats();
         format!(
-            "Grubcraft · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
+            "Grubcraft{} · {fps:.0} fps · sim {tick_ms:.3} ms/tick · {} regiments · {}/{} chunks · {} MB process · {} MB heap · {} MB gpu",
+            self.speed_label(),
             self.world.regiments.len(),
             rs.chunks_drawn,
             rs.chunks_total,
