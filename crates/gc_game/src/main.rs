@@ -560,6 +560,7 @@ impl App {
                     units: &unit_stats,
                     map_tiles: MAP_TILES,
                     nav: &nav,
+                    teams: &[],
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -1637,6 +1638,7 @@ impl Running {
                 units: &self.unit_stats,
                 map_tiles: MAP_TILES,
                 nav: &nav,
+                teams: &[],
             })
         });
         self.drill = (!sandbox).then(|| make_drill(self.seed));

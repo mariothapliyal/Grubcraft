@@ -619,6 +619,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gc_ai"
+version = "0.1.0"
+dependencies = [
+ "gc_fixed",
+ "gc_sim",
+ "glam",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "gc_artbake"
 version = "0.1.0"
 dependencies = [
