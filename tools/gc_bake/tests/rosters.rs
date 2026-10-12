@@ -1,5 +1,5 @@
 //! Checks the faction rosters in `data/rosters/` (design data for Conquest;
-//! see docs/16-unit-rosters.md). The game does not read them yet, but every
+//! see docs/17-unit-rosters.md). The game does not read them yet, but every
 //! `stats` block must bake exactly as `data/units.ron` entries do, so the
 //! engine can move them across unchanged.
 

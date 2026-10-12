@@ -1,6 +1,6 @@
 // Ember Clans roster: every unit, summon, hero and Honor Edict, with
 // first-pass numbers. Design data for Conquest (M3): the game does not read
-// this file yet. Readable copy and rationale: docs/16-unit-rosters.md.
+// this file yet. Readable copy and rationale: docs/17-unit-rosters.md.
 //
 // Each `stats` block uses exactly the fields of a data/units.ron entry (see
 // the comment at the top of that file) so it can move into the game

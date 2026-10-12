@@ -1,4 +1,4 @@
-# 16 · Unit Rosters
+# 17 · Unit Rosters
 
 Every regiment, worker, summon and hero for all four factions, with first-pass stats and abilities, ready for Conquest (M3) and the Choir and Concord milestone (M5). [03 · World and Factions](03-factions.md) gives each faction's fantasy, economy and structures; this document gives the numbers.
 
