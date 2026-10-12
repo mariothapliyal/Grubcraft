@@ -24,7 +24,9 @@ pub const CHUNK_TILES: u32 = 32;
 const CHUNK_QUADS: u32 = 64;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
-pub use overlay::MAX_OVERLAY_CHARS;
+pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
+/// Most quads one frame of menu UI may draw.
+pub const MAX_UI_QUADS: usize = 8192;
 pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -167,6 +169,8 @@ pub struct Renderer {
     visible_chunks: Vec<[u32; 2]>,
     overlay: OverlayGpu,
     soldiers: soldiers::SoldiersGpu,
+    /// Menu and lobby screens, drawn under the dev overlay.
+    ui: OverlayGpu,
 }
 
 struct OverlayGpu {
@@ -174,7 +178,7 @@ struct OverlayGpu {
     bind_group: wgpu::BindGroup,
     globals: wgpu::Buffer,
     instances: wgpu::Buffer,
-    glyphs: Vec<overlay::GlyphInstance>,
+    glyphs: Vec<UiQuad>,
     count: u32,
     scale: f32,
     gpu_bytes: u64,
@@ -341,7 +345,8 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let overlay = make_overlay(&device, &queue, format);
+        let overlay = make_overlay(&device, &queue, format, MAX_OVERLAY_CHARS);
+        let ui = make_overlay(&device, &queue, format, MAX_UI_QUADS);
         let adapter_info = adapter.get_info();
         let (depth_view, depth_bytes) = make_depth(
             &device,
@@ -379,6 +384,7 @@ impl Renderer {
             visible_chunks: Vec::new(),
             overlay,
             soldiers,
+            ui,
         })
     }
 
@@ -396,6 +402,7 @@ impl Renderer {
             + self.terrain_gpu_bytes
             + self.depth_bytes
             + self.overlay.gpu_bytes
+            + self.ui.gpu_bytes
             + self.soldiers.models.as_ref().map_or(0, |m| m.gpu_bytes)
     }
 
@@ -434,6 +441,24 @@ impl Renderer {
             }
             None => o.count = 0,
         }
+    }
+
+    /// Show menu UI: `quads` in UI pixels, drawn at `scale` physical pixels
+    /// per UI pixel (not rounded, so UI scales like 125% work). Call every
+    /// frame the UI is up, and [`Renderer::clear_ui`] when it closes.
+    pub fn set_ui(&mut self, quads: &[UiQuad], scale: f32) {
+        let u = &mut self.ui;
+        u.scale = (scale * self.options.render_scale).max(0.25);
+        let quads = &quads[..quads.len().min(MAX_UI_QUADS)];
+        u.count = quads.len() as u32;
+        if !quads.is_empty() {
+            self.queue
+                .write_buffer(&u.instances, 0, bytemuck::cast_slice(quads));
+        }
+    }
+
+    pub fn clear_ui(&mut self) {
+        self.ui.count = 0;
     }
 
     /// Follow a window resize; sizes are the window's, in physical pixels.
@@ -636,15 +661,18 @@ impl Renderer {
 
         // The overlay draws inside the main pass, which a bare frame skips.
         let overlay_visible = !bare && self.overlay.count > 0;
-        if overlay_visible {
-            let screen = [
-                self.config.width as f32,
-                self.config.height as f32,
-                self.overlay.scale,
-                0.0,
-            ];
-            self.queue
-                .write_buffer(&self.overlay.globals, 0, bytemuck::bytes_of(&screen));
+        let ui_visible = !bare && self.ui.count > 0;
+        for (gpu, visible) in [(&self.overlay, overlay_visible), (&self.ui, ui_visible)] {
+            if visible {
+                let screen = [
+                    self.config.width as f32,
+                    self.config.height as f32,
+                    gpu.scale,
+                    0.0,
+                ];
+                self.queue
+                    .write_buffer(&gpu.globals, 0, bytemuck::bytes_of(&screen));
+            }
         }
 
         let view = surface_texture
@@ -729,6 +757,13 @@ impl Renderer {
                 pass.draw(0..30, 0..boxes.len() as u32);
                 draw_calls += 1;
             }
+            if ui_visible {
+                pass.set_pipeline(&self.ui.pipeline);
+                pass.set_bind_group(0, &self.ui.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.ui.instances.slice(..));
+                pass.draw(0..4, 0..self.ui.count);
+                draw_calls += 1;
+            }
             if overlay_visible {
                 pass.set_pipeline(&self.overlay.pipeline);
                 pass.set_bind_group(0, &self.overlay.bind_group, &[]);
@@ -810,6 +845,7 @@ fn make_overlay(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
+    capacity: usize,
 ) -> OverlayGpu {
     let font_size = wgpu::Extent3d {
         width: overlay::font_width(),
@@ -850,7 +886,7 @@ fn make_overlay(
     });
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("overlay glyphs"),
-        size: (MAX_OVERLAY_CHARS * size_of::<overlay::GlyphInstance>()) as u64,
+        size: (capacity * size_of::<UiQuad>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -911,7 +947,7 @@ fn make_overlay(
             entry_point: Some("vs_glyph"),
             compilation_options: Default::default(),
             buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: size_of::<overlay::GlyphInstance>() as u64,
+                array_stride: size_of::<UiQuad>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     0 => Uint16x2, 1 => Uint16x2, 2 => Uint32, 3 => Unorm8x4
@@ -951,7 +987,11 @@ fn make_overlay(
         gpu_bytes: texels.len() as u64 + globals.size() + instances.size(),
         globals,
         instances,
-        glyphs: Vec::with_capacity(MAX_OVERLAY_CHARS),
+        glyphs: Vec::with_capacity(if capacity == MAX_OVERLAY_CHARS {
+            capacity
+        } else {
+            0
+        }),
         count: 0,
         scale: 1.0,
     }
@@ -1089,7 +1129,7 @@ mod tests {
 
     #[test]
     fn overlay_instance_layout_is_stable() {
-        assert_eq!(size_of::<overlay::GlyphInstance>(), 16);
+        assert_eq!(size_of::<UiQuad>(), 16);
     }
 
     #[test]
