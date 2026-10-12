@@ -195,6 +195,17 @@ const WITHDRAW_TILES: f32 = 25.0;
 /// Only with the enemy front at least this far off, tiles.
 const WITHDRAW_GAP: f32 = 35.0;
 const WITHDRAW_AFTER_TICKS: u32 = 4 * 20;
+/// The enemy is beaten once what still stands against us is this share of
+/// our soldiers or less: the line breaks up to finish the rest wherever they
+/// stand. It forms again if they gather past the second share.
+const FINISH_SHARE: f32 = 0.35;
+const REFORM_SHARE: f32 = 0.5;
+/// Finishing off: an enemy regiment already set upon counts this many
+/// tiles further away, so the hunters spread out.
+const FINISH_SPREAD: f32 = 20.0;
+/// Falling back at most this often in a battle: past that, it stands and
+/// fights rather than retreat across the map from an enemy who waits.
+const WITHDRAWALS: u32 = 2;
 
 /// One of the Captain's regiments.
 #[derive(Clone, Copy, Debug)]
@@ -254,6 +265,8 @@ impl Ctx<'_> {
 pub struct Captain {
     pub doctrine: Doctrine,
     pub posture: Posture,
+    /// The enemy is beaten and the regiments are finishing off the rest.
+    pub finishing: bool,
     pub estimate: Option<Estimate>,
     pub members: Vec<Member>,
     /// The battle frame: which way is the enemy, and where the line stands.
@@ -265,12 +278,15 @@ pub struct Captain {
     next_doctrine: u32,
     losing_since: Option<u32>,
     withdrawn_at: Option<u32>,
+    withdrawals: u32,
     standoff_since: u32,
     /// Tick the posture last changed.
     posture_since: u32,
-    /// Distance between the armies a while ago, to tell whether the enemy
-    /// is coming: (tick, tiles).
-    distance_then: Option<(u32, f32)>,
+    /// Where the enemy army was a while ago, to tell whether it is coming:
+    /// (tick, its centre).
+    distance_then: Option<(u32, Vec2)>,
+    /// How fast the enemy army comes towards ours, tiles a second (our own
+    /// advance doesn't count).
     closing: f32,
     /// Refused flank: +1 when the strong wing is the right, -1 the left.
     strong_side: f32,
@@ -296,6 +312,7 @@ impl Captain {
         Captain {
             doctrine: Doctrine::HoldTheLine,
             posture: Posture::Form,
+            finishing: false,
             estimate: None,
             members: Vec::new(),
             forward: Vec2::Y,
@@ -306,6 +323,7 @@ impl Captain {
             next_doctrine: 0,
             losing_since: None,
             withdrawn_at: None,
+            withdrawals: 0,
             standoff_since: 0,
             posture_since: 0,
             distance_then: None,
@@ -360,8 +378,83 @@ impl Captain {
         if self.relayout {
             self.layout(ctx);
         }
+        if self.beaten(ctx, &ours, &fighting) {
+            self.finish(ctx, &fighting, wants);
+            return;
+        }
         self.choose_posture(ctx, &ours, &fighting);
         self.act(ctx, &ours, &fighting, &foes, wants);
+    }
+
+    /// Whether the enemy is beaten: few left standing against many. A
+    /// scattered remnant that has rallied would otherwise sit out of reach
+    /// of the line for ever.
+    fn beaten(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) -> bool {
+        let view = ctx.view;
+        let mine = Force::of(view, ours.iter().copied()).soldiers;
+        let theirs = Force::of(view, fighting.iter().copied()).soldiers;
+        let share = if self.finishing {
+            REFORM_SHARE
+        } else {
+            FINISH_SHARE
+        };
+        let beaten = theirs <= mine * share;
+        if beaten != self.finishing {
+            self.finishing = beaten;
+            let note = if beaten {
+                format!("Finishing them off: {} regiments left", fighting.len())
+            } else {
+                "They have rallied: forming up again".to_string()
+            };
+            ctx.journal.note(view.tick, note);
+            if !beaten {
+                self.relayout = true;
+            }
+        }
+        beaten
+    }
+
+    /// Every regiment goes for the nearest enemy still standing, spreading
+    /// out so each remnant gets its share.
+    fn finish(&mut self, ctx: &mut Ctx, fighting: &[&Seen], wants: &mut Vec<Want>) {
+        let view = ctx.view;
+        let standing = |t: RegimentHandle| fighting.iter().any(|f| f.handle == t);
+        let mut on: Vec<(RegimentHandle, u8)> = Vec::new();
+        for m in &self.members {
+            if let Some(t) = m.target.filter(|&t| standing(t)) {
+                bump(&mut on, t);
+            }
+        }
+        for k in 0..self.members.len() {
+            let mut m = self.members[k];
+            let Some(r) = view.get(m.handle) else {
+                continue;
+            };
+            if m.lost || r.broken() || r.engaged {
+                continue;
+            }
+            let target = match m.target.filter(|&t| standing(t)) {
+                Some(t) => t,
+                None => {
+                    let score = |f: &Seen| {
+                        f.pos.distance(r.pos) + FINISH_SPREAD * count(&on, f.handle) as f32
+                    };
+                    let Some(t) = fighting
+                        .iter()
+                        .min_by(|a, b| score(a).total_cmp(&score(b)))
+                        .map(|f| f.handle)
+                    else {
+                        continue;
+                    };
+                    bump(&mut on, t);
+                    t
+                }
+            };
+            m.target = Some(target);
+            m.striking = false;
+            wants.push(attack(m.handle, target, 2));
+            self.members[k] = m;
+        }
     }
 
     /// Follow regiments joining (placed in the sandbox) and leaving.
@@ -439,14 +532,16 @@ impl Captain {
                 self.relayout = true;
             }
         }
-        // Is the enemy coming? Compare with the distance two seconds ago.
+        // Is the enemy coming? See how far it moved our way in the last
+        // two seconds.
         let now = ctx.view.tick;
         match self.distance_then {
-            Some((then, d)) if now >= then + 2 * 20 => {
-                self.closing = (d - distance) / ((now - then) as f32 / TICKS);
-                self.distance_then = Some((now, distance));
+            Some((then, was)) if now >= then + 2 * 20 => {
+                let towards_us = -dir.normalize_or_zero();
+                self.closing = (their_c - was).dot(towards_us) / ((now - then) as f32 / TICKS);
+                self.distance_then = Some((now, their_c));
             }
-            None => self.distance_then = Some((now, distance)),
+            None => self.distance_then = Some((now, their_c)),
             _ => {}
         }
     }
@@ -462,10 +557,16 @@ impl Captain {
     }
 
     /// Tiles between the front of the formation and the nearest enemy front.
+    /// Tiles from the line's place (the anchor) to the nearest enemy front.
     fn front_gap(&self, fighting: &[&Seen]) -> f32 {
+        self.front_gap_from(self.anchor, fighting)
+    }
+
+    /// Tiles from a line standing at `from` to the nearest enemy front.
+    fn front_gap_from(&self, from: Vec2, fighting: &[&Seen]) -> f32 {
         let gap = fighting
             .iter()
-            .map(|f| (f.pos - self.anchor).dot(self.forward) - f.depth * 0.5)
+            .map(|f| (f.pos - from).dot(self.forward) - f.depth * 0.5)
             .fold(f32::MAX, f32::min)
             - self.line_depth * 0.5;
         gap.max(0.0)
@@ -774,7 +875,10 @@ impl Captain {
         let now = view.tick;
         let p = ctx.persona;
         let before = self.posture;
-        let gap = self.front_gap(fighting);
+        // How far the enemy is from where the line stands now (the anchor
+        // is where it is going, which while advancing is near the enemy).
+        let line_now = line_centre(&self.members, ours, centroid(ours));
+        let gap = self.front_gap_from(line_now, fighting);
         let mine = Force::of(view, ours.iter().copied());
         let theirs = Force::of(view, fighting.iter().copied());
         let margin = self.estimate.map_or(0.0, |e| e.margin);
@@ -803,10 +907,14 @@ impl Captain {
         if margin < threshold && well_off {
             let since = *self.losing_since.get_or_insert(now);
             let recently = self.withdrawn_at.is_some_and(|t| now < t + 30 * 20);
-            if now >= since + WITHDRAW_AFTER_TICKS && !recently && self.posture != Posture::Withdraw
+            if now >= since + WITHDRAW_AFTER_TICKS
+                && !recently
+                && self.withdrawals < WITHDRAWALS
+                && self.posture != Posture::Withdraw
             {
                 self.posture = Posture::Withdraw;
                 self.withdrawn_at = Some(now);
+                self.withdrawals += 1;
                 let back = ctx
                     .terrain
                     .clamp(self.anchor - self.forward * WITHDRAW_TILES, 8.0);
@@ -884,7 +992,7 @@ impl Captain {
                 } else {
                     STAND_OFF
                 };
-                let step = (gap - shoot_from).max(0.0);
+                let step = (self.front_gap(fighting) - shoot_from).max(0.0);
                 let goal = ctx.terrain.clamp(self.anchor + self.forward * step, 6.0);
                 if goal.distance(self.anchor) >= ANCHOR_SLACK || step < ANCHOR_SLACK {
                     self.anchor = goal;
@@ -1385,9 +1493,15 @@ impl Captain {
                 return;
             }
         }
-        // Not yet: wait in its place.
+        // Not yet: wait in its place, keeping level with the line on the
+        // march rather than racing ahead of it.
+        let pace = if self.posture == Posture::Advance {
+            self.pace
+        } else {
+            0.0
+        };
         let to = self.place(ctx, m.slot);
-        wants.push(slot_move(m.handle, to, self.forward, 0.0));
+        wants.push(slot_move(m.handle, to, self.forward, pace));
     }
 
     /// The nearest enemy melee regiment marching at `r` and about to reach it.

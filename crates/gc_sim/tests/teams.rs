@@ -150,8 +150,7 @@ fn an_allys_rout_shakes_its_friends() {
     let before = w.regiments.get(mine).unwrap().morale_points;
     for _ in 0..20 * 30 {
         w.tick(&[]);
-        if w
-            .regiments
+        if w.regiments
             .get(ally)
             .is_some_and(|r| r.morale == MoraleState::Routing)
         {

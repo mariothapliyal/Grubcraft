@@ -53,6 +53,8 @@ struct Outcome {
     /// The side under test's orders by priority, and attention spent.
     order_mix: String,
     journal: Vec<String>,
+    /// The opponent's journal, if it is a mind.
+    their_journal: Vec<String>,
 }
 
 enum Player {
@@ -185,13 +187,18 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
                 o.spent
             )
         }),
-        journal: mind.map_or(Vec::new(), |m| {
-            m.journal()
-                .entries()
-                .map(|e| format!("{:>5}: {}", e.tick, e.text))
-                .collect()
-        }),
+        journal: journal_of(mind),
+        their_journal: journal_of(minds.get(them)),
     }
+}
+
+fn journal_of(mind: Option<&Mind>) -> Vec<String> {
+    mind.map_or(Vec::new(), |m| {
+        m.journal()
+            .entries()
+            .map(|e| format!("{:>5}: {}", e.tick, e.text))
+            .collect()
+    })
 }
 
 /// Battles `seeds` of `side` against `against`; returns the wins.
@@ -317,7 +324,8 @@ fn print_field(view: &Perception, us: PlayerId, mind: Option<&Mind>) {
     }
 }
 
-/// One General battle against charge-straight-in, traced.
+/// One General battle, traced: against charge-straight-in, or against
+/// `AI_AGAINST=Recruit|Veteran|General`.
 #[test]
 #[ignore]
 fn one() {
@@ -325,7 +333,7 @@ fn one() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let r = fight(seed, Side::Mind(Difficulty::General), Side::Charge);
+    let r = fight(seed, Side::Mind(Difficulty::General), against());
     println!(
         "{} in {}s: {}",
         if r.won { "won" } else { "LOST" },
@@ -334,6 +342,22 @@ fn one() {
     );
     for line in &r.journal {
         println!("    {line}");
+    }
+    if !r.their_journal.is_empty() {
+        println!("  they:");
+        for line in &r.their_journal {
+            println!("    {line}");
+        }
+    }
+}
+
+/// `AI_AGAINST`: the opponent for tuning runs (charge straight in by default).
+fn against() -> Side {
+    match std::env::var("AI_AGAINST").as_deref() {
+        Ok("Recruit") => Side::Mind(Difficulty::Recruit),
+        Ok("Veteran") => Side::Mind(Difficulty::Veteran),
+        Ok("General") => Side::Mind(Difficulty::General),
+        _ => Side::Charge,
     }
 }
 
@@ -384,12 +408,7 @@ fn knob_study() {
         Ok("Veteran") => Difficulty::Veteran,
         _ => Difficulty::General,
     };
-    let against = match std::env::var("AI_AGAINST").as_deref() {
-        Ok("Recruit") => Side::Mind(Difficulty::Recruit),
-        Ok("Veteran") => Side::Mind(Difficulty::Veteran),
-        Ok("General") => Side::Mind(Difficulty::General),
-        _ => Side::Charge,
-    };
+    let against = against();
     let only = std::env::var("AI_TUNE").ok();
     let tunes: [Tune; 10] = [
         ("as is", |_| {}),

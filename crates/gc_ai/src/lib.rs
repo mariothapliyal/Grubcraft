@@ -160,12 +160,16 @@ impl Mind {
             Some(e) => format!(", expects {}", captain::describe_margin(e.margin)),
             None => String::new(),
         };
+        let doing = if c.finishing {
+            "finishing them off"
+        } else {
+            c.posture.name()
+        };
         format!(
-            "{} ({}): {}, {}{expects}",
+            "{} ({}): {}, {doing}{expects}",
             self.persona.name,
             self.difficulty.name(),
             c.doctrine.name(),
-            c.posture.name(),
         )
     }
 }
@@ -208,6 +212,11 @@ impl Minds {
 
     pub fn is_empty(&self) -> bool {
         self.minds.is_empty()
+    }
+
+    /// The ground the minds plan on.
+    pub fn terrain(&self) -> &Terrain {
+        &self.terrain
     }
 
     /// The last look at the world.
