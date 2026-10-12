@@ -63,6 +63,30 @@ pub struct RegimentInstance {
     pub color: [u8; 4],
 }
 
+/// How the renderer is set up. The draw switches exist to measure what each
+/// part of the frame costs on real machines.
+#[derive(Clone, Copy, Debug)]
+pub struct RendererOptions {
+    /// Frames the GPU may queue (1 to 3). Each holds a full-window image.
+    pub frame_latency: u32,
+    /// Fraction of the window's pixels to render (0.25 to 1.0); the system
+    /// compositor scales the image up to fill the window.
+    pub render_scale: f32,
+    pub draw_terrain: bool,
+    pub draw_blocks: bool,
+}
+
+impl Default for RendererOptions {
+    fn default() -> Self {
+        RendererOptions {
+            frame_latency: 2,
+            render_scale: 1.0,
+            draw_terrain: true,
+            draw_blocks: true,
+        }
+    }
+}
+
 pub struct FrameParams {
     pub view_proj: Mat4,
     pub camera_pos: Vec3,
@@ -108,6 +132,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    options: RendererOptions,
     depth_view: wgpu::TextureView,
     depth_bytes: u64,
     globals: wgpu::Buffer,
@@ -133,10 +158,16 @@ impl Renderer {
     /// Create the renderer for a window (or any surface target).
     pub async fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
-        width: u32,
-        height: u32,
-        frame_latency: u32,
+        window_width: u32,
+        window_height: u32,
+        options: RendererOptions,
     ) -> Result<Renderer, InitError> {
+        let options = RendererOptions {
+            frame_latency: options.frame_latency.clamp(1, 3),
+            render_scale: options.render_scale.clamp(0.25, 1.0),
+            ..options
+        };
+        let (width, height) = scaled(window_width, window_height, options.render_scale);
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         desc.backends = wgpu::Backends::PRIMARY;
         let instance = wgpu::Instance::new(desc);
@@ -175,17 +206,15 @@ impl Renderer {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: width.max(1),
-            height: height.max(1),
+            width,
+            height,
             present_mode: wgpu::PresentMode::AutoVsync,
             // Frames in flight. Each one can hold a full-window drawable
             // (about 15 MB at Retina resolution).
-            desired_maximum_frame_latency: frame_latency.clamp(1, 3),
+            desired_maximum_frame_latency: options.frame_latency,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
-            ..surface
-                .get_default_config(&adapter, width.max(1), height.max(1))
-                .unwrap()
+            ..surface.get_default_config(&adapter, width, height).unwrap()
         };
         surface.configure(&device, &config);
 
@@ -283,7 +312,12 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let (depth_view, depth_bytes) = make_depth(&device, &config);
+        let adapter_info = adapter.get_info();
+        let (depth_view, depth_bytes) = make_depth(
+            &device,
+            &config,
+            adapter_info.transient_saves_memory == Some(true),
+        );
         let static_gpu_bytes = size_of::<Globals>() as u64
             + chunk_index_buffer.size()
             + regiment_instances.size()
@@ -294,6 +328,7 @@ impl Renderer {
             device,
             queue,
             config,
+            options,
             depth_view,
             depth_bytes,
             globals,
@@ -309,7 +344,7 @@ impl Renderer {
             static_gpu_bytes,
             terrain_gpu_bytes: 0,
             stats: RenderStats::default(),
-            adapter_info: adapter.get_info(),
+            adapter_info,
             visible_chunks: Vec::new(),
         })
     }
@@ -327,14 +362,20 @@ impl Renderer {
         self.static_gpu_bytes + self.terrain_gpu_bytes + self.depth_bytes
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
+    /// Follow a window resize; sizes are the window's, in physical pixels.
+    pub fn resize(&mut self, window_width: u32, window_height: u32) {
+        if window_width == 0 || window_height == 0 {
             return;
         }
+        let (width, height) = scaled(window_width, window_height, self.options.render_scale);
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        let (view, bytes) = make_depth(&self.device, &self.config);
+        let (view, bytes) = make_depth(
+            &self.device,
+            &self.config,
+            self.adapter_info.transient_saves_memory == Some(true),
+        );
         self.depth_view = view;
         self.depth_bytes = bytes;
     }
@@ -423,11 +464,13 @@ impl Renderer {
         let Some(terrain) = &self.terrain else {
             return FrameOutcome::Skipped;
         };
+        let mut reconfigure = false;
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
             wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
-                // Draw this one, reconfigure for the next.
-                self.surface.configure(&self.device, &self.config);
+                // Draw this one, reconfigure for the next. A scaled-down
+                // surface is "suboptimal" on some platforms by design.
+                reconfigure = self.options.render_scale >= 1.0;
                 t
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -479,7 +522,14 @@ impl Renderer {
                 bytemuck::cast_slice(&self.visible_chunks),
             );
         }
-        let regiments = &regiments[..regiments.len().min(MAX_REGIMENT_INSTANCES)];
+        if !self.options.draw_terrain {
+            self.visible_chunks.clear();
+        }
+        let regiments = if self.options.draw_blocks {
+            &regiments[..regiments.len().min(MAX_REGIMENT_INSTANCES)]
+        } else {
+            &[]
+        };
         if !regiments.is_empty() {
             self.queue
                 .write_buffer(&self.regiment_instances, 0, bytemuck::cast_slice(regiments));
@@ -545,6 +595,9 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(surface_texture);
+        if reconfigure {
+            self.surface.configure(&self.device, &self.config);
+        }
 
         self.stats = RenderStats {
             draw_calls,
@@ -554,6 +607,11 @@ impl Renderer {
         };
         FrameOutcome::Presented
     }
+}
+
+fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
+    let s = |v: u32| ((v as f32 * scale).round() as u32).max(1);
+    (s(width), s(height))
 }
 
 fn make_pipeline(
@@ -605,6 +663,7 @@ fn make_pipeline(
 fn make_depth(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
+    transient_saves_memory: bool,
 ) -> (wgpu::TextureView, u64) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),
@@ -617,10 +676,16 @@ fn make_depth(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // Cleared and discarded every pass, so on Apple GPUs it can live in
+        // on-chip tile memory only (zero bytes of RAM). A no-op elsewhere.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT_ATTACHMENT,
         view_formats: &[],
     });
-    let bytes = config.width as u64 * config.height as u64 * 4;
+    let bytes = if transient_saves_memory {
+        0
+    } else {
+        config.width as u64 * config.height as u64 * 4
+    };
     (
         texture.create_view(&wgpu::TextureViewDescriptor::default()),
         bytes,

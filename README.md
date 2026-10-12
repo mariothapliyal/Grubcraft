@@ -23,7 +23,7 @@ cargo run --release -p gc_bench         # simulation benchmark with budget check
 
 **M0 controls:** you are red. Left-click a red block to select it, right-click the ground to move it. Pan with the arrow keys, screen edges or a two-finger trackpad scroll; zoom with the mouse wheel or a pinch; rotate with Alt + middle-drag or a two-finger twist; Home or a middle-click resets the rotation. **F11** prints memory by subsystem; **Esc** quits. The window title shows frame rate, simulation tick time and memory.
 
-To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers.
+To measure memory on your machine: `cargo run --release -p gc_game -- --frames 600` runs for 600 frames and prints the numbers. Measurement flags: `--latency 1|2|3` (frames in flight), `--render-scale 0.25..1` (render fewer pixels than the window has) and `--draw all|terrain|blocks|none` (turn parts of the frame off).
 
 ## Layout
 

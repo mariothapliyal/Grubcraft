@@ -8,7 +8,10 @@
 //! Esc quits.
 //!
 //! Flags: `--seed N` picks the match seed; `--frames N` quits after N frames
-//! and prints a final stats line (for measuring memory on real machines).
+//! and prints a final stats line (for measuring memory on real machines);
+//! `--latency 1|2|3` sets frames in flight; `--render-scale F` renders at a
+//! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
+//! parts of the frame off to measure what they cost.
 
 mod camera;
 mod terrain_gen;
@@ -17,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
-use gc_render::{FrameParams, RegimentInstance, Renderer, Terrain};
+use gc_render::{FrameParams, RegimentInstance, Renderer, RendererOptions, Terrain};
 use gc_sim::scenario::Drill;
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, World};
 use glam::Vec2;
@@ -49,29 +52,62 @@ const EDGE_SCROLL_PX: f64 = 6.0;
 struct Options {
     seed: u64,
     frames: Option<u64>,
-    frame_latency: u32,
+    render: RendererOptions,
 }
 
 fn parse_args() -> Options {
     let mut opts = Options {
         seed: 0x6772_7562,
         frames: None,
-        frame_latency: 2,
+        render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        let value = args.next().and_then(|v| v.parse::<u64>().ok());
-        match (a.as_str(), value) {
-            ("--seed", Some(v)) => opts.seed = v,
-            ("--frames", Some(v)) => opts.frames = Some(v),
-            ("--latency", Some(v @ 1..=3)) => opts.frame_latency = v as u32,
-            _ => {
-                eprintln!("usage: grubcraft [--seed N] [--frames N] [--latency 1|2|3]");
-                std::process::exit(2);
+    while let Some(flag) = args.next() {
+        let value = args.next().unwrap_or_default();
+        let ok = match flag.as_str() {
+            "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
+            "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--latency" => match value.parse() {
+                Ok(v @ 1..=3) => {
+                    opts.render.frame_latency = v;
+                    true
+                }
+                _ => false,
+            },
+            "--render-scale" => match value.parse::<f32>() {
+                Ok(v) if (0.25..=1.0).contains(&v) => {
+                    opts.render.render_scale = v;
+                    true
+                }
+                _ => false,
+            },
+            "--draw" => {
+                let (terrain, blocks) = match value.as_str() {
+                    "all" => (true, true),
+                    "terrain" => (true, false),
+                    "blocks" => (false, true),
+                    "none" => (false, false),
+                    _ => usage(),
+                };
+                opts.render.draw_terrain = terrain;
+                opts.render.draw_blocks = blocks;
+                true
             }
+            _ => false,
+        };
+        if !ok {
+            usage();
         }
     }
     opts
+}
+
+fn usage() -> ! {
+    eprintln!(
+        "usage: grubcraft [--seed N] [--frames N] [--latency 1|2|3] \
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
+    );
+    std::process::exit(2);
 }
 
 /// Everything that exists once the window and GPU are up.
@@ -164,7 +200,7 @@ impl App {
                 window.clone(),
                 size.width,
                 size.height,
-                opts.frame_latency,
+                opts.render,
             ))
         })?;
         self.memory_timeline.mark("gpu device + pipelines");
@@ -202,8 +238,19 @@ impl App {
         self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
         eprintln!(
-            "grubcraft: {} via {:?}, {}x{} pixels, frame latency {}",
-            info.name, info.backend, size.width, size.height, opts.frame_latency
+            "grubcraft: {} via {:?}, {}x{} pixels, frame latency {}, render scale {}, draw {}",
+            info.name,
+            info.backend,
+            size.width,
+            size.height,
+            opts.render.frame_latency,
+            opts.render.render_scale,
+            match (opts.render.draw_terrain, opts.render.draw_blocks) {
+                (true, true) => "all",
+                (true, false) => "terrain",
+                (false, true) => "blocks",
+                (false, false) => "none",
+            }
         );
 
         let now = Instant::now();
@@ -313,7 +360,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 r.frame();
                 match r.stats.frames {
-                    1 => r.memory_timeline.mark("first frame"),
+                    1 => r.memory_timeline.mark("frame 1"),
+                    2 => r.memory_timeline.mark("frame 2"),
+                    10 => r.memory_timeline.mark("frame 10"),
                     120 => r.memory_timeline.mark("frame 120"),
                     _ => {}
                 }
