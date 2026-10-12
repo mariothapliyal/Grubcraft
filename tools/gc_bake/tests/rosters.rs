@@ -239,7 +239,7 @@ fn check_ability(file: &str, owner: &str, a: &Ability) {
     }
 }
 
-/// The supply a unit of this class may cost (docs/16 "Classes and counters").
+/// The supply a unit of this class may cost (docs/17 "Classes and counters").
 fn supply_range(class: Class) -> std::ops::RangeInclusive<u8> {
     match class {
         Class::Worker => 1..=1,
