@@ -13,10 +13,10 @@ const TICKS: u32 = 2_400; // two minutes of game time
 
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
-    (600, 0x4e72_05e7_cdde_35ca),
-    (1200, 0x31c8_fd78_13a6_ea53),
-    (1800, 0xbdb4_3587_6da3_2edd),
-    (2400, 0xdad8_1047_5ae4_fe10),
+    (600, 0xd233_f735_d16d_96f8),
+    (1200, 0x1997_5547_52bf_78aa),
+    (1800, 0xc58a_c3bd_d4b5_5a74),
+    (2400, 0xb952_fefc_62dc_99c6),
 ];
 
 fn run() -> Vec<(u32, u64)> {

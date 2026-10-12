@@ -19,6 +19,8 @@ pub struct Drill {
     pub map_tiles: i32,
     /// Ticks between each round of orders.
     pub order_interval: u32,
+    /// A player the drill spawns but never orders (left to a human).
+    pub skip_player: Option<PlayerId>,
 }
 
 impl Drill {
@@ -29,6 +31,7 @@ impl Drill {
             regiments_per_player: 60,
             map_tiles: 256,
             order_interval: 10,
+            skip_player: None,
         }
     }
 
@@ -60,7 +63,7 @@ impl Drill {
                 };
                 for k in 0..self.regiments_per_player as i32 {
                     let position =
-                        FxVec2::from_ints(cx + (k % 10) * 3 - 15, cy + (k / 10) * 4 - 12);
+                        FxVec2::from_ints(cx + (k % 10) * 7 - 32, cy + (k / 10) * 5 - 14);
                     out.push(PlayerCommand {
                         player,
                         command: Command::SpawnRegiment { position },
@@ -73,6 +76,9 @@ impl Drill {
             return;
         }
         for player in 0..self.players {
+            if self.skip_player == Some(player) {
+                continue;
+            }
             // Order a few of this player's regiments, picked by stepping through the pool.
             for _ in 0..3 {
                 let Some(regiment) = self.pick_regiment(world, player) else {

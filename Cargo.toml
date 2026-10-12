@@ -4,6 +4,9 @@ members = [
     "crates/gc_fixed",
     "crates/gc_sim",
     "crates/gc_platform",
+    "crates/gc_render",
+    "crates/gc_game",
+    "tools/gc_bench",
 ]
 
 [workspace.package]
@@ -22,7 +25,7 @@ gc_render = { path = "crates/gc_render" }
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = "0.34"
 pollster = "1.0"
-wgpu = { version = "30", default-features = false, features = ["wgsl", "metal", "dx12", "vulkan"] }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "dx12", "vulkan"] }
 winit = "0.30"
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3"] }
 

@@ -17,6 +17,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Tagged allocator, dev overlay, Tracy hook.
 - CI: build and test on macOS (arm64) and Windows (x64); universal Mac app bundle.
 - **Exit:** the app opens to a rendered map on Mario's Mac and a Windows PC at under 64 MB memory footprint; the cross-platform hash test passes on an empty sim.
+- **Progress (2026-10-12):** first slice landed: workspace, `gc_fixed`, `gc_sim` skeleton with golden determinism, zero-allocation and no-float tests, tagged allocator and OS memory stats, wgpu terrain and regiment-block renderer, RTS camera with trackpad gestures, select-and-move on a scripted 4-player drill, `gc_bench` budget gates, CI on macOS/Windows/Linux, universal Mac app script. Remaining: asset pack and baker skeleton, RON data compilation, on-screen dev overlay (stats are in the window title for now), Tracy hook, and measuring memory on Mario's Mac and a Windows PC.
 
 ### M1 · Regiments on a field (solo sandbox)
 *Goal: moving and fighting regiments feel great.*

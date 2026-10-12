@@ -22,7 +22,7 @@ pub struct Regiments {
     generation: Vec<u16>,
     owner: Vec<PlayerId>,
     position: Vec<FxVec2>,
-    /// Unit vector the regiment is facing.
+    /// Unit vector the regiment is facing (new regiments face north, -y).
     facing: Vec<FxVec2>,
     /// Tiles per tick.
     speed: Vec<Fx>,
@@ -39,7 +39,7 @@ impl Regiments {
             generation: vec![0; n],
             owner: vec![0; n],
             position: vec![FxVec2::ZERO; n],
-            facing: vec![FxVec2::new(Fx::ONE, Fx::ZERO); n],
+            facing: vec![FxVec2::new(Fx::ZERO, -Fx::ONE); n],
             speed: vec![Fx::ZERO; n],
             target: vec![None; n],
             free: (0..capacity).rev().collect(),
@@ -69,7 +69,7 @@ impl Regiments {
         self.alive[i] = true;
         self.owner[i] = owner;
         self.position[i] = position;
-        self.facing[i] = FxVec2::new(Fx::ONE, Fx::ZERO);
+        self.facing[i] = FxVec2::new(Fx::ZERO, -Fx::ONE);
         self.speed[i] = speed;
         self.target[i] = None;
         Some(RegimentHandle {
