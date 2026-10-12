@@ -53,6 +53,7 @@ The Total War experience in a 10-minute bite: two or more armies, one battlefiel
 - **Pause** (team-voted in multiplayer, free in solo sandbox). Giving orders while paused is allowed only in solo.
 - **Slow-motion** in solo sandbox and replays, not in multiplayer.
 - **Sandbox mode** (solo): place any armies on any map for both sides and watch or play. This is the main balance-testing and learning tool, and the first thing we build.
+  - **Built so far (M1 step 7):** `grubcraft --sandbox` starts on an empty field. You can place regiments of any type for any of the four sides (`B`, then click; `[` and `]` choose the type), command any side (`Tab` switches), remove regiments (`Delete`) or clear the field (`Shift` + `Delete`), pause (`P`), run from 0.1× to 4× speed (`-` and `=`), tune a unit type's stats live (`T`), and reload `data/units.ron` from disk (`R`, when run from the repository). Without `--sandbox` the same tools work over the four-army demo. The main menu's Sandbox entry will open the empty field once the menus land.
 
 ### Restage this battle (the bridge between modes)
 After a Conquest match, the post-game screen lists its biggest battles (by models killed). Pick one and the exact armies that fought it, with their veterancy and heroes, are staged on a Field Battle map generated from the same patch of terrain. Rematch the fight that decided the game. Because both modes share one simulation and replays record everything, this is cheap to build: it is a snapshot of regiments at the moment the battle began, loaded into a battle map.
