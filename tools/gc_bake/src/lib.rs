@@ -183,22 +183,19 @@ mod tests {
     use gc_assets::Pack;
     use gc_data::GameData;
 
+    /// A fresh data directory per call: tests run in parallel, and sharing a
+    /// directory let one test read a file another was rewriting.
     fn temp_data(units: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT: AtomicU32 = AtomicU32::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "gc_bake_test_{}_{:x}",
+            "gc_bake_test_{}_{}",
             std::process::id(),
-            xxhash(units)
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("units.ron"), units).unwrap();
         dir
-    }
-
-    fn xxhash(s: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        s.hash(&mut h);
-        h.finish()
     }
 
     /// Copy a pack into 16-byte-aligned storage, as the game's loaders do.
