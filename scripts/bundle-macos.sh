@@ -21,6 +21,14 @@ lipo -create \
   target/x86_64-apple-darwin/release/grubcraft \
   -output "$APP/Contents/MacOS/grubcraft"
 
+# Diagnostic: the smallest Metal window, to compare the game's memory against.
+for arch in arm64 x86_64; do
+  swiftc -O -swift-version 5 -target "$arch-apple-macos12.0" \
+    tools/metal_floor/main.swift -o "target/metal-floor-$arch"
+done
+lipo -create target/metal-floor-arm64 target/metal-floor-x86_64 \
+  -output "$APP/Contents/MacOS/metal-floor"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

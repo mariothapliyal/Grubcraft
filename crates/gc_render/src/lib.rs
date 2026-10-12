@@ -497,8 +497,13 @@ impl Renderer {
             fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
             misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
         };
-        self.queue
-            .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        // With nothing to draw the frame is a bare clear: no uploads and no
+        // depth buffer, to measure the floor cost of presenting.
+        let bare = !self.options.draw_terrain && !self.options.draw_blocks;
+        if !bare {
+            self.queue
+                .write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        }
 
         // Frustum-cull terrain chunks on the CPU; upload only the visible ones.
         let planes = frustum_planes(frame.view_proj);
@@ -561,19 +566,23 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: (!bare).then_some(
+                    wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    },
+                ),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &terrain.bind_group, &[]);
+            if !bare {
+                pass.set_bind_group(0, &terrain.bind_group, &[]);
+            }
 
             if !self.visible_chunks.is_empty() {
                 pass.set_pipeline(&self.terrain_pipeline);
