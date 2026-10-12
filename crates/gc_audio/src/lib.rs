@@ -7,6 +7,10 @@
 //! commands onto the queue. The mixer ([`Mixer`]) has no device code in it,
 //! so it is tested without a sound card.
 
+// Stereo frames are walked as 2-sample chunks; `as_chunks` needs a newer Rust
+// than the one this workspace declares.
+#![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+
 pub mod adpcm;
 pub mod bank;
 mod engine;
