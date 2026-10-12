@@ -359,7 +359,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
 | Lantern Wraiths | 2 | Air | 140 / 40 | 3 | 28 | Lantern Spire | 4 × 16 | 4 | 6.5 | 140 | 1.8 / 1.8 | 30 / 25 / 3 | 0 | — | 8, 3, 3.0 s, 40% |
-| Mausoleum Engine | 3 | Siege | 240 / 120 | 4 | 50 | Ossuary | 1 × 500 | 1 | 1.5 | 30 | 3.5 / 4.5 | 20 / 40 / 30 | 0 | — | 40, 14, 9.0 s, 30% |
+| Mausoleum Engine | 3 | Siege | 240 / 120 | 4 | 50 | Ossuary | 1 × 500 | 1 | 1.5 | 30 | 3.5 / 4.0 | 20 / 40 / 30 | 0 | — | 40, 14, 9.0 s, 30% |
 | The Insolvent | 3 | Monster | 260 / 150 | 6 | 55 | Ossuary | 1 × 640 | 1 | 2.5 | 60 | 3.5 / 3.5 | 50 / 35 / 30 | 40 | — | |
 
 **Summoned**
