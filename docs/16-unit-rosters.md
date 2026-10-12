@@ -201,7 +201,7 @@ Brood regiments are hatched from larvae at a Hive or Hatchery Pit; "Hive" above 
   - **Burrow In** · order — Burrows into a seep (up to 5 per seep) and delivers Grub through the vein network; burrowed Gnawers are hidden and cannot be harmed except by Titan Events. [Burrow, Gather]
   - **Grow Structure** · order — The Gnawer is consumed to grow a Brood structure. [Construct]
 - **Skitterlings** (existing)
-  - **Swarm Instinct** · passive — See above. [ModifyMorale]
+  - **Swarm Instinct** · passive — Brood regiments lose 30% less morale from casualties but 50% more when a nearby hero dies. [ModifyMorale]
   - **Metamorphosis** · order — Evolves into Spitters or Burrowers. [Transform]
 - **Chitin Guard**
   - **Hunker** · toggle — +20 melee defence, −50% speed. [ModifyStat]
@@ -231,7 +231,7 @@ Brood regiments are hatched from larvae at a Hive or Hatchery Pit; "Hive" above 
   - *Flags: friendly fire.*
 - **Colossus Maw**
   - **Devour** · active · 20 s — Swallows 3 models of a non-monster regiment it is fighting, healing 40 hit points per model. [Damage, Heal]
-  - **Terror** · aura · radius 10 — As the Oni-Bound. [ModifyMorale]
+  - **Terror** · aura · radius 10 — Enemy regiments within 10 tiles lose 1 morale a second; a regiment it charges loses 10. [ModifyMorale]
   - *Flags: terror.*
 - **Spawnlings**
   - **Short-lived** · passive — Lasts 20 to 30 s; never routs. [Summon]
@@ -292,7 +292,7 @@ The Choir has no summoned units.
 - **Shardlings** (existing)
   - **Shatter** · passive — Each model that dies bursts for 3 damage to enemies within 1.5 tiles. [Damage, AreaPulse]
 - **Prism Lancers**
-  - **Refraction** · passive — See above. [SpawnVolley]
+  - **Refraction** · passive — A beam volley that passes through an allied Crystal regiment splits into two volleys of 75% damage aimed at the two nearest enemies past it. [SpawnVolley]
   - *Flags: direct fire (needs line of sight), anti-air.*
 - **Harmonic Walkers**
   - **Sonic Pulse** · active · 25 s · range 8 — Cone in front: enemy regiments are knocked back 3 tiles, lose 6 morale and suffer −20 melee defence for 5 s while they re-form. [Knockback, ModifyMorale, ApplyStatus]
@@ -306,7 +306,7 @@ The Choir has no summoned units.
   - **Tuning Fork** · aura · radius 8 — Crystal regiments regain 1 hit point per model every 4 s. [Heal]
 - **Monolith**
   - **Sonic Beam** · passive — ×3.0 damage to structures. [ModifyStat]
-  - **Terror** · aura · radius 10 — As the Oni-Bound. [ModifyMorale]
+  - **Terror** · aura · radius 10 — Enemy regiments within 10 tiles lose 1 morale a second; a regiment it charges loses 10. [ModifyMorale]
   - *Flags: terror, direct fire.*
 
 ### Resonance abilities (meter 0 to 100)
@@ -403,7 +403,7 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
   - *Flags: undead.*
 - **The Insolvent**
   - **Stitched Together** · passive — Regains 10 hit points for each corpse it walks over. [Heal, RaiseCorpses]
-  - **Terror** · aura · radius 10 — As the Oni-Bound. [ModifyMorale]
+  - **Terror** · aura · radius 10 — Enemy regiments within 10 tiles lose 1 morale a second; a regiment it charges loses 10. [ModifyMorale]
   - *Flags: undead, terror.*
 - **Bound Dead**
   - **Undead** · passive — Never routs; temporary versions last 30 to 90 s, Indentured ones crumble instead. [Summon]
