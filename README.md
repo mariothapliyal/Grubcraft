@@ -8,14 +8,14 @@ A four-player LAN real-time strategy game where Warcraft III's base-building mee
 
 ## Status
 
-Milestone M0 (foundations) in progress; see the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
+M0 (foundations) is done apart from a test run on a Windows PC. M1 (regiments on a field) is in progress: formations, soldiers on screen, controls, and melee and arrows are built; morale, pathfinding, the sandbox and real art are next. See the [roadmap](docs/13-roadmap.md). Start with the [design documents](docs/README.md).
 
 ## Building and running
 
 You need [Rust](https://rustup.rs) (stable). Then, from this folder:
 
 ```sh
-cargo run --release -p gc_game          # play the M0 build
+cargo run --release -p gc_game          # play the current build
 cargo test --workspace                  # all tests, including determinism
 cargo run --release -p gc_bench         # simulation benchmark with budget checks
 cargo run -p gc_bake                    # check data/*.ron and bake target/grubcraft.pak

@@ -5,7 +5,10 @@
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
 //! draw the line they form instead (its length sets their frontage; they face
-//! away from the camera side of the line). Ctrl (or Cmd) + a number key saves
+//! away from the camera side of the line); a big selection forms several
+//! lines. Right-click an enemy regiment to attack it; archers (each army's
+//! back two rows) also shoot enemies in range on their own, and blocks that
+//! touch fight. Ctrl (or Cmd) + a number key saves
 //! the selection as a control group; the number recalls it (Shift adds it),
 //! and pressing it twice quickly centres the camera on it.
 //!
