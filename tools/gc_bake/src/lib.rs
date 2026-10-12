@@ -227,6 +227,18 @@ mod tests {
         assert_eq!(u.depth(), Fx::from_ratio(5, 2));
     }
 
+    /// Baking must give the same bytes on every platform, or Mac and Windows
+    /// players would see different data hashes. CI runs this on all three.
+    #[test]
+    fn fixture_hash_is_the_same_everywhere() {
+        let baked = bake(&temp_data(ONE)).unwrap();
+        let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "3b98a5d249a4ddfeb3cd2d6611764bba84f96576d80e9c668ac3d88e57541436"
+        );
+    }
+
     #[test]
     fn same_sources_same_bytes() {
         let a = bake(&temp_data(ONE)).unwrap();
