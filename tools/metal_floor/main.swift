@@ -3,7 +3,12 @@
 // same size as the game's, clears it every frame, and prints process memory
 // (the figure Activity Monitor shows) at the same milestones as the game.
 //
-//   metal-floor [--frames N]
+//   metal-floor [--frames N] [--queue N] [--buffers N]
+//
+// --queue sets the command queue's maxCommandBufferCount (Metal's default is
+// 64; wgpu asks for 4096). --buffers commits that many command buffers per
+// frame, each with a completion handler, as wgpu does (it adds one to signal
+// its fence).
 //
 // Built into Grubcraft.app/Contents/MacOS by scripts/bundle-macos.sh.
 
@@ -40,15 +45,21 @@ func mark(_ stage: String) {
     previous = now
 }
 
+struct Settings {
+    var frames = 300
+    var queueSize: Int? = nil
+    var buffersPerFrame = 1
+}
+
 final class Floor: NSObject, NSApplicationDelegate {
-    let frames: Int
+    let settings: Settings
     var window: NSWindow!
     var layer: CAMetalLayer!
     var queue: MTLCommandQueue!
     var frame = 0
 
-    init(frames: Int) {
-        self.frames = frames
+    init(settings: Settings) {
+        self.settings = settings
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -62,7 +73,11 @@ final class Floor: NSObject, NSApplicationDelegate {
             fputs("metal-floor: no Metal device\n", stderr)
             exit(1)
         }
-        queue = device.makeCommandQueue()
+        if let n = settings.queueSize {
+            queue = device.makeCommandQueue(maxCommandBufferCount: n)
+        } else {
+            queue = device.makeCommandQueue()
+        }
         layer = CAMetalLayer()
         layer.device = device
         layer.pixelFormat = .bgra8Unorm_srgb
@@ -77,7 +92,9 @@ final class Floor: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         fputs(
-            "metal-floor: \(device.name), \(Int(1280 * scale))x\(Int(760 * scale)) pixels, 3 drawables\n",
+            "metal-floor: \(device.name), \(Int(1280 * scale))x\(Int(760 * scale)) pixels, 3 drawables, "
+                + "queue \(settings.queueSize.map { String($0) } ?? "default"), "
+                + "\(settings.buffersPerFrame) command buffers per frame\n",
             stderr)
         mark("window + metal device")
         Timer.scheduledTimer(
@@ -97,8 +114,14 @@ final class Floor: NSObject, NSApplicationDelegate {
             pass.colorAttachments[0].clearColor = MTLClearColor(
                 red: 0.34, green: 0.39, blue: 0.45, alpha: 1)
             commands.makeRenderCommandEncoder(descriptor: pass)?.endEncoding()
+            commands.addCompletedHandler { _ in }
             commands.present(drawable)
             commands.commit()
+            for _ in 1..<settings.buffersPerFrame {
+                guard let extra = queue.makeCommandBuffer() else { break }
+                extra.addCompletedHandler { _ in }
+                extra.commit()
+            }
         }
         frame += 1
         switch frame {
@@ -108,24 +131,32 @@ final class Floor: NSObject, NSApplicationDelegate {
         case 120: mark("frame 120")
         default: break
         }
-        if frame >= frames {
+        if frame >= settings.frames {
             mark("exit")
             exit(0)
         }
     }
 }
 
-var frames = 300
-let args = CommandLine.arguments
-if args.count == 3, args[1] == "--frames", let n = Int(args[2]), n > 0 {
-    frames = n
-} else if args.count != 1 {
-    fputs("usage: metal-floor [--frames N]\n", stderr)
-    exit(2)
+var settings = Settings()
+var args = CommandLine.arguments.dropFirst()
+while let flag = args.popFirst() {
+    guard let value = args.popFirst().flatMap({ Int($0) }), value > 0 else {
+        fputs("usage: metal-floor [--frames N] [--queue N] [--buffers N]\n", stderr)
+        exit(2)
+    }
+    switch flag {
+    case "--frames": settings.frames = value
+    case "--queue": settings.queueSize = value
+    case "--buffers": settings.buffersPerFrame = value
+    default:
+        fputs("usage: metal-floor [--frames N] [--queue N] [--buffers N]\n", stderr)
+        exit(2)
+    }
 }
 mark("process start")
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let delegate = Floor(frames: frames)
+let delegate = Floor(settings: settings)
 app.delegate = delegate
 app.run()
