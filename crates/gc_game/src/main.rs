@@ -49,12 +49,14 @@ const EDGE_SCROLL_PX: f64 = 6.0;
 struct Options {
     seed: u64,
     frames: Option<u64>,
+    frame_latency: u32,
 }
 
 fn parse_args() -> Options {
     let mut opts = Options {
         seed: 0x6772_7562,
         frames: None,
+        frame_latency: 2,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -62,8 +64,9 @@ fn parse_args() -> Options {
         match (a.as_str(), value) {
             ("--seed", Some(v)) => opts.seed = v,
             ("--frames", Some(v)) => opts.frames = Some(v),
+            ("--latency", Some(v @ 1..=3)) => opts.frame_latency = v as u32,
             _ => {
-                eprintln!("usage: grubcraft [--seed N] [--frames N]");
+                eprintln!("usage: grubcraft [--seed N] [--frames N] [--latency 1|2|3]");
                 std::process::exit(2);
             }
         }
@@ -91,6 +94,34 @@ struct Running {
     started: Instant,
     input: Input,
     stats: Stats,
+    memory_timeline: MemoryTimeline,
+}
+
+/// Process memory recorded at startup milestones, to see what each costs.
+#[derive(Default)]
+struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
+
+impl MemoryTimeline {
+    fn mark(&mut self, stage: &'static str) {
+        self.0
+            .push((stage, gc_platform::memory::process_memory().current));
+    }
+
+    fn print(&self) {
+        eprintln!("process memory by stage (MB, change from previous):");
+        let mut prev: Option<u64> = None;
+        for (stage, bytes) in &self.0 {
+            match (bytes, prev) {
+                (Some(b), Some(p)) => {
+                    let delta = (*b as f64 - p as f64) / (1024.0 * 1024.0);
+                    eprintln!("  {stage:<26} {:>8.1}  ({delta:+.1})", mb(*b as usize));
+                }
+                (Some(b), None) => eprintln!("  {stage:<26} {:>8.1}", mb(*b as usize)),
+                (None, _) => eprintln!("  {stage:<26}        ?"),
+            }
+            prev = *bytes;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -115,6 +146,7 @@ struct Stats {
 struct App {
     opts: Option<Options>,
     running: Option<Running>,
+    memory_timeline: MemoryTimeline,
 }
 
 impl App {
@@ -125,10 +157,17 @@ impl App {
             .with_inner_size(LogicalSize::new(1280.0, 760.0));
         let window = Arc::new(event_loop.create_window(attrs)?);
         let size = window.inner_size();
+        self.memory_timeline.mark("window open");
 
         let mut renderer = tagged_alloc::scope(Tag::Render, || {
-            pollster::block_on(Renderer::new(window.clone(), size.width, size.height))
+            pollster::block_on(Renderer::new(
+                window.clone(),
+                size.width,
+                size.height,
+                opts.frame_latency,
+            ))
         })?;
+        self.memory_timeline.mark("gpu device + pipelines");
         let heightmap = tagged_alloc::scope(Tag::Map, || Heightmap::generate(opts.seed, MAP_TILES));
         tagged_alloc::scope(Tag::Render, || {
             renderer.set_terrain(&Terrain {
@@ -139,6 +178,7 @@ impl App {
                 heights: &heightmap.heights,
             })
         });
+        self.memory_timeline.mark("map generated + uploaded");
 
         let capacities = Capacities::default();
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
@@ -159,8 +199,12 @@ impl App {
         camera.focus_height = heightmap.height_at(camera.focus.x, camera.focus.y);
         camera.aspect = renderer.aspect_ratio();
 
+        self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
-        eprintln!("grubcraft: {} via {:?}", info.name, info.backend);
+        eprintln!(
+            "grubcraft: {} via {:?}, {}x{} pixels, frame latency {}",
+            info.name, info.backend, size.width, size.height, opts.frame_latency
+        );
 
         let now = Instant::now();
         self.running = Some(Running {
@@ -189,6 +233,7 @@ impl App {
                 tick_time: Duration::ZERO,
                 ticks: 0,
             },
+            memory_timeline: std::mem::take(&mut self.memory_timeline),
         });
         Ok(())
     }
@@ -256,7 +301,10 @@ impl ApplicationHandler for App {
                         KeyCode::ArrowLeft => r.input.arrows[2] = down,
                         KeyCode::ArrowRight => r.input.arrows[3] = down,
                         KeyCode::Home if down => r.camera.reset_rotation(),
-                        KeyCode::F11 if down && !event.repeat => print_memory(&r.renderer),
+                        KeyCode::F11 if down && !event.repeat => {
+                            r.memory_timeline.print();
+                            print_memory(&r.renderer);
+                        }
                         KeyCode::Escape if down => event_loop.exit(),
                         _ => {}
                     }
@@ -264,9 +312,16 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 r.frame();
+                match r.stats.frames {
+                    1 => r.memory_timeline.mark("first frame"),
+                    120 => r.memory_timeline.mark("frame 120"),
+                    _ => {}
+                }
                 let limit = self.opts.as_ref().and_then(|o| o.frames);
                 if limit.is_some_and(|n| r.stats.frames >= n) {
+                    r.memory_timeline.mark("exit");
                     println!("{}", r.stats_line());
+                    r.memory_timeline.print();
                     print_memory(&r.renderer);
                     event_loop.exit();
                 }
@@ -509,11 +564,7 @@ fn print_memory(renderer: &Renderer) {
     }
     eprintln!("  {:<8} {:>8.2}", "gpu", mb(renderer.gpu_bytes() as usize));
     if let Some(c) = mem.current {
-        eprintln!(
-            "  process  {:>8.2}  (peak {:.2})",
-            mb(c as usize),
-            mb(mem.peak.unwrap_or(0) as usize)
-        );
+        eprintln!("  process  {:>8.2}", mb(c as usize));
     }
 }
 
@@ -541,8 +592,9 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
         opts: Some(opts),
-        running: None,
+        ..Default::default()
     };
+    app.memory_timeline.mark("process start");
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("grubcraft: {e}");
         std::process::exit(1);

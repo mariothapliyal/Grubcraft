@@ -135,6 +135,7 @@ impl Renderer {
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
         height: u32,
+        frame_latency: u32,
     ) -> Result<Renderer, InitError> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         desc.backends = wgpu::Backends::PRIMARY;
@@ -177,8 +178,9 @@ impl Renderer {
             width: width.max(1),
             height: height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            // Two frames in flight: lowest latency that keeps the GPU busy.
-            desired_maximum_frame_latency: 2,
+            // Frames in flight. Each one can hold a full-window drawable
+            // (about 15 MB at Retina resolution).
+            desired_maximum_frame_latency: frame_latency.clamp(1, 3),
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             ..surface
