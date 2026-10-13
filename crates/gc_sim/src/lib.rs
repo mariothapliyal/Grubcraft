@@ -277,7 +277,14 @@ impl World {
             &self.terrain,
         );
         self.nav.plan(&mut self.regiments);
-        self.regiments.step_movement(&mut self.nav, &self.terrain);
+        self.combat.mark_holders(&self.regiments);
+        self.regiments.step_movement(
+            &mut self.nav,
+            &self.terrain,
+            &self.combat,
+            &self.units,
+            &self.stances,
+        );
         self.combat.after_move(
             &mut self.regiments,
             &self.units,

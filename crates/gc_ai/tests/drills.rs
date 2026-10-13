@@ -98,10 +98,6 @@ fn row(regiments: &[UnitId], x: f32, y: f32, facing: Vec2) -> Vec<Placement> {
 struct Ground {
     nav: Vec<u8>,
     heights: Vec<f32>,
-    /// Whether the simulation's terrain rules (high ground, fords) apply;
-    /// off, the sim fights on flat, dry ground the minds still read as a
-    /// river, to measure what the rules are worth.
-    rules: bool,
 }
 
 impl Ground {
@@ -110,7 +106,6 @@ impl Ground {
         Ground {
             nav: vec![1; side * side],
             heights: vec![LAND; (MAP * MAP) as usize],
-            rules: true,
         }
     }
 
@@ -213,13 +208,9 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
         map_tiles: MAP,
         nav: &drill.ground.nav,
         teams: &[],
-        ground: if drill.ground.rules {
-            gc_sim::Ground {
-                heights: &sim_heights,
-                water_level: (WATER_LEVEL * per_tile) as u16,
-            }
-        } else {
-            gc_sim::Ground::FLAT
+        ground: gc_sim::Ground {
+            heights: &sim_heights,
+            water_level: (WATER_LEVEL * per_tile) as u16,
         },
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
@@ -780,8 +771,7 @@ fn it_anchors_an_end_of_its_line_on_a_cliff() {
 /// A river 10 tiles wide across the field, with a ford in the middle wide
 /// enough for one regiment at a time.
 ///
-/// Regiments can still overlap, so a column wading out of a ford arrives
-/// stacked two deep rather than one regiment at a time.
+/// A column wading out of the ford arrives one regiment at a time.
 fn ford_drill(personality: usize) -> Drill {
     let mut ai = row(&[SPEARS, SPEARS, PIKES, SPEARS], 128.0, 145.0, NORTH);
     ai.push(at(ARCHERS, 120.0, 152.0, NORTH));
@@ -838,33 +828,23 @@ fn soldiers_left(view: &Perception) -> [f32; 2] {
 }
 
 /// Not a drill: waiting at the ford pays. The enemy charges across into
-/// the AI's line; with the terrain rules (wading is slow, men in the water
-/// take more blows and can't charge) the AI keeps more of its army than on
-/// flat ground with the same moves.
+/// the AI's line. Its regiments come out of the ford one at a time (they
+/// queue rather than stack), slowed and without a charge, and the AI wins
+/// with every personality.
 #[test]
 fn holding_the_ford_pays_off() {
-    let fight = |personality: usize, rules: bool| {
+    for personality in only(0..8) {
         let mut drill = ford_drill(personality);
         drill.foe_plays = Foe::Charge;
-        drill.ground.rules = rules;
         let mut left = [0.0; 2];
         let winner = run(drill, 180, |f| left = soldiers_left(f.view));
-        (winner, left)
-    };
-    let (mut with, mut without) = (0.0, 0.0);
-    for personality in only(0..8) {
-        let (winner, left) = fight(personality, true);
-        let (_, flat) = fight(personality, false);
-        println!(
-            "personality {personality}: {winner:?}, left {left:?}; without the rules {flat:?}"
+        println!("personality {personality}: {winner:?}, left {left:?}");
+        assert_eq!(
+            winner,
+            Some(AI),
+            "personality {personality} lost the ford ({left:?} left)"
         );
-        with += left[0] - left[1];
-        without += flat[0] - flat[1];
     }
-    assert!(
-        with > without,
-        "the ford won nothing: margin {with} with the rules, {without} without"
-    );
 }
 
 /// Not a drill: the AI lens (step 3) shows what the cliff drill checks.
