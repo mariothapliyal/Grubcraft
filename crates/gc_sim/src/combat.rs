@@ -22,6 +22,7 @@ use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
+use crate::terrain::Terrain;
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
@@ -389,6 +390,7 @@ impl Combat {
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
+        terrain: &Terrain,
     ) {
         self.build_grid(regs, units);
         for i in 0..regs.alive.len() {
@@ -436,9 +438,11 @@ impl Combat {
             });
             if let Some((_, j)) = best {
                 if !was_engaged {
-                    // Hitting home at speed is a charge. A fight ends any march.
+                    // Hitting home at speed is a charge, but nobody charges
+                    // out of a river. A fight ends any march.
                     let charging = regs.target[i].is_some()
-                        && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3;
+                        && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
+                        && !terrain.wet(regs.position[i]);
                     if charging {
                         regs.charge[i] = CHARGE_TICKS;
                     }
@@ -460,7 +464,11 @@ impl Combat {
                 regs.attack_target[i] = None;
                 continue;
             };
-            let range = units[regs.unit[i] as usize].range;
+            let range = terrain.range(
+                units[regs.unit[i] as usize].range,
+                regs.position[i],
+                regs.position[j],
+            );
             let to = regs.position[j] - regs.position[i];
             if range.raw() > 0 && to.length() <= range {
                 regs.target[i] = None;
@@ -478,6 +486,7 @@ impl Combat {
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
+        terrain: &Terrain,
         tick: u32,
         rng: &mut Pcg32,
     ) {
@@ -510,6 +519,7 @@ impl Combat {
             let charge =
                 100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
             let heart = heart_percent(regs.morale_state[i]);
+            let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
             let expected = fighters
                 * hit
                 * attacker.melee_damage as u64
@@ -517,7 +527,9 @@ impl Combat {
                 * charge
                 * heart
                 * 256
-                / (100 * 100 * 100 * 100);
+                / (100 * 100 * 100 * 100)
+                * ground
+                / 100;
             deal(regs, units, j, expected, side, rng);
         }
 
@@ -535,7 +547,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, i, stats.range) else {
+            let Some(j) = self.pick_target(regs, stances, terrain, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -612,23 +624,30 @@ impl Combat {
         &self,
         regs: &Regiments,
         stances: &Stances,
+        terrain: &Terrain,
         i: usize,
         range: Fx,
     ) -> Option<usize> {
         let me = regs.position[i];
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
-            && (regs.position[j] - me).length() <= range
+            && (regs.position[j] - me).length() <= terrain.range(range, me, regs.position[j])
         {
             return Some(j);
         }
         let mut best: Option<(u64, usize)> = None;
-        let range_sq = (range.raw() as i64 * range.raw() as i64) as u64;
-        self.near_enemies(me, range, regs.owner[i], |j| {
+        // Look as far as high ground could carry, then check each.
+        let reach = if terrain.is_flat() {
+            range
+        } else {
+            Terrain::range_from_high_ground(range)
+        };
+        self.near_enemies(me, reach, regs.owner[i], |j| {
             if !regs.alive[j] || !stances.hostile(regs.owner[i], regs.owner[j]) {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            if d <= range_sq && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
+            let r = terrain.range(range, me, regs.position[j]).raw() as i64;
+            if d <= (r * r) as u64 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
                 best = Some((d, j));
             }
         });

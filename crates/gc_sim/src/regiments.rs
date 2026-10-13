@@ -6,6 +6,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
+use crate::terrain::Terrain;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
@@ -321,7 +322,7 @@ impl Regiments {
             .map(|i| self.view(i))
     }
 
-    pub(crate) fn step_movement(&mut self, nav: &mut Nav) {
+    pub(crate) fn step_movement(&mut self, nav: &mut Nav, terrain: &Terrain) {
         for i in 0..self.alive.len() {
             if !self.alive[i] {
                 continue;
@@ -357,6 +358,7 @@ impl Regiments {
                     }
                     pace
                 };
+                let step = terrain.wading(step, self.position[i]);
                 if dist <= step {
                     self.position[i] = point;
                     if last {
