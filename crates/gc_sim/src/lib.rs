@@ -90,6 +90,16 @@ impl Mass {
             Mass::Heavy => "heavy",
         }
     }
+
+    /// How much a blow weighs when lines push (docs/05-combat.md, "Lines
+    /// that push"): monsters and cavalry shove hardest, swarms least.
+    pub fn heft(self) -> u64 {
+        match self {
+            Mass::Light => 1,
+            Mass::Medium => 2,
+            Mass::Heavy => 4,
+        }
+    }
 }
 
 /// How closely a regiment's soldiers stand (docs/05-combat.md, "Weapon
@@ -532,7 +542,6 @@ impl World {
         );
         self.combat.push_lines(
             &mut self.regiments,
-            &self.units,
             &self.stances,
             &self.terrain,
             &self.nav,

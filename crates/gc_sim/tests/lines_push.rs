@@ -70,29 +70,28 @@ enum Behind {
 
 fn world(behind: Behind) -> World {
     let side = MAP * CELLS_PER_TILE as u32;
-    let nav: Vec<u8> = match behind {
-        Behind::Cliff(row) => (0..side * side)
-            .map(|c| {
+    let (nav, heights): (Vec<u8>, Vec<u16>) = match behind {
+        Behind::Open => (Vec::new(), Vec::new()),
+        Behind::Cliff(row) => {
+            let cell = |c: u32| {
                 if c / side / CELLS_PER_TILE as u32 >= row {
                     BLOCKED
                 } else {
                     1
                 }
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    let heights: Vec<u16> = match behind {
-        Behind::River(row) => (0..MAP * MAP)
-            .map(|i| {
+            };
+            ((0..side * side).map(cell).collect(), Vec::new())
+        }
+        Behind::River(row) => {
+            let tile = |i: u32| {
                 if i / MAP >= row {
                     0
                 } else {
                     2 * HEIGHT_UNITS as u16
                 }
-            })
-            .collect(),
-        _ => Vec::new(),
+            };
+            (Vec::new(), (0..MAP * MAP).map(tile).collect())
+        }
     };
     World::new(&MatchSetup {
         seed: 9,
@@ -103,11 +102,8 @@ fn world(behind: Behind) -> World {
         teams: &[],
         ground: Ground {
             heights: &heights,
-            water_level: if heights.is_empty() {
-                0
-            } else {
-                HEIGHT_UNITS as u16
-            },
+            // Ignored on flat maps.
+            water_level: HEIGHT_UNITS as u16,
             cover: &[],
         },
         champions: false,
@@ -155,7 +151,7 @@ fn moved_south(w: &World, regiments: &[(RegimentHandle, FxVec2)]) -> Vec<f64> {
 }
 
 fn seconds(w: &mut World, s: u32) {
-    for _ in 0..s * 20 {
+    for _ in 0..s * gc_sim::TICKS_PER_SECOND {
         w.tick(&[]);
     }
 }

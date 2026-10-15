@@ -59,7 +59,7 @@
         melee_defence: 25,
         melee_damage: 3,
         charge_bonus: 40,
-        morale: 57,
+        morale: 65,
         mass: Light,
     ),
     (
@@ -90,7 +90,7 @@
         file_spacing: 0.7,
         rank_spacing: 0.9,
         melee_attack: 28,
-        melee_defence: 54,
+        melee_defence: 52,
         melee_damage: 2,
         charge_bonus: 10,
         never_routs: true,

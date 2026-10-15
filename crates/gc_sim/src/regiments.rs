@@ -324,6 +324,11 @@ impl Regiments {
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
     }
 
+    /// The live regiment `i` is locked in melee with, if any.
+    pub(crate) fn foe(&self, i: usize) -> Option<usize> {
+        self.engaged[i].and_then(|h| self.resolve(h))
+    }
+
     pub fn owner(&self, h: RegimentHandle) -> Option<PlayerId> {
         self.resolve(h).map(|i| self.owner[i])
     }
