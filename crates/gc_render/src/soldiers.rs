@@ -194,8 +194,8 @@ pub(crate) fn make(
 
 impl SoldiersGpu {
     /// Draw the first `count` uploaded instances by `batches`, each at its
-    /// level of detail or, for the shadow map, the reduced mesh. Returns
-    /// draw calls, soldiers and triangles drawn.
+    /// level of detail, into the frame or (with `shadow`) the shadow map.
+    /// Returns draw calls, soldiers and triangles drawn.
     pub fn draw(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -227,8 +227,13 @@ impl SoldiersGpu {
                 });
                 textured_now = Some(textured);
             }
-            let lod = if shadow { 1 } else { (b.lod as usize).min(1) };
-            let [first, len] = lods[lod];
+            // A model without the reduced mesh draws its full one.
+            let lod = (b.lod as usize).min(1);
+            let [first, len] = if lods[lod][1] == 0 {
+                lods[0]
+            } else {
+                lods[lod]
+            };
             let end = (b.first + b.count).min(count as u32);
             if b.first >= end || len == 0 {
                 continue;

@@ -37,10 +37,6 @@ use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 const SUN: Vec3 = Vec3::new(-0.45, 0.75, -0.35);
 /// The sky (and fog) colour, in sRGB.
 const SKY: [f32; 3] = [0.62, 0.66, 0.70];
-/// Terrain shadows are drawn with every `SHADOW_GRID_STEP`th vertex of the
-/// chunk grid: hill shadows are broad, and it costs a quarter of the
-/// triangles.
-const SHADOW_GRID_STEP: u32 = 2;
 
 #[derive(Debug)]
 pub enum InitError {
@@ -187,8 +183,10 @@ pub struct Renderer {
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
     post_targets: post::PostTargets,
-    /// The chunk grid's triangles, at full detail and for the shadow map.
-    chunk_indices: [(wgpu::Buffer, u32); 2],
+    /// The sky colour, scaled so that it tone-maps back to itself.
+    fog_color: [f32; 3],
+    /// The chunk grid's triangles, and how many indices they take.
+    chunk_indices: (wgpu::Buffer, u32),
     chunk_instances: wgpu::Buffer,
     chunk_instance_capacity: u32,
     box_instances: wgpu::Buffer,
@@ -430,8 +428,8 @@ impl Renderer {
         let post = post::make(&device, hdr_format, format, options.glow);
         let post_targets = post.targets(&device, config.width, config.height);
 
-        let chunk_indices = [1, SHADOW_GRID_STEP].map(|step| {
-            let indices = chunk_grid_indices(CHUNK_QUADS, step);
+        let chunk_indices = {
+            let indices = chunk_grid_indices(CHUNK_QUADS);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("chunk grid indices"),
                 size: (indices.len() * 2) as u64,
@@ -440,7 +438,7 @@ impl Renderer {
             });
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&indices));
             (buffer, indices.len() as u32)
-        });
+        };
 
         let box_instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("box instances"),
@@ -468,7 +466,7 @@ impl Renderer {
             + shadow_side as u64
                 * shadow_side as u64
                 * SHADOW_FORMAT.block_copy_size(None).unwrap_or(4) as u64
-            + chunk_indices.iter().map(|(b, _)| b.size()).sum::<u64>()
+            + chunk_indices.0.size()
             + box_instances.size()
             + soldiers.instances.size()
             + chunk_instances.size();
@@ -493,6 +491,7 @@ impl Renderer {
             no_shadow_map,
             post,
             post_targets,
+            fog_color: SKY.map(|c| post::untonemap(srgb_to_linear(c))),
             chunk_indices,
             chunk_instances,
             chunk_instance_capacity: 1,
@@ -729,8 +728,7 @@ impl Renderer {
             | wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Skipped,
         };
 
-        // The sky colour, scaled so that it tone-maps back to itself.
-        let fog_color = SKY.map(|c| post::untonemap(srgb_to_linear(c)));
+        let fog_color = self.fog_color;
         let sun = SUN.normalize();
         let shadows = self.options.shadows;
         let (sun_view_proj, texel) = if shadows {
@@ -756,7 +754,12 @@ impl Renderer {
             fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
             misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
-            shadow: [texel * 1.5, if shadows { 1.0 } else { 0.0 }, 0.0, 0.0],
+            shadow: [
+                texel * 1.5,
+                if shadows { 1.0 } else { 0.0 },
+                shadows::SHADOW_FADE,
+                0.0,
+            ],
         };
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
@@ -874,7 +877,7 @@ impl Renderer {
             if chunks.is_empty() {
                 return 0;
             }
-            let (indices, count) = &self.chunk_indices[shadow as usize];
+            let (indices, count) = &self.chunk_indices;
             pass.set_pipeline(pipeline);
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
             pass.set_vertex_buffer(0, self.chunk_instances.slice(at..));
@@ -1274,20 +1277,17 @@ fn make_depth(
     )
 }
 
-/// Triangle-list indices for a `quads × quads` grid of `(quads+1)²`
-/// vertices, using every `step`th vertex along each side.
-fn chunk_grid_indices(quads: u32, step: u32) -> Vec<u16> {
+/// Triangle-list indices for a `quads × quads` grid of `(quads+1)²` vertices.
+fn chunk_grid_indices(quads: u32) -> Vec<u16> {
     let side = quads + 1;
     assert!(side * side <= u16::MAX as u32 + 1);
-    assert_eq!(quads % step, 0);
-    let cells = quads / step;
-    let mut out = Vec::with_capacity((cells * cells * 6) as usize);
-    for y in (0..quads).step_by(step as usize) {
-        for x in (0..quads).step_by(step as usize) {
+    let mut out = Vec::with_capacity((quads * quads * 6) as usize);
+    for y in 0..quads {
+        for x in 0..quads {
             let i = (y * side + x) as u16;
-            let right = i + step as u16;
-            let down = i + (side * step) as u16;
-            let diag = down + step as u16;
+            let right = i + 1;
+            let down = i + side as u16;
+            let diag = down + 1;
             out.extend_from_slice(&[i, down, right, right, down, diag]);
         }
     }
@@ -1330,13 +1330,10 @@ mod tests {
 
     #[test]
     fn grid_indices_cover_every_quad() {
-        for step in [1, SHADOW_GRID_STEP] {
-            let idx = chunk_grid_indices(CHUNK_QUADS, step);
-            let cells = CHUNK_QUADS / step;
-            assert_eq!(idx.len() as u32, cells * cells * 6);
-            let max = *idx.iter().max().unwrap() as u32;
-            assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
-        }
+        let idx = chunk_grid_indices(CHUNK_QUADS);
+        assert_eq!(idx.len() as u32, CHUNK_QUADS * CHUNK_QUADS * 6);
+        let max = *idx.iter().max().unwrap() as u32;
+        assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
     }
 
     #[test]

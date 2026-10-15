@@ -15,18 +15,25 @@ pub const SHADOW_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     slope_scale: 2.0,
     clamp: 0.0,
 };
-/// Shadows reach this far from the camera, in tiles.
-const SHADOW_RANGE: f32 = 220.0;
+/// Shadows reach this far from the camera, in tiles: past the far corners
+/// of the view at the camera's widest zoom (260 tiles out at 55°, whose
+/// far corners are about 390 tiles away).
+const SHADOW_RANGE: f32 = 400.0;
 /// The covered square's side is rounded up to this many tiles, so its
 /// texel size changes in steps as the view zooms rather than every frame.
 const SIDE_STEP: f32 = 16.0;
+/// Shadows fade out over the outer part of the map past this fraction of
+/// its half-width (`sunlight` in `shaders/world.wgsl`); the square is
+/// padded so that what the camera sees stays inside it.
+pub const SHADOW_FADE: f32 = 0.95;
 
 /// The sun's view and projection, and the size of one shadow texel in
 /// tiles, covering what `view_proj` shows of a map `map_size` tiles across
 /// whose ground lies between 0 and `max_height`. `sun` points toward the sun.
 pub fn sun_view_proj(view_proj: Mat4, sun: Vec3, map_size: f32, max_height: f32) -> (Mat4, f32) {
-    // The view, from the near plane to where it meets the lowest ground (or
-    // the shadow range, if nearer).
+    // The ground the view can show: along each corner's ray, from where it
+    // comes down to the highest ground to where it meets the lowest (or the
+    // shadow range, if nearer).
     let inv = view_proj.inverse();
     let at = |x: f32, y: f32, z: f32| {
         let p = inv * Vec4::new(x, y, z, 1.0);
@@ -39,12 +46,15 @@ pub fn sun_view_proj(view_proj: Mat4, sun: Vec3, map_size: f32, max_height: f32)
     {
         let near = at(x, y, 0.0);
         let ray = at(x, y, 1.0) - near;
-        let mut t = (SHADOW_RANGE / ray.length()).min(1.0);
+        let mut end = (SHADOW_RANGE / ray.length()).min(1.0);
+        let mut start = 0.0;
         if ray.y < 0.0 {
-            t = t.min(-near.y / ray.y);
+            end = end.min(-near.y / ray.y);
+            start = ((max_height - near.y) / ray.y).max(0.0);
         }
-        seen[i] = near;
-        seen[i + 4] = near + ray * t.max(0.0);
+        let end = end.max(0.0);
+        seen[i] = near + ray * start.min(end);
+        seen[i + 4] = near + ray * end;
     }
     // A fixed orientation, so moving the view only slides the covered
     // square, and sliding it by whole texels keeps shadow edges still.
@@ -56,7 +66,8 @@ pub fn sun_view_proj(view_proj: Mat4, sun: Vec3, map_size: f32, max_height: f32)
         lo = lo.min(v);
         hi = hi.max(v);
     }
-    let side = ((hi.x - lo.x).max(hi.y - lo.y) / SIDE_STEP).ceil().max(1.0) * SIDE_STEP;
+    let extent = (hi.x - lo.x).max(hi.y - lo.y) / SHADOW_FADE;
+    let side = (extent / SIDE_STEP).ceil().max(1.0) * SIDE_STEP;
     let texel = side / SHADOW_SIZE as f32;
     let snap = |v: f32| (v / texel).floor() * texel;
     let left = snap((lo.x + hi.x - side) * 0.5);
@@ -112,6 +123,28 @@ mod tests {
         let low = m.project_point3(focus).z;
         let high = m.project_point3(focus + Vec3::Y * 10.0).z;
         assert!(high < low);
+    }
+
+    #[test]
+    fn the_widest_zoom_keeps_what_it_sees_clear_of_the_fade() {
+        // The game camera at its widest: 260 tiles out at 55°, 35° high.
+        let focus = Vec3::new(256.0, 0.0, 256.0);
+        let (pitch, fov) = (55f32.to_radians(), 35f32.to_radians());
+        let eye = focus + Vec3::new(0.0, pitch.sin(), pitch.cos()) * 260.0;
+        let view_proj =
+            perspective(fov, 16.0 / 9.0, 1.0, 1080.0) * look_at_mat4(eye, focus, Vec3::Y);
+        let (m, _) = sun_view_proj(view_proj, crate::SUN.normalize(), 512.0, 40.0);
+        let inv = view_proj.inverse();
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            // Where the corner's ray meets the ground, and the highest ground.
+            let near = inv.project_point3(Vec3::new(x, y, 0.0));
+            let ray = inv.project_point3(Vec3::new(x, y, 1.0)) - near;
+            for h in [0.0, 40.0] {
+                let p = near + ray * ((h - near.y) / ray.y);
+                let c = m.project_point3(p);
+                assert!(c.x.abs().max(c.y.abs()) <= SHADOW_FADE + 1e-3, "{p} → {c}");
+            }
+        }
     }
 
     #[test]

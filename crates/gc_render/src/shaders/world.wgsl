@@ -22,9 +22,14 @@ struct Globals {
     // World to the sun's shadow map (x, y in [-1, 1], z the depth).
     sun_view_proj: mat4x4<f32>,
     // x: how far to push the lookup out along the surface normal (tiles),
-    // y: 1 with shadows on
+    // y: 1 with shadows on, z: where shadows start fading toward the map's
+    // edge (`SHADOW_FADE` in shadows.rs)
     shadow: vec4<f32>,
 };
+
+// The selection highlight's strength. It is added before tone mapping,
+// which flattens it, so it is twice what it was when added after.
+const HIGHLIGHT: f32 = 1.6;
 
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var heightmap: texture_2d<u32>;
@@ -115,7 +120,7 @@ fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
         let o = vec2<f32>(select(-t, t, (i & 1u) == 1u), select(-t, t, i >= 2u));
         lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, c.z);
     }
-    return mix(lit * 0.25, 1.0, smoothstep(0.85, 1.0, edge));
+    return mix(lit * 0.25, 1.0, smoothstep(g.shadow.z, 1.0, edge));
 }
 
 // Direct sunlight on a surface facing `n`: the cosine term, shadowed.
@@ -427,7 +432,7 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
     let c = shade(albedo, n, in.world);
-    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
 
 @vertex
@@ -461,5 +466,5 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
     let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb);
-    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+    return vec4<f32>(c + albedo * in.highlight * HIGHLIGHT, 1.0);
 }
