@@ -96,6 +96,8 @@ Routing regiments are slower than their pursuers, so a rout is a real loss, but 
 | Cliff / rib-ridge | Impassable except to air and Burrowers |
 | Bog | Slow, no charges |
 
+**Built so far (terrain rules):** high ground and fords work as in the table. "Higher" means the regiment's tile stands at least half a tile above its foe's; the ranged bonus counts only against targets that far below the archers. A regiment whose centre is in water wades at 60% pace, takes 20% more melee damage, and can't charge (it reaches the bank with no charge bonus). Steep slopes still cost routes but don't slow the march; forest, grass, roads and bogs come with the map tile types.
+
 ## Ranged combat
 
 - Ranged regiments fire **volleys**. Each volley rolls hits against the target area, so firing into a tight block hits more than firing at skirmishers in loose formation.
@@ -145,11 +147,11 @@ Regiments gain experience from kills. Three ranks, shown as chevrons on the regi
 
 ## Combat simulation in one paragraph
 
-The simulation models each regiment as a formation (position, facing, width, depth) with per-model hit points and a mask of which slots are alive. Melee is resolved along the contact frontage, file by file; ranged fire is resolved per volley against the target's formation footprint. Individual soldiers on screen are a **presentation layer** that animates those results: they step into gaps, swing, fall, and flee. This keeps the deterministic simulation tiny (hundreds of regiments, not thousands of soldiers) while the screen shows thousands of soldiers. See [10 · Architecture](10-architecture.md#the-two-tier-simulation).
+The simulation models each regiment as a formation (position, facing, width, depth) with per-model hit points and a mask of which slots are alive. Melee is resolved along the contact frontage, file by file; ranged fire is resolved per volley against the target's formation footprint. Individual soldiers on screen are a **presentation layer** that animates those results: they step into gaps, swing, fall, and flee. Soldiers are planned to fight in visible one-on-one pairs, with matched kills for heroes and charges later ([09 · Art and Audio](09-art-and-audio.md#animation)); this is presentation only, so it never changes who wins. This keeps the deterministic simulation tiny (hundreds of regiments, not thousands of soldiers) while the screen shows thousands of soldiers. See [10 · Architecture](10-architecture.md#the-two-tier-simulation).
 
 **Built so far (M1 step 5):**
 - **Fighting:** melee with flank, rear and charge multipliers, locked melee, casualties from the back, and arrow volleys that hit dense blocks harder. The orders are move, move-and-face (right-drag) and attack.
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment; with no structures yet, a shattered regiment runs, then stands for good. Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
-- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Formation, Run and Retreat orders, terrain, air, heroes, counters and veterancy also come later.
+- **Not yet:** heroes, terror and veterancy as morale sources, the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish/Brace, Formation, Run and Retreat orders, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes, counters and veterancy also come later.
 
 The exact formulas are in [10 · Architecture](10-architecture.md#formations-and-combat).
