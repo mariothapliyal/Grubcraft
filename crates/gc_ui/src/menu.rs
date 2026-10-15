@@ -385,13 +385,16 @@ impl<N: Network> Menu<N> {
         );
         self.join_password = password;
         let join_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
-        let target = match self.selected_game.and_then(|i| games.get(i)) {
-            Some(g) => g.address.clone(),
-            None => self.address.trim().to_string(),
+        // A game listed without a password is joined without one, whatever
+        // is left in the box.
+        let (target, password) = match self.selected_game.and_then(|i| games.get(i)) {
+            Some(g) if !g.locked => (g.address.clone(), ""),
+            Some(g) => (g.address.clone(), self.join_password.as_str()),
+            None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
             let me = self.profile();
-            match self.net.join(&me, &target, &self.join_password) {
+            match self.net.join(&me, &target, password) {
                 Ok(()) => self.go(ui, Screen::Lobby),
                 Err(e) => self.message = Some((e.to_string(), true)),
             }
@@ -630,17 +633,7 @@ impl<N: Network> Menu<N> {
             me.faction.difficulty()
         );
         let footer_y = rows_top + 4 * (row_h + sp(8)) + sp(4);
-        let hint = match self.net.invite() {
-            Some(invite) => format!("{invite}   {hint}"),
-            None => hint,
-        };
-        ui.label(
-            panel.x + 24,
-            footer_y,
-            1,
-            theme::MUTED,
-            &fit(&hint, ((panel.w - 48) / 8) as usize),
-        );
+        ui.label(panel.x + 24, footer_y, 1, theme::MUTED, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
         if let Some(why) = &blocker {
@@ -660,6 +653,9 @@ impl<N: Network> Menu<N> {
                 theme::GOOD,
                 "Everyone is ready.",
             );
+        }
+        if let Some(invite) = self.net.invite() {
+            ui.label(panel.x + 24, footer_y + 44, 1, theme::MUTED, invite);
         }
         let btn_y = panel.bottom() - 52;
         let mut action = MenuAction::None;

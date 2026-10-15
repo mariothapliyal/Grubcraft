@@ -70,6 +70,12 @@ impl Link {
         self.cipher.is_some()
     }
 
+    /// Whether a sealed packet from the other side has opened, proving
+    /// they have the same keys (a later failure is a replay or noise).
+    pub fn is_proven(&self) -> bool {
+        self.cipher.as_ref().is_some_and(Cipher::has_opened)
+    }
+
     /// Queue a message for reliable, in-order delivery.
     pub fn send(&mut self, msg: &Msg) {
         let bytes = msg.encode();
@@ -145,7 +151,7 @@ impl Link {
     pub fn receive(&mut self, packet: &[u8], now: Instant) -> Option<Vec<Msg>> {
         let (head, body) = packet.split_at_checked(HEADER_LEN)?;
         let opened;
-        let body = match &self.cipher {
+        let body = match &mut self.cipher {
             Some(c) => {
                 opened = c.open(head, body)?;
                 &opened[..]

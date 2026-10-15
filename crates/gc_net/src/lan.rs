@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::io::ErrorKind;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
@@ -66,6 +66,13 @@ const QUERY_EVERY: Duration = Duration::from_secs(1);
 /// A joiner repeats its key until the host answers.
 const HI_EVERY: Duration = Duration::from_millis(100);
 const DISCOVERED_FOR: Duration = Duration::from_secs(3);
+/// Joiners the host keeps keys for before they are let in; more Hi
+/// packets are ignored until some are dropped.
+const MAX_WAITING: usize = 8;
+/// Wrong-password answers one address gets per GUESS_WINDOW; past that
+/// its guesses go unanswered.
+const MAX_GUESSES: usize = 5;
+const GUESS_WINDOW: Duration = Duration::from_secs(60);
 /// Commands per turn bundle are capped so a bundle fits a packet; the rest
 /// go in the next turn.
 const MAX_BUNDLE_BYTES: usize = 900;
@@ -160,6 +167,8 @@ struct Host {
     password: String,
     /// How friends reach this lobby, for the lobby screen.
     invite: Option<String>,
+    /// Recent wrong passwords: from where, and when.
+    guesses: Vec<(IpAddr, Instant)>,
     lobby: LobbyState,
     peers: Vec<Peer>,
     sent: Option<LobbyWire>,
@@ -702,6 +711,10 @@ impl Lan {
                 if let Some(i) = known {
                     h.peers.remove(i);
                 }
+                let waiting = h.peers.iter().filter(|p| p.slot.is_none() && !p.gone);
+                if waiting.count() >= MAX_WAITING {
+                    return;
+                }
                 let Some(mine) = KeyPair::new() else { return };
                 let Some(cipher) = Cipher::new(&mine, theirs, true, &h.password) else {
                     return;
@@ -735,14 +748,25 @@ impl Lan {
                     return;
                 };
                 let Some(msgs) = h.peers[index].link.receive(packet, now) else {
-                    // A joiner not yet let in whose packets we can't open
-                    // typed a different password.
-                    if h.peers[index].slot.is_none() && !h.peers[index].gone {
-                        let mut w = Writer::new();
-                        header(&mut w, Kind::WrongPassword);
-                        w.bool(!h.password.is_empty());
-                        self.send_raw(&w.buf, from);
+                    // A joiner whose first packet we can't open typed a
+                    // different password. Forget their keys, and answer
+                    // only a few guesses a minute from one address.
+                    let peer = &mut h.peers[index];
+                    if peer.slot.is_some() || peer.gone || peer.link.is_proven() {
+                        return;
                     }
+                    peer.gone = true;
+                    peer.drop_at = Some(now + Duration::from_secs(2));
+                    h.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
+                    let ip = from.ip();
+                    if h.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES {
+                        return;
+                    }
+                    h.guesses.push((ip, now));
+                    let mut w = Writer::new();
+                    header(&mut w, Kind::WrongPassword);
+                    w.bool(!h.password.is_empty());
+                    self.send_raw(&w.buf, from);
                     return;
                 };
                 if h.peers[index].gone {
@@ -1506,6 +1530,7 @@ impl Network for Lan {
         self.role = Role::Host(Box::new(Host {
             password: password.trim().to_string(),
             invite,
+            guesses: Vec::new(),
             lobby: LobbyState {
                 slots,
                 settings,
@@ -1745,7 +1770,7 @@ fn parse_address(target: &str) -> Result<SocketAddr, NetError> {
     if let Some(a) = joincode::decode(target) {
         return Ok(a);
     }
-    if let Ok(ip) = target.parse::<std::net::IpAddr>() {
+    if let Ok(ip) = target.parse::<IpAddr>() {
         return Ok(SocketAddr::new(ip, DEFAULT_PORT));
     }
     let with_port = if target.contains(':') {

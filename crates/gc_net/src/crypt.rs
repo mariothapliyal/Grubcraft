@@ -7,9 +7,15 @@
 //! direction from the shared secret, both public keys and the lobby
 //! password (empty when there is none), with BLAKE3. Someone without the
 //! password can't make keys that work, so a joiner who typed it wrong is
-//! found at their first packet, and a machine in the middle can't read or
-//! change the game without it. Every packet carries its number in that
-//! direction as the nonce; the packet header is authenticated too.
+//! found at their first packet. Every packet carries its number in that
+//! direction as the nonce; the packet header is authenticated too, and an
+//! old packet sent again is refused.
+//!
+//! What this does and doesn't stop: anyone just listening on the network
+//! sees nothing readable. The key swap itself isn't authenticated, though,
+//! so a machine actively sitting in the middle could read a game that has
+//! no password, and could try guesses at a password it captured offline.
+//! A password-authenticated exchange (CPace) would close that later.
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
@@ -44,6 +50,8 @@ pub struct Cipher {
     recv: ChaCha20Poly1305,
     /// The next number to send.
     sent: u64,
+    /// The lowest number still accepted: anything older is a replay.
+    next_recv: u64,
 }
 
 impl Cipher {
@@ -78,7 +86,14 @@ impl Cipher {
             send,
             recv,
             sent: 0,
+            next_recv: 0,
         })
+    }
+
+    /// Whether any packet from the other side has opened yet: once one
+    /// has, the password matched.
+    pub fn has_opened(&self) -> bool {
+        self.next_recv > 0
     }
 
     fn nonce(number: u64) -> Nonce {
@@ -108,13 +123,18 @@ impl Cipher {
     }
 
     /// The body of a sealed packet, or `None` if it was not sealed with
-    /// the other side's key (or was changed on the way).
-    pub fn open(&self, header: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
+    /// the other side's key, was changed on the way, or is older than the
+    /// last packet opened (a replay; links resend what matters anyway).
+    pub fn open(&mut self, header: &[u8], sealed: &[u8]) -> Option<Vec<u8>> {
         if sealed.len() < OVERHEAD {
             return None;
         }
         let number = u64::from_le_bytes(sealed[..8].try_into().ok()?);
-        self.recv
+        if number < self.next_recv {
+            return None;
+        }
+        let body = self
+            .recv
             .decrypt(
                 &Self::nonce(number),
                 Payload {
@@ -122,7 +142,9 @@ impl Cipher {
                     aad: header,
                 },
             )
-            .ok()
+            .ok()?;
+        self.next_recv = number + 1;
+        Some(body)
     }
 }
 
@@ -154,17 +176,28 @@ mod tests {
 
     #[test]
     fn tampering_and_wrong_passwords_are_refused() {
-        let (host, mut joiner) = pair("moles", "moles");
+        let (mut host, mut joiner) = pair("moles", "moles");
         let mut p = joiner.seal(b"GC", b"orders");
-        assert!(host.open(b"GC", &p).is_some());
         assert_eq!(host.open(b"GX", &p), None, "header is authenticated");
+        assert!(host.open(b"GC", &p).is_some());
         let last = p.len() - 1;
         p[last] ^= 1;
         assert_eq!(host.open(b"GC", &p), None);
         assert_eq!(host.open(b"GC", &p[..10]), None);
 
-        let (host, mut joiner) = pair("moles", "voles");
+        let (mut host, mut joiner) = pair("moles", "voles");
         assert_eq!(host.open(b"GC", &joiner.seal(b"GC", b"hi")), None);
+    }
+
+    #[test]
+    fn replays_are_refused() {
+        let (mut host, mut joiner) = pair("", "");
+        let first = joiner.seal(b"GC", b"one");
+        let second = joiner.seal(b"GC", b"two");
+        assert!(host.open(b"GC", &second).is_some());
+        assert_eq!(host.open(b"GC", &second), None);
+        assert_eq!(host.open(b"GC", &first), None, "older than the last");
+        assert!(host.open(b"GC", &joiner.seal(b"GC", b"three")).is_some());
     }
 
     #[test]
