@@ -7,7 +7,7 @@ use crate::draw::{Rect, fit};
 use crate::lobby::{
     AI_LEVELS, Budget, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY, MatchStart,
     NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit, SlotEdit, SlotKind, Tempo,
-    army_points,
+    army_points, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -494,7 +494,8 @@ impl<N: Network> Menu<N> {
             }
             // Tempo is for Conquest; a Field Battle has a points budget.
             if settings.mode == GameMode::FieldBattle {
-                let names: Vec<&str> = Budget::ALL.iter().map(|b| b.name()).collect();
+                let names = Budget::ALL.map(|b| thousands(b.points()));
+                let names = names.each_ref().map(String::as_str);
                 let mut budget = Budget::ALL
                     .iter()
                     .position(|&b| b == settings.budget)
@@ -529,7 +530,7 @@ impl<N: Network> Menu<N> {
                 format!("Map: {map}"),
                 format!("Mode: {}", settings.mode.name()),
                 if settings.mode == GameMode::FieldBattle {
-                    format!("Points: {}", settings.budget.name())
+                    format!("Points: {}", thousands(settings.budget.points()))
                 } else {
                     format!("Tempo: {}", settings.tempo.name())
                 },
@@ -669,10 +670,8 @@ impl<N: Network> Menu<N> {
                 "   Army: picked for you (Army to build your own).".to_string()
             } else {
                 format!(
-                    "   Army: {} regiments, {} of {} points.",
-                    me.army.len(),
-                    thousands(army_points(&self.roster, &me.army)),
-                    thousands(budget)
+                    "   Army: {}.",
+                    army_summary(me.army.len(), army_points(&self.roster, &me.army), budget)
                 )
             };
         }
@@ -758,7 +757,7 @@ impl<N: Network> Menu<N> {
             &format!(
                 "{}   {} points",
                 me.faction.name(),
-                lobby.settings.budget.name()
+                thousands(lobby.settings.budget.points())
             ),
         );
 
@@ -828,12 +827,7 @@ impl<N: Network> Menu<N> {
                 summary_y,
                 1,
                 color,
-                &format!(
-                    "{} regiments, {} of {} points",
-                    army.len(),
-                    thousands(spent),
-                    thousands(budget)
-                ),
+                &army_summary(army.len(), spent, budget),
             );
             if spent > budget {
                 ui.label(
@@ -1014,17 +1008,13 @@ impl<N: Network> Menu<N> {
     }
 }
 
-/// 4000 as "4,000".
-fn thousands(n: u32) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+/// "3 regiments, 1,400 of 4,000 points".
+fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
+    format!(
+        "{army_len} regiments, {} of {} points",
+        thousands(spent),
+        thousands(budget)
+    )
 }
 
 #[cfg(test)]

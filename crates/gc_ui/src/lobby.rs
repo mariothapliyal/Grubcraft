@@ -119,16 +119,6 @@ pub enum Budget {
 impl Budget {
     pub const ALL: [Budget; 3] = [Budget::Skirmish, Budget::Battle, Budget::GrandBattle];
 
-    /// The points, as the lobby shows them (Skirmish, Battle and Grand
-    /// Battle in docs/06-game-modes.md).
-    pub fn name(self) -> &'static str {
-        match self {
-            Budget::Skirmish => "2,000",
-            Budget::Battle => "4,000",
-            Budget::GrandBattle => "8,000",
-        }
-    }
-
     pub fn points(self) -> u32 {
         match self {
             Budget::Skirmish => 2_000,
@@ -156,6 +146,19 @@ pub fn army_points(roster: &[RosterUnit], army: &[u16]) -> u32 {
         .filter_map(|&u| roster.get(u as usize))
         .map(|r| r.points)
         .sum()
+}
+
+/// 4000 as "4,000".
+pub fn thousands(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// What a network match does when a player loses the connection

@@ -185,7 +185,6 @@ pub(crate) fn write_slot(w: &mut Writer, s: &Slot) {
 }
 
 fn write_army(w: &mut Writer, army: &[u16]) {
-    let army = &army[..army.len().min(MAX_ARMY)];
     w.var(army.len() as u64);
     for &u in army {
         w.var(u as u64);

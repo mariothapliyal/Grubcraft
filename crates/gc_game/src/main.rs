@@ -729,12 +729,14 @@ impl App {
             .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
             .collect();
         let unit_points: Vec<u32> = game_data.units.iter().map(|u| u.points as u32).collect();
+        // gc_data and the lobby list the factions in the same order.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
             .units
             .iter()
-            .map(|u| gc_ui::lobby::RosterUnit {
-                name: u.name().to_string(),
-                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize % 4],
+            .zip(&unit_names)
+            .map(|(u, name)| gc_ui::lobby::RosterUnit {
+                name: name.clone(),
+                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
                 points: u.points as u32,
             })
             .collect();

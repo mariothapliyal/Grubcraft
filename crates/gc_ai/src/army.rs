@@ -117,15 +117,7 @@ pub fn pick_army_within(
             .map(|&u| points.get(u as usize).copied().unwrap_or(u32::MAX))
             .fold(0, u32::saturating_add)
     };
-    // Every army of n regiments costs at least n times the cheapest one.
-    let cheapest = (0..units.len())
-        .filter(|&u| factions.get(u) == Some(&faction))
-        .filter_map(|u| points.get(u).copied())
-        .min()
-        .unwrap_or(1)
-        .max(1);
-    let largest = most.min((budget / cheapest) as usize);
-    (0..=largest)
+    (0..=most)
         .rev()
         .map(|n| pick_army(units, factions, faction, preset, n))
         .find(|army| cost(army) <= budget)
