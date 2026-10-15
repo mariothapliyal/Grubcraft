@@ -8,8 +8,11 @@
 //! sets off before the rear, a halting block overshoots a touch and settles,
 //! and a regiment at rest sways and looks about. In melee each front-rank
 //! soldier pairs off with the nearest enemy across the line and the two trade
-//! blows (docs/09-art-and-audio.md, "Animation"). None of this feeds back
-//! into the simulation, so it may use floats and frame time.
+//! blows (docs/09-art-and-audio.md, "Animation"). Each blow is parried,
+//! blocked, staggers its man or crushes through his guard, with the odds the
+//! simulation uses; a heavier charge knocks men off their feet; and when the
+//! simulation takes a soldier, his man deals the killing blow. None of this
+//! feeds back into the simulation, so it may use floats and frame time.
 
 use gc_sim::RegimentHandle;
 use gc_sim::formation::MAX_MODELS;
@@ -59,6 +62,34 @@ const DUEL_LEASH: f32 = 0.6;
 /// The step in and back as a pair trades blows, in tiles, and its rate.
 const DUEL_STEP: f32 = 0.16;
 const DUEL_RATE: f32 = 0.8;
+/// A swing takes this long, in seconds, and its blow lands this far into it.
+const SWING_SECONDS: f32 = 0.7;
+const BLOW_AT: f32 = 0.45;
+/// The same as fractions of a pair's round of blows.
+const SWING_ROUND: f32 = SWING_SECONDS * DUEL_RATE;
+const BLOW_ROUND: f32 = SWING_ROUND * BLOW_AT;
+/// How long a parry or shield block, a stagger and a knockdown (falling,
+/// lying and getting up) last, in seconds.
+const PARRY_SECONDS: f32 = 0.4;
+const STAGGER_SECONDS: f32 = 0.6;
+const DOWN_SECONDS: f32 = 1.8;
+/// For each class of mass a heavy striker has over his man (a big swinging
+/// blade counts one class heavier), the chance a blow he blocks crushes
+/// through and knocks him down.
+const CRUSH_PER_CLASS: f32 = 0.25;
+/// For each class of mass a heavy charging regiment has over its foe, the
+/// chance its impact knocks a man off his feet; a man left standing
+/// staggers this often.
+const KNOCKDOWN_PER_CLASS: f32 = 0.4;
+const CHARGE_STAGGER: f32 = 0.5;
+/// Soldiers who pair off this soon after their regiment's charge hits home,
+/// in seconds, deliver its impact.
+const IMPACT_SECONDS: f32 = 0.6;
+/// How hard a blow shoves its man back, in tiles per second.
+const STAGGER_SHOVE: f32 = 0.8;
+const DOWN_SHOVE: f32 = 2.4;
+/// The heavy class of mass.
+const HEAVY: u8 = gc_sim::Mass::Heavy as u8;
 /// Regiments this far apart, centre to centre, are never paired.
 const DUEL_REGIMENT_RANGE: f32 = 24.0;
 /// A regiment not updated for this long, in seconds, is gone.
@@ -92,6 +123,61 @@ pub struct Block {
     pub engaged: bool,
     /// Running away: the ranks come apart.
     pub routing: bool,
+    pub fighter: Fighter,
+}
+
+/// How a regiment's soldiers fight, from its unit's stats and state, which
+/// decides what their blows do on screen.
+#[derive(Clone, Copy, Debug)]
+pub struct Fighter {
+    /// Melee attack, and melee defence facing the front with the
+    /// formation's bonus.
+    pub attack: i32,
+    pub defence: i32,
+    /// Percent of the usual share of blows that land: fewer for a wavering
+    /// regiment or one without room for its weapons.
+    pub sharpness: u32,
+    pub shield: bool,
+    /// Class of mass: 0 light, 1 medium, 2 heavy (`gc_sim::Mass`).
+    pub mass: u8,
+    /// Big swinging blades, which hit a guard like a heavier man.
+    pub heavy_blade: bool,
+    /// Its charge has just hit home.
+    pub charging: bool,
+}
+
+impl Default for Fighter {
+    fn default() -> Fighter {
+        Fighter {
+            attack: 0,
+            defence: 0,
+            sharpness: 100,
+            shield: false,
+            mass: 1,
+            heavy_blade: false,
+            charging: false,
+        }
+    }
+}
+
+impl Fighter {
+    /// The chance (0 to 1) a blow gets through `them`'s guard: the
+    /// simulation's chance to hit (docs/05-combat.md).
+    fn lands(&self, them: &Fighter) -> f32 {
+        (50 + self.attack - them.defence).clamp(10, 90) as f32 * self.sharpness as f32 / 10_000.0
+    }
+
+    /// Classes of mass a heavy man has over `them`; with `blade`, a big
+    /// swinging blade makes its wielder heavy, and one class heavier. None
+    /// for lighter men: only monsters, cavalry and great blades bowl men
+    /// over.
+    fn outweighs(&self, them: &Fighter, blade: bool) -> f32 {
+        let blade = blade && self.heavy_blade;
+        if self.mass < HEAVY && !blade {
+            return 0.0;
+        }
+        (self.mass as i32 + blade as i32 - them.mass as i32).max(0) as f32
+    }
 }
 
 /// One soldier ready to draw.
@@ -103,10 +189,58 @@ pub struct Soldier {
     pub speed: f32,
     /// In a fighting front rank, striking at the enemy.
     pub striking: bool,
-    /// Paired with an enemy soldier and trading blows with him.
-    pub dueling: bool,
+    /// What he is doing in a duel: paired with an enemy soldier and trading
+    /// blows, or still reeling from one. `None` out of a duel.
+    pub fight: Option<Move>,
     /// A stable value in [0, 1) per soldier, to keep animations out of step.
     pub phase: f32,
+}
+
+/// A dueling soldier's move, with how far through it he is (0 to 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Move {
+    /// Weapon up, waiting for an opening.
+    Guard,
+    /// Swinging at his man; `alt` picks his second attack.
+    Swing { at: f32, alt: bool },
+    /// Turning a blow aside with his weapon.
+    Parry(f32),
+    /// Catching a blow on his shield.
+    Block(f32),
+    /// Hit and reeling, which costs him his next swing.
+    Stagger(f32),
+    /// Knocked off his feet by a charge or a crushing blow, and getting up.
+    Down(f32),
+}
+
+/// What a blow did to a soldier, or the killing blow he is dealing, which
+/// overrides his usual round of swings until it ends. Later variants
+/// outrank earlier ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Act {
+    None,
+    Parry,
+    Block,
+    Stagger,
+    Down,
+    Kill,
+}
+
+impl Act {
+    fn seconds(self) -> f32 {
+        match self {
+            Act::None => 0.0,
+            Act::Parry | Act::Block => PARRY_SECONDS,
+            Act::Stagger => STAGGER_SECONDS,
+            Act::Down => DOWN_SECONDS,
+            Act::Kill => SWING_SECONDS,
+        }
+    }
+
+    /// Whether it knocks him out of his next swing.
+    fn reels(self) -> bool {
+        matches!(self, Act::Stagger | Act::Down)
+    }
 }
 
 /// A soldier lying where he fell.
@@ -116,7 +250,8 @@ pub struct Corpse {
     pub facing: Vec2,
     pub owner: u8,
     pub unit: u16,
-    /// Seconds since he fell.
+    /// Seconds since he fell; negative while he still stands, waiting for
+    /// the killing blow.
     pub age: f32,
     /// How far it has sunk into the ground, in tiles (0 while fresh).
     pub sink: f32,
@@ -136,6 +271,9 @@ pub struct Puppets {
     player: Vec<u8>,
     engaged: Vec<bool>,
     files: Vec<u16>,
+    fighter: Vec<Fighter>,
+    /// When each regiment's charge last hit home.
+    impact: Vec<f32>,
     /// When each regiment was last updated, to skip ones that are gone.
     seen: Vec<f32>,
     pos: Vec<Vec2>,
@@ -143,6 +281,9 @@ pub struct Puppets {
     facing: Vec<Vec2>,
     /// Each soldier's duel partner, a puppet index, or `NONE`.
     partner: Vec<u32>,
+    /// What each soldier last suffered or dealt outside his round of swings,
+    /// and when.
+    act: Vec<(Act, f32)>,
     /// Scratch for pairing: regiments in melee, and the enemies near one.
     fighting: Vec<u32>,
     near: Vec<u32>,
@@ -151,6 +292,8 @@ pub struct Puppets {
     corpse_capacity: usize,
     next_corpse: usize,
     time: f32,
+    /// The last frame's step, in seconds.
+    dt: f32,
 }
 
 impl Puppets {
@@ -163,17 +306,21 @@ impl Puppets {
             player: vec![0; regiment_capacity],
             engaged: vec![false; regiment_capacity],
             files: vec![1; regiment_capacity],
+            fighter: vec![Fighter::default(); regiment_capacity],
+            impact: vec![f32::NEG_INFINITY; regiment_capacity],
             seen: vec![f32::NEG_INFINITY; regiment_capacity],
             pos: vec![Vec2::ZERO; regiment_capacity * SLOTS],
             vel: vec![Vec2::ZERO; regiment_capacity * SLOTS],
             facing: vec![Vec2::NEG_Y; regiment_capacity * SLOTS],
             partner: vec![NONE; regiment_capacity * SLOTS],
+            act: vec![(Act::None, 0.0); regiment_capacity * SLOTS],
             fighting: Vec::with_capacity(regiment_capacity),
             near: Vec::with_capacity(regiment_capacity),
             corpses: Vec::with_capacity(corpse_capacity.max(1)),
             corpse_capacity: corpse_capacity.max(1),
             next_corpse: 0,
             time: 0.0,
+            dt: 0.0,
         }
     }
 
@@ -185,13 +332,14 @@ impl Puppets {
     /// Start a new frame `dt` seconds after the last one.
     pub fn advance(&mut self, dt: f32) {
         self.time += dt;
+        self.dt = dt;
     }
 
     /// Pair front-rank soldiers of fighting regiments with the nearest enemy
-    /// across the line, from last frame's positions. A soldier keeps his
-    /// partner while the partner stands within reach; several may pick the
-    /// same man. `hostile` says whether two players fight. Call once a frame,
-    /// before the updates.
+    /// across the line, from last frame's positions, and play out the blows
+    /// that land this frame. A soldier keeps his partner while the partner
+    /// stands within reach; several may pick the same man. `hostile` says
+    /// whether two players fight. Call once a frame, before the updates.
     pub fn pair(&mut self, hostile: impl Fn(u8, u8) -> bool) {
         let mut fighting = core::mem::take(&mut self.fighting);
         let mut near = core::mem::take(&mut self.near);
@@ -236,10 +384,115 @@ impl Puppets {
                     }
                 }
                 self.partner[i] = best.0;
+                if best.0 != NONE && self.time - self.impact[a] < IMPACT_SECONDS {
+                    self.charge_home(i, best.0 as usize);
+                }
+            }
+        }
+        for &a in &fighting {
+            let a = a as usize;
+            for i in a * SLOTS..a * SLOTS + self.front(a) {
+                if let Some((j, blow)) = self.blow_lands(i) {
+                    self.blow(i, j, blow);
+                }
             }
         }
         self.fighting = fighting;
         self.near = near;
+    }
+
+    /// Where puppet `i`, dueling puppet `j`, is at time `t` in his rounds of
+    /// blows, one swing a round: the round count, and the fraction of this
+    /// round gone. A pair keeps half a round out of step.
+    fn round(i: usize, j: usize, t: f32) -> (f32, f32) {
+        let (lo, hi) = (i.min(j), i.max(j));
+        let half = if i == lo { 0.0 } else { 0.5 };
+        let x = t * DUEL_RATE + pair_hash(lo, hi) + half;
+        (x.floor(), x.fract())
+    }
+
+    /// How far through a swing at puppet `j` puppet `i` is, or `None`
+    /// between swings or when a blow has knocked him out of this one.
+    fn swing(&self, i: usize, j: usize) -> Option<f32> {
+        let (_, gone) = Self::round(i, j, self.time);
+        let began = self.time - gone / DUEL_RATE;
+        let (act, at) = self.act[i];
+        let reeled = act.reels() && at + act.seconds() > began;
+        let at = gone / SWING_ROUND;
+        (at < 1.0 && !reeled).then_some(at)
+    }
+
+    /// What puppet `i` is doing outside his round of swings, and how far
+    /// through it he is.
+    fn acting(&self, i: usize) -> Option<(Act, f32)> {
+        let (act, at) = self.act[i];
+        let f = (self.time - at) / act.seconds();
+        (act != Act::None && (0.0..1.0).contains(&f)).then_some((act, f))
+    }
+
+    /// If puppet `i`'s swing landed since last frame: his partner, and which
+    /// of his blows it was.
+    fn blow_lands(&self, i: usize) -> Option<(usize, u32)> {
+        let j = self.partner[i];
+        if j == NONE {
+            return None;
+        }
+        let j = j as usize;
+        let after = |t: f32| (Self::round(i, j, t).0 + Self::round(i, j, t).1 - BLOW_ROUND).floor();
+        let blow = after(self.time);
+        (blow > after(self.time - self.dt)
+            && self.swing(i, j).is_some()
+            && !self.acting(i).is_some_and(|(act, _)| act == Act::Kill))
+        .then_some((j, blow as i32 as u32))
+    }
+
+    /// Puppet `i`'s blow lands on `j` with the simulation's odds: it gets
+    /// through and staggers him, or a heavier striker crushes through his
+    /// guard and knocks him down, or he parries it or takes it on his shield.
+    fn blow(&mut self, i: usize, j: usize, blow: u32) {
+        let (me, them) = (self.fighter[i / SLOTS], self.fighter[j / SLOTS]);
+        let act = if roll(i, j, blow, 0) < me.lands(&them) {
+            Act::Stagger
+        } else if roll(i, j, blow, 1) < CRUSH_PER_CLASS * me.outweighs(&them, true) {
+            Act::Down
+        } else if them.shield {
+            Act::Block
+        } else {
+            Act::Parry
+        };
+        self.suffer(j, i, act);
+    }
+
+    /// Puppet `i`'s charge hits home on `j`: a heavier charger may knock him
+    /// off his feet, and may stagger him if not.
+    fn charge_home(&mut self, i: usize, j: usize) {
+        let (me, them) = (self.fighter[i / SLOTS], self.fighter[j / SLOTS]);
+        let knock = KNOCKDOWN_PER_CLASS * me.outweighs(&them, false);
+        let r = roll(i, j, 0, 2);
+        if r < knock {
+            self.suffer(j, i, Act::Down);
+        } else if r < knock + (1.0 - knock) * CHARGE_STAGGER {
+            self.suffer(j, i, Act::Stagger);
+        }
+    }
+
+    /// Puppet `j` takes `act` from puppet `from`'s blow, unless he is already
+    /// in the middle of something stronger or lying down; a stagger or
+    /// knockdown shoves him back.
+    fn suffer(&mut self, j: usize, from: usize, act: Act) {
+        if self
+            .acting(j)
+            .is_some_and(|(now, _)| now > act || now == Act::Down)
+        {
+            return;
+        }
+        self.act[j] = (act, self.time);
+        let shove = match act {
+            Act::Stagger => STAGGER_SHOVE,
+            Act::Down => DOWN_SHOVE,
+            _ => return,
+        };
+        self.vel[j] += (self.pos[j] - self.pos[from]).normalize_or_zero() * shove;
     }
 
     /// Whether regiment `r` was updated recently and is still in play.
@@ -271,12 +524,16 @@ impl Puppets {
         let fresh = self.owner[r] != Some(block.handle);
         self.owner[r] = Some(block.handle);
         if fresh {
-            for i in r * SLOTS..(r + 1) * SLOTS {
-                self.partner[i] = NONE;
-            }
+            self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
+            self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
+            self.impact[r] = f32::NEG_INFINITY;
         } else {
             self.fall(block, owner, models);
+            if block.fighter.charging && !self.fighter[r].charging {
+                self.impact[r] = self.time;
+            }
         }
+        self.fighter[r] = block.fighter;
         self.models[r] = models as u16;
         self.drift[r] = if fresh || dt <= 0.0 {
             Vec2::ZERO
@@ -309,10 +566,14 @@ impl Puppets {
             ) * spread
                 + jitter(block.handle, k) * scatter;
             let slot = block.centre + right * local.x + back * local.y;
-            // A dueling soldier closes on his man, on a leash from his slot.
+            // A dueling soldier closes on his man, on a leash from his slot;
+            // one knocked down lies where he fell.
             let j = self.partner[i];
             let foe = (j != NONE && !block.routing).then(|| self.pos[j as usize]);
+            let acting = self.acting(i).filter(|_| !block.routing);
+            let down = matches!(acting, Some((Act::Down, _)));
             let target = match foe {
+                _ if down => self.pos[i],
                 Some(f) => {
                     let gap = (self.pos[i] - f).normalize_or(back);
                     let spot = f + gap * DUEL_GAP;
@@ -334,8 +595,12 @@ impl Puppets {
                 let accel = if block.routing { accel * 1.5 } else { accel };
                 let v = self.vel[i];
                 let pull = if dist > SETTLED { to } else { Vec2::ZERO };
-                let push = pull * (SPRING * SPRING)
-                    - (v - self.drift[r] * LEAD) * (2.0 * DAMPING * SPRING);
+                let carry = if down {
+                    Vec2::ZERO
+                } else {
+                    self.drift[r] * LEAD
+                };
+                let push = pull * (SPRING * SPRING) - (v - carry) * (2.0 * DAMPING * SPRING);
                 self.vel[i] = (v + push.clamp_length_max(accel) * dt).clamp_length_max(top);
                 self.pos[i] += self.vel[i] * dt;
                 // Face your man, or where you walk when it's more than a
@@ -352,18 +617,35 @@ impl Puppets {
             let mut pos = self.pos[i];
             let mut facing = self.facing[i];
             let striking = block.engaged && (k as u16) < files * 2;
-            let mut phase = unit_hash(block.handle, k, 5);
+            let phase = unit_hash(block.handle, k, 5);
             let dueling = foe.is_some() && striking;
-            if dueling {
-                // The pair shares a rhythm, half a beat apart: one steps in
-                // as the other gives ground.
-                let (lo, hi) = (i.min(j as usize), i.max(j as usize));
-                let beat = pair_hash(lo, hi);
-                let half = if i == lo { 0.0 } else { 0.5 };
-                let step = ((self.time * DUEL_RATE + beat + half) * tau).sin();
-                pos += facing * DUEL_STEP * step;
-                phase = (beat + half * 0.25).fract();
-            } else if striking {
+            let swing = if dueling {
+                self.swing(i, j as usize)
+            } else {
+                None
+            };
+            let fight = match (acting, swing) {
+                (Some((Act::Kill, f)), _) => Some(Move::Swing { at: f, alt: false }),
+                (Some((Act::Down, f)), _) => Some(Move::Down(f)),
+                (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
+                (_, Some(at)) => {
+                    let (round, _) = Self::round(i, j as usize, self.time);
+                    Some(Move::Swing {
+                        at,
+                        alt: round as i32 % 2 != 0,
+                    })
+                }
+                (Some((Act::Block, f)), _) => Some(Move::Block(f)),
+                (Some((Act::Parry, f)), _) => Some(Move::Parry(f)),
+                _ if dueling => Some(Move::Guard),
+                _ => None,
+            };
+            if dueling && !acting.is_some_and(|(act, _)| act.reels()) {
+                // The pair shares a rhythm, half a round apart: one steps in
+                // to swing as the other gives ground.
+                let (_, gone) = Self::round(i, j as usize, self.time);
+                pos += facing * DUEL_STEP * (gone * tau).sin();
+            } else if striking && fight.is_none() {
                 let lunge = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
@@ -380,7 +662,7 @@ impl Puppets {
                 facing,
                 speed,
                 striking,
-                dueling,
+                fight,
                 phase,
             });
         }
@@ -390,9 +672,12 @@ impl Puppets {
     /// takes casualties off the last slots, but on screen the men who fall
     /// are the ones fighting: a front-rank soldier (any soldier, for a block
     /// under arrows) drops, and the soldier from the emptied slot takes his
-    /// place and walks up to fill the gap.
+    /// place and walks up to fill the gap. In melee the man who falls is one
+    /// locked in a duel, if any are, and his man swings the killing blow: he
+    /// stands until it lands.
     fn fall(&mut self, block: &Block, owner: u8, models: usize) {
         let r = block.handle.index as usize;
+        let base = r * SLOTS;
         let before = (self.models[r] as usize).min(SLOTS);
         let files = block.files.clamp(1, block.models.max(1)) as usize;
         for gone in (models..before).rev() {
@@ -401,15 +686,35 @@ impl Puppets {
             } else {
                 gone + 1
             };
-            let pick = (unit_hash(block.handle, gone, self.time.to_bits()) * pool as f32) as usize;
-            let (victim, last) = (r * SLOTS + pick.min(gone), r * SLOTS + gone);
-            let corpse = (
-                self.pos[victim],
-                self.facing[victim],
-                owner,
-                block.unit,
-                self.time,
-            );
+            let roll = unit_hash(block.handle, gone, self.time.to_bits());
+            let paired = |k: &usize| self.partner[base + k] != NONE;
+            let dueling = (0..pool).filter(paired).count();
+            let pick = if dueling > 0 {
+                let n = ((roll * dueling as f32) as usize).min(dueling - 1);
+                (0..pool).filter(paired).nth(n).unwrap_or(0)
+            } else {
+                ((roll * pool as f32) as usize).min(gone)
+            };
+            let (victim, last) = (base + pick, base + gone);
+            let mut facing = self.facing[victim];
+            let killer = self.partner[victim];
+            let striking = (killer != NONE).then(|| self.acting(killer as usize));
+            let fell = match striking {
+                // Unpaired, or his man is reeling or down and can't strike:
+                // he just drops.
+                None => self.time,
+                Some(Some((act, _))) if act.reels() => self.time,
+                // His man is already swinging a killing blow: he falls to it
+                // too.
+                Some(Some((Act::Kill, f))) => self.time + (BLOW_AT - f).max(0.0) * SWING_SECONDS,
+                Some(_) => {
+                    let killer = killer as usize;
+                    self.act[killer] = (Act::Kill, self.time);
+                    facing = (self.pos[killer] - self.pos[victim]).normalize_or(facing);
+                    self.time + BLOW_AT * SWING_SECONDS
+                }
+            };
+            let corpse = (self.pos[victim], facing, owner, block.unit, fell);
             if self.corpses.len() < self.corpse_capacity {
                 self.corpses.push(corpse);
             } else {
@@ -419,6 +724,8 @@ impl Puppets {
             self.pos[victim] = self.pos[last];
             self.vel[victim] = self.vel[last];
             self.facing[victim] = self.facing[last];
+            self.act[victim] = self.act[last];
+            self.act[last] = (Act::None, 0.0);
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -463,19 +770,26 @@ fn slot_offset(k: u16, files: u16, models: u16, file_spacing: f32, rank_spacing:
 
 /// A stable pseudo-random value in [0, 1) per soldier and purpose.
 fn unit_hash(h: RegimentHandle, k: usize, salt: u32) -> f32 {
-    let mut x = h.index.wrapping_mul(0x9E37_79B9)
-        ^ (h.generation as u32).wrapping_mul(0x85EB_CA6B)
-        ^ (k as u32).wrapping_mul(0xC2B2_AE35)
-        ^ salt.wrapping_mul(0x27D4_EB2F);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2C1B_3C6D);
-    x ^= x >> 12;
-    (x >> 8) as f32 / (1u32 << 24) as f32
+    mix(h.index, h.generation as u32, k as u32, salt)
 }
 
 /// A stable value in [0, 1) for a pair of puppets.
 fn pair_hash(a: usize, b: usize) -> f32 {
-    let mut x = (a as u32).wrapping_mul(0x9E37_79B9) ^ (b as u32).wrapping_mul(0x85EB_CA6B);
+    mix(a as u32, b as u32, 0, 0)
+}
+
+/// A stable value in [0, 1) for blow `blow` between two puppets, one per
+/// `salt`.
+fn roll(i: usize, j: usize, blow: u32, salt: u32) -> f32 {
+    mix(i as u32, j as u32, blow, salt)
+}
+
+/// A stable value in [0, 1) from four numbers.
+fn mix(a: u32, b: u32, c: u32, d: u32) -> f32 {
+    let mut x = a.wrapping_mul(0x9E37_79B9)
+        ^ b.wrapping_mul(0x85EB_CA6B)
+        ^ c.wrapping_mul(0xC2B2_AE35)
+        ^ d.wrapping_mul(0x27D4_EB2F);
     x ^= x >> 15;
     x = x.wrapping_mul(0x2C1B_3C6D);
     x ^= x >> 12;
@@ -538,6 +852,7 @@ mod tests {
             speed: 3.0,
             engaged: false,
             routing: false,
+            fighter: Fighter::default(),
         };
         let mut first = Vec::new();
         p.update(&block, 0, 0.016, |s| first.push(s.pos));
@@ -575,6 +890,7 @@ mod tests {
             speed: 3.0,
             engaged,
             routing: false,
+            fighter: Fighter::default(),
         }
     }
 
@@ -638,7 +954,7 @@ mod tests {
             }
             let mut out = Vec::new();
             p.update(&a, 0, 0.016, |s| out.push(s));
-            let dueling = out.iter().filter(|s| s.dueling).count();
+            let dueling = out.iter().filter(|s| s.fight.is_some()).count();
             if !hostile {
                 assert_eq!(dueling, 0);
                 continue;
@@ -652,7 +968,7 @@ mod tests {
                 assert!(s.striking);
             }
             // The rear rank is not paired.
-            assert!(out[4..].iter().all(|s| !s.dueling));
+            assert!(out[4..].iter().all(|s| s.fight.is_none()));
         }
     }
 
@@ -674,6 +990,7 @@ mod tests {
             speed: 3.0,
             engaged: true,
             routing: false,
+            fighter: Fighter::default(),
         };
         let mut soldiers = Vec::new();
         p.update(&block, 2, 0.016, |s| soldiers.push(s.pos));
@@ -698,5 +1015,193 @@ mod tests {
         assert_eq!(p.corpses().count(), 3);
         p.advance(CORPSE_SECONDS + CORPSE_SINK_SECONDS);
         assert_eq!(p.corpses().count(), 0);
+    }
+
+    const FRAME: f32 = 1.0 / 60.0;
+
+    /// Two regiments facing each other across a melee line, fronts 1.2 tiles
+    /// apart: `a` (pool index 0) faces north, `b` (1) south.
+    fn melee_pair(a: Fighter, b: Fighter) -> (Block, Block) {
+        let mut x = block(0, Vec2::new(0.0, 0.0), Vec2::NEG_Y, true);
+        let mut y = block(1, Vec2::new(0.3, -3.2), Vec2::Y, true);
+        x.fighter = a;
+        y.fighter = b;
+        (x, y)
+    }
+
+    fn frame(p: &mut Puppets, a: &Block, b: &Block) {
+        p.advance(FRAME);
+        p.pair(|x, y| x != y);
+        p.update(a, 0, FRAME, |_| {});
+        p.update(b, 1, FRAME, |_| {});
+    }
+
+    /// What `a`'s blows did to `b`'s front rank over `seconds` of melee: how
+    /// many times each act began.
+    fn blows(a: Fighter, b: Fighter, seconds: f32) -> [u32; 6] {
+        let mut p = Puppets::new(2, 64);
+        let (x, y) = melee_pair(a, b);
+        let mut seen = [(Act::None, 0.0); 4];
+        let mut count = [0; 6];
+        for _ in 0..(seconds / FRAME) as usize {
+            frame(&mut p, &x, &y);
+            for (k, last) in seen.iter_mut().enumerate() {
+                let now = p.act[SLOTS + k];
+                if now != *last {
+                    count[now.0 as usize] += 1;
+                    *last = now;
+                }
+            }
+        }
+        count
+    }
+
+    fn fighter(attack: i32, defence: i32) -> Fighter {
+        Fighter {
+            attack,
+            defence,
+            ..Fighter::default()
+        }
+    }
+
+    #[test]
+    fn blows_land_at_the_simulations_odds() {
+        // 50 + 80 - 20 caps at 90%: nearly every blow staggers its man.
+        let c = blows(fighter(80, 20), fighter(0, 20), 60.0);
+        let total: u32 = c.iter().sum();
+        assert!(total > 150, "{c:?}");
+        assert!(c[Act::Stagger as usize] * 100 > total * 80, "{c:?}");
+        assert_eq!(c[Act::Down as usize] + c[Act::Block as usize], 0, "{c:?}");
+
+        // 10%: nearly every blow is parried.
+        let c = blows(fighter(0, 20), fighter(0, 60), 60.0);
+        let total: u32 = c.iter().sum();
+        assert!(c[Act::Parry as usize] * 100 > total * 80, "{c:?}");
+
+        // A shield takes the blows a blade would parry.
+        let c = blows(
+            fighter(0, 20),
+            Fighter {
+                shield: true,
+                ..fighter(0, 60)
+            },
+            60.0,
+        );
+        let total: u32 = c.iter().sum();
+        assert_eq!(c[Act::Parry as usize], 0, "{c:?}");
+        assert!(c[Act::Block as usize] * 100 > total * 80, "{c:?}");
+
+        // A wavering regiment lands fewer.
+        let sure = blows(fighter(45, 0), fighter(0, 45), 60.0)[Act::Stagger as usize];
+        let shaken = Fighter {
+            sharpness: 50,
+            ..fighter(45, 0)
+        };
+        let unsure = blows(shaken, fighter(0, 45), 60.0)[Act::Stagger as usize];
+        assert!(unsure * 3 < sure * 2, "{unsure} of {sure}");
+    }
+
+    #[test]
+    fn heavy_blades_crush_through_a_light_mans_guard() {
+        let heavy = Fighter {
+            mass: 2,
+            heavy_blade: true,
+            ..fighter(0, 20)
+        };
+        let light = Fighter {
+            mass: 0,
+            ..fighter(0, 60)
+        };
+        let c = blows(heavy, light, 60.0);
+        let total: u32 = c.iter().sum();
+        assert!(c[Act::Down as usize] * 2 > total, "{c:?}");
+        // Men of a weight parry each other, and so do medium men against
+        // light ones.
+        let c = blows(fighter(0, 20), fighter(0, 60), 60.0);
+        assert_eq!(c[Act::Down as usize], 0, "{c:?}");
+        let c = blows(fighter(0, 20), light, 60.0);
+        assert_eq!(c[Act::Down as usize], 0, "{c:?}");
+    }
+
+    #[test]
+    fn a_staggered_man_loses_his_next_swing() {
+        let mut p = Puppets::new(2, 4);
+        let (a, b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        let j = p.partner[0] as usize;
+        assert_ne!(p.partner[0], NONE);
+        // Just after his swing begins.
+        let (round, _) = Puppets::round(0, j, p.time);
+        p.time = (round + 1.0 - pair_hash(0, j)) / DUEL_RATE + 0.05;
+        let swing = p.swing(0, j).expect("swinging");
+        assert!(swing < 0.2, "{swing}");
+        // Hit just before it began, he reels through it.
+        p.act[0] = (Act::Stagger, p.time - 0.1);
+        assert_eq!(p.swing(0, j), None);
+        // A parry doesn't cost him the swing.
+        p.act[0] = (Act::Parry, p.time - 0.1);
+        assert!(p.swing(0, j).is_some());
+    }
+
+    #[test]
+    fn the_killing_blow_comes_from_his_man() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let corpse = p.corpses().next().expect("a man fell");
+        // He stands until the blow lands...
+        assert!(corpse.age < 0.0, "{corpse:?}");
+        // ...dealt by one of the front rank facing him, who swings it now.
+        let killers: Vec<usize> = (0..4).filter(|&k| p.act[k].0 == Act::Kill).collect();
+        assert_eq!(killers.len(), 1, "{:?}", &p.act[..4]);
+        let mut fights = Vec::new();
+        p.advance(FRAME);
+        p.update(&a, 0, FRAME, |s| fights.push(s.fight));
+        assert!(
+            matches!(fights[killers[0]], Some(Move::Swing { at, alt: false }) if at < 0.1),
+            "{:?}",
+            fights[killers[0]]
+        );
+        p.advance(BLOW_AT * SWING_SECONDS);
+        assert!(p.corpses().next().unwrap().age >= 0.0);
+    }
+
+    #[test]
+    fn a_heavy_charge_knocks_men_off_their_feet() {
+        let downed = |charger: u8, foe: u8| {
+            let mut p = Puppets::new(2, 4);
+            let (mut a, mut b) = melee_pair(
+                Fighter {
+                    mass: charger,
+                    ..Fighter::default()
+                },
+                Fighter {
+                    mass: foe,
+                    ..Fighter::default()
+                },
+            );
+            (a.engaged, b.engaged) = (false, false);
+            frame(&mut p, &a, &b);
+            (a.engaged, b.engaged, a.fighter.charging) = (true, true, true);
+            for _ in 0..3 {
+                frame(&mut p, &a, &b);
+            }
+            (SLOTS..SLOTS + 4)
+                .filter(|&i| p.act[i].0 == Act::Down)
+                .count()
+        };
+        // Heavy into light: most of the front rank goes down.
+        assert!(downed(2, 0) >= 2, "{}", downed(2, 0));
+        // Men of a weight only stagger, and so do light men charged by
+        // medium ones.
+        assert_eq!(downed(1, 1), 0);
+        assert_eq!(downed(1, 0), 0);
+        assert_eq!(downed(2, 2), 0);
     }
 }

@@ -898,7 +898,7 @@ impl Combat {
 }
 
 /// Percent of its usual damage a regiment deals in this state of mind.
-fn heart_percent(state: MoraleState) -> u64 {
+pub fn heart_percent(state: MoraleState) -> u64 {
     match state {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
         _ => 100,
