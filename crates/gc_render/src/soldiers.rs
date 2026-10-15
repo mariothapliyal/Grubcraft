@@ -241,7 +241,7 @@ impl SoldiersGpu {
             pass.draw_indexed(first..first + len, base, b.first..end);
             calls += 1;
             drawn += end - b.first;
-            tris += (len / 3) as u64 * (end - b.first) as u64;
+            tris += u64::from(len / 3) * u64::from(end - b.first);
         }
         (calls, drawn, tris)
     }

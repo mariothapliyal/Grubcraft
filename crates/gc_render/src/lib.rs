@@ -273,7 +273,7 @@ impl Renderer {
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(wgpu::TextureFormat::is_srgb)
             .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -463,9 +463,9 @@ impl Renderer {
             adapter_info.transient_saves_memory == Some(true),
         );
         let static_gpu_bytes = 2 * size_of::<Globals>() as u64
-            + shadow_side as u64
-                * shadow_side as u64
-                * SHADOW_FORMAT.block_copy_size(None).unwrap_or(4) as u64
+            + u64::from(shadow_side)
+                * u64::from(shadow_side)
+                * u64::from(SHADOW_FORMAT.block_copy_size(None).unwrap_or(4))
             + chunk_indices.0.size()
             + box_instances.size()
             + soldiers.instances.size()
@@ -678,7 +678,7 @@ impl Renderer {
         // The camera's visible chunks, then the sun's.
         self.chunk_instances = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk instances"),
-            size: chunk_count as u64 * 16,
+            size: u64::from(chunk_count) * 16,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -798,7 +798,7 @@ impl Renderer {
             }
         }
         debug_assert!(self.visible_chunks.len() <= self.chunk_instance_capacity as usize);
-        let sun_chunks_at = self.chunk_instance_capacity as u64 * 8;
+        let sun_chunks_at = u64::from(self.chunk_instance_capacity) * 8;
         for (chunks, at) in [(&self.visible_chunks, 0), (&self.sun_chunks, sun_chunks_at)] {
             if !chunks.is_empty() {
                 self.queue
@@ -917,9 +917,9 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: fog_color[0] as f64,
-                            g: fog_color[1] as f64,
-                            b: fog_color[2] as f64,
+                            r: f64::from(fog_color[0]),
+                            g: f64::from(fog_color[1]),
+                            b: f64::from(fog_color[2]),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -1269,7 +1269,7 @@ fn make_depth(
     let bytes = if transient_saves_memory {
         0
     } else {
-        config.width as u64 * config.height as u64 * 4
+        u64::from(config.width) * u64::from(config.height) * 4
     };
     (
         texture.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -1280,7 +1280,7 @@ fn make_depth(
 /// Triangle-list indices for a `quads × quads` grid of `(quads+1)²` vertices.
 fn chunk_grid_indices(quads: u32) -> Vec<u16> {
     let side = quads + 1;
-    assert!(side * side <= u16::MAX as u32 + 1);
+    assert!(side * side <= u32::from(u16::MAX) + 1);
     let mut out = Vec::with_capacity((quads * quads * 6) as usize);
     for y in 0..quads {
         for x in 0..quads {
@@ -1316,7 +1316,7 @@ fn aabb_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
 }
 
 fn srgb_to_linear(c: f32) -> f64 {
-    let c = c as f64;
+    let c = f64::from(c);
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -1332,7 +1332,7 @@ mod tests {
     fn grid_indices_cover_every_quad() {
         let idx = chunk_grid_indices(CHUNK_QUADS);
         assert_eq!(idx.len() as u32, CHUNK_QUADS * CHUNK_QUADS * 6);
-        let max = *idx.iter().max().unwrap() as u32;
+        let max = u32::from(*idx.iter().max().unwrap());
         assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
     }
 

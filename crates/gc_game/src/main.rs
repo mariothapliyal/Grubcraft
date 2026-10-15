@@ -21,6 +21,9 @@
 //! take the team colour. Zoom far out and the Commander View replaces them
 //! with one block and banner per regiment.
 //!
+//! The bottom bar has a minimap (click or drag to move the camera, right-click
+//! to send the selection there) and an army tray of regiment cards (click to
+//! select, Shift-click to toggle, double-click to centre).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -82,6 +85,7 @@ mod credits;
 mod data;
 #[cfg(test)]
 mod goldens;
+mod hud;
 mod lens;
 mod models;
 mod online;
@@ -431,6 +435,8 @@ struct Running {
     ui: Ui,
     ui_input: UiInput,
     ui_quads: Vec<UiQuad>,
+    /// The in-battle bar: minimap and army tray.
+    hud: hud::HudState,
     menu_open: bool,
     /// Whether a match has started (the sim is frozen until then).
     match_started: bool,
@@ -515,7 +521,7 @@ fn formation_hint(f: Formation) -> String {
 /// screen: the simulation's numbers for its unit and state.
 fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
-        attack: stats.melee_attack as i32,
+        attack: i32::from(stats.melee_attack),
         defence: stats.melee_defence_in(r.formation, true),
         flank_defence: stats.melee_defence_in(r.formation, false),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
@@ -689,7 +695,7 @@ impl App {
                 max_height: heightmap.max_height(),
                 water_level: heightmap.water_level(),
                 heights: &heightmap.heights,
-            })
+            });
         });
         self.memory_timeline.mark("map generated + uploaded");
 
@@ -782,11 +788,13 @@ impl App {
             game_data
                 .units
                 .iter()
-                .map(|u| u.name())
+                .map(gc_data::UnitRecord::name)
                 .collect::<Vec<_>>()
                 .join(", ")
         );
 
+        let mut hud_state = hud::HudState::default();
+        hud_state.set_terrain(&heightmap, MAP_TILES);
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -880,6 +888,7 @@ impl App {
             ui: Ui::new(),
             ui_input: UiInput::default(),
             ui_quads: Vec::with_capacity(512),
+            hud: hud_state,
             menu_open: show_menu,
             match_started: !show_menu,
             online: None,
@@ -954,13 +963,20 @@ impl ApplicationHandler for App {
                 r.renderer.resize(size.width, size.height);
                 r.camera.aspect = r.renderer.aspect_ratio();
             }
-            WindowEvent::Focused(f) => r.input.focused = f,
+            WindowEvent::Focused(f) => {
+                r.input.focused = f;
+                // A button let go outside the window never reports it.
+                r.hud.reset();
+            }
             WindowEvent::ModifiersChanged(m) => {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
                 r.input.command = m.state().control_key() || m.state().super_key();
             }
-            WindowEvent::CursorLeft { .. } => r.input.cursor = None,
+            WindowEvent::CursorLeft { .. } => {
+                r.input.cursor = None;
+                r.hud.reset();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 if let (Some(prev), Some(_)) = (r.input.cursor, r.input.middle_down) {
                     let size = r.window.inner_size();
@@ -975,6 +991,8 @@ impl ApplicationHandler for App {
                 }
                 r.input.cursor = Some(position);
             }
+            // Over the bar the wheel is not the camera's.
+            WindowEvent::MouseWheel { .. } if r.hud_wants_mouse() => {}
             WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(_, y) => r.camera.zoom(0.88f32.powf(y)),
                 // Trackpads send pixel deltas: two-finger scroll pans, as in
@@ -1169,6 +1187,20 @@ impl Running {
                 }
                 self.input.middle_down = None;
             }
+            // The bar at the bottom takes its own clicks.
+            // A click that starts on the bar stays the bar's until it ends.
+            (MouseButton::Left, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_left();
+            }
+            (MouseButton::Left, ElementState::Released) if self.hud.left_captured() => {
+                self.hud.release_left();
+            }
+            (MouseButton::Right, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_right();
+            }
+            (MouseButton::Right, ElementState::Released) if self.hud.right_captured() => {
+                self.hud.release_right();
+            }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
             }
@@ -1192,12 +1224,7 @@ impl Running {
                     .ground_under_cursor()
                     .and_then(|p| self.nearest_own(p, 6.0))
                 {
-                    match self.selected.iter().position(|&s| s == h) {
-                        Some(i) => {
-                            self.selected.swap_remove(i);
-                        }
-                        None => self.selected.push(h),
-                    }
+                    self.toggle_selected(h);
                 }
                 if !self.selected.is_empty() {
                     self.ui_sound(sounds::UiSound::Select);
@@ -1231,15 +1258,7 @@ impl Running {
                         width: None,
                     })
                 }) {
-                    self.plan_order(order);
-                    if !self.group_commands.is_empty() {
-                        self.ui_sound(sounds::UiSound::Move);
-                    }
-                    self.human_orders
-                        .extend(self.group_commands.iter().map(|&command| PlayerCommand {
-                            player: self.sandbox.side,
-                            command,
-                        }));
+                    self.issue_group_order(order);
                 }
                 self.input.right_down = None;
             }
@@ -1293,6 +1312,29 @@ impl Running {
             t += step;
         }
         None
+    }
+
+    /// Send the selection to carry out `order`.
+    fn issue_group_order(&mut self, order: GroupOrder) {
+        self.plan_order(order);
+        if !self.group_commands.is_empty() {
+            self.ui_sound(sounds::UiSound::Move);
+        }
+        self.human_orders
+            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+                player: self.sandbox.side,
+                command,
+            }));
+    }
+
+    /// Add `h` to the selection, or take it out if it is already in.
+    fn toggle_selected(&mut self, h: RegimentHandle) {
+        match self.selected.iter().position(|&s| s == h) {
+            Some(i) => {
+                self.selected.swap_remove(i);
+            }
+            None => self.selected.push(h),
+        }
     }
 
     /// Expand a group order for the current selection into
@@ -1431,8 +1473,7 @@ impl Running {
                 .map(from_fx_vec)
                 .sum();
             let centre = sum / self.control_groups[n].len() as f32;
-            self.camera.focus = centre;
-            self.camera.focus_height = self.heightmap.height_at(centre.x, centre.y);
+            self.look_at(centre);
         }
     }
 
@@ -1670,7 +1711,7 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
-                disorder: r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32,
+                disorder: f32::from(r.disorder) / f32::from(gc_sim::combat::DISORDER_TICKS),
                 charge: r.charge,
                 fighter: fighter_of(stats, &r),
             };
@@ -1712,7 +1753,7 @@ impl Running {
                 // One block per regiment with a tall banner: the flag shows
                 // the team, or the morale colour when shaken.
                 let shade = if selected { 255 } else { 210 };
-                let tint = |c: u8| (c as u32 * shade / 255) as u8;
+                let tint = |c: u8| (u32::from(c) * shade / 255) as u8;
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -1770,7 +1811,7 @@ impl Running {
                     self.camera.focus_height,
                     pos.y,
                 )) > LOD_DISTANCE;
-                let bucket = &mut art.buckets[model * 2 + far as usize];
+                let bucket = &mut art.buckets[model * 2 + usize::from(far)];
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
@@ -1792,7 +1833,12 @@ impl Running {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [(pose.blend * 255.0) as u8, highlight, flat as u8 * 255, 0],
+                            flags: [
+                                (pose.blend * 255.0) as u8,
+                                highlight,
+                                u8::from(flat) * 255,
+                                0,
+                            ],
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -1845,6 +1891,8 @@ impl Running {
 
         if self.menu_open {
             self.run_menu();
+        } else if self.match_started {
+            self.run_hud();
         } else {
             self.renderer.clear_ui();
         }
@@ -2094,6 +2142,7 @@ impl Running {
         self.input.left_down = None;
         self.input.right_down = None;
         self.input.middle_down = None;
+        self.hud.reset();
     }
 
     fn menu_key(&mut self, key: &winit::event::KeyEvent) {
@@ -2117,28 +2166,13 @@ impl Running {
 
     /// Draw this frame's menu and carry out what it asks for.
     fn run_menu(&mut self) {
-        let scale = self.ui_scale();
-        let size = self.window.inner_size();
-        let screen = (
-            (size.width as f32 / scale) as i32,
-            (size.height as f32 / scale) as i32,
-        );
+        let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
-        input.mouse = self.input.cursor.map_or((-1, -1), |c| {
-            ((c.x as f32 / scale) as i32, (c.y as f32 / scale) as i32)
-        });
+        input.mouse = self.ui_cursor();
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
-        self.ui_quads.clear();
-        self.ui_quads
-            .extend(self.ui.draw.quads.iter().map(|q| UiQuad {
-                pos: q.pos,
-                size: q.size,
-                glyph: q.glyph,
-                color: q.color,
-            }));
-        self.renderer.set_ui(&self.ui_quads, scale);
+        hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
             MenuAction::None | MenuAction::SettingsChanged => {}
             MenuAction::Resume => self.close_menu(),
@@ -2179,7 +2213,7 @@ impl Running {
         // built (whatever the sandbox tuned stays in the sandbox).
         let net_seed = match &kind {
             MatchKind::Battle(setup) => setup.seed,
-            _ => None,
+            MatchKind::Sandbox => None,
         };
         if net_seed.is_none() && self.menu.net().in_match() {
             // Starting something else leaves the network match.
@@ -2195,7 +2229,7 @@ impl Running {
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
         let teams: Vec<u8> = match &kind {
             MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
-            _ => Vec::new(),
+            MatchKind::Sandbox => Vec::new(),
         };
         self.world = tagged_alloc::scope(Tag::Sim, || {
             World::new(&MatchSetup {
@@ -2264,8 +2298,9 @@ impl Running {
                 max_height: hm.max_height(),
                 water_level: hm.water_level(),
                 heights: &hm.heights,
-            })
+            });
         });
+        self.hud.set_terrain(&self.heightmap, MAP_TILES);
         let nav = self.heightmap.nav_costs();
         self.blocked_marks = blocked_marks(&nav, MAP_TILES);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
@@ -2434,11 +2469,11 @@ impl Running {
                         self.camera.focus_height,
                         c.pos.y,
                     )) > LOD_DISTANCE;
-                    art.buckets[model * 2 + far as usize].push(SoldierInstance {
+                    art.buckets[model * 2 + usize::from(far)].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, flat as u8 * 255, 0],
+                        flags: [(pose.blend * 255.0) as u8, 0, u8::from(flat) * 255, 0],
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,
@@ -2496,30 +2531,31 @@ impl Running {
             self.input.arrows
         };
         if up {
-            dy += 1.0
+            dy += 1.0;
         }
         if down {
-            dy -= 1.0
+            dy -= 1.0;
         }
         if left {
-            dx -= 1.0
+            dx -= 1.0;
         }
         if right {
-            dx += 1.0
+            dx += 1.0;
         }
         if let (Some(c), true, false) = (self.input.cursor, self.input.focused, self.menu_open) {
             let size = self.window.inner_size();
             if c.x <= EDGE_SCROLL_PX {
-                dx -= 1.0
+                dx -= 1.0;
             }
-            if c.x >= size.width as f64 - EDGE_SCROLL_PX {
-                dx += 1.0
+            if c.x >= f64::from(size.width) - EDGE_SCROLL_PX {
+                dx += 1.0;
             }
             if c.y <= EDGE_SCROLL_PX {
-                dy += 1.0
+                dy += 1.0;
             }
-            if c.y >= size.height as f64 - EDGE_SCROLL_PX {
-                dy -= 1.0
+            // The bar fills the bottom edge during a match.
+            if c.y >= f64::from(size.height) - EDGE_SCROLL_PX && !self.match_started {
+                dy -= 1.0;
             }
         }
         if dx != 0.0 || dy != 0.0 {
@@ -2555,12 +2591,12 @@ impl Running {
         let frame_avg = secs * 1000.0 / frames as f32;
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         let tick_avg = if self.stats.ticks > 0 {
-            ms(self.stats.tick_time) / self.stats.ticks as f64
+            ms(self.stats.tick_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
         let ai_avg = if self.stats.ticks > 0 {
-            ms(self.stats.ai_time) / self.stats.ticks as f64
+            ms(self.stats.ai_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
@@ -2604,7 +2640,7 @@ impl Running {
             self.data_label,
             self.sounds
                 .as_ref()
-                .map_or("off".to_string(), |s| s.overlay_line()),
+                .map_or("off".to_string(), sounds::Sounds::overlay_line),
             info.name,
             info.backend,
         );
@@ -2677,13 +2713,13 @@ impl Running {
         };
         let faction = self.faction_of(side);
         let personality = persona.unwrap_or_else(|| {
-            gc_ai::personality::pick(faction, self.world.tick_count() ^ side as u32)
+            gc_ai::personality::pick(faction, self.world.tick_count() ^ u32::from(side))
         });
         let mind = Mind::new(MindConfig {
             party: side,
             difficulty: level,
             personality,
-            seed: self.seed ^ (self.matches << 8) ^ side as u64,
+            seed: self.seed ^ (self.matches << 8) ^ u64::from(side),
         });
         let who = mind.personality().name.clone();
         tagged_alloc::scope(Tag::Ai, || self.minds.add(mind));
@@ -2716,7 +2752,8 @@ impl Running {
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
         let types = self.unit_stats.len() as i32;
-        self.sandbox.unit = (self.sandbox.unit as i32 + step).rem_euclid(types.max(1)) as UnitId;
+        self.sandbox.unit =
+            (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
         self.sandbox.dirty = true;
     }
 
@@ -3160,7 +3197,7 @@ fn digit(code: KeyCode) -> Option<usize> {
 
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
 fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
-    Vec2::from_angle(a.0 as f32 / 65536.0 * std::f32::consts::TAU)
+    Vec2::from_angle(f32::from(a.0) / 65536.0 * std::f32::consts::TAU)
 }
 
 fn main() {

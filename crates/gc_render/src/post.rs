@@ -173,10 +173,10 @@ impl PostGpu {
                 view_formats: &[],
             })
         };
-        let texel_bytes = self.hdr_format.block_copy_size(None).unwrap_or(8) as u64;
+        let texel_bytes = u64::from(self.hdr_format.block_copy_size(None).unwrap_or(8));
         let hdr = image("hdr", width, height, 1);
         let hdr = hdr.create_view(&Default::default());
-        let mut gpu_bytes = width as u64 * height as u64 * texel_bytes;
+        let mut gpu_bytes = u64::from(width) * u64::from(height) * texel_bytes;
         let mut levels = Vec::new();
         let (w, h) = ((width / 2).max(1), (height / 2).max(1));
         if self.glow {
@@ -190,7 +190,8 @@ impl PostGpu {
                 });
                 let group = self.group(device, &self.chain_layout, &view, None);
                 levels.push(Level { view, group });
-                gpu_bytes += ((w >> mip).max(1) as u64) * ((h >> mip).max(1) as u64) * texel_bytes;
+                gpu_bytes +=
+                    u64::from((w >> mip).max(1)) * u64::from((h >> mip).max(1)) * texel_bytes;
             }
         }
         // With the glow off the composite never reads its glow binding.
