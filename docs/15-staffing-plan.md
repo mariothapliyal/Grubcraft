@@ -82,7 +82,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | 5 Morale and routing | **Opus alone** (merged) | Haiku `test-writer`, `bench-runner` | Cascading rout is emergent and easy to get subtly wrong |
 | 6 Pathfinding: nav grid, sectors, flow fields | Opus (merged; waypoint routes rather than flow fields, see 10 · Architecture) | Haiku `bench-runner` (path cost per tick), `test-writer` (grid edge cases) | Deterministic and performance critical at once |
 | 7 Sandbox: place armies, slow-mo, hot-reload stats | Opus (merged; built in one thread, panels on the overlay text until the `gc_ui` widgets land) | **Sonnet `feature-builder`** for moving the panels to `gc_ui` | First clean seam where Sonnet can build inside the thread |
-| 8 Real art: CC0 kits, bone animation textures, Commander View | Opus for the VAT format and renderer integration (in review; built in one thread, with a Rust glTF baker `gc_artbake` instead of a Blender script) | Sonnet `feature-builder` for the Blender export script and `gc_bake` importer; Haiku sources CC0 packs and logs licences | The pipeline is a well-scoped tool; licence checks are pure bookkeeping |
+| 8 Real art: CC0 kits, bone animation textures, Commander View | Opus for the VAT format and renderer integration (merged; built in one thread, with a Rust glTF baker `gc_artbake` instead of a Blender script) | Sonnet `feature-builder` for the Blender export script and `gc_bake` importer; Haiku sources CC0 packs and logs licences | The pipeline is a well-scoped tool; licence checks are pure bookkeeping |
 | Golden replays and `field-8000pt-2v2` benchmark | Opus designs the scenario | Haiku records goldens, wires the bench into CI | |
 | Exit: 3,000-soldier sandbox at 60 fps | Opus investigates frame time | Haiku `bench-runner`; **Mario** judges the feel | "Feels like Shogun" is Mario's call |
 
@@ -92,12 +92,12 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 
 | Workstream | Lead | Helpers | Notes |
 |---|---|---|---|
-| `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay | **Opus alone** | Haiku `test-writer` for packet codec round-trips | The highest-risk system in the game; also gets a dedicated security review (Opus `Plan` subagent) of the encryption |
+| `gc_net`: UDP transport, encryption, host-sequenced lockstep, adaptive input delay | **Opus alone** | Haiku `test-writer` for packet codec round-trips | The highest-risk system in the game; also gets a dedicated security review (Opus `Plan` subagent) of the encryption. **Step 1 done (2026-10-15)** by its own Opus thread (LAN multiplayer): transport, discovery, lobby protocol and lockstep; adaptive input delay and encryption are steps 2 and 3 ([11 · Networking](11-networking.md)) |
 | Network chaos test (latency, jitter, loss on loopback) | Opus | Haiku runs the soak and summarises | |
 | Desync detection and report files | **Opus alone**, high effort | | Debugging a desync is the archetypal Opus task |
 | Cross-platform determinism CI on golden replays | Opus decides what's hashed | Sonnet writes the macOS/Windows CI jobs; Haiku `ci-triage` | |
 | Replays: record and play back | Opus (format is versioned and hashed) | Haiku tests for round-trip | |
-| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game`. **Started early (2026-10-12):** a Sonnet thread built the screens against a stub `Network` trait; `gc_net` still has to implement it |
+| LAN discovery, Host/Join screens, lobby, version gate | Opus defines the lobby protocol | **Sonnet** builds the screens, as a `feature-builder` subagent or a second thread once the protocol is frozen | First point where a parallel Sonnet thread is reasonable: it only touches `gc_ui` and `gc_game`. **Started early (2026-10-12):** a Sonnet thread built the screens against a stub `Network` trait; `gc_net` implements it since M2 step 1 (2026-10-15) |
 | Field Battle mode: army builder, deployment, victory conditions | Opus for victory rules and deployment in the sim | Sonnet for the army builder UI; Haiku `data-entry` for point costs | |
 | Two battle maps | Sonnet | Haiku validates with `gc_mapcheck` once it exists | |
 | Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, zips | **Sonnet** | Haiku writes the release checklist | Platform plumbing with a clear finish line |
@@ -105,6 +105,7 @@ The engine thread (currently running) stays Opus and builds the eight steps in o
 | Battle AI (`gc_ai`, AI-1 and AI-2 in [18 · AI](18-ai.md#build-plan)) | **Opus, extra-high effort**, as a parallel thread | Haiku `test-writer` writes the drills; Sonnet `feature-builder` builds the AI lens overlay | Safe to run beside the engine thread: it adds a new crate and only reads the sim's public API. The rehearsal hooks (copy a battle area, spawn with state) go through the engine thread. **Step 1 of 3 built (2026-10-12)** by an Opus extra-high-effort thread: the crate, tactics, difficulty levels, personalities, and the lobby and sandbox wiring. **Steps 2 and 3 built (2026-10-13)** by the same thread: the drills were written there too, as they shaped the tactics, and the AI lens was small enough not to need a Sonnet hand-off |
 | Terrain rules: high ground and fords in the sim | Opus (sim combat thread) | | **Done (2026-10-13)** by its own thread, in parallel with the unit balance pass (unit data) and `gc_net` (LAN), touching only the sim's combat and movement and one new `MatchSetup` field |
 | Regiments queue instead of stacking in tight ground | Opus (sim combat thread) | | **Done (2026-10-13)** by the same thread, in the sim's movement and combat only, with no `MatchSetup` change |
+| Soldier fighting, stage 1: duel pairs and living formations ([09 · Art and Audio](09-art-and-audio.md#animation)) | Opus | | **Done (2026-10-15)** by its own thread, in `gc_game`'s puppets only (presentation, no sim change) |
 | Exit: 2v2 over home Wi-Fi, zero desyncs | Opus reads desync reports | **Mario and friends** play it | |
 
 ### M3 · First Harvest: the first agent team
@@ -126,7 +127,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 
 | Thread | Lead | Workstreams |
 |---|---|---|
-| **A · World systems** | Opus | Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines, Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat), "Restage this battle" (snapshot and re-seed) |
+| **A · World systems** | Opus | Grubfolk hamlets (market, mercenaries, rumours, raiding, reputation), creep camps and items, Shrines, Titan Events (Tremors and Bloodseeps, Marrow Bloom, Heartbeat), "Restage this battle" (snapshot and re-seed), frontier sites and first contact (C-0 in [19](19-campaign.md#build-plan)); Sonnet writes the site content |
 | **B · Learnability** | Sonnet | Tutorial "First Harvest", Clans and Brood primers, contextual hints, codex. Opus reviews any tutorial scripting hook added to the sim; Haiku drafts codex entries from the design docs |
 | **C · Audio** | Sonnet | `gc_audio`: unit voices, faction themes, battle ambience (the mixer, first sound set and adaptive music were built early, as a separate Sonnet thread). Haiku sources and licence-checks royalty-free audio |
 | **D · Maps and post-game** | Sonnet | Hollow Lung and Marrowfen, map validator improvements, post-game screen with graphs |
@@ -143,6 +144,7 @@ A and B both touch `gc_sim`, so they split by module and B starts once A's inter
 | **C · Primers and presentation** | Sonnet | Primers for both factions, faction UI, effects. Starts once A and B have playable units |
 | **Balance across all pairings** | Opus | Haiku batch-sims every pairing; Opus proposes changes against the "no faction above 60%" exit |
 | **D · Choir and Concord AI** | Opus | Their economy modules and doctrines in `gc_ai` (AI-5); starts once A and B have playable units. Haiku `arena-runner` checks each holds 40 to 60% |
+| **E · Campaign core** | Opus, high effort | C-1 in [19](19-campaign.md#build-plan): `gc_campaign`, the world map, seasons, hosts, exploring, battles fought or handed to the generals, saves, the campaign mind in `gc_ai::campaign`. Sonnet builds the campaign screen; Haiku enters encounter cards as data. Lives in its own crate, so it doesn't collide with A and B |
 
 A and B both live in `gc_sim` but in separate faction modules; shared hooks they both need are added first, in one small Opus PR, before the two threads start.
 
@@ -162,7 +164,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 
 | Feature | Lead | Notes |
 |---|---|---|
-| Exploration and diplomacy (AI-6) | Opus, max effort for diplomacy logic | Factions met while exploring are mostly content (rosters, personalities, homes) that Sonnet can add once the minds exist; Haiku runs the arena |
+| M7 · Across the Reach: campaign peoples, diplomacy and the full campaign (C-2, C-3, AI-6) | Opus, max effort for diplomacy logic | Factions met while exploring are mostly content (rosters, personalities, homes, encounter cards) that Sonnet can add once the minds exist; Sonnet builds the Chronicle and guest-commander screens; Haiku runs the arena and plays scripted test campaigns |
 | Host migration | Opus | Protocol work |
 | Internet join codes (hole punching, rendezvous service) | Sonnet | Opus security review of the rendezvous protocol |
 | Player map editor | Sonnet | Exposes the internal edit mode |
