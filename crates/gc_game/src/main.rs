@@ -488,14 +488,13 @@ fn formation_hint(f: Formation) -> String {
 fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
         attack: stats.melee_attack as i32,
-        defence: stats.melee_defence as i32 + stats.formation_defence(r.formation, true),
+        defence: stats.melee_defence_in(r.formation, true),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
             * stats.weapon_room_percent(r.formation)
             / 100) as u32,
         shield: stats.shield,
-        mass: stats.mass as u8,
+        mass: stats.mass,
         heavy_blade: stats.swing_room,
-        charging: r.charging,
     }
 }
 
@@ -1617,6 +1616,7 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
+                charge: r.charge,
                 fighter: fighter_of(stats, &r),
             };
             let blink = self.started.elapsed().as_millis() % 600 < 300;
@@ -2255,14 +2255,7 @@ impl Running {
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
-                let (pose, fallen) = match art.clips.death(model, c.age) {
-                    Some(p) => (Some(p), 0),
-                    None => (
-                        art.clips.pose(model, Action::Idle, 0.0),
-                        if c.age < 0.0 { 0 } else { 255 },
-                    ),
-                };
-                if let Some(pose) = pose {
+                if let Some((pose, flat)) = art.clips.death(model, c.age) {
                     let far = self.camera.eye().distance(glam::Vec3::new(
                         c.pos.x,
                         self.camera.focus_height,
@@ -2272,7 +2265,7 @@ impl Running {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, fallen, 0],
+                        flags: [(pose.blend * 255.0) as u8, 0, flat as u8 * 255, 0],
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,

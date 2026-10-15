@@ -383,7 +383,7 @@ impl Regiments {
             models: self.models[i],
             moving: self.target[i].is_some() || self.target_facing[i].is_some(),
             engaged: self.engaged[i].is_some(),
-            charging: self.charge[i] > 0,
+            charge: self.charge[i],
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
         }
@@ -604,8 +604,9 @@ pub struct RegimentView {
     pub moving: bool,
     /// Fighting in melee.
     pub engaged: bool,
-    /// Hit home at speed in the last few seconds: its charge bonus is running.
-    pub charging: bool,
+    /// Ticks of charge bonus left: it hit home at speed within the last
+    /// few seconds.
+    pub charge: u16,
     pub morale: MoraleState,
     /// Morale in points (0 to 100); meaningless for regiments that never rout.
     pub morale_points: u8,

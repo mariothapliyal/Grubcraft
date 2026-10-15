@@ -67,7 +67,7 @@ const DOWN_RISE: f32 = 0.35;
 
 /// Per model, the clip for each action, looked up once.
 pub struct Clips {
-    by_model: Vec<[Option<ClipRecord>; 9]>,
+    by_model: Vec<[Option<ClipRecord>; ACTIONS.len()]>,
     die: Vec<Option<ClipRecord>>,
 }
 
@@ -118,12 +118,26 @@ impl Clips {
         Some(once(&clip, fraction * (clip.frames - 1) as f32))
     }
 
-    /// The pose `seconds` after falling: the death clip, held on its last
-    /// frame. `None` when the model has no death clip (the renderer lays the
-    /// idle pose down instead).
-    pub fn death(&self, model: usize, seconds: f32) -> Option<Pose> {
-        let clip = (*self.die.get(model)?)?;
-        Some(once(&clip, seconds * clip.fps))
+    /// The pose `seconds` after falling dead (negative while he still
+    /// stands, waiting for the blow), and whether to lay the model flat: see
+    /// `fall`.
+    pub fn death(&self, model: usize, seconds: f32) -> Option<(Pose, bool)> {
+        self.fall(model, |die| seconds * die.fps, seconds >= 0.0)
+    }
+
+    /// The death clip at the frame `frame` picks, held on its first and last
+    /// frames, or for a model without one its idle pose, laid flat when
+    /// `down`.
+    fn fall(
+        &self,
+        model: usize,
+        frame: impl FnOnce(&ClipRecord) -> f32,
+        down: bool,
+    ) -> Option<(Pose, bool)> {
+        match (*self.die.get(model)?).as_ref() {
+            Some(die) => Some((once(die, frame(die)), false)),
+            None => Some((self.pose(model, Action::Idle, 0.0)?, down)),
+        }
     }
 
     /// The pose for a soldier's move in a duel, and whether to lay the model
@@ -145,10 +159,7 @@ impl Clips {
             // forward, then back.
             Move::Down(f) => {
                 let depth = (f / DOWN_FALL).min((1.0 - f) / DOWN_RISE).min(1.0);
-                match (*self.die.get(model)?).as_ref() {
-                    Some(die) => Some((once(die, depth * (die.frames - 1) as f32), false)),
-                    None => Some((self.pose(model, Action::Idle, 0.0)?, depth > 0.5)),
-                }
+                self.fall(model, |die| depth * (die.frames - 1) as f32, depth > 0.5)
             }
         }
     }
@@ -265,7 +276,8 @@ mod tests {
             .find(|&m| models.clip(m, ClipKind::Die).is_some())
             .unwrap();
         let die = models.clip(m, ClipKind::Die).unwrap();
-        let end = clips.death(m, 100.0).unwrap();
+        let (end, flat) = clips.death(m, 100.0).unwrap();
         assert_eq!(end.rows, [(die.first_row + die.frames - 1) as u16; 2]);
+        assert!(!flat);
     }
 }
