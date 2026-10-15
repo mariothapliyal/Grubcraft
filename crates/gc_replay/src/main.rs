@@ -81,11 +81,7 @@ fn expand(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for p in paths {
         if p.is_dir() {
-            let mut found: Vec<PathBuf> = std::fs::read_dir(p)?
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
-                .collect();
-            found.sort();
+            let found = gc_replay::files_in(p)?;
             if found.is_empty() {
                 return Err(std::io::Error::other(format!(
                     "no .{EXTENSION} replays in {}",
@@ -181,7 +177,6 @@ fn info(file: &Path) -> bool {
         return false;
     };
     let size = std::fs::metadata(file).map_or(0, |m| m.len());
-    let seconds = replay.ticks / TICKS_PER_SECOND;
     let mut spawned = vec![(0u32, 0u32); replay.teams.len().max(1)];
     for (_, commands) in &replay.turns {
         for c in commands {
@@ -205,9 +200,8 @@ fn info(file: &Path) -> bool {
         println!("  desync report: out of sync with the host from tick {tick}");
     }
     println!(
-        "  {}:{:02} of game time ({} ticks), {} commands, {:.1} KB",
-        seconds / 60,
-        seconds % 60,
+        "  {} of game time ({} ticks), {} commands, {:.1} KB",
+        clock(replay.ticks),
         replay.ticks,
         replay.command_count(),
         size as f64 / 1024.0
@@ -278,9 +272,8 @@ fn compare(a: &Path, b: &Path) -> ExitCode {
                 .find(|(x, y)| x != y)
                 .map(|(x, _)| x.0);
             println!(
-                "differ  the worlds first disagree at tick {tick} ({}:{:02}){}",
-                tick / TICKS_PER_SECOND / 60,
-                tick / TICKS_PER_SECOND % 60,
+                "differ  the worlds first disagree at tick {tick} ({}){}",
+                clock(tick),
                 turn.map_or(String::new(), |t| format!(
                     "; their commands first differ at tick {t}"
                 ))
@@ -288,4 +281,10 @@ fn compare(a: &Path, b: &Path) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Game time as "m:ss".
+fn clock(ticks: u32) -> String {
+    let seconds = ticks / TICKS_PER_SECOND;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }

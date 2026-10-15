@@ -109,6 +109,16 @@ pub struct Replay {
     pub checkpoints: Vec<(u32, u64)>,
 }
 
+/// The replay files in `dir`, sorted by name.
+pub fn files_in(dir: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut found: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
+        .collect();
+    found.sort();
+    Ok(found)
+}
+
 /// Where a replay stopped matching its recorded hashes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Divergence {

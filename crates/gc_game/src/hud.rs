@@ -243,7 +243,9 @@ impl Running {
             cards: &hud.cards,
             tray_title: &title,
             // Nobody deploys in a replay.
-            deployment: (self.world.deploy_zone(side))
+            deployment: self
+                .world
+                .deploy_zone(side)
                 .filter(|_| self.watching.is_none())
                 .map(|_| DeployStatus {
                     seconds_left: self

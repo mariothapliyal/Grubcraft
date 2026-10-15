@@ -78,16 +78,9 @@ pub fn save(replay: &Replay, path: &Path) -> Result<(), String> {
     replay.save(path).map_err(|e| e.to_string())
 }
 
-/// The replay files in `dir`, oldest first.
+/// The replay files in `dir`, oldest first (none if there is no folder).
 fn files(dir: &Path) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
-        .collect();
-    found.sort();
-    found
+    gc_replay::files_in(dir).unwrap_or_default()
 }
 
 /// Delete all but the newest `keep` replays in `dir`.
@@ -147,10 +140,12 @@ pub fn title(replay: &Replay) -> String {
     sides.join(" v ")
 }
 
-/// "4:12".
-pub fn clock(ticks: u32) -> String {
-    let secs = ticks / TICKS_PER_SECOND;
-    format!("{}:{:02}", secs / 60, secs % 60)
+/// Why this build can't show `replay`, if it can't: unit ids name entries
+/// in the game's unit table, so a table of another size names other
+/// regiments.
+pub fn unplayable(replay: &Replay, unit_types: usize) -> Option<String> {
+    (replay.units.len() != unit_types)
+        .then(|| "Made with other unit data: this build can't show it".into())
 }
 
 /// The saved replays in `dir`, newest first, as the Replays screen lists
@@ -168,25 +163,23 @@ pub fn list(dir: &Path, unit_types: usize, data_hash: u64) -> Vec<ReplayEntry> {
                 .map_or(String::new(), |d| {
                     format!("{} UTC, ", date_time(d.as_secs()))
                 });
-            let name = path
-                .file_stem()
-                .map_or(String::new(), |n| n.to_string_lossy().into_owned());
             match Replay::load(&path) {
                 Ok(r) => {
-                    let mut detail = format!("{saved}{} long", clock(r.ticks));
+                    let mut detail = format!("{saved}{} long", gc_ai::lens::clock(r.ticks));
                     if r.header.data_hash != 0 && r.header.data_hash != data_hash {
                         detail.push_str(", older game data");
                     }
                     ReplayEntry {
                         title: title(&r),
                         detail,
-                        unplayable: (r.units.len() != unit_types)
-                            .then(|| "Made with other unit data: this build can't show it".into()),
+                        unplayable: unplayable(&r, unit_types),
                         path,
                     }
                 }
                 Err(e) => ReplayEntry {
-                    title: name,
+                    title: path
+                        .file_stem()
+                        .map_or(String::new(), |n| n.to_string_lossy().into_owned()),
                     detail: String::new(),
                     unplayable: Some(e.to_string()),
                     path,
