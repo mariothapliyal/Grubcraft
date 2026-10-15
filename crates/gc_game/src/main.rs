@@ -683,8 +683,8 @@ impl App {
             renderer.set_terrain(&Terrain {
                 size: heightmap.size,
                 samples_per_tile: heightmap.samples_per_tile,
-                max_height: heightmap.max_height,
-                water_level: heightmap.water_level,
+                max_height: heightmap.max_height(),
+                water_level: heightmap.water_level(),
                 heights: &heightmap.heights,
             })
         });
@@ -1281,7 +1281,7 @@ impl Running {
             let ground = self
                 .heightmap
                 .height_at(p.x, p.z)
-                .max(self.heightmap.water_level);
+                .max(self.heightmap.water_level());
             if p.y <= ground {
                 // Refine between the last point above ground and this one.
                 let (mut lo, mut hi) = (prev_t, t);
@@ -1291,7 +1291,7 @@ impl Running {
                     let g = self
                         .heightmap
                         .height_at(q.x, q.z)
-                        .max(self.heightmap.water_level);
+                        .max(self.heightmap.water_level());
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
                 let hit = origin + dir * hi;
@@ -2281,8 +2281,8 @@ impl Running {
             self.renderer.set_terrain(&Terrain {
                 size: hm.size,
                 samples_per_tile: hm.samples_per_tile,
-                max_height: hm.max_height,
-                water_level: hm.water_level,
+                max_height: hm.max_height(),
+                water_level: hm.water_level(),
                 heights: &hm.heights,
             })
         });
