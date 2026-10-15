@@ -122,7 +122,7 @@ impl Challenge {
 
     /// Tick the blow of `beat` lands (or would have).
     pub fn blow_tick(&self, beat: u8) -> u32 {
-        self.meet + beat as u32 * BEAT_TICKS + BLOW_TICKS
+        self.meet + u32::from(beat) * BEAT_TICKS + BLOW_TICKS
     }
 
     /// Tick the duel is decided: the killing blow lands, or the last beat is
@@ -130,7 +130,7 @@ impl Challenge {
     pub fn ends(&self) -> u32 {
         match self.winner {
             Some(_) => self.blow_tick(self.beats - 1),
-            None => self.meet + self.beats as u32 * BEAT_TICKS,
+            None => self.meet + u32::from(self.beats) * BEAT_TICKS,
         }
     }
 
@@ -250,8 +250,8 @@ impl Champions {
             Fx::from_raw(px.y.raw().midpoint(py.y.raw())),
         );
         // Ticks for the champion further from the spot to run there.
-        let far = (px - spot).length().raw() as i64;
-        let walk = (far * TICKS_PER_SECOND as i64 / PACE.raw() as i64) as u32;
+        let far = i64::from((px - spot).length().raw());
+        let walk = (far * i64::from(TICKS_PER_SECOND) / i64::from(PACE.raw())) as u32;
         let stats = |i: usize| &units[regs.unit[i] as usize];
         let fighters = [stats(x), stats(y)];
         let (beats, landed, winner) = duel(fighters, &mut self.rng);
@@ -278,7 +278,7 @@ impl Champions {
         stances: &Stances,
         vision: &Vision,
     ) -> Option<(usize, usize)> {
-        let reach = Fx::from_int(CALL_TILES).raw() as i64;
+        let reach = i64::from(Fx::from_int(CALL_TILES).raw());
         let ready = |i: usize| regs.alive[i] && !regs.morale_state[i].broken();
         // Each party's ground, (least x, least y, most x, most y) raw, and
         // the parties with regiments ready.
@@ -301,8 +301,8 @@ impl Champions {
             let (x, y) = (regs.position[i].x.raw(), regs.position[i].y.raw());
             parties[..count].iter().any(|&o| {
                 let g = ground[o as usize];
-                let dx = (g.0 - x).max(x - g.2).max(0) as i64;
-                let dy = (g.1 - y).max(y - g.3).max(0) as i64;
+                let dx = i64::from((g.0 - x).max(x - g.2).max(0));
+                let dy = i64::from((g.1 - y).max(y - g.3).max(0));
                 stances.hostile(regs.owner[i], o) && dx * dx + dy * dy <= reach * reach
             })
         };
@@ -334,7 +334,7 @@ impl Champions {
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
-        h.u8(self.rolled as u8);
+        h.u8(u8::from(self.rolled));
         let (state, inc) = self.rng.raw_state();
         h.u64(state);
         h.u64(inc);
@@ -390,7 +390,7 @@ fn pick(
         if d > near * near {
             continue;
         }
-        let score = stats.melee_attack as i32 + stats.melee_defence as i32;
+        let score = i32::from(stats.melee_attack) + i32::from(stats.melee_defence);
         if best.is_none_or(|(s, bd, _)| score > s || score == s && d < bd) {
             best = Some((score, d, i));
         }
@@ -421,7 +421,7 @@ fn duel(fighters: [&UnitStats; 2], rng: &mut Pcg32) -> (u8, u32, Option<u8>) {
         }
         let (me, them) = (fighters[s], fighters[1 - s]);
         // He stands alone: no formation helps his guard.
-        let chance = hit_percent(me.melee_attack as i32, them.melee_defence as i32);
+        let chance = hit_percent(i32::from(me.melee_attack), i32::from(them.melee_defence));
         if rng.below(100) < chance as u32 {
             landed |= 1 << beat;
             wounds[1 - s] += 1;
@@ -462,7 +462,7 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
     }
     let last = regs.models[l] as usize - 1;
     let hp = regs.hp[l * crate::formation::MAX_MODELS as usize + last];
-    regs.take_damage(l, hp as u32);
+    regs.take_damage(l, u32::from(hp));
     if regs.models[l] == 0 {
         regs.despawn(lost);
     }
@@ -536,7 +536,7 @@ mod tests {
                 (&weak, &strong)
             };
             let winner = duel([first, second], &mut rng).2;
-            let strong_won = winner.map(|w| (w as u64 == seed % 2) as usize);
+            let strong_won = winner.map(|w| usize::from(u64::from(w) == seed % 2));
             wins[strong_won.unwrap_or(2)] += 1;
         }
         // wins[1]: the strong man; wins[0]: the weak; wins[2]: they parted.

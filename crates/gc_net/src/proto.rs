@@ -345,7 +345,7 @@ impl Msg {
             }
             Msg::Bundle { turn, commands } => {
                 w.u8(7);
-                w.var(*turn as u64);
+                w.var(u64::from(*turn));
                 write_player_commands(&mut w, commands);
             }
             Msg::Orders { commands } => {
@@ -354,7 +354,7 @@ impl Msg {
             }
             Msg::Hash { tick, hash } => {
                 w.u8(9);
-                w.var(*tick as u64);
+                w.var(u64::from(*tick));
                 w.u64(*hash);
             }
             Msg::Notice { text } => {
@@ -372,11 +372,11 @@ impl Msg {
             Msg::Wait { who, seconds } => {
                 w.u8(13);
                 w.str(who);
-                w.var(*seconds as u64);
+                w.var(u64::from(*seconds));
             }
             Msg::Desync { tick } => {
                 w.u8(14);
-                w.var(*tick as u64);
+                w.var(u64::from(*tick));
             }
         }
         w.buf

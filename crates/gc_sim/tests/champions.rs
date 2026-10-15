@@ -151,15 +151,15 @@ fn the_winners_side_takes_heart_and_the_loser_dies() {
     for (k, &h) in regiments.iter().enumerate() {
         let r = w.regiments.get(h).unwrap();
         let on_winners_side = !w.hostile(r.owner, w.regiments.get(winner).unwrap().owner);
-        let change = r.morale_points as i32 - before[k].0 as i32;
+        let change = i32::from(r.morale_points) - i32::from(before[k].0);
         if on_winners_side {
-            assert_eq!(change, HEART as i32, "seed {seed}, regiment {k}");
+            assert_eq!(change, i32::from(HEART), "seed {seed}, regiment {k}");
         } else {
             // His regiment also lost him, which lowers its ceiling a little.
-            assert!(change <= -(HEART as i32), "seed {seed}: {change}");
+            assert!(change <= -i32::from(HEART), "seed {seed}: {change}");
         }
         let lost = before[k].1 - r.models;
-        assert_eq!(lost, (h == loser) as u16, "seed {seed}, regiment {k}");
+        assert_eq!(lost, u16::from(h == loser), "seed {seed}, regiment {k}");
     }
 }
 
