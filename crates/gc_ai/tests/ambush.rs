@@ -14,7 +14,9 @@ use gc_ai::army::{Placement, spawn_commands};
 use gc_ai::scripted::ChargeBot;
 use gc_ai::{Difficulty, Doctrine, Mind, MindConfig, Minds, Perception, Role, Terrain};
 use gc_sim::scenario::DRILL_UNITS;
-use gc_sim::{Capacities, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitId, World};
+use gc_sim::{
+    Capacities, Formation, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, UnitId, World,
+};
 use glam::Vec2;
 
 const MAP: u32 = 256;
@@ -32,7 +34,7 @@ const WOOD: u8 = 2;
 
 fn width(unit: UnitId) -> f32 {
     let s = &DRILL_UNITS[unit as usize];
-    s.block_size(s.files, s.models).0.raw() as f32 / 65536.0
+    s.block_size_in(Formation::Line, s.files, s.models).0.raw() as f32 / 65536.0
 }
 
 /// Regiments side by side, two tiles apart, centred on (`x`, `y`).

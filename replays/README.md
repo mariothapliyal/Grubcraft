@@ -1,6 +1,6 @@
 # Golden replays
 
-Recorded battles that the simulation must keep playing exactly as recorded. Each `.gcr` file holds a match's setup (seed, unit table, teams, map, and since format 2 its woods and tall grass) and every command of the battle, plus the simulation's state hash once a second. Playing one back must give the same hashes, on every machine. See [10 · Architecture](../docs/10-architecture.md#testing-strategy) and the `gc_replay` crate.
+Recorded battles that the simulation must keep playing exactly as recorded. Each `.gcr` file holds a match's setup (seed, unit table, teams, map, and since format 3 its woods and tall grass) and every command of the battle, plus the simulation's state hash once a second. Playing one back must give the same hashes, on every machine. See [10 · Architecture](../docs/10-architecture.md#testing-strategy) and the `gc_replay` crate.
 
 | Replay | What it is |
 |---|---|

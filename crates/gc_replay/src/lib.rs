@@ -35,11 +35,11 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 1, which is format 2 without the
+/// with [`Error::Format`], except format 2, which is format 3 without the
 /// cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 2;
+pub const FORMAT: u16 = 3;
 /// The oldest format this build still reads.
-const OLDEST_FORMAT: u16 = 1;
+const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
 pub const EXTENSION: &str = "gcr";
 /// State hashes are kept every this many ticks (one second of game time).
@@ -319,7 +319,7 @@ impl Replay {
             heights.push(prev);
         }
         let water_level = r.var_as()?;
-        let cover = if format >= 2 {
+        let cover = if format >= 3 {
             r.bytes()?.to_vec()
         } else {
             Vec::new()
@@ -447,10 +447,11 @@ impl Recorder {
 mod tests {
     use super::*;
     use gc_sim::scenario::{DRILL_UNITS, Drill, ribs_map};
-    use gc_sim::{Command, TICKS_PER_SECOND};
+    use gc_sim::{Command, Formation, Mass, TICKS_PER_SECOND};
 
     /// A minute of the scripted drill on the ridged map, with sandbox
-    /// tuning and removal, so every kind of command is recorded.
+    /// tuning, a formation change and removal, so every kind of command is
+    /// recorded.
     fn record() -> Replay {
         let nav = ribs_map(64);
         let heights: Vec<u16> = (0..64u32 * 64).map(|i| (i * 37 % 900) as u16).collect();
@@ -486,10 +487,23 @@ mod tests {
                         unit: 1,
                         stats: UnitStats {
                             melee_attack: 70,
+                            mass: Mass::Heavy,
+                            reach: true,
+                            shield: true,
                             ..DRILL_UNITS[1]
                         },
                     },
                 }),
+                350 => {
+                    let regiment = world.regiments.iter().find(|r| r.owner == 0).unwrap();
+                    commands.push(PlayerCommand {
+                        player: 0,
+                        command: Command::SetFormation {
+                            regiment: regiment.handle,
+                            formation: Formation::Tight,
+                        },
+                    });
+                }
                 400 => {
                     let regiment = world.regiments.iter().next().unwrap().handle;
                     commands.push(PlayerCommand {
