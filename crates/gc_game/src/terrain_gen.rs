@@ -218,8 +218,14 @@ impl Heightmap {
     pub fn cover(&self) -> Vec<u8> {
         let (heights, water) = self.sim_ground();
         let n = ((self.size - 1) / self.samples_per_tile) as i64;
-        let at = |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
-        let starts = [(n / 4, n / 4), (3 * n / 4, n / 4), (n / 4, 3 * n / 4), (3 * n / 4, 3 * n / 4)];
+        let at =
+            |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
+        let starts = [
+            (n / 4, n / 4),
+            (3 * n / 4, n / 4),
+            (n / 4, 3 * n / 4),
+            (3 * n / 4, 3 * n / 4),
+        ];
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
             for x in 0..n {

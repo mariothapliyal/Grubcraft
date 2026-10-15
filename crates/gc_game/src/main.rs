@@ -717,6 +717,7 @@ impl App {
                 &gc_sim::Ground {
                     heights: &heights,
                     water_level,
+                    cover: &cover,
                 },
             ),
         });
@@ -1984,6 +1985,7 @@ impl Running {
                 &gc_sim::Ground {
                     heights: &heights,
                     water_level,
+                    cover: &cover,
                 },
             );
             let lan = self.menu.net();

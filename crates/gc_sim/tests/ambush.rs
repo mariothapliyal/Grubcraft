@@ -3,9 +3,7 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, Drill, NORTH};
-use gc_sim::vision::{
-    AMBUSH_RIPPLE, AMBUSH_SHOCK, LINGER_TICKS, SURPRISE_TICKS, VOLLEY_SHOCK,
-};
+use gc_sim::vision::{AMBUSH_RIPPLE, AMBUSH_SHOCK, LINGER_TICKS, SURPRISE_TICKS, VOLLEY_SHOCK};
 use gc_sim::{
     Capacities, Command, Cover, Ground, MatchSetup, MoraleState, PlayerCommand, RegimentHandle,
     UnitStats, World,
@@ -83,7 +81,9 @@ fn run(w: &mut World, ticks: u32) {
 }
 
 fn order(w: &mut World, player: u8, command: Command) -> bool {
-    w.tick(&[PlayerCommand { player, command }]).commands_applied == 1
+    w.tick(&[PlayerCommand { player, command }])
+        .commands_applied
+        == 1
 }
 
 fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: Fx, y: Fx) {
@@ -221,7 +221,12 @@ fn half_in_a_wood_is_seen() {
 #[test]
 fn allies_share_what_they_see() {
     // Parties 0 and 2 are allies against party 1.
-    let mut w = world_with(1, &DRILL_UNITS, &patch(Cover::Wood, 10, 30, 10, 30), &[0, 1, 0]);
+    let mut w = world_with(
+        1,
+        &DRILL_UNITS,
+        &patch(Cover::Wood, 10, 30, 10, 30),
+        &[0, 1, 0],
+    );
     let hid = spawn(&mut w, 1, SPEARS, tile(20), tile(20), SOUTH);
     let _far = spawn(&mut w, 0, SPEARS, tile(50), tile(55), NORTH);
     let near = spawn(&mut w, 2, SPEARS, tile(20), tile(50), NORTH);
@@ -252,7 +257,10 @@ fn attack_orders_need_a_target_the_side_can_see() {
     let open = spawn(&mut w, 1, SPEARS, tile(45), tile(20), SOUTH);
     let me = spawn(&mut w, 0, CAVALRY, tile(30), tile(50), NORTH);
     run(&mut w, 2);
-    assert!(!attack(&mut w, 0, me, hid), "attacked a regiment it can't see");
+    assert!(
+        !attack(&mut w, 0, me, hid),
+        "attacked a regiment it can't see"
+    );
     assert!(attack(&mut w, 0, me, open));
 }
 
@@ -392,7 +400,9 @@ fn an_ambush_breaks_a_line_that_would_have_held() {
     };
     let (ambushed, ambushed_when) = broke(true);
     let (open, open_when) = broke(false);
-    println!("ambushed: {ambushed} broke, ticks {ambushed_when}; open: {open} broke, ticks {open_when}");
+    println!(
+        "ambushed: {ambushed} broke, ticks {ambushed_when}; open: {open} broke, ticks {open_when}"
+    );
     assert!(
         ambushed > open || (ambushed == open && ambushed_when * 10 < open_when * 9),
         "ambushed {ambushed} ({ambushed_when}) vs open {open} ({open_when})"
