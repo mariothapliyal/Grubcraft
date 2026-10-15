@@ -215,9 +215,11 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
-    /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`).
+    /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
+    /// or join code), with `--password` if it has one.
     host: bool,
     join: Option<String>,
+    password: String,
     render: RendererOptions,
 }
 
@@ -232,6 +234,7 @@ fn parse_args() -> Options {
         battle: None,
         host: false,
         join: None,
+        password: String::new(),
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -261,6 +264,10 @@ fn parse_args() -> Options {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
             "--join" => {
                 opts.join = Some(value);
+                true
+            }
+            "--password" => {
+                opts.password = value;
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
@@ -845,11 +852,12 @@ impl App {
             if opts.host || opts.join.is_some() {
                 let me = r.menu.profile();
                 let result = match &opts.join {
-                    Some(addr) => r.menu.net().join(&me, addr),
-                    None => r
-                        .menu
-                        .net()
-                        .host(&me, gc_ui::lobby::LobbySettings::default()),
+                    Some(addr) => r.menu.net().join(&me, addr, &opts.password),
+                    None => r.menu.net().host(
+                        &me,
+                        gc_ui::lobby::LobbySettings::default(),
+                        &opts.password,
+                    ),
                 };
                 match result {
                     Ok(()) => r.menu.show(Screen::Lobby),
