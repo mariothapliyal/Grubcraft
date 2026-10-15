@@ -14,6 +14,7 @@
 //! simulation takes a soldier, his man deals the killing blow. None of this
 //! feeds back into the simulation, so it may use floats and frame time.
 
+use gc_sim::combat::{CHARGE_TICKS, hit_percent};
 use gc_sim::formation::MAX_MODELS;
 use gc_sim::{Mass, RegimentHandle};
 use glam::Vec2;
@@ -82,9 +83,10 @@ const CRUSH_PER_CLASS: f32 = 0.25;
 /// staggers this often.
 const KNOCKDOWN_PER_CLASS: f32 = 0.4;
 const CHARGE_STAGGER: f32 = 0.5;
-/// Soldiers who pair off this soon after their regiment's charge hits home,
-/// in seconds, deliver its impact.
-const IMPACT_SECONDS: f32 = 0.6;
+/// Soldiers who pair off while their regiment has more than this many ticks
+/// of charge bonus left (within 0.6 s of the charge hitting home) deliver
+/// its impact.
+const IMPACT_TICKS: u16 = CHARGE_TICKS - 12;
 /// How hard a blow shoves its man back, in tiles per second.
 const STAGGER_SHOVE: f32 = 0.8;
 const DOWN_SHOVE: f32 = 2.4;
@@ -121,8 +123,8 @@ pub struct Block {
     pub engaged: bool,
     /// Running away: the ranks come apart.
     pub routing: bool,
-    /// Ticks of charge bonus left (`RegimentView::charge`); a rise is a
-    /// charge hitting home.
+    /// Ticks of charge bonus left (`RegimentView::charge`), counting down
+    /// from `CHARGE_TICKS` as a charge hits home.
     pub charge: u16,
     pub fighter: Fighter,
 }
@@ -131,9 +133,11 @@ pub struct Block {
 /// decides what their blows do on screen.
 #[derive(Clone, Copy, Debug)]
 pub struct Fighter {
-    /// Melee attack, and melee defence facing the front in its formation.
+    /// Melee attack, and melee defence in its formation against blows on
+    /// its front and on its flanks or rear.
     pub attack: i32,
     pub defence: i32,
+    pub flank_defence: i32,
     /// Percent of the usual share of blows that land: fewer for a wavering
     /// regiment or one without room for its weapons.
     pub sharpness: u32,
@@ -148,6 +152,7 @@ impl Default for Fighter {
         Fighter {
             attack: 0,
             defence: 0,
+            flank_defence: 0,
             sharpness: 100,
             shield: false,
             mass: Mass::Medium,
@@ -157,11 +162,10 @@ impl Default for Fighter {
 }
 
 impl Fighter {
-    /// The chance (0 to 1) a blow gets through `them`'s guard: the
+    /// The chance (0 to 1) a blow gets through a guard of `defence`: the
     /// simulation's chance to hit.
-    fn lands(&self, them: &Fighter) -> f32 {
-        gc_sim::combat::hit_percent(self.attack, them.defence) as f32 * self.sharpness as f32
-            / 10_000.0
+    fn lands(&self, defence: i32) -> f32 {
+        hit_percent(self.attack, defence) as f32 * self.sharpness as f32 / 10_000.0
     }
 
     /// Classes of mass a heavy man has over `them`; with `blade`, a big
@@ -269,10 +273,11 @@ pub struct Puppets {
     engaged: Vec<bool>,
     files: Vec<u16>,
     fighter: Vec<Fighter>,
-    /// Each regiment's charge bonus ticks last frame, and when its charge
-    /// last hit home.
     charge: Vec<u16>,
-    impact: Vec<f32>,
+    /// Each regiment's facing, and half its width and depth, to tell which
+    /// side a blow falls on.
+    heading: Vec<Vec2>,
+    half: Vec<Vec2>,
     /// When each regiment was last updated, to skip ones that are gone.
     seen: Vec<f32>,
     pos: Vec<Vec2>,
@@ -281,8 +286,10 @@ pub struct Puppets {
     /// Each soldier's duel partner, a puppet index, or `NONE`.
     partner: Vec<u32>,
     /// What each soldier last suffered or dealt outside his round of swings,
-    /// and when.
+    /// and when; and until when a blow has him reeling, which costs him any
+    /// swing begun before then.
     act: Vec<(Act, f32)>,
+    reeling: Vec<f32>,
     /// Scratch for pairing: regiments in melee, and the enemies near one.
     fighting: Vec<u32>,
     near: Vec<u32>,
@@ -307,13 +314,15 @@ impl Puppets {
             files: vec![1; regiment_capacity],
             fighter: vec![Fighter::default(); regiment_capacity],
             charge: vec![0; regiment_capacity],
-            impact: vec![f32::NEG_INFINITY; regiment_capacity],
+            heading: vec![Vec2::NEG_Y; regiment_capacity],
+            half: vec![Vec2::ONE; regiment_capacity],
             seen: vec![f32::NEG_INFINITY; regiment_capacity],
             pos: vec![Vec2::ZERO; regiment_capacity * SLOTS],
             vel: vec![Vec2::ZERO; regiment_capacity * SLOTS],
             facing: vec![Vec2::NEG_Y; regiment_capacity * SLOTS],
             partner: vec![NONE; regiment_capacity * SLOTS],
             act: vec![(Act::None, 0.0); regiment_capacity * SLOTS],
+            reeling: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             fighting: Vec::with_capacity(regiment_capacity),
             near: Vec::with_capacity(regiment_capacity),
             corpses: Vec::with_capacity(corpse_capacity.max(1)),
@@ -362,7 +371,7 @@ impl Puppets {
                         <= DUEL_REGIMENT_RANGE * DUEL_REGIMENT_RANGE
             }));
             let front = self.front(a);
-            let impact = self.time - self.impact[a] < IMPACT_SECONDS;
+            let impact = self.charge[a] > IMPACT_TICKS;
             for k in 0..SLOTS {
                 let i = a * SLOTS + k;
                 if k >= front || near.is_empty() {
@@ -415,10 +424,8 @@ impl Puppets {
     fn swing(&self, i: usize, beat: f32) -> Option<f32> {
         let gone = beat.fract();
         let began = self.time - gone / DUEL_RATE;
-        let (act, at) = self.act[i];
-        let reeled = act.reels() && at + act.seconds() > began;
         let at = gone / SWING_ROUND;
-        (at < 1.0 && !reeled).then_some(at)
+        (at < 1.0 && self.reeling[i] <= began).then_some(at)
     }
 
     /// What puppet `i` is doing outside his round of swings, and how far
@@ -450,7 +457,12 @@ impl Puppets {
         }
         let blow = blow as i32 as u32;
         let (me, them) = (self.fighter[i / SLOTS], self.fighter[j / SLOTS]);
-        let act = if roll(i, j, blow, 1) < me.lands(&them) {
+        let defence = if self.on_front(j / SLOTS, self.centre[i / SLOTS]) {
+            them.defence
+        } else {
+            them.flank_defence
+        };
+        let act = if roll(i, j, blow, 1) < me.lands(defence) {
             Act::Stagger
         } else if roll(i, j, blow, 2) < CRUSH_PER_CLASS * me.outweighs(&them, true) {
             Act::Down
@@ -460,6 +472,15 @@ impl Puppets {
             Act::Parry
         };
         self.suffer(j, i, act);
+    }
+
+    /// Whether `from` lies off regiment `r`'s front rather than its flanks
+    /// or rear, by the simulation's rule: the side of the block facing it.
+    fn on_front(&self, r: usize, from: Vec2) -> bool {
+        let d = from - self.centre[r];
+        let along = d.dot(self.heading[r]);
+        let across = d.perp_dot(self.heading[r]);
+        along >= 0.0 && along * self.half[r].x >= across.abs() * self.half[r].y
     }
 
     /// Puppet `i`'s charge hits home on `j`: a heavier charger may knock him
@@ -486,6 +507,9 @@ impl Puppets {
             return;
         }
         self.act[j] = (act, self.time);
+        if act.reels() {
+            self.reeling[j] = self.time + act.seconds();
+        }
         let shove = match act {
             Act::Stagger => STAGGER_SHOVE,
             Act::Down => DOWN_SHOVE,
@@ -525,12 +549,9 @@ impl Puppets {
         if fresh {
             self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
             self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
-            self.impact[r] = f32::NEG_INFINITY;
+            self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
         } else {
             self.fall(block, owner, models);
-            if block.charge > self.charge[r] {
-                self.impact[r] = self.time;
-            }
         }
         self.charge[r] = block.charge;
         self.fighter[r] = block.fighter;
@@ -544,11 +565,17 @@ impl Puppets {
         self.centre[r] = block.centre;
         self.player[r] = owner;
         self.engaged[r] = block.engaged;
-        self.files[r] = block.files.clamp(1, block.models.max(1));
+        let files = block.files.clamp(1, block.models.max(1));
+        self.files[r] = files;
         self.seen[r] = self.time;
+        self.heading[r] = block.facing;
+        let ranks = block.models.div_ceil(files).max(1);
+        self.half[r] = Vec2::new(
+            files as f32 * block.file_spacing,
+            ranks as f32 * block.rank_spacing,
+        ) / 2.0;
         let right = Vec2::new(-block.facing.y, block.facing.x);
         let back = -block.facing;
-        let files = block.files.clamp(1, block.models.max(1));
         let (spread, scatter) = if block.routing {
             (1.0 + ROUT_SPREAD, SLOT_JITTER + ROUT_JITTER)
         } else {
@@ -604,9 +631,10 @@ impl Puppets {
                 self.vel[i] = (v + push.clamp_length_max(accel) * dt).clamp_length_max(top);
                 self.pos[i] += self.vel[i] * dt;
                 // Face your man, or where you walk when it's more than a
-                // shuffle, else the regiment's way.
+                // shuffle, else the regiment's way; lie still when down.
                 let walking = self.vel[i].length() > 0.6 && dist > 0.4;
                 let look = match foe {
+                    _ if down => self.facing[i],
                     Some(f) if !walking => (f - self.pos[i]).normalize_or(block.facing),
                     _ if walking => self.vel[i].normalize_or(block.facing),
                     _ => block.facing,
@@ -681,36 +709,38 @@ impl Puppets {
                 gone + 1
             };
             let roll = unit_hash(block.handle, gone, self.time.to_bits());
-            let mut dueling = [0; SLOTS];
-            let mut n = 0;
-            for k in (0..pool).filter(|k| self.partner[base + k] != NONE) {
-                dueling[n] = k;
-                n += 1;
-            }
-            let pick = if n > 0 {
-                dueling[(roll * n as f32) as usize]
-            } else {
-                ((roll * pool as f32) as usize).min(gone)
-            };
+            // Best a man and his partner fighting each other, then any man
+            // with a partner.
+            let partner = |k: usize| self.partner[base + k] as usize;
+            let pick = nth_of(pool, roll, |k| {
+                partner(k) != NONE as usize && self.partner[partner(k)] as usize == base + k
+            })
+            .or_else(|| nth_of(pool, roll, |k| partner(k) != NONE as usize))
+            .unwrap_or(((roll * pool as f32) as usize).min(gone));
             let (victim, last) = (base + pick, base + gone);
-            let mut facing = self.facing[victim];
             let killer = self.partner[victim] as usize;
-            let fell = if killer == NONE as usize {
-                self.time
+            let blow_in = if killer == NONE as usize {
+                None
             } else {
                 match self.acting(killer) {
                     // His man is reeling or down and can't strike: he just
                     // drops.
-                    Some((act, _)) if act.reels() => self.time,
+                    Some((act, _)) if act.reels() => None,
                     // His man is already swinging a killing blow: he falls to
                     // it too.
-                    Some((Act::Kill, f)) => self.time + (BLOW_AT - f).max(0.0) * SWING_SECONDS,
+                    Some((Act::Kill, f)) => Some((BLOW_AT - f).max(0.0) * SWING_SECONDS),
                     _ => {
                         self.act[killer] = (Act::Kill, self.time);
-                        facing = (self.pos[killer] - self.pos[victim]).normalize_or(facing);
-                        self.time + BLOW_AT * SWING_SECONDS
+                        Some(BLOW_AT * SWING_SECONDS)
                     }
                 }
+            };
+            let (fell, facing) = match blow_in {
+                Some(wait) => (
+                    self.time + wait,
+                    (self.pos[killer] - self.pos[victim]).normalize_or(self.facing[victim]),
+                ),
+                None => (self.time, self.facing[victim]),
             };
             let corpse = (self.pos[victim], facing, owner, block.unit, fell);
             if self.corpses.len() < self.corpse_capacity {
@@ -724,6 +754,8 @@ impl Puppets {
             self.facing[victim] = self.facing[last];
             self.act[victim] = self.act[last];
             self.act[last] = (Act::None, 0.0);
+            self.reeling[victim] = self.reeling[last];
+            self.reeling[last] = f32::NEG_INFINITY;
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -747,6 +779,15 @@ impl Puppets {
                 })
             })
     }
+}
+
+/// The index below `pool` that `roll` (0 to 1) picks among those `keep`
+/// accepts, if any.
+fn nth_of(pool: usize, roll: f32, keep: impl Fn(usize) -> bool) -> Option<usize> {
+    let n = (0..pool).filter(|&k| keep(k)).count();
+    (0..pool)
+        .filter(|&k| keep(k))
+        .nth((roll * n as f32) as usize)
 }
 
 /// Local slot position, x to the right and y toward the rear, matching
@@ -1035,8 +1076,14 @@ mod tests {
     /// What `a`'s blows did to `b`'s front rank over `seconds` of melee: how
     /// many times each act began.
     fn blows(a: Fighter, b: Fighter, seconds: f32) -> [u32; 6] {
+        blows_facing(a, b, Vec2::Y, seconds)
+    }
+
+    /// The same with `b` facing `facing`.
+    fn blows_facing(a: Fighter, b: Fighter, facing: Vec2, seconds: f32) -> [u32; 6] {
         let mut p = Puppets::new(2, 64);
-        let (x, y) = melee_pair(a, b);
+        let (x, mut y) = melee_pair(a, b);
+        y.facing = facing;
         let mut seen = [(Act::None, 0.0); 4];
         let mut count = [0; 6];
         for _ in 0..(seconds / FRAME) as usize {
@@ -1098,6 +1145,20 @@ mod tests {
     }
 
     #[test]
+    fn blows_on_a_flank_meet_its_flank_defence() {
+        // A shield wall: 60 to the front, nothing off it.
+        let wall = Fighter {
+            flank_defence: 0,
+            ..fighter(0, 60)
+        };
+        let share = |c: [u32; 6]| c[Act::Stagger as usize] as f32 / c.iter().sum::<u32>() as f32;
+        let front = share(blows_facing(fighter(10, 0), wall, Vec2::Y, 60.0));
+        let flank = share(blows_facing(fighter(10, 0), wall, Vec2::X, 60.0));
+        assert!(front < 0.2, "{front}");
+        assert!(flank > 0.4, "{flank}");
+    }
+
+    #[test]
     fn heavy_blades_crush_through_a_light_mans_guard() {
         let heavy = Fighter {
             mass: Mass::Heavy,
@@ -1134,11 +1195,20 @@ mod tests {
         let beat = Puppets::beat(0, j, p.time);
         let swing = p.swing(0, beat).expect("swinging");
         assert!(swing < 0.2, "{swing}");
-        // Hit just before it began, he reels through it.
-        p.act[0] = (Act::Stagger, p.time - 0.1);
+        // Staggered just before it began, he reels through it...
+        let now = p.time;
+        p.time = now - 0.1;
+        p.suffer(0, j, Act::Stagger);
+        p.time = now;
         assert_eq!(p.swing(0, beat), None);
-        // A parry doesn't cost him the swing.
-        p.act[0] = (Act::Parry, p.time - 0.1);
+        // ...even once the stagger is over and a later blow is parried.
+        p.time = now + 0.55;
+        p.suffer(0, j, Act::Parry);
+        assert_eq!(p.act[0].0, Act::Parry);
+        assert_eq!(p.swing(0, Puppets::beat(0, j, p.time)), None);
+        // A parry alone doesn't cost him the swing.
+        p.time = now;
+        p.reeling[0] = f32::NEG_INFINITY;
         assert!(p.swing(0, beat).is_some());
     }
 
@@ -1157,6 +1227,9 @@ mod tests {
         // ...dealt by one of the front rank facing him, who swings it now.
         let killers: Vec<usize> = (0..4).filter(|&k| p.act[k].0 == Act::Kill).collect();
         assert_eq!(killers.len(), 1, "{:?}", &p.act[..4]);
+        // He falls facing his killer.
+        let to = (p.pos[killers[0]] - corpse.pos).normalize();
+        assert!(corpse.facing.dot(to) > 0.99, "{:?} {to}", corpse.facing);
         let mut fights = Vec::new();
         p.advance(FRAME);
         p.update(&a, 0, FRAME, |s| fights.push(s.fight));

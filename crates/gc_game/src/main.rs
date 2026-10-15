@@ -489,6 +489,7 @@ fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
         attack: stats.melee_attack as i32,
         defence: stats.melee_defence_in(r.formation, true),
+        flank_defence: stats.melee_defence_in(r.formation, false),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
             * stats.weapon_room_percent(r.formation)
             / 100) as u32,

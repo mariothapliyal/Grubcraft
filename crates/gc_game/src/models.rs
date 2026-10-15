@@ -65,7 +65,8 @@ const BLOCK_DEPTH: f32 = 0.25;
 const DOWN_FALL: f32 = 0.25;
 const DOWN_RISE: f32 = 0.35;
 
-/// Per model, the clip for each action, looked up once.
+/// Per model, the clip for each action (in the order of `ACTIONS`, which is
+/// the enum's), looked up once.
 pub struct Clips {
     by_model: Vec<[Option<ClipRecord>; ACTIONS.len()]>,
     die: Vec<Option<ClipRecord>>,
@@ -102,8 +103,7 @@ impl Clips {
     }
 
     fn clip(&self, model: usize, action: Action) -> Option<ClipRecord> {
-        let slot = ACTIONS.iter().position(|&a| a == action)?;
-        self.by_model.get(model)?[slot]
+        self.by_model.get(model)?[action as usize]
     }
 
     /// The pose for `action` `seconds` into a looping clip.
@@ -206,6 +206,13 @@ mod tests {
                 "no model for {}",
                 u.name()
             );
+        }
+    }
+
+    #[test]
+    fn actions_are_listed_in_order() {
+        for (k, a) in ACTIONS.into_iter().enumerate() {
+            assert_eq!(a as usize, k, "{a:?}");
         }
     }
 
