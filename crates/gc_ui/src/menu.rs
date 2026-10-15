@@ -54,6 +54,8 @@ pub struct Menu<N: Network = LocalNetwork> {
     in_match: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
+    /// The Army screen's copy of your army while it is open.
+    army_draft: Option<Vec<u16>>,
 }
 
 /// Vertical flow of equally wide rows.
@@ -103,6 +105,7 @@ impl<N: Network> Menu<N> {
             message: None,
             in_match: false,
             roster: Vec::new(),
+            army_draft: None,
         }
     }
 
@@ -664,19 +667,24 @@ impl<N: Network> Menu<N> {
             me.faction.difficulty()
         );
         let field_battle = lobby.settings.mode == GameMode::FieldBattle;
+        let mut hint_color = theme::MUTED;
         if field_battle {
             let budget = lobby.settings.budget.points();
+            let spent = army_points(&self.roster, &me.army);
             hint += &if me.army.is_empty() {
                 "   Army: picked for you (Army to build your own).".to_string()
-            } else {
+            } else if spent > budget {
+                hint_color = theme::BAD;
                 format!(
-                    "   Army: {}.",
-                    army_summary(me.army.len(), army_points(&self.roster, &me.army), budget)
+                    "   Army over budget: {}.",
+                    army_summary(me.army.len(), spent, budget)
                 )
+            } else {
+                format!("   Army: {}.", army_summary(me.army.len(), spent, budget))
             };
         }
         let footer_y = rows_top + 4 * (row_h + sp(8)) + sp(4);
-        ui.label(panel.x + 24, footer_y, 1, theme::MUTED, &hint);
+        ui.label(panel.x + 24, footer_y, 1, hint_color, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
         if let Some(why) = &blocker {
@@ -742,8 +750,16 @@ impl<N: Network> Menu<N> {
             self.go(ui, Screen::Play);
             return MenuAction::None;
         };
+        if lobby.settings.mode != GameMode::FieldBattle {
+            self.go(ui, Screen::Lobby);
+            return MenuAction::None;
+        }
         let me = &lobby.slots[lobby.local_slot];
         let budget = lobby.settings.budget.points();
+        // Edits go from the army as this screen last left it, not as the
+        // lobby shows it: a joiner's lobby only catches up when the host
+        // echoes the edit, and a second click before then would be lost.
+        let mut army = self.army_draft.take().unwrap_or_else(|| me.army.clone());
         let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 640, sp(560));
@@ -762,8 +778,7 @@ impl<N: Network> Menu<N> {
         );
 
         // One row per regiment type of your faction: cost, and how many.
-        let spent = army_points(&self.roster, &me.army);
-        let mut army = me.army.clone();
+        let spent = army_points(&self.roster, &army);
         let mut changed = false;
         let row_h = sp(44);
         let mut y = panel.y + sp(64);
@@ -835,7 +850,7 @@ impl<N: Network> Menu<N> {
                     summary_y + 22,
                     1,
                     theme::BAD,
-                    "Over budget: the last regiments will stay at home.",
+                    "Over budget: the regiments lowest on the list will stay at home.",
                 );
             }
         }
@@ -857,10 +872,13 @@ impl<N: Network> Menu<N> {
             true,
         );
         if changed {
-            self.net.edit_slot(lobby.local_slot, SlotEdit::Army(army));
+            self.net
+                .edit_slot(lobby.local_slot, SlotEdit::Army(army.clone()));
         }
         if done || escape {
             self.go(ui, Screen::Lobby);
+        } else {
+            self.army_draft = Some(army);
         }
         MenuAction::None
     }

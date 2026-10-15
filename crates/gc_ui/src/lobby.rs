@@ -485,6 +485,8 @@ pub fn apply_edit(lobby: &mut LobbyState, editor: usize, host: bool, slot: usize
                 s.name = format!("AI {}", slot + 1);
                 s.ready = true;
                 s.version = version;
+                // An AI picks its own army.
+                s.army.clear();
             }
             SlotKind::Open => lobby.slots[slot] = Slot::open(slot),
             SlotKind::Human => {}
@@ -676,6 +678,10 @@ mod tests {
         let mut lobby = n.lobby().unwrap().clone();
         apply_edit(&mut lobby, 1, false, 0, SlotEdit::Army(vec![]));
         assert_eq!(lobby.slots[0].army.len(), MAX_ARMY);
+        // A slot handed to an AI starts with no army: it picks its own.
+        n.edit_slot(1, SlotEdit::Army(vec![1]));
+        n.edit_slot(1, SlotEdit::Kind(SlotKind::Ai));
+        assert!(n.lobby().unwrap().slots[1].army.is_empty());
     }
 
     #[test]

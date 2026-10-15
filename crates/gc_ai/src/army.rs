@@ -117,15 +117,15 @@ pub fn pick_army_within(
             .map(|&u| points.get(u as usize).copied().unwrap_or(u32::MAX))
             .fold(0, u32::saturating_add)
     };
-    (0..=most)
-        .rev()
+    (1..=most)
         .map(|n| pick_army(units, factions, faction, preset, n))
-        .find(|army| cost(army) <= budget)
+        .take_while(|army| cost(army) <= budget)
+        .last()
         .unwrap_or_default()
 }
 
 /// The part of a player's own `army` that can take the field: their
-/// faction's regiments, in the order they were picked, up to `budget`
+/// faction's regiments, in list order, up to `budget`
 /// points and `most` regiments. Anything else is left at home, so a
 /// changed budget or a tampered list can't field more than it should.
 pub fn within_budget(
