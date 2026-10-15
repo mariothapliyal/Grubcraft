@@ -307,7 +307,7 @@ impl Combat {
             ],
             radius: vec![Fx::ZERO; regiment_capacity],
             max_radius: Fx::ZERO,
-            max_step: Fx::ZERO,
+            max_step: Fx::from_raw(1),
             holder: vec![false; BUCKETS * OWNER_SLOTS],
             big_holder: false,
             seen: vec![Cell::new(0); regiment_capacity],
@@ -614,26 +614,28 @@ impl Combat {
         let patient = regs.held[i] < PATIENCE;
         let me = Block::at(regs, units, i, next);
         let reach = me.radius();
-        // A friend `j` counts only if its centre is within `reach +
-        // radius[j] + 1 + LOOK_AHEAD` of `next` (the circle test below). It
-        // started the tick at most `max_step` from where it is now, and
-        // holders are filed in every cell their circle touched then, so one
-        // of those cells lies within `holders` of `next`. The grid files
-        // everyone else with REACH more.
-        let holders = reach + Fx::ONE + LOOK_AHEAD + self.max_step;
+        // How far the search reached before it was narrowed. The holder
+        // check and the centre filter keep it, so the result is unchanged:
+        // friends that start holding during this tick aren't in the holder
+        // grid, and are only found because a marked holder is near them.
+        let wide = reach + self.max_radius + LOOK_AHEAD;
         let owner = regs.owner[i];
-        if !self.holder_near(next, holders, stances.friend_slots(owner, OWNER_SLOTS)) {
+        if !self.holder_near(next, wide, stances.friend_slots(owner, OWNER_SLOTS)) {
             return Err(LOOK_AHEAD);
         }
+        // A friend `j` counts only if its centre is within `reach +
+        // radius[j] + 1 + LOOK_AHEAD` of `next` (the circle test below). It
+        // started the tick at most `max_step` from where it is now, and is
+        // filed in every cell its circle plus REACH touched then, so one of
+        // those cells lies within `cells` of `next`.
+        let cells = reach + Fx::ONE + LOOK_AHEAD + self.max_step - REACH;
         let mut found: Option<usize> = None;
         let mut gap = LOOK_AHEAD;
         self.each_near_in(
             &placement!(regs, stances),
             next,
-            holders - REACH,
-            // The range the search had before it was narrowed, kept so
-            // `gap` (how long `i` marches before looking again) is unchanged.
-            reach + self.max_radius + LOOK_AHEAD,
+            cells,
+            wide,
             Whose::Friends(owner),
             |j| {
                 if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
