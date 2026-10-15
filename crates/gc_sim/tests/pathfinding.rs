@@ -323,3 +323,28 @@ fn same_map_same_hashes() {
     };
     assert_eq!(run(), run());
 }
+
+#[test]
+fn routes_across_open_country_keep_their_line_through_portals() {
+    // A rock just short of the goal hides it, so the route goes through the
+    // portal graph; on the open ground before it, the block should keep to
+    // its own line rather than funnel to wherever the portals sit (their
+    // middles are 8 tiles apart, so a neighbour could be marched into).
+    let rock = |x: i32, y: i32| (106..114).contains(&x) && (196..202).contains(&y);
+    let nav = map(128, rock);
+    let mut w = world_on(128, &nav, &DRILL_UNITS);
+    let r = spawn(&mut w, 0, SPEARS, 56, 20, SOUTH);
+    move_to(&mut w, 0, r, 56, 106);
+    let route = w.route(r).to_vec();
+    assert!(
+        route.len() >= 2,
+        "straight line expected to be blocked: {route:?}"
+    );
+    for p in route.iter().filter(|p| p.y < Fx::from_int(94)) {
+        assert!(
+            (p.x - Fx::from_int(56)).abs() <= Fx::from_ratio(3, 2),
+            "waypoint off the line: {route:?}"
+        );
+    }
+    walk(&mut w, &nav, 128, r, 20 * 200);
+}

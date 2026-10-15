@@ -21,10 +21,10 @@ const GOLDEN: [(u32, u64); 4] = [
 
 /// The same drill on the ridged test map, where most orders need routes.
 const GOLDEN_RIBS: [(u32, u64); 4] = [
-    (600, 0x2e00_a1e7_4d84_9ba3),
-    (1200, 0x0eea_e8a6_a076_5890),
-    (1800, 0x195e_ff2f_7628_7335),
-    (2400, 0x4e7a_8439_34e0_e40c),
+    (600, 0x8117_0314_fccc_3f34),
+    (1200, 0x7d64_f820_9e87_a91e),
+    (1800, 0x7b5b_f0ba_747d_c106),
+    (2400, 0x9eb5_4940_be1c_1b81),
 ];
 
 /// The same drill on terraced, river-cut ground, where high ground and

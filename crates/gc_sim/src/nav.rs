@@ -877,7 +877,85 @@ fn find(
             prev = c;
         }
     }
-    Some(smooth(grid, s, lead, goal_point, truncated, out))
+    let (n, partial) = smooth(grid, s, lead, goal_point, truncated, out);
+    spread_through_portals(grid, s, if lead { 1 } else { 0 }, from, n, out);
+    Some((n, partial))
+}
+
+/// Waypoints at portals sit where the portal is, the middle of its stretch
+/// of sector edge, so regiments marching side by side would all funnel
+/// through the same spot and pile into each other. Slide each waypoint on a
+/// sector edge along it toward where the straight line from the waypoint
+/// before to the route's end crosses it, as far as the lines to its
+/// neighbours stay open (up to [`PORTAL_SPAN`] cells): neighbours keep
+/// their spacing across open country. The first `skip` waypoints and the
+/// last stay put.
+fn spread_through_portals(
+    grid: &Grid,
+    s: &mut Search,
+    skip: usize,
+    from: FxVec2,
+    n: usize,
+    out: &mut [FxVec2],
+) {
+    if n < 2 {
+        return;
+    }
+    let end = out[n - 1];
+    let mut prev = if skip > 0 { out[skip - 1] } else { from };
+    for i in skip..n - 1 {
+        let c = grid.cell_at(out[i]);
+        let (cx, cy) = grid.xy(c);
+        let on_edge = |v: i32| v % SECTOR == 0 || v % SECTOR == SECTOR - 1;
+        // Slide across the direction of the edge: along x on an edge
+        // between sectors above and below, along y on one between sectors
+        // side by side.
+        let along_x = match (on_edge(cx), on_edge(cy)) {
+            (false, true) => true,
+            (true, false) => false,
+            _ => {
+                prev = out[i];
+                continue;
+            }
+        };
+        let (p, e, here) = if along_x {
+            ((prev.y, prev.x), (end.y, end.x), (out[i].y, cx))
+        } else {
+            ((prev.x, prev.y), (end.x, end.y), (out[i].x, cy))
+        };
+        // Where the line from `prev` to `end` crosses the edge, if it does.
+        let (across, run) = ((e.0 - p.0).raw() as i64, (e.1 - p.1).raw() as i64);
+        let to_edge = (here.0 - p.0).raw() as i64;
+        if across == 0 || to_edge.signum() != across.signum() || to_edge.abs() > across.abs() {
+            prev = out[i];
+            continue;
+        }
+        let cross = p.1.raw() as i64 + run * to_edge / across;
+        let target = ((cross * CELLS_PER_TILE as i64) >> 16) as i32;
+        let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
+        let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
+        for shift in [shift, shift / 2, shift / 4] {
+            if shift == 0 {
+                break;
+            }
+            let (x, y) = if along_x {
+                (cx + shift, cy)
+            } else {
+                (cx, cy + shift)
+            };
+            if !grid.inside(x, y) {
+                continue;
+            }
+            let moved = grid.idx(x, y);
+            if grid.line_open(from_cell, moved, &mut s.work)
+                && grid.line_open(moved, to_cell, &mut s.work)
+            {
+                out[i] = grid.centre(moved);
+                break;
+            }
+        }
+        prev = out[i];
+    }
 }
 
 /// Pull the chain of cells tight: keep only the cells where the straight
