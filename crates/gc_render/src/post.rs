@@ -7,10 +7,17 @@ const BLOOM_STRENGTH: f64 = 0.35;
 /// Levels in the glow chain, at most; each is half the size of the last,
 /// the first half the frame's.
 const BLOOM_LEVELS: u32 = 6;
+/// The tone curve's exposure: `tonemap(c) = 1 - exp(-c × EXPOSURE)`.
+const EXPOSURE: f64 = 1.25;
+
+/// The HDR value the tone curve maps to `c`.
+pub(crate) fn untonemap(c: f64) -> f32 {
+    (-(1.0 - c.min(0.999)).ln() / EXPOSURE) as f32
+}
 
 pub(crate) struct PostGpu {
     /// The format of the HDR image and the glow chain.
-    pub hdr_format: wgpu::TextureFormat,
+    hdr_format: wgpu::TextureFormat,
     chain_layout: wgpu::BindGroupLayout,
     composite_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -24,11 +31,18 @@ pub(crate) struct PostGpu {
 /// Images sized to the frame, remade when the window resizes.
 pub(crate) struct PostTargets {
     pub hdr: wgpu::TextureView,
-    /// One view per glow level, and a bind group reading each.
-    levels: Vec<(wgpu::TextureView, wgpu::BindGroup)>,
+    levels: Vec<Level>,
     hdr_group: wgpu::BindGroup,
     pub composite_group: wgpu::BindGroup,
     pub gpu_bytes: u64,
+}
+
+/// One image of the glow chain.
+struct Level {
+    /// To draw into.
+    view: wgpu::TextureView,
+    /// To read from.
+    group: wgpu::BindGroup,
 }
 
 pub(crate) fn make(
@@ -71,7 +85,18 @@ pub(crate) fn make(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    let pipeline = |label, layout: &wgpu::BindGroupLayout, fs, format, blend, constants: &[_]| {
+    // The glow chain's pipelines draw into the HDR format; `None` for
+    // `chain` is the composite, drawing to the screen.
+    let pipeline = |label, fs, chain: Option<Option<wgpu::BlendState>>| {
+        let (layout, format, blend) = match chain {
+            Some(blend) => (&chain_layout, hdr_format, blend),
+            None => (&composite_layout, screen_format, None),
+        };
+        let strength = if glow { BLOOM_STRENGTH } else { 0.0 };
+        let constants: &[(&str, f64)] = match chain {
+            Some(_) => &[],
+            None => &[("BLOOM_STRENGTH", strength), ("EXPOSURE", EXPOSURE)],
+        };
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(label),
             bind_group_layouts: &[Some(layout)],
@@ -115,41 +140,12 @@ pub(crate) fn make(
         color: add,
         alpha: add,
     });
-    let strength = if glow { BLOOM_STRENGTH } else { 0.0 };
     PostGpu {
         hdr_format,
-        prefilter: pipeline(
-            "glow prefilter",
-            &chain_layout,
-            "fs_bloom_prefilter",
-            hdr_format,
-            None,
-            &[],
-        ),
-        down: pipeline(
-            "glow down",
-            &chain_layout,
-            "fs_bloom_down",
-            hdr_format,
-            None,
-            &[],
-        ),
-        up: pipeline(
-            "glow up",
-            &chain_layout,
-            "fs_bloom_up",
-            hdr_format,
-            add,
-            &[],
-        ),
-        composite: pipeline(
-            "composite",
-            &composite_layout,
-            "fs_composite",
-            screen_format,
-            None,
-            &[("BLOOM_STRENGTH", strength)],
-        ),
+        prefilter: pipeline("glow prefilter", "fs_bloom_prefilter", Some(None)),
+        down: pipeline("glow down", "fs_bloom_down", Some(None)),
+        up: pipeline("glow up", "fs_bloom_up", Some(add)),
+        composite: pipeline("composite", "fs_composite", None),
         chain_layout,
         composite_layout,
         sampler,
@@ -192,13 +188,13 @@ impl PostGpu {
                     mip_level_count: Some(1),
                     ..Default::default()
                 });
-                let bind = self.group(device, &self.chain_layout, &view, None);
-                levels.push((view, bind));
+                let group = self.group(device, &self.chain_layout, &view, None);
+                levels.push(Level { view, group });
                 gpu_bytes += ((w >> mip).max(1) as u64) * ((h >> mip).max(1) as u64) * texel_bytes;
             }
         }
         // With the glow off the composite never reads its glow binding.
-        let glow_view = levels.first().map_or(&hdr, |(v, _)| v);
+        let glow_view = levels.first().map_or(&hdr, |l| &l.view);
         let composite_group = self.group(device, &self.composite_layout, &hdr, Some(glow_view));
         PostTargets {
             hdr_group: self.group(device, &self.chain_layout, &hdr, None),
@@ -268,19 +264,21 @@ impl PostGpu {
             pass.draw(0..3, 0..1);
         };
         let clear = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
-        let Some((first, _)) = t.levels.first() else {
+        let Some(first) = t.levels.first() else {
             return 0;
         };
-        pass(encoder, &self.prefilter, &t.hdr_group, first, clear);
+        pass(encoder, &self.prefilter, &t.hdr_group, &first.view, clear);
         for pair in t.levels.windows(2) {
-            pass(encoder, &self.down, &pair[0].1, &pair[1].0, clear);
+            let [big, small] = pair else { unreachable!() };
+            pass(encoder, &self.down, &big.group, &small.view, clear);
         }
         for pair in t.levels.windows(2).rev() {
+            let [big, small] = pair else { unreachable!() };
             pass(
                 encoder,
                 &self.up,
-                &pair[1].1,
-                &pair[0].0,
+                &small.group,
+                &big.view,
                 wgpu::LoadOp::Load,
             );
         }

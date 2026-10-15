@@ -15,6 +15,8 @@
 
 // How strongly the glow adds to the frame; 0 with the glow off.
 override BLOOM_STRENGTH: f32 = 0.0;
+// The tone curve's exposure (post.rs's EXPOSURE, which also inverts it).
+override EXPOSURE: f32 = 1.25;
 
 // Light brighter than this (in the HDR scale, where sunlit white paint is
 // about 1.7) starts to glow, easing in over `KNEE` below it.
@@ -84,7 +86,7 @@ fn fs_bloom_up(in: Fullscreen) -> @location(0) vec4<f32> {
 
 // Soft filmic curve so bright sunlit slopes don't clip to white.
 fn tonemap(c: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(1.0) - exp(-c * 1.25);
+    return vec3<f32>(1.0) - exp(-c * EXPOSURE);
 }
 
 @fragment

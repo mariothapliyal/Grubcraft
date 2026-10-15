@@ -35,6 +35,12 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 /// Direction toward the sun.
 const SUN: Vec3 = Vec3::new(-0.45, 0.75, -0.35);
+/// The sky (and fog) colour, in sRGB.
+const SKY: [f32; 3] = [0.62, 0.66, 0.70];
+/// Terrain shadows are drawn with every `SHADOW_GRID_STEP`th vertex of the
+/// chunk grid: hill shadows are broad, and it costs a quarter of the
+/// triangles.
+const SHADOW_GRID_STEP: u32 = 2;
 
 #[derive(Debug)]
 pub enum InitError {
@@ -181,8 +187,8 @@ pub struct Renderer {
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
     post_targets: post::PostTargets,
-    chunk_index_buffer: wgpu::Buffer,
-    chunk_index_count: u32,
+    /// The chunk grid's triangles, at full detail and for the shadow map.
+    chunk_indices: [(wgpu::Buffer, u32); 2],
     chunk_instances: wgpu::Buffer,
     chunk_instance_capacity: u32,
     box_instances: wgpu::Buffer,
@@ -368,8 +374,8 @@ impl Renderer {
                 },
             )
         };
-        let terrain_pipeline = terrain(Some((hdr_format, "fs_terrain")));
-        let terrain_shadow_pipeline = terrain(None);
+        let terrain_pipeline = terrain(Target::Color(hdr_format, "fs_terrain"));
+        let terrain_shadow_pipeline = terrain(Target::Shadow);
         let block = |color| {
             make_pipeline(
                 &device,
@@ -388,11 +394,11 @@ impl Renderer {
                 },
             )
         };
-        let block_pipeline = block(Some((hdr_format, "fs_block")));
-        let block_shadow_pipeline = block(None);
+        let block_pipeline = block(Target::Color(hdr_format, "fs_block"));
+        let block_shadow_pipeline = block(Target::Shadow);
 
         let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_format);
-        let depth_view = |label, side| {
+        let shadow_texture = |label, side| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
@@ -412,8 +418,8 @@ impl Renderer {
                 .create_view(&Default::default())
         };
         let shadow_side = if options.shadows { SHADOW_SIZE } else { 1 };
-        let shadow_map = depth_view("sun shadow map", shadow_side);
-        let no_shadow_map = depth_view("no shadow map", 1);
+        let shadow_map = shadow_texture("sun shadow map", shadow_side);
+        let no_shadow_map = shadow_texture("no shadow map", 1);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sun shadow"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -424,14 +430,17 @@ impl Renderer {
         let post = post::make(&device, hdr_format, format, options.glow);
         let post_targets = post.targets(&device, config.width, config.height);
 
-        let chunk_indices = chunk_grid_indices(CHUNK_QUADS);
-        let chunk_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("chunk grid indices"),
-            size: (chunk_indices.len() * 2) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let chunk_indices = [1, SHADOW_GRID_STEP].map(|step| {
+            let indices = chunk_grid_indices(CHUNK_QUADS, step);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("chunk grid indices"),
+                size: (indices.len() * 2) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&indices));
+            (buffer, indices.len() as u32)
         });
-        queue.write_buffer(&chunk_index_buffer, 0, bytemuck::cast_slice(&chunk_indices));
 
         let box_instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("box instances"),
@@ -456,8 +465,10 @@ impl Renderer {
             adapter_info.transient_saves_memory == Some(true),
         );
         let static_gpu_bytes = 2 * size_of::<Globals>() as u64
-            + shadow_side as u64 * shadow_side as u64 * 2
-            + chunk_index_buffer.size()
+            + shadow_side as u64
+                * shadow_side as u64
+                * SHADOW_FORMAT.block_copy_size(None).unwrap_or(4) as u64
+            + chunk_indices.iter().map(|(b, _)| b.size()).sum::<u64>()
             + box_instances.size()
             + soldiers.instances.size()
             + chunk_instances.size();
@@ -482,8 +493,7 @@ impl Renderer {
             no_shadow_map,
             post,
             post_targets,
-            chunk_index_buffer,
-            chunk_index_count: chunk_indices.len() as u32,
+            chunk_indices,
             chunk_instances,
             chunk_instance_capacity: 1,
             box_instances,
@@ -720,15 +730,19 @@ impl Renderer {
         };
 
         // The sky colour, scaled so that it tone-maps back to itself.
-        let fog_color = [0.62f32, 0.66, 0.70].map(|c| untonemap(srgb_to_linear(c)));
+        let fog_color = SKY.map(|c| post::untonemap(srgb_to_linear(c)));
         let sun = SUN.normalize();
         let shadows = self.options.shadows;
-        let (sun_view_proj, texel) = shadows::sun_view_proj(
-            frame.view_proj,
-            sun,
-            terrain.tiles as f32,
-            terrain.max_height,
-        );
+        let (sun_view_proj, texel) = if shadows {
+            shadows::sun_view_proj(
+                frame.view_proj,
+                sun,
+                terrain.tiles as f32,
+                terrain.max_height,
+            )
+        } else {
+            (Mat4::IDENTITY, 0.0)
+        };
         let mut globals = Globals {
             view_proj: frame.view_proj.to_cols_array_2d(),
             camera_pos: frame.camera_pos.extend(1.0).to_array(),
@@ -742,12 +756,7 @@ impl Renderer {
             fog: [fog_color[0], fog_color[1], fog_color[2], 0.0025],
             misc: [terrain.water_level, frame.time_seconds, 0.0, 0.0],
             sun_view_proj: sun_view_proj.to_cols_array_2d(),
-            shadow: [
-                1.0 / SHADOW_SIZE as f32,
-                texel * 1.5,
-                if shadows { 1.0 } else { 0.0 },
-                0.0,
-            ],
+            shadow: [texel * 1.5, if shadows { 1.0 } else { 0.0 }, 0.0, 0.0],
         };
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
@@ -767,6 +776,8 @@ impl Renderer {
         // ones: those the camera sees, then those the sun sees.
         let planes = frustum_planes(frame.view_proj);
         let sun_planes = frustum_planes(sun_view_proj);
+        // The camera's chunks fill the instance buffer's first half, the
+        // sun's the second.
         self.visible_chunks.clear();
         self.sun_chunks.clear();
         let n = terrain.chunks_per_side;
@@ -814,8 +825,7 @@ impl Renderer {
             self.queue
                 .write_buffer(&self.soldiers.instances, 0, bytemuck::cast_slice(soldiers));
         }
-        let mut soldiers_drawn = 0;
-        let mut triangles = 0u64;
+        let (mut soldiers_drawn, mut triangles) = (0, 0);
 
         // The overlay draws in the composite pass, which a bare frame skips.
         let overlay_visible = !bare && self.overlay.count > 0;
@@ -842,49 +852,6 @@ impl Renderer {
                 label: Some("frame"),
             });
         let mut draw_calls = 0;
-        // Soldiers in `batches`, at the batch's level of detail or, for the
-        // shadow map, the reduced mesh.
-        let draw_soldiers = |pass: &mut wgpu::RenderPass<'_>, shadow: bool| {
-            let (mut calls, mut drawn, mut tris) = (0, 0, 0u64);
-            let Some(models) = &self.soldiers.models else {
-                return (calls, drawn, tris);
-            };
-            if soldiers.is_empty() {
-                return (calls, drawn, tris);
-            }
-            pass.set_bind_group(1, &models.bind_group, &[]);
-            pass.set_vertex_buffer(0, models.vertices.slice(..));
-            pass.set_vertex_buffer(1, self.soldiers.instances.slice(..));
-            pass.set_index_buffer(models.indices.slice(..), wgpu::IndexFormat::Uint16);
-            if shadow {
-                pass.set_pipeline(&self.soldiers.shadow_pipeline);
-            }
-            let mut textured_now = None;
-            for b in batches {
-                let Some(&(base, lods, textured)) = models.ranges.get(b.model as usize) else {
-                    continue;
-                };
-                if !shadow && textured_now != Some(textured) {
-                    pass.set_pipeline(if textured {
-                        &self.soldiers.textured_pipeline
-                    } else {
-                        &self.soldiers.pipeline
-                    });
-                    textured_now = Some(textured);
-                }
-                let lod = if shadow { 1 } else { (b.lod as usize).min(1) };
-                let [first, count] = lods[lod];
-                let end = (b.first + b.count).min(soldiers.len() as u32);
-                if b.first >= end || count == 0 {
-                    continue;
-                }
-                pass.draw_indexed(first..first + count, base, b.first..end);
-                calls += 1;
-                drawn += end - b.first;
-                tris += (count / 3) as u64 * (end - b.first) as u64;
-            }
-            (calls, drawn, tris)
-        };
         let draw_boxes = |pass: &mut wgpu::RenderPass<'_>, pipeline| {
             if boxes.is_empty() {
                 return 0;
@@ -894,14 +861,24 @@ impl Renderer {
             pass.draw(0..30, 0..boxes.len() as u32);
             1
         };
-        let draw_terrain = |pass: &mut wgpu::RenderPass<'_>, pipeline, chunks: &[_], at| {
+        let draw_terrain = |pass: &mut wgpu::RenderPass<'_>, shadow: bool| {
+            let (pipeline, chunks, at) = if shadow {
+                (
+                    &self.terrain_shadow_pipeline,
+                    &self.sun_chunks,
+                    sun_chunks_at,
+                )
+            } else {
+                (&self.terrain_pipeline, &self.visible_chunks, 0)
+            };
             if chunks.is_empty() {
                 return 0;
             }
+            let (indices, count) = &self.chunk_indices[shadow as usize];
             pass.set_pipeline(pipeline);
-            pass.set_index_buffer(self.chunk_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
             pass.set_vertex_buffer(0, self.chunk_instances.slice(at..));
-            pass.draw_indexed(0..self.chunk_index_count, 0, 0..chunks.len() as u32);
+            pass.draw_indexed(0..*count, 0, 0..chunks.len() as u32);
             1
         };
         if shadows && !bare {
@@ -921,13 +898,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &terrain.shadow_bind_group, &[]);
-            draw_calls += draw_terrain(
-                &mut pass,
-                &self.terrain_shadow_pipeline,
-                &self.sun_chunks,
-                sun_chunks_at,
-            );
-            draw_calls += draw_soldiers(&mut pass, true).0;
+            draw_calls += draw_terrain(&mut pass, true);
+            draw_calls += self
+                .soldiers
+                .draw(&mut pass, soldiers.len(), batches, true)
+                .0;
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
         }
         if !bare {
@@ -960,14 +935,15 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &terrain.bind_group, &[]);
-            draw_calls += draw_terrain(&mut pass, &self.terrain_pipeline, &self.visible_chunks, 0);
-            let (calls, drawn, tris) = draw_soldiers(&mut pass, false);
+            draw_calls += draw_terrain(&mut pass, false);
+            let (calls, drawn, tris) =
+                self.soldiers
+                    .draw(&mut pass, soldiers.len(), batches, false);
             draw_calls += calls;
             soldiers_drawn = drawn;
             triangles = tris;
             draw_calls += draw_boxes(&mut pass, &self.block_pipeline);
-        }
-        if !bare {
+            drop(pass);
             draw_calls += self.post.glow(&mut encoder, &self.post_targets);
         }
         {
@@ -981,9 +957,9 @@ impl Renderer {
                         // A bare frame shows the sky colour; others cover
                         // every pixel.
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: srgb_to_linear(0.62),
-                            g: srgb_to_linear(0.66),
-                            b: srgb_to_linear(0.70),
+                            r: srgb_to_linear(SKY[0]),
+                            g: srgb_to_linear(SKY[1]),
+                            b: srgb_to_linear(SKY[2]),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -1038,22 +1014,57 @@ fn scaled(width: u32, height: u32, scale: f32) -> (u32, u32) {
     (s(width), s(height))
 }
 
-/// `color` is the target format and fragment entry point; `None` makes the
-/// depth-only pipeline that draws the sun's shadow map.
+/// What a world pipeline draws into.
+#[derive(Clone, Copy)]
+pub(crate) enum Target<'a> {
+    /// The HDR image (in this format), with this fragment entry point.
+    Color(wgpu::TextureFormat, &'a str),
+    /// The sun's shadow map: depth only, pushed away from the sun.
+    Shadow,
+}
+
+impl<'a> Target<'a> {
+    pub(crate) fn depth_state(self) -> wgpu::DepthStencilState {
+        let shadow = matches!(self, Target::Shadow);
+        wgpu::DepthStencilState {
+            format: if shadow { SHADOW_FORMAT } else { DEPTH_FORMAT },
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: if shadow {
+                SHADOW_BIAS
+            } else {
+                Default::default()
+            },
+        }
+    }
+
+    /// The colour target (none for the shadow map) and fragment entry point.
+    pub(crate) fn color(self) -> ([Option<wgpu::ColorTargetState>; 1], Option<&'a str>) {
+        match self {
+            Target::Color(format, fs) => (
+                [Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                Some(fs),
+            ),
+            Target::Shadow => ([None], None),
+        }
+    }
+}
+
 fn make_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     label: &str,
     vs: &str,
-    color: Option<(wgpu::TextureFormat, &str)>,
+    target: Target<'_>,
     instance_layout: wgpu::VertexBufferLayout<'_>,
 ) -> wgpu::RenderPipeline {
-    let targets = [color.map(|(format, _)| wgpu::ColorTargetState {
-        format,
-        blend: None,
-        write_mask: wgpu::ColorWrites::ALL,
-    })];
+    let (targets, fs) = target.color();
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -1068,9 +1079,9 @@ fn make_pipeline(
             cull_mode: None,
             ..Default::default()
         },
-        depth_stencil: Some(depth_state(color.is_none())),
+        depth_stencil: Some(target.depth_state()),
         multisample: Default::default(),
-        fragment: color.map(|(_, fs)| wgpu::FragmentState {
+        fragment: fs.map(|fs| wgpu::FragmentState {
             module: shader,
             entry_point: Some(fs),
             compilation_options: Default::default(),
@@ -1079,21 +1090,6 @@ fn make_pipeline(
         multiview_mask: None,
         cache: None,
     })
-}
-
-/// Depth testing for the world pass, or for the shadow map.
-fn depth_state(shadow: bool) -> wgpu::DepthStencilState {
-    wgpu::DepthStencilState {
-        format: if shadow { SHADOW_FORMAT } else { DEPTH_FORMAT },
-        depth_write_enabled: Some(true),
-        depth_compare: Some(wgpu::CompareFunction::Less),
-        stencil: Default::default(),
-        bias: if shadow {
-            SHADOW_BIAS
-        } else {
-            Default::default()
-        },
-    }
 }
 
 fn make_overlay(
@@ -1278,17 +1274,20 @@ fn make_depth(
     )
 }
 
-/// Triangle-list indices for a `quads × quads` grid of `(quads+1)²` vertices.
-fn chunk_grid_indices(quads: u32) -> Vec<u16> {
+/// Triangle-list indices for a `quads × quads` grid of `(quads+1)²`
+/// vertices, using every `step`th vertex along each side.
+fn chunk_grid_indices(quads: u32, step: u32) -> Vec<u16> {
     let side = quads + 1;
     assert!(side * side <= u16::MAX as u32 + 1);
-    let mut out = Vec::with_capacity((quads * quads * 6) as usize);
-    for y in 0..quads {
-        for x in 0..quads {
+    assert_eq!(quads % step, 0);
+    let cells = quads / step;
+    let mut out = Vec::with_capacity((cells * cells * 6) as usize);
+    for y in (0..quads).step_by(step as usize) {
+        for x in (0..quads).step_by(step as usize) {
             let i = (y * side + x) as u16;
-            let right = i + 1;
-            let down = i + side as u16;
-            let diag = down + 1;
+            let right = i + step as u16;
+            let down = i + (side * step) as u16;
+            let diag = down + step as u16;
             out.extend_from_slice(&[i, down, right, right, down, diag]);
         }
     }
@@ -1316,11 +1315,6 @@ fn aabb_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
     })
 }
 
-/// The HDR value the tone curve (`tonemap` in post.wgsl) maps to `c`.
-fn untonemap(c: f64) -> f32 {
-    (-(1.0 - c.min(0.999)).ln() / 1.25) as f32
-}
-
 fn srgb_to_linear(c: f32) -> f64 {
     let c = c as f64;
     if c <= 0.04045 {
@@ -1336,10 +1330,13 @@ mod tests {
 
     #[test]
     fn grid_indices_cover_every_quad() {
-        let idx = chunk_grid_indices(CHUNK_QUADS);
-        assert_eq!(idx.len() as u32, CHUNK_QUADS * CHUNK_QUADS * 6);
-        let max = *idx.iter().max().unwrap() as u32;
-        assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
+        for step in [1, SHADOW_GRID_STEP] {
+            let idx = chunk_grid_indices(CHUNK_QUADS, step);
+            let cells = CHUNK_QUADS / step;
+            assert_eq!(idx.len() as u32, cells * cells * 6);
+            let max = *idx.iter().max().unwrap() as u32;
+            assert_eq!(max, (CHUNK_QUADS + 1) * (CHUNK_QUADS + 1) - 1);
+        }
     }
 
     #[test]

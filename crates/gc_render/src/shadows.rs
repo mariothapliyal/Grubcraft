@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn the_shadow_map_covers_the_view_and_the_map_depth() {
-        let sun = Vec3::new(-0.45, 0.75, -0.35).normalize();
+        let sun = crate::SUN.normalize();
         let focus = Vec3::new(200.0, 0.0, 200.0);
         let (m, _) = sun_view_proj(camera(focus), sun, 512.0, 40.0);
         for p in [
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn panning_moves_the_map_by_whole_texels() {
-        let sun = Vec3::new(-0.45, 0.75, -0.35).normalize();
+        let sun = crate::SUN.normalize();
         let a = Vec3::new(200.0, 0.0, 200.0);
         let b = a + Vec3::new(3.37, 0.0, 1.91);
         let (ma, ta) = sun_view_proj(camera(a), sun, 512.0, 40.0);

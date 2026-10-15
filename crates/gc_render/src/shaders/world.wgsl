@@ -21,8 +21,8 @@ struct Globals {
     misc: vec4<f32>,
     // World to the sun's shadow map (x, y in [-1, 1], z the depth).
     sun_view_proj: mat4x4<f32>,
-    // x: one shadow texel in shadow-map coordinates, y: how far to push the
-    // lookup out along the surface normal (tiles), z: 1 with shadows on
+    // x: how far to push the lookup out along the surface normal (tiles),
+    // y: 1 with shadows on
     shadow: vec4<f32>,
 };
 
@@ -100,16 +100,16 @@ fn finish(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
 // filtered taps soften the edge over about three shadow texels, and the
 // shadow fades out at the edge of the area the map covers.
 fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
-    if g.shadow.z < 0.5 {
+    if g.shadow.y < 0.5 {
         return 1.0;
     }
-    let c = g.sun_view_proj * vec4<f32>(world + n * g.shadow.y, 1.0);
+    let c = g.sun_view_proj * vec4<f32>(world + n * g.shadow.x, 1.0);
     let edge = max(abs(c.x), abs(c.y));
     if edge >= 1.0 || c.z >= 1.0 {
         return 1.0;
     }
     let uv = c.xy * vec2<f32>(0.5, -0.5) + 0.5;
-    let t = g.shadow.x * 0.5;
+    let t = 0.5 / f32(textureDimensions(shadow_map).x);
     var lit = 0.0;
     for (var i = 0u; i < 4u; i++) {
         let o = vec2<f32>(select(-t, t, (i & 1u) == 1u), select(-t, t, i >= 2u));
@@ -118,11 +118,17 @@ fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
     return mix(lit * 0.25, 1.0, smoothstep(0.85, 1.0, edge));
 }
 
-fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
-    var ndl = max(dot(n, g.sun_dir.xyz), 0.0);
+// Direct sunlight on a surface facing `n`: the cosine term, shadowed.
+fn sun_ndl(n: vec3<f32>, world: vec3<f32>) -> f32 {
+    let ndl = max(dot(n, g.sun_dir.xyz), 0.0);
     if ndl > 0.0 {
-        ndl *= sunlight(world, n);
+        return ndl * sunlight(world, n);
     }
+    return 0.0;
+}
+
+fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    let ndl = sun_ndl(n, world);
     return finish(albedo * (SUN_COLOR * ndl + ambient_light(n)), world);
 }
 
@@ -139,10 +145,7 @@ fn shade_material(
     emit: vec3<f32>,
 ) -> vec3<f32> {
     let sun = g.sun_dir.xyz;
-    var ndl = max(dot(n, sun), 0.0);
-    if ndl > 0.0 {
-        ndl *= sunlight(world, n);
-    }
+    let ndl = sun_ndl(n, world);
     let v = normalize(g.camera_pos.xyz - world);
     let h = normalize(sun + v);
     let power = exp2(11.0 * (1.0 - rough) + 1.0);
@@ -410,6 +413,12 @@ fn vs_soldier(v: SoldierIn) -> SoldierOut {
     out.color = mix(v.vcolor.rgb, tinted, team);
     out.highlight = v.flags.y;
     return out;
+}
+
+// Position only, for the shadow map.
+@vertex
+fn vs_soldier_depth(v: SoldierIn) -> @builtin(position) vec4<f32> {
+    return pose(v).clip;
 }
 
 @fragment
