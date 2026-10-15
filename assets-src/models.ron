@@ -4,8 +4,9 @@
 // project's shared assets folder because their packs may not be
 // redistributed raw (docs/16-art-sourcing.md); `repo:` sources are in
 // assets-src/ here. `textures` lists painted maps for models whose detail
-// is in textures rather than vertex colours. Clip kinds: Idle, Walk, Run, Attack, Attack2, Hit, Die,
-// Cheer, Shoot.
+// is in textures rather than vertex colours. Clip kinds: Idle, Walk, Run,
+// Attack, Attack2, Hit, Die, Cheer, Shoot, Block (a model without a Block clip
+// guards with its Idle).
 (
     models: [
         (
@@ -59,6 +60,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
                 "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Yes",
+                "Block": "Duck",
             },
             lod_triangles: (1400, 500),
         ),
@@ -70,6 +72,7 @@
             clips: {
                 "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Attack": "Weapon",
                 "Attack2": "Punch", "Hit": "HitReact", "Die": "Death", "Cheer": "Yes",
+                "Block": "Duck",
             },
             lod_triangles: (1400, 500),
         ),
