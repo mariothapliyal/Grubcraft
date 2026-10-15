@@ -75,7 +75,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
 | Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 30 / 45 / 3 | 20 | 60 | |
-| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 15 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 30% |
+| Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 30% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
 | Mounted Samurai | 2 | Cavalry | 180 / 40 | 5 | 32 | Stables | 8 × 30 | 4 | 6.5 | 140 | 1.4 / 2.0 | 45 / 30 / 6 | 80 | 70 | |
@@ -481,17 +481,17 @@ A Field Battle army is ten regiments from the faction's roster (see [06 · Game 
 | Skitterlings | 24 × 6, 6 files, 40 / 20 / 2, Mor 45 | 32 × 6, 8 files, 50 / 25 / 3, Mor 57 (a bigger, harder-hitting swarm) |
 | Shardlings | 12 × 9, spacing 0.7, 35 / 35 / 4, Mor 55 | 14 × 12, spacing 0.55, 40 / 40 / 4, Mor 60 (tougher; the tighter block takes more arrows) |
 | Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
-| Yumi Ashigaru | 16 models | 15 models |
+| Yumi Ashigaru | unchanged | |
 
 Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins:
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
-| **Ember Clans** | 45% | 41% | 52% |
+| **Ember Clans** | 50% | 47% | 61% |
 | **Brood** | | 45% | 53% |
 | **Choir** | | | 53% |
 
-Seeds 1 to 96 gave every pair between 48% and 52% except the Brood against the Choir (36%). Once the terrain rules arrived the Concord fell behind the Clans (66%), so the Bone Pikes got a little faster (2.6 to 2.75) and the Yumi one archer fewer. Results move in big steps: one Bone Pike more or less per regiment swings Concord matchups by 20 to 30 points, because it changes which AI expects to win and so which side attacks. Re-run the table after any change to these stats or to combat: `AI_BATTLES=192 AI_FROM=2001 cargo test -p gc_game --release faction_table -- --ignored --nocapture` (`AI_PAIR=Brood` or `AI_PAIR=Brood,Choir` narrows it).
+Seeds 1 to 96 gave every pair between 48% and 57% except the Brood against the Choir (36%). Once the terrain rules arrived the Concord fell behind the Clans (66%), so the Bone Pikes got a little faster (2.6 to 2.75). One Yumi fewer evens the Clans and the Concord further, but then a Veteran in the Clans mirror on one test seed beats the army in front of it and never marches on the survivors who rallied and scattered (an AI gap, not balance), so the Yumi stay at 16. Results move in big steps: one Bone Pike more or less per regiment swings Concord matchups by 20 to 30 points, because it changes which AI expects to win and so which side attacks. Re-run the table after any change to these stats or to combat: `AI_BATTLES=192 AI_FROM=2001 cargo test -p gc_game --release faction_table -- --ignored --nocapture` (`AI_PAIR=Brood` or `AI_PAIR=Brood,Choir` narrows it).
 
 ---
 
