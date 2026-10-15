@@ -122,7 +122,7 @@ fn attack(w: &mut World, player: u8, regiment: RegimentHandle, target: RegimentH
 fn hp(w: &World, h: RegimentHandle) -> u32 {
     w.regiments
         .model_hp(h)
-        .map_or(0, |hp| hp.iter().map(|&v| u32::from(v)).sum())
+        .map_or(0, |hp| hp.iter().copied().map(u32::from).sum())
 }
 
 fn morale(w: &World, h: RegimentHandle) -> u8 {

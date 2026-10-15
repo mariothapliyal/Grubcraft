@@ -83,10 +83,6 @@ pub const PATIENCE: u16 = 3 * TICKS_PER_SECOND as u16;
 /// How far past touching distance the crowd check looks, so a regiment
 /// with no friend that near can march a few ticks without looking again.
 const LOOK_AHEAD: Fx = Fx::from_int(2);
-/// The furthest any regiment moves in one tick (20 tiles a second, several
-/// times the fastest unit). The spatial grid is filled at the start of the
-/// tick, so neighbour searches during movement add this much slack.
-pub(crate) const MOVE_SLACK: Fx = Fx::ONE;
 
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
 const CELL_TILES: i32 = 16;
@@ -214,6 +210,11 @@ pub struct Combat {
     radius: Vec<Fx>,
     /// The biggest of `radius` this tick.
     max_radius: Fx,
+    /// The furthest any regiment can step this tick (its speed, and never
+    /// less than the one-unit floor steps are clamped to). The grid is
+    /// filled at the start of the tick, so searches during movement add
+    /// this much slack.
+    max_step: Fx,
     /// Per grid bucket and owner slot (as `head`): whether a regiment that
     /// may hold its ground this tick (fighting, standing or queuing) is
     /// listed there, so marching regiments far from any skip the search
@@ -306,6 +307,7 @@ impl Combat {
             ],
             radius: vec![Fx::ZERO; regiment_capacity],
             max_radius: Fx::ZERO,
+            max_step: Fx::ZERO,
             holder: vec![false; BUCKETS * OWNER_SLOTS],
             big_holder: false,
             seen: vec![Cell::new(0); regiment_capacity],
@@ -353,6 +355,10 @@ impl Combat {
         self.max_radius
     }
 
+    pub(crate) fn max_step(&self) -> Fx {
+        self.max_step
+    }
+
     fn bucket_of(cx: i32, cy: i32) -> usize {
         let h = (cx as u32).wrapping_mul(0x9E37_79B1) ^ (cy as u32).wrapping_mul(0x85EB_CA77);
         (h >> 22) as usize & (BUCKETS - 1)
@@ -374,6 +380,7 @@ impl Combat {
         self.entries = 0;
         self.big.clear();
         self.max_radius = Fx::ZERO;
+        self.max_step = Fx::from_raw(1);
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -381,6 +388,7 @@ impl Combat {
             self.blocks[i] = Block::of(regs, units, i);
             self.radius[i] = self.blocks[i].radius();
             self.max_radius = self.max_radius.max(self.radius[i]);
+            self.max_step = self.max_step.max(regs.speed[i]);
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i] + REACH);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big.push(i as u32);
@@ -433,6 +441,21 @@ impl Combat {
         p: FxVec2,
         range: Fx,
         whose: Whose,
+        f: impl FnMut(usize),
+    ) {
+        self.each_near_in(regs, p, range, range, whose, f);
+    }
+
+    /// [`Combat::each_near`], looking only in the grid cells within `cells`
+    /// of `p` (which may be less than `range` when the caller knows every
+    /// regiment it wants is filed nearer).
+    fn each_near_in(
+        &self,
+        regs: &Placement,
+        p: FxVec2,
+        cells: Fx,
+        range: Fx,
+        whose: Whose,
         mut f: impl FnMut(usize),
     ) {
         let (owner, friends) = match whose {
@@ -447,7 +470,7 @@ impl Combat {
             !(1 << (owner as usize % OWNER_SLOTS))
         };
         let range_sq = i64::from(range.raw()) * i64::from(range.raw());
-        self.each_filed_once(p, range, slots, regs.alive, |j| {
+        self.each_filed_once(p, cells, slots, regs.alive, |j| {
             if regs.stances.hostile(owner, regs.owner[j]) != friends
                 && ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq
             {
@@ -590,31 +613,30 @@ impl Combat {
         }
         let patient = regs.held[i] < PATIENCE;
         let me = Block::at(regs, units, i, next);
-        let now = Block::of(regs, units, i);
         let reach = me.radius();
         // A friend `j` counts only if its centre is within `reach +
         // radius[j] + 1 + LOOK_AHEAD` of `next` (the circle test below). It
-        // started the tick at most MOVE_SLACK from where it is now, and is
-        // filed in every cell its circle (plus REACH) touched then, so one
-        // of those cells lies within `range` of `next`. Holders are filed
-        // by their bare circle, hence the extra REACH for them.
-        let range = reach + Fx::ONE + LOOK_AHEAD + MOVE_SLACK - REACH;
+        // started the tick at most `max_step` from where it is now, and
+        // holders are filed in every cell their circle touched then, so one
+        // of those cells lies within `holders` of `next`. The grid files
+        // everyone else with REACH more.
+        let holders = reach + Fx::ONE + LOOK_AHEAD + self.max_step;
         let owner = regs.owner[i];
-        let slots = stances.friend_slots(owner, OWNER_SLOTS);
-        if !self.holder_near(next, range + REACH, slots) {
+        if !self.holder_near(next, holders, stances.friend_slots(owner, OWNER_SLOTS)) {
             return Err(LOOK_AHEAD);
         }
-        // Nothing further than this counts towards the gap either.
-        let outer = (reach + self.max_radius + LOOK_AHEAD).raw() as u64;
         let mut found: Option<usize> = None;
         let mut gap = LOOK_AHEAD;
-        self.each_filed_once(next, range, slots, &regs.alive, |j| {
-            {
-                if j == i
-                    || stances.hostile(owner, regs.owner[j])
-                    || found.is_some_and(|f| f < j)
-                    || regs.morale_state[j].broken()
-                {
+        self.each_near_in(
+            &placement!(regs, stances),
+            next,
+            holders - REACH,
+            // The range the search had before it was narrowed, kept so
+            // `gap` (how long `i` marches before looking again) is unchanged.
+            reach + self.max_radius + LOOK_AHEAD,
+            Whose::Friends(owner),
+            |j| {
+                if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
                     return;
                 }
                 let holding = regs.engaged[j].is_some()
@@ -629,7 +651,7 @@ impl Combat {
                 let touch = reach + self.radius[j] + Fx::ONE;
                 let r = (touch + LOOK_AHEAD).raw() as u64;
                 let d = (regs.position[j] - next).length_sq_raw();
-                if d > r * r || d > outer * outer {
+                if d > r * r {
                     return;
                 }
                 let r = touch.raw() as u64;
@@ -640,11 +662,16 @@ impl Combat {
                 gap = Fx::ZERO;
                 let them = Block::of(regs, units, j);
                 let after = me.overlap(&them);
+                // Where `i` stands now: the same block, before this step.
+                let now = Block {
+                    centre: regs.position[i],
+                    ..me
+                };
                 if after > CROWDING && after >= now.overlap(&them) {
                     found = Some(j);
                 }
-            }
-        });
+            },
+        );
         found.ok_or(gap)
     }
 

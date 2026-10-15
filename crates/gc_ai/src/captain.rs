@@ -1794,11 +1794,7 @@ impl Captain {
             .iter()
             .filter(|o| matches!(o.home, Role::Anchor | Role::Wing))
             .filter(|o| {
-                o.lost
-                    || o.role == Role::Recover
-                    || view
-                        .get(o.handle)
-                        .is_none_or(super::perception::Seen::broken)
+                o.lost || o.role == Role::Recover || view.get(o.handle).is_none_or(Seen::broken)
             })
             .map(|o| self.place(ctx, o.slot))
             .find(|p| fighting.iter().any(|f| f.pos.distance(*p) < 22.0));

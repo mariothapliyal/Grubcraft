@@ -468,10 +468,7 @@ impl Regiments {
                 };
                 let step = terrain.wading(step, self.position[i]);
                 let step = crate::combat::pushing(step, self.crowd[i]);
-                debug_assert!(
-                    step <= crate::combat::MOVE_SLACK,
-                    "a step outruns the crowd check"
-                );
+                debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {

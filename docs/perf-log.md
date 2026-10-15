@@ -27,7 +27,7 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 | 2 | `Combat::crowding` neighbour scan | 9.6% | Each regiment finds the friends its block overlaps (push-through and disorder) |
 | 3 | `nav::Search::sector` | 9.2% | Route searches across the portal graph |
 
-**Fixed in this pass:** number 1 searched every grid cell within its reach plus the radius of the largest regiment on the map. It now searches only the cells a friend it could count can be filed in: its reach, plus one tile, plus the look-ahead, plus one tile of movement slack (no regiment moves more than a tile a tick; a debug assertion checks it). The same friends are found, so the drill and every golden replay keep their hashes.
+**Fixed in this pass:** number 1 searched every grid cell within its reach plus the radius of the largest regiment on the map. It now searches only the cells a friend it could count can be filed in: its reach, plus one tile, plus the look-ahead, plus the furthest any regiment can step this tick (the grid is filled before anyone moves; a debug assertion checks the step). The same friends are found, so the drill and every golden replay keep their hashes.
 
 | | Before | After |
 |---|---|---|

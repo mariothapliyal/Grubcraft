@@ -344,38 +344,23 @@ mod tests {
         }
     }
 
+    const U_CASES: [u64; 7] = [0, 1, 127, 128, 300, u32::MAX as u64, u64::MAX];
+    const I_CASES: [i64; 8] = [0, -1, 1, -64, 64, i32::MIN as i64, i64::MAX, i64::MIN];
+
     #[test]
     fn varints_round_trip() {
         let mut w = Writer::new();
-        for x in [0u64, 1, 127, 128, 300, u64::from(u32::MAX), u64::MAX] {
+        for x in U_CASES {
             w.var(x);
         }
-        for x in [
-            0i64,
-            -1,
-            1,
-            -64,
-            64,
-            i64::from(i32::MIN),
-            i64::MAX,
-            i64::MIN,
-        ] {
+        for x in I_CASES {
             w.ivar(x);
         }
         let mut r = Reader::new(&w.buf);
-        for x in [0u64, 1, 127, 128, 300, u64::from(u32::MAX), u64::MAX] {
+        for x in U_CASES {
             assert_eq!(r.var(), Some(x));
         }
-        for x in [
-            0i64,
-            -1,
-            1,
-            -64,
-            64,
-            i64::from(i32::MIN),
-            i64::MAX,
-            i64::MIN,
-        ] {
+        for x in I_CASES {
             assert_eq!(r.ivar(), Some(x));
         }
         assert!(r.is_empty());
