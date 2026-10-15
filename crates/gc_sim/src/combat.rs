@@ -54,8 +54,12 @@ pub const DISORDER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
 /// takes this much more, in percent.
 pub const DISORDER_PERCENT: u64 = 20;
 /// Each regiment measures how deep it overlaps its friends every this many
-/// ticks (staggered by index).
+/// ticks (staggered by index; 0.2 s, short against the 3 s it takes to
+/// re-form).
 const CROWD_EVERY: u32 = 4;
+/// Overlap past which neither the slowdown nor the disorder grows, so the
+/// crowd check stops looking once it finds this much.
+const SATURATED: Fx = Fx::from_raw(CROWDING.raw() + Fx::ONE.raw());
 /// It waits this long behind a friend that is only standing or waiting,
 /// then walks through, so no order is stuck for good. Friends locked in
 /// melee are never walked through.
@@ -440,6 +444,59 @@ impl Combat {
         }
     }
 
+    /// Call `f` for every other live friend of `i` whose bounding circle
+    /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
+    /// circle, and every regiment is filed in each cell its circle touches,
+    /// so only the cells under `i`'s own circle need looking in.
+    fn each_friend_touching(
+        &self,
+        regs: &Regiments,
+        stances: &Stances,
+        i: usize,
+        mut f: impl FnMut(usize),
+    ) {
+        let search = self.search.get().wrapping_add(1);
+        self.search.set(search);
+        if search == 0 {
+            self.seen.iter().for_each(|c| c.set(u32::MAX));
+        }
+        let p = regs.position[i];
+        let owner = regs.owner[i];
+        let mut visit = |j: usize| {
+            if j == i || self.seen[j].get() == search || !regs.alive[j] {
+                return;
+            }
+            self.seen[j].set(search);
+            if stances.hostile(owner, regs.owner[j]) {
+                return;
+            }
+            let r = (self.radius[i] + self.radius[j]).raw() as u64;
+            if (regs.position[j] - p).length_sq_raw() <= r * r {
+                f(j);
+            }
+        };
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        let (x0, y0, x1, y1) = Self::cells(p, self.radius[i]);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let b = Self::bucket_of(x, y) * OWNER_SLOTS;
+                for slot in 0..OWNER_SLOTS {
+                    if slots & (1 << slot) == 0 {
+                        continue;
+                    }
+                    let mut e = self.head[b + slot];
+                    while e != EMPTY {
+                        visit(self.entry_regiment[e as usize] as usize);
+                        e = self.entry_next[e as usize];
+                    }
+                }
+            }
+        }
+        for &j in &self.big {
+            visit(j as usize);
+        }
+    }
+
     /// Note which grid cells hold regiments that may hold their ground this
     /// tick (see `holder`). Called after [`Combat::before_move`], before
     /// anyone moves.
@@ -697,30 +754,14 @@ impl Combat {
             if regs.morale_state[i].broken() {
                 regs.crowd[i] = Fx::ZERO;
             } else if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
-                let placement = Placement {
-                    alive: &regs.alive,
-                    owner: &regs.owner,
-                    position: &regs.position,
-                    stances,
-                };
                 let me = self.blocks[i];
                 let mut deepest = Fx::ZERO;
-                self.each_near(
-                    &placement,
-                    me.centre,
-                    self.radius[i] + self.max_radius,
-                    Whose::Friends(regs.owner[i]),
-                    |j| {
-                        if j == i || regs.morale_state[j].broken() {
-                            return;
-                        }
-                        let r = (self.radius[i] + self.radius[j]).raw() as u64;
-                        if (regs.position[j] - me.centre).length_sq_raw() > r * r {
-                            return;
-                        }
+                self.each_friend_touching(regs, stances, i, |j| {
+                    // Deeper than this changes nothing (see `SATURATED`).
+                    if deepest < SATURATED && !regs.morale_state[j].broken() {
                         deepest = deepest.max(me.overlap(&self.blocks[j]));
-                    },
-                );
+                    }
+                });
                 regs.crowd[i] = deepest;
             }
             regs.disorder[i] = if regs.crowd[i] > PUSHING {

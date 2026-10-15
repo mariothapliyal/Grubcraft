@@ -52,6 +52,12 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 - **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles.
 - A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing.
 
+## Pushing through friends
+
+Friendly regiments can march into and through each other, but it costs them. A block pushing more than a quarter tile into a friend slows, down to 40% of its pace once it is a tile deep. While two friendly blocks overlap by more than a tile, both fall into **disorder**: their ranks break, they deal 20% less melee damage and take 20% more, and once clear they take 3 seconds to re-form (the penalty fades as they do). Blocks in a line that only brush or wheel into each other stay in order. On screen a disordered block's soldiers break ranks, mill about and look around, and a ragged amber outline marks it. Routers neither slow nor fall into disorder (they are past caring). In fords and narrow passes regiments queue behind a friend holding its ground instead (see [10 · Architecture](10-architecture.md#pathfinding)).
+
+**Built so far (2026-10-15):** as described. Other rules can disorder a regiment too (the sim's `Regiments::disorder`), which the Mount & Blade work uses.
+
 ## Morale
 
 The core of Shogun-style battles: armies lose because they *break*, not because every soldier dies.
