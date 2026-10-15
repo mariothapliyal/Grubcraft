@@ -271,22 +271,24 @@ fn champion_news(
     parties: &[Party],
     unit_names: &[String],
 ) -> String {
-    // Each side's party, and the unit its champion comes from (its
-    // regiment may be gone by the end).
-    let [a, b] = c.champions.map(|h| {
-        world.regiments.get(h).map_or(("one side".into(), ""), |r| {
-            let unit = unit_names.get(r.unit as usize).map_or("", String::as_str);
-            (party_name(parties, r.owner), unit)
-        })
-    });
+    let [a, b] = c.sides.map(|s| party_name(parties, s));
     match outcome {
-        Outcome::Fighting => format!(
-            "CHAMPIONS  {}'s {} and {}'s {} each send out a champion to fight between the lines",
-            a.0, a.1, b.0, b.1
-        ),
+        Outcome::Fighting => {
+            // The regiments they step out of are there while they fight.
+            let [x, y] = c.champions.map(|h| {
+                world
+                    .regiments
+                    .get(h)
+                    .and_then(|r| unit_names.get(r.unit as usize))
+                    .map_or("regiment", String::as_str)
+            });
+            format!(
+                "CHAMPIONS  {a}'s {x} and {b}'s {y} each send out a champion to fight between the lines"
+            )
+        }
         Outcome::CutShort => "CHAMPIONS  The battle swallows the duel before it is decided".into(),
         Outcome::Killed { winner } => {
-            let (w, l) = if winner == 0 { (a.0, b.0) } else { (b.0, a.0) };
+            let (w, l) = if winner == 0 { (a, b) } else { (b, a) };
             format!(
                 "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
             )

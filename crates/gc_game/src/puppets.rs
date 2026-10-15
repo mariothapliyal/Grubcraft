@@ -392,6 +392,8 @@ pub struct Puppets {
     /// The last frame's step, in seconds.
     dt: f32,
     duel: Option<Duel>,
+    /// The tick the duel the puppets are done with was called.
+    duel_over: Option<u32>,
 }
 
 impl Puppets {
@@ -423,6 +425,7 @@ impl Puppets {
             time: 0.0,
             dt: 0.0,
             duel: None,
+            duel_over: None,
         }
     }
 
@@ -492,9 +495,12 @@ impl Puppets {
     /// the updates.
     pub fn champions(&mut self, challenge: Option<&Challenge>, now: f32) {
         let Some(&challenge) = challenge else {
-            self.duel = None;
+            (self.duel, self.duel_over) = (None, None);
             return;
         };
+        if self.duel_over == Some(challenge.called) {
+            return;
+        }
         let duel = match self.duel {
             Some(d) => Duel {
                 challenge,
@@ -515,7 +521,12 @@ impl Puppets {
             },
         };
         // Once neither is out between the lines, the puppets are done with it.
-        self.duel = (duel.out(0) || duel.out(1)).then_some(duel);
+        if duel.out(0) || duel.out(1) {
+            self.duel = Some(duel);
+        } else {
+            self.duel = None;
+            self.duel_over = Some(challenge.called);
+        }
     }
 
     /// Regiment `r`'s champion while he is out between the lines: the
@@ -1500,6 +1511,7 @@ mod tests {
         let c = Challenge {
             champions: [a.handle, b.handle],
             spot: gc_fixed::FxVec2::from_ints(0, 15),
+            sides: [0, 1],
             called: 0,
             meet: 100,
             beats: 5,

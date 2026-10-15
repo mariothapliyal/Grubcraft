@@ -394,7 +394,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     };
     let champions = world.challenge().map_or(String::new(), |c| {
         let at = gc_ai::lens::clock(c.decided());
-        match c.outcome(c.decided()) {
+        match c.outcome(u32::MAX) {
             Outcome::Killed { .. } => format!("; champions duel to a kill at {at}"),
             Outcome::Parted => format!("; champions duel to a draw at {at}"),
             _ => format!("; the champions' duel is cut short at {at}"),

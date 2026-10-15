@@ -238,3 +238,39 @@ fn a_regiment_hiding_in_a_wood_sends_no_champion() {
     }
     panic!("no champions in 40 seeds");
 }
+
+#[test]
+fn no_champions_once_the_battle_has_begun() {
+    // A skirmish already under way on the flank: no challenge, ever.
+    for seed in 0..40 {
+        let mut w = world(seed, true);
+        spawn(&mut w, 0, SPEARS, 30, 200, NORTH);
+        spawn(&mut w, 1, SKITTERS, 30, 197, SOUTH);
+        for _ in 0..10 {
+            w.tick(&[]);
+        }
+        spawn(&mut w, 0, SPEARS, 150, 100, NORTH);
+        spawn(&mut w, 1, SPEARS, 150, 100 - (CALL_TILES - 4), SOUTH);
+        for _ in 0..200 {
+            w.tick(&[]);
+        }
+        assert!(w.challenge().is_none(), "seed {seed}");
+    }
+}
+
+#[test]
+fn fighting_anywhere_on_either_side_ends_the_duel() {
+    let (seed, mut w, [ours, _, _], c) = deadly(0);
+    let before = points(&w, ours);
+    // An enemy regiment falls on ours (standing at 100, 100) while the
+    // champions fight.
+    spawn(&mut w, 1, SKITTERS, 100, 97, SOUTH);
+    while w.tick_count() <= c.ends() + 1 {
+        w.tick(&[]);
+    }
+    let after = w.challenge().unwrap();
+    assert!(after.abandoned.is_some(), "seed {seed}");
+    assert_eq!(after.sides, c.sides);
+    // Nobody took heart from it.
+    assert!(points(&w, ours) <= before, "seed {seed}");
+}

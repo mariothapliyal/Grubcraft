@@ -3,8 +3,9 @@
 //!
 //! In a match that allows it ([`crate::MatchSetup::champions`]), the first
 //! time two hostile regiments that see each other come within
-//! [`CALL_TILES`] there is a [`CHANCE_PERCENT`] chance that each side
-//! sends a champion out between the lines. Until heroes exist, a side's
+//! [`CALL_TILES`], before either side has begun fighting, there is a
+//! [`CHANCE_PERCENT`] chance that each side sends a champion out between
+//! the lines. Until heroes exist, a side's
 //! champion is the best man of its best fighting regiment near the front
 //! (melee attack plus defence) that isn't hiding in cover. The two run to
 //! the point halfway between their regiments and trade blows, one swing
@@ -16,13 +17,15 @@
 //! events stream, so every machine and every replay sees the same duel and
 //! the presentation can play it out blow by blow. Nothing changes until the
 //! last blow lands: then every regiment on the winner's side gains
-//! [`HEART`] morale points, and keeps them as a higher ceiling for the rest
-//! of the battle, while every regiment on the loser's side loses as many,
-//! from its morale and its ceiling. The loser's regiment loses him. If
-//! neither falls within [`MAX_BEATS`] swings they part and nothing changes;
-//! if either regiment is drawn into melee, breaks or is destroyed first,
-//! the duel is abandoned, also without effect. The armies are never held
-//! back: a challenge is a moment in the battle, not a pause in it.
+//! [`HEART`] morale points, and the side keeps them as a higher ceiling for
+//! the rest of the battle, while every regiment on the loser's side loses
+//! as many, from its morale and its ceiling. The loser's regiment loses
+//! him. If neither falls within [`MAX_BEATS`] swings they part and nothing
+//! changes. If the battle starts around them first (a regiment of either
+//! side fights in melee or loses soldiers), or a champion's regiment breaks
+//! or is destroyed, the duel is abandoned, also without effect. The armies
+//! are never held back: a challenge is a moment in the battle, not a pause
+//! in it.
 
 use alloc::vec::Vec;
 
@@ -47,7 +50,7 @@ const PICK_TILES: i32 = 25;
 /// [`MIN_WALK_TICKS`] and at most [`MAX_WALK_TICKS`] to meet.
 const PACE: Fx = Fx::from_int(5);
 const MIN_WALK_TICKS: u32 = 2 * TICKS_PER_SECOND;
-const MAX_WALK_TICKS: u32 = 8 * TICKS_PER_SECOND;
+const MAX_WALK_TICKS: u32 = 12 * TICKS_PER_SECOND;
 /// Ticks per beat: one champion swings each beat, in turn.
 pub const BEAT_TICKS: u32 = 12;
 /// A swing's blow lands this many ticks into its beat.
@@ -64,6 +67,8 @@ pub const HEART: i16 = 6;
 pub struct Challenge {
     /// The regiments the champions step out of, for their two sides.
     pub champions: [RegimentHandle; 2],
+    /// The parties those regiments belong to.
+    pub sides: [PlayerId; 2],
     /// Where they fight: halfway between their regiments when called.
     pub spot: FxVec2,
     /// Tick the challenge was called.
@@ -134,11 +139,12 @@ impl Challenge {
         self.abandoned.unwrap_or(self.ends())
     }
 
-    /// How the duel stands at `tick`.
-    pub fn outcome(&self, tick: u32) -> Outcome {
+    /// How the duel stands once the world has run `ticks` ticks
+    /// ([`crate::World::tick_count`]): the tick it ends on decides it.
+    pub fn outcome(&self, ticks: u32) -> Outcome {
         match (self.abandoned, self.winner) {
             (Some(_), _) => Outcome::CutShort,
-            _ if tick < self.ends() => Outcome::Fighting,
+            _ if ticks <= self.ends() => Outcome::Fighting,
             (None, Some(winner)) => Outcome::Killed { winner },
             (None, None) => Outcome::Parted,
         }
@@ -195,11 +201,11 @@ impl Champions {
         if c.abandoned.is_some() || tick > c.ends() {
             return;
         }
-        let ready = |h: RegimentHandle| {
+        let standing = |h: RegimentHandle| {
             regs.resolve(h)
-                .is_some_and(|i| regs.engaged[i].is_none() && !regs.morale_state[i].broken())
+                .is_some_and(|i| !regs.morale_state[i].broken())
         };
-        if !c.champions.iter().all(|&h| ready(h)) {
+        if !c.champions.iter().all(|&h| standing(h)) || battle_begun(regs, stances, c.sides) {
             c.abandoned = Some(tick);
         } else if tick == c.ends()
             && let Some(w) = c.winner
@@ -210,8 +216,9 @@ impl Champions {
     }
 
     /// Once two hostile regiments that see each other are within
-    /// [`CALL_TILES`], roll whether champions come out, and if so pick them
-    /// and roll their duel.
+    /// [`CALL_TILES`] and both sides have a champion to send, roll whether
+    /// they come out, and if so roll their duel. If the battle has already
+    /// begun, there will be none.
     fn look(
         &mut self,
         regs: &mut Regiments,
@@ -223,8 +230,8 @@ impl Champions {
         let Some((a, b)) = self.nearest_pair(regs, stances, vision) else {
             return;
         };
-        self.rolled = true;
-        if self.rng.below(100) >= CHANCE_PERCENT {
+        if battle_begun(regs, stances, [regs.owner[a], regs.owner[b]]) {
+            self.rolled = true;
             return;
         }
         let (Some(x), Some(y)) = (
@@ -233,6 +240,10 @@ impl Champions {
         ) else {
             return;
         };
+        self.rolled = true;
+        if self.rng.below(100) >= CHANCE_PERCENT {
+            return;
+        }
         let (px, py) = (regs.position[x], regs.position[y]);
         let spot = FxVec2::new(
             Fx::from_raw(px.x.raw().midpoint(py.x.raw())),
@@ -246,6 +257,7 @@ impl Champions {
         let (beats, landed, winner) = duel(fighters, &mut self.rng);
         self.challenge = Some(Challenge {
             champions: [regs.handle(x), regs.handle(y)],
+            sides: [regs.owner[x], regs.owner[y]],
             spot,
             called: tick,
             meet: tick + walk.clamp(MIN_WALK_TICKS, MAX_WALK_TICKS),
@@ -332,6 +344,8 @@ impl Champions {
                 for &r in &c.champions {
                     hash_handle(h, Some(r));
                 }
+                h.u8(c.sides[0]);
+                h.u8(c.sides[1]);
                 h.i32(c.spot.x.raw());
                 h.i32(c.spot.y.raw());
                 h.u32(c.called);
@@ -384,6 +398,17 @@ fn pick(
     best.map(|(_, _, i)| i)
 }
 
+/// Whether the battle has begun for either of `sides`: a regiment of theirs
+/// or their allies is fighting in melee, or has lost soldiers lately (since
+/// its last morale check).
+fn battle_begun(regs: &Regiments, stances: &Stances, sides: [PlayerId; 2]) -> bool {
+    (0..regs.alive.len()).any(|i| {
+        regs.alive[i]
+            && (regs.engaged[i].is_some() || regs.losses[i] > 0)
+            && sides.iter().any(|&s| !stances.hostile(s, regs.owner[i]))
+    })
+}
+
 /// Roll a duel between champions of `fighters`: (beats fought, the beats
 /// whose blows landed, the winner if anyone fell).
 fn duel(fighters: [&UnitStats; 2], rng: &mut Pcg32) -> (u8, u32, Option<u8>) {
@@ -415,20 +440,25 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
         return;
     };
     let (winners, losers) = (regs.owner[w], regs.owner[l]);
-    for i in 0..regs.alive.len() {
-        if !regs.alive[i] {
-            continue;
-        }
-        let points = if !stances.hostile(winners, regs.owner[i]) {
+    let heart = |party: PlayerId| {
+        if !stances.hostile(winners, party) {
             HEART
-        } else if !stances.hostile(losers, regs.owner[i]) {
+        } else if !stances.hostile(losers, party) {
             -HEART
         } else {
-            continue;
-        };
-        // The ceiling moves for the rest of the battle; morale moves now.
-        regs.morale_bonus[i] = regs.morale_bonus[i].saturating_add(points * SCALE);
-        morale::shift(regs, i, points);
+            0
+        }
+    };
+    // Each side's ceiling moves for the rest of the battle, for regiments
+    // it raises later too; its regiments' morale moves now.
+    for party in 0..=PlayerId::MAX {
+        let bonus = &mut regs.party_morale[party as usize];
+        *bonus = bonus.saturating_add(heart(party) * SCALE);
+    }
+    for i in 0..regs.alive.len() {
+        if regs.alive[i] {
+            morale::shift(regs, i, heart(regs.owner[i]));
+        }
     }
     let last = regs.models[l] as usize - 1;
     let hp = regs.hp[l * crate::formation::MAX_MODELS as usize + last];
@@ -462,6 +492,7 @@ mod tests {
                     generation: 0,
                 }; 2],
                 spot: FxVec2::ZERO,
+                sides: [0, 1],
                 called: 0,
                 meet: 0,
                 beats,

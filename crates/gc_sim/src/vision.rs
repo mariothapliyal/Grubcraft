@@ -312,9 +312,9 @@ impl Vision {
         volley: bool,
     ) {
         if volley {
-            morale::shake(regs, j, VOLLEY_SHOCK);
+            morale::shift(regs, j, -VOLLEY_SHOCK);
         } else {
-            morale::shake(regs, j, AMBUSH_SHOCK);
+            morale::shift(regs, j, -AMBUSH_SHOCK);
             self.off_guard[j] = OFF_GUARD_TICKS;
             morale::shake_friends(regs, combat, stances, j, RIPPLE_TILES, AMBUSH_RIPPLE);
         }

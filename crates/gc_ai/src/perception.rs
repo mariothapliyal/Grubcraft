@@ -170,8 +170,8 @@ pub struct Perception {
     /// Live regiments in pool order.
     pub regiments: Vec<Seen>,
     pub stances: Stances,
-    /// Whether champions are fighting between the lines now.
-    pub champions_fighting: bool,
+    /// The two parties whose champions are fighting between the lines now.
+    pub champions: Option<[PlayerId; 2]>,
     /// Index into `regiments` by pool index, for handle lookups.
     by_index: Vec<u32>,
     /// Every enemy seen lately, as last seen, and the tick it was.
@@ -216,9 +216,10 @@ impl Perception {
         if self.stances != *world.stances() {
             self.stances = world.stances().clone();
         }
-        self.champions_fighting = world
+        self.champions = world
             .challenge()
-            .is_some_and(|c| c.outcome(self.tick) == Outcome::Fighting);
+            .filter(|c| c.outcome(self.tick) == Outcome::Fighting)
+            .map(|c| c.sides);
         self.regiments.clear();
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);

@@ -27,7 +27,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -162,7 +162,7 @@ fn check(
     // the unit's stat at full strength to half of it with nobody left. A
     // champion's win or loss raises or lowers it for the rest of the battle.
     let cap = fresh(stats) as i32 * (full + regs.models[i] as i32) / (2 * full)
-        + regs.morale_bonus[i] as i32;
+        + regs.party_morale[regs.owner[i] as usize] as i32;
     let morale = (regs.morale[i] as i32 + tenths).clamp(0, cap.max(1)) as i16;
     regs.morale[i] = morale;
     if morale > 0 {
@@ -205,22 +205,13 @@ fn local_strength(
     (friends, enemies)
 }
 
-/// Regiment `i` loses `points` of morale at once (an ambush), down to no
-/// less than a tenth of a point: its own next check decides whether it
-/// breaks. Routers and regiments that never rout are left alone.
-pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
-    shift(regs, i, -points);
-}
-
-/// Regiment `i` gains `points` morale (loses them, if negative) unless it
-/// is running. A loss leaves it at least 0.1, so it never routs from this
-/// alone; a gain may go above its ceiling until its next check caps it.
+/// Regiment `i` gains `points` of morale at once (a champion's win), or
+/// loses them if negative (an ambush), down to no less than a tenth of a
+/// point: its own next check decides whether it breaks, and a gain may go
+/// above its ceiling until that check caps it. Routers and regiments that
+/// never rout are left alone.
 pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
     adjust(&mut regs.morale[i], &mut regs.morale_state[i], points);
-}
-
-fn lose(morale: &mut i16, state: &mut MoraleState, points: i16) {
-    adjust(morale, state, -points);
 }
 
 fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
@@ -247,7 +238,7 @@ pub(crate) fn shake_friends(
     let state = &mut regs.morale_state;
     combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
         if j != i {
-            lose(&mut morale[j], &mut state[j], points);
+            adjust(&mut morale[j], &mut state[j], -points);
         }
     });
 }
@@ -283,10 +274,7 @@ fn rout(
 
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.
-    let me = RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
-    };
+    let me = regs.handle(i);
     shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK);
     let (p, owner, near) = (
         regs.position[i],
