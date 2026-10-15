@@ -56,6 +56,8 @@ pub(crate) struct SoldiersGpu {
     /// For models painted in vertex colours.
     pub pipeline: wgpu::RenderPipeline,
     pub textured_pipeline: wgpu::RenderPipeline,
+    /// Depth only, for the sun's shadow map; any model.
+    pub shadow_pipeline: wgpu::RenderPipeline,
     pub bones_layout: wgpu::BindGroupLayout,
     pub instances: wgpu::Buffer,
     pub models: Option<ModelGpu>,
@@ -66,7 +68,6 @@ pub(crate) fn make(
     world_layout: &wgpu::BindGroupLayout,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
-    depth: wgpu::TextureFormat,
 ) -> SoldiersGpu {
     let materials = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -108,7 +109,13 @@ pub(crate) fn make(
         bind_group_layouts: &[Some(world_layout), Some(&bones_layout)],
         immediate_size: 0,
     });
-    let pipeline = |label, vs, fs, cull_mode| {
+    let targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: None,
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    // `fs: None` draws only depth, for the shadow map.
+    let pipeline = |label, vs, fs: Option<&str>, cull_mode| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
@@ -142,23 +149,13 @@ pub(crate) fn make(
                 cull_mode,
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
+            depth_stencil: Some(crate::depth_state(fs.is_none())),
             multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
+            fragment: fs.map(|fs| wgpu::FragmentState {
                 module: shader,
                 entry_point: Some(fs),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &targets,
             }),
             multiview_mask: None,
             cache: None,
@@ -169,10 +166,11 @@ pub(crate) fn make(
     let textured_pipeline = pipeline(
         "textured soldiers",
         "vs_soldier_textured",
-        "fs_soldier_textured",
+        Some("fs_soldier_textured"),
         Some(wgpu::Face::Back),
     );
-    let pipeline = pipeline("soldiers", "vs_soldier", "fs_soldier", None);
+    let shadow_pipeline = pipeline("soldier shadows", "vs_soldier", None, None);
+    let pipeline = pipeline("soldiers", "vs_soldier", Some("fs_soldier"), None);
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("soldier instances"),
         size: (MAX_SOLDIER_INSTANCES * size_of::<SoldierInstance>()) as u64,
@@ -182,6 +180,7 @@ pub(crate) fn make(
     SoldiersGpu {
         pipeline,
         textured_pipeline,
+        shadow_pipeline,
         bones_layout,
         instances,
         models: None,
