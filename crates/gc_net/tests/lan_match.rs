@@ -210,7 +210,7 @@ impl Match {
     }
 
     fn ticks(&self) -> Vec<u32> {
-        self.worlds.iter().map(|w| w.tick_count()).collect()
+        self.worlds.iter().map(gc_sim::World::tick_count).collect()
     }
 
     /// Let the last hashes reach the host.
@@ -224,7 +224,7 @@ impl Match {
     fn desyncs(&mut self) -> Vec<u32> {
         self.lans
             .iter_mut()
-            .flat_map(|l| l.match_events())
+            .flat_map(gc_net::Lan::match_events)
             .filter_map(|e| match e {
                 MatchEvent::Desync { tick } => Some(tick),
                 _ => None,
@@ -235,7 +235,9 @@ impl Match {
 
 #[test]
 fn three_machines_play_in_lockstep_through_lost_packets() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -311,7 +313,7 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     m.run(&[], TURNS, Duration::from_secs(60));
     assert_eq!(m.ticks(), [TURNS; 3], "match stalled");
     m.settle();
-    let hashes: Vec<u64> = m.worlds.iter().map(|w| w.state_hash()).collect();
+    let hashes: Vec<u64> = m.worlds.iter().map(gc_sim::World::state_hash).collect();
     assert_eq!(hashes[0], hashes[1]);
     assert_eq!(hashes[0], hashes[2]);
     // Every player's regiments made it into the match.
@@ -355,7 +357,9 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
 
 #[test]
 fn the_delay_drops_on_a_fast_network() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // With 30 ms turns, a round trip on this machine plus the margin fits
     // in one turn.
     let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 30);
@@ -371,7 +375,9 @@ fn the_delay_drops_on_a_fast_network() {
 
 #[test]
 fn the_match_waits_for_a_player_who_drops() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
     m.run(&[], 100, Duration::from_secs(20));
     assert_eq!(m.ticks(), [100; 3]);
@@ -431,7 +437,9 @@ fn the_match_waits_for_a_player_who_drops() {
 
 #[test]
 fn carry_on_plays_through_a_drop() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut m = Match::start(&["Alex"], &[2], OnDrop::CarryOn, 5);
     m.run(&[], 50, Duration::from_secs(20));
     let before = m.ticks()[0];
@@ -453,7 +461,9 @@ fn carry_on_plays_through_a_drop() {
 
 #[test]
 fn a_desync_is_found_and_reported_everywhere() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
     m.run(&[], 40, Duration::from_secs(20));
     // Something only Alex's machine does: an extra tick of its own.
@@ -472,7 +482,9 @@ fn a_desync_is_found_and_reported_everywhere() {
 
 #[test]
 fn joiners_are_refused_when_full_or_on_different_data() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -502,7 +514,9 @@ fn joiners_are_refused_when_full_or_on_different_data() {
 
 #[test]
 fn leaving_and_being_removed() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -538,7 +552,9 @@ fn leaving_and_being_removed() {
 
 #[test]
 fn the_join_screen_finds_a_hosted_game() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -562,7 +578,9 @@ fn the_join_screen_finds_a_hosted_game() {
 
 #[test]
 fn nobody_answering_is_a_clear_error() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut alex = lan();
     // A port nothing listens on.
     let err = alex.join(&profile("Alex"), "127.0.0.1:9", "").unwrap_err();
@@ -571,7 +589,9 @@ fn nobody_answering_is_a_clear_error() {
 
 #[test]
 fn a_password_keeps_strangers_out() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "moles")
         .unwrap();
@@ -610,7 +630,9 @@ fn a_password_keeps_strangers_out() {
 
 #[test]
 fn friends_join_with_a_code() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -629,7 +651,9 @@ fn friends_join_with_a_code() {
 
 #[test]
 fn nothing_readable_crosses_the_network() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // A listener between the two sees every packet the joiner sends.
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")

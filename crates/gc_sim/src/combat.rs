@@ -72,9 +72,9 @@ pub(crate) fn pushing(step: Fx, crowd: Fx) -> Fx {
     if crowd <= CROWDING {
         return step;
     }
-    let deep = (crowd - CROWDING).min(PUSH_RAMP).raw() as i64;
-    let percent = 100 - (100 - PUSH_PERCENT) * deep / PUSH_RAMP.raw() as i64;
-    Fx::from_raw((step.raw() as i64 * percent / 100) as i32).max(Fx::from_raw(1))
+    let deep = i64::from((crowd - CROWDING).min(PUSH_RAMP).raw());
+    let percent = 100 - (100 - PUSH_PERCENT) * deep / i64::from(PUSH_RAMP.raw());
+    Fx::from_raw((i64::from(step.raw()) * percent / 100) as i32).max(Fx::from_raw(1))
 }
 /// It waits this long behind a friend that is only standing or waiting,
 /// then walks through, so no order is stuck for good. Friends locked in
@@ -83,6 +83,10 @@ pub const PATIENCE: u16 = 3 * TICKS_PER_SECOND as u16;
 /// How far past touching distance the crowd check looks, so a regiment
 /// with no friend that near can march a few ticks without looking again.
 const LOOK_AHEAD: Fx = Fx::from_int(2);
+/// The furthest any regiment moves in one tick (20 tiles a second, several
+/// times the fastest unit). The spatial grid is filled at the start of the
+/// tick, so neighbour searches during movement add this much slack.
+pub(crate) const MOVE_SLACK: Fx = Fx::ONE;
 
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
 const CELL_TILES: i32 = 16;
@@ -442,7 +446,7 @@ impl Combat {
         } else {
             !(1 << (owner as usize % OWNER_SLOTS))
         };
-        let range_sq = range.raw() as i64 * range.raw() as i64;
+        let range_sq = i64::from(range.raw()) * i64::from(range.raw());
         self.each_filed_once(p, range, slots, regs.alive, |j| {
             if regs.stances.hostile(owner, regs.owner[j]) != friends
                 && ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq
@@ -587,30 +591,30 @@ impl Combat {
         let patient = regs.held[i] < PATIENCE;
         let me = Block::at(regs, units, i, next);
         let now = Block::of(regs, units, i);
-        let placement = Placement {
-            alive: &regs.alive,
-            owner: &regs.owner,
-            position: &regs.position,
-            stances,
-        };
         let reach = me.radius();
-        let range = reach + self.max_radius + LOOK_AHEAD;
-        if !self.holder_near(
-            next,
-            range,
-            stances.friend_slots(regs.owner[i], OWNER_SLOTS),
-        ) {
+        // A friend `j` counts only if its centre is within `reach +
+        // radius[j] + 1 + LOOK_AHEAD` of `next` (the circle test below). It
+        // started the tick at most MOVE_SLACK from where it is now, and is
+        // filed in every cell its circle (plus REACH) touched then, so one
+        // of those cells lies within `range` of `next`. Holders are filed
+        // by their bare circle, hence the extra REACH for them.
+        let range = reach + Fx::ONE + LOOK_AHEAD + MOVE_SLACK - REACH;
+        let owner = regs.owner[i];
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        if !self.holder_near(next, range + REACH, slots) {
             return Err(LOOK_AHEAD);
         }
+        // Nothing further than this counts towards the gap either.
+        let outer = (reach + self.max_radius + LOOK_AHEAD).raw() as u64;
         let mut found: Option<usize> = None;
         let mut gap = LOOK_AHEAD;
-        self.each_near(
-            &placement,
-            next,
-            range,
-            Whose::Friends(regs.owner[i]),
-            |j| {
-                if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
+        self.each_filed_once(next, range, slots, &regs.alive, |j| {
+            {
+                if j == i
+                    || stances.hostile(owner, regs.owner[j])
+                    || found.is_some_and(|f| f < j)
+                    || regs.morale_state[j].broken()
+                {
                     return;
                 }
                 let holding = regs.engaged[j].is_some()
@@ -625,7 +629,7 @@ impl Combat {
                 let touch = reach + self.radius[j] + Fx::ONE;
                 let r = (touch + LOOK_AHEAD).raw() as u64;
                 let d = (regs.position[j] - next).length_sq_raw();
-                if d > r * r {
+                if d > r * r || d > outer * outer {
                     return;
                 }
                 let r = touch.raw() as u64;
@@ -639,8 +643,8 @@ impl Combat {
                 if after > CROWDING && after >= now.overlap(&them) {
                     found = Some(j);
                 }
-            },
-        );
+            }
+        });
         found.ok_or(gap)
     }
 
@@ -861,16 +865,17 @@ impl Combat {
             // Soldiers who can reach the foe, in percent of a soldier.
             let fighters = match me.side_facing(them.centre) {
                 Side::Front => attacker.front_fighters_percent(files, models),
-                Side::Flank => 100 * formation::ranks(files, models) as u64,
-                Side::Rear => 100 * files.min(models).div_ceil(2) as u64,
+                Side::Flank => 100 * u64::from(formation::ranks(files, models)),
+                Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
             };
             let side = them.side_facing(me.centre);
             let defence = defender.melee_defence_in(regs.formation[j], side == Side::Front);
-            let hit = hit_percent(attacker.melee_attack as i32, defence) as u128;
-            let charge =
-                100 + attacker.charge_bonus as u128 * regs.charge[i] as u128 / CHARGE_TICKS as u128;
-            let heart = heart_percent(regs.morale_state[i]) as u128;
-            let room = attacker.weapon_room_percent(regs.formation[i]) as u128;
+            let hit = hit_percent(i32::from(attacker.melee_attack), defence) as u128;
+            let charge = 100
+                + u128::from(attacker.charge_bonus) * u128::from(regs.charge[i])
+                    / u128::from(CHARGE_TICKS);
+            let heart = u128::from(heart_percent(regs.morale_state[i]));
+            let room = u128::from(attacker.weapon_room_percent(regs.formation[i]));
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
             let (shaken, exposed) = (
                 100 - disorder_percent(regs.disorder[i]),
@@ -878,10 +883,10 @@ impl Combat {
             );
             // In u128: the extra factors would overflow u64 for big blows.
             // With every new factor at 100 this is exactly the old formula.
-            let mut expected = (fighters as u128
+            let mut expected = (u128::from(fighters)
                 * hit
-                * attacker.melee_damage as u128
-                * side.damage_percent() as u128
+                * u128::from(attacker.melee_damage)
+                * u128::from(side.damage_percent())
                 * charge
                 * heart
                 * room
@@ -919,7 +924,7 @@ impl Combat {
             };
             let to = regs.position[j] - regs.position[i];
             let want = Angle::of_vec(to);
-            if (regs.facing[i].delta_to(want) as i32).abs() > 0x2000 {
+            if i32::from(regs.facing[i].delta_to(want)).abs() > 0x2000 {
                 regs.target_facing[i] = Some(want);
                 continue;
             }
@@ -948,7 +953,7 @@ impl Combat {
             vs.shots[v] = regs.models[i];
             vs.damage[v] = stats.missile_damage;
             vs.accuracy[v] =
-                (stats.accuracy as u64 * heart_percent(regs.morale_state[i]) / 100) as u8;
+                (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100) as u8;
             regs.reload[i] = stats.reload_ticks.max(1);
         }
 
@@ -968,16 +973,17 @@ impl Combat {
             if (block.centre - vs.aim[v]).length() > block.radius() + Fx::ONE {
                 continue;
             }
-            let area = (block.half_width * block.half_depth).raw() as i64 * 4;
-            let density = (regs.models[j] as i64 * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
-                .clamp(25, 125) as u64;
+            let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
+            let density = (i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100
+                / area.max(1))
+            .clamp(25, 125) as u64;
             let side = block.side_facing(vs.from[v]);
             // Arrows from the front mostly glance off a shield wall.
             let shields = regs.formation[j].arrow_percent(side == Side::Front);
-            let expected = vs.shots[v] as u64
-                * vs.accuracy[v] as u64
+            let expected = u64::from(vs.shots[v])
+                * u64::from(vs.accuracy[v])
                 * density
-                * vs.damage[v] as u64
+                * u64::from(vs.damage[v])
                 * side.damage_percent()
                 * 256
                 / (100 * 100 * 100)
@@ -1035,7 +1041,7 @@ impl Combat {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            let r = terrain.range(range, me, regs.position[j]).raw() as i64;
+            let r = i64::from(terrain.range(range, me, regs.position[j]).raw());
             if d <= (r * r) as u64 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
                 best = Some((d, j));
             }
@@ -1068,7 +1074,7 @@ impl Combat {
 /// How much worse, in percent, a regiment this far out of order fights:
 /// [`DISORDER_PERCENT`] at full disorder, fading as it re-forms.
 fn disorder_percent(disorder: u8) -> u64 {
-    DISORDER_PERCENT * disorder as u64 / DISORDER_TICKS as u64
+    DISORDER_PERCENT * u64::from(disorder) / u64::from(DISORDER_TICKS)
 }
 
 /// Percent chance a melee blow with `attack` lands on a soldier with
@@ -1102,15 +1108,15 @@ fn deal(
         Side::Flank => SHOCK_FLANK,
         Side::Rear => SHOCK_REAR,
     };
-    let rolled = expected * (192 + rng.below(129) as u64) / 256;
-    let total = rolled + regs.damage_carry[j] as u64;
+    let rolled = expected * (192 + u64::from(rng.below(129))) / 256;
+    let total = rolled + u64::from(regs.damage_carry[j]);
     regs.damage_carry[j] = (total % 256) as u16;
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    regs.take_damage(j, (total / 256).min(u32::MAX as u64) as u32);
+    regs.take_damage(j, (total / 256).min(u64::from(u32::MAX)) as u32);
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
     if regs.models[j] > 0 && ranks_after < ranks_before {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
-        let step = Fx::from_raw(spacing.raw() * (ranks_before - ranks_after) as i32 / 2);
+        let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         regs.position[j] += regs.facing[j].to_vec() * step;
     }
 }

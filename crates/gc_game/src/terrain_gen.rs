@@ -70,7 +70,7 @@ impl Heightmap {
                 let edge = p.x.min(p.y).min(n - p.x).min(n - p.y);
                 h *= smoothstep(0.0, 10.0, edge) * 0.85 + 0.15;
 
-                heights.push((h.clamp(0.0, 1.0) * u16::MAX as f32) as u16);
+                heights.push((h.clamp(0.0, 1.0) * f32::from(u16::MAX)) as u16);
             }
         }
         let mut map = Heightmap {
@@ -101,7 +101,7 @@ impl Heightmap {
     fn sample(&self, x: i32, z: i32) -> f32 {
         let max = self.size as i32 - 1;
         let i = (z.clamp(0, max) * self.size as i32 + x.clamp(0, max)) as usize;
-        self.heights[i] as f32 * (self.max_height / u16::MAX as f32)
+        f32::from(self.heights[i]) * (self.max_height / f32::from(u16::MAX))
     }
 
     /// Bilinear height in tiles at a map position in tiles (matches the shader).
@@ -139,7 +139,7 @@ impl Heightmap {
         let cells_per_tile = gc_sim::nav::CELLS_PER_TILE as u32;
         let step = self.samples_per_tile / cells_per_tile; // samples per cell
         let side = (self.size - 1) / step;
-        let units = u16::MAX as f32 / self.max_height; // height units per tile
+        let units = f32::from(u16::MAX) / self.max_height; // height units per tile
         let cliff = (CLIFF_RISE_PER_TILE * units / cells_per_tile as f32) as u32;
         let steep = cliff / 2;
         let water = (self.water_level * units) as u32;
@@ -151,7 +151,7 @@ impl Heightmap {
                 let (mut lo, mut hi, mut sum, mut n) = (u32::MAX, 0, 0, 0);
                 for sz in cy * step..=(cy + 1) * step {
                     for sx in cx * step..=(cx + 1) * step {
-                        let h = self.heights[(sz * self.size + sx) as usize] as u32;
+                        let h = u32::from(self.heights[(sz * self.size + sx) as usize]);
                         lo = lo.min(h);
                         hi = hi.max(h);
                         sum += h;
@@ -192,7 +192,7 @@ impl Heightmap {
                 let s = (y * self.samples_per_tile + half) * self.size
                     + x * self.samples_per_tile
                     + half;
-                let h = self.heights[s as usize] as u64 * scale / u16::MAX as u64;
+                let h = u64::from(self.heights[s as usize]) * scale / u64::from(u16::MAX);
                 heights.push(h as u16);
             }
         }
@@ -238,9 +238,10 @@ impl Heightmap {
     /// the map's edge stay open.
     fn grow_cover(&self, seed: u64) -> Vec<u8> {
         let (heights, water) = (&self.sim_heights, self.sim_water);
-        let n = ((self.size - 1) / self.samples_per_tile) as i64;
-        let at =
-            |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
+        let n = i64::from((self.size - 1) / self.samples_per_tile);
+        let at = |x: i64, y: i64| {
+            i64::from(heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize])
+        };
         let starts = start_positions(n as u32).map(|s| (s.x as i64, s.y as i64));
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
@@ -255,7 +256,7 @@ impl Heightmap {
                     (x - sx) * (x - sx) + (y - sy) * (y - sy)
                         < COVER_CLEAR_OF_STARTS * COVER_CLEAR_OF_STARTS
                 });
-                let kind = if h < water as i64
+                let kind = if h < i64::from(water)
                     || slope > COVER_STEEPEST
                     || edge < COVER_CLEAR_OF_EDGE
                     || near_start
@@ -379,7 +380,7 @@ mod tests {
         assert_eq!(water, (hm.water_level * 256.0) as u16);
         for (x, y) in [(3, 5), (16, 16), (40, 22), (63, 63)] {
             let want = hm.height_at(x as f32 + 0.5, y as f32 + 0.5) * 256.0;
-            let got = heights[y * 64 + x] as f32;
+            let got = f32::from(heights[y * 64 + x]);
             assert!((got - want).abs() <= 1.0, "tile {x},{y}: {got} vs {want}");
         }
     }

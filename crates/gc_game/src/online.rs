@@ -24,7 +24,7 @@ pub fn version() -> String {
 pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |b: u8| {
-        h ^= b as u64;
+        h ^= u64::from(b);
         h = h.wrapping_mul(0x0100_0000_01b3);
     };
     nav.iter().for_each(|&b| eat(b));
@@ -46,7 +46,7 @@ pub fn save_report(report: &gc_net::Report) -> String {
         .unwrap_or_else(|| PathBuf::from("desync-reports"));
     let path = dir.join(format!(
         "desync-{stamp}-player{}.gcdesync",
-        report.me as u32 + 1
+        u32::from(report.me) + 1
     ));
     let saved = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report.encode()));
     let line = match saved {

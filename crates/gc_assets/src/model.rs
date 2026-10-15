@@ -208,7 +208,7 @@ impl<'a> Models<'a> {
             let bad = ModelError::OutOfRange(k);
             let verts_end = r.first_vertex as usize + r.vertex_count as usize;
             if verts_end > m.vertices.len()
-                || r.vertex_count > u16::MAX as u32 + 1
+                || r.vertex_count > u32::from(u16::MAX) + 1
                 || r.bones > MAX_BONES + 1
             {
                 return Err(bad);
@@ -218,7 +218,7 @@ impl<'a> Models<'a> {
                 let Some(tris) = m.indices.get(first..first + count) else {
                     return Err(bad);
                 };
-                if count % 3 != 0 || tris.iter().any(|&i| i as u32 >= r.vertex_count) {
+                if count % 3 != 0 || tris.iter().any(|&i| u32::from(i) >= r.vertex_count) {
                     return Err(bad);
                 }
             }
@@ -226,8 +226,8 @@ impl<'a> Models<'a> {
             // The shader reads the first bone always and stops at the first
             // empty slot, so weights must run heaviest first and sum to 255.
             if verts.iter().any(|v| {
-                v.bones.iter().any(|&b| b as u32 >= r.bones)
-                    || v.weights.iter().map(|&w| w as u32).sum::<u32>() != 255
+                v.bones.iter().any(|&b| u32::from(b) >= r.bones)
+                    || v.weights.iter().map(|&w| u32::from(w)).sum::<u32>() != 255
                     || v.weights.windows(2).any(|w| w[1] > w[0])
             }) {
                 return Err(bad);
@@ -339,8 +339,8 @@ pub fn f16_bits(v: f32) -> u16 {
 /// The `f32` value of half-float bits.
 pub fn f16_value(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
-    let exp = ((h >> 10) & 0x1f) as i32;
-    let mant = (h & 0x3ff) as f32;
+    let exp = i32::from((h >> 10) & 0x1f);
+    let mant = f32::from(h & 0x3ff);
     match exp {
         0 => sign * mant * (1.0 / (1u32 << 24) as f32),
         0x1f => {
@@ -440,29 +440,29 @@ mod tests {
         let mut bad = one_model();
         bad.indices[2] = 3;
         parsed(&bad, |m| {
-            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
         let mut bad = one_model();
         bad.clips[0].frames = 3;
         parsed(&bad, |m| {
-            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
         let mut bad = one_model();
         bad.vertices[1].bones = [0, 1, 0, 0];
         bad.vertices[1].weights = [200, 55, 0, 0];
         parsed(&bad, |m| {
-            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
         let mut bad = one_model();
         bad.vertices[1].bones = [0, 9, 0, 0];
         parsed(&bad, |m| {
-            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });
         for weights in [[0, 0, 0, 0], [200, 0, 55, 0], [55, 200, 0, 0]] {
             let mut bad = one_model();
             bad.vertices[1].weights = weights;
             parsed(&bad, |m| {
-                assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+                assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
             });
         }
     }
