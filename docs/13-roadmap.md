@@ -29,7 +29,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Sandbox: place armies for both sides, slow motion, hot-reload unit stats.
 - Golden replay tests and `field-8000pt-2v2` benchmark.
 - **Exit:** a 1v1 sandbox battle of ~3,000 soldiers looks and feels like Shogun, at 60 fps on the low tier.
-- **Progress (2026-10-12):** M1 is built in eight steps: formations in the sim, soldiers on screen, controls, melee and arrows, morale, pathfinding, sandbox, real art. Step 1 (formations: files, ranks, facing, per-soldier hit points, turning, group moves in line, unit data schema 2) is merged. Step 2 (each soldier drawn as a placeholder puppet that steps into its formation slot) is merged. Step 3 (box select, right-drag lines that set frontage and facing, control groups) is merged. Step 4 (melee with flank, rear and charge bonuses; arrow volleys; right-click an enemy to attack; soldiers fall where they fight; unit data schema 3) is merged. Step 5 (morale: wavering, routing, rallying and shattering; banners over shaken regiments; unit data schema 4 with a morale stat) is merged. Step 6 (pathfinding: a walkable-ground grid from the map, portal search across sectors, smoothed waypoint routes, a per-tick search budget; dotted routes for selected regiments and a view of blocked ground) is merged. Step 7 (sandbox: an empty-field start, placing regiments for any side, commanding any side, removing regiments, pause and 0.1× to 4× speed, live stat tuning and reloading `data/units.ron`) is merged. Step 8 (real art: animated CC0 models for every unit type baked into bone animation textures, two levels of detail, death poses, a credits screen, and the Commander View) is merged. Outside the eight steps, a first audio pass is built: the `gc_audio` mixer and `cpal` output, a generated sound set and two adaptive music loops, wired to volleys, melee and morale. Ahead of M2, the menus and lobby screens are built in `gc_ui` (main menu, Play with host and join, lobby with AI players and a version-gate message, settings saved to disk) against a stub network, so the M2 netcode only has to implement one trait.
+- **Progress (2026-10-12):** M1 is built in eight steps: formations in the sim, soldiers on screen, controls, melee and arrows, morale, pathfinding, sandbox, real art. Step 1 (formations: files, ranks, facing, per-soldier hit points, turning, group moves in line, unit data schema 2) is merged. Step 2 (each soldier drawn as a placeholder puppet that steps into its formation slot) is merged. Step 3 (box select, right-drag lines that set frontage and facing, control groups) is merged. Step 4 (melee with flank, rear and charge bonuses; arrow volleys; right-click an enemy to attack; soldiers fall where they fight; unit data schema 3) is merged. Step 5 (morale: wavering, routing, rallying and shattering; banners over shaken regiments; unit data schema 4 with a morale stat) is merged. Step 6 (pathfinding: a walkable-ground grid from the map, portal search across sectors, smoothed waypoint routes, a per-tick search budget; dotted routes for selected regiments and a view of blocked ground) is merged. Step 7 (sandbox: an empty-field start, placing regiments for any side, commanding any side, removing regiments, pause and 0.1× to 4× speed, live stat tuning and reloading `data/units.ron`) is merged. Step 8 (real art: animated CC0 models for every unit type baked into bone animation textures, two levels of detail, death poses, a credits screen, and the Commander View) is merged. Outside the eight steps, a first audio pass is built: the `gc_audio` mixer and `cpal` output, a generated sound set and two adaptive music loops, wired to volleys, melee and morale. Ahead of M2, the menus and lobby screens are built in `gc_ui` (main menu, Play with host and join, lobby with AI players and a version-gate message, settings saved to disk) against a stub network, so the M2 netcode only had to implement one trait (it does since M2 step 1). Remaining for the M1 exit: golden replay tests, the `field-8000pt-2v2` benchmark, and the 3,000-soldier, 60 fps check on real machines, where Mario judges the feel.
 
 ### M2 · LAN Battle (first game night)
 *Goal: Mario and friends play Field Battle together over Wi-Fi.*
@@ -37,7 +37,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - LAN discovery, Host/Join screens, lobby, version gate.
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
-- AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally.
+- AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally. *AI-1 built (2026-10-13): the battle AI at three levels, reading the ground, and the AI lens (`L`). AI-2 (rehearsal and the Warlord level) is next ([18 · AI](18-ai.md#build-plan)).*
 - Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day).*
 - Desync detection with report files; cross-platform determinism CI on golden replays.
 - Replays (record and play back).
@@ -68,6 +68,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Remaining launch maps (Hollow Lung, Marrowfen), map validator.
 - Post-game screen with graphs and "Restage this battle".
 - AI track: the relations ledger (stance, liking, trust, memories) that hamlet reputation runs on; mercenary companies; the parley panel (AI-4).
+- Campaign track: exploring inside a match, with frontier sites and first contact (C-0 in [19](19-campaign.md#build-plan)).
 - **Exit:** a newcomer can learn and win a game after the tutorial; first full balance pass.
 
 ### M5 · Choir and Concord
@@ -101,12 +102,28 @@ AI players were planned for after 1.0; on 2026-10-12 Mario asked for an intellig
 | AI-5 · Choir and Concord AI | Their economy modules and doctrines | M5 |
 | AI-6 · Exploration and diplomacy | Factions met while exploring; diplomacy between players as an option | After 1.0 |
 
+## The campaign track
+
+On 2026-10-15 the Campaign was designed as a third mode ([19 · Campaign and Exploration](19-campaign.md)): a world map of the Reach played over several game nights, where you explore, meet friendly, neutral and mercenary peoples, and fight the battles that matter as Field Battles. Like the AI track it lives in its own crate (`gc_campaign`) and AI module, so a parallel thread can build it.
+
+| Phase | What | With |
+|---|---|---|
+| C-0 · Exploring inside a match | Frontier sites, first sight and first contact on Conquest maps | M4 |
+| C-1 · Campaign core | World map, seasons, hosts, exploring, Grubfolk and companies, battles fought or handed to the generals, saves; Clans and Brood | Starts once M4 lands, alongside M5 |
+| C-2 · Peoples and diplomacy | Minor factions with minds (AI-6), diplomacy between players, alliances, guest commanders, the Chronicle | M7 |
+| C-3 · The full campaign | All four factions, Fellowship mode, stronghold battles, Iron campaign | M7 |
+
+### M7 · Across the Reach (first milestone after 1.0)
+*Goal: the full campaign.*
+- C-2 and C-3 above, on top of the C-1 core built alongside M5.
+- **Exit:** four friends finish a Long campaign over several game nights with no desync, and want to start another.
+
 ## After 1.0 (unordered)
 
 | Feature | Notes |
 |---|---|
 | Naval expansion | Water maps, ships, coastal raids; the map format already reserves a depth layer |
-| Exploration and diplomacy | Factions met while exploring, with their own minds and memories; diplomacy between players as a lobby option (AI-6 in [18 · AI](18-ai.md#build-plan)) |
+| Exploration and diplomacy | Now part of the campaign (M7 above): factions met while exploring, with their own minds and memories, and diplomacy between players (AI-6 in [18 · AI](18-ai.md#build-plan), C-2 in [19](19-campaign.md#build-plan)). Diplomacy between players in Conquest matches stays a later lobby option |
 | Host migration | Every client already has full state |
 | Internet join codes | UDP hole punching via a tiny rendezvous service |
 | Map editor for players | The internal edit mode, exposed |
