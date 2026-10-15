@@ -210,6 +210,41 @@ mod tests {
     }
 
     #[test]
+    fn duel_moves_play_their_clips() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let m = models.by_name("Bone Pikes").unwrap();
+        let clip = |k| *models.clip(m, k).unwrap();
+        let (die, duck, hit) = (
+            clip(ClipKind::Die),
+            clip(ClipKind::Block),
+            clip(ClipKind::Hit),
+        );
+        let rows = |f: Move| clips.fight(m, f, 0.0).unwrap();
+        // A knockdown falls, lies on the death clip's last frame, and gets
+        // up again; it never lays the model flat when it has a death clip.
+        let (start, flat) = rows(Move::Down(0.0));
+        assert_eq!((start.rows[0], flat), (die.first_row as u16, false));
+        let lying = (die.first_row + die.frames - 1) as u16;
+        assert_eq!(rows(Move::Down(0.5)).0.rows, [lying; 2]);
+        assert_eq!(rows(Move::Down(1.0)).0.rows[0], die.first_row as u16);
+        // A block ducks and comes back up; a stagger plays the hit clip.
+        assert_eq!(rows(Move::Block(0.0)).0.rows[0], duck.first_row as u16);
+        let low = rows(Move::Block(0.5)).0.rows[0] as u32;
+        assert!(low > duck.first_row && low < duck.first_row + duck.frames / 2);
+        assert_eq!(
+            rows(Move::Stagger(1.0)).0.rows,
+            [(hit.first_row + hit.frames - 1) as u16; 2]
+        );
+
+        // A model without a death clip lies flat while knocked down.
+        let bug = models.by_name("Skitterlings").unwrap();
+        assert!(models.clip(bug, ClipKind::Die).is_none());
+        assert!(clips.fight(bug, Move::Down(0.5), 0.0).unwrap().1);
+        assert!(!clips.fight(bug, Move::Down(0.05), 0.0).unwrap().1);
+    }
+
+    #[test]
     fn loops_wrap_and_deaths_hold() {
         let clip = ClipRecord {
             kind: ClipKind::Walk as u8,
