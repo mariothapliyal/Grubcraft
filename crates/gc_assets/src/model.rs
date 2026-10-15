@@ -1,5 +1,6 @@
-//! Baked soldier models: meshes rigidly bound to bones, and bone animation
-//! rows (see `docs/10-architecture.md#units-instancing-and-vertex-animation-textures`).
+//! Baked soldier models: skinned meshes (each vertex follows up to four
+//! bones), and bone animation rows (see
+//! `docs/10-architecture.md#units-instancing-and-vertex-animation-textures`).
 //!
 //! A model pack holds five tables:
 //!
@@ -20,8 +21,9 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::{Pack, TableError, read_table};
 
-/// Bumped whenever a record's layout or meaning changes.
-pub const MODEL_SCHEMA: u32 = 1;
+/// Bumped whenever a record's layout or meaning changes. 2: vertices follow
+/// up to four weighted bones and carry a texture coordinate and tangent.
+pub const MODEL_SCHEMA: u32 = 2;
 pub const INDEX_PATH: &str = "models/index";
 pub const VERTICES_PATH: &str = "models/vertices";
 pub const INDICES_PATH: &str = "models/indices";
@@ -29,7 +31,11 @@ pub const CLIPS_PATH: &str = "models/clips";
 pub const BONES_PATH: &str = "models/bones";
 
 /// Most bones a model may have (one more is added for parts that never move).
-pub const MAX_BONES: u32 = 47;
+/// Room for a full humanoid rig with fingers (the Quaternius rigs have 62);
+/// every bone costs every animation frame three texels, used or not.
+pub const MAX_BONES: u32 = 63;
+/// Bones a vertex may follow.
+pub const BONES_PER_VERTEX: usize = 4;
 /// Texels in a bone texture row: three per bone, for `MAX_BONES + 1` bones.
 pub const BONE_TEXELS_PER_ROW: u32 = 3 * (MAX_BONES + 1);
 /// Vertex positions are stored in 1/`POSITION_SCALE` tiles.
@@ -98,20 +104,40 @@ impl ModelRecord {
     }
 }
 
-/// One vertex, rigidly bound to one bone. 16 bytes.
+/// One vertex, following up to four bones. 32 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
 pub struct ModelVertex {
     /// Rest-pose position in 1/[`POSITION_SCALE`] tiles; x across, y up,
     /// z forward (the way the soldier faces).
     pub pos: [i16; 3],
-    pub bone: u8,
     /// How much of the team colour replaces the vertex colour (0 to 255).
     pub team: u8,
+    pub _pad: u8,
+    /// The bones this vertex follows, heaviest first.
+    pub bones: [u8; BONES_PER_VERTEX],
+    /// Each bone's share of the vertex, summing to 255. Unused slots are 0.
+    pub weights: [u8; BONES_PER_VERTEX],
     /// Unit normal scaled to ±127; the fourth byte is padding.
     pub normal: [i8; 4],
+    /// Unit tangent (along the texture's u) scaled to ±127; the fourth byte
+    /// is ±127, the handedness of the bitangent. All zero without a texture.
+    pub tangent: [i8; 4],
     /// sRGB colour; alpha is padding.
     pub color: [u8; 4],
+    /// Texture coordinate, 0 to 65,535 across the texture.
+    pub uv: [u16; 2],
+}
+
+impl ModelVertex {
+    /// A vertex that follows one bone completely.
+    pub fn rigid(bone: u8) -> ModelVertex {
+        ModelVertex {
+            bones: [bone, 0, 0, 0],
+            weights: [255, 0, 0, 0],
+            ..Zeroable::zeroed()
+        }
+    }
 }
 
 /// One animation clip. 16 bytes.
@@ -202,7 +228,12 @@ impl<'a> Models<'a> {
                 }
             }
             let verts = &m.vertices[r.first_vertex as usize..verts_end];
-            if verts.iter().any(|v| v.bone as u32 >= r.bones) {
+            if verts.iter().any(|v| {
+                v.bones
+                    .iter()
+                    .zip(v.weights)
+                    .any(|(&b, w)| w > 0 && b as u32 >= r.bones)
+            }) {
                 return Err(bad);
             }
             let clips_end = r.first_clip as usize + r.clip_count as usize;
@@ -353,7 +384,7 @@ mod tests {
     #[test]
     fn record_sizes_are_stable() {
         assert_eq!(size_of::<ModelRecord>(), 64);
-        assert_eq!(size_of::<ModelVertex>(), 16);
+        assert_eq!(size_of::<ModelVertex>(), 32);
         assert_eq!(size_of::<ClipRecord>(), 16);
     }
 
@@ -361,11 +392,9 @@ mod tests {
         let mut name = [0; NAME_BYTES];
         name[..4].copy_from_slice(b"test");
         let v = ModelVertex {
-            pos: [0, 0, 0],
-            bone: 0,
-            team: 0,
             normal: [0, 127, 0, 0],
             color: [255; 4],
+            ..ModelVertex::rigid(0)
         };
         ModelTables {
             models: alloc::vec![ModelRecord {
@@ -422,9 +451,14 @@ mod tests {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
         });
         let mut bad = one_model();
-        bad.vertices[1].bone = 1;
+        bad.vertices[1].bones = [0, 1, 0, 0];
+        bad.vertices[1].weights = [200, 55, 0, 0];
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
         });
+        // A bone slot with no weight is never read, so its index doesn't matter.
+        let mut fine = one_model();
+        fine.vertices[1].bones = [0, 9, 0, 0];
+        parsed(&fine, |m| assert!(m.is_ok()));
     }
 }
