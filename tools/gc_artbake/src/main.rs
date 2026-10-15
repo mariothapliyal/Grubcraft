@@ -145,8 +145,9 @@ fn run(opts: &Options) -> Result<(), String> {
         // and anything drawn without textures).
         let albedo = match &m.textures {
             Some(t) => {
-                let path = resolve(&t.albedo)?;
-                Some((textures::load_png(&path)?, path))
+                let path = resolve(&t.albedo).map_err(|e| format!("{}: {e}", m.name))?;
+                let img = textures::load_png(&path).map_err(|e| format!("{}: {e}", m.name))?;
+                Some((img, path))
             }
             None => None,
         };
@@ -544,6 +545,7 @@ fn bake_model(
             });
 
             let base = verts.len() as u32;
+            let mut mirrored = false;
             for k in 0..positions.len() {
                 let (bones, to_model) = match influences.get(k) {
                     Some(inf) if skinned => (top_weights(inf), bind_space),
@@ -553,6 +555,7 @@ fn bake_model(
                         (rigid_skin(bone as u8), to_model)
                     }
                 };
+                mirrored = to_model.determinant() < 0.0;
                 let tangent = tangents.as_ref().map_or(Vec4::ZERO, |t| {
                     let dir = to_model
                         .transform_vector3(t[k].truncate())
@@ -579,9 +582,16 @@ fn bake_model(
                     bones,
                 });
             }
+            let first = indices.len();
             match reader.read_indices() {
                 Some(i) => indices.extend(i.into_u32().map(|i| base + i)),
                 None => indices.extend(base..verts.len() as u32),
+            }
+            if mirrored {
+                // Keep the outside counter-clockwise, as back-face culling expects.
+                for tri in indices[first..].chunks_exact_mut(3) {
+                    tri.swap(1, 2);
+                }
             }
         }
     }
@@ -645,19 +655,20 @@ fn bake_model(
         .collect();
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
         .map_err(|e| e.to_string())?;
+    let textured = cfg.textures.is_some();
     let simplify = |indices: &[u32], tris: usize| -> Vec<u32> {
         if indices.len() / 3 <= tris {
             return indices.to_vec();
         }
-        let mut out = meshopt::simplify(
-            indices,
-            &adapter,
-            tris * 3,
-            0.05,
-            meshopt::SimplifyOptions::Permissive,
-            None,
-        );
-        if out.len() / 3 > tris * 5 / 4 {
+        // Texture seams must hold, or reduced triangles would span unrelated
+        // parts of the atlas; vertex-coloured models may collapse across them.
+        let options = if textured {
+            meshopt::SimplifyOptions::None
+        } else {
+            meshopt::SimplifyOptions::Permissive
+        };
+        let mut out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
+        if !textured && out.len() / 3 > tris * 5 / 4 {
             // Attribute seams can stop the careful simplifier early.
             out = meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
         }

@@ -264,11 +264,13 @@ impl<'a> Models<'a> {
             let verts = &m.vertices[r.first_vertex as usize..verts_end];
             // The shader reads the first bone always and stops at the first
             // empty slot, so weights must run heaviest first and sum to 255.
+            // A model is drawn with one material.
             if verts.iter().any(|v| {
                 v.bones.iter().any(|&b| b as u32 >= r.bones)
                     || v.weights.iter().map(|&w| w as u32).sum::<u32>() != 255
                     || v.weights.windows(2).any(|w| w[1] > w[0])
                     || v.material as usize > m.materials()
+                    || v.material != verts[0].material
             }) {
                 return Err(bad);
             }
@@ -528,9 +530,16 @@ mod tests {
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
         });
-        let mut fine = one_model();
-        fine.vertices[1].material = 1;
-        fine.textures = alloc::vec![[0; 4]; TEXELS_PER_MATERIAL];
+        let mut mixed = one_model();
+        mixed.vertices[1].material = 1;
+        mixed.textures = alloc::vec![[0; 4]; TEXELS_PER_MATERIAL];
+        parsed(&mixed, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+        });
+        let mut fine = mixed;
+        for v in &mut fine.vertices {
+            v.material = 1;
+        }
         parsed(&fine, |m| assert_eq!(m.unwrap().materials(), 1));
         let mut bad = one_model();
         bad.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER];

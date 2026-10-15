@@ -408,9 +408,10 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let a = textureSample(materials_srgb, material_sampler, in.uv, in.layer);
     let b = textureSample(materials_linear, material_sampler, in.uv, in.layer + 1);
     let e = textureSample(materials_srgb, material_sampler, in.uv, in.layer + 2);
-    // Team parts are painted in greys: the team colour takes their shade.
+    // Team parts are painted in greys, light grey (0.8 linear) taking the
+    // whole team colour and darker greys (folds, occlusion) less of it.
     let grey = dot(a.rgb, vec3<f32>(0.3, 0.59, 0.11));
-    let albedo = mix(a.rgb, in.team_color * min(grey * 1.4, 1.0), a.a);
+    let albedo = mix(a.rgb, in.team_color * min(grey * 1.25, 1.2), a.a);
     let n0 = in.normal;
     let t = normalize(in.tangent.xyz - n0 * dot(n0, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
     let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);

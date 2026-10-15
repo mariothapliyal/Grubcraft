@@ -125,7 +125,7 @@ pub fn load_png(path: &Path) -> Result<Image, String> {
 fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
     let side = img.width as usize;
     let target = TEXTURE_SIZE as usize;
-    if img.width != img.height || side < target || !(side / target).is_power_of_two() {
+    if img.width != img.height || side < target || !side.is_power_of_two() {
         return Err(format!(
             "{}: {} × {} texels; maps must be square, {target} or a power of two larger",
             path.display(),
