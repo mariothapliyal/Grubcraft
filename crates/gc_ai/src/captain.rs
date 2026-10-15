@@ -507,7 +507,8 @@ impl Captain {
     fn beaten(&mut self, ctx: &mut Ctx, ours: &[&Seen], fighting: &[&Seen]) -> bool {
         let view = ctx.view;
         let mine = Force::of(view, ours.iter().copied()).soldiers;
-        let theirs = Force::of(view, fighting.iter().copied()).soldiers;
+        // Not while enemies it lost sight of may still be standing.
+        let theirs = Force::of(view, fighting.iter().copied().chain(&view.remembered)).soldiers;
         let share = if self.finishing {
             REFORM_SHARE
         } else {
@@ -744,11 +745,12 @@ impl Captain {
                         0.0
                     }
                 }
-                // Hammer and anvil with the hammers hidden: scores on top of
-                // it when there is somewhere to hide.
-                Doctrine::Ambush => match (hammers, self.ambush_fit(ctx, ours, fighting)) {
-                    (Some(fit), Some(extra)) => fit + extra,
-                    _ => continue,
+                // Hammer and anvil with the hammers hidden (or, with no fast
+                // troops, the ends of the line): scores on top of it when
+                // there is somewhere to hide.
+                Doctrine::Ambush => match self.ambush_fit(ctx, ours, fighting) {
+                    Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
+                    None => continue,
                 },
             };
             let jitter = ctx.rng.below(1000) as f32 / 1000.0 * 0.15;
@@ -830,6 +832,14 @@ impl Captain {
             shock.sort_by(by_middle);
             line = shock.split_off(0);
             shock = line.split_off(line.len() - keep);
+        }
+        // The Ambush doctrine with no fast troops hides line regiments
+        // instead: those already sent into hiding, then the outermost.
+        if self.doctrine == Doctrine::Ambush && shock.is_empty() {
+            let hiding = |k: usize| self.ambush.has(self.members[k].handle);
+            line.sort_by(|&a, &b| hiding(b).cmp(&hiding(a)).then(by_middle(&b, &a)));
+            let n = ambush::line_ambushers(line.len());
+            shock = line.drain(..n).collect();
         }
         // The reserve: a line regiment from near the middle, if there are
         // enough to spare one.

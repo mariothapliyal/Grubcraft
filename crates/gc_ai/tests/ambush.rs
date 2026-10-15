@@ -95,6 +95,7 @@ enum Foe {
 
 struct Battle {
     cover: Vec<u8>,
+    army: Vec<Placement>,
     foe: Foe,
     personality: &'static str,
 }
@@ -141,7 +142,7 @@ fn run(battle: Battle, seconds: u32, mut watch: impl FnMut(&Field)) {
         },
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
-    spawn_commands(AI, &ai_army(), &mut out);
+    spawn_commands(AI, &battle.army, &mut out);
     spawn_commands(FOE, &foe_army(), &mut out);
     world.tick(&out);
     let terrain = Terrain::new(&nav, MAP).with_cover(battle.cover.clone());
@@ -209,6 +210,7 @@ fn a_cunning_general_hides_its_cavalry_in_a_wood_off_its_flank() {
     run(
         Battle {
             cover: wood_on_the_right(),
+            army: ai_army(),
             foe: Foe::Idle,
             personality: "The Deep Hive",
         },
@@ -233,11 +235,45 @@ fn a_cunning_general_hides_its_cavalry_in_a_wood_off_its_flank() {
 }
 
 #[test]
+fn an_army_without_fast_troops_hides_the_ends_of_its_line() {
+    let mut army = row(&[SPEARS; 6], 140.0, 200.0, NORTH);
+    army.extend(row(&[ARCHERS; 2], 140.0, 208.0, NORTH));
+    let mut doctrine = None;
+    let mut hidden_spears = 0;
+    run(
+        Battle {
+            cover: wood_on_the_right(),
+            army,
+            foe: Foe::Idle,
+            personality: "The Deep Hive",
+        },
+        40,
+        |f| {
+            doctrine = Some(f.mind.captain().doctrine);
+            hidden_spears = f
+                .world
+                .regiments
+                .iter()
+                .filter(|r| r.owner == AI && r.unit == SPEARS)
+                .filter(|r| f.role(r.handle) == Some(Role::Ambusher) && f.world.hidden(r.handle))
+                .count();
+        },
+    );
+    assert_eq!(doctrine, Some(Doctrine::Ambush));
+    // A third of a line of six, if the wood has room for them.
+    assert!(
+        (1..=2).contains(&hidden_spears),
+        "{hidden_spears} spear regiments hiding"
+    );
+}
+
+#[test]
 fn without_cover_nobody_lays_an_ambush() {
     let mut ever = false;
     run(
         Battle {
             cover: Vec::new(),
+            army: ai_army(),
             foe: Foe::Idle,
             personality: "The Deep Hive",
         },
@@ -261,6 +297,7 @@ fn the_ambush_springs_on_an_enemy_that_comes_on() {
     run(
         Battle {
             cover: wood_on_the_right(),
+            army: ai_army(),
             foe: Foe::ChargeAfter(30),
             personality: "The Deep Hive",
         },
@@ -348,4 +385,75 @@ fn minds_see_only_what_their_side_sees() {
         }
         world.tick(&out);
     }
+}
+
+#[test]
+fn a_mind_remembers_enemies_it_lost_sight_of() {
+    // A foe regiment in the open walks into a wood: the AI's side loses
+    // sight of it but remembers it where it was last seen, for a while.
+    let mut cover = vec![0; (MAP * MAP) as usize];
+    patch(&mut cover, WOOD, 110..146, 100..120);
+    let mut world = World::new(&MatchSetup {
+        seed: 7,
+        capacities: Capacities { regiments: 32 },
+        units: &DRILL_UNITS,
+        map_tiles: MAP,
+        nav: &[],
+        teams: &[],
+        ground: gc_sim::Ground {
+            heights: &[],
+            water_level: 0,
+            cover: &cover,
+        },
+    });
+    let mut out = Vec::new();
+    spawn_commands(AI, &ai_army(), &mut out);
+    spawn_commands(FOE, &row(&[SPEARS], 128.0, 140.0, SOUTH), &mut out);
+    world.tick(&out);
+    let foe = world
+        .regiments
+        .iter()
+        .find(|r| r.owner == FOE)
+        .unwrap()
+        .handle;
+    out.clear();
+    out.push(PlayerCommand {
+        player: FOE,
+        command: gc_sim::Command::MoveTo {
+            regiment: foe,
+            target: gc_ai::perception::to_fx_vec(Vec2::new(128.0, 108.0)),
+            facing: None,
+            files: 0,
+            pace: gc_fixed::Fx::ZERO,
+        },
+    });
+    let mut view = Perception::new();
+    let mut last_seen = None;
+    let mut lost_at = None;
+    while world.tick_count() < 120 * 20 {
+        world.tick(&out);
+        out.clear();
+        view.capture_for(&world, AI);
+        match view.get(foe) {
+            Some(r) => {
+                assert!(view.remembered.is_empty());
+                last_seen = Some(r.pos);
+            }
+            None if lost_at.is_none() => lost_at = Some(world.tick_count()),
+            None => {}
+        }
+        if let Some(t) = lost_at {
+            let since = world.tick_count() - t;
+            let remembered = view.remembered.iter().find(|r| r.handle == foe);
+            if since < gc_ai::perception::REMEMBER_TICKS {
+                let r = remembered.expect("it remembers the foe it lost sight of");
+                assert_eq!(Some(r.pos), last_seen, "where it was last seen");
+                assert!(!r.moving);
+            } else if since > gc_ai::perception::REMEMBER_TICKS {
+                assert!(remembered.is_none(), "and forgets it in the end");
+            }
+        }
+    }
+    assert!(lost_at.is_some(), "the foe never got out of sight");
+    assert!(world.hidden(foe));
 }

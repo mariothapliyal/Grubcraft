@@ -1,8 +1,9 @@
 //! The Ambush doctrine (docs/20-ambushes.md, "Setting an ambush"): Hammer
-//! and anvil with the hammers hidden.
+//! and anvil with the hammers hidden. An army with no fast troops hides the
+//! outer regiments of its line instead ([`line_ambushers`]).
 //!
 //! While the armies are still apart, the Captain looks for a hiding place
-//! for each of its fast regiments: a spot where the whole block fits in a
+//! for each of its hammers: a spot where the whole block fits in a
 //! wood (or tall grass), off one end of the line, between it and the enemy,
 //! well clear of any enemy it can see and reachable long before the enemy
 //! gets there; best just past the end of the line and a little in front of
@@ -22,6 +23,9 @@ use crate::perception::{Class, Seen, right_of};
 
 /// The most regiments that lie in wait at once.
 const MAX_AMBUSHERS: usize = 3;
+/// An army with no fast troops hides line regiments when its line has at
+/// least this many: a third of them, at most [`MAX_AMBUSHERS`].
+const LINE_FROM: usize = 4;
 /// The armies must be at least this far apart (front to front, tiles) to
 /// slip into hiding unseen.
 const APART: f32 = 35.0;
@@ -59,6 +63,40 @@ pub(super) struct Plan {
     joined: bool,
 }
 
+impl Plan {
+    /// Whether regiment `h` was sent into hiding (sprung since or not).
+    pub(super) fn has(&self, h: gc_sim::RegimentHandle) -> bool {
+        self.hideouts.iter().any(|o| o.handle == h)
+    }
+}
+
+/// How many of `line` line regiments an army with no fast troops sends
+/// into hiding (the outermost, so the line stays whole).
+pub(super) fn line_ambushers(line: usize) -> usize {
+    if line >= LINE_FROM {
+        (line / 3).min(MAX_AMBUSHERS)
+    } else {
+        0
+    }
+}
+
+/// The class of `ours` that would lie in wait: its fast troops when they
+/// can be hammers (beside a line, or a third of an army of fast troops
+/// only), otherwise its line infantry when there are enough to spare.
+fn ambusher_class(view: &crate::perception::Perception, ours: &[&Seen]) -> Option<Class> {
+    let count = |c: Class| ours.iter().filter(|r| view.unit(r).class == c).count();
+    let (line, shock, ranged) = (
+        count(Class::Line),
+        count(Class::Shock),
+        count(Class::Ranged),
+    );
+    if shock > 0 {
+        (line + ranged > 0 || shock >= 3).then_some(Class::Shock)
+    } else {
+        (line_ambushers(line) > 0).then_some(Class::Line)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Hideout {
     handle: gc_sim::RegimentHandle,
@@ -85,14 +123,15 @@ impl Captain {
 
     /// How much better the Ambush doctrine fits than Hammer and anvil now,
     /// or `None` when it can't be used: no cover on the map, the armies
-    /// already close, or nowhere for a fast regiment to hide. Lying in wait
-    /// suits the cunning and the patient, not the headlong.
+    /// already close, or nowhere for a would-be ambusher to hide. Lying in
+    /// wait suits the cunning and the patient, not the headlong.
     pub(super) fn ambush_fit(&self, ctx: &Ctx, ours: &[&Seen], fighting: &[&Seen]) -> Option<f32> {
         if !ctx.terrain.has_cover() {
             return None;
         }
-        // Once laid, the plan stands while anyone still lies in wait.
-        if self.lying_in_wait() {
+        // Once laid, the plan stands while any of its regiments is still in
+        // the fight, so the sprung ones keep their part.
+        if self.doctrine == Doctrine::Ambush && !self.ambush.hideouts.is_empty() {
             return Some(1.0);
         }
         let joined = self.ambush.joined || ctx.view.regiments.iter().any(|r| r.engaged);
@@ -100,9 +139,10 @@ impl Captain {
             return None;
         }
         let view = ctx.view;
+        let class = ambusher_class(view, ours)?;
         let (_, wood) = ours
             .iter()
-            .filter(|r| view.unit(r).class == Class::Shock)
+            .filter(|r| view.unit(r).class == class)
             .find_map(|r| self.hiding_place(ctx, r, fighting, &[]))?;
         let p = ctx.persona;
         let margin = self.estimate.map_or(0.0, |e| e.margin);

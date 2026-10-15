@@ -312,6 +312,38 @@ fn hidden_archers_hold_their_fire_until_ordered() {
     assert!(hp(&w, spears) < before);
 }
 
+#[test]
+fn each_hidden_regiment_springs_one_ambush() {
+    // Archers loose volley after volley from the wood: only the first
+    // shakes the target.
+    let mut w = world(&patch(Cover::Wood, 10, 30, 10, 30));
+    let archers = spawn(&mut w, 1, ARCHERS, tile(20), tile(22), SOUTH);
+    let spears = spawn(&mut w, 0, SPEARS, tile(20), tile(42), NORTH);
+    run(&mut w, 5 * SECOND);
+    assert!(attack(&mut w, 1, archers, spears));
+    let mut volleys = w.ambushes().len();
+    for _ in 0..15 * SECOND {
+        w.tick(&[]);
+        volleys += w.ambushes().len();
+    }
+    assert_eq!(volleys, 1);
+
+    // Cavalry springs out on the spears and is ordered straight on to
+    // their friend: the friend's side has it in full view by then.
+    let (mut w, cav, spears, friend) = charge(true);
+    let mut sprung = Vec::new();
+    let mut ordered = false;
+    for _ in 0..10 * SECOND {
+        w.tick(&[]);
+        sprung.extend(w.ambushes().iter().map(|a| a.victim));
+        if !sprung.is_empty() && !ordered {
+            ordered = attack(&mut w, 1, cav, friend);
+        }
+    }
+    assert!(ordered);
+    assert_eq!(sprung, vec![spears]);
+}
+
 /// A cavalry regiment charges a spear block from 12 tiles away. With
 /// `wood`, it waits hidden in a wood until the order. Returns the world,
 /// the cavalry, the spears, and a friend of the spears standing near them.

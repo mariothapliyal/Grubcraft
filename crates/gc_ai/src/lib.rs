@@ -188,8 +188,8 @@ impl Mind {
 /// with cover, each also gets its own look at what its side sees).
 pub struct Minds {
     view: Perception,
-    /// What one mind's side sees, refilled for each mind in turn.
-    own: Perception,
+    /// What each mind's side sees, by party, with the enemies it remembers.
+    sights: Vec<(PlayerId, Perception)>,
     terrain: Terrain,
     minds: Vec<Mind>,
 }
@@ -198,7 +198,7 @@ impl Minds {
     pub fn new(terrain: Terrain) -> Minds {
         Minds {
             view: Perception::new(),
-            own: Perception::new(),
+            sights: Vec::new(),
             terrain,
             minds: Vec::new(),
         }
@@ -251,8 +251,16 @@ impl Minds {
         let fair = world.vision().active();
         for m in &mut self.minds {
             if fair {
-                self.own.capture_for(world, m.party);
-                m.tick(&self.own, &self.terrain, out);
+                let k = match self.sights.iter().position(|(p, _)| *p == m.party) {
+                    Some(k) => k,
+                    None => {
+                        self.sights.push((m.party, Perception::new()));
+                        self.sights.len() - 1
+                    }
+                };
+                let sight = &mut self.sights[k].1;
+                sight.capture_for(world, m.party);
+                m.tick(sight, &self.terrain, out);
             } else {
                 m.tick(&self.view, &self.terrain, out);
             }

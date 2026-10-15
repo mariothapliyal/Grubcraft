@@ -32,6 +32,10 @@
 //! routing (no orders until it rallies), grey is shattered. Regiments find
 //! their own way around cliffs and deep water; a selected regiment's route
 //! shows as a dotted line, and G shows the ground no regiment can cross.
+//! Woods and tall grass hide regiments (docs/20-ambushes.md): enemies your
+//! side can't see aren't drawn, yours that the enemy can't see carry a
+//! moss-green flag, and a sprung ambush shows an "AMBUSH!" message with a
+//! drum and horn. V in the sandbox shows every regiment, hidden or not.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.

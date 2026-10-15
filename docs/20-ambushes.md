@@ -7,9 +7,10 @@ Hiding regiments in woods and tall grass, spotting them, and the surprise when a
 - **Woods and tall grass hide regiments.** A regiment with most of its block in a wood is hidden from the enemy until an enemy regiment comes within 4 tiles (10 if it is on the move). Tall grass hides a regiment standing still, spotted within 3 tiles. Everywhere else, regiments are seen, as today.
 - **Fighting or shooting gives you away.** A regiment in melee is seen by everyone; one that looses a volley stays seen for 5 seconds. Once seen, a regiment stays seen for 3 seconds after it slips back out of sight. Allies share what they see.
 - **You can't target what you can't see.** Attack orders need a target your side can see; archers only shoot what their side sees; a regiment chasing an enemy that vanishes marches to where it was last seen. Hidden archers hold their fire until you order them to shoot, so they don't give themselves away.
-- **Springing an ambush.** A regiment that hits an enemy in melee whose side hadn't seen it until less than 4 seconds before springs an ambush: the victim loses 20 morale at once and is *caught off guard* for 6 seconds (its blows deal 70% damage), and its friends within 16 tiles lose 5 morale. An ordered volley from hiding costs its target 10 morale.
-- **The AI plays fair and sets ambushes.** Computer players see only what their side sees. The Veteran and General can choose the **Ambush** doctrine when a wood lies off a flank between the armies: the line holds while one or two regiments slip into the trees, wait, and strike the enemy's flank once it is locked in melee or walks past.
-- **On screen:** woods and tall grass are drawn on the generated maps, enemies you can't see aren't drawn, your hidden regiments carry a moss-green marker, and an **Ambush!** alert and drum sound when one is sprung.
+- **Springing an ambush.** A regiment that hits an enemy in melee whose side hadn't seen it until less than 4 seconds before springs an ambush: the victim loses 20 morale at once and is *caught off guard* for 6 seconds (its blows deal 70% damage), and its friends within 16 tiles lose 5 morale. An ordered volley from hiding costs its target 10 morale. Each hidden regiment springs one ambush.
+- **Hidden regiments don't hold the field.** A Field Battle is won by holding the field with no enemy in sight still standing, so an army whose visible regiments have all broken has lost, however many it still has hiding.
+- **The AI plays fair and sets ambushes.** Computer players see only what their side sees. The Veteran and General can choose the **Ambush** doctrine when a wood lies off a flank between the armies: the line holds while up to three regiments (its fast troops, or the ends of its line in an army without any) slip into the trees, wait, and strike the enemy's flank once it is locked in melee or walks past.
+- **On screen:** woods and tall grass are drawn on the generated maps, enemies you can't see aren't drawn, your hidden regiments carry a moss-green flag above the treetops, and an **Ambush!** alert, drum and horn sound when one is sprung.
 - **Later:** unit traits (scouts, stealthy, tall, detectors), forest slow-down and arrow cover, fog of war with line of sight and dead ground behind ridges (M3), Brood burrowing, and ambush stances and ambush battles on the campaign.
 
 ## What makes an ambush
@@ -75,6 +76,7 @@ Any regiment can spot, including routers: running for your life doesn't make you
 - **A chase ends at the last place the target was seen.** A regiment ordered to attack an enemy that slips out of sight marches to where it was last seen and stops there.
 - **Hidden archers hold their fire** at enemies who can't see them, until you order them to shoot (or the enemy spots them). Without this rule archers in a wood would loose at the first enemy in range and give the ambush away. Melee regiments never charge on their own anyway; you order the charge.
 - **Unseen enemies don't frighten anyone.** A regiment in melee loses morale when nearby enemies outnumber nearby friends; enemies hidden from its side don't count until they show themselves.
+- **Hidden regiments don't hold the field.** A Field Battle ends when one side has held the field for 10 seconds: it has regiments standing in sight, and no enemy it can see is still standing. Regiments hidden in cover don't count for either side, so an army whose regiments in sight have all broken has lost, however many it still has hiding (spring the ambush while there is a battle to spring it on), and a beaten army's survivors rallying in a wood don't drag the battle on. Two armies both wholly out of each other's sight are still facing each other. (This is the game's rule, in `battle.rs`, not the simulation's.)
 
 ### Springing an ambush
 
@@ -86,7 +88,7 @@ A regiment **springs an ambush** when it makes contact in melee with an enemy wh
 | The victim is **caught off guard** | 6 seconds, blows deal 70% damage | Soldiers facing the wrong way, half of them turning: the ambusher wins the first exchanges |
 | Every friend of the victim within 16 tiles loses morale | 5 points | "Ambush!" runs down the line, like a rout's shock (8 points) but smaller |
 
-The ambusher's own charge bonus applies as usual when it hits at speed, and most ambushes land on a flank or the rear, where blows already deal 140% or 180% and shake morale every second. Several ambushers striking the same regiment each count.
+The ambusher's own charge bonus applies as usual when it hits at speed, and most ambushes land on a flank or the rear, where blows already deal 140% or 180% and shake morale every second. Several ambushers striking the same regiment each count, but **each hidden regiment springs one ambush**: once it has, the victim's side has it fully in view, so breaking off and charging back in (or loosing a second volley) is no surprise.
 
 **A volley from hiding**: an archer regiment ordered to shoot, whose target's side hadn't seen it for 4 seconds, costs the target 10 morale when it looses. Arrows don't catch anyone off guard.
 
@@ -98,9 +100,10 @@ The [UI principles](08-ui-ux.md#ui-principles) say nothing important is hidden. 
 
 - **The map shows where anything could hide.** Woods are drawn as trees and tall grass as tufts, so every player knows which ground could hold an enemy, the same way they know which ground is high.
 - **Enemies you can't see aren't drawn**, and enemies your side spots appear where they stand. (The sound of their fighting isn't played either.)
-- **Your own hidden regiments carry a moss-green marker** above the block, so you always know whether the enemy can see them.
-- **"Ambush!"**: when an ambush is sprung, by you or on you, a message names the regiment caught and a war drum sounds.
-- **The sandbox** follows the side you command, so `Tab` shows each side's view; `V` reveals every regiment for testing.
+- **Your own hidden regiments carry a moss-green flag** above the treetops (and above the block in the Commander View), so you always know whether the enemy can see them.
+- **"Ambush!"**: when an ambush is sprung, by you or on you, a message names who caught whom, and a war drum and a horn sound.
+- **Orders follow sight**: right-clicking where a hidden enemy stands is a move, not an attack.
+- **The sandbox** follows the side you command, so `Tab` shows each side's view; `V` reveals every regiment for testing (not in Field Battles or network matches).
 
 Planned with the M3 interface: a tooltip on any regiment showing whether it is hidden and the distance it would be spotted at; a faint "last seen" ghost where an enemy vanished; the hidden marker on the army tray.
 
@@ -143,20 +146,21 @@ Computer players follow the same rules ([18 · AI](18-ai.md#spymaster-perception
 
 ### Setting an ambush
 
-The **Ambush** doctrine: *a hidden force strikes the flank once the lines are locked.* It is Hammer and anvil with the hammers hidden.
+The **Ambush** doctrine: *a hidden force strikes the flank once the lines are locked.* It is Hammer and anvil with the hammers hidden. An army with no fast troops (the Ember Clans' spears and bows, the Choir, the Concord as the rosters stand) hides the outer regiments of its line instead: a third of its line regiments, at most three, when it has at least four. Infantry has to hide closer to strike inside the surprise window, but the hiding places are close to the line anyway.
 
-1. **Is there somewhere to hide?** While the armies are still apart, the Captain looks for a hiding place for each of its fast regiments (or, with none, one or two line regiments from the end of the line nearest the trees): a spot where the whole block fits in a wood (or tall grass, for one that will stand still), off one end of the line, between the line and the enemy and no further forward than the enemy is likely to reach, not closer than 20 tiles to any enemy it can see, and reachable before the enemy gets there.
-2. **Choosing it.** The doctrine scores on top of Hammer and anvil when such a place exists, more for cunning personalities and the Brood. The Veteran and General can choose it; the Recruit can't.
-3. **Slipping in.** The ambushers march into the trees while the enemy is far away, then stand still, facing where the enemy will come from. The rest of the army takes up Hold the line, so the enemy comes to it.
-4. **Springing it.** An ambusher strikes when an enemy regiment is locked in melee within 25 tiles of its hiding place, when an enemy marches within 12 tiles of it, or once it has been spotted with an enemy close. It picks its target the way a hammer does: engaged enemies, exposed flanks and wavering regiments first, and swings round to the flank if it isn't already there.
-5. **After it.** A sprung ambusher is a hammer for the rest of the battle.
+1. **Is there somewhere to hide?** While the armies are still at least 35 tiles apart and nobody has come to blows, the Captain looks for a hiding place for each of its hammers (up to three): a spot where the whole block (all five points) fits in a wood, or in tall grass, off one end of the line, between the line and the enemy and no more than halfway to it, at least 20 tiles from any enemy it can see, and reachable at least 1.5 times sooner than any enemy could get there. It tries places 2 tiles apart and prefers woods, a short march, and a spot about 8 tiles past the end of the line and 10 in front of it: beside where the enemy will be when it meets the line.
+2. **Choosing it.** The doctrine scores as Hammer and anvil does (or, with no fast troops, 0.4 plus 0.3 for cunning), plus a bonus when there is somewhere to hide: more for cunning and patient personalities, less for headlong ones, a little more for a wood than for grass and when expecting to lose; then each personality's liking for it (`ambush` in `data/ai/personalities.ron`: the Deep Hive and the Dissonance like it most, the Long Ledger least). The Veteran and General can choose it; the Recruit can't.
+3. **Slipping in.** The ambushers march into the trees while the enemy is far away, then stand still, facing where the enemy will come from. The rest of the army holds: while anyone lies in wait it has 25 seconds more patience in a stand-off, doesn't march out to meet an enemy coming on, and doesn't advance just to bring its archers into range.
+4. **Springing it.** An ambusher strikes when an enemy regiment is locked in melee within 35 tiles of it, when an enemy comes within 12 tiles of it (edge to edge), or once it has been spotted with an enemy within 20. It picks its target the way a hammer does once the enemy line is locked: engaged enemies, exposed flanks and wavering regiments first, and swings round to the flank if it isn't already there.
+5. **After it.** A sprung ambusher is a hammer for the rest of the battle, and the doctrine stays Ambush while any of the ambushers is still in the fight. If the battle moves away (the line and every enemy in sight more than 45 tiles from the hiding place), it gives up and rejoins as a hammer.
+6. **Once a battle.** Nobody slips away into hiding once anyone has come to blows.
 
 ### Walking into one
 
-Now: the AI reacts to what appears. A regiment ambushed on the flank fights back where it stands; wings turn to face flankers; the reserve plugs the gap; wavering regiments are pulled back.
+Now: the AI reacts to what appears. A regiment ambushed on the flank fights back where it stands; wings turn to face flankers; the reserve plugs the gap; wavering regiments are pulled back. It also **remembers** an enemy regiment it has lost sight of for 60 seconds, where it last saw it, and won't decide the enemy is beaten while remembered regiments may still be standing. Without that memory a general who saw two enemy regiments slip into a wood thought the enemy had shrunk, decided it was "finishing them off" and threw everything forward; in the balance table that alone swung the Brood against the Choir by 15 points. (Counting remembered regiments in the battle estimate too was tried and left out: it made the Brood and the Choir too cautious against the Ember Clans' archers, who then won 70% of their battles.) (A regiment hidden from the very start was never seen, so it isn't remembered either.)
 
 Later (with the Spymaster's belief, AI-2 and AI-3):
-- It remembers every enemy regiment it has seen and notices when part of the enemy army has gone missing, which is what an ambush looks like from outside.
+- It remembers every enemy regiment it has seen for the whole battle, guesses where it went, and notices when part of the enemy army has gone missing, which is what an ambush looks like from outside.
 - With missing enemies and woods near its route, cautious personalities probe the woods with a fast regiment, keep their distance, or advance more slowly; reckless ones march on.
 - Its rehearsal can only rehearse what it believes, so a hidden reserve or an ambush still surprises it ([18](18-ai.md#rehearsal-thinking-ahead-with-the-real-simulation)).
 
@@ -194,18 +198,19 @@ On the [campaign](19-campaign.md), ambushes are a host's choice of where to wait
 
 ### The game
 
-- **Map generation** (`terrain_gen.rs`) lays woods and tall grass from the integer heights and the seed with integer rules, so every machine that agrees on the heights (which the LAN lobby checks) agrees on the cover. Woods grow on dry, gentle ground away from the start plateaus and the cliffs; tall grass fringes them and fills some low meadows. On the 256-tile maps about one tile in ten is wood and one in fourteen tall grass.
-- **Drawing:** trees are a trunk and two stacked canopy boxes, placed by a hash per wood tile; grass is a few low tufts per grass tile. Both are built once when the map loads.
-- **The viewer** is the side you command: unseen enemies aren't drawn, picked or heard, and your hidden regiments get the marker.
+- **Map generation** (`terrain_gen.rs`, `Heightmap::cover`) lays woods and tall grass from the integer heights and the seed with integer rules (hashed value noise), so every machine that agrees on the heights agrees on the cover, and the LAN lobby's map check hashes the cover too. Woods grow in clumps on dry, gentle ground, at least 34 tiles from the start plateaus' centres and 10 from the map's edge; tall grass rings them and fills a few meadows. On the 256-tile maps about one tile in nine is wood and one in twelve tall grass (8 to 13% wood and 6 to 10% grass over the seeds the test checks).
+- **Drawing** (`scenery.rs`): a tree on about half the wood tiles (a trunk and two stacked canopy boxes, placed, sized and shaded by a hash of the tile) and three low tufts on each tall-grass tile, built once when the map loads in 16-tile chunks and drawn nearest the camera first, at most 24,000 boxes a frame. The Commander View leaves the grass out.
+- **The viewer** is the side you command: unseen enemies aren't drawn or picked, your hidden regiments (and your allies') get the flag, and `World::ambushes()` drives the alert.
+- **Holding the field** (`battle.rs`) counts only regiments the other side can see.
 
 ### The AI (`gc_ai`)
 
-- `Perception::capture_for(world, party)` copies only what the party sees; `Minds::tick` captures once per mind on maps with cover.
-- `gc_ai::Terrain` carries the cover layer; `ambush.rs` finds hiding places and decides when to spring; the Captain's `Ambush` doctrine and `Ambusher` role use them.
+- `Perception::capture_for(world, party)` copies only what the party sees, marks the party's own hidden regiments (`Seen::hidden`), and lists the enemies it lost sight of in the last 60 seconds as last seen (`Perception::remembered`); `Minds::tick` keeps one such look per mind on maps with cover (the shared `view` stays whole, for the AI lens).
+- `gc_ai::Terrain::with_cover` carries the cover layer; `captain/ambush.rs` finds hiding places and decides when to spring; the Captain's `Ambush` doctrine and `Ambusher` role use them. The AI lens draws ambushers in moss green.
 
 ### Networking
 
-No new commands and no new wire format. Cover is computed from the heights the lobby already compares, and everything that changes the battle is in the hashed simulation state.
+No new commands and no new wire format. Cover is computed from the heights and seed the lobby already compares, the lobby's map hash covers it as well, and everything that changes the battle is in the hashed simulation state. Replays (format 2) store the cover layer; format 1 replays still load, as maps without cover.
 
 ## Build plan
 
@@ -220,7 +225,16 @@ No new commands and no new wire format. Cover is computed from the heights the l
 
 ### Built so far
 
-Nothing yet; this section is filled in as step A lands.
+Step A is built:
+
+- **Simulation:** `Ground::cover` and `Terrain::cover`; `vision.rs` with every rule in [The battle rules](#the-battle-rules); attack orders, archers' targets, chases and morale's outnumbering follow sight; one ambush per hidden regiment. Tests: `gc_sim/tests/ambush.rs` (19 cases, from "a regiment in a wood is hidden until an enemy comes close" to "an ambush breaks a line that would have held"); the no-allocation test ticks a map with cover. On a map without cover nothing changes: every golden hash and golden replay stands unchanged. Cost: the 6,000-soldier grand battle replayed over a dense woods-and-grass layer ticks in 88 µs at the median and 410 µs at the 99th percentile (58 and 352 µs without cover; the budget is 2,000), still with no allocation in the tick.
+- **The game:** woods and tall grass on every generated map; trees and tufts; unseen enemies not drawn or picked; the moss-green flag; the Ambush! alert with drum and horn; `V` in the sandbox; hidden regiments don't hold the field. Replays store the cover (format 2) and the LAN map check hashes it.
+- **The AI:** fair sight on maps with cover, a 60-second memory of enemies out of sight, and the Ambush doctrine for the Veteran and General, with fast troops or, in armies without any, the ends of the line. Tests: `gc_ai/tests/ambush.rs` (a cunning General hides its cavalry in a wood off its flank and springs it on an enemy that comes on; an army of spears and bows hides the ends of its line; minds never order attacks on what they can't see and remember what they lost sight of; no ambushes without cover).
+- **A golden replay with woods:** `replays/field-woods-1v1.gcr`, Brood against Choir with both Generals laying ambushes (nine sprung), so CI checks the vision rules play out identically on Mac, Windows and Linux.
+- **How often the AI ambushes:** in 144 Veteran battles (every pair of factions, 24 each) the generals laid 208 ambushes, sending 502 regiments into hiding; 157 of those sprang, and 322 were called off when the battle moved away from them (usually because their own army advanced after waiting out its patience), which leaves room for a smarter plan later. Before ambushers could be line infantry, no live army could set one: only the Brood has fast troops, and an army of nothing but fast troops never chose Hammer and anvil.
+- **Balance with woods:** two Veteran AIs a side, 192 battles a pair (seeds 2001 to 2192), the first faction's wins, with the same seeds without woods in brackets: Clans v Brood 49% (50), Clans v Choir 60% (47), Clans v Concord 54% (61), Brood v Choir 56% (45), Brood v Concord 53% (53), Choir v Concord 45% (53). One pair is outside 44% to 57% with woods, as one was without (a different one). Woods move results because they change what each general sees, and so which side attacks; the Choir, with the smallest regiments, hides most easily and springs the most ambushes.
+
+Not yet: unit traits, forest slow-down and arrows into trees, last-seen ghosts and tooltips (step B); fog of war (step C); campaign ambushes (step D).
 
 ## Open questions
 

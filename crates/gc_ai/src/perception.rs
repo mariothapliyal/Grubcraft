@@ -167,9 +167,18 @@ pub struct Perception {
     /// Live regiments in pool order.
     pub regiments: Vec<Seen>,
     pub stances: Stances,
+    /// Enemies seen in the last [`REMEMBER_TICKS`] but out of sight now,
+    /// where and as they were last seen (filled by
+    /// [`Perception::capture_for`] only).
+    pub remembered: Vec<Seen>,
     /// Index into `regiments` by pool index, for handle lookups.
     by_index: Vec<u32>,
+    /// Every enemy seen lately, as last seen, and the tick it was.
+    memory: Vec<(Seen, u32)>,
 }
+
+/// How long a mind remembers an enemy it has lost sight of, in ticks.
+pub const REMEMBER_TICKS: u32 = 60 * TICKS_PER_SECOND;
 
 const NONE: u32 = u32::MAX;
 
@@ -234,6 +243,44 @@ impl Perception {
                 hidden: world.hidden(r.handle),
             });
         }
+        match party {
+            Some(p) => self.remember(world, p),
+            None => {
+                self.memory.clear();
+                self.remembered.clear();
+            }
+        }
+    }
+
+    /// Note the enemies `party` sees now, and list those it saw lately and
+    /// can't see now, as it last saw them (standing, not fighting: it
+    /// doesn't know). One that is gone from the field is forgotten.
+    fn remember(&mut self, world: &World, party: PlayerId) {
+        let now = self.tick;
+        for r in &self.regiments {
+            if !self.stances.hostile(party, r.owner) {
+                continue;
+            }
+            match self.memory.iter_mut().find(|(m, _)| m.handle == r.handle) {
+                Some(m) => *m = (*r, now),
+                None => self.memory.push((*r, now)),
+            }
+        }
+        self.memory.retain(|(m, seen)| {
+            *seen <= now && now - seen <= REMEMBER_TICKS && world.regiments.get(m.handle).is_some()
+        });
+        self.remembered.clear();
+        self.remembered
+            .extend(
+                self.memory
+                    .iter()
+                    .filter(|(_, seen)| *seen != now)
+                    .map(|&(m, _)| Seen {
+                        moving: false,
+                        engaged: false,
+                        ..m
+                    }),
+            );
     }
 
     /// The regiment a handle refers to, if it is still on the field.
