@@ -83,8 +83,8 @@ const MAX_HOST_LAG: u32 = 20;
 /// [`CATCH_UP_BURST`].
 const CATCH_UP_BACKLOG: usize = 32;
 const CATCH_UP_BURST: usize = 24;
-/// More turns than this waiting on a player: [`Lan::catching_up`].
-const CATCH_UP_TURNS: usize = 2 * MAX_DELAY as usize;
+/// Bursts are at least this far apart (and a round trip).
+const BURST_GAP: Duration = Duration::from_millis(20);
 
 /// What this machine runs, for the version gate and the map check.
 #[derive(Clone, Debug)]
@@ -142,6 +142,13 @@ struct Peer {
     drop_at: Option<Instant>,
 }
 
+impl Peer {
+    /// Connected: neither gone nor lost.
+    fn active(&self) -> bool {
+        !self.gone && self.lost_at.is_none()
+    }
+}
+
 struct HostGame {
     /// When turn 0 began; `None` until everyone has loaded.
     go_at: Option<Instant>,
@@ -157,13 +164,14 @@ struct HostGame {
     lower_votes: u32,
     /// Who the match is paused for, if anyone (as sent to the players).
     waiting_for: String,
-    /// Bundles closed but not yet simulated here; the front is `handed`.
-    closed: VecDeque<Vec<PlayerCommand>>,
-    /// Every bundle closed so far, by turn, to bring a player who rejoins
-    /// after a restart up to date.
+    /// Every bundle closed so far, by turn: this machine simulates them
+    /// from `handed`, and a player who rejoins after a restart gets them
+    /// all.
     history: Vec<Vec<PlayerCommand>>,
     /// The match as it started, to tell a player who rejoins.
     start: MatchStart,
+    /// Each player's lobby slot.
+    slots: Vec<usize>,
     /// Commands waiting for a turn, in arrival order.
     inbox: VecDeque<PlayerCommand>,
     /// This machine's state hashes, oldest first.
@@ -458,10 +466,7 @@ impl Lan {
     /// rejoined, or stalled): the game may then run more turns a frame.
     pub fn catching_up(&self) -> bool {
         match &self.role {
-            Role::Client(c) => c
-                .game
-                .as_ref()
-                .is_some_and(|g| g.ready.len() > CATCH_UP_TURNS),
+            Role::Client(c) => c.game.as_ref().is_some_and(ClientGame::behind),
             _ => false,
         }
     }
@@ -573,7 +578,7 @@ impl Lan {
                     LOBBY_KEEPALIVE
                 };
                 for p in h.peers.iter_mut().filter(|p| !p.gone) {
-                    let due = due_packets(&mut p.link, now, all, keepalive);
+                    let due = due_packets(&mut p.link, now, all, keepalive, p.lost_at.is_none());
                     out.extend(due.into_iter().map(|b| (b, p.addr)));
                 }
             }
@@ -590,7 +595,7 @@ impl Lan {
                 };
                 if c.link.is_secure() {
                     out.extend(
-                        due_packets(&mut c.link, now, all, keepalive)
+                        due_packets(&mut c.link, now, all, keepalive, true)
                             .into_iter()
                             .map(|b| (b, c.host)),
                     );
@@ -714,13 +719,7 @@ impl Lan {
             Some(i) if h.peers[i].their_key == theirs => h.peers[i].host_key,
             // A new key from someone already in: a restarted game on the
             // same port. They can join again once their old place is freed.
-            Some(i)
-                if h.peers[i].slot.is_some()
-                    && !h.peers[i].gone
-                    && h.peers[i].lost_at.is_none() =>
-            {
-                return;
-            }
+            Some(i) if h.peers[i].slot.is_some() && h.peers[i].active() => return,
             _ => {
                 if let Some(i) = known {
                     h.peers.remove(i);
@@ -1035,18 +1034,17 @@ impl Lan {
     /// and every turn so far, and catch up from the first. Returns false
     /// when there is no such place.
     fn rejoin(&mut self, index: usize, name: &str, now: Instant) -> bool {
-        let (seed, map_hash) = (self.id.seed, self.id.map_hash);
+        let map_hash = self.id.map_hash;
         let Role::Host(h) = &mut self.role else {
             return false;
         };
         let Some(g) = &h.game else { return false };
-        let held = |p: &Peer, player: usize| {
-            p.player == Some(player as PlayerId) && !p.gone && p.lost_at.is_none()
-        };
         // The host is player 0 and never rejoins.
         let Some(player) = (1..g.start.players.len()).find(|&i| {
             let s = &g.start.players[i];
-            s.kind == SlotKind::Human && s.name == name && !h.peers.iter().any(|p| held(p, i))
+            s.kind == SlotKind::Human
+                && s.name == name
+                && !(h.peers.iter()).any(|p| p.active() && p.player == Some(i as PlayerId))
         }) else {
             return false;
         };
@@ -1059,23 +1057,13 @@ impl Lan {
                 p.drop_at = Some(now);
             }
         }
-        let occupied: Vec<usize> = (0..MAX_PLAYERS)
-            .filter(|&i| h.lobby.slots[i].occupied())
-            .collect();
         let peer = &mut h.peers[index];
-        peer.slot = occupied.get(player).copied();
+        peer.slot = g.slots.get(player).copied();
         peer.player = Some(player as PlayerId);
         peer.name = name.to_string();
         peer.drop_at = None;
         peer.loaded = true;
-        peer.link.send(&Msg::Start {
-            seed,
-            map_hash,
-            settings: g.start.settings.clone(),
-            players: g.start.players.clone(),
-            you: player as PlayerId,
-            input_delay: g.delay as u8,
-        });
+        peer.link.send(&g.start_msg(map_hash, player as PlayerId));
         for (turn, commands) in g.history.iter().enumerate() {
             peer.link.send(&Msg::Bundle {
                 turn: turn as u32,
@@ -1469,8 +1457,7 @@ fn close_turn(h: &mut Host, turn: u32) {
             commands: commands.clone(),
         });
     }
-    g.history.push(commands.clone());
-    g.closed.push_back(commands);
+    g.history.push(commands);
     g.next_close = turn + 1;
 }
 
@@ -1481,7 +1468,7 @@ fn adapt_delay(h: &mut Host, length: Duration) {
     let worst = h
         .peers
         .iter()
-        .filter(|p| p.player.is_some() && !p.gone && p.lost_at.is_none())
+        .filter(|p| p.player.is_some() && p.active())
         .filter_map(|p| Some(p.link.rtt()? / 2 + p.link.jitter() * 2))
         .max();
     let Some(worst) = worst else { return };
@@ -1507,6 +1494,21 @@ fn adapt_delay(h: &mut Host, length: Duration) {
             p.link.send(&Msg::Delay {
                 turns: g.delay as u8,
             });
+        }
+    }
+}
+
+impl HostGame {
+    /// The match's start as player `you` is told it, with the input delay
+    /// as it is now.
+    fn start_msg(&self, map_hash: u64, you: PlayerId) -> Msg {
+        Msg::Start {
+            seed: self.start.seed.unwrap_or_default(),
+            map_hash,
+            settings: self.start.settings.clone(),
+            players: self.start.players.clone(),
+            you,
+            input_delay: self.delay as u8,
         }
     }
 }
@@ -1539,7 +1541,8 @@ fn host_turn(h: &mut Host, now: Instant, length: Duration) -> Option<Vec<PlayerC
         }
         close_turn(h, g.next_close);
     }
-    h.game.as_mut()?.closed.pop_front()
+    let g = h.game.as_ref()?;
+    g.history.get(g.handed as usize - 1).cloned()
 }
 
 /// How long a joiner waits on a silent host before giving up.
@@ -1550,16 +1553,35 @@ fn client_timeout(c: &Client) -> Duration {
     }
 }
 
-/// What `link` should send now: a burst while it has a long backlog (a
-/// player catching up on a whole match, or the hashes of one), else a
-/// packet when there is news or the keepalive is due.
-fn due_packets(link: &mut Link, now: Instant, all: bool, keepalive: Duration) -> Vec<Vec<u8>> {
-    if link.backlog() > CATCH_UP_BACKLOG {
-        link.packets(now, CATCH_UP_BURST)
+/// What `link` should send now: while it has a long backlog (a player
+/// catching up on a whole match, or the hashes of one) and the other side
+/// is answering, a burst once a round trip; else a packet when there is
+/// news or the keepalive is due.
+fn due_packets(
+    link: &mut Link,
+    now: Instant,
+    all: bool,
+    keepalive: Duration,
+    answering: bool,
+) -> Vec<Vec<u8>> {
+    if answering && link.backlog() > CATCH_UP_BACKLOG {
+        let round = link.rtt().unwrap_or(BURST_GAP).max(BURST_GAP);
+        if now - link.last_sent >= round {
+            link.packets(now, CATCH_UP_BURST)
+        } else {
+            Vec::new()
+        }
     } else if all || link.fresh || now - link.last_sent >= keepalive {
         vec![link.packet(now)]
     } else {
         Vec::new()
+    }
+}
+
+impl ClientGame {
+    /// More turns waiting than the input delay accounts for.
+    fn behind(&self) -> bool {
+        self.ready.len() as u32 > self.delay + 1
     }
 }
 
@@ -1568,9 +1590,8 @@ fn client_turn(g: &mut ClientGame, now: Instant, length: Duration) -> Option<Vec
         return None;
     }
     let due = *g.due.get_or_insert(now);
-    // Behind by more than the input delay: catch up a turn at a time.
-    let catching_up = g.ready.len() as u32 > g.delay + 1;
-    if now < due && !catching_up {
+    // Behind: catch up a turn at a time.
+    if now < due && !g.behind() {
         return None;
     }
     // After a stall, don't rush the turns that piled up on the clock.
@@ -1755,23 +1776,7 @@ impl Network for Lan {
             return Ok(h.lobby.match_start(None));
         }
         let start = h.lobby.match_start(Some(seed));
-        let occupied: Vec<usize> = (0..MAX_PLAYERS)
-            .filter(|&i| h.lobby.slots[i].occupied())
-            .collect();
-        for p in h.peers.iter_mut().filter(|p| !p.gone) {
-            let Some(slot) = p.slot else { continue };
-            let you = occupied.iter().position(|&s| s == slot).unwrap_or(0) as PlayerId;
-            p.player = Some(you);
-            p.link.send(&Msg::Start {
-                seed,
-                map_hash,
-                settings: start.settings.clone(),
-                players: start.players.clone(),
-                you,
-                input_delay: INPUT_DELAY as u8,
-            });
-        }
-        h.game = Some(HostGame {
+        let g = HostGame {
             go_at: None,
             started_at: Instant::now(),
             host_loaded: false,
@@ -1780,14 +1785,23 @@ impl Network for Lan {
             delay: INPUT_DELAY,
             lower_votes: 0,
             waiting_for: String::new(),
-            closed: VecDeque::new(),
             history: Vec::new(),
             start: start.clone(),
+            slots: (0..MAX_PLAYERS)
+                .filter(|&i| h.lobby.slots[i].occupied())
+                .collect(),
             inbox: VecDeque::new(),
             hashes: VecDeque::new(),
             theirs: Vec::new(),
             desynced: Vec::new(),
-        });
+        };
+        for p in h.peers.iter_mut().filter(|p| !p.gone) {
+            let Some(slot) = p.slot else { continue };
+            let you = g.slots.iter().position(|&s| s == slot).unwrap_or(0) as PlayerId;
+            p.player = Some(you);
+            p.link.send(&g.start_msg(map_hash, you));
+        }
+        h.game = Some(g);
         self.flush(Instant::now(), true);
         Ok(start)
     }
