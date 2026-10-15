@@ -1,9 +1,12 @@
 //! Soldier models on the GPU: every model's vertices and indices in one
-//! buffer each, the bone animation texture, and one instanced draw per model
-//! and level of detail.
+//! buffer each, the bone animation texture, the material texture array, and
+//! one instanced draw per model and level of detail.
 
 use bytemuck::{Pod, Zeroable};
-use gc_assets::model::{BONE_TEXELS_PER_ROW, ModelVertex, Models};
+use gc_assets::model::{
+    BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, ModelVertex, Models, TEXELS_PER_LAYER, TEXTURE_MIPS,
+    TEXTURE_SIZE,
+};
 
 /// Fixed capacity of the soldier instance buffer; never reallocated.
 pub const MAX_SOLDIER_INSTANCES: usize = 65_536;
@@ -62,18 +65,40 @@ pub(crate) fn make(
     format: wgpu::TextureFormat,
     depth: wgpu::TextureFormat,
 ) -> SoldiersGpu {
+    let materials = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    };
     let bones_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bones"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
+        label: Some("soldier models"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            // The material array seen as sRGB (colour layers) and as linear
+            // (the normal layer).
+            materials(1),
+            materials(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("soldiers"),
@@ -212,13 +237,45 @@ pub(crate) fn upload(
         size,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let (materials, material_bytes) = upload_materials(device, queue, m);
+    let array_view = |format| {
+        materials.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    };
+    let srgb_view = array_view(wgpu::TextureFormat::Rgba8UnormSrgb);
+    let linear_view = array_view(wgpu::TextureFormat::Rgba8Unorm);
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("soldier materials"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: 8,
+        ..Default::default()
+    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bones"),
+        label: Some("soldier models"),
         layout: bones_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&view),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&srgb_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&linear_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
     });
     let ranges = m
         .models
@@ -226,10 +283,74 @@ pub(crate) fn upload(
         .map(|r| (r.first_vertex as i32, r.lods))
         .collect();
     ModelGpu {
-        gpu_bytes: vertices.size() + indices.size() + (texels.len() * 8) as u64,
+        gpu_bytes: vertices.size() + indices.size() + (texels.len() * 8) as u64 + material_bytes,
         vertices,
         indices,
         bind_group,
         ranges,
     }
+}
+
+/// The material texture array, every layer with its mips; a single blank
+/// texel when no model is textured, since the binding must exist.
+fn upload_materials(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    m: &Models<'_>,
+) -> (wgpu::Texture, u64) {
+    let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
+    let (side, mips) = if layers == 0 {
+        (1, 1)
+    } else {
+        (TEXTURE_SIZE, TEXTURE_MIPS)
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("soldier materials"),
+        size: wgpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: layers.max(1),
+        },
+        mip_level_count: mips,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+    });
+    if layers == 0 {
+        return (texture, 4);
+    }
+    for (layer, texels) in m.textures.chunks_exact(TEXELS_PER_LAYER).enumerate() {
+        let mut offset = 0;
+        for mip in 0..TEXTURE_MIPS {
+            let side = TEXTURE_SIZE >> mip;
+            let count = (side * side) as usize;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: mip,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&texels[offset..offset + count]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side * 4),
+                    rows_per_image: Some(side),
+                },
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+            );
+            offset += count;
+        }
+    }
+    (texture, (m.textures.len() * 4) as u64)
 }

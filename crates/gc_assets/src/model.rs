@@ -2,7 +2,7 @@
 //! bones), and bone animation rows (see
 //! `docs/10-architecture.md#units-instancing-and-vertex-animation-textures`).
 //!
-//! A model pack holds five tables:
+//! A model pack holds six tables:
 //!
 //! - `models/index`: one [`ModelRecord`] per model.
 //! - `models/vertices`: every model's [`ModelVertex`]es, back to back.
@@ -13,6 +13,9 @@
 //!   texels per row, one row per frame of every clip. Each texel is four
 //!   half floats; a bone takes three texels (the rows of a 3 × 4 matrix that
 //!   moves a vertex from where it is stored to that frame's pose).
+//! - `models/textures`: [`LAYERS_PER_MATERIAL`] texture layers per material,
+//!   each [`TEXTURE_SIZE`] square RGBA8 with its full mip chain (see
+//!   [`MaterialLayer`]). Models painted in vertex colours have none.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -23,11 +26,13 @@ use crate::{Pack, TableError, read_table};
 
 /// Bumped whenever a record's layout or meaning changes. 2: vertices follow
 /// up to four weighted bones and carry a texture coordinate and tangent.
-pub const MODEL_SCHEMA: u32 = 2;
+/// 3: textured materials.
+pub const MODEL_SCHEMA: u32 = 3;
 pub const INDEX_PATH: &str = "models/index";
 pub const VERTICES_PATH: &str = "models/vertices";
 pub const INDICES_PATH: &str = "models/indices";
 pub const CLIPS_PATH: &str = "models/clips";
+pub const TEXTURES_PATH: &str = "models/textures";
 pub const BONES_PATH: &str = "models/bones";
 
 /// Most bones a model may have (one more is added for parts that never move).
@@ -41,6 +46,38 @@ pub const BONE_TEXELS_PER_ROW: u32 = 3 * (MAX_BONES + 1);
 /// Vertex positions are stored in 1/`POSITION_SCALE` tiles.
 pub const POSITION_SCALE: f32 = 4096.0;
 pub const NAME_BYTES: usize = 24;
+
+/// Side of a material texture layer, in texels.
+pub const TEXTURE_SIZE: u32 = 512;
+/// Mip levels per layer, down to 1 × 1.
+pub const TEXTURE_MIPS: u32 = TEXTURE_SIZE.ilog2() + 1;
+/// Texels in one layer with all its mips.
+pub const TEXELS_PER_LAYER: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < TEXTURE_MIPS {
+        let side = (TEXTURE_SIZE >> i) as usize;
+        n += side * side;
+        i += 1;
+    }
+    n
+};
+pub const LAYERS_PER_MATERIAL: usize = 3;
+/// Most materials a pack may hold: GPUs promise 256 texture array layers.
+pub const MAX_MATERIALS: usize = 256 / LAYERS_PER_MATERIAL;
+
+/// The layers of one material, in order. Normals use the OpenGL convention
+/// (green points along +v's bitangent), as glTF does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialLayer {
+    /// sRGB base colour; alpha is how much the team colour replaces it.
+    AlbedoTeam = 0,
+    /// Linear: tangent-space normal x and y (0 to 1 for -1 to 1), ambient
+    /// occlusion, roughness.
+    NormalAoRough = 1,
+    /// sRGB emitted light; alpha (linear) is metalness.
+    EmissiveMetal = 2,
+}
 
 /// What a clip shows. The game picks clips by kind, never by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -113,7 +150,9 @@ pub struct ModelVertex {
     pub pos: [i16; 3],
     /// How much of the team colour replaces the vertex colour (0 to 255).
     pub team: u8,
-    pub _pad: u8,
+    /// The material this vertex is painted with, plus one; 0 means its
+    /// colour is all in `color`.
+    pub material: u8,
     /// The bones this vertex follows, heaviest first.
     pub bones: [u8; BONES_PER_VERTEX],
     /// Each bone's share of the vertex, summing to 255. Unused slots are 0.
@@ -159,8 +198,11 @@ impl ClipRecord {
 pub enum ModelError {
     Missing(&'static str),
     Table(&'static str, TableError),
-    /// A model's vertices, indices, clips or bone rows point outside their tables.
+    /// A model's vertices, indices, clips, bone rows or materials point
+    /// outside their tables.
     OutOfRange(usize),
+    /// The texture table is not a whole number of materials, or too many.
+    BadTextures,
 }
 
 impl fmt::Display for ModelError {
@@ -169,6 +211,7 @@ impl fmt::Display for ModelError {
             ModelError::Missing(p) => write!(f, "model pack has no {p}"),
             ModelError::Table(p, e) => write!(f, "{p}: {e}"),
             ModelError::OutOfRange(m) => write!(f, "model {m} points outside the pack's tables"),
+            ModelError::BadTextures => write!(f, "model pack textures are not whole materials"),
         }
     }
 }
@@ -184,6 +227,8 @@ pub struct Models<'a> {
     pub clips: &'a [ClipRecord],
     /// Bone texture texels, four half floats each, row by row.
     pub bones: &'a [[u16; 4]],
+    /// Material texture texels: [`TEXELS_PER_LAYER`] per layer, mip by mip.
+    pub textures: &'a [[u8; 4]],
 }
 
 impl<'a> Models<'a> {
@@ -199,8 +244,13 @@ impl<'a> Models<'a> {
             indices: table(pack, INDICES_PATH)?,
             clips: table(pack, CLIPS_PATH)?,
             bones: table(pack, BONES_PATH)?,
+            textures: table(pack, TEXTURES_PATH)?,
         };
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
+        let material_texels = TEXELS_PER_LAYER * LAYERS_PER_MATERIAL;
+        if !m.textures.len().is_multiple_of(material_texels) || m.materials() > MAX_MATERIALS {
+            return Err(ModelError::BadTextures);
+        }
         for (k, r) in m.models.iter().enumerate() {
             let bad = ModelError::OutOfRange(k);
             let verts_end = r.first_vertex as usize + r.vertex_count as usize;
@@ -226,6 +276,7 @@ impl<'a> Models<'a> {
                 v.bones.iter().any(|&b| b as u32 >= r.bones)
                     || v.weights.iter().map(|&w| w as u32).sum::<u32>() != 255
                     || v.weights.windows(2).any(|w| w[1] > w[0])
+                    || v.material as usize > m.materials()
             }) {
                 return Err(bad);
             }
@@ -245,6 +296,11 @@ impl<'a> Models<'a> {
             }
         }
         Ok(m)
+    }
+
+    /// Materials in the texture table.
+    pub fn materials(&self) -> usize {
+        self.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL)
     }
 
     /// Rows in the bone texture.
@@ -273,6 +329,7 @@ pub struct ModelTables {
     pub indices: Vec<u16>,
     pub clips: Vec<ClipRecord>,
     pub bones: Vec<[u16; 4]>,
+    pub textures: Vec<[u8; 4]>,
 }
 
 impl ModelTables {
@@ -302,6 +359,11 @@ impl ModelTables {
             BONES_PATH,
             Kind::Table,
             &table_bytes(MODEL_SCHEMA, &self.bones),
+        );
+        pack.add(
+            TEXTURES_PATH,
+            Kind::Table,
+            &table_bytes(MODEL_SCHEMA, &self.textures),
         );
     }
 }
@@ -411,6 +473,7 @@ mod tests {
                 fps: 10.0,
             }],
             bones: alloc::vec![[0; 4]; 2 * BONE_TEXELS_PER_ROW as usize],
+            textures: Vec::new(),
         }
     }
 
@@ -455,6 +518,18 @@ mod tests {
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
         });
+        let mut bad = one_model();
+        bad.vertices[1].material = 1;
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+        });
+        let mut fine = one_model();
+        fine.vertices[1].material = 1;
+        fine.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER * LAYERS_PER_MATERIAL];
+        parsed(&fine, |m| assert_eq!(m.unwrap().materials(), 1));
+        let mut bad = one_model();
+        bad.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER];
+        parsed(&bad, |m| assert_eq!(m.err(), Some(ModelError::BadTextures)));
         for weights in [[0, 0, 0, 0], [200, 0, 55, 0], [55, 200, 0, 0]] {
             let mut bad = one_model();
             bad.vertices[1].weights = weights;

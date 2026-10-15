@@ -24,13 +24,16 @@
 //!                   [--out assets/models.pak] [--report]
 //! `--report` prints each model's most common colours, for choosing team colours.
 
+mod textures;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, ModelRecord,
-    ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
+    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, LAYERS_PER_MATERIAL, MAX_BONES,
+    MAX_MATERIALS, ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE,
+    TEXELS_PER_LAYER, f16_bits,
 };
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use serde::Deserialize;
@@ -70,6 +73,10 @@ struct ModelConfig {
     clips: HashMap<String, String>,
     /// Triangle budgets for the full and the reduced level of detail.
     lod_triangles: (usize, usize),
+    /// Painted texture maps, for models whose detail is in textures rather
+    /// than vertex colours.
+    #[serde(default)]
+    textures: Option<textures::TextureConfig>,
 }
 
 fn default_team_tolerance() -> f32 {
@@ -123,22 +130,33 @@ fn run(opts: &Options) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", opts.config.display()))?;
     let config: Config =
         ron::from_str(&text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
+    let resolve = |src: &str| -> Result<PathBuf, String> {
+        if let Some(p) = src.strip_prefix("shared:") {
+            Ok(opts.shared.join(p))
+        } else if let Some(p) = src.strip_prefix("repo:") {
+            Ok(opts.repo_src.join(p))
+        } else {
+            Err(format!("{src}: must start with shared: or repo:"))
+        }
+    };
     let mut tables = ModelTables::default();
     for m in &config.models {
-        let path = if let Some(p) = m.source.strip_prefix("shared:") {
-            opts.shared.join(p)
-        } else if let Some(p) = m.source.strip_prefix("repo:") {
-            opts.repo_src.join(p)
-        } else {
-            return Err(format!(
-                "{}: source must start with shared: or repo:",
-                m.name
-            ));
-        };
-        let baked =
+        let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
+        let mut baked =
             bake_model(m, &path).map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
+        }
+        if let Some(cfg) = &m.textures {
+            let material = tables.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL);
+            if material >= MAX_MATERIALS {
+                return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
+            }
+            let texels = textures::bake(cfg, resolve).map_err(|e| format!("{}: {e}", m.name))?;
+            tables.textures.extend_from_slice(&texels);
+            for v in &mut baked.verts {
+                v.material = material as u8 + 1;
+            }
         }
         baked.append_to(&mut tables, &m.name)?;
     }
@@ -150,13 +168,14 @@ fn run(opts: &Options) -> Result<(), String> {
     }
     std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
     println!(
-        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows",
+        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows, {} materials",
         opts.out.display(),
         bytes.len() / 1024,
         tables.models.len(),
         tables.vertices.len(),
         tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
         tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
+        tables.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL),
     );
     Ok(())
 }
@@ -555,6 +574,9 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
     if indices.is_empty() {
         return Err("no triangles".into());
     }
+    if cfg.textures.is_some() && verts.iter().any(|v| v.tangent == Vec4::ZERO) {
+        return Err("a textured model needs tangents (export them with the glTF)".into());
+    }
 
     // 2. Into game space: face +z, feet on the ground, `height` tall.
     let turn = Mat4::from_rotation_y(cfg.turn.to_radians());
@@ -710,7 +732,7 @@ fn quantise(
     ModelVertex {
         pos: [q(v.pos.x), q(v.pos.y), q(v.pos.z)],
         team: if is_team { 255 } else { 0 },
-        _pad: 0,
+        material: 0,
         bones,
         weights,
         normal: [n(v.normal.x), n(v.normal.y), n(v.normal.z), 0],
