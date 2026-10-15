@@ -352,8 +352,8 @@ impl Champions {
                 h.u32(c.meet);
                 h.u8(c.beats);
                 h.u32(c.landed);
-                h.u8(c.winner.map_or(u8::MAX, |w| w));
-                h.u32(c.abandoned.map_or(u32::MAX, |t| t));
+                h.u8(c.winner.unwrap_or(u8::MAX));
+                h.u32(c.abandoned.unwrap_or(u32::MAX));
             }
             None => h.u8(0),
         }
