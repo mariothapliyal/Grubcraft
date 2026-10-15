@@ -267,6 +267,8 @@ pub fn holding_the_field(world: &World) -> Option<PlayerId> {
 /// it ended.
 pub struct Battle {
     pub me: PlayerId,
+    /// Watching a replay: nobody here won or lost.
+    pub watching: bool,
     /// The side holding the field and the tick it took it, while one does.
     held: Option<(PlayerId, u32)>,
     /// "VICTORY" or "DEFEAT" and what happened, once it is over.
@@ -283,11 +285,20 @@ impl Battle {
     pub fn new(me: PlayerId) -> Battle {
         Battle {
             me,
+            watching: false,
             held: None,
             outcome: None,
             won: None,
             champions: None,
             heard: None,
+        }
+    }
+
+    /// A recorded battle being watched.
+    pub fn watching() -> Battle {
+        Battle {
+            watching: true,
+            ..Battle::new(0)
         }
     }
 
@@ -334,6 +345,13 @@ impl Battle {
         }
         let secs = world.battle_ticks() / gc_sim::TICKS_PER_SECOND;
         let time = format!("{}:{:02}", secs / 60, secs % 60);
+        if self.watching {
+            self.outcome = Some(format!(
+                "OVER  {} holds the field after {time}. Esc: menu",
+                party_name(parties, p)
+            ));
+            return true;
+        }
         let won = !world.hostile(self.me, p);
         self.won = Some(won);
         self.outcome = Some(if won {

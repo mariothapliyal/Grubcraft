@@ -6,6 +6,8 @@
 //!   gc_replay bless PATH...      play each back and store the hashes the
 //!                                simulation produces now
 //!   gc_replay info PATH...       describe each replay
+//!   gc_replay compare A B        the first second two machines' recordings
+//!                                of one match disagree (desync reports)
 //!
 //! A PATH may be a `.gcr` file or a folder of them. `verify` exits non-zero
 //! when any replay fails, so CI can run it on every platform.
@@ -23,6 +25,12 @@ fn main() -> ExitCode {
         return usage();
     };
     let mut paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    if action == "compare" {
+        return match &paths[..] {
+            [a, b] => compare(a, b),
+            _ => usage(),
+        };
+    }
     if paths.is_empty() {
         if action != "verify" {
             return usage();
@@ -54,7 +62,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: gc_replay verify [PATH...] | bless PATH... | info PATH...");
+    eprintln!("usage: gc_replay verify [PATH...] | bless PATH... | info PATH... | compare A B");
     ExitCode::from(2)
 }
 
@@ -189,6 +197,13 @@ fn info(file: &Path) -> bool {
     }
     println!("{}", file.display());
     println!("  {}", replay.note);
+    let h = &replay.header;
+    if !h.build.is_empty() {
+        println!("  recorded on {} (data {:016x})", h.build, h.data_hash);
+    }
+    if let Some(tick) = h.desync_tick {
+        println!("  desync report: out of sync with the host from tick {tick}");
+    }
     println!(
         "  {}:{:02} of game time ({} ticks), {} commands, {:.1} KB",
         seconds / 60,
@@ -228,7 +243,49 @@ fn info(file: &Path) -> bool {
             .teams
             .get(p)
             .map_or(String::new(), |t| format!(" (team {t})"));
-        println!("  player {p}{team}: {regiments} regiments, {soldiers} soldiers");
+        let who = replay.header.players.get(p).map_or(String::new(), |pl| {
+            let me = if replay.header.recorded_by == Some(p as u8) {
+                ", recorded here"
+            } else {
+                ""
+            };
+            format!(" {}{me}", pl.name)
+        });
+        println!("  player {p}{who}{team}: {regiments} regiments, {soldiers} soldiers");
     }
     true
+}
+
+/// Where two recordings of one match, from two machines, first disagree.
+fn compare(a: &Path, b: &Path) -> ExitCode {
+    let (Some(ra), Some(rb)) = (load(a), load(b)) else {
+        return ExitCode::from(2);
+    };
+    if ra.seed != rb.seed || ra.teams != rb.teams {
+        println!("{} and {} are not the same match", name(a), name(b));
+        return ExitCode::FAILURE;
+    }
+    match ra.first_difference(&rb) {
+        None => {
+            println!("same  every state hash both recorded matches");
+            ExitCode::SUCCESS
+        }
+        Some(tick) => {
+            let turn = ra
+                .turns
+                .iter()
+                .zip(&rb.turns)
+                .find(|(x, y)| x != y)
+                .map(|(x, _)| x.0);
+            println!(
+                "differ  the worlds first disagree at tick {tick} ({}:{:02}){}",
+                tick / TICKS_PER_SECOND / 60,
+                tick / TICKS_PER_SECOND % 60,
+                turn.map_or(String::new(), |t| format!(
+                    "; their commands first differ at tick {t}"
+                ))
+            );
+            ExitCode::FAILURE
+        }
+    }
 }
