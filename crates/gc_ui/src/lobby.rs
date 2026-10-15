@@ -351,7 +351,7 @@ pub trait Network {
     fn join(&mut self, me: &Profile, target: &str, password: &str) -> Result<(), NetError>;
     /// While hosting: how friends reach this lobby (a join code and the
     /// address), to show in it.
-    fn invite(&self) -> Option<String> {
+    fn invite(&self) -> Option<&str> {
         None
     }
     /// The lobby we are in, if any.

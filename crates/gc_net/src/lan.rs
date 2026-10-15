@@ -112,7 +112,7 @@ struct Peer {
     /// repeated Hi the same way.
     their_key: [u8; 32],
     host_key: [u8; 32],
-    cipher: Cipher,
+    /// Secured from the start (the keys come before the link).
     link: Link,
     /// The lobby slot this player holds; `None` while being turned away.
     slot: Option<usize>,
@@ -185,9 +185,9 @@ struct Client {
     host: SocketAddr,
     keys: KeyPair,
     password: String,
-    /// Set once the host has answered our key.
-    cipher: Option<Cipher>,
     hi_sent: Option<Instant>,
+    /// Secured once the host has answered our key; until then we only
+    /// send that key.
     link: Link,
     slot: Option<usize>,
     lobby: Option<LobbyState>,
@@ -558,7 +558,7 @@ impl Lan {
                 };
                 for p in h.peers.iter_mut().filter(|p| !p.gone) {
                     if all || p.link.fresh || now - p.link.last_sent >= keepalive {
-                        out.push((sealed(&mut p.cipher, p.link.packet(now)), p.addr));
+                        out.push((p.link.packet(now), p.addr));
                     }
                 }
             }
@@ -573,21 +573,13 @@ impl Lan {
                 } else {
                     LOBBY_KEEPALIVE
                 };
-                match &mut c.cipher {
-                    Some(cipher) => {
-                        if all || c.link.fresh || now - c.link.last_sent >= keepalive {
-                            out.push((sealed(cipher, c.link.packet(now)), c.host));
-                        }
+                if c.link.is_secure() {
+                    if all || c.link.fresh || now - c.link.last_sent >= keepalive {
+                        out.push((c.link.packet(now), c.host));
                     }
-                    None => {
-                        if all || c.hi_sent.is_none_or(|t| now - t >= HI_EVERY) {
-                            c.hi_sent = Some(now);
-                            let mut w = Writer::new();
-                            header(&mut w, Kind::Hi);
-                            w.buf.extend_from_slice(&c.keys.public);
-                            out.push((w.buf, c.host));
-                        }
-                    }
+                } else if all || c.hi_sent.is_none_or(|t| now - t >= HI_EVERY) {
+                    c.hi_sent = Some(now);
+                    out.push((key_packet(Kind::Hi, &c.keys.public), c.host));
                 }
             }
             Role::Idle => {}
@@ -622,9 +614,9 @@ impl Lan {
                     self.send_raw(&w.buf, from);
                 }
             }
-            k if k == Kind::Link as u8 => self.on_link(&packet[..4], &packet[4..], from, now),
+            k if k == Kind::Link as u8 => self.on_link(packet, from, now),
             k if k == Kind::Hi as u8 => {
-                if let Some(key) = r.take(32).and_then(|k| <[u8; 32]>::try_from(k).ok())
+                if let Some(key) = r.array()
                     && r.is_empty()
                 {
                     self.on_hi(key, from, now);
@@ -633,14 +625,15 @@ impl Lan {
             k if k == Kind::KeyReply as u8 => {
                 if let Role::Client(c) = &mut self.role
                     && c.host == from
-                    && c.cipher.is_none()
-                    && let Some(key) = r.take(32).and_then(|k| <[u8; 32]>::try_from(k).ok())
+                    && !c.link.is_secure()
+                    && let Some(key) = r.array()
                 {
-                    c.cipher = Cipher::new(&c.keys, key, false, &c.password);
-                    if c.cipher.is_none() {
-                        self.lose_host("The host's key was not valid.".into());
-                    } else {
-                        self.flush(now, true);
+                    match Cipher::new(&c.keys, key, false, &c.password) {
+                        Some(cipher) => {
+                            c.link.secure(cipher);
+                            self.flush(now, true);
+                        }
+                        None => self.lose_host("The host's key was not valid.".into()),
                     }
                 }
             }
@@ -713,12 +706,13 @@ impl Lan {
                 let Some(cipher) = Cipher::new(&mine, theirs, true, &h.password) else {
                     return;
                 };
+                let mut link = Link::new(now);
+                link.secure(cipher);
                 h.peers.push(Peer {
                     addr: from,
                     their_key: theirs,
                     host_key: mine.public,
-                    cipher,
-                    link: Link::new(now),
+                    link,
                     slot: None,
                     player: None,
                     name: String::new(),
@@ -730,20 +724,17 @@ impl Lan {
                 mine.public
             }
         };
-        let mut w = Writer::new();
-        header(&mut w, Kind::KeyReply);
-        w.buf.extend_from_slice(&reply_key);
-        self.send_raw(&w.buf, from);
+        self.send_raw(&key_packet(Kind::KeyReply, &reply_key), from);
     }
 
-    fn on_link(&mut self, head: &[u8], body: &[u8], from: SocketAddr, now: Instant) {
+    fn on_link(&mut self, packet: &[u8], from: SocketAddr, now: Instant) {
         match &mut self.role {
             Role::Host(h) => {
                 // Links begin with a key exchange: strangers are ignored.
                 let Some(index) = h.peers.iter().position(|p| p.addr == from) else {
                     return;
                 };
-                let Some(plain) = h.peers[index].cipher.open(head, body) else {
+                let Some(msgs) = h.peers[index].link.receive(packet, now) else {
                     // A joiner not yet let in whose packets we can't open
                     // typed a different password.
                     if h.peers[index].slot.is_none() && !h.peers[index].gone {
@@ -752,9 +743,6 @@ impl Lan {
                         w.bool(!h.password.is_empty());
                         self.send_raw(&w.buf, from);
                     }
-                    return;
-                };
-                let Some(msgs) = h.peers[index].link.receive(&mut Reader::new(&plain), now) else {
                     return;
                 };
                 if h.peers[index].gone {
@@ -769,10 +757,10 @@ impl Lan {
                 if c.host != from {
                     return;
                 }
-                let Some(plain) = c.cipher.as_ref().and_then(|k| k.open(head, body)) else {
+                if !c.link.is_secure() {
                     return;
-                };
-                let Some(msgs) = c.link.receive(&mut Reader::new(&plain), now) else {
+                }
+                let Some(msgs) = c.link.receive(packet, now) else {
                     return;
                 };
                 for msg in msgs {
@@ -1170,7 +1158,7 @@ impl Lan {
                     reason: "The host gave your place to someone else.".into(),
                 });
                 // Gone peers get no more packets: send this one now.
-                let bytes = sealed(&mut p.cipher, p.link.packet(now));
+                let bytes = p.link.packet(now);
                 if let Some(s) = &self.socket {
                     let _ = s.send_to(&bytes, p.addr);
                 }
@@ -1311,13 +1299,12 @@ impl Lan {
     }
 }
 
-/// A link packet with its body sealed by `cipher` (the header stays readable
-/// and is authenticated).
-fn sealed(cipher: &mut Cipher, packet: Vec<u8>) -> Vec<u8> {
-    let (head, body) = packet.split_at(4);
-    let mut out = head.to_vec();
-    out.extend(cipher.seal(head, body));
-    out
+/// A Hi or KeyReply packet: the header and a public key.
+fn key_packet(kind: Kind, key: &[u8; 32]) -> Vec<u8> {
+    let mut w = Writer::new();
+    header(&mut w, kind);
+    w.buf.extend_from_slice(key);
+    w.buf
 }
 
 fn h_name(role: &Role, index: usize) -> String {
@@ -1495,13 +1482,14 @@ impl Network for Lan {
         self.leave();
         let socket = Lan::open(Lan::bind_host()?)?;
         let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
-        let invite = joincode::local_ip().map(|ip| {
-            let code = joincode::encode(ip, port).unwrap_or_default();
-            if port == DEFAULT_PORT {
-                format!("Join code {code} (or {ip})")
+        let invite = joincode::local_ip().and_then(|ip| {
+            let code = joincode::encode(ip, port)?;
+            let address = if port == DEFAULT_PORT {
+                ip.to_string()
             } else {
-                format!("Join code {code} (or {ip}:{port})")
-            }
+                format!("{ip}:{port}")
+            };
+            Some(format!("Join code {code} (or {address})"))
         });
         let mut slots = [Slot::open(0), Slot::open(1), Slot::open(2), Slot::open(3)];
         slots[0] = Slot {
@@ -1542,9 +1530,9 @@ impl Network for Lan {
         &self.games
     }
 
-    fn invite(&self) -> Option<String> {
+    fn invite(&self) -> Option<&str> {
         match &self.role {
-            Role::Host(h) => h.invite.clone(),
+            Role::Host(h) => h.invite.as_deref(),
             _ => None,
         }
     }
@@ -1574,7 +1562,6 @@ impl Network for Lan {
             host: addr,
             keys,
             password: password.trim().to_string(),
-            cipher: None,
             hi_sent: None,
             link,
             slot: None,

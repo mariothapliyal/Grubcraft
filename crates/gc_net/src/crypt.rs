@@ -69,18 +69,15 @@ impl Cipher {
             ChaCha20Poly1305::new(Key::from_slice(h.finalize().as_bytes()))
         };
         let (to_joiner, to_host) = (key(b"host to joiner"), key(b"joiner to host"));
-        Some(if host {
-            Cipher {
-                send: to_joiner,
-                recv: to_host,
-                sent: 0,
-            }
+        let (send, recv) = if host {
+            (to_joiner, to_host)
         } else {
-            Cipher {
-                send: to_host,
-                recv: to_joiner,
-                sent: 0,
-            }
+            (to_host, to_joiner)
+        };
+        Some(Cipher {
+            send,
+            recv,
+            sent: 0,
         })
     }
 

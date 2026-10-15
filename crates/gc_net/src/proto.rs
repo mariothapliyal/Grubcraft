@@ -48,6 +48,9 @@ pub enum Kind {
     WrongPassword = 6,
 }
 
+/// Bytes in a packet header: `GC`, the protocol and the kind.
+pub const HEADER_LEN: usize = 4;
+
 pub fn header(w: &mut Writer, kind: Kind) {
     w.buf.extend_from_slice(&MAGIC);
     w.u8(PROTOCOL);
