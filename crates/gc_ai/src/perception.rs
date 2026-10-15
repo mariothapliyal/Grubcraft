@@ -136,10 +136,6 @@ impl Seen {
     /// less than zero by as much as they overlap (as the simulation
     /// measures crowding).
     pub fn clearance(&self, other: &Seen) -> f32 {
-        let extent = |s: &Seen, axis: Vec2| {
-            0.5 * s.width * right_of(s.facing).dot(axis).abs()
-                + 0.5 * s.depth * s.facing.dot(axis).abs()
-        };
         let d = other.pos - self.pos;
         [
             self.facing,
@@ -148,8 +144,14 @@ impl Seen {
             right_of(other.facing),
         ]
         .iter()
-        .map(|&axis| d.dot(axis).abs() - extent(self, axis) - extent(other, axis))
+        .map(|&axis| d.dot(axis).abs() - self.half_extent(axis) - other.half_extent(axis))
         .fold(f32::MIN, f32::max)
+    }
+
+    /// Half this block's length along `axis` (a unit vector), in tiles.
+    pub fn half_extent(&self, axis: Vec2) -> f32 {
+        0.5 * self.width * right_of(self.facing).dot(axis).abs()
+            + 0.5 * self.depth * self.facing.dot(axis).abs()
     }
 
     /// How deep this block and `other` overlap, in tiles (zero when apart).

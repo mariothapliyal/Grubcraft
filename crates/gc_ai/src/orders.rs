@@ -152,7 +152,7 @@ impl Orders {
             let needed = match prev {
                 None => true,
                 Some(s) if !same(&s.act, &w.act) => true,
-                Some(s) if moved_on(r, &s.act, &w.act) => true,
+                Some(s) if now >= s.lands && moved_on(r, &s.act, &w.act) => true,
                 Some(s) => self.not_carried_out(view, r, s),
             };
             if !needed {
