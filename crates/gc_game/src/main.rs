@@ -67,7 +67,7 @@
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
 //! the menu.
 //!
-//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general`
+//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
@@ -163,6 +163,9 @@ const PLATE_HEIGHT: f32 = 0.05;
 const DISORDER_DASH: f32 = 0.55;
 const DISORDER_DASH_SPACING: f32 = 0.9;
 const DISORDER_GLOW: u8 = 110;
+/// The deployment zone's ring: dash length and spacing, tiles.
+const ZONE_DASH: f32 = 1.2;
+const ZONE_DASH_SPACING: f32 = 2.0;
 /// A right-drag shorter than this on the ground is a click.
 const MIN_LINE_TILES: f32 = 2.0;
 /// A left-drag shorter than this on screen is a click.
@@ -342,7 +345,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -388,6 +391,8 @@ struct Running {
     unit_names: Vec<String>,
     /// Each regiment type's faction, as the AI names them.
     unit_factions: Vec<gc_ai::Faction>,
+    /// Each regiment type's cost in a Field Battle army.
+    unit_points: Vec<u32>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -735,6 +740,22 @@ impl App {
             .iter()
             .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
             .collect();
+        let unit_points: Vec<u32> = game_data
+            .units
+            .iter()
+            .map(|u| u32::from(u.points))
+            .collect();
+        // gc_data and the lobby list the factions in the same order.
+        let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
+            .units
+            .iter()
+            .zip(&unit_names)
+            .map(|(u, name)| gc_ui::lobby::RosterUnit {
+                name: name.clone(),
+                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
+                points: u32::from(u.points),
+            })
+            .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
@@ -758,7 +779,7 @@ impl App {
             )
         });
         let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
-        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)));
+        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)).live());
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -806,7 +827,8 @@ impl App {
             seed: opts.seed,
             map_hash: online::map_hash(&nav, &heightmap.ground()),
         });
-        let menu = Menu::new(lan, settings, settings_path, &online::version());
+        let mut menu = Menu::new(lan, settings, settings_path, &online::version());
+        menu.set_roster(roster);
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -842,6 +864,7 @@ impl App {
             unit_stats,
             unit_names,
             unit_factions,
+            unit_points,
             sandbox: Sandbox::new(opts.sandbox),
             selected: Vec::with_capacity(64),
             formation_pick: None,
@@ -1351,6 +1374,7 @@ impl Running {
         }
         self.group_commands.clear();
         formation::group_move(&mut self.group, order, &mut self.group_commands);
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
     /// Ghost plates where each regiment of a planned order will stand.
@@ -1662,6 +1686,13 @@ impl Running {
             &mut self.instances,
         );
         let viewer = self.sandbox.side;
+        if let Some(zone) = self.world.deploy_zone(viewer) {
+            Self::push_zone_ring(
+                &mut self.instances,
+                from_fx_vec(zone.center),
+                fx_to_f32(zone.radius),
+            );
+        }
         // Flags and banners grow as the Commander View pulls back, so they
         // stay readable.
         let zoom = if self.commander {
@@ -2256,7 +2287,9 @@ impl Running {
                 champions,
             })
         });
-        self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
+        self.minds = tagged_alloc::scope(Tag::Ai, || {
+            Minds::new(self.heightmap.ai_terrain(&nav)).live()
+        });
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
@@ -2331,6 +2364,7 @@ impl Running {
                 setup,
                 &self.unit_stats,
                 &self.unit_factions,
+                &self.unit_points,
                 terrain_gen::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
@@ -2384,6 +2418,22 @@ impl Running {
                 eprintln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
+        }
+    }
+
+    /// Where you may deploy: a dashed amber ring on the ground.
+    fn push_zone_ring(instances: &mut Vec<BoxInstance>, centre: Vec2, radius: f32) {
+        let dashes = ((std::f32::consts::TAU * radius / ZONE_DASH_SPACING) as usize).max(8);
+        for k in 0..dashes {
+            let along = Vec2::from_angle(std::f32::consts::TAU * k as f32 / dashes as f32);
+            instances.push(BoxInstance {
+                pos: (centre + along * radius).to_array(),
+                // Each dash lies along the ring.
+                facing: along.to_array(),
+                size: [ZONE_DASH, PLATE_HEIGHT, 0.25],
+                color: [235, 150, 40, 255],
+                lift: 0.01,
+            });
         }
     }
 
@@ -2715,7 +2765,7 @@ impl Running {
     }
 
     /// I: hand the side you command to the computer, raise its level
-    /// (Recruit, Veteran, General), or take the side back.
+    /// (Recruit, Veteran, General, Warlord), or take the side back.
     fn cycle_mind(&mut self) {
         let side = self.sandbox.side;
         let name = party_name(&self.parties, side);
