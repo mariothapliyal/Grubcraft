@@ -143,6 +143,10 @@ const COMMANDER_FLAG: [f32; 3] = [2.6, 1.8, 0.25];
 const SHOOTING_TICKS: u32 = 24;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
+/// Dashes of the ragged outline round a regiment out of order: length
+/// and spacing, in tiles.
+const DISORDER_DASH: f32 = 0.55;
+const DISORDER_DASH_SPACING: f32 = 0.9;
 /// A right-drag shorter than this on the ground is a click.
 const MIN_LINE_TILES: f32 = 2.0;
 /// A left-drag shorter than this on screen is a click.
@@ -1493,7 +1497,21 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
+                disorder: r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32,
             };
+            if r.disorder > 0 && !r.morale.broken() {
+                let (width, depth) = stats.block_size(r.files, r.models);
+                let d = r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32;
+                Self::push_disorder_outline(
+                    &mut self.instances,
+                    pos,
+                    facing,
+                    fx_to_f32(width),
+                    fx_to_f32(depth),
+                    d,
+                    r.handle.index,
+                );
+            }
             let blink = self.started.elapsed().as_millis() % 600 < 300;
             let banner = match r.morale {
                 MoraleState::Steady => None,
@@ -2056,6 +2074,55 @@ impl Running {
                 eprintln!("grubcraft: {outcome}");
             }
             self.sandbox.dirty = true;
+        }
+    }
+
+    /// A ragged amber outline on the ground round a regiment out of order
+    /// (pushing through friends): short dashes knocked askew, fading as it
+    /// re-forms (`d` from 1 down to 0).
+    fn push_disorder_outline(
+        instances: &mut Vec<BoxInstance>,
+        centre: Vec2,
+        facing: Vec2,
+        width: f32,
+        depth: f32,
+        d: f32,
+        seed: u32,
+    ) {
+        let right = Vec2::new(-facing.y, facing.x);
+        let (hw, hd) = (width / 2.0 + 0.4, depth / 2.0 + 0.4);
+        // Corners in order round the block, front left first.
+        let corners = [
+            centre + facing * hd - right * hw,
+            centre + facing * hd + right * hw,
+            centre - facing * hd + right * hw,
+            centre - facing * hd - right * hw,
+        ];
+        let alpha = (60.0 + 170.0 * d) as u8;
+        let mut n = seed.wrapping_mul(0x9E37_79B9);
+        let mut rand = move || {
+            n ^= n << 13;
+            n ^= n >> 17;
+            n ^= n << 5;
+            (n >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+        };
+        for side in 0..4 {
+            let (a, b) = (corners[side], corners[(side + 1) % 4]);
+            let edge = b - a;
+            let along = edge.normalize_or(facing);
+            let out = Vec2::new(along.y, -along.x);
+            let dashes = (edge.length() / DISORDER_DASH_SPACING).max(1.0) as usize;
+            for k in 0..dashes {
+                let t = (k as f32 + 0.5) / dashes as f32;
+                let skew = Vec2::from_angle(0.5 * d * rand()).rotate(along);
+                instances.push(BoxInstance {
+                    pos: (a + edge * t + out * (0.25 * d * rand())).to_array(),
+                    facing: [skew.y, -skew.x],
+                    size: [DISORDER_DASH, PLATE_HEIGHT, 0.12],
+                    color: [235, 150, 40, alpha],
+                    lift: 0.0,
+                });
+            }
         }
     }
 

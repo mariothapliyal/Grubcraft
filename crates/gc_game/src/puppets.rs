@@ -69,6 +69,15 @@ const NONE: u32 = u32::MAX;
 /// fraction of their spacing) and this much further off their slots, in tiles.
 const ROUT_SPREAD: f32 = 0.8;
 const ROUT_JITTER: f32 = 0.45;
+/// A regiment fully out of order (pushing through friends): ranks open up by
+/// this fraction, soldiers stand this much further off their slots, in
+/// tiles, and drift about them by this much more, at this rate, looking
+/// this far either way (radians).
+const DISORDER_SPREAD: f32 = 0.25;
+const DISORDER_JITTER: f32 = 0.3;
+const DISORDER_DRIFT: f32 = 0.22;
+const DISORDER_RATE: f32 = 0.7;
+const DISORDER_LOOK: f32 = 0.9;
 /// Fallen soldiers stay on the field this long, in seconds, then sink away.
 const CORPSE_SECONDS: f32 = 20.0;
 const CORPSE_SINK_SECONDS: f32 = 3.0;
@@ -92,6 +101,9 @@ pub struct Block {
     pub engaged: bool,
     /// Running away: the ranks come apart.
     pub routing: bool,
+    /// Out of order from pushing through friends, 0 (in order) to 1 (fully
+    /// disordered): the ranks break up, soldiers mill and look about.
+    pub disorder: f32,
 }
 
 /// One soldier ready to draw.
@@ -292,12 +304,20 @@ impl Puppets {
         let right = Vec2::new(-block.facing.y, block.facing.x);
         let back = -block.facing;
         let files = block.files.clamp(1, block.models.max(1));
+        let tau = core::f32::consts::TAU;
+        let mess = if block.routing {
+            0.0
+        } else {
+            block.disorder.clamp(0.0, 1.0)
+        };
         let (spread, scatter) = if block.routing {
             (1.0 + ROUT_SPREAD, SLOT_JITTER + ROUT_JITTER)
         } else {
-            (1.0, SLOT_JITTER)
+            (
+                1.0 + DISORDER_SPREAD * mess,
+                SLOT_JITTER + DISORDER_JITTER * mess,
+            )
         };
-        let tau = core::f32::consts::TAU;
         for k in 0..models {
             let i = r * SLOTS + k;
             let local = slot_offset(
@@ -308,7 +328,13 @@ impl Puppets {
                 block.rank_spacing,
             ) * spread
                 + jitter(block.handle, k) * scatter;
-            let slot = block.centre + right * local.x + back * local.y;
+            let mut slot = block.centre + right * local.x + back * local.y;
+            if mess > 0.0 {
+                // Jostled about: each soldier wanders round his slot.
+                let p = unit_hash(block.handle, k, 7) * tau;
+                let wander = Vec2::from_angle(self.time * DISORDER_RATE * tau + p);
+                slot += wander * (DISORDER_DRIFT * mess * (0.5 + unit_hash(block.handle, k, 8)));
+            }
             // A dueling soldier closes on his man, on a leash from his slot.
             let j = self.partner[i];
             let foe = (j != NONE && !block.routing).then(|| self.pos[j as usize]);
@@ -345,6 +371,14 @@ impl Puppets {
                     Some(f) if !walking => (f - self.pos[i]).normalize_or(block.facing),
                     _ if walking => self.vel[i].normalize_or(block.facing),
                     _ => block.facing,
+                };
+                // Out of order, men look this way and that for their place.
+                let look = if mess > 0.0 && foe.is_none() {
+                    let p = unit_hash(block.handle, k, 9) * tau;
+                    let turn = (self.time * 0.8 + p).sin() * DISORDER_LOOK * mess;
+                    Vec2::from_angle(turn).rotate(look)
+                } else {
+                    look
                 };
                 self.facing[i] = turn_toward(self.facing[i], look, TURN_RATE * dt);
             }
@@ -538,6 +572,7 @@ mod tests {
             speed: 3.0,
             engaged: false,
             routing: false,
+            disorder: 0.0,
         };
         let mut first = Vec::new();
         p.update(&block, 0, 0.016, |s| first.push(s.pos));
@@ -559,6 +594,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_disordered_block_loses_its_ranks() {
+        // How far, on average, soldiers stand from their exact slots after
+        // settling, and how far they look away from the regiment's facing.
+        let scatter = |disorder: f32| -> (f32, f32) {
+            let mut p = Puppets::new(4, 16);
+            let b = Block {
+                disorder,
+                ..block(1, Vec2::new(10.0, 10.0), Vec2::NEG_Y, false)
+            };
+            let mut off = (0.0, 0.0);
+            for step in 0..400 {
+                let mut k = 0;
+                p.update(&b, 0, 0.016, |s| {
+                    if step >= 200 {
+                        // Facing north: right is +x and back is +y.
+                        let slot = b.centre + slot_offset(k, 4, 8, 1.0, 1.0);
+                        off.0 += s.pos.distance(slot);
+                        off.1 += s.facing.angle_to(Vec2::NEG_Y).abs();
+                    }
+                    k += 1;
+                });
+            }
+            (off.0 / 1600.0, off.1 / 1600.0)
+        };
+        let (calm_off, calm_look) = scatter(0.0);
+        let (mess_off, mess_look) = scatter(1.0);
+        assert!(
+            mess_off > calm_off + 0.15,
+            "{mess_off} vs {calm_off} tiles off"
+        );
+        assert!(
+            mess_look > calm_look + 0.2,
+            "{mess_look} vs {calm_look} radians"
+        );
+    }
+
     fn block(index: u32, centre: Vec2, facing: Vec2, engaged: bool) -> Block {
         Block {
             handle: RegimentHandle {
@@ -575,6 +647,7 @@ mod tests {
             speed: 3.0,
             engaged,
             routing: false,
+            disorder: 0.0,
         }
     }
 
@@ -674,6 +747,7 @@ mod tests {
             speed: 3.0,
             engaged: true,
             routing: false,
+            disorder: 0.0,
         };
         let mut soldiers = Vec::new();
         p.update(&block, 2, 0.016, |s| soldiers.push(s.pos));

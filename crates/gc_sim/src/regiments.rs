@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{Combat, PATIENCE};
+use crate::combat::{CROWDING, Combat, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
@@ -47,6 +47,9 @@ const RECHECK: u16 = 4;
 /// The most ticks a regiment marches without looking for friends in its
 /// way (see `clear`).
 const CLEAR_TICKS: u8 = 8;
+/// Pace, in percent, of a regiment more than a tile and a quarter deep in a
+/// friendly block.
+const PUSH_PERCENT: i64 = 40;
 
 /// Structure-of-arrays pool of regiments with a fixed capacity.
 ///
@@ -104,6 +107,11 @@ pub struct Regiments {
     /// Ticks it can march before looking for friends in its way again:
     /// none holding their ground were near enough to reach sooner.
     pub(crate) clear: Vec<u8>,
+    /// How deep the block overlaps its friends, in tiles (see
+    /// `Combat::crowding`).
+    pub(crate) crowd: Vec<Fx>,
+    /// Ticks left until it is back in order (0: in order).
+    pub(crate) disorder: Vec<u8>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
     pub(crate) free: Vec<u32>,
 }
@@ -140,6 +148,8 @@ impl Regiments {
             last_rout: vec![0; n],
             held: vec![0; n],
             clear: vec![0; n],
+            crowd: vec![Fx::ZERO; n],
+            disorder: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -197,6 +207,8 @@ impl Regiments {
         self.last_rout[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
+        self.crowd[i] = Fx::ZERO;
+        self.disorder[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -337,6 +349,7 @@ impl Regiments {
             engaged: self.engaged[i].is_some(),
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
+            disorder: self.disorder[i],
         }
     }
 
@@ -395,6 +408,15 @@ impl Regiments {
                     pace
                 };
                 let step = terrain.wading(step, self.position[i]);
+                // Pushing into friends: slower the deeper the overlap, down
+                // to 40% of pace a tile past the quarter tile that is let go.
+                let step = if self.crowd[i] > CROWDING {
+                    let deep = (self.crowd[i] - CROWDING).min(Fx::ONE).raw() as i64;
+                    let percent = 100 - (100 - PUSH_PERCENT) * deep / Fx::ONE.raw() as i64;
+                    Fx::from_raw((step.raw() as i64 * percent / 100) as i32).max(Fx::from_raw(1))
+                } else {
+                    step
+                };
                 let here = self.position[i];
                 let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {
@@ -487,6 +509,12 @@ impl Regiments {
             h.u8(self.shock[i]);
             h.u16(self.rout_clock[i]);
             h.u32(self.last_rout[i]);
+            // Only while overlapping or re-forming, so worlds where no
+            // friends ever overlap hash as they did before.
+            if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
+                h.i32(self.crowd[i].raw());
+                h.u8(self.disorder[i]);
+            }
             // Only while waiting, so worlds where nobody ever queues hash
             // as they did before queuing existed.
             if self.held[i] != 0 || self.clear[i] != 0 {
@@ -543,6 +571,10 @@ pub struct RegimentView {
     pub morale: MoraleState,
     /// Morale in points (0 to 100); meaningless for regiments that never rout.
     pub morale_points: u8,
+    /// Out of order from pushing through friends: ticks left until it has
+    /// re-formed, from [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS)
+    /// (full disorder) down to 0 (in order).
+    pub disorder: u8,
 }
 
 impl RegimentView {

@@ -42,7 +42,20 @@ const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
 
 /// A marching regiment stops short of a friendly block it would overlap by
 /// more than this, in tiles (see [`Combat::friend_in_the_way`]).
-const CROWDING: Fx = Fx::from_ratio(1, 4);
+pub const CROWDING: Fx = Fx::from_ratio(1, 4);
+/// A regiment overlapping a friendly block by more than this, in tiles, is
+/// pushing through it (or being pushed through): it slows and falls into
+/// disorder. Neighbours in a line brushing or wheeling into each other
+/// overlap less than this.
+pub const PUSHING: Fx = Fx::ONE;
+/// A regiment out of order takes this long to re-form once clear (3 s).
+pub const DISORDER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
+/// At full disorder a regiment deals this much less melee damage, and
+/// takes this much more, in percent.
+pub const DISORDER_PERCENT: u64 = 20;
+/// Each regiment measures how deep it overlaps its friends every this many
+/// ticks (staggered by index).
+const CROWD_EVERY: u32 = 4;
 /// It waits this long behind a friend that is only standing or waiting,
 /// then walks through, so no order is stuck for good. Friends locked in
 /// melee are never walked through.
@@ -580,8 +593,10 @@ impl Combat {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        tick: u32,
     ) {
         self.build_grid(regs, units);
+        self.crowding(regs, stances, tick);
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -669,6 +684,53 @@ impl Combat {
         }
     }
 
+    /// How deep each regiment overlaps friendly blocks (`crowd`, measured
+    /// every [`CROWD_EVERY`] ticks), and the disorder that follows from it:
+    /// full while overlapping by more than [`PUSHING`], fading over
+    /// [`DISORDER_TICKS`] once clear. Routers neither crowd nor are
+    /// crowded (they are past caring about order).
+    fn crowding(&self, regs: &mut Regiments, stances: &Stances, tick: u32) {
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            if regs.morale_state[i].broken() {
+                regs.crowd[i] = Fx::ZERO;
+            } else if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
+                let placement = Placement {
+                    alive: &regs.alive,
+                    owner: &regs.owner,
+                    position: &regs.position,
+                    stances,
+                };
+                let me = self.blocks[i];
+                let mut deepest = Fx::ZERO;
+                self.each_near(
+                    &placement,
+                    me.centre,
+                    self.radius[i] + self.max_radius,
+                    Whose::Friends(regs.owner[i]),
+                    |j| {
+                        if j == i || regs.morale_state[j].broken() {
+                            return;
+                        }
+                        let r = (self.radius[i] + self.radius[j]).raw() as u64;
+                        if (regs.position[j] - me.centre).length_sq_raw() > r * r {
+                            return;
+                        }
+                        deepest = deepest.max(me.overlap(&self.blocks[j]));
+                    },
+                );
+                regs.crowd[i] = deepest;
+            }
+            regs.disorder[i] = if regs.crowd[i] > PUSHING {
+                DISORDER_TICKS
+            } else {
+                regs.disorder[i].saturating_sub(1)
+            };
+        }
+    }
+
     /// Blows, volleys and deaths, after everyone has moved this tick.
     pub(crate) fn after_move(
         &mut self,
@@ -718,6 +780,10 @@ impl Combat {
                 * 256
                 / (100 * 100 * 100 * 100)
                 * ground
+                / 100
+                * (100 - DISORDER_PERCENT * regs.disorder[i] as u64 / DISORDER_TICKS as u64)
+                / 100
+                * (100 + DISORDER_PERCENT * regs.disorder[j] as u64 / DISORDER_TICKS as u64)
                 / 100;
             deal(regs, units, j, expected, side, rng);
         }
