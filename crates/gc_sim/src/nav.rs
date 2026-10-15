@@ -182,11 +182,18 @@ impl Grid {
     /// cells. A line through a cell corner needs both cells beside the corner
     /// open. Adds the cells checked to `work`.
     fn line_open(&self, a: u32, b: u32, work: &mut u32) -> bool {
+        self.line_within(a, b, u8::MAX, work)
+    }
+
+    /// [`Grid::line_open`], on cells costing no more than `max_cost`.
+    fn line_within(&self, a: u32, b: u32, max_cost: u8, work: &mut u32) -> bool {
+        let open =
+            |x: i32, y: i32| self.open(x, y) && self.cost[self.idx(x, y) as usize] <= max_cost;
         let (mut x, mut y) = self.xy(a);
         let (x1, y1) = self.xy(b);
         let (nx, ny) = ((x1 - x).abs(), (y1 - y).abs());
         let (sx, sy) = ((x1 - x).signum(), (y1 - y).signum());
-        if !self.open(x, y) {
+        if !open(x, y) {
             return false;
         }
         let (mut ix, mut iy) = (0, 0);
@@ -194,7 +201,7 @@ impl Grid {
             *work += 1;
             let decision = (1 + 2 * ix) * ny - (1 + 2 * iy) * nx;
             if decision == 0 {
-                if !self.open(x + sx, y) || !self.open(x, y + sy) {
+                if !open(x + sx, y) || !open(x, y + sy) {
                     return false;
                 }
                 x += sx;
@@ -208,7 +215,7 @@ impl Grid {
                 y += sy;
                 iy += 1;
             }
-            if !self.open(x, y) {
+            if !open(x, y) {
                 return false;
             }
         }
@@ -846,6 +853,7 @@ fn find(
     s.chain.clear();
     s.chain.push(start);
     let mut truncated = false;
+    let mut via_portals = false;
     let (start_sector, goal_sector) = (grid.sector_of(start), grid.sector_of(goal));
     if grid.line_open(start, goal, &mut s.work) {
         s.chain.push(goal);
@@ -855,6 +863,7 @@ fn find(
         if !s.portals(grid, start, goal) {
             return None;
         }
+        via_portals = true;
         // Fill in the legs between portals that aren't straight lines.
         let mut prev = start;
         for k in 1..s.coarse.len() {
@@ -878,18 +887,23 @@ fn find(
         }
     }
     let (n, partial) = smooth(grid, s, lead, goal_point, truncated, out);
-    spread_through_portals(grid, s, if lead { 1 } else { 0 }, from, n, out);
+    if via_portals {
+        spread_through_portals(grid, s, if lead { 1 } else { 0 }, from, n, out);
+    }
     Some((n, partial))
 }
 
 /// Waypoints at portals sit where the portal is, the middle of its stretch
 /// of sector edge, so regiments marching side by side would all funnel
-/// through the same spot and pile into each other. Slide each waypoint on a
-/// sector edge along it toward where the straight line from the waypoint
-/// before to the route's end crosses it, as far as the lines to its
-/// neighbours stay open (up to [`PORTAL_SPAN`] cells): neighbours keep
-/// their spacing across open country. The first `skip` waypoints and the
-/// last stay put.
+/// through the same spot and pile into each other. Slide each portal
+/// waypoint along its edge toward where the straight line from the
+/// waypoint before to the next one that isn't a portal (a turn round
+/// something, or the route's end) crosses it, by up to [`PORTAL_SPAN`]
+/// cells, as long as the legs either side stay on open, plain (cost 1)
+/// ground: neighbours keep their spacing across open country, and the
+/// route still bends where the search said. Waypoints before `skip` stay
+/// put, as does the last. Only for routes that went through portals (the
+/// search's coarse route lists them).
 fn spread_through_portals(
     grid: &Grid,
     s: &mut Search,
@@ -898,32 +912,32 @@ fn spread_through_portals(
     n: usize,
     out: &mut [FxVec2],
 ) {
-    if n < 2 {
-        return;
-    }
-    let end = out[n - 1];
+    let portals = s.coarse.len().saturating_sub(1);
+    let is_portal = |s: &Search, p: FxVec2| s.coarse[1..portals].contains(&grid.cell_at(p));
     let mut prev = if skip > 0 { out[skip - 1] } else { from };
-    for i in skip..n - 1 {
+    for i in skip..n.saturating_sub(1) {
+        if !is_portal(s, out[i]) {
+            prev = out[i];
+            continue;
+        }
         let c = grid.cell_at(out[i]);
         let (cx, cy) = grid.xy(c);
+        // Portals sit on the cells either side of a sector edge: slide
+        // along x on an edge between sectors above and below, along y on
+        // one between sectors side by side.
         let on_edge = |v: i32| v % SECTOR == 0 || v % SECTOR == SECTOR - 1;
-        // Slide across the direction of the edge: along x on an edge
-        // between sectors above and below, along y on one between sectors
-        // side by side.
-        let along_x = match (on_edge(cx), on_edge(cy)) {
-            (false, true) => true,
-            (true, false) => false,
-            _ => {
-                prev = out[i];
-                continue;
-            }
-        };
+        let along_x = on_edge(cy) && !on_edge(cx);
+        let aim = out[i + 1..n]
+            .iter()
+            .copied()
+            .find(|&w| !is_portal(s, w))
+            .unwrap_or(out[n - 1]);
         let (p, e, here) = if along_x {
-            ((prev.y, prev.x), (end.y, end.x), (out[i].y, cx))
+            ((prev.y, prev.x), (aim.y, aim.x), (out[i].y, cx))
         } else {
-            ((prev.x, prev.y), (end.x, end.y), (out[i].x, cy))
+            ((prev.x, prev.y), (aim.x, aim.y), (out[i].x, cy))
         };
-        // Where the line from `prev` to `end` crosses the edge, if it does.
+        // Where the line from `prev` to `aim` crosses the edge, if it does.
         let (across, run) = ((e.0 - p.0).raw() as i64, (e.1 - p.1).raw() as i64);
         let to_edge = (here.0 - p.0).raw() as i64;
         if across == 0 || to_edge.signum() != across.signum() || to_edge.abs() > across.abs() {
@@ -934,21 +948,18 @@ fn spread_through_portals(
         let target = ((cross * CELLS_PER_TILE as i64) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
         let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
-        for shift in [shift, shift / 2, shift / 4] {
-            if shift == 0 {
-                break;
-            }
+        for shift in [shift, shift / 2] {
             let (x, y) = if along_x {
                 (cx + shift, cy)
             } else {
                 (cx, cy + shift)
             };
-            if !grid.inside(x, y) {
-                continue;
+            if shift == 0 || !grid.inside(x, y) {
+                break;
             }
             let moved = grid.idx(x, y);
-            if grid.line_open(from_cell, moved, &mut s.work)
-                && grid.line_open(moved, to_cell, &mut s.work)
+            if grid.line_within(from_cell, moved, 1, &mut s.work)
+                && grid.line_within(moved, to_cell, 1, &mut s.work)
             {
                 out[i] = grid.centre(moved);
                 break;
