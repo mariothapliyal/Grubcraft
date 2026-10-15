@@ -91,7 +91,9 @@ impl GroupMember {
             models: r.models,
             file_spacing,
             rank_spacing,
-            speed: Fx::from_raw(stats.speed.raw() * r.formation.pace_percent() / 100),
+            speed: Fx::from_raw(
+                (stats.speed.raw() as i64 * r.formation.pace_percent() as i64 / 100) as i32,
+            ),
         }
     }
 

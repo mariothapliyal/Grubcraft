@@ -414,8 +414,8 @@ pub enum Command {
     /// their soldiers keep the hit points they have.
     TuneUnit { unit: UnitId, stats: UnitStats },
     /// Change how closely a regiment's soldiers stand (see [`Formation`]).
-    /// Only shielded regiments can form a shield wall; routing ones don't
-    /// listen.
+    /// Only shielded regiments can form a shield wall; regiments locked in
+    /// melee or running can't re-form.
     SetFormation {
         regiment: RegimentHandle,
         formation: Formation,

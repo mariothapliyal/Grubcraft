@@ -12,7 +12,8 @@
 //!   (10 to 90); regiments beyond the enemy's frontage hit flanks for 40%
 //!   more.
 //! - **Arrows:** soldiers x accuracy x damage per volley, from as soon as the
-//!   enemy is in range, and on through the melee.
+//!   enemy is in range, and on through the melee; shield walls turn most of
+//!   them.
 //! - **Breaking:** losses cost 0.9 morale per 1% of strength, plus the
 //!   drains for being outnumbered two or three to one, for being below half
 //!   strength, and for being flanked. A side whose morale is spent breaks;
@@ -72,6 +73,9 @@ pub struct Force {
     pub defence: f32,
     /// Slowest marching speed, tiles per second.
     pub speed: f32,
+    /// Share of the arrows coming at its front that do no harm (shield
+    /// walls), weighted by soldiers.
+    pub arrows_turned: f32,
 }
 
 impl Force {
@@ -103,10 +107,9 @@ impl Force {
             // Taking the enemy head on.
             f.defence +=
                 (s.melee_defence as i32 + s.formation_defence(r.formation, true)) as f32 * n;
+            f.arrows_turned += (100 - r.formation.arrow_percent(true)) as f32 / 100.0 * n;
             defence_soldiers += n;
-            f.speed = f
-                .speed
-                .min(u.speed * r.formation.pace_percent() as f32 / 100.0);
+            f.speed = f.speed.min(view.pace(r));
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
@@ -133,6 +136,7 @@ impl Force {
         }
         if defence_soldiers > 0.0 {
             f.defence /= defence_soldiers;
+            f.arrows_turned /= defence_soldiers;
         }
         if f.speed == f32::MAX {
             f.speed = 0.0;
@@ -273,10 +277,10 @@ pub fn estimate(ours: &Force, theirs: &Force, approach: Approach) -> Estimate {
         let mut to_b = 0.0;
         let mut to_a = 0.0;
         if gap_now <= ours.range {
-            to_b += ours.ranged * va * STEP;
+            to_b += ours.ranged * va * STEP * (1.0 - theirs.arrows_turned);
         }
         if gap_now <= theirs.range {
-            to_a += theirs.ranged * vb * STEP;
+            to_a += theirs.ranged * vb * STEP * (1.0 - ours.arrows_turned);
         }
         if contact {
             to_b += melee_a * va * STEP;

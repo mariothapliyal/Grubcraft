@@ -258,7 +258,12 @@ impl Regiments {
         let Some(i) = self.resolve(h) else {
             return false;
         };
-        if self.morale_state[i].broken() || !units[self.unit[i] as usize].can_form(formation) {
+        // Ranks re-form out of the fight: locked in melee, or running, a
+        // regiment can't change them.
+        if self.morale_state[i].broken()
+            || self.engaged[i].is_some()
+            || !units[self.unit[i] as usize].can_form(formation)
+        {
             return false;
         }
         self.formation[i] = formation;

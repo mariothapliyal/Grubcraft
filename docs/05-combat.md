@@ -63,10 +63,10 @@ A regiment's weapons decide which formation suits it, so the Formation order is 
 | **Loose** | 150% | −10 (swinging blades +0) | spears and shields deal 85% | sparser block, takes fewer |
 | **Shield wall** (shields only) | 70% | +10 from the front only | swinging blades deal 80% | 30% from the front |
 
-- **Reach:** spears and pikes fight from their first two ranks when the foe is in front (the second rank at half strength), and strike the moment lines meet instead of waiting for their next blow. Their support needs a close line, so Loose order costs them.
+- **Reach:** spears and pikes fight from their first two ranks when the foe is in front (the second rank at half strength), and when a foe comes at their points they strike the moment lines meet instead of waiting for their next blow (then skip that blow, so they strike sooner, not more often). Their support needs a close line, so Loose order costs them.
 - **Swing room:** big swings need space. Cramped in Tight order or a shield wall they lose a fifth of their damage; in Loose order they keep their defence, because the gaps are what they fight in.
 - **Shield wall:** the strongest answer to archers (arrows from the front do 30% damage, and the front holds better in melee), but the regiment marches at half pace, can't charge, and is no better than a Line when hit in the flank or rear. Only regiments with shields can form one.
-- A routing regiment keeps no ranks: it drops back to Line and takes no formation orders until it rallies.
+- Ranks re-form only out of the fight: a regiment locked in melee keeps its formation, and a routing one drops back to Line and takes no formation orders until it rallies. A group order with a shield wall in it marches at the wall's pace.
 - Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee once lines that push arrive.
 
 ## Morale

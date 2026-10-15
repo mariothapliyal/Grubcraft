@@ -231,6 +231,11 @@ impl Perception {
         &self.units[r.unit as usize]
     }
 
+    /// How fast `r` marches in its formation, tiles per second.
+    pub fn pace(&self, r: &Seen) -> f32 {
+        self.unit(r).speed * r.formation.pace_percent() as f32 / 100.0
+    }
+
     pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {
         self.stances.hostile(a, b)
     }

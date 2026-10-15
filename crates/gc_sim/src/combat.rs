@@ -633,8 +633,12 @@ impl Combat {
                         regs.charge[i] = CHARGE_TICKS;
                     }
                     regs.target[i] = None;
-                    // Long weapons hit first when lines meet.
-                    if units[regs.unit[i] as usize].reach && regs.strike[i] == Strike::Turn {
+                    // Long weapons hit first when lines meet, if the foe
+                    // comes at their points.
+                    if units[regs.unit[i] as usize].reach
+                        && regs.strike[i] == Strike::Turn
+                        && self.blocks[i].side_facing(self.blocks[j].centre) == Side::Front
+                    {
                         regs.strike[i] = Strike::Early;
                     }
                 }

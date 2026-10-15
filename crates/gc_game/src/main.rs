@@ -28,14 +28,15 @@
 //! away from the camera side of the line); a big selection forms several
 //! lines. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
-//! touch fight. F changes the selection's formation: Line, Tight (stronger
-//! to hold, cramped for swinging blades), Loose (gaps for blades to swing
-//! and arrows to miss) and, for regiments with shields, Shield wall (turns
-//! arrows from the front, marches at half pace, never charges). Banners
-//! show morale: blinking amber is wavering, white is routing (no orders
-//! until it rallies), grey is shattered. Regiments find
-//! their own way around cliffs and deep water; a selected regiment's route
-//! shows as a dotted line, and G shows the ground no regiment can cross.
+//! touch fight. F changes the selection's formation (not while locked in
+//! melee): Line, Tight (stronger to hold, cramped for swinging blades),
+//! Loose (gaps for blades to swing and arrows to miss) and, for regiments
+//! with shields, Shield wall (turns arrows from the front, marches at half
+//! pace, never charges). Banners show morale: blinking amber is wavering,
+//! white is routing (no orders until it rallies), grey is shattered.
+//! Regiments find their own way around cliffs and deep water; a selected
+//! regiment's route shows as a dotted line, and G shows the ground no
+//! regiment can cross.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
@@ -194,6 +195,13 @@ const TEAM_NAMES: [&str; 4] = ["red", "violet", "cyan", "bone"];
 const MAX_TICKS_PER_FRAME: u32 = 8;
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
+// The baked weapon bits and masses mean the same to the simulation.
+const _: () = assert!(
+    gc_data::WEAPON_REACH == gc_sim::WEAPON_REACH
+        && gc_data::WEAPON_SWING_ROOM == gc_sim::WEAPON_SWING_ROOM
+        && gc_data::WEAPON_SHIELD == gc_sim::WEAPON_SHIELD
+        && gc_data::MAX_MASS == gc_sim::Mass::Heavy as u8
+);
 
 struct Options {
     seed: u64,
@@ -347,6 +355,12 @@ struct Running {
     unit_factions: Vec<gc_ai::Faction>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
+    /// The formation F last ordered, for which selection and on which tick:
+    /// pressing F again soon after cycles on from it, before the orders
+    /// have landed.
+    formation_pick: Option<(Vec<RegimentHandle>, Formation, u32)>,
+    /// The selection's formation as the panel last showed it.
+    shown_formation: Option<Option<Formation>>,
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
     group_commands: Vec<gc_sim::Command>,
@@ -777,6 +791,8 @@ impl App {
             unit_factions,
             sandbox: Sandbox::new(opts.sandbox),
             selected: Vec::with_capacity(64),
+            formation_pick: None,
+            shown_formation: None,
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
             boxed: Vec::with_capacity(64),
@@ -1129,8 +1145,6 @@ impl Running {
                 if !self.selected.is_empty() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
-                // The panel shows the selection's formation.
-                self.sandbox.dirty = true;
                 self.input.left_down = None;
             }
             (MouseButton::Right, ElementState::Pressed) => {
@@ -1391,22 +1405,41 @@ impl Running {
     fn cycle_formation(&mut self) {
         let regiments = &self.world.regiments;
         let units = self.world.units();
-        let selection = || self.selected.iter().filter_map(|&h| regiments.get(h));
-        let Some(first) = selection().next() else {
+        let tick = self.world.tick_count();
+        // Regiments locked in melee or running can't re-form.
+        let ready = || {
+            self.selected
+                .iter()
+                .filter_map(|&h| regiments.get(h))
+                .filter(|r| !r.engaged && !r.morale.broken())
+        };
+        let Some(first) = ready().next() else {
+            if !self.selected.is_empty() {
+                self.say("Locked in melee or running: no new formation".into());
+            }
             return;
         };
-        let shields = selection().any(|r| units[r.unit as usize].shield);
-        let next = match first.formation {
+        let shielded = |r: &gc_sim::RegimentView| units[r.unit as usize].shield;
+        // Cycle on from what F just ordered for this selection (its orders
+        // may not have landed yet), else from where it stands now: a shield
+        // regiment's formation, since the rest stand in Tight for its wall.
+        let current = match &self.formation_pick {
+            Some((selection, f, at)) if *selection == self.selected && tick < at + 40 => *f,
+            _ => ready().find(shielded).unwrap_or(first).formation,
+        };
+        let next = match current {
             Formation::Line => Formation::Tight,
             Formation::Tight => Formation::Loose,
-            Formation::Loose if shields => Formation::ShieldWall,
+            Formation::Loose if ready().any(|r| shielded(&r)) => Formation::ShieldWall,
             Formation::Loose | Formation::ShieldWall => Formation::Line,
         };
-        for r in selection() {
+        let mut closed_up = false;
+        for r in ready() {
             // Regiments without shields close up instead.
             let formation = if units[r.unit as usize].can_form(next) {
                 next
             } else {
+                closed_up = true;
                 Formation::Tight
             };
             self.human_orders.push(PlayerCommand {
@@ -1417,8 +1450,14 @@ impl Running {
                 },
             });
         }
+        self.formation_pick = Some((self.selected.clone(), next, tick));
         self.ui_sound(sounds::UiSound::Move);
-        self.say(format!("{}: {}", next.name(), formation_hint(next)));
+        let note = if closed_up {
+            " (Tight for those without shields)"
+        } else {
+            ""
+        };
+        self.say(format!("{}{note}: {}", next.name(), formation_hint(next)));
     }
 
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
@@ -1715,6 +1754,13 @@ impl Running {
             });
         }
         profile::frame_mark();
+        // The panel names the selection's formation, which orders, routs and
+        // control groups change.
+        let formation = self.selection_formation();
+        if formation != self.shown_formation {
+            self.shown_formation = formation;
+            self.sandbox.dirty = true;
+        }
         if self.sandbox.dirty {
             self.refresh_overlay();
         }
@@ -2747,20 +2793,25 @@ impl Running {
     }
 
     /// The selection's formation, for the panel.
-    fn formation_line(&self) -> String {
+    /// The selection's formation: `None` with nothing selected, `Some(None)`
+    /// when they stand in different ones.
+    fn selection_formation(&self) -> Option<Option<Formation>> {
         let mut formations = self
             .selected
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
             .map(|r| r.formation);
-        match formations.next() {
+        let first = formations.next()?;
+        Some(formations.all(|f| f == first).then_some(first))
+    }
+
+    fn formation_line(&self) -> String {
+        match self.selection_formation() {
             None => {
                 "order    F: formation (Line, Tight, Loose, Shield wall) for the selection".into()
             }
-            Some(f) if formations.all(|g| g == f) => {
-                format!("order    {}   F: next formation", f.name())
-            }
-            Some(_) => "order    mixed formations   F: next formation".into(),
+            Some(Some(f)) => format!("order    {}   F: next formation", f.name()),
+            Some(None) => "order    mixed formations   F: next formation".into(),
         }
     }
 

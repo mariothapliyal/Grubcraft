@@ -184,6 +184,31 @@ fn spears_strike_first_when_lines_meet() {
 }
 
 #[test]
+fn spears_strike_first_only_at_their_points() {
+    // Taken in the flank, a spear block waits for its turn like anyone.
+    let (first, ..) = melee(
+        |u| u.reach = true,
+        Formation::Line,
+        Formation::Line,
+        RIGHT,
+        0,
+    );
+    assert_eq!(first, 0);
+}
+
+#[test]
+fn ranks_re_form_only_out_of_the_fight() {
+    let units = units(|_| {});
+    let mut w = world(&units);
+    let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
+    let foe = spawn(&mut w, 1, DUMMY, 100, 90, SOUTH);
+    assert!(march(&mut w, 1, foe, 100, 100, Fx::ONE));
+    until_engaged(&mut w, me);
+    assert!(!form(&mut w, 0, me, Formation::Tight));
+    assert_eq!(w.regiments.get(me).unwrap().formation, Formation::Line);
+}
+
+#[test]
 fn swinging_weapons_are_cramped_in_tight_order() {
     let swing = |u: &mut UnitStats| u.swing_room = true;
     let (_, line, _) = melee(swing, Formation::Line, Formation::Line, AHEAD, FIGHT);
