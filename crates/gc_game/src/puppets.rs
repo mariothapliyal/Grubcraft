@@ -78,6 +78,7 @@ const DISORDER_JITTER: f32 = 0.3;
 const DISORDER_DRIFT: f32 = 0.22;
 const DISORDER_RATE: f32 = 0.7;
 const DISORDER_LOOK: f32 = 0.9;
+const DISORDER_LOOK_RATE: f32 = 0.8;
 /// Fallen soldiers stay on the field this long, in seconds, then sink away.
 const CORPSE_SECONDS: f32 = 20.0;
 const CORPSE_SINK_SECONDS: f32 = 3.0;
@@ -305,11 +306,8 @@ impl Puppets {
         let back = -block.facing;
         let files = block.files.clamp(1, block.models.max(1));
         let tau = core::f32::consts::TAU;
-        let mess = if block.routing {
-            0.0
-        } else {
-            block.disorder.clamp(0.0, 1.0)
-        };
+        // The sim never has a router in disorder.
+        let mess = block.disorder.clamp(0.0, 1.0);
         let (spread, scatter) = if block.routing {
             (1.0 + ROUT_SPREAD, SLOT_JITTER + ROUT_JITTER)
         } else {
@@ -375,7 +373,7 @@ impl Puppets {
                 // Out of order, men look this way and that for their place.
                 let look = if mess > 0.0 && foe.is_none() {
                     let p = unit_hash(block.handle, k, 9) * tau;
-                    let turn = (self.time * 0.8 + p).sin() * DISORDER_LOOK * mess;
+                    let turn = (self.time * DISORDER_LOOK_RATE + p).sin() * DISORDER_LOOK * mess;
                     Vec2::from_angle(turn).rotate(look)
                 } else {
                     look

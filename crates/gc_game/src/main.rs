@@ -1480,12 +1480,13 @@ impl Running {
             let stats = &self.unit_stats[r.unit as usize];
             let (file_spacing, rank_spacing) =
                 (fx_to_f32(stats.file_spacing), fx_to_f32(stats.rank_spacing));
+            let (width, depth) = stats.block_size(r.files, r.models);
+            let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
             if selected || marked == Some(r.handle) {
-                let (width, depth) = stats.block_size(r.files, r.models);
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
-                    size: [fx_to_f32(width) + 0.3, PLATE_HEIGHT, fx_to_f32(depth) + 0.3],
+                    size: [width + 0.3, PLATE_HEIGHT, depth + 0.3],
                     color: if selected {
                         // Darker than the team colour so the soldiers on it stand out.
                         [cr / 2 + 20, cg / 2 + 20, cb / 2 + 20, 255]
@@ -1509,16 +1510,14 @@ impl Running {
                 routing: r.morale.broken(),
                 disorder: r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32,
             };
-            if r.disorder > 0 && !r.morale.broken() {
-                let (width, depth) = stats.block_size(r.files, r.models);
-                let d = r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32;
+            if block.disorder > 0.0 {
                 Self::push_disorder_outline(
                     &mut self.instances,
                     pos,
                     facing,
-                    fx_to_f32(width),
-                    fx_to_f32(depth),
-                    d,
+                    width,
+                    depth,
+                    block.disorder,
                     r.handle.index,
                 );
             }
@@ -1532,8 +1531,6 @@ impl Running {
             if self.commander {
                 // One block per regiment with a tall banner: the flag shows
                 // the team, or the morale colour when shaken.
-                let (width, depth) = stats.block_size(r.files, r.models);
-                let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
                 let shade = if selected { 255 } else { 210 };
                 let tint = |c: u8| (c as u32 * shade / 255) as u8;
                 self.instances.push(BoxInstance {
@@ -2112,13 +2109,7 @@ impl Running {
             centre - facing * hd - right * hw,
         ];
         let alpha = (60.0 + 170.0 * d) as u8;
-        let mut n = seed.wrapping_mul(0x9E37_79B9);
-        let mut rand = move || {
-            n ^= n << 13;
-            n ^= n >> 17;
-            n ^= n << 5;
-            (n >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
-        };
+        let seed = seed.wrapping_mul(0x9E37_79B9);
         for side in 0..4 {
             let (a, b) = (corners[side], corners[(side + 1) % 4]);
             let edge = b - a;
@@ -2127,9 +2118,10 @@ impl Running {
             let dashes = (edge.length() / DISORDER_DASH_SPACING).max(1.0) as usize;
             for k in 0..dashes {
                 let t = (k as f32 + 0.5) / dashes as f32;
-                let skew = Vec2::from_angle(0.5 * d * rand()).rotate(along);
+                let dash = side * 256 + k;
+                let skew = Vec2::from_angle(0.5 * d * spread_hash(seed, dash, 0)).rotate(along);
                 instances.push(BoxInstance {
-                    pos: (a + edge * t + out * (0.25 * d * rand())).to_array(),
+                    pos: (a + edge * t + out * (0.25 * d * spread_hash(seed, dash, 1))).to_array(),
                     facing: [skew.y, -skew.x],
                     size: [DISORDER_DASH, PLATE_HEIGHT, 0.12],
                     color: [235, 150, 40, alpha],

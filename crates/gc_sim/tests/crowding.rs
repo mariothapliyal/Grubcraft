@@ -35,8 +35,12 @@ fn nav(corridor: bool) -> Vec<u8> {
 }
 
 fn world(nav: &[u8]) -> World {
+    seeded_world(nav, 3)
+}
+
+fn seeded_world(nav: &[u8], seed: u64) -> World {
     World::new(&MatchSetup {
-        seed: 3,
+        seed,
         capacities: Capacities { regiments: 64 },
         units: &fearless(),
         map_tiles: MAP as u32,
@@ -242,15 +246,7 @@ fn a_disordered_block_fights_worse() {
     let enemy_losses = |crowded: bool| -> u32 {
         (1..=4)
             .map(|seed| {
-                let mut w = World::new(&MatchSetup {
-                    seed,
-                    capacities: Capacities { regiments: 64 },
-                    units: &fearless(),
-                    map_tiles: MAP as u32,
-                    nav: &[],
-                    teams: &[],
-                    ground: Ground::FLAT,
-                });
+                let mut w = seeded_world(&[], seed);
                 let enemy = spawn(&mut w, 1, 32, 20, SOUTH);
                 let _friend = spawn(&mut w, 0, 32, 23, NORTH);
                 if crowded {

@@ -42,7 +42,7 @@ const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
 
 /// A marching regiment stops short of a friendly block it would overlap by
 /// more than this, in tiles (see [`Combat::friend_in_the_way`]).
-pub const CROWDING: Fx = Fx::from_ratio(1, 4);
+const CROWDING: Fx = Fx::from_ratio(1, 4);
 /// A regiment overlapping a friendly block by more than this, in tiles, is
 /// pushing through it (or being pushed through): it slows and falls into
 /// disorder. Neighbours in a line brushing or wheeling into each other
@@ -57,9 +57,24 @@ pub const DISORDER_PERCENT: u64 = 20;
 /// ticks (staggered by index; 0.2 s, short against the 3 s it takes to
 /// re-form).
 const CROWD_EVERY: u32 = 4;
-/// Overlap past which neither the slowdown nor the disorder grows, so the
-/// crowd check stops looking once it finds this much.
-const SATURATED: Fx = Fx::from_raw(CROWDING.raw() + Fx::ONE.raw());
+/// Pushing into friends slows a regiment to this share of its pace, in
+/// percent, once it is [`PUSH_RAMP`] past [`CROWDING`] deep.
+const PUSH_PERCENT: i64 = 40;
+const PUSH_RAMP: Fx = Fx::ONE;
+/// Overlap past which neither the slowdown nor the disorder grows: the
+/// crowd check stops looking once it finds this much, and stores no more.
+const SATURATED: Fx = Fx::from_raw(CROWDING.raw() + PUSH_RAMP.raw());
+
+/// `step` slowed for pushing `crowd` tiles deep into friendly blocks:
+/// untouched up to [`CROWDING`], then down to [`PUSH_PERCENT`] of it.
+pub(crate) fn pushing(step: Fx, crowd: Fx) -> Fx {
+    if crowd <= CROWDING {
+        return step;
+    }
+    let deep = (crowd - CROWDING).min(PUSH_RAMP).raw() as i64;
+    let percent = 100 - (100 - PUSH_PERCENT) * deep / PUSH_RAMP.raw() as i64;
+    Fx::from_raw((step.raw() as i64 * percent / 100) as i32).max(Fx::from_raw(1))
+}
 /// It waits this long behind a friend that is only standing or waiting,
 /// then walks through, so no order is stuck for good. Friends locked in
 /// melee are never walked through.
@@ -393,13 +408,6 @@ impl Combat {
         whose: Whose,
         mut f: impl FnMut(usize),
     ) {
-        let search = self.search.get().wrapping_add(1);
-        self.search.set(search);
-        if search == 0 {
-            // Wrapped: forget every old mark so none can match by accident.
-            self.seen.iter().for_each(|c| c.set(u32::MAX));
-        }
-        let (x0, y0, x1, y1) = Self::cells(p, range);
         let (owner, friends) = match whose {
             Whose::Enemies(owner) => (owner, false),
             Whose::Friends(owner) => (owner, true),
@@ -412,36 +420,13 @@ impl Combat {
             !(1 << (owner as usize % OWNER_SLOTS))
         };
         let range_sq = range.raw() as i64 * range.raw() as i64;
-        let mut visit = |j: usize| {
-            if self.seen[j].get() == search || !regs.alive[j] {
-                return;
-            }
-            self.seen[j].set(search);
-            if regs.stances.hostile(owner, regs.owner[j]) == friends {
-                return;
-            }
-            if ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq {
+        self.each_filed_once(p, range, slots, regs.alive, |j| {
+            if regs.stances.hostile(owner, regs.owner[j]) != friends
+                && ((regs.position[j] - p).length_sq_raw() as i64) <= range_sq
+            {
                 f(j);
             }
-        };
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let b = Self::bucket_of(x, y) * OWNER_SLOTS;
-                for slot in 0..OWNER_SLOTS {
-                    if slots & (1 << slot) == 0 {
-                        continue;
-                    }
-                    let mut e = self.head[b + slot];
-                    while e != EMPTY {
-                        visit(self.entry_regiment[e as usize] as usize);
-                        e = self.entry_next[e as usize];
-                    }
-                }
-            }
-        }
-        for &j in &self.big {
-            visit(j as usize);
-        }
+        });
     }
 
     /// Call `f` for every other live friend of `i` whose bounding circle
@@ -455,28 +440,44 @@ impl Combat {
         i: usize,
         mut f: impl FnMut(usize),
     ) {
+        let p = regs.position[i];
+        let owner = regs.owner[i];
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        self.each_filed_once(p, self.radius[i], slots, &regs.alive, |j| {
+            let r = (self.radius[i] + self.radius[j]).raw() as u64;
+            if j != i
+                && !stances.hostile(owner, regs.owner[j])
+                && (regs.position[j] - p).length_sq_raw() <= r * r
+            {
+                f(j);
+            }
+        });
+    }
+
+    /// Call `f` once for every live regiment filed in a grid cell within
+    /// `radius` of `p` under one of the owner `slots` (a bit mask), or in
+    /// `big`.
+    fn each_filed_once(
+        &self,
+        p: FxVec2,
+        radius: Fx,
+        slots: u32,
+        alive: &[bool],
+        mut f: impl FnMut(usize),
+    ) {
         let search = self.search.get().wrapping_add(1);
         self.search.set(search);
         if search == 0 {
+            // Wrapped: forget every old mark so none can match by accident.
             self.seen.iter().for_each(|c| c.set(u32::MAX));
         }
-        let p = regs.position[i];
-        let owner = regs.owner[i];
         let mut visit = |j: usize| {
-            if j == i || self.seen[j].get() == search || !regs.alive[j] {
-                return;
-            }
-            self.seen[j].set(search);
-            if stances.hostile(owner, regs.owner[j]) {
-                return;
-            }
-            let r = (self.radius[i] + self.radius[j]).raw() as u64;
-            if (regs.position[j] - p).length_sq_raw() <= r * r {
+            if self.seen[j].get() != search && alive[j] {
+                self.seen[j].set(search);
                 f(j);
             }
         };
-        let slots = stances.friend_slots(owner, OWNER_SLOTS);
-        let (x0, y0, x1, y1) = Self::cells(p, self.radius[i]);
+        let (x0, y0, x1, y1) = Self::cells(p, radius);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let b = Self::bucket_of(x, y) * OWNER_SLOTS;
@@ -753,7 +754,10 @@ impl Combat {
             }
             if regs.morale_state[i].broken() {
                 regs.crowd[i] = Fx::ZERO;
-            } else if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
+                regs.disorder[i] = 0;
+                continue;
+            }
+            if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
                 let me = self.blocks[i];
                 let mut deepest = Fx::ZERO;
                 self.each_friend_touching(regs, stances, i, |j| {
@@ -762,13 +766,13 @@ impl Combat {
                         deepest = deepest.max(me.overlap(&self.blocks[j]));
                     }
                 });
-                regs.crowd[i] = deepest;
+                regs.crowd[i] = deepest.min(SATURATED);
             }
-            regs.disorder[i] = if regs.crowd[i] > PUSHING {
-                DISORDER_TICKS
+            if regs.crowd[i] > PUSHING {
+                regs.disorder(i);
             } else {
-                regs.disorder[i].saturating_sub(1)
-            };
+                regs.disorder[i] = regs.disorder[i].saturating_sub(1);
+            }
         }
     }
 
@@ -812,6 +816,10 @@ impl Combat {
                 100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
             let heart = heart_percent(regs.morale_state[i]);
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
+            let (shaken, exposed) = (
+                100 - disorder_percent(regs.disorder[i]),
+                100 + disorder_percent(regs.disorder[j]),
+            );
             let expected = fighters
                 * hit
                 * attacker.melee_damage as u64
@@ -822,9 +830,9 @@ impl Combat {
                 / (100 * 100 * 100 * 100)
                 * ground
                 / 100
-                * (100 - DISORDER_PERCENT * regs.disorder[i] as u64 / DISORDER_TICKS as u64)
+                * shaken
                 / 100
-                * (100 + DISORDER_PERCENT * regs.disorder[j] as u64 / DISORDER_TICKS as u64)
+                * exposed
                 / 100;
             deal(regs, units, j, expected, side, rng);
         }
@@ -973,6 +981,12 @@ impl Combat {
 }
 
 /// Percent of its usual damage a regiment deals in this state of mind.
+/// How much worse, in percent, a regiment this far out of order fights:
+/// [`DISORDER_PERCENT`] at full disorder, fading as it re-forms.
+fn disorder_percent(disorder: u8) -> u64 {
+    DISORDER_PERCENT * disorder as u64 / DISORDER_TICKS as u64
+}
+
 fn heart_percent(state: MoraleState) -> u64 {
     match state {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,

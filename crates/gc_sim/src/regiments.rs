@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{CROWDING, Combat, PATIENCE};
+use crate::combat::{Combat, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
@@ -47,9 +47,6 @@ const RECHECK: u16 = 4;
 /// The most ticks a regiment marches without looking for friends in its
 /// way (see `clear`).
 const CLEAR_TICKS: u8 = 8;
-/// Pace, in percent, of a regiment more than a tile and a quarter deep in a
-/// friendly block.
-const PUSH_PERCENT: i64 = 40;
 
 /// Structure-of-arrays pool of regiments with a fixed capacity.
 ///
@@ -268,11 +265,10 @@ impl Regiments {
             .map(|i| &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize])
     }
 
-    /// Throw regiment `i` into full disorder (pushed into friends, driven
-    /// back into something it can't give ground to); it re-forms over
+    /// Throw regiment `i` into full disorder, as pushing through friends
+    /// does (other combat rules may too); it re-forms over
     /// [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS) once nothing keeps
     /// it there.
-    #[allow(dead_code)]
     pub(crate) fn disorder(&mut self, i: usize) {
         self.disorder[i] = crate::combat::DISORDER_TICKS;
     }
@@ -417,15 +413,7 @@ impl Regiments {
                     pace
                 };
                 let step = terrain.wading(step, self.position[i]);
-                // Pushing into friends: slower the deeper the overlap, down
-                // to 40% of pace a tile past the quarter tile that is let go.
-                let step = if self.crowd[i] > CROWDING {
-                    let deep = (self.crowd[i] - CROWDING).min(Fx::ONE).raw() as i64;
-                    let percent = 100 - (100 - PUSH_PERCENT) * deep / Fx::ONE.raw() as i64;
-                    Fx::from_raw((step.raw() as i64 * percent / 100) as i32).max(Fx::from_raw(1))
-                } else {
-                    step
-                };
+                let step = crate::combat::pushing(step, self.crowd[i]);
                 let here = self.position[i];
                 let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {
