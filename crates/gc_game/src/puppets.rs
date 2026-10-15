@@ -908,7 +908,9 @@ impl Puppets {
                 pos,
                 facing,
                 speed,
-                backing: speed > 0.0 && self.vel[i].dot(facing) < 0.0,
+                // Clearly backwards, so a sideways shuffle doesn't flip
+                // the walk back and forth.
+                backing: self.vel[i].dot(facing) < -0.5 * speed,
                 striking,
                 fight,
                 phase,

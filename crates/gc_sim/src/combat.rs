@@ -125,14 +125,20 @@ const MAX_CELLS_PER_REGIMENT: usize = 9;
 /// Every owner slot, for searches that look at friends and enemies alike.
 const ALL_SLOTS: u32 = (1 << OWNER_SLOTS) - 1;
 
-/// Whether a regiment whose rear edge stands at `rear` has nowhere to give
-/// ground to `behind`: blocked ground, off a river bank into the water, or
-/// off the map.
-fn ground_ends(terrain: &Terrain, nav: &Nav, map_tiles: u32, rear: FxVec2, behind: FxVec2) -> bool {
+/// Whether a point of a regiment's rear edge, stepping back to `behind`,
+/// meets the end of the ground: blocked ground, the map's edge, or water
+/// behind a regiment standing on dry land (a river bank at its back).
+fn ground_ends(
+    terrain: &Terrain,
+    nav: &Nav,
+    map_tiles: u32,
+    centre: FxVec2,
+    behind: FxVec2,
+) -> bool {
     let edge = Fx::from_int(map_tiles as i32);
     let off_map = map_tiles > 0
         && (behind.x < Fx::ZERO || behind.y < Fx::ZERO || behind.x > edge || behind.y > edge);
-    off_map || nav.blocks(rear, behind) || (terrain.wet(behind) && !terrain.wet(rear))
+    off_map || nav.blocked(behind) || (terrain.wet(behind) && !terrain.wet(centre))
 }
 
 /// Which side of a regiment something is on.
@@ -807,10 +813,17 @@ impl Combat {
             {
                 regs.attack_target[i] = previous;
             }
-            regs.engaged[i] = best.map(|(_, j)| RegimentHandle {
+            let engaged = best.map(|(_, j)| RegimentHandle {
                 index: j as u32,
                 generation: regs.generation[j],
             });
+            if engaged != previous {
+                // A new fight, or none: who is winning starts afresh.
+                regs.pressing[i] = 0;
+                regs.pressed[i] = 0;
+                regs.giving[i] = 0;
+            }
+            regs.engaged[i] = engaged;
             if let Some((_, j)) = best {
                 if !was_engaged {
                     // Hitting home at speed is a charge, but nobody charges
@@ -917,19 +930,25 @@ impl Combat {
         map_tiles: u32,
     ) {
         self.give.fill(FxVec2::ZERO);
+        let mut anyone = false;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] || regs.giving[i] == 0 {
                 continue;
             }
-            let Some(j) = regs.foe(i) else {
+            // Only a foe fighting it back, and not losing a fight of its own,
+            // drives it; in a scrum of three or more it holds.
+            let Some(j) = regs
+                .foe(i)
+                .filter(|&j| regs.foe(j) == Some(i) && regs.giving[j] == 0)
+            else {
                 continue;
             };
             let me = self.blocks[i];
             let foe = self.blocks[j].centre;
-            let axis = if me.side_facing(foe) == Side::Flank {
-                me.right
+            let (axis, across) = if me.side_facing(foe) == Side::Flank {
+                (me.right, me.forward)
             } else {
-                me.forward
+                (me.forward, me.right)
             };
             let away = if (foe - me.centre).dot(axis) >= Fx::ZERO {
                 axis * -Fx::ONE
@@ -938,27 +957,39 @@ impl Combat {
             };
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(regs.giving[i]) / 100).max(1));
             let give = away * terrain.wading(pace, me.centre);
-            let rear = me.centre + away * me.extent_along(away);
-            if ground_ends(terrain, nav, map_tiles, rear, rear + give)
+            if nav.blocks(foe, foe + give) {
+                // Its foe can't follow, so nobody is pushing.
+                continue;
+            }
+            // The middle and both corners of its rear edge, after the step.
+            let rear = me.centre + away * me.extent_along(away) + give;
+            let wing = across * me.extent_along(across);
+            if [rear, rear + wing, rear - wing]
+                .iter()
+                .any(|&p| ground_ends(terrain, nav, map_tiles, me.centre, p))
                 || self.backs_into(regs, stances, i, me.centre + give)
             {
                 regs.disorder(i);
                 regs.shock[i] |= SHOCK_PINNED;
             } else {
                 self.give[i] = give;
+                anyone = true;
             }
+        }
+        if !anyone {
+            return;
         }
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
             }
-            let here = regs.position[i];
-            if self.give[i] != FxVec2::ZERO {
-                regs.position[i] = here + self.give[i];
-            } else if let Some(step) = self.follow(regs, i)
-                && !nav.blocks(here, here + step)
-            {
-                regs.position[i] = here + step;
+            let step = if self.give[i] == FxVec2::ZERO {
+                self.follow(regs, nav, i)
+            } else {
+                Some(self.give[i])
+            };
+            if let Some(step) = step {
+                regs.position[i] += step;
             }
         }
     }
@@ -967,11 +998,12 @@ impl Combat {
     /// gives ground, if the foe draws away from it. One fighting a foe that
     /// is itself following its own foe follows too, and so on down the
     /// chain (up to [`FOLLOW_HOPS`] fights), so a fight several blocks deep
-    /// moves as one. Reads only where everyone stood at the start of the
-    /// tick, so the order regiments move in changes nothing.
-    fn follow(&self, regs: &Regiments, i: usize) -> Option<FxVec2> {
+    /// moves as one; nobody in the chain follows if any of them would step
+    /// onto blocked ground. Reads only where everyone stood at the start of
+    /// the tick, so the order regiments move in changes nothing.
+    fn follow(&self, regs: &Regiments, nav: &Nav, i: usize) -> Option<FxVec2> {
         if regs.giving[i] > 0 {
-            // Losing too, and pinned: it stays where it is.
+            // Losing too, and not driven back: it stays where it is.
             return None;
         }
         let mut chain = [i; FOLLOW_HOPS + 1];
@@ -984,14 +1016,20 @@ impl Combat {
             let step = self.give[k];
             if step != FxVec2::ZERO {
                 // Only if the step draws each foe down the chain away from
-                // the one fighting it.
+                // the one fighting it, and everyone following can take it.
                 let draws_away = |w: &[usize]| {
                     step.dot(self.blocks[w[1]].centre - self.blocks[w[0]].centre) > Fx::ZERO
                 };
-                return chain[..=hop].windows(2).all(draws_away).then_some(step);
+                let can_step = |&k: &usize| {
+                    let at = self.blocks[k].centre;
+                    !nav.blocks(at, at + step)
+                };
+                return (chain[..=hop].windows(2).all(draws_away)
+                    && chain[..hop].iter().all(can_step))
+                .then_some(step);
             }
             if regs.giving[k] > 0 {
-                // Losing and pinned: nobody behind it moves.
+                // Losing but not driven back: nobody behind it moves.
                 return None;
             }
         }
@@ -1113,7 +1151,9 @@ impl Combat {
             if vision.off_guard(i) {
                 expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
+            // Even a blow that can't wound shoves.
             let shove = expected
+                .max(1)
                 .saturating_mul(attacker.mass.heft())
                 .min(u64::from(u32::MAX)) as u32;
             regs.pressing[i] = regs.pressing[i].saturating_add(shove);

@@ -299,3 +299,57 @@ fn a_pinned_regiment_loses_heart() {
     // Pinned after about four seconds, then 3 points a second.
     assert!(pinned < 20 && pinned > 0, "{pinned}");
 }
+
+#[test]
+fn a_regiment_with_its_back_already_over_the_edge_is_pinned_at_once() {
+    // The rear edge (24.275) already overhangs the cliff or the water.
+    for behind in [Behind::Cliff(24), Behind::River(24)] {
+        let mut w = world(behind);
+        pinned_against(&mut w, 0.0);
+    }
+}
+
+#[test]
+fn a_regiment_holds_when_the_foe_beating_it_is_losing_its_own_fight() {
+    // A second strong block hits the strong one from behind: the strong
+    // block is losing overall, so it isn't pushing, and the weak one holds
+    // instead of backing out of the fight. (Later the strong block turns to
+    // face the one behind it, which has nothing to do with pushing.)
+    let mut w = world(Behind::Open);
+    let (strong, weak) = face_off(&mut w, STRONG, WEAK);
+    spawn(
+        &mut w,
+        0,
+        STRONG,
+        Fx::from_int(32),
+        Fx::from_ratio(1696, 100),
+        SOUTH,
+    );
+    let start = [(weak, at(&w, weak))];
+    let mut losing = false;
+    for _ in 0..15 * 20 {
+        w.tick(&[]);
+        assert!(moved_south(&w, &start)[0] < 0.1);
+        losing |= w.regiments.get(strong).unwrap().giving_ground;
+    }
+    assert!(losing);
+}
+
+#[test]
+fn a_new_foe_starts_the_exchange_afresh() {
+    let mut w = world(Behind::Open);
+    let (strong, weak) = face_off(&mut w, STRONG, WEAK);
+    seconds(&mut w, 6);
+    assert!(w.regiments.get(weak).unwrap().giving_ground);
+    // The strong block leaves; an equal one takes its place.
+    let at_strong = at(&w, strong);
+    w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::RemoveRegiment { regiment: strong },
+    }]);
+    spawn(&mut w, 1, WEAK, at_strong.x, at_strong.y, SOUTH);
+    let start = [(weak, at(&w, weak))];
+    seconds(&mut w, 4);
+    assert!(!w.regiments.get(weak).unwrap().giving_ground);
+    assert!(moved_south(&w, &start)[0].abs() < 0.3);
+}
