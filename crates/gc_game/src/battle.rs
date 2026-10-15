@@ -148,17 +148,33 @@ pub fn battle_starts(teams: &[u8], me: usize, plateaus: [Vec2; 4]) -> Vec<Vec2> 
 }
 
 /// The side left holding the field: some side with regiments still
-/// fighting, when everyone else still fighting is its ally. None while
-/// enemies still face each other, or nobody stands.
+/// fighting in sight, when every enemy still fighting is out of its sight.
+/// None while enemies still face each other, or nobody stands.
+///
+/// Regiments hidden in woods or tall grass don't hold the field
+/// (docs/20-ambushes.md): an army whose regiments in sight have all broken
+/// has lost it, however many it still has hiding, so a beaten army's
+/// survivors rallying in a wood don't drag a battle on. Two armies that
+/// are both out of each other's sight are still facing each other.
 pub fn holding_the_field(world: &World) -> Option<PlayerId> {
-    let mut standing = world
-        .regiments
-        .iter()
-        .filter(|r| r.models > 0 && !r.morale.broken());
-    let first = standing.next()?.owner;
-    standing
-        .all(|r| !world.hostile(first, r.owner))
-        .then_some(first)
+    let standing = || {
+        world
+            .regiments
+            .iter()
+            .filter(|r| r.models > 0 && !r.morale.broken())
+    };
+    let mut parties = 0u32;
+    for r in standing().filter(|r| !world.hidden(r.handle)) {
+        let p = r.owner;
+        if parties & (1 << p.min(31)) != 0 {
+            continue;
+        }
+        parties |= 1 << p.min(31);
+        if standing().all(|e| !world.hostile(p, e.owner) || !world.sees(p, e.handle)) {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// A lobby Field Battle under way: whose side this machine plays, and how

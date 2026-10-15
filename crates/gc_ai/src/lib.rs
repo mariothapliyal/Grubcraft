@@ -184,9 +184,12 @@ impl Mind {
     }
 }
 
-/// The minds of a match, sharing one look at the world per tick.
+/// The minds of a match, sharing one look at the world per tick (on a map
+/// with cover, each also gets its own look at what its side sees).
 pub struct Minds {
     view: Perception,
+    /// What one mind's side sees, refilled for each mind in turn.
+    own: Perception,
     terrain: Terrain,
     minds: Vec<Mind>,
 }
@@ -195,6 +198,7 @@ impl Minds {
     pub fn new(terrain: Terrain) -> Minds {
         Minds {
             view: Perception::new(),
+            own: Perception::new(),
             terrain,
             minds: Vec::new(),
         }
@@ -229,7 +233,8 @@ impl Minds {
         &self.terrain
     }
 
-    /// The last look at the world.
+    /// The last look at the world, all of it (minds on a map with cover
+    /// think on what their side sees).
     pub fn view(&self) -> &Perception {
         &self.view
     }
@@ -241,8 +246,16 @@ impl Minds {
             return;
         }
         self.view.capture(world);
+        // Regiments hidden in cover are hidden from the computer players
+        // too (docs/20-ambushes.md).
+        let fair = world.vision().active();
         for m in &mut self.minds {
-            m.tick(&self.view, &self.terrain, out);
+            if fair {
+                self.own.capture_for(world, m.party);
+                m.tick(&self.own, &self.terrain, out);
+            } else {
+                m.tick(&self.view, &self.terrain, out);
+            }
         }
     }
 }

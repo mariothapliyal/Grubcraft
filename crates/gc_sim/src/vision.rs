@@ -16,7 +16,9 @@
 //! loses [`AMBUSH_SHOCK`] morale, is caught off guard for
 //! [`OFF_GUARD_TICKS`] (its blows deal [`OFF_GUARD_DAMAGE_PERCENT`]), and
 //! its friends within [`RIPPLE_TILES`] lose [`AMBUSH_RIPPLE`]. An ordered
-//! volley from hiding costs its target [`VOLLEY_SHOCK`].
+//! volley from hiding costs its target [`VOLLEY_SHOCK`]. Each hidden
+//! regiment springs one ambush: after it, the victim's side has it fully in
+//! view.
 //!
 //! Combat asks [`Vision::sees`] before an archer picks a target, and
 //! holds a hidden archer's fire; morale counts only seen enemies; an
@@ -350,6 +352,15 @@ impl Vision {
                 victim: handle(regs, j),
                 volley,
             });
+        }
+        // Sprung: the victim's side knows all about it now, so it springs
+        // one ambush, not one per blow or volley.
+        let friends = self.allies[regs.owner[j] as usize];
+        for p in 0..PARTIES {
+            if friends & (1 << p) != 0 {
+                self.sighting[i * PARTIES + p] = SURPRISE_TICKS;
+                self.linger[i * PARTIES + p] = LINGER_TICKS;
+            }
         }
     }
 

@@ -191,7 +191,9 @@ impl Heightmap {
                 heights.push(self.height_at(x as f32 + 0.5, y as f32 + 0.5));
             }
         }
-        gc_ai::Terrain::new(nav, tiles).with_heights(heights, self.water_level)
+        gc_ai::Terrain::new(nav, tiles)
+            .with_heights(heights, self.water_level)
+            .with_cover(self.cover())
     }
 }
 

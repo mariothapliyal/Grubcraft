@@ -52,13 +52,14 @@ pub fn role_color(role: Role) -> [u8; 3] {
         Role::Reserve => [185, 120, 255],
         Role::Hunter => [255, 70, 60],
         Role::Recover => [150, 150, 150],
+        Role::Ambusher => [95, 150, 70],
     }
 }
 
 pub const LEGEND: &str = "AI LENS (L hides)   dashes: to its target, bright, or its place, faint   \
 squares: places   posts: anchored ends   magenta: point of attack\n\
   anchor white  wing blue  hammer orange  screen green  battery yellow  \
-reserve violet  hunter red  recovering grey";
+reserve violet  hunter red  recovering grey  ambusher moss";
 
 /// Every computer player's lens.
 pub fn lenses(minds: &Minds) -> Vec<Lens> {
@@ -217,6 +218,7 @@ mod tests {
             Role::Reserve,
             Role::Hunter,
             Role::Recover,
+            Role::Ambusher,
         ];
         for (i, a) in roles.iter().enumerate() {
             for b in &roles[i + 1..] {

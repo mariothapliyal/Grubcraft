@@ -3,9 +3,10 @@
 //!
 //! A mind never reads simulation internals, only what a player could see on
 //! screen: each regiment's position, facing, frontage, strength, whether it
-//! is moving or fighting, and its morale as its banner shows it. There is no
-//! fog of war yet (M3), so every party sees the whole field; when fog lands,
-//! [`Perception::capture`] is where it gets filtered.
+//! is moving or fighting, and its morale as its banner shows it. On a map
+//! with woods and tall grass (docs/20-ambushes.md) a mind sees only what its
+//! side sees ([`Perception::capture_for`]): enemies hidden in cover are left
+//! out, and its own regiments say whether they are hidden.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::{
@@ -106,6 +107,9 @@ pub struct Seen {
     pub morale: MoraleState,
     /// Morale in points, 0 to 100 (meaningless for units that never rout).
     pub morale_points: u8,
+    /// No enemy sees it (in cover, unspotted). Always false for enemies a
+    /// mind sees, of course.
+    pub hidden: bool,
 }
 
 impl Seen {
@@ -174,9 +178,20 @@ impl Perception {
         Perception::default()
     }
 
-    /// Copy what can be seen of `world` now. Reuses the buffers, so after
-    /// the first call it allocates nothing.
+    /// Copy the whole of `world` now, every regiment whether anyone sees it
+    /// or not. Reuses the buffers, so after the first call it allocates
+    /// nothing.
     pub fn capture(&mut self, world: &World) {
+        self.capture_seen_by(world, None);
+    }
+
+    /// Copy what `party`'s side sees of `world` now: the same as
+    /// [`Perception::capture`] but without the enemies hidden from it.
+    pub fn capture_for(&mut self, world: &World, party: PlayerId) {
+        self.capture_seen_by(world, Some(party));
+    }
+
+    fn capture_seen_by(&mut self, world: &World, party: Option<PlayerId>) {
         self.tick = world.tick_count();
         if self.units.len() != world.units().len()
             || self
@@ -195,6 +210,9 @@ impl Perception {
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);
         for r in world.regiments.iter() {
+            if party.is_some_and(|p| !world.sees(p, r.handle)) {
+                continue;
+            }
             let stats = &self.units[r.unit as usize].stats;
             let (w, d) = stats.block_size(r.files, r.models);
             self.by_index[r.handle.index as usize] = self.regiments.len() as u32;
@@ -213,6 +231,7 @@ impl Perception {
                 engaged: r.engaged,
                 morale: r.morale,
                 morale_points: r.morale_points,
+                hidden: world.hidden(r.handle),
             });
         }
     }
