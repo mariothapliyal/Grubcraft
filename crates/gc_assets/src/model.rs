@@ -106,7 +106,7 @@ impl ModelRecord {
 
 /// One vertex, following up to four bones. 32 bytes.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
 pub struct ModelVertex {
     /// Rest-pose position in 1/[`POSITION_SCALE`] tiles; x across, y up,
     /// z forward (the way the soldier faces).
@@ -127,17 +127,6 @@ pub struct ModelVertex {
     pub color: [u8; 4],
     /// Texture coordinate, 0 to 65,535 across the texture.
     pub uv: [u16; 2],
-}
-
-impl ModelVertex {
-    /// A vertex that follows one bone completely.
-    pub fn rigid(bone: u8) -> ModelVertex {
-        ModelVertex {
-            bones: [bone, 0, 0, 0],
-            weights: [255, 0, 0, 0],
-            ..Zeroable::zeroed()
-        }
-    }
 }
 
 /// One animation clip. 16 bytes.
@@ -394,7 +383,8 @@ mod tests {
         let v = ModelVertex {
             normal: [0, 127, 0, 0],
             color: [255; 4],
-            ..ModelVertex::rigid(0)
+            weights: [255, 0, 0, 0],
+            ..Zeroable::zeroed()
         };
         ModelTables {
             models: alloc::vec![ModelRecord {

@@ -431,13 +431,28 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
         Some(r) => r.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
         None => vec![Mat4::IDENTITY; joints.len()],
     };
+    // Exporters may bind a mesh in a different pose from the skeleton's
+    // rest pose (a T-pose bind under an A-pose rest). Skinned vertices are
+    // kept in the bind pose, seen from the first joint, and each bone's
+    // matrices carry its own bind-to-rest difference relative to that, so
+    // the shader's weighted blend is exact skinning. `bind_fix` is that
+    // difference per bone (the identity when bind and rest agree, and for
+    // the still bone).
+    let bind_to_rest: Vec<Mat4> = (0..joints.len())
+        .map(|b| rest_globals[joints[b]] * inverse_bind[b])
+        .collect();
+    let bind_space = bind_to_rest.first().copied().unwrap_or(Mat4::IDENTITY);
+    let bind_fix: Vec<Mat4> = bind_to_rest
+        .iter()
+        .map(|m| *m * bind_space.inverse())
+        .chain([Mat4::IDENTITY])
+        .collect();
     let joint_of_node: HashMap<usize, usize> =
         joints.iter().enumerate().map(|(b, &n)| (n, b)).collect();
     // Parts that hang from no bone use one extra bone that never moves.
     let still_bone = joints.len();
-    debug_assert!(still_bone <= u8::MAX as usize);
 
-    // 1. Gather every triangle in the rest pose, bound rigidly to one bone.
+    // 1. Gather every triangle in the rest pose with the bones it follows.
     let mut verts: Vec<Vert> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     for node in doc.nodes() {
@@ -487,27 +502,16 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
 
             let base = verts.len() as u32;
             for k in 0..positions.len() {
-                let (bones, to_rest) = match (&joints_attr, &weights_attr) {
-                    (Some(j), Some(w)) if skinned => {
-                        let bones = top_weights(j[k], w[k]);
-                        // The bind pose blended the same way the shader will.
-                        let mut m = Mat4::ZERO;
-                        for &(b, wt) in &bones {
-                            if wt > 0.0 {
-                                let b = b as usize;
-                                m += (rest_globals[joints[b]] * inverse_bind[b]) * wt;
-                            }
-                        }
-                        (bones, m)
-                    }
+                let (bones, to_model) = match (&joints_attr, &weights_attr) {
+                    (Some(j), Some(w)) if skinned => (top_weights(j[k], w[k]), bind_space),
                     _ => {
-                        let mut bones = [(0u8, 0.0); BONES_PER_VERTEX];
-                        bones[0] = (holder.unwrap_or(still_bone) as u8, 1.0);
-                        (bones, rest_globals[node.index()])
+                        let bone = holder.unwrap_or(still_bone);
+                        let to_model = bind_fix[bone].inverse() * rest_globals[node.index()];
+                        (rigid_skin(bone as u8), to_model)
                     }
                 };
                 let tangent = tangents.as_ref().map_or(Vec4::ZERO, |t| {
-                    let dir = to_rest
+                    let dir = to_model
                         .transform_vector3(t[k].truncate())
                         .normalize_or_zero();
                     dir.extend(if t[k].w < 0.0 { -1.0 } else { 1.0 })
@@ -518,8 +522,8 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                     color *= Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
                 }
                 verts.push(Vert {
-                    pos: to_rest.transform_point3(positions[k]),
-                    normal: to_rest.transform_vector3(normals[k]).normalize_or(Vec3::Y),
+                    pos: to_model.transform_point3(positions[k]),
+                    normal: to_model.transform_vector3(normals[k]).normalize_or(Vec3::Y),
                     tangent,
                     uv: uvs[k],
                     color: color.round().to_array().map(|c| c.clamp(0.0, 255.0) as u8),
@@ -540,7 +544,11 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
     let turn = Mat4::from_rotation_y(cfg.turn.to_radians());
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for v in &verts {
-        let p = turn.transform_point3(v.pos);
+        // Measured in the rest pose, where skinned vertices may not be.
+        let rest = v.bones.iter().fold(Vec3::ZERO, |p, &(b, w)| {
+            p + bind_fix[b as usize].transform_point3(v.pos) * w
+        });
+        let p = turn.transform_point3(rest);
         lo = lo.min(p);
         hi = hi.max(p);
     }
@@ -565,13 +573,12 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
         .map(|h| parse_hex(h))
         .collect::<Result<_, _>>()?;
     let mut welded: Vec<ModelVertex> = Vec::new();
-    let mut seen: HashMap<[u8; 32], u32> = HashMap::new();
+    let mut seen: HashMap<ModelVertex, u32> = HashMap::new();
     let remap: Vec<u32> = verts
         .iter()
         .map(|v| {
             let q = quantise(v, &team_colors, cfg.team_tolerance, cfg.team_hue);
-            let key: [u8; 32] = bytemuck::cast(q);
-            *seen.entry(key).or_insert_with(|| {
+            *seen.entry(q).or_insert_with(|| {
                 welded.push(q);
                 welded.len() as u32 - 1
             })
@@ -635,9 +642,12 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
         let frames = sample_clip(&anim, kind, &skel, &rest_globals, &joints, get)?
             .into_iter()
             .map(|bones| {
-                let mut out: Vec<Mat4> = bones.iter().map(|m| to_game * *m * from_game).collect();
-                out.push(Mat4::IDENTITY);
-                out
+                bones
+                    .iter()
+                    .chain([&Mat4::IDENTITY])
+                    .zip(&bind_fix)
+                    .map(|(m, fix)| to_game * *m * *fix * from_game)
+                    .collect()
             })
             .collect();
         clips.push((kind, frames));
@@ -699,24 +709,33 @@ fn quantise(
     }
 }
 
+/// Bones with less of a vertex than this are dropped: they barely move it,
+/// and every bone a vertex follows costs the shader six texture reads.
+const MIN_WEIGHT: f32 = 0.05;
+
 /// A vertex's skin, heaviest bone first, weights normalised to sum to 1.
 /// Slots past the last real bone have weight 0.
 fn top_weights(joints: [u16; 4], weights: [f32; 4]) -> [(u8, f32); BONES_PER_VERTEX] {
-    let mut pairs: [(u8, f32); BONES_PER_VERTEX] =
-        core::array::from_fn(|i| (joints[i] as u8, weights[i].max(0.0)));
+    let total: f32 = weights.iter().map(|w| w.max(0.0)).sum();
+    let mut pairs: [(u8, f32); BONES_PER_VERTEX] = core::array::from_fn(|i| {
+        let w = weights[i].max(0.0);
+        (
+            joints[i] as u8,
+            if w < MIN_WEIGHT * total { 0.0 } else { w },
+        )
+    });
     pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
     let sum: f32 = pairs.iter().map(|p| p.1).sum();
     if sum <= 0.0 {
         // No weights at all: follow the first listed joint.
-        return core::array::from_fn(|i| {
-            if i == 0 {
-                (joints[0] as u8, 1.0)
-            } else {
-                (0, 0.0)
-            }
-        });
+        return rigid_skin(joints[0] as u8);
     }
-    pairs.map(|(b, w)| if w > 0.0 { (b, w / sum) } else { (0, 0.0) })
+    pairs.map(|(b, w)| (b, w / sum))
+}
+
+/// A skin that follows one bone completely.
+fn rigid_skin(bone: u8) -> [(u8, f32); BONES_PER_VERTEX] {
+    core::array::from_fn(|i| if i == 0 { (bone, 1.0) } else { (0, 0.0) })
 }
 
 /// Weights as bytes summing exactly to 255, so a vertex never shrinks
@@ -888,4 +907,24 @@ fn sample_clip<'a>(
         );
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn light_bones_are_dropped_and_weights_sum_to_255() {
+        let skin = top_weights([3, 7, 9, 2], [0.2, 0.7, 0.08, 0.02]);
+        let (bones, weights) = quantise_weights(&skin);
+        assert_eq!(bones, [7, 3, 9, 0]);
+        assert_eq!(weights.iter().map(|&w| w as u32).sum::<u32>(), 255);
+        assert_eq!(weights[3], 0);
+    }
+
+    #[test]
+    fn a_vertex_without_weights_follows_its_first_joint() {
+        let (bones, weights) = quantise_weights(&top_weights([5, 1, 0, 0], [0.0; 4]));
+        assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
+    }
 }
