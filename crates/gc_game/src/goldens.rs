@@ -10,6 +10,10 @@
 //! GOLDEN=field-1v1 cargo test ...   # just that one
 //! ```
 //!
+//! `AI_TRACE=1` prints what each computer player is doing every 20
+//! seconds; `ENGAGED_TRACE=1` prints how many soldiers are in melee every
+//! 5 seconds.
+//!
 //! When a simulation change only moves the hashes, bless the existing
 //! replays instead (`cargo run --release -p gc_replay -- bless replays`):
 //! that keeps the recorded commands.
