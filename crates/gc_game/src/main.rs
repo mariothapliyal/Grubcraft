@@ -163,6 +163,9 @@ const PLATE_HEIGHT: f32 = 0.05;
 const DISORDER_DASH: f32 = 0.55;
 const DISORDER_DASH_SPACING: f32 = 0.9;
 const DISORDER_GLOW: u8 = 110;
+/// The deployment zone's ring: dash length and spacing, tiles.
+const ZONE_DASH: f32 = 1.2;
+const ZONE_DASH_SPACING: f32 = 2.0;
 /// A right-drag shorter than this on the ground is a click.
 const MIN_LINE_TILES: f32 = 2.0;
 /// A left-drag shorter than this on screen is a click.
@@ -1636,6 +1639,7 @@ impl Running {
             let t_ai = Instant::now();
             tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
             self.stats.ai_time += t_ai.elapsed();
+            battle::orders_while_deploying(&self.world, &mut self.human_orders);
             self.pending.append(&mut self.human_orders);
             self.step();
         }
@@ -1682,6 +1686,15 @@ impl Running {
             &mut self.instances,
         );
         let viewer = self.sandbox.side;
+        if self.world.deploying()
+            && let Some(zone) = self.world.deploy_zone(viewer)
+        {
+            Self::push_zone_ring(
+                &mut self.instances,
+                from_fx_vec(zone.center),
+                fx_to_f32(zone.radius),
+            );
+        }
         // Flags and banners grow as the Commander View pulls back, so they
         // stay readable.
         let zoom = if self.commander {
@@ -2085,6 +2098,7 @@ impl Running {
             return 0;
         }
         let host = o.host;
+        battle::orders_while_deploying(&self.world, &mut self.human_orders);
         let lan = self.menu.net();
         lan.submit(self.human_orders.drain(..));
         let mut turns = 0;
@@ -2399,6 +2413,22 @@ impl Running {
                 eprintln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
+        }
+    }
+
+    /// Where you may deploy: a dashed amber ring on the ground.
+    fn push_zone_ring(instances: &mut Vec<BoxInstance>, centre: Vec2, radius: f32) {
+        let dashes = ((std::f32::consts::TAU * radius / ZONE_DASH_SPACING) as usize).max(8);
+        for k in 0..dashes {
+            let along = Vec2::from_angle(std::f32::consts::TAU * k as f32 / dashes as f32);
+            instances.push(BoxInstance {
+                pos: (centre + along * radius).to_array(),
+                // Each dash lies along the ring.
+                facing: along.to_array(),
+                size: [ZONE_DASH, PLATE_HEIGHT, 0.25],
+                color: [235, 150, 40, 255],
+                lift: 0.01,
+            });
         }
     }
 

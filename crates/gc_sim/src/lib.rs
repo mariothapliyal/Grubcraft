@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 pub mod champions;
 pub mod combat;
+pub mod deploy;
 pub mod formation;
 mod hash;
 pub mod morale;
@@ -38,6 +39,7 @@ pub use vision::Ambush;
 
 use champions::Champions;
 use combat::Combat;
+use deploy::{Deployment, Zone};
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
@@ -437,6 +439,20 @@ pub enum Command {
         regiment: RegimentHandle,
         formation: Formation,
     },
+    /// Field Battle: give the issuing player a deployment zone, which starts
+    /// the deployment phase (see [`deploy`]). Only on the first tick.
+    DeployZone { center: FxVec2, radius: Fx },
+    /// During deployment: put one of your regiments at `position` inside
+    /// your zone, facing `facing`, `files` wide (0 keeps its frontage).
+    Place {
+        regiment: RegimentHandle,
+        position: FxVec2,
+        facing: Angle,
+        files: u16,
+    },
+    /// During deployment: you are done placing. The battle starts when
+    /// every player with a zone is, or when time runs out.
+    Ready,
 }
 
 /// A command tagged with who issued it. Turn bundles carry these.
@@ -464,6 +480,7 @@ pub struct World {
     stances: Stances,
     terrain: Terrain,
     vision: Vision,
+    deploy: Deployment,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
     pub regiments: Regiments,
@@ -489,6 +506,7 @@ impl World {
             stances,
             terrain,
             vision,
+            deploy: Deployment::default(),
             champions: setup.champions.then(|| {
                 Champions::new(
                     setup.capacities.regiments,
@@ -522,6 +540,11 @@ impl World {
             } else {
                 stats.commands_rejected += 1;
             }
+        }
+        // Time stands still while the armies deploy.
+        if self.deploying() {
+            self.tick += 1;
+            return stats;
         }
         self.combat.before_move(
             &mut self.regiments,
@@ -609,6 +632,9 @@ impl World {
                 files,
                 pace,
             } => {
+                if self.deploying() {
+                    return false;
+                }
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {
                     Some(owner) if owner == pc.player => self.regiments.order(
@@ -623,7 +649,7 @@ impl World {
                     _ => false,
                 }
             }
-            Command::Attack { regiment, target } => {
+            Command::Attack { regiment, target } if !self.deploying() => {
                 match (self.regiments.owner(regiment), self.regiments.owner(target)) {
                     (Some(owner), Some(enemy))
                         if owner == pc.player
@@ -654,7 +680,56 @@ impl World {
                 }
                 _ => false,
             },
+            Command::Attack { .. } => false,
+            Command::DeployZone { center, radius } => {
+                self.deploy
+                    .set_zone(pc.player, Zone { center, radius }, self.tick)
+            }
+            Command::Place {
+                regiment,
+                position,
+                facing,
+                files,
+            } => {
+                let allowed = self.deploying()
+                    && self.regiments.owner(regiment) == Some(pc.player)
+                    && self
+                        .deploy
+                        .zone(pc.player)
+                        .is_some_and(|z| z.contains(position))
+                    && self.nav.walkable(position);
+                if !allowed || !self.regiments.place(regiment, position, facing, files) {
+                    return false;
+                }
+                if let Some(i) = self.regiments.resolve(regiment) {
+                    self.vision
+                        .start(&self.regiments, &self.units, &self.terrain, i);
+                }
+                true
+            }
+            Command::Ready => self.deploy.set_ready(pc.player, self.tick),
         }
+    }
+
+    /// Whether the armies are still deploying: time stands still, and only
+    /// placing, formations and readiness are accepted (see [`deploy`]).
+    pub fn deploying(&self) -> bool {
+        self.deploy.active(self.tick)
+    }
+
+    /// `player`'s deployment zone, if the match has a deployment phase.
+    pub fn deploy_zone(&self, player: PlayerId) -> Option<Zone> {
+        self.deploy.zone(player)
+    }
+
+    /// Whether `player` has said they are done deploying.
+    pub fn deploy_ready(&self, player: PlayerId) -> bool {
+        self.deploy.is_ready(player)
+    }
+
+    /// Ticks until the battle starts, while deploying.
+    pub fn deploy_ticks_left(&self) -> u32 {
+        self.deploy.ticks_left(self.tick)
     }
 
     /// Who fights whom.
@@ -675,10 +750,13 @@ impl World {
     /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always
     /// true on a map with no cover, and for a party's own and its allies'
     /// regiments; false for a regiment that is gone.
+    /// While deploying, no enemy regiment is seen.
     pub fn sees(&self, party: PlayerId, h: RegimentHandle) -> bool {
-        self.regiments
-            .resolve(h)
-            .is_some_and(|i| self.vision.sees(party, i, self.regiments.owner[i]))
+        self.regiments.resolve(h).is_some_and(|i| {
+            let owner = self.regiments.owner[i];
+            !(self.deploying() && self.stances.hostile(party, owner))
+                && self.vision.sees(party, i, owner)
+        })
     }
 
     /// Whether regiment `h` is hidden from every enemy of its owner.
@@ -738,6 +816,7 @@ impl World {
         self.combat.hash_into(&mut h);
         self.nav.hash_into(&mut h);
         self.vision.hash_into(&self.regiments, &mut h);
+        self.deploy.hash_into(&mut h);
         // Only in matches that allow champions, so other worlds hash as
         // they did before champions existed.
         if let Some(champions) = &self.champions {
