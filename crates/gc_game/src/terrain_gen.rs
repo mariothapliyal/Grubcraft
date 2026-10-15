@@ -28,8 +28,6 @@ pub struct Heightmap {
     pub samples_per_tile: u32,
     /// Samples per side: `tiles * samples_per_tile + 1`.
     pub size: u32,
-    pub max_height: f32,
-    pub water_level: f32,
     pub heights: Vec<u16>,
     /// The simulation's tile heights and water line ([`Heightmap::sim_ground`]).
     sim_heights: Vec<u16>,
@@ -55,6 +53,7 @@ impl Heightmap {
         // so their square roots are skipped (the bowl's with a sample to spare).
         let bowl_reach2 = (72 * n / 100 + 1).pow(2);
         let plateau_reach2 = (30 * SAMPLES_PER_TILE).pow(2);
+        let last = n * SAMPLES_PER_TILE;
 
         let mut heights = Vec::with_capacity((size * size) as usize);
         for sz in 0..size as i64 {
@@ -69,11 +68,13 @@ impl Heightmap {
                 let rib = ONE - Angle(turn as u16).sin().raw().abs() as i64;
                 let rib2 = rib * rib / ONE;
                 let rib6 = rib2 * rib2 / ONE * rib2 / ONE;
-                let gaps_noise = noise.fbm(sx * ONE / 120 + 17 * ONE, sz * ONE / 120 + 17 * ONE, 3);
-                let gaps = smoothstep(ONE * 42 / 100, ONE * 6 / 10, gaps_noise);
-                h += rib6 * 45 / 100 * gaps / ONE;
+                if rib6 > 0 {
+                    let (gx, gz) = (sx * ONE / 120 + 17 * ONE, sz * ONE / 120 + 17 * ONE);
+                    let gaps = smoothstep(ONE * 42 / 100, ONE * 6 / 10, noise.fbm(gx, gz, 3));
+                    h += rib6 * 45 / 100 * gaps / ONE;
+                }
 
-                // Shallow bowl around the Heart, 0.18 of the map across.
+                // Shallow bowl around the Heart, reaching 0.18 of the map out.
                 let d2 = dist2(sx - centre, sz - centre);
                 if d2 < bowl_reach2 {
                     let dc = tiles_apart(d2) * 100 / (18 * n);
@@ -90,19 +91,15 @@ impl Heightmap {
                 }
 
                 // Edges fall away so the map reads as an island of hide.
-                let last = n * SAMPLES_PER_TILE;
                 let edge = sx.min(sz).min(last - sx).min(last - sz) * ONE / SAMPLES_PER_TILE;
                 h = h * (smoothstep(0, 10 * ONE, edge) * 85 / 100 + ONE * 15 / 100) / ONE;
 
                 heights.push((h.clamp(0, ONE) * u16::MAX as i64 / ONE) as u16);
             }
         }
-        let max_height = MAX_HEIGHT as f32;
         let mut map = Heightmap {
             samples_per_tile,
             size,
-            max_height,
-            water_level: WATER as f32 * max_height / u16::MAX as f32,
             heights,
             sim_heights: Vec::new(),
             sim_water: 0,
@@ -123,10 +120,20 @@ impl Heightmap {
         }
     }
 
+    /// The highest ground, in tiles, for drawing.
+    pub fn max_height(&self) -> f32 {
+        MAX_HEIGHT as f32
+    }
+
+    /// The water line, in tiles, for drawing and the computer players.
+    pub fn water_level(&self) -> f32 {
+        WATER as f32 * self.max_height() / u16::MAX as f32
+    }
+
     fn sample(&self, x: i32, z: i32) -> f32 {
         let max = self.size as i32 - 1;
         let i = (z.clamp(0, max) * self.size as i32 + x.clamp(0, max)) as usize;
-        self.heights[i] as f32 * (self.max_height / u16::MAX as f32)
+        self.heights[i] as f32 * (self.max_height() / u16::MAX as f32)
     }
 
     /// Bilinear height in tiles at a map position in tiles (matches the shader).
@@ -245,7 +252,7 @@ impl Heightmap {
             }
         }
         gc_ai::Terrain::new(nav, tiles)
-            .with_heights(heights, self.water_level)
+            .with_heights(heights, self.water_level())
             .with_cover(self.cover.clone())
     }
 }
@@ -385,6 +392,7 @@ impl Noise {
 
     /// `octaves` layers of noise, each finer and half as strong.
     fn fbm(&self, x: i64, y: i64, octaves: usize) -> i64 {
+        debug_assert!(octaves <= OCTAVE_FREQ.len(), "add octave frequencies");
         let (mut sum, mut norm) = (0, 0);
         for (i, freq) in OCTAVE_FREQ[..octaves].iter().enumerate() {
             let amp = ONE >> (i + 1);
@@ -415,7 +423,7 @@ mod tests {
         let hm = Heightmap::generate(1, 64);
         let (heights, water) = hm.sim_ground();
         assert_eq!(heights.len(), 64 * 64);
-        assert_eq!(water, (hm.water_level * 256.0) as u16);
+        assert_eq!(water, (hm.water_level() * 256.0) as u16);
         for (x, y) in [(3, 5), (16, 16), (40, 22), (63, 63)] {
             let want = hm.height_at(x as f32 + 0.5, y as f32 + 0.5) * 256.0;
             let got = heights[y * 64 + x] as f32;
@@ -447,7 +455,8 @@ mod tests {
     /// the same map on every machine. CI runs this on macOS, Windows and
     /// Linux; if it fails on one of them, something in map making depends
     /// on the CPU or the maths library. If map making changes on purpose,
-    /// update the numbers (and bless the golden replays).
+    /// update the numbers (golden replays keep their own maps, so they
+    /// don't move).
     #[test]
     fn the_map_is_the_same_on_every_machine() {
         let fingerprint = |seed| {
