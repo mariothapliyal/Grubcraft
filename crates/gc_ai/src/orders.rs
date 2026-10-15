@@ -177,7 +177,9 @@ impl Orders {
                 }
             }
             let retries = match prev {
-                Some(s) if same(&s.act, &w.act) => s.retries + 1,
+                // Sending a regiment at rest on to its shifted place is a new
+                // order, not another try at one it stopped short of.
+                Some(s) if same(&s.act, &w.act) && !moved_on(r, &s.act, &w.act) => s.retries + 1,
                 _ => 0,
             };
             self.decided[(w.priority as usize).min(7)] += 1;

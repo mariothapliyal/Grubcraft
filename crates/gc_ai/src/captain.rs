@@ -139,7 +139,7 @@ impl Posture {
 
 /// Seconds a side expecting to lose waits for an enemy that doesn't come
 /// before going to fetch it.
-const TIRED_OF_WAITING: f32 = 60.0;
+const TIRED_OF_WAITING: f32 = 30.0;
 /// Space left between regiments side by side in the line, tiles.
 const LINE_GAP: f32 = 1.5;
 /// A regiment shouldn't meet an enemy where it would overlap a friend's
@@ -343,6 +343,9 @@ pub struct Captain {
     withdrawn_at: Option<u32>,
     withdrawals: u32,
     standoff_since: u32,
+    /// Since when it has been waiting, expecting to lose, with the enemy
+    /// not coming and nobody fighting.
+    waiting_since: Option<u32>,
     /// Tick the posture last changed.
     posture_since: u32,
     /// Where the enemy army was a while ago, to tell whether it is coming:
@@ -422,6 +425,7 @@ impl Captain {
             withdrawn_at: None,
             withdrawals: 0,
             standoff_since: 0,
+            waiting_since: None,
             posture_since: 0,
             distance_then: None,
             closing: 0.0,
@@ -509,6 +513,7 @@ impl Captain {
             self.layout(ctx);
         }
         if self.beaten(ctx, &ours, &fighting) || self.fetching {
+            self.waiting_since = None;
             self.finish(ctx, &fighting, wants);
             return;
         }
@@ -915,6 +920,9 @@ impl Captain {
             .iter()
             .map(|&k| BATTERY_BACK + depth[k])
             .fold(0.0, f32::max);
+        // How far behind the line the archers standing behind it reach (not
+        // a screen out in front).
+        let mut archers_back: f32 = 0.0;
         for (i, &k) in ranged.iter().enumerate() {
             let cx = first + step * i as f32;
             let behind = Vec2::new(cx, line_depth * 0.5 + BATTERY_BACK + depth[k] * 0.5);
@@ -929,6 +937,7 @@ impl Captain {
                 self.assign(k, Role::Screen, ahead);
             } else {
                 self.assign(k, Role::Battery, behind);
+                archers_back = archers_back.max(BATTERY_BACK + depth[k]);
             }
         }
 
@@ -979,7 +988,7 @@ impl Captain {
             let back = if anvil {
                 line_depth * 0.5
             } else {
-                line_depth * 0.5 + HAMMER_BACK.max(self.rear + LINE_GAP) + depth[k] * 0.5
+                line_depth * 0.5 + HAMMER_BACK.max(archers_back + LINE_GAP) + depth[k] * 0.5
             };
             self.assign(k, Role::Hammer, Vec2::new(cx, back));
         }
@@ -1204,6 +1213,8 @@ impl Captain {
         let now = view.tick;
         let p = ctx.persona;
         let before = self.posture;
+        // Only kept while it goes on waiting, below.
+        let was_waiting = self.waiting_since.take();
         // How far the enemy is from where the line stands now (the anchor
         // is where it is going, which while advancing is near the enemy).
         let line_now = line_centre(&self.members, ours, centroid(ours));
@@ -1309,11 +1320,15 @@ impl Captain {
                 // Wait on our own ground for them to come. Being shot to
                 // pieces with no falling back left is the exception. An
                 // enemy that never comes has to be fetched in the end, or
-                // the battle never ends.
-                if waited > TIRED_OF_WAITING {
-                    self.fetching = true;
-                    ctx.journal
-                        .note(now, "Tired of waiting: going to fetch them".to_string());
+                // the battle never ends. Only time with nobody coming and
+                // nobody fighting counts.
+                if !ours.iter().any(|r| r.engaged) {
+                    let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
+                    if (now - since) as f32 / TICKS > TIRED_OF_WAITING {
+                        self.fetching = true;
+                        ctx.journal
+                            .note(now, "Tired of waiting: going to fetch them".to_string());
+                    }
                 }
                 outshot && self.withdrawals >= WITHDRAWALS
             } else {
