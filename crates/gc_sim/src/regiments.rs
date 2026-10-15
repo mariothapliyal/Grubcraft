@@ -268,6 +268,15 @@ impl Regiments {
             .map(|i| &self.hp[i * MAX_MODELS as usize..][..self.models[i] as usize])
     }
 
+    /// Throw regiment `i` into full disorder (pushed into friends, driven
+    /// back into something it can't give ground to); it re-forms over
+    /// [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS) once nothing keeps
+    /// it there.
+    #[allow(dead_code)]
+    pub(crate) fn disorder(&mut self, i: usize) {
+        self.disorder[i] = crate::combat::DISORDER_TICKS;
+    }
+
     /// Give a move order. Routing regiments don't listen.
     pub fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
         let Some(i) = self.resolve(h) else {
