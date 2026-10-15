@@ -43,7 +43,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     settings_path: Option<PathBuf>,
     version: String,
     host: LobbySettings,
+    host_password: String,
     address: String,
+    join_password: String,
     selected_game: Option<usize>,
     message: Option<(String, bool)>,
     in_match: bool,
@@ -89,7 +91,9 @@ impl<N: Network> Menu<N> {
             settings_path,
             version: version.to_string(),
             host: LobbySettings::default(),
+            host_password: String::new(),
             address: String::new(),
+            join_password: String::new(),
             selected_game: None,
             message: None,
             in_match: false,
@@ -303,12 +307,15 @@ impl<N: Network> Menu<N> {
         if ui.stepper(s.next(sp(36)), "Tempo", &mut tempo, &tempo_names) {
             self.host.tempo = Tempo::ALL[tempo];
         }
+        let mut password = std::mem::take(&mut self.host_password);
+        ui.text_field(s.next(sp(36)), &mut password, 24, "Password (optional)");
+        self.host_password = password;
         s.skip(sp(8));
         let host_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
         let playable = self.host.mode.playable();
         if ui.button(host_btn, "Host", ButtonStyle::Primary, playable) {
             let me = self.profile();
-            match self.net.host(&me, self.host.clone()) {
+            match self.net.host(&me, self.host.clone(), &self.host_password) {
                 Ok(()) => self.go(ui, Screen::Lobby),
                 Err(e) => self.message = Some((e.to_string(), true)),
             }
@@ -342,7 +349,14 @@ impl<N: Network> Menu<N> {
             if ui.row(row, self.selected_game == Some(i)) {
                 self.selected_game = Some(i);
             }
-            let text = format!("{}  {}  {}/{}", g.host, g.map, g.players, g.max_players);
+            let text = format!(
+                "{}  {}  {}/{}{}",
+                g.host,
+                g.map,
+                g.players,
+                g.max_players,
+                if g.locked { "  (password)" } else { "" }
+            );
             let ty = row.y + (row.h - 16) / 2;
             ui.label(
                 row.x + 8,
@@ -362,6 +376,14 @@ impl<N: Network> Menu<N> {
             self.selected_game = None;
         }
         self.address = address;
+        let mut password = std::mem::take(&mut self.join_password);
+        ui.text_field(
+            s.next(sp(36)),
+            &mut password,
+            24,
+            "Password, if the host set one",
+        );
+        self.join_password = password;
         let join_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
         let target = match self.selected_game.and_then(|i| games.get(i)) {
             Some(g) => g.address.clone(),
@@ -369,7 +391,7 @@ impl<N: Network> Menu<N> {
         };
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
             let me = self.profile();
-            match self.net.join(&me, &target) {
+            match self.net.join(&me, &target, &self.join_password) {
                 Ok(()) => self.go(ui, Screen::Lobby),
                 Err(e) => self.message = Some((e.to_string(), true)),
             }
@@ -608,7 +630,17 @@ impl<N: Network> Menu<N> {
             me.faction.difficulty()
         );
         let footer_y = rows_top + 4 * (row_h + sp(8)) + sp(4);
-        ui.label(panel.x + 24, footer_y, 1, theme::MUTED, &hint);
+        let hint = match self.net.invite() {
+            Some(invite) => format!("{invite}   {hint}"),
+            None => hint,
+        };
+        ui.label(
+            panel.x + 24,
+            footer_y,
+            1,
+            theme::MUTED,
+            &fit(&hint, ((panel.w - 48) / 8) as usize),
+        );
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
         if let Some(why) = &blocker {

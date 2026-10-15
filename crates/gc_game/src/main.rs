@@ -808,11 +808,11 @@ impl App {
             if opts.host || opts.join.is_some() {
                 let me = r.menu.profile();
                 let result = match &opts.join {
-                    Some(addr) => r.menu.net().join(&me, addr),
+                    Some(addr) => r.menu.net().join(&me, addr, ""),
                     None => r
                         .menu
                         .net()
-                        .host(&me, gc_ui::lobby::LobbySettings::default()),
+                        .host(&me, gc_ui::lobby::LobbySettings::default(), ""),
                 };
                 match result {
                     Ok(()) => r.menu.show(Screen::Lobby),

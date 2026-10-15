@@ -103,7 +103,8 @@ impl Link {
         w.u8(0);
         let mut count = 0u8;
         for m in &self.out {
-            if w.buf.len() + m.len() + 2 > MAX_PACKET {
+            // Room is left for sealing the packet (crate::crypt).
+            if w.buf.len() + m.len() + 2 > MAX_PACKET - crate::crypt::OVERHEAD {
                 break;
             }
             w.bytes(m);
