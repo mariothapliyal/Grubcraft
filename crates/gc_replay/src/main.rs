@@ -265,12 +265,13 @@ fn compare(a: &Path, b: &Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(tick) => {
-            let turn = ra
-                .turns
-                .iter()
-                .zip(&rb.turns)
-                .find(|(x, y)| x != y)
-                .map(|(x, _)| x.0);
+            // The first tick, of those both played, either gave orders on
+            // that the other didn't give the same.
+            let played = ra.ticks.min(rb.ticks);
+            let turn = (ra.turns.iter().chain(&rb.turns))
+                .map(|&(t, _)| t)
+                .filter(|&t| t < played && ra.commands_at(t) != rb.commands_at(t))
+                .min();
             println!(
                 "differ  the worlds first disagree at tick {tick} ({}){}",
                 clock(tick),

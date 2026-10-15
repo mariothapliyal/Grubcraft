@@ -631,6 +631,8 @@ struct Recording {
 struct Watching {
     replay: gc_replay::Replay,
     title: String,
+    /// The unit stats to go back to afterwards.
+    stats_before: Vec<UnitStats>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -2193,7 +2195,10 @@ impl Running {
             self.step();
             let tick = self.world.tick_count();
             if tick.is_multiple_of(gc_net::HASH_EVERY) {
-                let hash = self.world.state_hash();
+                // The recording hashes as often, so it pins a desync's tick.
+                let hash = (self.recording.as_ref())
+                    .and_then(|r| r.recorder.hash_now())
+                    .unwrap_or_else(|| self.world.state_hash());
                 self.menu.net().record_hash(tick, hash);
             }
             // The computer players think on the host only; their orders
@@ -2302,18 +2307,23 @@ impl Running {
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
-                let list = replays::list(&replays::folder(), self.data_stats.len(), self.data_hash);
+                let list = replays::list(
+                    &replays::folder(),
+                    self.data_stats.len(),
+                    self.capacities,
+                    self.data_hash,
+                );
                 self.menu.set_replays(list);
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => match replays::unplayable(&r, self.data_stats.len()) {
+                Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
                     None => {
                         eprintln!("grubcraft: watching {}", path.display());
                         self.start_match(MatchKind::Replay(Box::new(r)));
                     }
-                    Some(why) => eprintln!("grubcraft: {}: {why}", path.display()),
+                    Some(why) => self.menu.tell(why),
                 },
-                Err(e) => eprintln!("grubcraft: {}: {e}", path.display()),
+                Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
                 eprintln!(
@@ -2350,9 +2360,12 @@ impl Running {
         self.save_recording();
         self.recording = None;
         // A replay played with its own unit table.
-        if self.watching.take().is_some() {
-            self.unit_stats.clone_from(&self.data_stats);
+        // A replay played with its own unit table; what was tuned before
+        // comes back.
+        if let Some(w) = self.watching.take() {
+            self.unit_stats = w.stats_before;
         }
+        let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
         let net_seed = match &kind {
@@ -2376,7 +2389,7 @@ impl Running {
             if r.seed != self.seed {
                 self.use_map(r.seed);
             }
-            self.unit_stats.clone_from(&r.units);
+            stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
         }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
@@ -2430,7 +2443,12 @@ impl Running {
                     &setup,
                     &self.world,
                     format!("{mode} on {map}, played {place}"),
-                ),
+                )
+                .checkpoint_every(if net_seed.is_some() {
+                    gc_net::HASH_EVERY
+                } else {
+                    gc_replay::CHECKPOINT_EVERY
+                }),
                 path: replays::new_path(&dir, replays::now(), mode),
                 saved_at: None,
             });
@@ -2459,7 +2477,7 @@ impl Running {
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         match kind {
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
-            MatchKind::Replay(r) => self.watch(*r),
+            MatchKind::Replay(r) => self.watch(*r, stats_before),
             MatchKind::Sandbox => {}
         }
         if let Some(note) = map_note {
@@ -2555,7 +2573,7 @@ impl Running {
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
     /// named as they were, the camera over the armies.
-    fn watch(&mut self, replay: gc_replay::Replay) {
+    fn watch(&mut self, replay: gc_replay::Replay, stats_before: Vec<UnitStats>) {
         let parties = replays::parties(&replay.header);
         if !parties.is_empty() {
             self.parties = parties;
@@ -2588,6 +2606,7 @@ impl Running {
         self.watching = Some(Watching {
             title: replays::title(&replay),
             replay,
+            stats_before,
         });
     }
 

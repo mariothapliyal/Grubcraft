@@ -145,6 +145,12 @@ impl<N: Network> Menu<N> {
         self.replay_page = 0;
     }
 
+    /// Show a problem on the current screen (the Replays screen shows why
+    /// a replay wouldn't open).
+    pub fn tell(&mut self, text: String) {
+        self.message = Some((text, true));
+    }
+
     /// The network the menus talk to.
     pub fn net(&mut self) -> &mut N {
         &mut self.net
@@ -991,6 +997,10 @@ impl<N: Network> Menu<N> {
             y += row_h + sp(8);
         }
         let btn_y = panel.bottom() - 52;
+        if let Some((text, _)) = &self.message {
+            let chars = ((panel.w - 48) / 8).max(8) as usize;
+            ui.label(panel.x + 24, btn_y - 26, 1, theme::BAD, &fit(text, chars));
+        }
         if pages > 1 {
             if ui.button(
                 Rect::new(panel.x + 24, btn_y, 120, 44),
@@ -1337,6 +1347,9 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(&h.last, MenuAction::WatchReplay(p) if p == &PathBuf::from("1.gcr")));
+        h.menu.tell("Can't open that replay".into());
+        h.frame(UiInput::default());
+        assert!(h.has("Can't open that replay"));
         h.key(|i| i.escape = true);
         assert_eq!(h.menu.screen(), Screen::Main);
     }

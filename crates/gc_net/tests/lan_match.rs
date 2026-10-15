@@ -114,7 +114,7 @@ fn machines(n: usize) -> (Vec<World>, Vec<Recorder>) {
     let worlds: Vec<World> = (0..n).map(|_| world()).collect();
     let recorders = worlds
         .iter()
-        .map(|w| Recorder::new(&SETUP, w, "LAN test"))
+        .map(|w| Recorder::new(&SETUP, w, "LAN test").checkpoint_every(HASH_EVERY))
         .collect();
     (worlds, recorders)
 }
@@ -224,8 +224,10 @@ impl Match {
                 {
                     self.recorders[i].tick(&mut self.worlds[i], &turn);
                     let tick = self.worlds[i].tick_count();
-                    let hash = self.worlds[i].state_hash();
-                    self.lans[i].record_hash(tick, hash);
+                    // The recorder hashes as often as the host compares.
+                    if let Some(hash) = self.recorders[i].hash_now() {
+                        self.lans[i].record_hash(tick, hash);
+                    }
                     self.order(i);
                 }
             }
@@ -480,7 +482,7 @@ fn a_desync_is_found_and_reported_everywhere() {
     assert_eq!(found, [50, 50], "{found:?}");
     // Their recordings, the desync reports, show where they parted.
     let (host, alex) = (m.recorders[0].replay(), m.recorders[1].replay());
-    assert_eq!(host.first_difference(alex), Some(60));
+    assert_eq!(host.first_difference(alex), Some(50));
 }
 
 #[test]

@@ -496,6 +496,8 @@ fn read_header(r: &mut Reader) -> Option<Header> {
 /// then run every tick through [`Recorder::tick`].
 pub struct Recorder {
     replay: Replay,
+    /// Ticks between state hashes ([`CHECKPOINT_EVERY`] unless set).
+    every: u32,
 }
 
 impl Recorder {
@@ -526,7 +528,25 @@ impl Recorder {
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
             },
+            every: CHECKPOINT_EVERY,
         }
+    }
+
+    /// Keep a state hash every `ticks` ticks instead, such as as often as a
+    /// network match compares them, so a desync report pins the tick.
+    #[must_use]
+    pub fn checkpoint_every(mut self, ticks: u32) -> Recorder {
+        self.every = ticks.max(1);
+        self
+    }
+
+    /// The state hash taken after the last tick, if one was.
+    pub fn hash_now(&self) -> Option<u64> {
+        self.replay
+            .checkpoints
+            .last()
+            .filter(|&&(t, _)| t == self.replay.ticks)
+            .map(|&(_, h)| h)
     }
 
     /// Advance `world` one tick with `commands`, recording them.
@@ -539,7 +559,7 @@ impl Recorder {
         }
         let stats = world.tick(commands);
         self.replay.ticks += 1;
-        if self.replay.ticks.is_multiple_of(CHECKPOINT_EVERY) {
+        if self.replay.ticks.is_multiple_of(self.every) {
             self.replay
                 .checkpoints
                 .push((self.replay.ticks, world.state_hash()));

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gc_replay::{EXTENSION, Header, Player, Replay};
-use gc_sim::TICKS_PER_SECOND;
+use gc_sim::{Capacities, TICKS_PER_SECOND};
 use gc_ui::ReplayEntry;
 
 use crate::battle::Party;
@@ -65,9 +65,21 @@ pub fn date_time(secs: u64) -> String {
 
 /// Where to save a new recording made at `secs`: the date and time come
 /// first, so the newest sorts last.
+/// Never one already there: a second recording in the same second gets a
+/// number.
 pub fn new_path(dir: &Path, secs: u64, what: &str) -> PathBuf {
-    let stamp = date_time(secs).replace(':', "-");
-    dir.join(format!("{stamp}-{:02} {what}.{EXTENSION}", secs % 60))
+    let stamp = format!(
+        "{}-{:02} {what}",
+        date_time(secs).replace(':', "-"),
+        secs % 60
+    );
+    (1..)
+        .map(|n| match n {
+            1 => dir.join(format!("{stamp}.{EXTENSION}")),
+            n => dir.join(format!("{stamp} {n}.{EXTENSION}")),
+        })
+        .find(|p| !p.exists())
+        .expect("a free name")
 }
 
 /// Save `replay` to `path`, making its folder.
@@ -142,16 +154,26 @@ pub fn title(replay: &Replay) -> String {
 
 /// Why this build can't show `replay`, if it can't: unit ids name entries
 /// in the game's unit table, so a table of another size names other
-/// regiments.
-pub fn unplayable(replay: &Replay, unit_types: usize) -> Option<String> {
-    (replay.units.len() != unit_types)
-        .then(|| "Made with other unit data: this build can't show it".into())
+/// regiments, and the game draws no more regiments than its capacity.
+pub fn unplayable(replay: &Replay, unit_types: usize, capacity: Capacities) -> Option<String> {
+    if replay.units.len() != unit_types {
+        Some("Made with other unit data: this build can't show it".into())
+    } else if replay.regiments > capacity.regiments {
+        Some("Too many regiments for this build to show".into())
+    } else {
+        None
+    }
 }
 
 /// The saved replays in `dir`, newest first, as the Replays screen lists
 /// them. One this build can't show (another format, or a unit table of a
 /// different size, so its unit ids name other regiments) says why.
-pub fn list(dir: &Path, unit_types: usize, data_hash: u64) -> Vec<ReplayEntry> {
+pub fn list(
+    dir: &Path,
+    unit_types: usize,
+    capacity: Capacities,
+    data_hash: u64,
+) -> Vec<ReplayEntry> {
     files(dir)
         .into_iter()
         .rev()
@@ -172,7 +194,7 @@ pub fn list(dir: &Path, unit_types: usize, data_hash: u64) -> Vec<ReplayEntry> {
                     ReplayEntry {
                         title: title(&r),
                         detail,
-                        unplayable: unplayable(&r, unit_types),
+                        unplayable: unplayable(&r, unit_types, capacity),
                         path,
                     }
                 }
@@ -236,9 +258,12 @@ mod tests {
         for s in 0..5 {
             save(&replay, &new_path(&dir, 1_792_101_000 + s, "Field Battle")).unwrap();
         }
+        // A second recording in the same second gets its own name.
+        let again = new_path(&dir, 1_792_101_004, "Field Battle");
+        assert!(again.ends_with("2026-10-15 21-50-04 Field Battle 2.gcr"));
         std::fs::write(dir.join("junk.gcr"), b"not a replay").unwrap();
         prune(&dir, 3);
-        let listed = list(&dir, units.len(), 0);
+        let listed = list(&dir, units.len(), Capacities::default(), 0);
         assert_eq!(listed.len(), 3, "{listed:?}");
         // "junk" sorts after the dates, so it is the newest.
         assert!(listed[0].unplayable.is_some());
@@ -250,7 +275,7 @@ mod tests {
         );
         assert!(listed[1].unplayable.is_none());
         assert_eq!(
-            list(&dir, units.len() + 1, 0)[1]
+            list(&dir, units.len() + 1, Capacities::default(), 0)[1]
                 .unplayable
                 .as_deref()
                 .map(|s| &s[..10]),
