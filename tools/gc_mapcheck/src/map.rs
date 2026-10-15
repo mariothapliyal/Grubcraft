@@ -322,18 +322,21 @@ fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
         } else {
             def.symmetry.copies() as u32
         };
+        let mut spots: Vec<Pos> = Vec::new();
         for k in 0..copies {
             let at = turn_tile(o.at, tiles, k * turns);
+            // A tile that turns onto itself (or a copy of it) is kept once.
+            if spots.contains(&at) {
+                continue;
+            }
+            spots.push(at);
             // Each copy belongs to the next player round.
             let owner = o.owner.map(|p| (p + k as u8) % def.players);
-            // An object that turns onto itself is kept once.
-            if !out.iter().any(|p| p.kind == o.kind && p.at == at) {
-                out.push(Placed {
-                    kind: o.kind,
-                    at,
-                    owner,
-                });
-            }
+            out.push(Placed {
+                kind: o.kind,
+                at,
+                owner,
+            });
         }
     }
     out

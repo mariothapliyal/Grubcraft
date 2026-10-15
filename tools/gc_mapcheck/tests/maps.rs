@@ -166,10 +166,21 @@ fn objects_must_be_unique_where_the_rules_say() {
 #[test]
 fn a_cut_off_stretch_of_land_is_an_error() {
     // A ring of cliffs round a wide meadow nobody can reach.
+    let ring: String = [
+        ((4, 88), (28, 88)),
+        ((28, 88), (28, 112)),
+        ((28, 112), (4, 112)),
+        ((4, 112), (4, 88)),
+    ]
+    .iter()
+    .map(|((ax, ay), (bx, by))| {
+        format!("(shape: Line(a: ({ax}, {ay}), b: ({bx}, {by}), half_width: 1), mode: Raise, height: 140, edge: 0),\n        ")
+    })
+    .collect();
     let text = edited(
         "ribcage_pass.ron",
         "// The ford.",
-        "(shape: Disc(at: (100, 100), r: 12), mode: Set, height: 48, edge: 0),\n        (shape: Disc(at: (100, 100), r: 16), mode: Lower, height: 40, edge: 0),\n        (shape: Line(a: (84, 84), b: (116, 84), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (116, 84), b: (116, 116), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (116, 116), b: (84, 116), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (84, 116), b: (84, 84), half_width: 1), mode: Raise, height: 140, edge: 1),\n        // The ford.",
+        &format!("{ring}// The ford."),
     );
     let e = errors_of(&text);
     assert!(e.iter().any(|m| m.contains("can't be reached")), "{e:?}");

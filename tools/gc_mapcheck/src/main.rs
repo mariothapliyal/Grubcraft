@@ -25,9 +25,14 @@ fn files(args: &[String]) -> Vec<PathBuf> {
     };
     for root in roots {
         if root.is_dir() {
-            let mut found: Vec<PathBuf> = std::fs::read_dir(&root)
-                .into_iter()
-                .flatten()
+            let entries = match std::fs::read_dir(&root) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("{}: {e}", root.display());
+                    continue;
+                }
+            };
+            let mut found: Vec<PathBuf> = entries
                 .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.extension().is_some_and(|e| e == "ron"))

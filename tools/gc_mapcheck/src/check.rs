@@ -67,7 +67,7 @@ pub fn check(def: &MapDef) -> Report {
     }
 
     placement(&map, &walk, &mut r);
-    if !counts(&map, &mut r) {
+    if !r.ok() || !counts(&map, &mut r) {
         return r;
     }
 
@@ -102,6 +102,17 @@ fn header(def: &MapDef, r: &mut Report) -> bool {
             r.err(format!("{s:?} symmetry doesn't fit {n} players"));
             ok = false;
         }
+    }
+    if let Some(o) = def
+        .objects
+        .iter()
+        .find(|o| o.owner.is_some_and(|p| p >= def.players))
+    {
+        r.err(format!(
+            "{:?} at {:?} belongs to player {:?}, but there are {}",
+            o.kind, o.at, o.owner, def.players
+        ));
+        ok = false;
     }
     if def.water < 0 {
         r.err("the water line is below zero");
@@ -387,10 +398,10 @@ fn nearest(map: &Map, s: &Search, kinds: &[Kind], unowned_only: bool, k: usize) 
 
 fn spread(values: &[u32]) -> u32 {
     let (lo, hi) = (
-        values.iter().min().copied().unwrap_or(0),
-        values.iter().max().copied().unwrap_or(0),
+        values.iter().min().copied().unwrap_or(0) as u64,
+        values.iter().max().copied().unwrap_or(0) as u64,
     );
-    ((hi - lo) * 100).checked_div(hi).unwrap_or(0)
+    ((hi - lo) * 100).checked_div(hi).unwrap_or(0) as u32
 }
 
 /// Note one number per player, and make it an error if they differ too much.
@@ -462,25 +473,31 @@ const MINUTES: [u32; 3] = [5, 10, 15];
 /// fresh seep holds 7,500 and a vein 3,000. Meant to be replaced by the real
 /// economy in the sim when M3 lands.
 fn income(map: &Map, s: &Search, player: u8) -> [u32; 3] {
-    let mut nodes: Vec<(u32, bool)> = map
+    let start = map.start_of(player).unwrap();
+    // (walk cost, in the base area, is a vein), nearest first.
+    let mut nodes: Vec<(u32, bool, bool)> = map
         .objects
         .iter()
         .filter(|o| matches!(o.kind, Kind::GrubSeep | Kind::MarrowVein))
         .filter(|o| o.owner.is_none_or(|w| w == player))
-        .filter_map(|o| s.to_object(o.at).map(|d| (d, o.kind == Kind::MarrowVein)))
+        .filter_map(|o| {
+            let near = euclid(o.at, start) <= BASE_AREA;
+            s.to_object(o.at)
+                .map(|d| (d, near, o.kind == Kind::MarrowVein))
+        })
         .collect();
     nodes.sort_unstable();
     // Per node: when it comes online (seconds), its yield per second and its stock.
+    let mut expansions = 0.0;
     let nodes: Vec<(f64, f64, f64)> = nodes
         .iter()
-        .enumerate()
-        .map(|(rank, &(d, vein))| {
+        .map(|&(d, near, vein)| {
             let tiles = d as f64 / 10.0;
-            let near = tiles <= BASE_AREA as f64;
             let online = if near {
                 60.0
             } else {
-                60.0 + 120.0 * (rank as f64 - 2.0).max(1.0) + tiles * 0.8
+                expansions += 1.0;
+                60.0 + 120.0 * expansions + tiles * 0.8
             };
             // Base nodes feed a hall some way off; expansions get their own.
             let eff = if near {
