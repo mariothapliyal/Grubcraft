@@ -145,12 +145,12 @@ impl Link {
         w.var(self.received);
         w.var(self.acked + skip as u64);
         let count_at = w.buf.len();
-        // Room for the count byte; fewer than 128 messages ever fit.
+        // Room for the count byte: at most 255 messages a packet.
         w.u8(0);
         let mut count = 0u8;
         for m in self.out.iter().skip(skip) {
             // Room is left for sealing the packet.
-            if w.buf.len() + m.len() + 2 > MAX_PACKET - OVERHEAD {
+            if count == u8::MAX || w.buf.len() + m.len() + 2 > MAX_PACKET - OVERHEAD {
                 break;
             }
             w.bytes(m);
@@ -334,6 +334,28 @@ mod tests {
         assert_eq!(a.backlog(), 0);
         // With nothing waiting, a burst is the one keepalive packet.
         assert_eq!(a.packets(t0, 64).len(), 1);
+    }
+
+    #[test]
+    fn a_packet_holds_at_most_255_tiny_messages() {
+        // A rejoin's history is mostly empty turns, a few bytes each.
+        let t0 = Instant::now();
+        let mut a = Link::new(t0);
+        let mut b = Link::new(t0);
+        let turns: Vec<Msg> = (0..2000)
+            .map(|turn| Msg::Bundle {
+                turn,
+                commands: Vec::new(),
+            })
+            .collect();
+        for m in &turns {
+            a.send(m);
+        }
+        let mut got = Vec::new();
+        for p in a.packets(t0, 64) {
+            got.extend(deliver(&p, &mut b, t0));
+        }
+        assert_eq!(got, turns);
     }
 
     #[test]
