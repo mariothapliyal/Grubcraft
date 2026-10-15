@@ -24,6 +24,7 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCEN
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
 use crate::terrain::Terrain;
+use crate::vision::Vision;
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
@@ -292,6 +293,12 @@ impl Combat {
                 impact_tick: v.impact[i],
                 shots: v.shots[i],
             })
+    }
+
+    /// The radius of the biggest block on the field at the start of this
+    /// tick (the circle that holds it).
+    pub(crate) fn max_radius(&self) -> Fx {
+        self.max_radius
     }
 
     fn bucket_of(cx: i32, cy: i32) -> usize {
@@ -670,12 +677,14 @@ impl Combat {
     }
 
     /// Blows, volleys and deaths, after everyone has moved this tick.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn after_move(
         &mut self,
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        vision: &Vision,
         tick: u32,
         rng: &mut Pcg32,
     ) {
@@ -709,7 +718,7 @@ impl Combat {
                 100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
             let heart = heart_percent(regs.morale_state[i]);
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
-            let expected = fighters
+            let mut expected = fighters
                 * hit
                 * attacker.melee_damage as u64
                 * side.damage_percent()
@@ -719,6 +728,11 @@ impl Combat {
                 / (100 * 100 * 100 * 100)
                 * ground
                 / 100;
+            // Caught off guard by an ambush.
+            let guard = vision.blow_percent(i);
+            if guard != 100 {
+                expected = expected * guard / 100;
+            }
             deal(regs, units, j, expected, side, rng);
         }
 
@@ -736,7 +750,7 @@ impl Combat {
             {
                 continue;
             }
-            let Some(j) = self.pick_target(regs, stances, terrain, i, stats.range) else {
+            let Some(j) = self.pick_target(regs, stances, terrain, vision, i, stats.range) else {
                 continue;
             };
             let to = regs.position[j] - regs.position[i];
@@ -809,17 +823,24 @@ impl Combat {
         }
     }
 
+    /// The enemy a ranged regiment shoots: the one it was told to attack if
+    /// in range, else the nearest in range. Only enemies its side can see;
+    /// and while hidden from an enemy, it holds its fire at that enemy
+    /// unless ordered to shoot it (docs/20-ambushes.md).
     fn pick_target(
         &self,
         regs: &Regiments,
         stances: &Stances,
         terrain: &Terrain,
+        vision: &Vision,
         i: usize,
         range: Fx,
     ) -> Option<usize> {
         let me = regs.position[i];
+        let owner = regs.owner[i];
         if let Some(j) = regs.attack_target[i].and_then(|t| regs.resolve(t))
             && (regs.position[j] - me).length() <= terrain.range(range, me, regs.position[j])
+            && vision.sees(owner, j, regs.owner[j])
         {
             return Some(j);
         }
@@ -830,8 +851,12 @@ impl Combat {
         } else {
             Terrain::range_from_high_ground(range)
         };
-        self.near_enemies(me, reach, regs.owner[i], |j| {
-            if !regs.alive[j] || !stances.hostile(regs.owner[i], regs.owner[j]) {
+        self.near_enemies(me, reach, owner, |j| {
+            if !regs.alive[j]
+                || !stances.hostile(owner, regs.owner[j])
+                || !vision.sees(owner, j, regs.owner[j])
+                || vision.hidden_from(i, owner, regs.owner[j])
+            {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();

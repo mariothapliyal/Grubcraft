@@ -644,6 +644,7 @@ impl App {
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let (heights, water_level) = tagged_alloc::scope(Tag::Map, || heightmap.sim_ground());
+        let cover = tagged_alloc::scope(Tag::Map, || heightmap.cover());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
@@ -657,6 +658,7 @@ impl App {
                     ground: gc_sim::Ground {
                         heights: &heights,
                         water_level,
+                        cover: &cover,
                     },
                 }),
                 vec![None; capacities.regiments as usize],
@@ -1912,6 +1914,7 @@ impl Running {
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
         let (heights, water_level) = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_ground());
+        let cover = tagged_alloc::scope(Tag::Map, || self.heightmap.cover());
         let teams: Vec<u8> = match &kind {
             MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
             _ => Vec::new(),
@@ -1927,6 +1930,7 @@ impl Running {
                 ground: gc_sim::Ground {
                     heights: &heights,
                     water_level,
+                    cover: &cover,
                 },
             })
         });

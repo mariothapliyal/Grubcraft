@@ -24,6 +24,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::combat::{Combat, Placement, Whose};
 use crate::regiments::Regiments;
+use crate::vision::Vision;
 use crate::{RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
@@ -112,6 +113,7 @@ pub(crate) fn update(
     combat: &Combat,
     units: &[UnitStats],
     stances: &Stances,
+    vision: &Vision,
     tick: u32,
     map_tiles: u32,
 ) {
@@ -126,7 +128,7 @@ pub(crate) fn update(
             if regs.morale_state[i].broken() {
                 flee(regs, combat, stances, i, map_tiles);
             } else {
-                check(regs, combat, stances, stats, i, tick, map_tiles);
+                check(regs, combat, stances, vision, stats, i, tick, map_tiles);
             }
         }
         regs.losses[i] = 0;
@@ -135,10 +137,12 @@ pub(crate) fn update(
 }
 
 /// The once-a-second check for a regiment that is still in the fight.
+#[allow(clippy::too_many_arguments)]
 fn check(
     regs: &mut Regiments,
     combat: &Combat,
     stances: &Stances,
+    vision: &Vision,
     stats: &UnitStats,
     i: usize,
     tick: u32,
@@ -155,7 +159,7 @@ fn check(
         if (regs.models[i] as i32) * 2 < full {
             tenths -= (HALF_STRENGTH_DRAIN * SCALE) as i32;
         }
-        let (friends, enemies) = local_strength(regs, combat, stances, i);
+        let (friends, enemies) = local_strength(regs, combat, stances, vision, i);
         if enemies >= friends.max(1) * 3 {
             tenths -= (OUTNUMBERED_3 * SCALE) as i32;
         } else if enemies >= friends.max(1) * 2 {
@@ -185,7 +189,14 @@ fn steady_or_wavering(morale: i16) -> MoraleState {
 }
 
 /// Soldiers still fighting near regiment `i`: (its side's, the enemy's).
-fn local_strength(regs: &Regiments, combat: &Combat, stances: &Stances, i: usize) -> (u32, u32) {
+/// Enemies its side can't see don't count.
+fn local_strength(
+    regs: &Regiments,
+    combat: &Combat,
+    stances: &Stances,
+    vision: &Vision,
+    i: usize,
+) -> (u32, u32) {
     let at = placement!(regs, stances);
     let (p, owner, local) = (regs.position[i], regs.owner[i], Fx::from_int(LOCAL_TILES));
     let (mut friends, mut enemies) = (0u32, 0u32);
@@ -195,11 +206,22 @@ fn local_strength(regs: &Regiments, combat: &Combat, stances: &Stances, i: usize
         }
     });
     combat.each_near(&at, p, local, Whose::Enemies(owner), |j| {
-        if !regs.morale_state[j].broken() {
+        if !regs.morale_state[j].broken() && vision.sees(owner, j, regs.owner[j]) {
             enemies += regs.models[j] as u32;
         }
     });
     (friends, enemies)
+}
+
+/// Regiment `i` loses `points` of morale at once (an ambush), down to no
+/// less than a tenth of a point: its own next check decides whether it
+/// breaks. Routers and regiments that never rout are left alone.
+pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
+    if regs.morale_state[i].broken() || regs.morale[i] <= 0 {
+        return;
+    }
+    regs.morale[i] = (regs.morale[i] - points * SCALE).max(1);
+    regs.morale_state[i] = steady_or_wavering(regs.morale[i]);
 }
 
 /// Regiment `i` breaks and runs.
