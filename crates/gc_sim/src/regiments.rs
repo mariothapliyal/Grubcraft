@@ -285,6 +285,14 @@ impl Regiments {
         true
     }
 
+    /// The handle of the regiment in slot `i`.
+    pub(crate) fn handle(&self, i: usize) -> RegimentHandle {
+        RegimentHandle {
+            index: i as u32,
+            generation: self.generation[i],
+        }
+    }
+
     pub(crate) fn resolve(&self, h: RegimentHandle) -> Option<usize> {
         let i = h.index as usize;
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)

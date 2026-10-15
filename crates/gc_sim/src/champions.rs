@@ -24,13 +24,15 @@
 //! the duel is abandoned, also without effect. The armies are never held
 //! back: a challenge is a moment in the battle, not a pause in it.
 
+use alloc::vec::Vec;
+
 use gc_fixed::{Fx, FxVec2, Pcg32};
 
 use crate::combat::hit_percent;
 use crate::morale::{self, SCALE};
 use crate::regiments::{Regiments, hash_handle};
 use crate::vision::Vision;
-use crate::{RegimentHandle, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
+use crate::{PlayerId, RegimentHandle, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Hostile regiments this close (centre to centre, in tiles) call out
 /// champions, if they are going to: far enough out that the duel is
@@ -43,7 +45,7 @@ pub const CHANCE_PERCENT: u32 = 50;
 const PICK_TILES: i32 = 25;
 /// Champions run out at this many tiles per second, and take at least
 /// [`MIN_WALK_TICKS`] and at most [`MAX_WALK_TICKS`] to meet.
-const PACE_TILES: i64 = 5;
+const PACE: Fx = Fx::from_int(5);
 const MIN_WALK_TICKS: u32 = 2 * TICKS_PER_SECOND;
 const MAX_WALK_TICKS: u32 = 8 * TICKS_PER_SECOND;
 /// Ticks per beat: one champion swings each beat, in turn.
@@ -80,11 +82,32 @@ pub struct Challenge {
     pub abandoned: Option<u32>,
 }
 
+/// How a duel stands at a given tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Fighting,
+    /// A champion's regiment was drawn into the battle, broke or was
+    /// destroyed first.
+    CutShort,
+    /// Champion `winner` (0 or 1) killed the other.
+    Killed {
+        winner: u8,
+    },
+    /// Nobody fell and they went back to their lines.
+    Parted,
+}
+
+/// Whether the man who swings on `beat` is still reeling from a blow that
+/// landed on the beat before, and loses his swing.
+fn reeling(landed: u32, beat: u8) -> bool {
+    beat > 0 && landed & (1 << (beat - 1)) != 0
+}
+
 impl Challenge {
     /// Whether champion `beat % 2` swings on `beat`: he does unless the blow
     /// of the beat before landed on him.
     pub fn swings(&self, beat: u8) -> bool {
-        beat < self.beats && (beat == 0 || self.landed & (1 << (beat - 1)) == 0)
+        beat < self.beats && !reeling(self.landed, beat)
     }
 
     /// Whether the swing of `beat` landed.
@@ -106,30 +129,42 @@ impl Challenge {
         }
     }
 
-    /// Whether the duel is still being fought at `tick`.
-    pub fn fighting(&self, tick: u32) -> bool {
-        self.abandoned.is_none() && tick < self.ends()
+    /// Tick the duel ended, cut short or not.
+    pub fn decided(&self) -> u32 {
+        self.abandoned.unwrap_or(self.ends())
+    }
+
+    /// How the duel stands at `tick`.
+    pub fn outcome(&self, tick: u32) -> Outcome {
+        match (self.abandoned, self.winner) {
+            (Some(_), _) => Outcome::CutShort,
+            _ if tick < self.ends() => Outcome::Fighting,
+            (None, Some(winner)) => Outcome::Killed { winner },
+            (None, None) => Outcome::Parted,
+        }
     }
 }
 
-/// The match's champions: whether it allows them, and the one challenge
-/// it may have.
+/// The champions of a match that allows them, and the one challenge it
+/// may have.
 pub(crate) struct Champions {
-    allowed: bool,
     /// The chance has been rolled (once a battle), whether or not they came
     /// out.
     rolled: bool,
     rng: Pcg32,
     challenge: Option<Challenge>,
+    /// Scratch for [`Champions::look`]: regiments near an enemy's ground,
+    /// allocated once.
+    near: Vec<u16>,
 }
 
 impl Champions {
-    pub(crate) fn new(allowed: bool, rng: Pcg32) -> Champions {
+    pub(crate) fn new(regiments: u32, rng: Pcg32) -> Champions {
         Champions {
-            allowed,
             rolled: false,
             rng,
             challenge: None,
+            near: Vec::with_capacity(regiments as usize),
         }
     }
 
@@ -148,9 +183,6 @@ impl Champions {
         vision: &Vision,
         tick: u32,
     ) {
-        if !self.allowed {
-            return;
-        }
         if !self.rolled {
             if tick.is_multiple_of(TICKS_PER_SECOND) {
                 self.look(regs, units, stances, vision, tick);
@@ -188,28 +220,7 @@ impl Champions {
         vision: &Vision,
         tick: u32,
     ) {
-        let reach = Fx::from_int(CALL_TILES).raw() as u64;
-        let mut nearest: Option<(u64, usize, usize)> = None;
-        for a in 0..regs.alive.len() {
-            if !regs.alive[a] || regs.morale_state[a].broken() {
-                continue;
-            }
-            for b in a + 1..regs.alive.len() {
-                if !regs.alive[b]
-                    || regs.morale_state[b].broken()
-                    || !stances.hostile(regs.owner[a], regs.owner[b])
-                    || !vision.sees(regs.owner[a], b, regs.owner[b])
-                    || !vision.sees(regs.owner[b], a, regs.owner[a])
-                {
-                    continue;
-                }
-                let d = (regs.position[a] - regs.position[b]).length_sq_raw();
-                if d <= reach * reach && nearest.is_none_or(|(best, _, _)| d < best) {
-                    nearest = Some((d, a, b));
-                }
-            }
-        }
-        let Some((_, a, b)) = nearest else {
+        let Some((a, b)) = self.nearest_pair(regs, stances, vision) else {
             return;
         };
         self.rolled = true;
@@ -222,22 +233,19 @@ impl Champions {
         ) else {
             return;
         };
+        let (px, py) = (regs.position[x], regs.position[y]);
         let spot = FxVec2::new(
-            Fx::from_raw(midpoint(regs.position[x].x.raw(), regs.position[y].x.raw())),
-            Fx::from_raw(midpoint(regs.position[x].y.raw(), regs.position[y].y.raw())),
+            Fx::from_raw(px.x.raw().midpoint(py.x.raw())),
+            Fx::from_raw(px.y.raw().midpoint(py.y.raw())),
         );
         // Ticks for the champion further from the spot to run there.
-        let far = (regs.position[x] - spot).length().raw() as i64;
-        let walk = (far * TICKS_PER_SECOND as i64 / (PACE_TILES << 16)) as u32;
+        let far = (px - spot).length().raw() as i64;
+        let walk = (far * TICKS_PER_SECOND as i64 / PACE.raw() as i64) as u32;
         let stats = |i: usize| &units[regs.unit[i] as usize];
         let fighters = [stats(x), stats(y)];
         let (beats, landed, winner) = duel(fighters, &mut self.rng);
-        let handle = |i: usize| RegimentHandle {
-            index: i as u32,
-            generation: regs.generation[i],
-        };
         self.challenge = Some(Challenge {
-            champions: [handle(x), handle(y)],
+            champions: [regs.handle(x), regs.handle(y)],
             spot,
             called: tick,
             meet: tick + walk.clamp(MIN_WALK_TICKS, MAX_WALK_TICKS),
@@ -248,12 +256,72 @@ impl Champions {
         });
     }
 
-    pub(crate) fn hash_into(&self, h: &mut StateHasher) {
-        // Only in matches that allow champions, so other worlds hash as
-        // they did before champions existed.
-        if !self.allowed {
-            return;
+    /// The closest two hostile regiments, neither running, that see each
+    /// other within [`CALL_TILES`]. Only regiments that close to an enemy
+    /// party's ground (the box around its regiments) are paired up, so
+    /// armies still far apart cost one pass over the regiments.
+    fn nearest_pair(
+        &mut self,
+        regs: &Regiments,
+        stances: &Stances,
+        vision: &Vision,
+    ) -> Option<(usize, usize)> {
+        let reach = Fx::from_int(CALL_TILES).raw() as i64;
+        let ready = |i: usize| regs.alive[i] && !regs.morale_state[i].broken();
+        // Each party's ground, (least x, least y, most x, most y) raw, and
+        // the parties with regiments ready.
+        let mut ground = [(i32::MAX, i32::MAX, i32::MIN, i32::MIN); 256];
+        let (mut parties, mut count) = ([0 as PlayerId; 256], 0);
+        for i in (0..regs.alive.len()).filter(|&i| ready(i)) {
+            let (p, g) = (regs.position[i], &mut ground[regs.owner[i] as usize]);
+            if g.0 == i32::MAX {
+                parties[count] = regs.owner[i];
+                count += 1;
+            }
+            *g = (
+                g.0.min(p.x.raw()),
+                g.1.min(p.y.raw()),
+                g.2.max(p.x.raw()),
+                g.3.max(p.y.raw()),
+            );
         }
+        let near_enemy = |i: usize| {
+            let (x, y) = (regs.position[i].x.raw(), regs.position[i].y.raw());
+            parties[..count].iter().any(|&o| {
+                let g = ground[o as usize];
+                let dx = (g.0 - x).max(x - g.2).max(0) as i64;
+                let dy = (g.1 - y).max(y - g.3).max(0) as i64;
+                stances.hostile(regs.owner[i], o) && dx * dx + dy * dy <= reach * reach
+            })
+        };
+        self.near.clear();
+        self.near.extend(
+            (0..regs.alive.len())
+                .filter(|&i| ready(i) && near_enemy(i))
+                .map(|i| i as u16),
+        );
+        let reach = (reach * reach) as u64;
+        let mut nearest: Option<(u64, usize, usize)> = None;
+        for (k, &a) in self.near.iter().enumerate() {
+            let a = a as usize;
+            for &b in &self.near[k + 1..] {
+                let b = b as usize;
+                let d = (regs.position[a] - regs.position[b]).length_sq_raw();
+                if d > reach
+                    || nearest.is_some_and(|(best, _, _)| d >= best)
+                    || !stances.hostile(regs.owner[a], regs.owner[b])
+                    || !vision.sees(regs.owner[a], b, regs.owner[b])
+                    || !vision.sees(regs.owner[b], a, regs.owner[a])
+                {
+                    continue;
+                }
+                nearest = Some((d, a, b));
+            }
+        }
+        nearest.map(|(_, a, b)| (a, b))
+    }
+
+    pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         h.u8(self.rolled as u8);
         let (state, inc) = self.rng.raw_state();
         h.u64(state);
@@ -276,10 +344,6 @@ impl Champions {
             None => h.u8(0),
         }
     }
-}
-
-fn midpoint(a: i32, b: i32) -> i32 {
-    ((a as i64 + b as i64) / 2) as i32
 }
 
 /// The regiment that sends out the champion for the side of regiment `a`:
@@ -327,8 +391,7 @@ fn duel(fighters: [&UnitStats; 2], rng: &mut Pcg32) -> (u8, u32, Option<u8>) {
     let mut landed = 0u32;
     for beat in 0..MAX_BEATS {
         let s = (beat % 2) as usize;
-        if beat > 0 && landed & (1 << (beat - 1)) != 0 {
-            // Still reeling from the last blow: he loses this swing.
+        if reeling(landed, beat) {
             continue;
         }
         let (me, them) = (fighters[s], fighters[1 - s]);
@@ -352,25 +415,20 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
         return;
     };
     let (winners, losers) = (regs.owner[w], regs.owner[l]);
-    let points = HEART * SCALE;
     for i in 0..regs.alive.len() {
         if !regs.alive[i] {
             continue;
         }
-        let change = if !stances.hostile(winners, regs.owner[i]) {
-            points
+        let points = if !stances.hostile(winners, regs.owner[i]) {
+            HEART
         } else if !stances.hostile(losers, regs.owner[i]) {
-            -points
+            -HEART
         } else {
             continue;
         };
-        regs.morale_bonus[i] = regs.morale_bonus[i].saturating_add(change);
-        if !regs.morale_state[i].broken() && regs.morale[i] > 0 {
-            // A gain may go above the ceiling until the regiment's next
-            // check, which uses the new one.
-            regs.morale[i] = regs.morale[i].saturating_add(change).max(1);
-            regs.morale_state[i] = morale::steady_or_wavering(regs.morale[i]);
-        }
+        // The ceiling moves for the rest of the battle; morale moves now.
+        regs.morale_bonus[i] = regs.morale_bonus[i].saturating_add(points * SCALE);
+        morale::shift(regs, i, points);
     }
     let last = regs.models[l] as usize - 1;
     let hp = regs.hp[l * crate::formation::MAX_MODELS as usize + last];

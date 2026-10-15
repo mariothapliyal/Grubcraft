@@ -1303,7 +1303,7 @@ impl Captain {
             }
             let behind_water = self.river.is_some() && !self.crossing;
             // Champions are fighting between the lines: stand and watch.
-            let watching = view.champions_fighting();
+            let watching = view.champions_fighting;
             let advance = if behind_water || watching {
                 false
             } else if only_archers {

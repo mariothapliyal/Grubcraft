@@ -249,7 +249,7 @@ impl Replay {
         }
         w.var(self.water_level as u64);
         w.bytes(&self.cover);
-        w.var(self.champions as u64);
+        w.bool(self.champions);
         w.var(self.ticks as u64);
         w.var(self.turns.len() as u64);
         let mut prev = 0;
@@ -332,14 +332,7 @@ impl Replay {
         if !cover.is_empty() && cover.len() != (map_tiles as usize).pow(2) {
             return None;
         }
-        let champions = match format {
-            2 | 3 => false,
-            _ => match r.var_as::<u8>()? {
-                0 => false,
-                1 => true,
-                _ => return None,
-            },
-        };
+        let champions = format >= 4 && r.bool()?;
         let ticks = r.var_as()?;
         let n: usize = r.var_as()?;
         let mut turns = Vec::with_capacity(n.min(r.remaining()));

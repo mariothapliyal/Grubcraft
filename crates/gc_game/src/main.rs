@@ -1589,6 +1589,7 @@ impl Running {
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
+        // The simulation's time, in ticks, interpolated as the regiments are.
         let now = world.tick_count() as f32 - 1.0 + alpha;
         self.puppets.champions(world.challenge(), now);
         let marked = self
@@ -1802,7 +1803,7 @@ impl Running {
         if let Some(art) = &mut self.art {
             art.finish();
         }
-        self.push_arrows(alpha);
+        self.push_arrows(now);
         self.push_routes();
         if self.lens && !self.minds.is_empty() {
             let lenses = lens::lenses(&self.minds);
@@ -2295,11 +2296,10 @@ impl Running {
     /// How the battle ended, once it has, and news of the champions.
     fn battle_news(&self) -> Option<String> {
         let battle = self.battle.as_ref()?;
-        let lines: Vec<&str> = [&battle.outcome, &battle.champions]
-            .into_iter()
-            .filter_map(|l| l.as_deref())
-            .collect();
-        (!lines.is_empty()).then(|| lines.join("\n"))
+        match (&battle.outcome, &battle.champions) {
+            (Some(o), Some(c)) => Some(format!("{o}\n{c}")),
+            (o, c) => o.clone().or_else(|| c.clone()),
+        }
     }
 
     /// Once one side alone has held the field long enough, say who won.
@@ -2404,9 +2404,9 @@ impl Running {
     }
 
     /// Volleys in flight: a few arrows each, arcing from the archers to where
-    /// they aimed. Only a picture; the simulation decides what they hit.
-    fn push_arrows(&mut self, alpha: f32) {
-        let now = self.world.tick_count() as f32 - 1.0 + alpha;
+    /// they aimed, at `now` (the simulation's time in ticks, interpolated).
+    /// Only a picture; the simulation decides what they hit.
+    fn push_arrows(&mut self, now: f32) {
         for v in self.world.volleys() {
             let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
             let t = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);

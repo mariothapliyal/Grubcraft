@@ -320,8 +320,8 @@ impl Vision {
         }
         if self.ambushes.len() < MAX_AMBUSHES {
             self.ambushes.push(Ambush {
-                ambusher: handle(regs, i),
-                victim: handle(regs, j),
+                ambusher: regs.handle(i),
+                victim: regs.handle(j),
                 volley,
             });
         }
@@ -426,12 +426,5 @@ impl Vision {
             h.u8(self.off_guard[i]);
             h.u8(self.was_engaged[i] as u8);
         }
-    }
-}
-
-fn handle(regs: &Regiments, i: usize) -> RegimentHandle {
-    RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
     }
 }

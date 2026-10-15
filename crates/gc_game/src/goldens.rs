@@ -21,6 +21,7 @@
 use gc_ai::army::{self, Placement};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_replay::Recorder;
+use gc_sim::champions::Outcome;
 use gc_sim::{
     Capacities, Command, Formation, MatchSetup, PlayerCommand, PlayerId, UnitStats, World,
 };
@@ -228,7 +229,7 @@ const GOLDENS: &[Golden] = &[
     // Champions come out before the armies close, and one kills the other.
     Golden {
         name: "field-champions-1v1",
-        seed: CHAMPIONS_SEED,
+        seed: 0xc4a1,
         map_tiles: 256,
         sides: &[side(EmberClans, Veteran, 0), side(Choir, Veteran, 1)],
         soldiers: 0,
@@ -239,8 +240,6 @@ const GOLDENS: &[Golden] = &[
         champions: true,
     },
 ];
-
-const CHAMPIONS_SEED: u64 = 0xc4a1;
 
 #[test]
 #[ignore = "records the golden replays; run by hand (see the module docs)"]
@@ -393,19 +392,14 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         }
         _ => "cut at the time limit".into(),
     };
-    let champions = match world.challenge() {
-        Some(c) if c.abandoned.is_none() => {
-            let at = c.ends() / gc_sim::TICKS_PER_SECOND;
-            let end = if c.winner.is_some() {
-                "a kill"
-            } else {
-                "a draw"
-            };
-            format!("; champions duel to {end} at {}:{:02}", at / 60, at % 60)
+    let champions = world.challenge().map_or(String::new(), |c| {
+        let at = gc_ai::lens::clock(c.decided());
+        match c.outcome(c.decided()) {
+            Outcome::Killed { .. } => format!("; champions duel to a kill at {at}"),
+            Outcome::Parted => format!("; champions duel to a draw at {at}"),
+            _ => format!("; the champions' duel is cut short at {at}"),
         }
-        Some(_) => "; the champions' duel is cut short".into(),
-        None => String::new(),
-    };
+    });
     assert_eq!(
         champions.is_empty(),
         !golden.champions,

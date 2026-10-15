@@ -172,7 +172,7 @@ fn check(
     }
 }
 
-pub(crate) fn steady_or_wavering(morale: i16) -> MoraleState {
+fn steady_or_wavering(morale: i16) -> MoraleState {
     if morale < WAVER_BELOW * SCALE {
         MoraleState::Wavering
     } else {
@@ -209,14 +209,25 @@ fn local_strength(
 /// less than a tenth of a point: its own next check decides whether it
 /// breaks. Routers and regiments that never rout are left alone.
 pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
-    lose(&mut regs.morale[i], &mut regs.morale_state[i], points);
+    shift(regs, i, -points);
+}
+
+/// Regiment `i` gains `points` morale (loses them, if negative) unless it
+/// is running. A loss leaves it at least 0.1, so it never routs from this
+/// alone; a gain may go above its ceiling until its next check caps it.
+pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
+    adjust(&mut regs.morale[i], &mut regs.morale_state[i], points);
 }
 
 fn lose(morale: &mut i16, state: &mut MoraleState, points: i16) {
+    adjust(morale, state, -points);
+}
+
+fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
     if state.broken() || *morale <= 0 {
         return;
     }
-    *morale = (*morale - points * SCALE).max(1);
+    *morale = morale.saturating_add(points * SCALE).max(1);
     *state = steady_or_wavering(*morale);
 }
 
@@ -287,10 +298,8 @@ fn rout(
     let state = &mut regs.morale_state;
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
-        if engaged[j] == Some(me) && !state[j].broken() && morale[j] > 0 {
-            // May go above the unit's stat until its next check caps it.
-            morale[j] = morale[j].saturating_add(VICTORY_BOOST * SCALE);
-            state[j] = steady_or_wavering(morale[j]);
+        if engaged[j] == Some(me) {
+            adjust(&mut morale[j], &mut state[j], VICTORY_BOOST);
         }
     });
     flee(regs, combat, stances, vision, i, map_tiles);

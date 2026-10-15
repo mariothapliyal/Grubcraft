@@ -461,7 +461,8 @@ pub struct World {
     stances: Stances,
     terrain: Terrain,
     vision: Vision,
-    champions: Champions,
+    /// Only in matches that allow champions.
+    champions: Option<Champions>,
     pub regiments: Regiments,
 }
 
@@ -485,7 +486,12 @@ impl World {
             stances,
             terrain,
             vision,
-            champions: Champions::new(setup.champions, Pcg32::new(setup.seed, streams::EVENTS)),
+            champions: setup.champions.then(|| {
+                Champions::new(
+                    setup.capacities.regiments,
+                    Pcg32::new(setup.seed, streams::EVENTS),
+                )
+            }),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -547,13 +553,15 @@ impl World {
             self.tick,
             self.map_tiles,
         );
-        self.champions.update(
-            &mut self.regiments,
-            &self.units,
-            &self.stances,
-            &self.vision,
-            self.tick,
-        );
+        if let Some(champions) = &mut self.champions {
+            champions.update(
+                &mut self.regiments,
+                &self.units,
+                &self.stances,
+                &self.vision,
+                self.tick,
+            );
+        }
         self.vision.update(
             &mut self.regiments,
             &self.combat,
@@ -726,14 +734,18 @@ impl World {
         self.combat.hash_into(&mut h);
         self.nav.hash_into(&mut h);
         self.vision.hash_into(&self.regiments, &mut h);
-        self.champions.hash_into(&mut h);
+        // Only in matches that allow champions, so other worlds hash as
+        // they did before champions existed.
+        if let Some(champions) = &self.champions {
+            champions.hash_into(&mut h);
+        }
         h.finish()
     }
 
     /// The champions' challenge, once one has been called (it stays after
     /// the duel is over).
     pub fn challenge(&self) -> Option<&Challenge> {
-        self.champions.challenge()
+        self.champions.as_ref()?.challenge()
     }
 
     /// The match's deterministic random stream (combat, events, ...).

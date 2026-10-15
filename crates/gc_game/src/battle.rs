@@ -4,7 +4,7 @@
 
 use gc_ai::army::{self, Preset};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
-use gc_sim::champions::HEART;
+use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{Challenge, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
 use gc_ui::lobby::{LobbySettings, MatchStart, PLAYER_COLORS, Slot, SlotKind};
@@ -195,6 +195,8 @@ pub struct Battle {
     pub won: Option<bool>,
     /// What the champions are doing, while there is news of them.
     pub champions: Option<String>,
+    /// The state of the duel that news tells.
+    heard: Option<Outcome>,
 }
 
 impl Battle {
@@ -205,18 +207,25 @@ impl Battle {
             outcome: None,
             won: None,
             champions: None,
+            heard: None,
         }
     }
 
     /// Follow the champions' duel: who steps out, then how it ended, for a
     /// few seconds. Returns true when the news changed.
     pub fn herald(&mut self, world: &World, parties: &[Party], unit_names: &[String]) -> bool {
-        let news = world
+        let now = world.tick_count();
+        let duel = world
             .challenge()
-            .and_then(|c| champion_news(c, world, parties, unit_names));
-        let changed = news != self.champions;
-        self.champions = news;
-        changed
+            .filter(|c| now <= c.decided() + NEWS_TICKS)
+            .map(|c| (c, c.outcome(now)));
+        let heard = duel.map(|(_, o)| o);
+        if heard == self.heard {
+            return false;
+        }
+        self.heard = heard;
+        self.champions = duel.map(|(c, o)| champion_news(c, o, world, parties, unit_names));
+        true
     }
 
     /// Look at the field after a tick; once one side alone has held it
@@ -254,41 +263,38 @@ impl Battle {
     }
 }
 
-/// The line about the champions' duel `c` at the world's tick, or `None`
-/// once it is old news.
+/// The line about the champions' duel `c`, which stands at `outcome`.
 fn champion_news(
     c: &Challenge,
+    outcome: Outcome,
     world: &World,
     parties: &[Party],
     unit_names: &[String],
-) -> Option<String> {
-    let now = world.tick_count();
-    let decided = c.abandoned.unwrap_or(c.ends());
-    if now > decided + NEWS_TICKS {
-        return None;
+) -> String {
+    // Each side's party, and the unit its champion comes from (its
+    // regiment may be gone by the end).
+    let [a, b] = c.champions.map(|h| {
+        world.regiments.get(h).map_or(("one side".into(), ""), |r| {
+            let unit = unit_names.get(r.unit as usize).map_or("", String::as_str);
+            (party_name(parties, r.owner), unit)
+        })
+    });
+    match outcome {
+        Outcome::Fighting => format!(
+            "CHAMPIONS  {}'s {} and {}'s {} each send out a champion to fight between the lines",
+            a.0, a.1, b.0, b.1
+        ),
+        Outcome::CutShort => "CHAMPIONS  The battle swallows the duel before it is decided".into(),
+        Outcome::Killed { winner } => {
+            let (w, l) = if winner == 0 { (a.0, b.0) } else { (b.0, a.0) };
+            format!(
+                "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
+            )
+        }
+        Outcome::Parted => {
+            "CHAMPIONS  Neither champion can beat the other, and both go back to their lines".into()
+        }
     }
-    let who = |side: usize| {
-        let r = world.regiments.get(c.champions[side])?;
-        let unit = unit_names.get(r.unit as usize).map_or("", String::as_str);
-        Some((party_name(parties, r.owner), unit))
-    };
-    let side = |side: usize| who(side).map_or("one side".to_string(), |(p, _)| p);
-    let news = if now < decided {
-        let [a, b] =
-            [0, 1].map(|s| who(s).map_or("a champion".to_string(), |(p, u)| format!("{p}'s {u}")));
-        format!("CHAMPIONS  {a} and {b} each send out a champion to fight between the lines")
-    } else if c.abandoned.is_some() {
-        "CHAMPIONS  The battle swallows the duel before it is decided".to_string()
-    } else if let Some(w) = c.winner {
-        let (w, l) = (side(w as usize), side(1 - w as usize));
-        format!(
-            "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
-        )
-    } else {
-        "CHAMPIONS  Neither champion can beat the other, and both go back to their lines"
-            .to_string()
-    };
-    Some(news)
 }
 
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
@@ -525,8 +531,9 @@ mod tests {
 
     /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
     /// factions, two Veterans, `AI_BATTLES` battles a pair (default 24),
-    /// swapping ends every battle. Prints the first faction's wins, losses
-    /// and battles nobody had won after ten minutes.
+    /// swapping ends every battle, with champions allowed unless
+    /// `AI_CHAMPIONS=off`. Prints the first faction's wins, losses and
+    /// battles nobody had won after ten minutes.
     /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -558,6 +565,9 @@ mod tests {
                             let a_first = seed % 2 == 0;
                             setup.players[0].faction = if a_first { a } else { b };
                             setup.players[1].faction = if a_first { b } else { a };
+                            // `AI_CHAMPIONS=off` plays them without champions.
+                            setup.settings.champions =
+                                std::env::var("AI_CHAMPIONS").as_deref() != Ok("off");
                             match play(&setup, seed, 10).battle.won {
                                 Some(w) if w == a_first => won += 1,
                                 Some(_) => lost += 1,
