@@ -47,16 +47,21 @@ impl Deployment {
         tick < self.end
     }
 
-    /// Give `player` a zone. Only on the first tick, before anything moves.
+    /// Give `player` a zone, once. The first zone starts the deployment;
+    /// more are accepted until the battle begins, so a host's setup that
+    /// spans several turns still reaches everyone.
     pub fn set_zone(&mut self, player: PlayerId, zone: Zone, tick: u32) -> bool {
-        let Some(slot) = self.deployers.get_mut(player as usize) else {
-            return false;
-        };
-        if tick != 0 || zone.radius <= Fx::ZERO {
+        let started = self.end != 0;
+        if (started && !self.active(tick)) || zone.radius <= Fx::ZERO {
             return false;
         }
-        *slot = Some(Deployer { zone, ready: false });
-        self.end = DEPLOY_SECONDS * TICKS_PER_SECOND;
+        match self.deployers.get_mut(player as usize) {
+            Some(slot @ None) => *slot = Some(Deployer { zone, ready: false }),
+            _ => return false,
+        }
+        if !started {
+            self.end = tick + DEPLOY_SECONDS * TICKS_PER_SECOND;
+        }
         true
     }
 

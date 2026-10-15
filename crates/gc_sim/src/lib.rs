@@ -408,7 +408,9 @@ pub enum Command {
         facing: Angle,
     },
     /// March the block's centre to `target`. Group orders are expanded into
-    /// one of these per regiment by [`formation::group_move`].
+    /// one of these per regiment by [`formation::group_move`]. While the
+    /// armies deploy, the regiment is put straight down there instead, if
+    /// that is inside its owner's zone (see [`deploy`]).
     MoveTo {
         regiment: RegimentHandle,
         target: FxVec2,
@@ -439,17 +441,10 @@ pub enum Command {
         regiment: RegimentHandle,
         formation: Formation,
     },
-    /// Field Battle: give the issuing player a deployment zone, which starts
-    /// the deployment phase (see [`deploy`]). Only on the first tick.
+    /// Field Battle: give the issuing player a deployment zone. The first
+    /// one starts the deployment phase (see [`deploy`]); more are accepted
+    /// until the battle begins, one per player.
     DeployZone { center: FxVec2, radius: Fx },
-    /// During deployment: put one of your regiments at `position` inside
-    /// your zone, facing `facing`, `files` wide (0 keeps its frontage).
-    Place {
-        regiment: RegimentHandle,
-        position: FxVec2,
-        facing: Angle,
-        files: u16,
-    },
     /// During deployment: you are done placing. The battle starts when
     /// every player with a zone is, or when time runs out.
     Ready,
@@ -601,8 +596,17 @@ impl World {
     }
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
-        // Marching and fighting orders wait for the battle.
-        if self.deploying() && matches!(pc.command, Command::MoveTo { .. } | Command::Attack { .. })
+        // While the armies deploy, only setting out and placing armies,
+        // formations and readiness are accepted.
+        if self.deploying()
+            && !matches!(
+                pc.command,
+                Command::DeployZone { .. }
+                    | Command::SpawnRegiment { .. }
+                    | Command::MoveTo { .. }
+                    | Command::SetFormation { .. }
+                    | Command::Ready
+            )
         {
             return false;
         }
@@ -615,6 +619,15 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
+                // Inside your zone while deploying, if you have one.
+                if self.deploying()
+                    && self
+                        .deploy
+                        .zone(pc.player)
+                        .is_some_and(|z| !z.contains(position))
+                {
+                    return false;
+                }
                 let Some(h) = self
                     .regiments
                     .spawn(pc.player, unit, position, facing, stats)
@@ -637,6 +650,9 @@ impl World {
                 files,
                 pace,
             } => {
+                if self.deploying() {
+                    return self.place(pc.player, regiment, target, facing, files);
+                }
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {
                     Some(owner) if owner == pc.player => self.regiments.order(
@@ -686,31 +702,45 @@ impl World {
                 self.deploy
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
             }
-            Command::Place {
-                regiment,
-                position,
-                facing,
-                files,
-            } => {
-                let allowed = self.deploying()
-                    && self.regiments.owner(regiment) == Some(pc.player)
-                    && self
-                        .deploy
-                        .zone(pc.player)
-                        .is_some_and(|z| z.contains(position))
-                    && self.nav.walkable(position);
-                let Some(i) = allowed
-                    .then(|| self.regiments.place(regiment, position, facing, files))
-                    .flatten()
-                else {
-                    return false;
-                };
-                self.vision
-                    .start(&self.regiments, &self.units, &self.terrain, i);
-                true
-            }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
         }
+    }
+
+    /// Deployment: put `player`'s `regiment` straight down at `position`,
+    /// inside their zone, on the map and on ground it can stand on.
+    fn place(
+        &mut self,
+        player: PlayerId,
+        regiment: RegimentHandle,
+        position: FxVec2,
+        facing: Option<Angle>,
+        files: u16,
+    ) -> bool {
+        let edge = Fx::from_int(self.map_tiles as i32);
+        let on_map =
+            (Fx::ZERO..=edge).contains(&position.x) && (Fx::ZERO..=edge).contains(&position.y);
+        let Some(r) = self.regiments.get(regiment) else {
+            return false;
+        };
+        let allowed = r.owner == player
+            && on_map
+            && self
+                .deploy
+                .zone(player)
+                .is_some_and(|z| z.contains(position))
+            && self.nav.walkable(position);
+        let Some(i) = allowed
+            .then(|| {
+                self.regiments
+                    .place(regiment, position, facing.unwrap_or(r.facing), files)
+            })
+            .flatten()
+        else {
+            return false;
+        };
+        self.vision
+            .start(&self.regiments, &self.units, &self.terrain, i);
+        true
     }
 
     /// Whether the armies are still deploying: time stands still, and only

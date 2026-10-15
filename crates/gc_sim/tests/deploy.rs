@@ -42,12 +42,14 @@ fn spawn(x: i32, y: i32, facing: Angle) -> Command {
     }
 }
 
+/// A move order; while deploying it places the regiment.
 fn place(regiment: RegimentHandle, x: i32, y: i32) -> Command {
-    Command::Place {
+    Command::MoveTo {
         regiment,
-        position: FxVec2::from_ints(x, y),
-        facing: NORTH,
+        target: FxVec2::from_ints(x, y),
+        facing: Some(NORTH),
         files: 6,
+        pace: Fx::ZERO,
     }
 }
 
@@ -68,20 +70,10 @@ fn deployed() -> (World, RegimentHandle, RegimentHandle) {
 }
 
 #[test]
-fn time_stands_still_and_only_placing_is_allowed() {
+fn time_stands_still_and_orders_place_regiments() {
     let (mut w, mine, theirs) = deployed();
     assert!(w.deploying());
     let stats = w.tick(&[
-        pc(
-            0,
-            Command::MoveTo {
-                regiment: mine,
-                target: FxVec2::from_ints(100, 110),
-                facing: None,
-                files: 0,
-                pace: Fx::ZERO,
-            },
-        ),
         pc(
             0,
             Command::Attack {
@@ -89,12 +81,15 @@ fn time_stands_still_and_only_placing_is_allowed() {
                 target: theirs,
             },
         ),
-        // A zone only on the first tick.
+        pc(0, Command::RemoveRegiment { regiment: theirs }),
+        // One zone each.
         pc(0, zone(10, 10)),
+        // Your own army goes inside your zone.
+        pc(0, spawn(100, 100, NORTH)),
     ]);
-    assert_eq!(stats.commands_rejected, 3);
-    // Placing inside your own zone works at once; outside it, or someone
-    // else's regiment, doesn't.
+    assert_eq!(stats.commands_rejected, 4);
+    // A move order puts the regiment straight down inside your own zone;
+    // outside it, off the map, or someone else's regiment, it is refused.
     let stats = w.tick(&[
         pc(0, place(mine, 110, 150)),
         pc(0, place(mine, 100, 100)),
@@ -111,6 +106,23 @@ fn time_stands_still_and_only_placing_is_allowed() {
         w.regiments.get(mine).unwrap().position,
         FxVec2::from_ints(110, 150)
     );
+}
+
+#[test]
+fn a_setup_spread_over_several_turns_still_deploys() {
+    let mut w = world();
+    // The host's setup arrives a few turns in, the second side's zone a
+    // turn after the first, and the computer's Ready after both.
+    w.tick(&[]);
+    w.tick(&[pc(0, zone(100, 140)), pc(0, spawn(100, 140, NORTH))]);
+    w.tick(&[pc(1, zone(100, 100)), pc(1, spawn(100, 100, SOUTH))]);
+    w.tick(&[pc(1, Command::Ready)]);
+    assert!(w.deploying() && w.deploy_zone(1).is_some());
+    assert_eq!(w.deploy_ticks_left(), DEPLOY_SECONDS * TICKS_PER_SECOND - 3);
+    w.tick(&[pc(0, Command::Ready)]);
+    assert!(!w.deploying());
+    // No new zones once the battle is on.
+    assert_eq!(w.tick(&[pc(2, zone(50, 50))]).commands_rejected, 1);
 }
 
 #[test]

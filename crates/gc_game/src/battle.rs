@@ -94,6 +94,9 @@ pub fn set_out(
         my_start: starts.get(me).copied().unwrap_or(middle),
         my_forward: Vec2::NEG_Y,
     };
+    // Every zone goes out before any army or Ready, so the deployment can't
+    // end before a late zone arrives when the setup spans several turns.
+    let (mut spawns, mut ready) = (Vec::new(), Vec::new());
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
@@ -142,10 +145,10 @@ pub fn set_out(
                     },
                 });
             }
-            army::spawn_commands(party, &placed, out);
+            army::spawn_commands(party, &placed, &mut spawns);
             // The computer keeps the standard deployment.
             if deployment && slot.kind == SlotKind::Ai {
-                out.push(PlayerCommand {
+                ready.push(PlayerCommand {
                     player: party,
                     command: Command::Ready,
                 });
@@ -155,48 +158,15 @@ pub fn set_out(
             minds.add(mind);
         }
     }
+    out.append(&mut spawns);
+    out.append(&mut ready);
     set
 }
 
-/// While the armies deploy, a march order puts each regiment straight down
-/// where it was sent, pulled inside its player's zone (see also
-/// [`shift_into_zone`]). Orders pass unchanged once the battle has begun.
-pub fn orders_while_deploying(world: &World, orders: &mut Vec<PlayerCommand>) {
-    if !world.deploying() {
-        return;
-    }
-    orders.retain_mut(|pc| match pc.command {
-        Command::MoveTo {
-            regiment,
-            target,
-            facing,
-            files,
-            ..
-        } => {
-            let (Some(zone), Some(r)) =
-                (world.deploy_zone(pc.player), world.regiments.get(regiment))
-            else {
-                return false;
-            };
-            let centre = v2(zone.center);
-            let room = (fx(zone.radius) - 1.0).max(0.0);
-            let to = v2(target) - centre;
-            let position = centre + to.clamp_length_max(room);
-            pc.command = Command::Place {
-                regiment,
-                position: to_fx_vec(position),
-                facing: facing.unwrap_or(r.facing),
-                files,
-            };
-            true
-        }
-        _ => true,
-    });
-}
-
-/// While `player` deploys, slide a planned group order (its `MoveTo`s) as
-/// a whole until every regiment's spot is inside their zone, so a line
-/// drawn past the edge keeps its shape instead of squashing against it.
+/// While `player` deploys, slide a planned group order (its `MoveTo`s, which
+/// place regiments while deploying) as a whole until every regiment's spot
+/// is inside their zone, so a line drawn past the edge keeps its shape
+/// instead of being refused.
 pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]) {
     let Some(zone) = world.deploy_zone(player) else {
         return;
@@ -464,8 +434,6 @@ mod tests {
         }
     }
 
-    /// A lobby setup: slot `k` is `who[k]` (None for you), on team
-    /// `teams[k]`, everyone Ember Clans so the armies match.
     /// The real game data's unit stats, factions and points, as `set_out`
     /// takes them.
     fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
@@ -479,6 +447,8 @@ mod tests {
         (units, factions, points)
     }
 
+    /// A lobby setup: slot `k` is `who[k]` (None for you), on team
+    /// `teams[k]`, everyone Ember Clans so the armies match.
     fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
         let players = who
             .iter()
@@ -628,36 +598,9 @@ mod tests {
             let zone = world.deploy_zone(r.owner).unwrap();
             assert!(zone.contains(r.position), "{r:?}");
         }
-        // A march order across the map becomes a placement at the zone's edge.
+        // A line drawn past the zone's edge slides in whole.
         let mine = world.regiments.iter().find(|r| r.owner == 0).unwrap();
         let zone = world.deploy_zone(0).unwrap();
-        let mut orders = vec![
-            PlayerCommand {
-                player: 0,
-                command: Command::MoveTo {
-                    regiment: mine.handle,
-                    target: gc_fixed::FxVec2::from_ints(5, 5),
-                    facing: None,
-                    files: 0,
-                    pace: Fx::ZERO,
-                },
-            },
-            PlayerCommand {
-                player: 0,
-                command: Command::Ready,
-            },
-        ];
-        orders_while_deploying(&world, &mut orders);
-        let Command::Place {
-            position, facing, ..
-        } = orders[0].command
-        else {
-            panic!("{:?}", orders[0]);
-        };
-        assert!(zone.contains(position) && position != mine.position);
-        assert_eq!(facing, mine.facing);
-        assert_eq!(orders[1].command, Command::Ready);
-        // A line drawn past the zone's edge slides in whole.
         let edge = v2(zone.center) + Vec2::new(fx(zone.radius) + 5.0, 0.0);
         let mut line = [0.0, 6.0].map(|dy| Command::MoveTo {
             regiment: mine.handle,
@@ -673,12 +616,23 @@ mod tests {
         });
         assert!(zone.contains(a) && zone.contains(b));
         assert!(((v2(b) - v2(a)) - Vec2::new(0.0, 6.0)).length() < 0.01);
-        let mine = mine.handle;
-        let open = world.nav().walkable(position);
-        world.tick(&orders);
+        // While deploying, that order puts the regiment straight down there.
+        let (handle, facing) = (mine.handle, mine.facing);
+        let open = world.nav().walkable(a);
+        world.tick(&[
+            PlayerCommand {
+                player: 0,
+                command: line[0],
+            },
+            PlayerCommand {
+                player: 0,
+                command: Command::Ready,
+            },
+        ]);
         assert!(!world.deploying());
         if open {
-            assert_eq!(world.regiments.get(mine).unwrap().position, position);
+            let r = world.regiments.get(handle).unwrap();
+            assert_eq!((r.position, r.facing), (a, facing));
         }
     }
 

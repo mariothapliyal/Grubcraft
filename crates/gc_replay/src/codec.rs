@@ -135,19 +135,7 @@ impl Writer {
                 self.vec(center);
                 self.fx(radius);
             }
-            Command::Place {
-                regiment,
-                position,
-                facing,
-                files,
-            } => {
-                self.u8(7);
-                self.handle(regiment);
-                self.vec(position);
-                self.var(u64::from(facing.0));
-                self.var(u64::from(files));
-            }
-            Command::Ready => self.u8(8),
+            Command::Ready => self.u8(7),
         }
     }
 }
@@ -297,13 +285,7 @@ impl<'a> Reader<'a> {
                 center: self.vec()?,
                 radius: self.fx()?,
             },
-            7 => Command::Place {
-                regiment: self.handle()?,
-                position: self.vec()?,
-                facing: Angle(self.var_as()?),
-                files: self.var_as()?,
-            },
-            8 => Command::Ready,
+            7 => Command::Ready,
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -316,20 +298,10 @@ mod tests {
 
     #[test]
     fn deployment_commands_round_trip() {
-        let regiment = RegimentHandle {
-            index: 3,
-            generation: 2,
-        };
         let commands = [
             Command::DeployZone {
                 center: FxVec2::from_ints(40, -7),
                 radius: Fx::from_int(30),
-            },
-            Command::Place {
-                regiment,
-                position: FxVec2::from_ints(41, 9),
-                facing: Angle(40_000),
-                files: 12,
             },
             Command::Ready,
         ];

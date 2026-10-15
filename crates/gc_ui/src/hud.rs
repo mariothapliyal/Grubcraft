@@ -8,7 +8,7 @@
 //! camera moves, selections and orders. Map positions are in tiles, with
 //! north (smaller z) at the top of the minimap.
 
-use crate::draw::{Color, DrawList, Rect, fit, text_width};
+use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::ui::theme;
 
 /// Height of the bottom bar, in UI pixels.
@@ -357,7 +357,8 @@ fn deploy_panel(
     events: &mut Vec<HudEvent>,
 ) {
     let inner = r.inset(6);
-    if inner.w < 80 {
+    // The Ready button shows on any screen; the words only where they fit.
+    if inner.w < CELL_W * 6 {
         return;
     }
     draw.border(r, 2, theme::ACCENT);
@@ -366,9 +367,15 @@ fn deploy_panel(
         deploy.seconds_left / 60,
         deploy.seconds_left % 60
     );
-    draw.text(inner.x, inner.y, 1, theme::ACCENT, "DEPLOYMENT");
-    draw.text(inner.x, inner.y + 20, 1, theme::TEXT, &left);
-    let chars = (inner.w / crate::draw::CELL_W).max(1) as usize;
+    let chars = (inner.w / CELL_W).max(1) as usize;
+    draw.text(
+        inner.x,
+        inner.y,
+        1,
+        theme::ACCENT,
+        &fit("DEPLOYMENT", chars),
+    );
+    draw.text(inner.x, inner.y + 20, 1, theme::TEXT, &fit(&left, chars));
     let hint = if deploy.ready {
         "Waiting for the others."
     } else {
@@ -390,7 +397,8 @@ fn deploy_panel(
             theme::PRIMARY
         },
     );
-    draw.text_centered(button, 2, theme::TEXT, "Ready");
+    let scale = if inner.w >= CELL_W * 2 * 6 { 2 } else { 1 };
+    draw.text_centered(button, scale, theme::TEXT, "Ready");
     if hot && input.left_pressed {
         events.push(HudEvent::Ready);
     }

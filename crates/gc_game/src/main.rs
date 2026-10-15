@@ -1640,7 +1640,6 @@ impl Running {
             let t_ai = Instant::now();
             tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
             self.stats.ai_time += t_ai.elapsed();
-            battle::orders_while_deploying(&self.world, &mut self.human_orders);
             self.pending.append(&mut self.human_orders);
             self.step();
         }
@@ -2097,7 +2096,6 @@ impl Running {
             return 0;
         }
         let host = o.host;
-        battle::orders_while_deploying(&self.world, &mut self.human_orders);
         let lan = self.menu.net();
         lan.submit(self.human_orders.drain(..));
         let mut turns = 0;

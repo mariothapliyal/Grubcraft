@@ -265,19 +265,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.vec(center);
             w.fx(radius);
         }
-        Command::Place {
-            regiment,
-            position,
-            facing,
-            files,
-        } => {
-            w.u8(7);
-            w.handle(regiment);
-            w.vec(position);
-            w.var(u64::from(facing.0));
-            w.var(u64::from(files));
-        }
-        Command::Ready => w.u8(8),
+        Command::Ready => w.u8(7),
     }
 }
 
@@ -317,13 +305,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             center: r.vec()?,
             radius: r.fx()?,
         },
-        7 => Command::Place {
-            regiment: r.handle()?,
-            position: r.vec()?,
-            facing: Angle(r.var_as()?),
-            files: r.var_as()?,
-        },
-        8 => Command::Ready,
+        7 => Command::Ready,
         _ => return None,
     })
 }
@@ -441,12 +423,6 @@ mod tests {
             Command::DeployZone {
                 center: FxVec2::new(Fx::from_raw(-5), Fx::from_int(200)),
                 radius: Fx::from_int(30),
-            },
-            Command::Place {
-                regiment: h(8, 1),
-                position: FxVec2::new(Fx::from_raw(123_456), Fx::from_int(17)),
-                facing: Angle(65_535),
-                files: 14,
             },
             Command::Ready,
         ];
