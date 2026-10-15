@@ -29,12 +29,13 @@ pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 pub use terrain::{Cover, Ground, Terrain};
-pub use vision::{Ambush, Vision};
+pub use vision::Ambush;
 
 use combat::Combat;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
+use vision::Vision;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -424,11 +425,6 @@ impl World {
     /// The ambushes sprung in the last tick.
     pub fn ambushes(&self) -> &[Ambush] {
         self.vision.ambushes()
-    }
-
-    /// Who sees whom (see [`vision`]).
-    pub fn vision(&self) -> &Vision {
-        &self.vision
     }
 
     /// The walkable ground and the route searches in progress.

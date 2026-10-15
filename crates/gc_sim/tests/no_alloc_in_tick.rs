@@ -65,7 +65,7 @@ fn ticking_never_allocates() {
             cover: &cover,
         },
     });
-    assert!(world.vision().active());
+    assert!(world.terrain().has_cover());
     let mut drill = Drill::new(7);
     let mut commands = Vec::with_capacity(512);
     for _ in 0..1_000 {

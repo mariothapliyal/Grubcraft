@@ -97,7 +97,22 @@ struct Battle {
     cover: Vec<u8>,
     army: Vec<Placement>,
     foe: Foe,
-    personality: &'static str,
+}
+
+fn world(cover: &[u8]) -> World {
+    World::new(&MatchSetup {
+        seed: 7,
+        capacities: Capacities { regiments: 32 },
+        units: &DRILL_UNITS,
+        map_tiles: MAP,
+        nav: &[],
+        teams: &[],
+        ground: gc_sim::Ground {
+            heights: &[],
+            water_level: 0,
+            cover,
+        },
+    })
 }
 
 /// What a check sees each tick.
@@ -116,41 +131,37 @@ impl Field<'_> {
         Some(m.role)
     }
 
-    fn cavalry(&self) -> Vec<RegimentHandle> {
+    /// The AI's regiments of `unit`.
+    fn ours(&self, unit: UnitId) -> Vec<RegimentHandle> {
         self.world
             .regiments
             .iter()
-            .filter(|r| r.owner == AI && r.unit == CAVALRY)
+            .filter(|r| r.owner == AI && r.unit == unit)
             .map(|r| r.handle)
             .collect()
+    }
+
+    /// How many of the AI's `unit` regiments lie hidden as ambushers.
+    fn hidden_ambushers(&self, unit: UnitId) -> usize {
+        self.ours(unit)
+            .into_iter()
+            .filter(|&h| self.role(h) == Some(Role::Ambusher) && self.world.hidden(h))
+            .count()
     }
 }
 
 fn run(battle: Battle, seconds: u32, mut watch: impl FnMut(&Field)) {
-    let nav: Vec<u8> = Vec::new();
-    let mut world = World::new(&MatchSetup {
-        seed: 7,
-        capacities: Capacities { regiments: 32 },
-        units: &DRILL_UNITS,
-        map_tiles: MAP,
-        nav: &nav,
-        teams: &[],
-        ground: gc_sim::Ground {
-            heights: &[],
-            water_level: 0,
-            cover: &battle.cover,
-        },
-    });
+    let mut world = world(&battle.cover);
     let mut out: Vec<PlayerCommand> = Vec::new();
     spawn_commands(AI, &battle.army, &mut out);
     spawn_commands(FOE, &foe_army(), &mut out);
     world.tick(&out);
-    let terrain = Terrain::new(&nav, MAP).with_cover(battle.cover.clone());
+    let terrain = Terrain::new(&[], MAP).with_cover(battle.cover.clone());
     let mut minds = Minds::new(terrain);
     minds.add(Mind::new(MindConfig {
         party: AI,
         difficulty: Difficulty::General,
-        personality: gc_ai::personality::find(battle.personality).unwrap(),
+        personality: gc_ai::personality::find("The Deep Hive").unwrap(),
         seed: 11,
     }));
     let mut bot = ChargeBot::new(FOE);
@@ -212,17 +223,12 @@ fn a_cunning_general_hides_its_cavalry_in_a_wood_off_its_flank() {
             cover: wood_on_the_right(),
             army: ai_army(),
             foe: Foe::Idle,
-            personality: "The Deep Hive",
         },
         40,
         |f| {
             doctrine = Some(f.mind.captain().doctrine);
-            hidden_ambushers = f
-                .cavalry()
-                .into_iter()
-                .filter(|&h| f.role(h) == Some(Role::Ambusher) && f.world.hidden(h))
-                .count();
-            in_the_wood = f.cavalry().into_iter().any(|h| {
+            hidden_ambushers = f.hidden_ambushers(CAVALRY);
+            in_the_wood = f.ours(CAVALRY).into_iter().any(|h| {
                 let r = f.world.regiments.get(h).unwrap();
                 let p = gc_ai::perception::v2(r.position);
                 (150.0..174.0).contains(&p.x) && (172.0..196.0).contains(&p.y)
@@ -245,18 +251,11 @@ fn an_army_without_fast_troops_hides_the_ends_of_its_line() {
             cover: wood_on_the_right(),
             army,
             foe: Foe::Idle,
-            personality: "The Deep Hive",
         },
         40,
         |f| {
             doctrine = Some(f.mind.captain().doctrine);
-            hidden_spears = f
-                .world
-                .regiments
-                .iter()
-                .filter(|r| r.owner == AI && r.unit == SPEARS)
-                .filter(|r| f.role(r.handle) == Some(Role::Ambusher) && f.world.hidden(r.handle))
-                .count();
+            hidden_spears = f.hidden_ambushers(SPEARS);
         },
     );
     assert_eq!(doctrine, Some(Doctrine::Ambush));
@@ -275,7 +274,6 @@ fn without_cover_nobody_lays_an_ambush() {
             cover: Vec::new(),
             army: ai_army(),
             foe: Foe::Idle,
-            personality: "The Deep Hive",
         },
         40,
         |f| {
@@ -299,12 +297,11 @@ fn the_ambush_springs_on_an_enemy_that_comes_on() {
             cover: wood_on_the_right(),
             army: ai_army(),
             foe: Foe::ChargeAfter(30),
-            personality: "The Deep Hive",
         },
         110,
         |f| {
             if f.seconds() > 30.0 && f.seconds() < 31.0 {
-                hidden_when_it_came |= f.cavalry().into_iter().any(|h| f.world.hidden(h));
+                hidden_when_it_came |= f.ours(CAVALRY).into_iter().any(|h| f.world.hidden(h));
             }
             for a in f.world.ambushes() {
                 if f.world
@@ -327,19 +324,7 @@ fn minds_see_only_what_their_side_sees() {
     // The foe hides in the wood in front of the AI from the start.
     let mut cover = vec![0; (MAP * MAP) as usize];
     patch(&mut cover, WOOD, 110..146, 120..150);
-    let mut world = World::new(&MatchSetup {
-        seed: 7,
-        capacities: Capacities { regiments: 32 },
-        units: &DRILL_UNITS,
-        map_tiles: MAP,
-        nav: &[],
-        teams: &[],
-        ground: gc_sim::Ground {
-            heights: &[],
-            water_level: 0,
-            cover: &cover,
-        },
-    });
+    let mut world = world(&cover);
     let mut out = Vec::new();
     spawn_commands(AI, &ai_army(), &mut out);
     spawn_commands(FOE, &row(&[SPEARS; 2], 128.0, 135.0, SOUTH), &mut out);
@@ -393,19 +378,7 @@ fn a_mind_remembers_enemies_it_lost_sight_of() {
     // sight of it but remembers it where it was last seen, for a while.
     let mut cover = vec![0; (MAP * MAP) as usize];
     patch(&mut cover, WOOD, 110..146, 100..120);
-    let mut world = World::new(&MatchSetup {
-        seed: 7,
-        capacities: Capacities { regiments: 32 },
-        units: &DRILL_UNITS,
-        map_tiles: MAP,
-        nav: &[],
-        teams: &[],
-        ground: gc_sim::Ground {
-            heights: &[],
-            water_level: 0,
-            cover: &cover,
-        },
-    });
+    let mut world = world(&cover);
     let mut out = Vec::new();
     spawn_commands(AI, &ai_army(), &mut out);
     spawn_commands(FOE, &row(&[SPEARS], 128.0, 140.0, SOUTH), &mut out);
@@ -436,7 +409,7 @@ fn a_mind_remembers_enemies_it_lost_sight_of() {
         view.capture_for(&world, AI);
         match view.get(foe) {
             Some(r) => {
-                assert!(view.remembered.is_empty());
+                assert_eq!(view.remembered().count(), 0);
                 last_seen = Some(r.pos);
             }
             None if lost_at.is_none() => lost_at = Some(world.tick_count()),
@@ -444,11 +417,10 @@ fn a_mind_remembers_enemies_it_lost_sight_of() {
         }
         if let Some(t) = lost_at {
             let since = world.tick_count() - t;
-            let remembered = view.remembered.iter().find(|r| r.handle == foe);
+            let remembered = view.remembered().find(|r| r.handle == foe);
             if since < gc_ai::perception::REMEMBER_TICKS {
                 let r = remembered.expect("it remembers the foe it lost sight of");
                 assert_eq!(Some(r.pos), last_seen, "where it was last seen");
-                assert!(!r.moving);
             } else if since > gc_ai::perception::REMEMBER_TICKS {
                 assert!(remembered.is_none(), "and forgets it in the end");
             }

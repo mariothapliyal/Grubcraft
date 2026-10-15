@@ -163,18 +163,10 @@ pub fn holding_the_field(world: &World) -> Option<PlayerId> {
             .iter()
             .filter(|r| r.models > 0 && !r.morale.broken())
     };
-    let mut parties = 0u32;
-    for r in standing().filter(|r| !world.hidden(r.handle)) {
-        let p = r.owner;
-        if parties & (1 << p.min(31)) != 0 {
-            continue;
-        }
-        parties |= 1 << p.min(31);
-        if standing().all(|e| !world.hostile(p, e.owner) || !world.sees(p, e.handle)) {
-            return Some(p);
-        }
-    }
-    None
+    (0..gc_sim::vision::PARTIES as PlayerId).find(|&p| {
+        standing().any(|r| r.owner == p && !world.hidden(r.handle))
+            && standing().all(|e| !world.hostile(p, e.owner) || !world.sees(p, e.handle))
+    })
 }
 
 /// A lobby Field Battle under way: whose side this machine plays, and how
@@ -339,8 +331,6 @@ mod tests {
             .collect();
         let heightmap = Heightmap::generate(seed, MAP);
         let nav = heightmap.nav_costs();
-        let (heights, water_level) = heightmap.sim_ground();
-        let cover = heightmap.cover();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
             seed,
@@ -349,11 +339,7 @@ mod tests {
             map_tiles: MAP,
             nav: &nav,
             teams: &teams,
-            ground: gc_sim::Ground {
-                heights: &heights,
-                water_level,
-                cover: &cover,
-            },
+            ground: heightmap.ground(),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         let mut out = Vec::new();

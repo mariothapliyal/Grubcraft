@@ -71,6 +71,9 @@ pub struct Mind {
     next_think: u32,
     next_slip: u32,
     wants: Vec<Want>,
+    /// What its side sees, with the enemies it remembers (on a map with
+    /// cover).
+    sight: Perception,
 }
 
 impl Mind {
@@ -104,6 +107,7 @@ impl Mind {
             next_think: config.party as u32 % knobs.think_ticks.max(1),
             next_slip: 0,
             wants: Vec::new(),
+            sight: Perception::new(),
         }
     }
 
@@ -185,11 +189,9 @@ impl Mind {
 }
 
 /// The minds of a match, sharing one look at the world per tick (on a map
-/// with cover, each also gets its own look at what its side sees).
+/// with cover, each takes its own look at what its side sees).
 pub struct Minds {
     view: Perception,
-    /// What each mind's side sees, by party, with the enemies it remembers.
-    sights: Vec<(PlayerId, Perception)>,
     terrain: Terrain,
     minds: Vec<Mind>,
 }
@@ -198,7 +200,6 @@ impl Minds {
     pub fn new(terrain: Terrain) -> Minds {
         Minds {
             view: Perception::new(),
-            sights: Vec::new(),
             terrain,
             minds: Vec::new(),
         }
@@ -248,19 +249,13 @@ impl Minds {
         self.view.capture(world);
         // Regiments hidden in cover are hidden from the computer players
         // too (docs/20-ambushes.md).
-        let fair = world.vision().active();
+        let fair = world.terrain().has_cover();
         for m in &mut self.minds {
             if fair {
-                let k = match self.sights.iter().position(|(p, _)| *p == m.party) {
-                    Some(k) => k,
-                    None => {
-                        self.sights.push((m.party, Perception::new()));
-                        self.sights.len() - 1
-                    }
-                };
-                let sight = &mut self.sights[k].1;
+                let mut sight = std::mem::take(&mut m.sight);
                 sight.capture_for(world, m.party);
-                m.tick(sight, &self.terrain, out);
+                m.tick(&sight, &self.terrain, out);
+                m.sight = sight;
             } else {
                 m.tick(&self.view, &self.terrain, out);
             }

@@ -22,7 +22,7 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::{Combat, Placement, Whose};
+use crate::combat::{Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
 use crate::{RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
@@ -93,18 +93,6 @@ impl MoraleState {
 /// Starting (and highest) morale for a regiment of this unit, in tenths.
 pub(crate) fn fresh(stats: &UnitStats) -> i16 {
     stats.morale as i16 * SCALE
-}
-
-/// Borrow where everyone is without borrowing the rest of the pool.
-macro_rules! placement {
-    ($regs:expr, $stances:expr) => {
-        Placement {
-            alive: &$regs.alive,
-            owner: &$regs.owner,
-            position: &$regs.position,
-            stances: $stances,
-        }
-    };
 }
 
 /// Check every regiment whose turn it is this tick.
@@ -224,6 +212,28 @@ pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
     regs.morale_state[i] = steady_or_wavering(regs.morale[i]);
 }
 
+/// Every friend of regiment `i` within `tiles` of it (not `i` itself) that
+/// isn't running loses `points` morale, down to 1.
+pub(crate) fn shake_friends(
+    regs: &mut Regiments,
+    combat: &Combat,
+    stances: &Stances,
+    i: usize,
+    tiles: i32,
+    points: i16,
+) {
+    let (p, owner) = (regs.position[i], regs.owner[i]);
+    let at = placement!(regs, stances);
+    let morale = &mut regs.morale;
+    let state = &mut regs.morale_state;
+    combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
+        if j != i && !state[j].broken() && morale[j] > 0 {
+            morale[j] = (morale[j] - points * SCALE).max(1);
+            state[j] = steady_or_wavering(morale[j]);
+        }
+    });
+}
+
 /// Regiment `i` breaks and runs.
 fn rout(
     regs: &mut Regiments,
@@ -255,6 +265,7 @@ fn rout(
         index: i as u32,
         generation: regs.generation[i],
     };
+    shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK);
     let (p, owner, near) = (
         regs.position[i],
         regs.owner[i],
@@ -263,12 +274,6 @@ fn rout(
     let at = placement!(regs, stances);
     let morale = &mut regs.morale;
     let state = &mut regs.morale_state;
-    combat.each_near(&at, p, near, Whose::Friends(owner), |j| {
-        if j != i && !state[j].broken() && morale[j] > 0 {
-            morale[j] = (morale[j] - ROUT_SHOCK * SCALE).max(1);
-            state[j] = steady_or_wavering(morale[j]);
-        }
-    });
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
         if engaged[j] == Some(me) && !state[j].broken() && morale[j] > 0 {

@@ -229,8 +229,6 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         .collect();
     let heightmap = Heightmap::generate(golden.seed, golden.map_tiles);
     let nav = heightmap.nav_costs();
-    let (heights, water_level) = heightmap.sim_ground();
-    let cover = heightmap.cover();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
     let setup = MatchSetup {
         seed: golden.seed,
@@ -239,11 +237,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         map_tiles: golden.map_tiles,
         nav: &nav,
         teams: &teams,
-        ground: gc_sim::Ground {
-            heights: &heights,
-            water_level,
-            cover: &cover,
-        },
+        ground: heightmap.ground(),
     };
     let mut world = World::new(&setup);
     let mut minds = Minds::new(heightmap.ai_terrain(&nav));

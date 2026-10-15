@@ -457,6 +457,8 @@ impl Captain {
     pub fn think(&mut self, ctx: &mut Ctx, wants: &mut Vec<Want>) {
         let view = ctx.view;
         self.sync_members(ctx);
+        // Once anyone has come to blows it is too late to slip into hiding.
+        self.ambush.joined |= view.regiments.iter().any(|r| r.engaged);
         let ours: Vec<&Seen> = self
             .members
             .iter()
@@ -508,7 +510,7 @@ impl Captain {
         let view = ctx.view;
         let mine = Force::of(view, ours.iter().copied()).soldiers;
         // Not while enemies it lost sight of may still be standing.
-        let theirs = Force::of(view, fighting.iter().copied().chain(&view.remembered)).soldiers;
+        let theirs = Force::of(view, fighting.iter().copied().chain(view.remembered())).soldiers;
         let share = if self.finishing {
             REFORM_SHARE
         } else {
@@ -748,10 +750,12 @@ impl Captain {
                 // Hammer and anvil with the hammers hidden (or, with no fast
                 // troops, the ends of the line): scores on top of it when
                 // there is somewhere to hide.
-                Doctrine::Ambush => match self.ambush_fit(ctx, ours, fighting) {
-                    Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
-                    None => continue,
-                },
+                Doctrine::Ambush => {
+                    match self.ambush_fit(ctx, ours, fighting, (line, shock, ranged)) {
+                        Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
+                        None => continue,
+                    }
+                }
             };
             let jitter = ctx.rng.below(1000) as f32 / 1000.0 * 0.15;
             let stick = if !self.doctrine_chosen || d != self.doctrine {
@@ -1568,7 +1572,7 @@ impl Captain {
                     self.archer_role(ctx, &mut m, r, fighting, foes, &on, pace, wants);
                 }
                 Role::Ambusher => {
-                    self.ambusher_role(ctx, &mut m, r, fighting, wants);
+                    self.ambusher_role(ctx, &mut m, r, ours, fighting, wants);
                 }
             }
             if m.target != before_target {

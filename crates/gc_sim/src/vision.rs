@@ -35,13 +35,13 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use gc_fixed::{Fx, FxVec2};
+use gc_fixed::Fx;
 
-use crate::combat::{Combat, Placement, Whose};
+use crate::combat::{Block, Combat, Whose, placement};
 use crate::morale;
 use crate::regiments::{RegimentHandle, Regiments};
 use crate::terrain::{Cover, Terrain};
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Parties whose sight is tracked.
 pub const PARTIES: usize = 8;
@@ -80,15 +80,14 @@ pub struct Ambush {
 }
 
 /// Who sees whom. All storage is reserved when the match starts.
-pub struct Vision {
+pub(crate) struct Vision {
     /// The map has cover; otherwise none of this runs.
     active: bool,
     /// Per party: the parties that share its sight (itself and its allies).
     allies: [u8; PARTIES],
-    /// Per slot: whether the state below belongs to the regiment there now,
-    /// and that regiment's generation.
-    known: Vec<bool>,
-    generation: Vec<u16>,
+    /// Per slot: the generation of the regiment the state below belongs
+    /// to, if any (a new one in the slot starts afresh).
+    tracked: Vec<Option<u16>>,
     /// Per slot and party: ticks the party has had the regiment in view,
     /// counting up to [`SURPRISE_TICKS`]; 0 is unseen.
     sighting: Vec<u16>,
@@ -119,8 +118,7 @@ impl Vision {
         Vision {
             active,
             allies,
-            known: vec![false; n],
-            generation: vec![0; n],
+            tracked: vec![None; n],
             sighting: vec![0; n * PARTIES],
             linger: vec![0; n * PARTIES],
             revealed: vec![0; n],
@@ -128,11 +126,6 @@ impl Vision {
             was_engaged: vec![false; n],
             ambushes: Vec::with_capacity(if active { MAX_AMBUSHES } else { 0 }),
         }
-    }
-
-    /// Whether the map has cover, so regiments can hide at all.
-    pub fn active(&self) -> bool {
-        self.active
     }
 
     /// Whether `party` sees the regiment in slot `i`, owned by `owner`.
@@ -146,12 +139,6 @@ impl Vision {
         self.sighting[i * PARTIES + party as usize] > 0
     }
 
-    /// Whether `party` can't see the regiment in slot `i` (owned by
-    /// `owner`) now.
-    pub(crate) fn hidden_from(&self, i: usize, owner: PlayerId, party: PlayerId) -> bool {
-        !self.sees(party, i, owner)
-    }
-
     /// Whether no party hostile to its owner sees the regiment in slot `i`.
     pub(crate) fn hidden(&self, i: usize, owner: PlayerId) -> bool {
         if !self.active || owner as usize >= PARTIES {
@@ -159,16 +146,6 @@ impl Vision {
         }
         let friends = self.allies[owner as usize];
         (0..PARTIES).all(|p| friends & (1 << p) != 0 || self.sighting[i * PARTIES + p] == 0)
-    }
-
-    /// Percent of its usual melee damage the regiment in slot `i` deals:
-    /// less while it is caught off guard by an ambush.
-    pub(crate) fn blow_percent(&self, i: usize) -> u64 {
-        if self.active && self.off_guard[i] > 0 {
-            OFF_GUARD_DAMAGE_PERCENT
-        } else {
-            100
-        }
     }
 
     /// Whether the regiment in slot `i` is caught off guard by an ambush.
@@ -197,15 +174,14 @@ impl Vision {
         self.ambushes.clear();
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
-                self.known[i] = false;
+                self.tracked[i] = None;
                 continue;
             }
             let owner = regs.owner[i];
             let stats = &units[regs.unit[i] as usize];
-            let new = !self.known[i] || self.generation[i] != regs.generation[i];
+            let new = self.tracked[i] != Some(regs.generation[i]);
             if new {
-                self.known[i] = true;
-                self.generation[i] = regs.generation[i];
+                self.tracked[i] = Some(regs.generation[i]);
                 self.revealed[i] = 0;
                 self.off_guard[i] = 0;
                 self.was_engaged[i] = false;
@@ -319,32 +295,7 @@ impl Vision {
         } else {
             morale::shake(regs, j, AMBUSH_SHOCK);
             self.off_guard[j] = OFF_GUARD_TICKS;
-            let at = Placement {
-                alive: &regs.alive,
-                owner: &regs.owner,
-                position: &regs.position,
-                stances,
-            };
-            let (p, owner) = (regs.position[j], regs.owner[j]);
-            let mut shaken = [0u32; 64];
-            let mut n = 0;
-            combat.each_near(
-                &at,
-                p,
-                Fx::from_int(RIPPLE_TILES),
-                Whose::Friends(owner),
-                |k| {
-                    if k != j && n < shaken.len() {
-                        shaken[n] = k as u32;
-                        n += 1;
-                    }
-                },
-            );
-            // In index order, whatever order the grid visited them in.
-            shaken[..n].sort_unstable();
-            for &k in &shaken[..n] {
-                morale::shake(regs, k as usize, AMBUSH_RIPPLE);
-            }
+            morale::shake_friends(regs, combat, stances, j, RIPPLE_TILES, AMBUSH_RIPPLE);
         }
         if self.ambushes.len() < MAX_AMBUSHES {
             self.ambushes.push(Ambush {
@@ -377,18 +328,8 @@ impl Vision {
         if regs.engaged[i].is_some() || self.revealed[i] > 0 {
             return None;
         }
-        let stats = &units[regs.unit[i] as usize];
-        let (w, d) = formation::block_size(
-            regs.files[i],
-            regs.models[i],
-            stats.file_spacing,
-            stats.rank_spacing,
-        );
-        let forward = regs.facing[i].to_vec();
-        let right = FxVec2::new(-forward.y, forward.x);
-        let across = right * Fx::from_raw(w.raw() / 2);
-        let along = forward * Fx::from_raw(d.raw() / 2);
-        let c = regs.position[i];
+        let b = Block::of(regs, units, i);
+        let (c, across, along) = (b.centre, b.right * b.half_width, b.forward * b.half_depth);
         let (mut wood, mut covered) = (0, 0);
         for p in [
             c,
@@ -427,27 +368,20 @@ impl Vision {
         i: usize,
         distance: Fx,
     ) -> u8 {
-        let at = Placement {
-            alive: &regs.alive,
-            owner: &regs.owner,
-            position: &regs.position,
-            stances,
-        };
-        let me = half_extent(regs, units, i);
-        let p = regs.position[i];
+        let at = placement!(regs, stances);
+        let me = Block::of(regs, units, i);
         let mut seen = 0u8;
         combat.each_near(
             &at,
-            p,
-            distance + me + combat.max_radius(),
+            me.centre,
+            distance + me.radius() + combat.max_radius(),
             Whose::Enemies(regs.owner[i]),
             |j| {
                 let party = regs.owner[j] as usize;
-                if party >= PARTIES {
-                    return;
-                }
-                let reach = (distance + me + half_extent(regs, units, j)).raw() as i64;
-                if ((regs.position[j] - p).length_sq_raw() as i64) <= reach * reach {
+                if party < PARTIES
+                    && seen & (1 << party) == 0
+                    && me.touches(&Block::of(regs, units, j), distance)
+                {
                     seen |= self.allies[party];
                 }
             },
@@ -460,7 +394,7 @@ impl Vision {
             return;
         }
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || !self.known[i] {
+            if !regs.alive[i] || self.tracked[i].is_none() {
                 continue;
             }
             for k in i * PARTIES..(i + 1) * PARTIES {
@@ -472,18 +406,6 @@ impl Vision {
             h.u8(self.was_engaged[i] as u8);
         }
     }
-}
-
-/// Half the longer side of regiment `i`'s block, in tiles.
-fn half_extent(regs: &Regiments, units: &[UnitStats], i: usize) -> Fx {
-    let stats = &units[regs.unit[i] as usize];
-    let (w, d) = formation::block_size(
-        regs.files[i],
-        regs.models[i],
-        stats.file_spacing,
-        stats.rank_spacing,
-    );
-    Fx::from_raw(w.raw().max(d.raw()) / 2)
 }
 
 fn handle(regs: &Regiments, i: usize) -> RegimentHandle {

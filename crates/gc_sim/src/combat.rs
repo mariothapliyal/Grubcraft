@@ -24,7 +24,7 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCEN
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
 use crate::terrain::Terrain;
-use crate::vision::Vision;
+use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
@@ -84,16 +84,16 @@ impl Side {
 
 /// A regiment's footprint as an oriented rectangle.
 #[derive(Clone, Copy, Debug)]
-struct Block {
-    centre: FxVec2,
-    forward: FxVec2,
-    right: FxVec2,
-    half_width: Fx,
-    half_depth: Fx,
+pub(crate) struct Block {
+    pub(crate) centre: FxVec2,
+    pub(crate) forward: FxVec2,
+    pub(crate) right: FxVec2,
+    pub(crate) half_width: Fx,
+    pub(crate) half_depth: Fx,
 }
 
 impl Block {
-    fn of(regs: &Regiments, units: &[UnitStats], i: usize) -> Block {
+    pub(crate) fn of(regs: &Regiments, units: &[UnitStats], i: usize) -> Block {
         Block::at(regs, units, i, regs.position[i])
     }
 
@@ -117,7 +117,7 @@ impl Block {
     }
 
     /// Radius of a circle that holds the block.
-    fn radius(&self) -> Fx {
+    pub(crate) fn radius(&self) -> Fx {
         self.half_width + self.half_depth
     }
 
@@ -127,7 +127,7 @@ impl Block {
     }
 
     /// Separating-axis test with `gap` of slack between the edges.
-    fn touches(&self, other: &Block, gap: Fx) -> bool {
+    pub(crate) fn touches(&self, other: &Block, gap: Fx) -> bool {
         let d = other.centre - self.centre;
         [self.forward, self.right, other.forward, other.right]
             .iter()
@@ -203,6 +203,19 @@ pub(crate) struct Placement<'a> {
     pub position: &'a [FxVec2],
     pub stances: &'a Stances,
 }
+
+/// Borrow where everyone is without borrowing the rest of the pool.
+macro_rules! placement {
+    ($regs:expr, $stances:expr) => {
+        $crate::combat::Placement {
+            alive: &$regs.alive,
+            owner: &$regs.owner,
+            position: &$regs.position,
+            stances: $stances,
+        }
+    };
+}
+pub(crate) use placement;
 
 /// Whose regiments a search around a point visits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -729,9 +742,8 @@ impl Combat {
                 * ground
                 / 100;
             // Caught off guard by an ambush.
-            let guard = vision.blow_percent(i);
-            if guard != 100 {
-                expected = expected * guard / 100;
+            if vision.off_guard(i) {
+                expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
             deal(regs, units, j, expected, side, rng);
         }
@@ -855,7 +867,8 @@ impl Combat {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
                 || !vision.sees(owner, j, regs.owner[j])
-                || vision.hidden_from(i, owner, regs.owner[j])
+                // A hidden archer holds its fire at enemies who can't see it.
+                || !vision.sees(regs.owner[j], i, owner)
             {
                 return;
             }

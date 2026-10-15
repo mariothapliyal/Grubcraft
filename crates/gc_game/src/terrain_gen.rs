@@ -21,14 +21,18 @@ pub fn start_positions(tiles: u32) -> [Vec2; 4] {
 }
 
 pub struct Heightmap {
-    /// The match seed the map grew from (it also places woods and grass).
-    pub seed: u64,
     pub samples_per_tile: u32,
     /// Samples per side: `tiles * samples_per_tile + 1`.
     pub size: u32,
     pub max_height: f32,
     pub water_level: f32,
     pub heights: Vec<u16>,
+    /// The simulation's tile heights and water line ([`Heightmap::sim_ground`]).
+    sim_heights: Vec<u16>,
+    sim_water: u16,
+    /// Woods and tall grass, one [`gc_sim::Cover`] byte per tile, row by
+    /// row (see [`Heightmap::grow_cover`]).
+    pub cover: Vec<u8>,
 }
 
 impl Heightmap {
@@ -69,13 +73,28 @@ impl Heightmap {
                 heights.push((h.clamp(0.0, 1.0) * u16::MAX as f32) as u16);
             }
         }
-        Heightmap {
-            seed,
+        let mut map = Heightmap {
             samples_per_tile,
             size,
             max_height,
             water_level: 0.17 * max_height,
             heights,
+            sim_heights: Vec::new(),
+            sim_water: 0,
+            cover: Vec::new(),
+        };
+        (map.sim_heights, map.sim_water) = map.sim_ground();
+        map.cover = map.grow_cover(seed);
+        map
+    }
+
+    /// The ground the simulation plays on: tile heights, the water line,
+    /// and the woods and tall grass.
+    pub fn ground(&self) -> gc_sim::Ground<'_> {
+        gc_sim::Ground {
+            heights: &self.sim_heights,
+            water_level: self.sim_water,
+            cover: &self.cover,
         }
     }
 
@@ -160,7 +179,7 @@ impl Heightmap {
     /// in [`gc_sim::terrain::HEIGHT_UNITS`] per tile, and the water line in
     /// the same units. The same tile-centre heights the minds read
     /// ([`Heightmap::ai_terrain`]), so both agree on what is high and wet.
-    pub fn sim_ground(&self) -> (Vec<u16>, u16) {
+    fn sim_ground(&self) -> (Vec<u16>, u16) {
         let tiles = (self.size - 1) / self.samples_per_tile;
         let half = self.samples_per_tile / 2;
         let per_tile = gc_sim::terrain::HEIGHT_UNITS as f32;
@@ -193,7 +212,7 @@ impl Heightmap {
         }
         gc_ai::Terrain::new(nav, tiles)
             .with_heights(heights, self.water_level)
-            .with_cover(self.cover())
+            .with_cover(self.cover.clone())
     }
 }
 
@@ -217,17 +236,12 @@ impl Heightmap {
     /// agrees on the cover. Woods grow in clumps on dry, gentle ground, ringed
     /// by tall grass; more grass fills a few meadows. The start plateaus and
     /// the map's edge stay open.
-    pub fn cover(&self) -> Vec<u8> {
-        let (heights, water) = self.sim_ground();
+    fn grow_cover(&self, seed: u64) -> Vec<u8> {
+        let (heights, water) = (&self.sim_heights, self.sim_water);
         let n = ((self.size - 1) / self.samples_per_tile) as i64;
         let at =
             |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
-        let starts = [
-            (n / 4, n / 4),
-            (3 * n / 4, n / 4),
-            (n / 4, 3 * n / 4),
-            (3 * n / 4, 3 * n / 4),
-        ];
+        let starts = start_positions(n as u32).map(|s| (s.x as i64, s.y as i64));
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
             for x in 0..n {
@@ -248,11 +262,11 @@ impl Heightmap {
                 {
                     gc_sim::Cover::Open
                 } else {
-                    let wood = cover_noise(self.seed, 0, x, y);
+                    let wood = cover_noise(seed, 0, x, y);
                     if wood > WOOD_LEVEL {
                         gc_sim::Cover::Wood
                     } else if wood > WOOD_LEVEL - GRASS_FRINGE
-                        || cover_noise(self.seed, 1, x, y) > MEADOW_LEVEL
+                        || cover_noise(seed, 1, x, y) > MEADOW_LEVEL
                     {
                         gc_sim::Cover::Grass
                     } else {
@@ -374,9 +388,13 @@ mod tests {
     fn woods_and_grass_grow_in_sensible_amounts() {
         for seed in [1, 2, 3, 42, 777] {
             let hm = Heightmap::generate(seed, 256);
-            let cover = hm.cover();
+            let cover = &hm.cover;
             assert_eq!(cover.len(), 256 * 256);
-            assert_eq!(cover, hm.cover(), "cover isn't repeatable");
+            assert_eq!(
+                *cover,
+                Heightmap::generate(seed, 256).cover,
+                "cover isn't repeatable"
+            );
             let share = |c: gc_sim::Cover| {
                 cover.iter().filter(|&&v| v == c as u8).count() as f32 * 100.0 / cover.len() as f32
             };

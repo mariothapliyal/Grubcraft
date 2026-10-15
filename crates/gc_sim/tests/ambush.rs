@@ -5,8 +5,8 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, Drill, NORTH};
 use gc_sim::vision::{AMBUSH_RIPPLE, AMBUSH_SHOCK, LINGER_TICKS, SURPRISE_TICKS, VOLLEY_SHOCK};
 use gc_sim::{
-    Capacities, Command, Cover, Ground, MatchSetup, MoraleState, PlayerCommand, RegimentHandle,
-    UnitStats, World,
+    Ambush, Capacities, Command, Cover, Ground, MatchSetup, MoraleState, PlayerCommand,
+    RegimentHandle, UnitStats, World,
 };
 
 const SOUTH: Angle = Angle(0x4000);
@@ -33,11 +33,15 @@ fn patch(kind: Cover, x0: u32, x1: u32, y0: u32, y1: u32) -> Vec<u8> {
 }
 
 fn world_with(seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]) -> World {
+    world_on(MAP, seed, units, cover, teams)
+}
+
+fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]) -> World {
     World::new(&MatchSetup {
         seed,
         capacities: Capacities::default(),
         units,
-        map_tiles: MAP,
+        map_tiles: map,
         nav: &[],
         teams,
         ground: Ground {
@@ -80,6 +84,17 @@ fn run(w: &mut World, ticks: u32) {
     }
 }
 
+/// Ticks until the first ambush springs, for at most `ticks` ticks.
+fn first_ambush(w: &mut World, ticks: u32) -> Option<Ambush> {
+    for _ in 0..ticks {
+        if let Some(&a) = w.ambushes().first() {
+            return Some(a);
+        }
+        w.tick(&[]);
+    }
+    w.ambushes().first().copied()
+}
+
 fn order(w: &mut World, player: u8, command: Command) -> bool {
     w.tick(&[PlayerCommand { player, command }])
         .commands_applied
@@ -117,7 +132,7 @@ fn morale(w: &World, h: RegimentHandle) -> u8 {
 #[test]
 fn without_cover_everyone_sees_everything() {
     let mut w = world(&[]);
-    assert!(!w.vision().active());
+    assert!(!w.terrain().has_cover());
     let a = spawn(&mut w, 0, SPEARS, tile(20), tile(20), SOUTH);
     let b = spawn(&mut w, 1, SPEARS, tile(20), tile(50), NORTH);
     run(&mut w, 10);
@@ -128,7 +143,7 @@ fn without_cover_everyone_sees_everything() {
 #[test]
 fn open_ground_hides_nothing() {
     let mut w = world(&patch(Cover::Wood, 40, 60, 0, 64));
-    assert!(w.vision().active());
+    assert!(w.terrain().has_cover());
     let a = spawn(&mut w, 0, SPEARS, tile(10), tile(10), SOUTH);
     let b = spawn(&mut w, 1, SPEARS, tile(10), tile(55), NORTH);
     run(&mut w, 10);
@@ -148,12 +163,13 @@ fn a_regiment_in_a_wood_is_hidden_until_an_enemy_comes_close() {
     assert!(w.hidden(hid));
     assert!(w.sees(1, scout) && !w.hidden(scout));
 
-    // Edge to edge 5 tiles away (the blocks are 6 tiles wide): still hidden.
-    move_to(&mut w, 0, scout, tile(20), tile(31));
+    // Front to front about 5.4 tiles apart (the blocks are 2.55 tiles
+    // deep, so their centres are 8 apart): still hidden.
+    move_to(&mut w, 0, scout, tile(20), tile(28));
     run(&mut w, 10 * SECOND);
     assert!(!w.sees(0, hid), "spotted from 5 tiles");
-    // 3 tiles away: spotted.
-    move_to(&mut w, 0, scout, tile(20), tile(29));
+    // About 3.4 tiles apart: spotted.
+    move_to(&mut w, 0, scout, tile(20), tile(26));
     run(&mut w, 2 * SECOND);
     assert!(w.sees(0, hid), "not spotted from 3 tiles");
     assert!(!w.hidden(hid));
@@ -232,7 +248,7 @@ fn allies_share_what_they_see() {
     let near = spawn(&mut w, 2, SPEARS, tile(20), tile(50), NORTH);
     run(&mut w, 2);
     assert!(!w.sees(0, hid) && !w.sees(2, hid));
-    move_to(&mut w, 2, near, tile(20), tile(29));
+    move_to(&mut w, 2, near, tile(20), tile(26));
     run(&mut w, 8 * SECOND);
     assert!(w.sees(2, hid));
     assert!(w.sees(0, hid), "an ally's sighting isn't shared");
@@ -293,15 +309,7 @@ fn hidden_archers_hold_their_fire_until_ordered() {
     // out of nowhere shakes the target.
     let steady = morale(&w, spears);
     assert!(attack(&mut w, 1, archers, spears));
-    let mut sprung = w.ambushes().first().copied();
-    for _ in 0..2 * SECOND {
-        if sprung.is_some() {
-            break;
-        }
-        w.tick(&[]);
-        sprung = w.ambushes().first().copied();
-    }
-    let a = sprung.expect("no ambush volley");
+    let a = first_ambush(&mut w, 2 * SECOND).expect("no ambush volley");
     assert!(a.volley);
     assert_eq!((a.ambusher, a.victim), (archers, spears));
     assert!(!w.hidden(archers));
@@ -367,15 +375,7 @@ fn charge(wood: bool) -> (World, RegimentHandle, RegimentHandle, RegimentHandle)
 fn a_charge_from_hiding_springs_an_ambush() {
     let (mut w, cav, spears, friend) = charge(true);
     let (steady, friend_steady) = (morale(&w, spears), morale(&w, friend));
-    let mut sprung = None;
-    for _ in 0..SURPRISE_TICKS as u32 {
-        w.tick(&[]);
-        if let Some(a) = w.ambushes().first() {
-            sprung = Some(*a);
-            break;
-        }
-    }
-    let a = sprung.expect("no ambush");
+    let a = first_ambush(&mut w, SURPRISE_TICKS as u32).expect("no ambush");
     assert!(!a.volley);
     assert_eq!((a.ambusher, a.victim), (cav, spears));
     assert!(w.caught_off_guard(spears));
@@ -481,7 +481,7 @@ fn regiments_placed_in_a_wood_start_hidden_and_in_the_open_start_seen() {
 }
 
 #[test]
-fn shattered_and_routing_regiments_are_not_shaken_further() {
+fn a_fearless_regiment_shrugs_off_an_ambush() {
     // A fearless victim (morale stat 0) loses no morale to an ambush.
     let mut units = DRILL_UNITS;
     units[SPEARS as usize].morale = 0;
@@ -508,19 +508,7 @@ fn checker(map: u32) -> Vec<u8> {
 }
 
 fn drill_hashes(cover: &[u8]) -> Vec<u64> {
-    let mut world = World::new(&MatchSetup {
-        seed: 11,
-        capacities: Capacities::default(),
-        units: &DRILL_UNITS,
-        map_tiles: 256,
-        nav: &[],
-        teams: &[],
-        ground: Ground {
-            heights: &[],
-            water_level: 0,
-            cover,
-        },
-    });
+    let mut world = world_on(256, 11, &DRILL_UNITS, cover, &[]);
     let mut drill = Drill::new(11);
     let mut commands = Vec::new();
     let mut hashes = Vec::new();

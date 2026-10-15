@@ -17,7 +17,7 @@
 use gc_sim::Cover;
 use glam::Vec2;
 
-use super::{Captain, Ctx, Doctrine, Role, gap_between};
+use super::{Captain, Ctx, Doctrine, Role, gap_between, line_centre};
 use crate::orders::{Act, Want};
 use crate::perception::{Class, Seen, right_of};
 
@@ -60,7 +60,7 @@ pub(super) const WAIT_LONGER: f32 = 25.0;
 pub(super) struct Plan {
     hideouts: Vec<Hideout>,
     /// Someone has come to blows: too late to slip away into hiding.
-    joined: bool,
+    pub(super) joined: bool,
 }
 
 impl Plan {
@@ -80,16 +80,11 @@ pub(super) fn line_ambushers(line: usize) -> usize {
     }
 }
 
-/// The class of `ours` that would lie in wait: its fast troops when they
-/// can be hammers (beside a line, or a third of an army of fast troops
-/// only), otherwise its line infantry when there are enough to spare.
-fn ambusher_class(view: &crate::perception::Perception, ours: &[&Seen]) -> Option<Class> {
-    let count = |c: Class| ours.iter().filter(|r| view.unit(r).class == c).count();
-    let (line, shock, ranged) = (
-        count(Class::Line),
-        count(Class::Shock),
-        count(Class::Ranged),
-    );
+/// The class that would lie in wait in an army of `line`, `shock` and
+/// `ranged` regiments: its fast troops when they can be hammers (beside a
+/// line, or a third of an army of fast troops only), otherwise its line
+/// infantry when there are enough to spare.
+fn ambusher_class(line: usize, shock: usize, ranged: usize) -> Option<Class> {
     if shock > 0 {
         (line + ranged > 0 || shock >= 3).then_some(Class::Shock)
     } else {
@@ -112,20 +107,18 @@ impl Captain {
         self.doctrine == Doctrine::Ambush && self.ambush.hideouts.iter().any(|h| !h.sprung)
     }
 
-    /// Where regiment `h` hides, if it is lying in wait.
-    pub fn hiding_place_of(&self, h: gc_sim::RegimentHandle) -> Option<Vec2> {
-        self.ambush
-            .hideouts
-            .iter()
-            .find(|o| o.handle == h && !o.sprung)
-            .map(|o| o.spot)
-    }
-
     /// How much better the Ambush doctrine fits than Hammer and anvil now,
     /// or `None` when it can't be used: no cover on the map, the armies
-    /// already close, or nowhere for a would-be ambusher to hide. Lying in
-    /// wait suits the cunning and the patient, not the headlong.
-    pub(super) fn ambush_fit(&self, ctx: &Ctx, ours: &[&Seen], fighting: &[&Seen]) -> Option<f32> {
+    /// already close, or nowhere for a would-be ambusher to hide. `counts`
+    /// are our line, shock and ranged regiments. Lying in wait suits the
+    /// cunning and the patient, not the headlong.
+    pub(super) fn ambush_fit(
+        &self,
+        ctx: &Ctx,
+        ours: &[&Seen],
+        fighting: &[&Seen],
+        (line, shock, ranged): (usize, usize, usize),
+    ) -> Option<f32> {
         if !ctx.terrain.has_cover() {
             return None;
         }
@@ -134,12 +127,11 @@ impl Captain {
         if self.doctrine == Doctrine::Ambush && !self.ambush.hideouts.is_empty() {
             return Some(1.0);
         }
-        let joined = self.ambush.joined || ctx.view.regiments.iter().any(|r| r.engaged);
-        if joined || self.front_gap(fighting) < APART {
+        if self.ambush.joined || self.front_gap(fighting) < APART {
             return None;
         }
         let view = ctx.view;
-        let class = ambusher_class(view, ours)?;
+        let class = ambusher_class(line, shock, ranged)?;
         let (_, wood) = ours
             .iter()
             .filter(|r| view.unit(r).class == class)
@@ -158,7 +150,6 @@ impl Captain {
     /// plan.
     pub(super) fn lay_ambush(&mut self, ctx: &mut Ctx) {
         let view = ctx.view;
-        self.ambush.joined |= view.regiments.iter().any(|r| r.engaged);
         if self.doctrine != Doctrine::Ambush {
             self.ambush.hideouts.clear();
             return;
@@ -237,18 +228,19 @@ impl Captain {
         let gap = self.front_gap(fighting);
         let speed = view.unit(r).speed.max(0.5);
         let reach = half_line + SEARCH_OUT;
+        let steps = |from: f32, to: f32| {
+            (0..)
+                .map(move |i| from + i as f32 * SEARCH_STEP)
+                .take_while(move |&v| v <= to)
+        };
         let mut best: Option<(f32, Vec2, bool)> = None;
-        let mut ahead = -6.0;
-        while ahead <= gap * 0.5 {
-            let mut across = -reach;
-            while across <= reach {
-                let here = (across, ahead);
-                across += SEARCH_STEP;
+        for ahead in steps(-6.0, gap * 0.5) {
+            for across in steps(-reach, reach) {
                 // Off an end of the line, not in front of its middle.
-                if here.0.abs() < half_line * 0.5 {
+                if across.abs() < half_line * 0.5 {
                     continue;
                 }
-                let c = self.anchor + right * here.0 + self.forward * here.1;
+                let c = self.anchor + right * across + self.forward * ahead;
                 if !terrain.inside(c, 6.0) || !terrain.walkable(c) {
                     continue;
                 }
@@ -262,28 +254,22 @@ impl Captain {
                 // Well clear of every enemy in sight, and there long before
                 // any of them could be.
                 let ours = c.distance(r.pos) / speed;
-                let mut clear = true;
-                for f in fighting {
+                let clear = fighting.iter().all(|f| {
                     let d = f.pos.distance(c);
-                    if d < KEEP_CLEAR + f.radius()
-                        || d / view.unit(f).speed.max(0.5) < ours * HEAD_START
-                    {
-                        clear = false;
-                        break;
-                    }
-                }
+                    d >= KEEP_CLEAR + f.radius()
+                        && d / view.unit(f).speed.max(0.5) >= ours * HEAD_START
+                });
                 if !clear {
                     continue;
                 }
                 let score = if wood { 1.0 } else { 0.6 }
                     - ours / 40.0
-                    - (here.0.abs() - half_line - BEST_OUT).abs() / 30.0
-                    - (here.1 - BEST_AHEAD).abs() / 40.0;
+                    - (across.abs() - half_line - BEST_OUT).abs() / 30.0
+                    - (ahead - BEST_AHEAD).abs() / 40.0;
                 if best.is_none_or(|(s, _, _)| score > s) {
                     best = Some((score, c, wood));
                 }
             }
-            ahead += SEARCH_STEP;
         }
         best.map(|(_, c, wood)| (c, wood))
     }
@@ -295,6 +281,7 @@ impl Captain {
         ctx: &mut Ctx,
         m: &mut super::Member,
         r: &Seen,
+        ours: &[&Seen],
         fighting: &[&Seen],
         wants: &mut Vec<Want>,
     ) {
@@ -319,18 +306,7 @@ impl Captain {
             && fighting.iter().any(|f| gap_between(r, f) < SPRING_SPOTTED);
         // Where the line stands now (while advancing, the anchor is where
         // it is going).
-        let view = ctx.view;
-        let line: Vec<Vec2> = self
-            .members
-            .iter()
-            .filter(|o| matches!(o.role, Role::Anchor | Role::Wing))
-            .filter_map(|o| view.get(o.handle).map(|r| r.pos))
-            .collect();
-        let line_at = if line.is_empty() {
-            self.anchor
-        } else {
-            line.iter().sum::<Vec2>() / line.len() as f32
-        };
+        let line_at = line_centre(&self.members, ours, self.anchor);
         let forgotten = line_at.distance(spot) > GIVE_UP
             && fighting.iter().all(|f| f.pos.distance(spot) > GIVE_UP);
         if melee || close || spotted || forgotten {
