@@ -103,11 +103,15 @@ fn linear_to_srgb(c: f32) -> f32 {
     }
 }
 
-/// Read a map and shrink it to [`TEXTURE_SIZE`]. `srgb` decodes the colour
-/// channels; `normal` averages them as normals.
-fn load_map(path: &Path, srgb: bool, normal: bool) -> Result<Layer, String> {
+/// Read a PNG.
+pub fn load_png(path: &Path) -> Result<Image, String> {
     let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let img: Image = crate::decode_png(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::decode_png(&data).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Shrink a map to [`TEXTURE_SIZE`]. `srgb` decodes the colour channels;
+/// `normal` averages them as normals.
+fn shrink(img: &Image, path: &Path, srgb: bool, normal: bool) -> Result<Layer, String> {
     let side = img.width as usize;
     let target = TEXTURE_SIZE as usize;
     if img.width != img.height || side < target || !(side / target).is_power_of_two() {
@@ -135,16 +139,21 @@ fn load_map(path: &Path, srgb: bool, normal: bool) -> Result<Layer, String> {
 }
 
 /// The three layers of one material, each with its mips, back to back.
+/// `albedo` is the already loaded `cfg.albedo` map.
 pub fn bake(
     cfg: &TextureConfig,
+    albedo: &Image,
     resolve: impl Fn(&str) -> Result<std::path::PathBuf, String>,
 ) -> Result<Vec<[u8; 4]>, String> {
     let map = |src: &Option<String>, srgb: bool, normal: bool| -> Result<Option<Layer>, String> {
         src.as_ref()
-            .map(|s| load_map(&resolve(s)?, srgb, normal))
+            .map(|s| {
+                let path = resolve(s)?;
+                shrink(&load_png(&path)?, &path, srgb, normal)
+            })
             .transpose()
     };
-    let albedo = load_map(&resolve(&cfg.albedo)?, true, false)?;
+    let albedo = shrink(albedo, &resolve(&cfg.albedo)?, true, false)?;
     let team = map(&cfg.team, false, false)?;
     let normal = map(&cfg.normal, false, true)?.unwrap_or(Layer::filled([0.5, 0.5, 1.0, 1.0]));
     let orm =
@@ -263,7 +272,8 @@ mod tests {
             orm: None,
             emissive: None,
         };
-        let texels = bake(&cfg, |s| Ok(dir.join(s))).unwrap();
+        let albedo = load_png(&path).unwrap();
+        let texels = bake(&cfg, &albedo, |s| Ok(dir.join(s))).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(texels.len(), TEXELS_PER_LAYER * LAYERS_PER_MATERIAL);
         // Albedo survives shrinking; no team; a flat normal; default roughness.

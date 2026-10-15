@@ -142,8 +142,14 @@ fn run(opts: &Options) -> Result<(), String> {
     let mut tables = ModelTables::default();
     for m in &config.models {
         let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
-        let mut baked =
-            bake_model(m, &path).map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
+        // A painted albedo map also gives the vertex colours (for the report
+        // and anything drawn without textures).
+        let albedo = match &m.textures {
+            Some(t) => Some(textures::load_png(&resolve(&t.albedo)?)?),
+            None => None,
+        };
+        let mut baked = bake_model(m, &path, albedo.as_ref())
+            .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
         }
@@ -152,7 +158,9 @@ fn run(opts: &Options) -> Result<(), String> {
             if material >= MAX_MATERIALS {
                 return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
             }
-            let texels = textures::bake(cfg, resolve).map_err(|e| format!("{}: {e}", m.name))?;
+            let albedo = albedo.as_ref().expect("loaded above");
+            let texels =
+                textures::bake(cfg, albedo, resolve).map_err(|e| format!("{}: {e}", m.name))?;
             tables.textures.extend_from_slice(&texels);
             for v in &mut baked.verts {
                 v.material = material as u8 + 1;
@@ -432,7 +440,11 @@ impl Skeleton {
     }
 }
 
-fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
+fn bake_model(
+    cfg: &ModelConfig,
+    path: &Path,
+    albedo: Option<&Image>,
+) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
     let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(|v| v.as_slice());
@@ -524,10 +536,11 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
             let material = prim.material();
             let pbr = material.pbr_metallic_roughness();
             let factor = Vec4::from(pbr.base_color_factor());
-            let texture = pbr
-                .base_color_texture()
-                .and_then(|t| src.images.get(t.texture().source().index()))
-                .and_then(|i| i.as_ref());
+            let texture = albedo.or_else(|| {
+                pbr.base_color_texture()
+                    .and_then(|t| src.images.get(t.texture().source().index()))
+                    .and_then(|i| i.as_ref())
+            });
 
             let base = verts.len() as u32;
             for k in 0..positions.len() {
