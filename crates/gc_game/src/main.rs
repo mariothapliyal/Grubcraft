@@ -1374,6 +1374,7 @@ impl Running {
         }
         self.group_commands.clear();
         formation::group_move(&mut self.group, order, &mut self.group_commands);
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
     /// Ghost plates where each regiment of a planned order will stand.
@@ -1686,9 +1687,7 @@ impl Running {
             &mut self.instances,
         );
         let viewer = self.sandbox.side;
-        if self.world.deploying()
-            && let Some(zone) = self.world.deploy_zone(viewer)
-        {
+        if let Some(zone) = self.world.deploy_zone(viewer) {
             Self::push_zone_ring(
                 &mut self.instances,
                 from_fx_vec(zone.center),

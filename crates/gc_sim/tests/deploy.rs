@@ -3,12 +3,11 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::deploy::DEPLOY_SECONDS;
-use gc_sim::scenario::DRILL_UNITS;
+use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{
     Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World,
 };
 
-const NORTH: Angle = Angle(0xC000);
 const SOUTH: Angle = Angle(0x4000);
 
 fn world() -> World {

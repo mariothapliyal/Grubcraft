@@ -601,6 +601,11 @@ impl World {
     }
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
+        // Marching and fighting orders wait for the battle.
+        if self.deploying() && matches!(pc.command, Command::MoveTo { .. } | Command::Attack { .. })
+        {
+            return false;
+        }
         match pc.command {
             Command::SpawnRegiment {
                 unit,
@@ -632,9 +637,6 @@ impl World {
                 files,
                 pace,
             } => {
-                if self.deploying() {
-                    return false;
-                }
                 // Players may only order their own regiments.
                 match self.regiments.owner(regiment) {
                     Some(owner) if owner == pc.player => self.regiments.order(
@@ -649,7 +651,7 @@ impl World {
                     _ => false,
                 }
             }
-            Command::Attack { regiment, target } if !self.deploying() => {
+            Command::Attack { regiment, target } => {
                 match (self.regiments.owner(regiment), self.regiments.owner(target)) {
                     (Some(owner), Some(enemy))
                         if owner == pc.player
@@ -680,7 +682,6 @@ impl World {
                 }
                 _ => false,
             },
-            Command::Attack { .. } => false,
             Command::DeployZone { center, radius } => {
                 self.deploy
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
@@ -698,13 +699,14 @@ impl World {
                         .zone(pc.player)
                         .is_some_and(|z| z.contains(position))
                     && self.nav.walkable(position);
-                if !allowed || !self.regiments.place(regiment, position, facing, files) {
+                let Some(i) = allowed
+                    .then(|| self.regiments.place(regiment, position, facing, files))
+                    .flatten()
+                else {
                     return false;
-                }
-                if let Some(i) = self.regiments.resolve(regiment) {
-                    self.vision
-                        .start(&self.regiments, &self.units, &self.terrain, i);
-                }
+                };
+                self.vision
+                    .start(&self.regiments, &self.units, &self.terrain, i);
                 true
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
@@ -719,12 +721,18 @@ impl World {
 
     /// `player`'s deployment zone, if the match has a deployment phase.
     pub fn deploy_zone(&self, player: PlayerId) -> Option<Zone> {
-        self.deploy.zone(player)
+        self.deploying().then(|| self.deploy.zone(player)).flatten()
     }
 
     /// Whether `player` has said they are done deploying.
     pub fn deploy_ready(&self, player: PlayerId) -> bool {
         self.deploy.is_ready(player)
+    }
+
+    /// Ticks of battle so far: the ticks since deployment ended, or all of
+    /// them in a match without one.
+    pub fn battle_ticks(&self) -> u32 {
+        self.deploy.battle_ticks(self.tick)
     }
 
     /// Ticks until the battle starts, while deploying.

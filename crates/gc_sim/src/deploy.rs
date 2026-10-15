@@ -28,10 +28,16 @@ impl Zone {
     }
 }
 
+/// A player taking part in the deployment.
+#[derive(Clone, Copy, Debug)]
+struct Deployer {
+    zone: Zone,
+    ready: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Deployment {
-    zones: [Option<Zone>; MAX_ZONES],
-    ready: [bool; MAX_ZONES],
+    deployers: [Option<Deployer>; MAX_ZONES],
     /// The tick the battle starts on; 0 when there is no deployment.
     end: u32,
 }
@@ -43,37 +49,48 @@ impl Deployment {
 
     /// Give `player` a zone. Only on the first tick, before anything moves.
     pub fn set_zone(&mut self, player: PlayerId, zone: Zone, tick: u32) -> bool {
-        let Some(slot) = self.zones.get_mut(player as usize) else {
+        let Some(slot) = self.deployers.get_mut(player as usize) else {
             return false;
         };
         if tick != 0 || zone.radius <= Fx::ZERO {
             return false;
         }
-        *slot = Some(zone);
+        *slot = Some(Deployer { zone, ready: false });
         self.end = DEPLOY_SECONDS * TICKS_PER_SECOND;
         true
     }
 
+    fn deployer(&self, player: PlayerId) -> Option<Deployer> {
+        self.deployers.get(player as usize).copied().flatten()
+    }
+
     pub fn zone(&self, player: PlayerId) -> Option<Zone> {
-        self.zones.get(player as usize).copied().flatten()
+        self.deployer(player).map(|d| d.zone)
     }
 
     pub fn is_ready(&self, player: PlayerId) -> bool {
-        self.ready.get(player as usize).copied().unwrap_or(false)
+        self.deployer(player).is_some_and(|d| d.ready)
     }
 
     /// `player` is done placing. Once every player with a zone is, the
     /// battle starts on the next tick.
     pub fn set_ready(&mut self, player: PlayerId, tick: u32) -> bool {
-        if !self.active(tick) || self.zone(player).is_none() || self.is_ready(player) {
+        if !self.active(tick) {
             return false;
         }
-        self.ready[player as usize] = true;
-        let all = (0..MAX_ZONES).all(|p| self.zones[p].is_none() || self.ready[p]);
-        if all {
+        match self.deployers.get_mut(player as usize) {
+            Some(Some(d)) if !d.ready => d.ready = true,
+            _ => return false,
+        }
+        if self.deployers.iter().flatten().all(|d| d.ready) {
             self.end = tick + 1;
         }
         true
+    }
+
+    /// Ticks since the battle started.
+    pub fn battle_ticks(&self, tick: u32) -> u32 {
+        tick.saturating_sub(self.end)
     }
 
     /// Ticks left until the battle starts.
@@ -88,13 +105,13 @@ impl Deployment {
             return;
         }
         h.u32(self.end);
-        for (zone, &ready) in self.zones.iter().zip(&self.ready) {
-            match zone {
-                Some(z) => {
-                    h.u8(1 + u8::from(ready));
-                    h.i32(z.center.x.raw());
-                    h.i32(z.center.y.raw());
-                    h.i32(z.radius.raw());
+        for d in &self.deployers {
+            match d {
+                Some(d) => {
+                    h.u8(1 + u8::from(d.ready));
+                    h.i32(d.zone.center.x.raw());
+                    h.i32(d.zone.center.y.raw());
+                    h.i32(d.zone.radius.raw());
                 }
                 None => h.u8(0),
             }

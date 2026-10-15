@@ -242,15 +242,13 @@ impl Running {
             },
             cards: &hud.cards,
             tray_title: &title,
-            deployment: (self.world.deploying() && self.world.deploy_zone(side).is_some()).then(
-                || DeployStatus {
-                    seconds_left: self
-                        .world
-                        .deploy_ticks_left()
-                        .div_ceil(gc_sim::TICKS_PER_SECOND),
-                    ready: self.world.deploy_ready(side),
-                },
-            ),
+            deployment: self.world.deploy_zone(side).map(|_| DeployStatus {
+                seconds_left: self
+                    .world
+                    .deploy_ticks_left()
+                    .div_ceil(gc_sim::TICKS_PER_SECOND),
+                ready: self.world.deploy_ready(side),
+            }),
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
