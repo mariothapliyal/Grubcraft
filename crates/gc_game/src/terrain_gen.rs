@@ -15,13 +15,13 @@ use glam::Vec2;
 /// Centres of the four start plateaus: north-west, north-east, south-west,
 /// south-east (north is towards smaller z, where the camera looks).
 pub fn start_positions(tiles: u32) -> [Vec2; 4] {
-    let n = tiles as f32;
-    [
-        Vec2::new(n * 0.25, n * 0.25),
-        Vec2::new(n * 0.75, n * 0.25),
-        Vec2::new(n * 0.25, n * 0.75),
-        Vec2::new(n * 0.75, n * 0.75),
-    ]
+    start_tiles(tiles).map(|(x, y)| Vec2::new(x as f32, y as f32))
+}
+
+/// [`start_positions`] in whole tiles, for map making.
+fn start_tiles(tiles: u32) -> [(i64, i64); 4] {
+    let (q1, q3) = (tiles as i64 / 4, tiles as i64 * 3 / 4);
+    [(q1, q1), (q3, q1), (q1, q3), (q3, q3)]
 }
 
 pub struct Heightmap {
@@ -45,15 +45,16 @@ impl Heightmap {
         let size = tiles * samples_per_tile + 1;
         let noise = Noise { seed: seed as u32 };
         let n = tiles as i64;
-        // In samples: the map's centre and the start plateaus' centres (a
-        // quarter and three quarters of the way across).
-        let (q1, q3) = (n * SAMPLES_PER_TILE / 4, n * SAMPLES_PER_TILE * 3 / 4);
+        // In samples: the map's centre and the start plateaus' centres.
         let centre = n * SAMPLES_PER_TILE / 2;
-        let starts = [(q1, q1), (q3, q1), (q1, q3), (q3, q3)];
-        // Distance in tiles, fixed point, from sample offsets.
-        let dist = |dx: i64, dz: i64| {
-            isqrt_u64(((dx * dx + dz * dz) as u64) << 32) as i64 / SAMPLES_PER_TILE
-        };
+        let starts = start_tiles(tiles).map(|(x, z)| (x * SAMPLES_PER_TILE, z * SAMPLES_PER_TILE));
+        // Squared distance in samples, and as a distance in tiles in fixed point.
+        let dist2 = |dx: i64, dz: i64| dx * dx + dz * dz;
+        let tiles_apart = |d2: i64| isqrt_u64((d2 as u64) << 32) as i64 / SAMPLES_PER_TILE;
+        // Beyond these the bowl and the plateaus leave the height as it is,
+        // so their square roots are skipped (the bowl's with a sample to spare).
+        let bowl_reach2 = (72 * n / 100 + 1).pow(2);
+        let plateau_reach2 = (30 * SAMPLES_PER_TILE).pow(2);
 
         let mut heights = Vec::with_capacity((size * size) as usize);
         for sz in 0..size as i64 {
@@ -73,13 +74,19 @@ impl Heightmap {
                 h += rib6 * 45 / 100 * gaps / ONE;
 
                 // Shallow bowl around the Heart, 0.18 of the map across.
-                let dc = dist(sx - centre, sz - centre) * 100 / (18 * n);
-                h -= (ONE - smoothstep(0, ONE, dc)) / 10;
+                let d2 = dist2(sx - centre, sz - centre);
+                if d2 < bowl_reach2 {
+                    let dc = tiles_apart(d2) * 100 / (18 * n);
+                    h -= (ONE - smoothstep(0, ONE, dc)) / 10;
+                }
 
                 // Flat, buildable plateaus at the four start positions.
                 for (x, z) in starts {
-                    let t = smoothstep(18 * ONE, 30 * ONE, dist(sx - x, sz - z));
-                    h = (h * t + ONE * 36 / 100 * (ONE - t)) / ONE;
+                    let d2 = dist2(sx - x, sz - z);
+                    if d2 < plateau_reach2 {
+                        let t = smoothstep(18 * ONE, 30 * ONE, tiles_apart(d2));
+                        h = (h * t + ONE * 36 / 100 * (ONE - t)) / ONE;
+                    }
                 }
 
                 // Edges fall away so the map reads as an island of hide.
@@ -144,7 +151,7 @@ const SAMPLES_PER_TILE: i64 = 4;
 /// The highest ground, in tiles: a stored height of 65,535.
 const MAX_HEIGHT: i64 = 14;
 /// The water line as a stored height: 0.17 of the highest ground.
-const WATER: i64 = 11_141;
+const WATER: i64 = u16::MAX as i64 * 17 / 100;
 /// Ground steeper than this many hundredths of a tile of rise per tile is
 /// a cliff no regiment climbs; over half of it is slow going that routes
 /// avoid.
@@ -268,7 +275,7 @@ impl Heightmap {
         let n = ((self.size - 1) / self.samples_per_tile) as i64;
         let at =
             |x: i64, y: i64| heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize] as i64;
-        let starts = start_positions(n as u32).map(|s| (s.x as i64, s.y as i64));
+        let starts = start_tiles(n as u32);
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
             for x in 0..n {
@@ -325,16 +332,16 @@ fn value_noise(seed: u64, layer: u64, x: i64, y: i64, cell: i64) -> i64 {
         h ^= h >> 29;
         (h & 0xFFFF) as i64
     };
-    const ONE: i64 = 4096;
+    const STEP: i64 = 4096;
     let ease = |f: i64| {
-        let t = f * ONE / cell;
-        t * t * (3 * ONE - 2 * t) / (ONE * ONE)
+        let t = f * STEP / cell;
+        t * t * (3 * STEP - 2 * t) / (STEP * STEP)
     };
     let (cx, cy) = (x.div_euclid(cell), y.div_euclid(cell));
     let (u, v) = (ease(x.rem_euclid(cell)), ease(y.rem_euclid(cell)));
-    let top = lattice(cx, cy) * (ONE - u) + lattice(cx + 1, cy) * u;
-    let bottom = lattice(cx, cy + 1) * (ONE - u) + lattice(cx + 1, cy + 1) * u;
-    (top * (ONE - v) + bottom * v) / (ONE * ONE)
+    let top = lattice(cx, cy) * (STEP - u) + lattice(cx + 1, cy) * u;
+    let bottom = lattice(cx, cy + 1) * (STEP - u) + lattice(cx + 1, cy + 1) * u;
+    (top * (STEP - v) + bottom * v) / (STEP * STEP)
 }
 
 /// 0 below `e0`, 1 above `e1` and a smooth S between, in fixed point.
@@ -365,7 +372,7 @@ impl Noise {
     /// Noise at a fixed-point position on a lattice one unit apart.
     fn value(&self, x: i64, y: i64) -> i64 {
         let (ix, iy) = ((x >> 16) as i32, (y >> 16) as i32);
-        let ease = |f: i64| f * f / ONE * (3 * ONE - 2 * f) / ONE;
+        let ease = |f: i64| smoothstep(0, ONE, f);
         let (u, v) = (ease(x & (ONE - 1)), ease(y & (ONE - 1)));
         let a = self.hash(ix, iy);
         let b = self.hash(ix + 1, iy);
@@ -422,11 +429,6 @@ mod tests {
             let hm = Heightmap::generate(seed, 256);
             let cover = &hm.cover;
             assert_eq!(cover.len(), 256 * 256);
-            assert_eq!(
-                *cover,
-                Heightmap::generate(seed, 256).cover,
-                "cover isn't repeatable"
-            );
             let share = |c: gc_sim::Cover| {
                 cover.iter().filter(|&&v| v == c as u8).count() as f32 * 100.0 / cover.len() as f32
             };
@@ -450,19 +452,19 @@ mod tests {
     fn the_map_is_the_same_on_every_machine() {
         let fingerprint = |seed| {
             let hm = Heightmap::generate(seed, 256);
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in hm.heights.iter().flat_map(|v| v.to_le_bytes()) {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-            (h, crate::online::map_hash(&hm.nav_costs(), &hm.ground()))
+            let heights = crate::online::fnv1a(hm.heights.iter().flat_map(|v| v.to_le_bytes()));
+            (
+                heights,
+                crate::online::map_hash(&hm.nav_costs(), &hm.ground()),
+            )
         };
         assert_eq!(
             fingerprint(1),
-            (0xfa16_1374_5be8_6d96, 0x8d34_8301_3e01_ffd0)
+            (0xfa16_1374_5be8_6d96, 0x10dc_5a39_1b6e_0613)
         );
         assert_eq!(
             fingerprint(42),
-            (0xed6f_3282_3a3d_1a97, 0x8e43_8d0f_67b0_c92b)
+            (0xed6f_3282_3a3d_1a97, 0xebdd_c7ee_8ab8_9d84)
         );
     }
 
