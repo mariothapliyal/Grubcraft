@@ -248,44 +248,17 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 // vertex from where it is stored into that frame's pose. Each instance names
 // two frame rows and how far to blend between them; the vertex blends its
 // bones' matrices by their weights (linear blend skinning). Models painted in
-// vertex colours stop there; textured ones read three layers of the material
-// array (albedo and team mask, normal with occlusion and roughness, emitted
-// light with metalness).
+// vertex colours draw with `vs_soldier` and `fs_soldier`; textured ones with
+// `vs_soldier_textured` and `fs_soldier_textured`, which read three layers
+// of the material array (albedo and team mask, normal with occlusion and
+// roughness, emitted light with metalness).
 
 @group(1) @binding(0) var bones: texture_2d<f32>;
 @group(1) @binding(1) var materials_srgb: texture_2d_array<f32>;
 @group(1) @binding(2) var materials_linear: texture_2d_array<f32>;
 @group(1) @binding(3) var material_sampler: sampler;
 
-struct SoldierOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
-    @location(3) highlight: f32,
-    // World-space tangent; w is the bitangent's handedness.
-    @location(4) tangent: vec4<f32>,
-    @location(5) uv: vec2<f32>,
-    // The material plus one; 0 for vertex colours only.
-    @location(6) @interpolate(flat) material: u32,
-    @location(7) @interpolate(flat) team_color: vec3<f32>,
-};
-
-fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
-    return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
-}
-
-// One bone's matrix rows, blended between the instance's two frames.
-fn bone_rows(frames: vec2<u32>, bone: u32, t: f32) -> mat3x4<f32> {
-    return mat3x4<f32>(
-        mix(bone_texel(frames.x, bone, 0u), bone_texel(frames.y, bone, 0u), t),
-        mix(bone_texel(frames.x, bone, 1u), bone_texel(frames.y, bone, 1u), t),
-        mix(bone_texel(frames.x, bone, 2u), bone_texel(frames.y, bone, 2u), t),
-    );
-}
-
-@vertex
-fn vs_soldier(
+struct SoldierIn {
     // x, y, z in 1/4096 tiles; w's low byte is the team weight, its second
     // byte the material plus one.
     @location(0) vpos: vec4<i32>,
@@ -304,80 +277,146 @@ fn vs_soldier(
     @location(11) team_color: vec4<f32>,
     @location(12) lift: f32,
     @location(13) scale: f32,
-) -> SoldierOut {
-    let packed = bitcast<u32>(vpos.w);
-    let team = f32(packed & 0xffu) / 255.0;
-    let p = vec4<f32>(vec3<f32>(vpos.xyz) / 4096.0, 1.0);
-    let t = flags.x;
+};
+
+struct SoldierOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) highlight: f32,
+};
+
+struct TexturedOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) highlight: f32,
+    // World-space tangent; w is the bitangent's handedness.
+    @location(3) tangent: vec4<f32>,
+    @location(4) uv: vec2<f32>,
+    // The material's first layer in the array.
+    @location(5) @interpolate(flat) layer: i32,
+    @location(6) @interpolate(flat) team_color: vec3<f32>,
+};
+
+fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
+    return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
+}
+
+// One bone's matrix rows, blended between the instance's two frames.
+fn bone_rows(frames: vec2<u32>, bone: u32, t: f32) -> mat3x4<f32> {
+    return mat3x4<f32>(
+        mix(bone_texel(frames.x, bone, 0u), bone_texel(frames.y, bone, 0u), t),
+        mix(bone_texel(frames.x, bone, 1u), bone_texel(frames.y, bone, 1u), t),
+        mix(bone_texel(frames.x, bone, 2u), bone_texel(frames.y, bone, 2u), t),
+    );
+}
+
+// A posed vertex in the world.
+struct Posed {
+    clip: vec4<f32>,
+    world: vec3<f32>,
+    normal: vec3<f32>,
+    tangent: vec3<f32>,
+};
+
+// A model-space direction moved by the blended bones, laid down with the
+// fallen, and turned to the soldier's facing. Model space is x to the
+// soldier's left, y up, z forward (glTF's convention).
+fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, v: SoldierIn) -> vec3<f32> {
+    var l = vec3<f32>(dot(m[0].xyz, d), dot(m[1].xyz, d), dot(m[2].xyz, d));
+    if v.flags.z > 0.5 {
+        l = vec3<f32>(l.x, -l.z, l.y);
+    }
+    let left = vec2<f32>(v.facing.y, -v.facing.x);
+    let xz = left * l.x + v.facing * l.z;
+    return vec3<f32>(xz.x, l.y, xz.y);
+}
+
+fn pose(v: SoldierIn) -> Posed {
+    let p = vec4<f32>(vec3<f32>(v.vpos.xyz) / 4096.0, 1.0);
+    let t = v.flags.x;
     // Most vertices follow one or two bones; stop at the first empty slot.
-    var m = bone_rows(frames, vbones.x, t) * vweights.x;
+    var m = bone_rows(v.frames, v.vbones.x, t) * v.vweights.x;
     for (var i = 1u; i < 4u; i++) {
-        let w = vweights[i];
+        let w = v.vweights[i];
         if w <= 0.0 {
             break;
         }
-        m += bone_rows(frames, vbones[i], t) * w;
+        m += bone_rows(v.frames, v.vbones[i], t) * w;
     }
-    var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
-    let n = vnormal.xyz;
-    var nl = vec3<f32>(dot(m[0].xyz, n), dot(m[1].xyz, n), dot(m[2].xyz, n));
-    let tv = vtangent.xyz;
-    var tl = vec3<f32>(dot(m[0].xyz, tv), dot(m[1].xyz, tv), dot(m[2].xyz, tv));
-    if flags.z > 0.5 {
+    var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * v.scale;
+    if v.flags.z > 0.5 {
         // No death clip: lay the soldier on his back.
-        local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);
-        nl = vec3<f32>(nl.x, -nl.z, nl.y);
-        tl = vec3<f32>(tl.x, -tl.z, tl.y);
+        local = vec3<f32>(local.x, -local.z + 0.12 * v.scale, local.y);
     }
-    // Model space is x to the soldier's left, y up, z forward (glTF's
-    // convention), so x maps to the left of the facing.
-    let fwd = facing;
-    let left = vec2<f32>(facing.y, -facing.x);
-    let xz = pos + left * local.x + fwd * local.z;
-    let ground = max(height_at(pos), g.misc.x - 0.05);
-    let world = vec3<f32>(xz.x, ground + lift + local.y, xz.y);
+    let left = vec2<f32>(v.facing.y, -v.facing.x);
+    let xz = v.pos + left * local.x + v.facing * local.z;
+    let ground = max(height_at(v.pos), g.misc.x - 0.05);
+    var out: Posed;
+    out.world = vec3<f32>(xz.x, ground + v.lift + local.y, xz.y);
+    out.clip = g.view_proj * vec4<f32>(out.world, 1.0);
+    let n = model_dir_to_world(m, v.vnormal.xyz, v);
+    out.normal = normalize(n + vec3<f32>(0.0, 1e-4, 0.0));
+    out.tangent = model_dir_to_world(m, v.vtangent.xyz, v);
+    return out;
+}
+
+@vertex
+fn vs_soldier(v: SoldierIn) -> SoldierOut {
+    let posed = pose(v);
     var out: SoldierOut;
-    out.clip = g.view_proj * vec4<f32>(world, 1.0);
-    out.world = world;
-    let nxz = left * nl.x + fwd * nl.z;
-    out.normal = normalize(vec3<f32>(nxz.x, nl.y, nxz.y) + vec3<f32>(0.0, 1e-4, 0.0));
-    let txz = left * tl.x + fwd * tl.z;
-    out.tangent = vec4<f32>(txz.x, tl.y, txz.y, vtangent.w);
-    out.uv = vuv;
-    out.material = (packed >> 8u) & 0xffu;
-    out.team_color = srgb_to_linear(team_color.rgb);
+    out.clip = posed.clip;
+    out.world = posed.world;
+    out.normal = posed.normal;
     // Team parts take the team colour, keeping the painted light and shade.
-    let shade_of = dot(vcolor.rgb, vec3<f32>(0.3, 0.59, 0.11));
-    let tinted = team_color.rgb * (0.45 + shade_of * 1.1);
-    out.color = mix(vcolor.rgb, tinted, team);
-    out.highlight = flags.y;
+    let team = f32(bitcast<u32>(v.vpos.w) & 0xffu) / 255.0;
+    let shade_of = dot(v.vcolor.rgb, vec3<f32>(0.3, 0.59, 0.11));
+    let tinted = v.team_color.rgb * (0.45 + shade_of * 1.1);
+    out.color = mix(v.vcolor.rgb, tinted, team);
+    out.highlight = v.flags.y;
     return out;
 }
 
 @fragment
 fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    // Texture gradients here, in uniform control flow, for the samples below.
-    let duv_dx = dpdx(in.uv);
-    let duv_dy = dpdy(in.uv);
+    let albedo = srgb_to_linear(in.color);
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
-    var n = select(-in.normal, in.normal, front);
-    if in.material == 0u {
-        let albedo = srgb_to_linear(in.color);
-        let c = shade(albedo, n, in.world);
-        return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
-    }
-    let layer = i32(in.material - 1u) * 3;
-    let a = textureSampleGrad(materials_srgb, material_sampler, in.uv, layer, duv_dx, duv_dy);
-    let b = textureSampleGrad(materials_linear, material_sampler, in.uv, layer + 1, duv_dx, duv_dy);
-    let e = textureSampleGrad(materials_srgb, material_sampler, in.uv, layer + 2, duv_dx, duv_dy);
+    let n = select(-in.normal, in.normal, front);
+    let c = shade(albedo, n, in.world);
+    return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
+}
+
+@vertex
+fn vs_soldier_textured(v: SoldierIn) -> TexturedOut {
+    let posed = pose(v);
+    var out: TexturedOut;
+    out.clip = posed.clip;
+    out.world = posed.world;
+    out.normal = posed.normal;
+    out.tangent = vec4<f32>(posed.tangent, v.vtangent.w);
+    out.uv = v.vuv;
+    out.layer = (i32((bitcast<u32>(v.vpos.w) >> 8u) & 0xffu) - 1) * 3;
+    out.team_color = srgb_to_linear(v.team_color.rgb);
+    out.highlight = v.flags.y;
+    return out;
+}
+
+@fragment
+fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
+    let a = textureSample(materials_srgb, material_sampler, in.uv, in.layer);
+    let b = textureSample(materials_linear, material_sampler, in.uv, in.layer + 1);
+    let e = textureSample(materials_srgb, material_sampler, in.uv, in.layer + 2);
     // Team parts are painted in greys: the team colour takes their shade.
     let grey = dot(a.rgb, vec3<f32>(0.3, 0.59, 0.11));
     let albedo = mix(a.rgb, in.team_color * min(grey * 1.4, 1.0), a.a);
-    let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
-    let bt = cross(n, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
+    let n0 = in.normal;
+    let t = normalize(in.tangent.xyz - n0 * dot(n0, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
+    let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
     let nxy = b.xy * 2.0 - 1.0;
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
-    n = normalize(t * nt.x + bt * nt.y + n * nt.z);
+    let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
     let c = shade_material(albedo, n, in.world, b.w, e.a, b.z, e.rgb);
     return vec4<f32>(c + albedo * in.highlight * 0.8, 1.0);
 }

@@ -51,18 +51,11 @@ pub const NAME_BYTES: usize = 24;
 pub const TEXTURE_SIZE: u32 = 512;
 /// Mip levels per layer, down to 1 × 1.
 pub const TEXTURE_MIPS: u32 = TEXTURE_SIZE.ilog2() + 1;
-/// Texels in one layer with all its mips.
-pub const TEXELS_PER_LAYER: usize = {
-    let mut n = 0;
-    let mut i = 0;
-    while i < TEXTURE_MIPS {
-        let side = (TEXTURE_SIZE >> i) as usize;
-        n += side * side;
-        i += 1;
-    }
-    n
-};
+/// Texels in one layer with all its mips (a geometric series, the side
+/// being a power of two).
+pub const TEXELS_PER_LAYER: usize = (4 * (TEXTURE_SIZE as usize).pow(2) - 1) / 3;
 pub const LAYERS_PER_MATERIAL: usize = 3;
+pub const TEXELS_PER_MATERIAL: usize = TEXELS_PER_LAYER * LAYERS_PER_MATERIAL;
 /// Most materials a pack may hold: GPUs promise 256 texture array layers.
 pub const MAX_MATERIALS: usize = 256 / LAYERS_PER_MATERIAL;
 
@@ -247,8 +240,7 @@ impl<'a> Models<'a> {
             textures: table(pack, TEXTURES_PATH)?,
         };
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
-        let material_texels = TEXELS_PER_LAYER * LAYERS_PER_MATERIAL;
-        if !m.textures.len().is_multiple_of(material_texels) || m.materials() > MAX_MATERIALS {
+        if !m.textures.len().is_multiple_of(TEXELS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
             return Err(ModelError::BadTextures);
         }
         for (k, r) in m.models.iter().enumerate() {
@@ -300,7 +292,7 @@ impl<'a> Models<'a> {
 
     /// Materials in the texture table.
     pub fn materials(&self) -> usize {
-        self.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL)
+        self.textures.len() / TEXELS_PER_MATERIAL
     }
 
     /// Rows in the bone texture.
@@ -333,6 +325,11 @@ pub struct ModelTables {
 }
 
 impl ModelTables {
+    /// Materials in the texture table.
+    pub fn materials(&self) -> usize {
+        self.textures.len() / TEXELS_PER_MATERIAL
+    }
+
     pub fn write(&self, pack: &mut crate::PackWriter) {
         use crate::{Kind, table_bytes};
         pack.add(
@@ -437,6 +434,14 @@ mod tests {
     }
 
     #[test]
+    fn a_layer_holds_every_mip() {
+        let sum: usize = (0..TEXTURE_MIPS)
+            .map(|i| ((TEXTURE_SIZE >> i) as usize).pow(2))
+            .sum();
+        assert_eq!(TEXELS_PER_LAYER, sum);
+    }
+
+    #[test]
     fn record_sizes_are_stable() {
         assert_eq!(size_of::<ModelRecord>(), 64);
         assert_eq!(size_of::<ModelVertex>(), 32);
@@ -525,7 +530,7 @@ mod tests {
         });
         let mut fine = one_model();
         fine.vertices[1].material = 1;
-        fine.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER * LAYERS_PER_MATERIAL];
+        fine.textures = alloc::vec![[0; 4]; TEXELS_PER_MATERIAL];
         parsed(&fine, |m| assert_eq!(m.unwrap().materials(), 1));
         let mut bad = one_model();
         bad.textures = alloc::vec![[0; 4]; TEXELS_PER_LAYER];

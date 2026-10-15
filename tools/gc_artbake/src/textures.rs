@@ -36,6 +36,17 @@ const DEFAULT_ROUGHNESS: f32 = 0.7;
 
 type Px = [f32; 4];
 
+/// How a map's channels are stored and filtered.
+#[derive(Clone, Copy, PartialEq)]
+enum Encoding {
+    /// Red, green and blue in sRGB; alpha linear.
+    Srgb,
+    Linear,
+    /// Red and green are a tangent-space normal's x and y, averaged as a
+    /// vector; blue and alpha linear.
+    Normal,
+}
+
 /// A square image in linear values (sRGB channels already decoded).
 struct Layer {
     side: usize,
@@ -51,9 +62,8 @@ impl Layer {
         }
     }
 
-    /// Half the size, averaging 2 × 2 blocks. With `normal`, the first two
-    /// channels are a tangent-space normal, averaged as a vector.
-    fn half(&self, normal: bool) -> Layer {
+    /// Half the size, averaging 2 × 2 blocks (values are linear already).
+    fn half(&self, enc: Encoding) -> Layer {
         let side = (self.side / 2).max(1);
         let mut px = Vec::with_capacity(side * side);
         for y in 0..side {
@@ -67,9 +77,11 @@ impl Layer {
                     for c in 0..4 {
                         sum[c] += p[c] * 0.25;
                     }
-                    n += decode_normal(p);
+                    if enc == Encoding::Normal {
+                        n += decode_normal(p);
+                    }
                 }
-                if normal {
+                if enc == Encoding::Normal {
                     let n = n.normalize_or(Vec3::Z);
                     sum[0] = n.x * 0.5 + 0.5;
                     sum[1] = n.y * 0.5 + 0.5;
@@ -109,9 +121,8 @@ pub fn load_png(path: &Path) -> Result<Image, String> {
     crate::decode_png(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Shrink a map to [`TEXTURE_SIZE`]. `srgb` decodes the colour channels;
-/// `normal` averages them as normals.
-fn shrink(img: &Image, path: &Path, srgb: bool, normal: bool) -> Result<Layer, String> {
+/// Shrink a map to [`TEXTURE_SIZE`], decoding sRGB channels to linear.
+fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
     let side = img.width as usize;
     let target = TEXTURE_SIZE as usize;
     if img.width != img.height || side < target || !(side / target).is_power_of_two() {
@@ -127,45 +138,56 @@ fn shrink(img: &Image, path: &Path, srgb: bool, normal: bool) -> Result<Layer, S
         .chunks_exact(4)
         .map(|c| {
             let f = |i: usize| c[i] as f32 / 255.0;
-            let col = |i: usize| if srgb { srgb_to_linear(f(i)) } else { f(i) };
+            let col = |i: usize| {
+                if enc == Encoding::Srgb {
+                    srgb_to_linear(f(i))
+                } else {
+                    f(i)
+                }
+            };
             [col(0), col(1), col(2), f(3)]
         })
         .collect();
     let mut layer = Layer { side, px };
     while layer.side > target {
-        layer = layer.half(normal);
+        layer = layer.half(enc);
     }
     Ok(layer)
 }
 
 /// The three layers of one material, each with its mips, back to back.
-/// `albedo` is the already loaded `cfg.albedo` map.
+/// `albedo` is the `cfg.albedo` map, already loaded from `albedo_path`.
 pub fn bake(
     cfg: &TextureConfig,
     albedo: &Image,
+    albedo_path: &Path,
     resolve: impl Fn(&str) -> Result<std::path::PathBuf, String>,
 ) -> Result<Vec<[u8; 4]>, String> {
-    let map = |src: &Option<String>, srgb: bool, normal: bool| -> Result<Option<Layer>, String> {
+    let map = |src: &Option<String>, enc: Encoding| -> Result<Option<Layer>, String> {
         src.as_ref()
             .map(|s| {
                 let path = resolve(s)?;
-                shrink(&load_png(&path)?, &path, srgb, normal)
+                shrink(&load_png(&path)?, &path, enc)
             })
             .transpose()
     };
-    let albedo = shrink(albedo, &resolve(&cfg.albedo)?, true, false)?;
-    let team = map(&cfg.team, false, false)?;
-    let normal = map(&cfg.normal, false, true)?.unwrap_or(Layer::filled([0.5, 0.5, 1.0, 1.0]));
-    let orm =
-        map(&cfg.orm, false, false)?.unwrap_or(Layer::filled([1.0, DEFAULT_ROUGHNESS, 0.0, 1.0]));
-    let emissive = map(&cfg.emissive, true, false)?.unwrap_or(Layer::filled([0.0; 4]));
+    let albedo = shrink(albedo, albedo_path, Encoding::Srgb)?;
+    let team = map(&cfg.team, Encoding::Linear)?;
+    let normal = map(&cfg.normal, Encoding::Normal)?.unwrap_or(Layer::filled([0.5, 0.5, 1.0, 1.0]));
+    let orm = map(&cfg.orm, Encoding::Linear)?.unwrap_or(Layer::filled([
+        1.0,
+        DEFAULT_ROUGHNESS,
+        0.0,
+        1.0,
+    ]));
+    let emissive = map(&cfg.emissive, Encoding::Srgb)?.unwrap_or(Layer::filled([0.0; 4]));
 
     let n = albedo.px.len();
     let layer = |f: &dyn Fn(usize) -> Px| Layer {
         side: albedo.side,
         px: (0..n).map(f).collect(),
     };
-    let a = albedo.px.clone();
+    let a = &albedo.px;
     let layers = [
         // Albedo and team mask.
         (
@@ -173,8 +195,7 @@ pub fn bake(
                 let t = team.as_ref().map_or(0.0, |t| t.px[i][0]);
                 [a[i][0], a[i][1], a[i][2], t]
             }),
-            true,
-            false,
+            Encoding::Srgb,
         ),
         // Normal, occlusion, roughness.
         (
@@ -182,8 +203,7 @@ pub fn bake(
                 let (nm, o) = (normal.px[i], orm.px[i]);
                 [nm[0], nm[1], o[0], o[1]]
             }),
-            false,
-            true,
+            Encoding::Normal,
         ),
         // Emitted light and metalness.
         (
@@ -191,26 +211,25 @@ pub fn bake(
                 let (e, o) = (emissive.px[i], orm.px[i]);
                 [e[0], e[1], e[2], o[2]]
             }),
-            true,
-            false,
+            Encoding::Srgb,
         ),
     ];
     let mut out = Vec::new();
-    for (mut level, srgb, normal) in layers {
+    for (mut level, enc) in layers {
         for mip in 0..TEXTURE_MIPS {
             if mip > 0 {
-                level = level.half(normal);
+                level = level.half(enc);
             }
             out.extend(level.px.iter().map(|p| {
-                let enc = |c: usize| {
-                    let v = if srgb && c < 3 {
+                let byte = |c: usize| {
+                    let v = if enc == Encoding::Srgb && c < 3 {
                         linear_to_srgb(p[c])
                     } else {
                         p[c]
                     };
                     (v.clamp(0.0, 1.0) * 255.0).round() as u8
                 };
-                [enc(0), enc(1), enc(2), enc(3)]
+                [byte(0), byte(1), byte(2), byte(3)]
             }));
         }
     }
@@ -220,7 +239,7 @@ pub fn bake(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gc_assets::model::{LAYERS_PER_MATERIAL, TEXELS_PER_LAYER};
+    use gc_assets::model::{TEXELS_PER_LAYER, TEXELS_PER_MATERIAL};
 
     #[test]
     fn halving_keeps_normals_unit_and_averages_colour() {
@@ -238,7 +257,7 @@ mod tests {
                 })
                 .collect(),
         };
-        let h = layer.half(true);
+        let h = layer.half(Encoding::Normal);
         assert_eq!(h.side, 2);
         let n = decode_normal(h.px[0]);
         assert!((n.length() - 1.0).abs() < 1e-4);
@@ -273,9 +292,9 @@ mod tests {
             emissive: None,
         };
         let albedo = load_png(&path).unwrap();
-        let texels = bake(&cfg, &albedo, |s| Ok(dir.join(s))).unwrap();
+        let texels = bake(&cfg, &albedo, &path, |s| Ok(dir.join(s))).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(texels.len(), TEXELS_PER_LAYER * LAYERS_PER_MATERIAL);
+        assert_eq!(texels.len(), TEXELS_PER_MATERIAL);
         // Albedo survives shrinking; no team; a flat normal; default roughness.
         assert_eq!(texels[0], [200, 200, 200, 0]);
         let b = texels[TEXELS_PER_LAYER];

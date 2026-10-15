@@ -31,9 +31,8 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, LAYERS_PER_MATERIAL, MAX_BONES,
-    MAX_MATERIALS, ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE,
-    TEXELS_PER_LAYER, f16_bits,
+    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, MAX_MATERIALS,
+    ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
 };
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use serde::Deserialize;
@@ -145,22 +144,24 @@ fn run(opts: &Options) -> Result<(), String> {
         // A painted albedo map also gives the vertex colours (for the report
         // and anything drawn without textures).
         let albedo = match &m.textures {
-            Some(t) => Some(textures::load_png(&resolve(&t.albedo)?)?),
+            Some(t) => {
+                let path = resolve(&t.albedo)?;
+                Some((textures::load_png(&path)?, path))
+            }
             None => None,
         };
-        let mut baked = bake_model(m, &path, albedo.as_ref())
+        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0))
             .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
         }
-        if let Some(cfg) = &m.textures {
-            let material = tables.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL);
+        if let (Some(cfg), Some((albedo, albedo_path))) = (&m.textures, &albedo) {
+            let material = tables.materials();
             if material >= MAX_MATERIALS {
                 return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
             }
-            let albedo = albedo.as_ref().expect("loaded above");
-            let texels =
-                textures::bake(cfg, albedo, resolve).map_err(|e| format!("{}: {e}", m.name))?;
+            let texels = textures::bake(cfg, albedo, albedo_path, resolve)
+                .map_err(|e| format!("{}: {e}", m.name))?;
             tables.textures.extend_from_slice(&texels);
             for v in &mut baked.verts {
                 v.material = material as u8 + 1;
@@ -183,7 +184,7 @@ fn run(opts: &Options) -> Result<(), String> {
         tables.vertices.len(),
         tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
         tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
-        tables.textures.len() / (TEXELS_PER_LAYER * LAYERS_PER_MATERIAL),
+        tables.materials(),
     );
     Ok(())
 }
