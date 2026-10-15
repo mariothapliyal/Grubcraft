@@ -589,7 +589,7 @@ fn bake_model(
             }
             if mirrored {
                 // Keep the outside counter-clockwise, as back-face culling expects.
-                for tri in indices[first..].chunks_exact_mut(3) {
+                for tri in indices[first..].as_chunks_mut::<3>().0 {
                     tri.swap(1, 2);
                 }
             }

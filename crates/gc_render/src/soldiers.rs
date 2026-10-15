@@ -340,7 +340,13 @@ fn upload_materials(device: &wgpu::Device, queue: &wgpu::Queue, m: &Models<'_>) 
     if layers == 0 {
         return texture;
     }
-    for (layer, texels) in m.textures.chunks_exact(TEXELS_PER_LAYER).enumerate() {
+    for (layer, texels) in m
+        .textures
+        .as_chunks::<TEXELS_PER_LAYER>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let mut offset = 0;
         for mip in 0..TEXTURE_MIPS {
             let side = TEXTURE_SIZE >> mip;

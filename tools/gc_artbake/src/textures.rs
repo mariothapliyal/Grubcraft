@@ -135,7 +135,9 @@ fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
     }
     let px = img
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| {
             let f = |i: usize| c[i] as f32 / 255.0;
             let col = |i: usize| {
