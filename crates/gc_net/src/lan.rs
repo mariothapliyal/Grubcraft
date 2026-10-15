@@ -78,6 +78,13 @@ const MAX_BUNDLE_BYTES: usize = 900;
 /// If the host falls this many turns behind its clock (a long hitch), it
 /// stops trying to catch up and carries on from now.
 const MAX_HOST_LAG: u32 = 20;
+/// A player with more messages than this waiting (one catching up on a
+/// whole match after rejoining) gets several packets a round, up to
+/// [`CATCH_UP_BURST`].
+const CATCH_UP_BACKLOG: usize = 32;
+const CATCH_UP_BURST: usize = 24;
+/// More turns than this waiting on a player: [`Lan::catching_up`].
+const CATCH_UP_TURNS: usize = 2 * MAX_DELAY as usize;
 
 /// What this machine runs, for the version gate and the map check.
 #[derive(Clone, Debug)]
@@ -152,6 +159,11 @@ struct HostGame {
     waiting_for: String,
     /// Bundles closed but not yet simulated here; the front is `handed`.
     closed: VecDeque<Vec<PlayerCommand>>,
+    /// Every bundle closed so far, by turn, to bring a player who rejoins
+    /// after a restart up to date.
+    history: Vec<Vec<PlayerCommand>>,
+    /// The match as it started, to tell a player who rejoins.
+    start: MatchStart,
     /// Commands waiting for a turn, in arrival order.
     inbox: VecDeque<PlayerCommand>,
     /// This machine's state hashes, oldest first.
@@ -442,6 +454,18 @@ impl Lan {
         turn
     }
 
+    /// Whether this machine is more than a few turns behind the host (it
+    /// rejoined, or stalled): the game may then run more turns a frame.
+    pub fn catching_up(&self) -> bool {
+        match &self.role {
+            Role::Client(c) => c
+                .game
+                .as_ref()
+                .is_some_and(|g| g.ready.len() > CATCH_UP_TURNS),
+            _ => false,
+        }
+    }
+
     /// The input delay the host has set, in turns, during a match.
     pub fn input_delay(&self) -> Option<u32> {
         match &self.role {
@@ -549,9 +573,8 @@ impl Lan {
                     LOBBY_KEEPALIVE
                 };
                 for p in h.peers.iter_mut().filter(|p| !p.gone) {
-                    if all || p.link.fresh || now - p.link.last_sent >= keepalive {
-                        out.push((p.link.packet(now), p.addr));
-                    }
+                    let due = due_packets(&mut p.link, now, all, keepalive);
+                    out.extend(due.into_iter().map(|b| (b, p.addr)));
                 }
             }
             Role::Client(c) => {
@@ -566,9 +589,11 @@ impl Lan {
                     LOBBY_KEEPALIVE
                 };
                 if c.link.is_secure() {
-                    if all || c.link.fresh || now - c.link.last_sent >= keepalive {
-                        out.push((c.link.packet(now), c.host));
-                    }
+                    out.extend(
+                        due_packets(&mut c.link, now, all, keepalive)
+                            .into_iter()
+                            .map(|b| (b, c.host)),
+                    );
                 } else if all || c.hi_sent.is_none_or(|t| now - t >= HI_EVERY) {
                     c.hi_sent = Some(now);
                     out.push((key_packet(Kind::Hi, &c.keys.public), c.host));
@@ -689,7 +714,13 @@ impl Lan {
             Some(i) if h.peers[i].their_key == theirs => h.peers[i].host_key,
             // A new key from someone already in: a restarted game on the
             // same port. They can join again once their old place is freed.
-            Some(i) if h.peers[i].slot.is_some() => return,
+            Some(i)
+                if h.peers[i].slot.is_some()
+                    && !h.peers[i].gone
+                    && h.peers[i].lost_at.is_none() =>
+            {
+                return;
+            }
             _ => {
                 if let Some(i) = known {
                     h.peers.remove(i);
@@ -795,6 +826,15 @@ impl Lan {
                 if h.peers[index].slot.is_some() {
                     return;
                 }
+                if h.game.is_some() && theirs == version && their_data == data_hash {
+                    let name = short_name(name.trim());
+                    if self.rejoin(index, &name, now) {
+                        return;
+                    }
+                }
+                let Role::Host(h) = &mut self.role else {
+                    return;
+                };
                 let refuse = if h.game.is_some() {
                     Some("That game has already started.".to_string())
                 } else if their_data != data_hash && theirs == version {
@@ -987,6 +1027,70 @@ impl Lan {
         }
         self.role = Role::Idle;
         self.socket = None;
+    }
+
+    /// A player whose game restarted joins the match again in their old
+    /// place: the one human place named `name` that nobody holds now (its
+    /// player lost connection or left). They are sent the match's start
+    /// and every turn so far, and catch up from the first. Returns false
+    /// when there is no such place.
+    fn rejoin(&mut self, index: usize, name: &str, now: Instant) -> bool {
+        let (seed, map_hash) = (self.id.seed, self.id.map_hash);
+        let Role::Host(h) = &mut self.role else {
+            return false;
+        };
+        let Some(g) = &h.game else { return false };
+        let held = |p: &Peer, player: usize| {
+            p.player == Some(player as PlayerId) && !p.gone && p.lost_at.is_none()
+        };
+        // The host is player 0 and never rejoins.
+        let Some(player) = (1..g.start.players.len()).find(|&i| {
+            let s = &g.start.players[i];
+            s.kind == SlotKind::Human && s.name == name && !h.peers.iter().any(|p| held(p, i))
+        }) else {
+            return false;
+        };
+        // Whoever held it before (a lost connection) is let go quietly.
+        for p in &mut h.peers {
+            if p.player == Some(player as PlayerId) && !p.gone {
+                p.gone = true;
+                p.lost_at = None;
+                p.slot = None;
+                p.drop_at = Some(now);
+            }
+        }
+        let occupied: Vec<usize> = (0..MAX_PLAYERS)
+            .filter(|&i| h.lobby.slots[i].occupied())
+            .collect();
+        let peer = &mut h.peers[index];
+        peer.slot = occupied.get(player).copied();
+        peer.player = Some(player as PlayerId);
+        peer.name = name.to_string();
+        peer.drop_at = None;
+        peer.loaded = true;
+        peer.link.send(&Msg::Start {
+            seed,
+            map_hash,
+            settings: g.start.settings.clone(),
+            players: g.start.players.clone(),
+            you: player as PlayerId,
+            input_delay: g.delay as u8,
+        });
+        for (turn, commands) in g.history.iter().enumerate() {
+            peer.link.send(&Msg::Bundle {
+                turn: turn as u32,
+                commands: commands.clone(),
+            });
+        }
+        if !g.waiting_for.is_empty() {
+            peer.link.send(&Msg::Wait {
+                who: g.waiting_for.clone(),
+                seconds: 0,
+            });
+        }
+        self.tell_everyone(format!("{name} rejoined and is catching up."));
+        self.update_wait(now);
+        true
     }
 
     /// A player left or lost the connection: free their slot in the lobby,
@@ -1244,9 +1348,6 @@ impl Lan {
             let Some(b) = Beacon::read(&mut r) else {
                 continue;
             };
-            if b.playing {
-                continue;
-            }
             let game = DiscoveredGame {
                 host: b.host,
                 map: b.map,
@@ -1254,6 +1355,7 @@ impl Lan {
                 max_players: b.max_players,
                 version: b.version,
                 locked: b.locked,
+                playing: b.playing,
                 address: from.to_string(),
             };
             // The same host heard on loopback and on the network is one game.
@@ -1367,6 +1469,7 @@ fn close_turn(h: &mut Host, turn: u32) {
             commands: commands.clone(),
         });
     }
+    g.history.push(commands.clone());
     g.closed.push_back(commands);
     g.next_close = turn + 1;
 }
@@ -1444,6 +1547,19 @@ fn client_timeout(c: &Client) -> Duration {
     match &c.game {
         Some(g) if g.on_drop == OnDrop::Wait => RECONNECT_WAIT,
         _ => HOST_TIMEOUT,
+    }
+}
+
+/// What `link` should send now: a burst while it has a long backlog (a
+/// player catching up on a whole match, or the hashes of one), else a
+/// packet when there is news or the keepalive is due.
+fn due_packets(link: &mut Link, now: Instant, all: bool, keepalive: Duration) -> Vec<Vec<u8>> {
+    if link.backlog() > CATCH_UP_BACKLOG {
+        link.packets(now, CATCH_UP_BURST)
+    } else if all || link.fresh || now - link.last_sent >= keepalive {
+        vec![link.packet(now)]
+    } else {
+        Vec::new()
     }
 }
 
@@ -1568,7 +1684,8 @@ impl Network for Lan {
             self.flush(now, false);
             self.pump(now);
             match &self.role {
-                Role::Client(c) if c.lobby.is_some() => return Ok(()),
+                // A player rejoining a match in progress gets its start.
+                Role::Client(c) if c.lobby.is_some() || c.game.is_some() => return Ok(()),
                 Role::Client(_) if now - start > JOIN_TIMEOUT => {
                     self.leave();
                     return Err(NetError::Refused(format!(
@@ -1664,6 +1781,8 @@ impl Network for Lan {
             lower_votes: 0,
             waiting_for: String::new(),
             closed: VecDeque::new(),
+            history: Vec::new(),
+            start: start.clone(),
             inbox: VecDeque::new(),
             hashes: VecDeque::new(),
             theirs: Vec::new(),
