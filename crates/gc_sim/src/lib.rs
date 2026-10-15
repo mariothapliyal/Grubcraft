@@ -525,6 +525,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            self.tick,
         );
         self.nav.plan(&mut self.regiments);
         self.combat.mark_holders(&self.regiments);
