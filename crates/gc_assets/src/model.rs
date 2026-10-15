@@ -12,7 +12,7 @@
 //! - `models/bones`: the bone animation texture, [`BONE_TEXELS_PER_ROW`]
 //!   texels per row, one row per frame of every clip. Each texel is four
 //!   half floats; a bone takes three texels (the rows of a 3 × 4 matrix that
-//!   moves a vertex from the rest pose to that frame's pose).
+//!   moves a vertex from where it is stored to that frame's pose).
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -121,11 +121,14 @@ pub struct ModelVertex {
     /// Unit normal scaled to ±127; the fourth byte is padding.
     pub normal: [i8; 4],
     /// Unit tangent (along the texture's u) scaled to ±127; the fourth byte
-    /// is ±127, the handedness of the bitangent. All zero without a texture.
+    /// is ±127, the handedness of the bitangent. Copied from the source
+    /// model; all zero when it has none (generating them comes with normal
+    /// maps).
     pub tangent: [i8; 4],
     /// sRGB colour; alpha is padding.
     pub color: [u8; 4],
-    /// Texture coordinate, 0 to 65,535 across the texture.
+    /// Texture coordinate, 0 to 65,535 across the texture (coordinates
+    /// outside it, for a repeating texture, are clamped for now).
     pub uv: [u16; 2],
 }
 
@@ -217,11 +220,12 @@ impl<'a> Models<'a> {
                 }
             }
             let verts = &m.vertices[r.first_vertex as usize..verts_end];
+            // The shader reads the first bone always and stops at the first
+            // empty slot, so weights must run heaviest first and sum to 255.
             if verts.iter().any(|v| {
-                v.bones
-                    .iter()
-                    .zip(v.weights)
-                    .any(|(&b, w)| w > 0 && b as u32 >= r.bones)
+                v.bones.iter().any(|&b| b as u32 >= r.bones)
+                    || v.weights.iter().map(|&w| w as u32).sum::<u32>() != 255
+                    || v.weights.windows(2).any(|w| w[1] > w[0])
             }) {
                 return Err(bad);
             }
@@ -446,9 +450,17 @@ mod tests {
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
         });
-        // A bone slot with no weight is never read, so its index doesn't matter.
-        let mut fine = one_model();
-        fine.vertices[1].bones = [0, 9, 0, 0];
-        parsed(&fine, |m| assert!(m.is_ok()));
+        let mut bad = one_model();
+        bad.vertices[1].bones = [0, 9, 0, 0];
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+        });
+        for weights in [[0, 0, 0, 0], [200, 0, 55, 0], [55, 200, 0, 0]] {
+            let mut bad = one_model();
+            bad.vertices[1].weights = weights;
+            parsed(&bad, |m| {
+                assert_eq!(m.err(), Some(ModelError::OutOfRange(0)))
+            });
+        }
     }
 }

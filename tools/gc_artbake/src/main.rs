@@ -14,7 +14,7 @@
 //! 3. Welds, simplifies to two levels of detail and orders the triangles for
 //!    the GPU's vertex cache.
 //! 4. Samples each clip at a fixed rate into bone texture rows: for every
-//!    frame, a 3 × 4 matrix per bone that moves the rest pose to that pose.
+//!    frame, a 3 × 4 matrix per bone that moves a stored vertex to that pose.
 //!
 //! Raw files from some packs (Quaternius) may not be redistributed, so they
 //! live in the project's shared folder, not the repository; only the baked
@@ -180,7 +180,8 @@ struct BakedModel {
     lods: [Vec<u16>; 2],
     height: f32,
     bones: u32,
-    /// Clip kind, and its frames: per frame, `bones` matrices (rest to pose).
+    /// Clip kind, and its frames: per frame, `bones` matrices (stored vertex
+    /// to pose).
     clips: Vec<(ClipKind, Vec<Vec<Mat4>>)>,
     /// Most common colours and how many vertices have each.
     palette: Vec<([u8; 3], usize, bool)>,
@@ -452,7 +453,8 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
     // Parts that hang from no bone use one extra bone that never moves.
     let still_bone = joints.len();
 
-    // 1. Gather every triangle in the rest pose with the bones it follows.
+    // 1. Gather every triangle, with the bones it follows, in the rest pose
+    // (skinned meshes in their bind pose, see above).
     let mut verts: Vec<Vert> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     for node in doc.nodes() {
@@ -488,10 +490,18 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
             };
             let tangents: Option<Vec<Vec4>> =
                 reader.read_tangents().map(|t| t.map(Vec4::from).collect());
-            let joints_attr: Option<Vec<[u16; 4]>> =
-                reader.read_joints(0).map(|j| j.into_u16().collect());
-            let weights_attr: Option<Vec<[f32; 4]>> =
-                reader.read_weights(0).map(|w| w.into_f32().collect());
+            // Every vertex's (joint, weight) pairs, from both sets of four an
+            // exporter may write.
+            let mut influences: Vec<Vec<(u16, f32)>> = Vec::new();
+            for set in 0..2 {
+                let (Some(j), Some(w)) = (reader.read_joints(set), reader.read_weights(set)) else {
+                    break;
+                };
+                influences.resize(positions.len(), Vec::new());
+                for (k, (j, w)) in j.into_u16().zip(w.into_f32()).enumerate() {
+                    influences[k].extend(j.into_iter().zip(w));
+                }
+            }
             let material = prim.material();
             let pbr = material.pbr_metallic_roughness();
             let factor = Vec4::from(pbr.base_color_factor());
@@ -502,8 +512,8 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
 
             let base = verts.len() as u32;
             for k in 0..positions.len() {
-                let (bones, to_model) = match (&joints_attr, &weights_attr) {
-                    (Some(j), Some(w)) if skinned => (top_weights(j[k], w[k]), bind_space),
+                let (bones, to_model) = match influences.get(k) {
+                    Some(inf) if skinned => (top_weights(inf), bind_space),
                     _ => {
                         let bone = holder.unwrap_or(still_bone);
                         let to_model = bind_fix[bone].inverse() * rest_globals[node.index()];
@@ -514,7 +524,13 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                     let dir = to_model
                         .transform_vector3(t[k].truncate())
                         .normalize_or_zero();
-                    dir.extend(if t[k].w < 0.0 { -1.0 } else { 1.0 })
+                    // A mirroring transform flips the bitangent too.
+                    let mirrored = to_model.determinant() < 0.0;
+                    dir.extend(if (t[k].w < 0.0) != mirrored {
+                        -1.0
+                    } else {
+                        1.0
+                    })
                 });
                 let mut color = Vec3::splat(255.0) * factor.truncate();
                 if let Some(img) = texture {
@@ -713,24 +729,24 @@ fn quantise(
 /// and every bone a vertex follows costs the shader six texture reads.
 const MIN_WEIGHT: f32 = 0.05;
 
-/// A vertex's skin, heaviest bone first, weights normalised to sum to 1.
-/// Slots past the last real bone have weight 0.
-fn top_weights(joints: [u16; 4], weights: [f32; 4]) -> [(u8, f32); BONES_PER_VERTEX] {
-    let total: f32 = weights.iter().map(|w| w.max(0.0)).sum();
-    let mut pairs: [(u8, f32); BONES_PER_VERTEX] = core::array::from_fn(|i| {
-        let w = weights[i].max(0.0);
-        (
-            joints[i] as u8,
-            if w < MIN_WEIGHT * total { 0.0 } else { w },
-        )
-    });
+/// A vertex's skin from its (joint, weight) pairs: the four heaviest
+/// bones, heaviest first, weights normalised to sum to 1. Slots past the
+/// last real bone have weight 0.
+fn top_weights(influences: &[(u16, f32)]) -> [(u8, f32); BONES_PER_VERTEX] {
+    let total: f32 = influences.iter().map(|p| p.1.max(0.0)).sum();
+    let mut pairs: Vec<(u16, f32)> = influences
+        .iter()
+        .map(|&(j, w)| (j, w.max(0.0)))
+        .filter(|p| p.1 > 0.0 && p.1 >= MIN_WEIGHT * total)
+        .collect();
     pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
+    pairs.truncate(BONES_PER_VERTEX);
     let sum: f32 = pairs.iter().map(|p| p.1).sum();
     if sum <= 0.0 {
         // No weights at all: follow the first listed joint.
-        return rigid_skin(joints[0] as u8);
+        return rigid_skin(influences.first().map_or(0, |p| p.0) as u8);
     }
-    pairs.map(|(b, w)| (b, w / sum))
+    core::array::from_fn(|i| pairs.get(i).map_or((0, 0.0), |&(j, w)| (j as u8, w / sum)))
 }
 
 /// A skin that follows one bone completely.
@@ -745,17 +761,17 @@ fn quantise_weights(
 ) -> ([u8; BONES_PER_VERTEX], [u8; BONES_PER_VERTEX]) {
     let mut b = [0u8; BONES_PER_VERTEX];
     let mut w = [0u8; BONES_PER_VERTEX];
-    for (i, &(bone, weight)) in bones.iter().enumerate() {
-        let q = (weight * 255.0).round() as u8;
+    // The lighter bones round down and the heaviest takes the rest, so the
+    // weights still run heaviest first (the shader stops at the first 0).
+    for (i, &(bone, weight)) in bones.iter().enumerate().skip(1) {
+        let q = (weight * 255.0) as u8;
         if q > 0 {
             b[i] = bone;
             w[i] = q;
         }
     }
-    // Rounding can leave the sum a little off; the heaviest bone takes up
-    // the difference.
-    let sum: i32 = w.iter().map(|&x| x as i32).sum();
-    w[0] = (w[0] as i32 + 255 - sum).clamp(0, 255) as u8;
+    b[0] = bones[0].0;
+    w[0] = 255 - w[1..].iter().map(|&x| x as u32).sum::<u32>().min(255) as u8;
     (b, w)
 }
 
@@ -915,16 +931,25 @@ mod tests {
 
     #[test]
     fn light_bones_are_dropped_and_weights_sum_to_255() {
-        let skin = top_weights([3, 7, 9, 2], [0.2, 0.7, 0.08, 0.02]);
+        let skin = top_weights(&[(3, 0.2), (7, 0.7), (9, 0.08), (2, 0.02)]);
         let (bones, weights) = quantise_weights(&skin);
         assert_eq!(bones, [7, 3, 9, 0]);
         assert_eq!(weights.iter().map(|&w| w as u32).sum::<u32>(), 255);
         assert_eq!(weights[3], 0);
+        let (_, even) = quantise_weights(&top_weights(&[(1, 0.5), (2, 0.5)]));
+        assert!(even[0] >= even[1] && even[0] as u32 + even[1] as u32 == 255);
+    }
+
+    #[test]
+    fn the_heaviest_four_of_eight_influences_are_kept() {
+        let inf: Vec<(u16, f32)> = (0..8).map(|j| (j, j as f32 + 1.0)).collect();
+        let (bones, _) = quantise_weights(&top_weights(&inf));
+        assert_eq!(bones, [7, 6, 5, 4]);
     }
 
     #[test]
     fn a_vertex_without_weights_follows_its_first_joint() {
-        let (bones, weights) = quantise_weights(&top_weights([5, 1, 0, 0], [0.0; 4]));
+        let (bones, weights) = quantise_weights(&top_weights(&[(5, 0.0), (1, 0.0)]));
         assert_eq!((bones, weights), ([5, 0, 0, 0], [255, 0, 0, 0]));
     }
 }

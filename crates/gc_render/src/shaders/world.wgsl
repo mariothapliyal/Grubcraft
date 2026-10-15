@@ -212,8 +212,8 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 // ---------------------------------------------------------------- soldiers
 //
 // Real soldier models: each vertex follows up to four bones, and the bone
-// texture holds, per animation frame, a 3 × 4 matrix per bone that moves the
-// rest pose into that frame's pose. Each instance names two frame rows and
+// texture holds, per animation frame, a 3 × 4 matrix per bone that moves a
+// vertex from where it is stored into that frame's pose. Each instance names two frame rows and
 // how far to blend between them; the vertex blends its bones' matrices by
 // their weights (linear blend skinning).
 
