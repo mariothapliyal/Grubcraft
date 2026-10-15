@@ -129,6 +129,16 @@ pub struct Regiments {
     pub(crate) crowd: Vec<Fx>,
     /// Ticks left until it is back in order (0: in order).
     pub(crate) disorder: Vec<u8>,
+    /// Melee damage dealt and taken lately, in 1/256ths of a hit point
+    /// weighted by the striker's mass: who is winning the exchange, for
+    /// lines that push (see [`Combat::push_lines`]). Both fade by an
+    /// eighth each second.
+    pub(crate) pressing: Vec<u32>,
+    pub(crate) pressed: Vec<u32>,
+    /// How fast it is giving ground, in percent of
+    /// [`GIVE_GROUND`](crate::combat::GIVE_GROUND), from the exchange as it
+    /// stood at its last blow.
+    pub(crate) giving: Vec<u8>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
     pub(crate) free: Vec<u32>,
 }
@@ -170,6 +180,9 @@ impl Regiments {
             clear: vec![0; n],
             crowd: vec![Fx::ZERO; n],
             disorder: vec![0; n],
+            pressing: vec![0; n],
+            pressed: vec![0; n],
+            giving: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -231,6 +244,9 @@ impl Regiments {
         self.clear[i] = 0;
         self.crowd[i] = Fx::ZERO;
         self.disorder[i] = 0;
+        self.pressing[i] = 0;
+        self.pressed[i] = 0;
+        self.giving[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -418,6 +434,7 @@ impl Regiments {
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             disorder: self.disorder[i],
+            giving_ground: self.giving[i] > 0 && self.engaged[i].is_some(),
         }
     }
 
@@ -597,6 +614,13 @@ impl Regiments {
                 h.i32(self.crowd[i].raw());
                 h.u8(self.disorder[i]);
             }
+            // Only once it has fought, so worlds without melee hash as
+            // they did before lines pushed.
+            if self.pressing[i] != 0 || self.pressed[i] != 0 {
+                h.u32(self.pressing[i]);
+                h.u32(self.pressed[i]);
+                h.u8(self.giving[i]);
+            }
             // Only while waiting, so worlds where nobody ever queues hash
             // as they did before queuing existed.
             if self.held[i] != 0 || self.clear[i] != 0 {
@@ -662,6 +686,10 @@ pub struct RegimentView {
     /// re-formed, from [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS)
     /// (full disorder) down to 0 (in order).
     pub disorder: u8,
+    /// Losing its melee and being driven back (see
+    /// [`Combat::push_lines`](crate::combat::Combat::push_lines)), or
+    /// pinned where it can't give ground.
+    pub giving_ground: bool,
 }
 
 impl RegimentView {

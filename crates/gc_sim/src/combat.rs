@@ -5,8 +5,10 @@
 //!    rectangles plus a little reach). A regiment in contact is locked in
 //!    melee with the nearest one; contact made at speed starts a charge.
 //!    Regiments ordered to attack chase their target.
-//! 2. The regiments move (`Regiments::step_movement`).
-//! 3. [`Combat::after_move`] resolves melee blows, looses and lands volleys,
+//! 2. [`Combat::push_lines`]: a regiment losing its melee gives ground and
+//!    the enemies fighting it follow; one with nowhere to go is pinned.
+//! 3. The regiments move (`Regiments::step_movement`).
+//! 4. [`Combat::after_move`] resolves melee blows, looses and lands volleys,
 //!    and removes regiments with no soldiers left.
 //!
 //! Every regiment strikes once a second, staggered by pool index so the work
@@ -20,12 +22,12 @@ use core::cell::Cell;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
-use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
+use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
 use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{Mass, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
 
 /// Ticks between a regiment's melee blows.
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
@@ -84,6 +86,39 @@ pub const PATIENCE: u16 = 3 * TICKS_PER_SECOND as u16;
 /// with no friend that near can march a few ticks without looking again.
 const LOOK_AHEAD: Fx = Fx::from_int(2);
 
+/// Lines that push (docs/05-combat.md): a regiment losing the melee
+/// exchange gives ground at up to this many tiles a tick (0.4 a second),
+/// and the enemies fighting it follow.
+pub const GIVE_GROUND: Fx = Fx::from_ratio(1, 50);
+/// A regiment losing the exchange by up to this share of the blows
+/// traded, in percent (weighted by mass), holds its ground; losing by
+/// [`DRIVEN_AT`] or more it gives ground at full pace.
+const HOLDS_WITHIN: i64 = 20;
+const DRIVEN_AT: i64 = 60;
+
+/// How much a blow weighs in the exchange, by the striker's mass:
+/// monsters and cavalry shove hardest, swarms least.
+fn heft(mass: Mass) -> u64 {
+    match mass {
+        Mass::Light => 1,
+        Mass::Medium => 2,
+        Mass::Heavy => 4,
+    }
+}
+
+/// How fast regiment `i` should be driven back, in percent of
+/// [`GIVE_GROUND`], by the exchange so far: nothing while it holds its own
+/// (or until both sides have struck, when nobody knows who is winning), all
+/// of it once it is losing badly.
+fn driven(regs: &Regiments, i: usize) -> u8 {
+    let (dealt, taken) = (i64::from(regs.pressing[i]), i64::from(regs.pressed[i]));
+    if regs.engaged[i].is_none() || dealt == 0 || taken == 0 {
+        return 0;
+    }
+    let losing_by = 100 * (taken - dealt) / (taken + dealt);
+    ((losing_by - HOLDS_WITHIN) * 100 / (DRIVEN_AT - HOLDS_WITHIN)).clamp(0, 100) as u8
+}
+
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
 const CELL_TILES: i32 = 16;
 const BUCKETS: usize = 1024;
@@ -94,6 +129,8 @@ const EMPTY: u32 = u32::MAX;
 const OWNER_SLOTS: usize = 8;
 /// Grid cells one regiment may occupy before it is checked by everyone instead.
 const MAX_CELLS_PER_REGIMENT: usize = 9;
+/// Every owner slot, for searches that look at friends and enemies alike.
+const ALL_SLOTS: u32 = (1 << OWNER_SLOTS) - 1;
 
 /// Which side of a regiment something is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,7 +248,8 @@ pub struct Combat {
     /// The biggest of `radius` this tick.
     max_radius: Fx,
     /// The furthest any regiment can step this tick (its speed, and never
-    /// less than the one-unit floor steps are clamped to). The grid is
+    /// less than [`GIVE_GROUND`], the most a line that pushes moves it; a
+    /// pushed regiment is in melee, so it doesn't also march). The grid is
     /// filled at the start of the tick, so searches during movement add
     /// this much slack.
     max_step: Fx,
@@ -224,6 +262,8 @@ pub struct Combat {
     /// Marks for visiting each regiment once per search (see `each_near`).
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
+    /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
+    give: Vec<FxVec2>,
     volleys: Volleys,
     /// Volleys loosed this tick: (shooter, target), for vision.
     loosed: Vec<(RegimentHandle, RegimentHandle)>,
@@ -307,11 +347,12 @@ impl Combat {
             ],
             radius: vec![Fx::ZERO; regiment_capacity],
             max_radius: Fx::ZERO,
-            max_step: Fx::from_raw(1),
+            max_step: GIVE_GROUND,
             holder: vec![false; BUCKETS * OWNER_SLOTS],
             big_holder: false,
             seen: vec![Cell::new(0); regiment_capacity],
             search: Cell::new(0),
+            give: vec![FxVec2::ZERO; regiment_capacity],
             volleys: Volleys {
                 alive: vec![false; MAX_VOLLEYS],
                 owner: vec![0; MAX_VOLLEYS],
@@ -380,7 +421,7 @@ impl Combat {
         self.entries = 0;
         self.big.clear();
         self.max_radius = Fx::ZERO;
-        self.max_step = Fx::from_raw(1);
+        self.max_step = GIVE_GROUND;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
@@ -843,6 +884,141 @@ impl Combat {
         }
     }
 
+    /// Lines that push, after contacts are found and before anyone
+    /// marches: each regiment losing its melee exchange (as read at its
+    /// last blow, see [`Combat::after_move`]) gives ground straight back
+    /// from the side its foe is on, and the enemies fighting it follow, so
+    /// the line bends where it is losing.
+    /// One with nowhere to go (see [`Combat::pinned`]) stands and is crushed
+    /// instead: it falls into disorder and loses heart.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn push_lines(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        terrain: &Terrain,
+        nav: &Nav,
+        map_tiles: u32,
+    ) {
+        for i in 0..regs.alive.len() {
+            self.give[i] = FxVec2::ZERO;
+            let percent = if regs.alive[i] { regs.giving[i] } else { 0 };
+            let Some(j) = regs.engaged[i]
+                .and_then(|h| regs.resolve(h))
+                .filter(|_| percent > 0)
+            else {
+                continue;
+            };
+            let me = self.blocks[i];
+            let foe = self.blocks[j].centre;
+            let away = match me.side_facing(foe) {
+                Side::Front => me.forward * -Fx::ONE,
+                Side::Rear => me.forward,
+                Side::Flank if (foe - me.centre).dot(me.right) > Fx::ZERO => me.right * -Fx::ONE,
+                Side::Flank => me.right,
+            };
+            let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(percent) / 100).max(1));
+            let give = away * terrain.wading(pace, me.centre);
+            if self.pinned(regs, units, stances, terrain, nav, map_tiles, i, away, give) {
+                regs.disorder(i);
+                regs.shock[i] |= SHOCK_PINNED;
+            } else {
+                self.give[i] = give;
+            }
+        }
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            let here = regs.position[i];
+            if self.give[i] != FxVec2::ZERO {
+                regs.position[i] = here + self.give[i];
+            } else if let Some(step) = self.follow(regs, i)
+                && !nav.blocks(here, here + step)
+            {
+                regs.position[i] = here + step;
+            }
+        }
+    }
+
+    /// The step regiment `i` takes after the foe it fights as that foe
+    /// gives ground, if the foe draws away from it. One fighting a foe that
+    /// is itself following its own foe follows too, so a fight three blocks
+    /// deep moves as one. Reads only where everyone stood at the start of
+    /// the tick, so the order regiments move in changes nothing.
+    fn follow(&self, regs: &Regiments, i: usize) -> Option<FxVec2> {
+        let foe = |k: usize| regs.engaged[k].and_then(|h| regs.resolve(h));
+        // Whether `step` takes `k` away from `from`.
+        let draws_away = |step: FxVec2, k: usize, from: usize| {
+            step.dot(self.blocks[k].centre - self.blocks[from].centre) > Fx::ZERO
+        };
+        if regs.giving[i] > 0 {
+            // Losing too, and pinned: it stays where it is.
+            return None;
+        }
+        let j = foe(i)?;
+        let step = self.give[j];
+        if step != FxVec2::ZERO {
+            return draws_away(step, j, i).then_some(step);
+        }
+        if regs.giving[j] > 0 {
+            return None;
+        }
+        let k = foe(j).filter(|&k| k != i)?;
+        let step = self.give[k];
+        (step != FxVec2::ZERO && draws_away(step, k, j) && draws_away(step, j, i)).then_some(step)
+    }
+
+    /// Whether regiment `i` has nowhere to give ground by `give` (a step
+    /// along `away`): its rear would step onto blocked ground, off a river
+    /// bank into the water, or off the map, or it would back into another
+    /// block (a friend more than [`PUSHING`] deep, or any enemy).
+    #[allow(clippy::too_many_arguments)]
+    fn pinned(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        terrain: &Terrain,
+        nav: &Nav,
+        map_tiles: u32,
+        i: usize,
+        away: FxVec2,
+        give: FxVec2,
+    ) -> bool {
+        let now = self.blocks[i];
+        let next = now.centre + give;
+        let rear = now.centre + away * now.extent_along(away);
+        let (edge, behind) = (Fx::from_int(map_tiles as i32), rear + give);
+        let off_map = map_tiles > 0
+            && (behind.x < Fx::ZERO || behind.y < Fx::ZERO || behind.x > edge || behind.y > edge);
+        if off_map || nav.blocks(rear, behind) || (terrain.wet(behind) && !terrain.wet(rear)) {
+            return true;
+        }
+        let me = Block::at(regs, units, i, next);
+        let owner = regs.owner[i];
+        let mut pinned = false;
+        self.each_filed_once(next, self.radius[i], ALL_SLOTS, &regs.alive, |k| {
+            if pinned || k == i || regs.morale_state[k].broken() {
+                return;
+            }
+            let them = &self.blocks[k];
+            let r = (self.radius[i] + self.radius[k]).raw() as u64;
+            if (them.centre - next).length_sq_raw() > r * r {
+                return;
+            }
+            let room = if stances.hostile(owner, regs.owner[k]) {
+                Fx::ZERO
+            } else {
+                PUSHING
+            };
+            let after = me.overlap(them);
+            pinned = after > room && after > now.overlap(them);
+        });
+        pinned
+    }
+
     /// Blows, volleys and deaths, after everyone has moved this tick.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn after_move(
@@ -931,7 +1107,25 @@ impl Combat {
             if vision.off_guard(i) {
                 expected = expected * OFF_GUARD_DAMAGE_PERCENT / 100;
             }
+            let shove = expected
+                .saturating_mul(heft(attacker.mass))
+                .min(u64::from(u32::MAX)) as u32;
+            regs.pressing[i] = regs.pressing[i].saturating_add(shove);
+            regs.pressed[j] = regs.pressed[j].saturating_add(shove);
             deal(regs, units, j, expected, side, rng);
+        }
+
+        // Who is winning each melee, read once a second on each regiment's
+        // turn, after its blow: then both sides have struck exactly once
+        // since the last reading, so the side that struck last doesn't look
+        // ahead. Only the last few seconds' blows count.
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] || !(tick + i as u32).is_multiple_of(STRIKE_INTERVAL) {
+                continue;
+            }
+            regs.pressing[i] = (u64::from(regs.pressing[i]) * 7 / 8) as u32;
+            regs.pressed[i] = (u64::from(regs.pressed[i]) * 7 / 8) as u32;
+            regs.giving[i] = driven(regs, i);
         }
 
         // Ranged regiments standing still loose volleys at the nearest enemy

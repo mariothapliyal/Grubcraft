@@ -530,6 +530,14 @@ impl World {
             &self.terrain,
             self.tick,
         );
+        self.combat.push_lines(
+            &mut self.regiments,
+            &self.units,
+            &self.stances,
+            &self.terrain,
+            &self.nav,
+            self.map_tiles,
+        );
         self.nav.plan(&mut self.regiments);
         self.combat.mark_holders(&self.regiments);
         self.regiments.step_movement(
