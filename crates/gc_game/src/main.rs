@@ -147,6 +147,7 @@ const PLATE_HEIGHT: f32 = 0.05;
 /// and spacing, in tiles.
 const DISORDER_DASH: f32 = 0.55;
 const DISORDER_DASH_SPACING: f32 = 0.9;
+const DISORDER_GLOW: u8 = 110;
 /// A right-drag shorter than this on the ground is a click.
 const MIN_LINE_TILES: f32 = 2.0;
 /// A left-drag shorter than this on screen is a click.
@@ -2088,8 +2089,10 @@ impl Running {
     }
 
     /// A ragged amber outline on the ground round a regiment out of order
-    /// (pushing through friends): short dashes knocked askew, fading as it
-    /// re-forms (`d` from 1 down to 0).
+    /// (pushing through friends): short dashes knocked askew, shrinking away
+    /// as it re-forms (`d` from 1 down to 0). Boxes are opaque (their alpha
+    /// is a glow), so the dashes fade by size, just above the selection
+    /// plate so the two never fight for the same pixels.
     fn push_disorder_outline(
         instances: &mut Vec<BoxInstance>,
         centre: Vec2,
@@ -2108,7 +2111,7 @@ impl Running {
             centre - facing * hd + right * hw,
             centre - facing * hd - right * hw,
         ];
-        let alpha = (60.0 + 170.0 * d) as u8;
+        let length = DISORDER_DASH * (0.3 + 0.7 * d);
         let seed = seed.wrapping_mul(0x9E37_79B9);
         for side in 0..4 {
             let (a, b) = (corners[side], corners[(side + 1) % 4]);
@@ -2123,9 +2126,9 @@ impl Running {
                 instances.push(BoxInstance {
                     pos: (a + edge * t + out * (0.25 * d * spread_hash(seed, dash, 1))).to_array(),
                     facing: [skew.y, -skew.x],
-                    size: [DISORDER_DASH, PLATE_HEIGHT, 0.12],
-                    color: [235, 150, 40, alpha],
-                    lift: 0.0,
+                    size: [length, PLATE_HEIGHT, 0.12],
+                    color: [235, 150, 40, DISORDER_GLOW],
+                    lift: 0.01,
                 });
             }
         }

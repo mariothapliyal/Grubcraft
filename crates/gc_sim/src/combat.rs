@@ -701,10 +701,12 @@ impl Combat {
             if let Some((_, j)) = best {
                 if !was_engaged {
                     // Hitting home at speed is a charge, but nobody charges
-                    // out of a river. A fight ends any march.
+                    // out of a river or while pushing through friends. A
+                    // fight ends any march.
                     let charging = regs.target[i].is_some()
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
-                        && !terrain.wet(regs.position[i]);
+                        && !terrain.wet(regs.position[i])
+                        && regs.crowd[i] <= CROWDING;
                     if charging {
                         regs.charge[i] = CHARGE_TICKS;
                     }
@@ -980,13 +982,13 @@ impl Combat {
     }
 }
 
-/// Percent of its usual damage a regiment deals in this state of mind.
 /// How much worse, in percent, a regiment this far out of order fights:
 /// [`DISORDER_PERCENT`] at full disorder, fading as it re-forms.
 fn disorder_percent(disorder: u8) -> u64 {
     DISORDER_PERCENT * disorder as u64 / DISORDER_TICKS as u64
 }
 
+/// Percent of its usual damage a regiment deals in this state of mind.
 fn heart_percent(state: MoraleState) -> u64 {
     match state {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
