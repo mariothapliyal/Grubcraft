@@ -24,13 +24,15 @@
 //!                   [--out assets/models.pak] [--report]
 //! `--report` prints each model's most common colours, for choosing team colours.
 
+mod textures;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, ModelRecord,
-    ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
+    BONE_TEXELS_PER_ROW, BONES_PER_VERTEX, ClipKind, ClipRecord, MAX_BONES, MAX_MATERIALS,
+    ModelRecord, ModelTables, ModelVertex, NAME_BYTES, POSITION_SCALE, f16_bits,
 };
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use serde::Deserialize;
@@ -70,6 +72,10 @@ struct ModelConfig {
     clips: HashMap<String, String>,
     /// Triangle budgets for the full and the reduced level of detail.
     lod_triangles: (usize, usize),
+    /// Painted texture maps, for models whose detail is in textures rather
+    /// than vertex colours.
+    #[serde(default)]
+    textures: Option<textures::TextureConfig>,
 }
 
 fn default_team_tolerance() -> f32 {
@@ -123,22 +129,44 @@ fn run(opts: &Options) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", opts.config.display()))?;
     let config: Config =
         ron::from_str(&text).map_err(|e| format!("{}: {e}", opts.config.display()))?;
+    let resolve = |src: &str| -> Result<PathBuf, String> {
+        if let Some(p) = src.strip_prefix("shared:") {
+            Ok(opts.shared.join(p))
+        } else if let Some(p) = src.strip_prefix("repo:") {
+            Ok(opts.repo_src.join(p))
+        } else {
+            Err(format!("{src}: must start with shared: or repo:"))
+        }
+    };
     let mut tables = ModelTables::default();
     for m in &config.models {
-        let path = if let Some(p) = m.source.strip_prefix("shared:") {
-            opts.shared.join(p)
-        } else if let Some(p) = m.source.strip_prefix("repo:") {
-            opts.repo_src.join(p)
-        } else {
-            return Err(format!(
-                "{}: source must start with shared: or repo:",
-                m.name
-            ));
+        let path = resolve(&m.source).map_err(|e| format!("{}: {e}", m.name))?;
+        // A painted albedo map also gives the vertex colours (for the report
+        // and anything drawn without textures).
+        let albedo = match &m.textures {
+            Some(t) => {
+                let path = resolve(&t.albedo).map_err(|e| format!("{}: {e}", m.name))?;
+                let img = textures::load_png(&path).map_err(|e| format!("{}: {e}", m.name))?;
+                Some((img, path))
+            }
+            None => None,
         };
-        let baked =
-            bake_model(m, &path).map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
+        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0))
+            .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
+        }
+        if let (Some(cfg), Some((albedo, albedo_path))) = (&m.textures, &albedo) {
+            let material = tables.materials();
+            if material >= MAX_MATERIALS {
+                return Err(format!("{}: more than {MAX_MATERIALS} materials", m.name));
+            }
+            let texels = textures::bake(cfg, albedo, albedo_path, resolve)
+                .map_err(|e| format!("{}: {e}", m.name))?;
+            tables.textures.extend_from_slice(&texels);
+            for v in &mut baked.verts {
+                v.material = material as u8 + 1;
+            }
         }
         baked.append_to(&mut tables, &m.name)?;
     }
@@ -150,13 +178,14 @@ fn run(opts: &Options) -> Result<(), String> {
     }
     std::fs::write(&opts.out, &bytes).map_err(|e| format!("{}: {e}", opts.out.display()))?;
     println!(
-        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows",
+        "wrote {} ({} KB): {} models, {} vertices, {} triangles at full detail, {} bone rows, {} materials",
         opts.out.display(),
         bytes.len() / 1024,
         tables.models.len(),
         tables.vertices.len(),
         tables.models.iter().map(|m| m.lods[0][1] / 3).sum::<u32>(),
         tables.bones.len() / BONE_TEXELS_PER_ROW as usize,
+        tables.materials(),
     );
     Ok(())
 }
@@ -413,10 +442,14 @@ impl Skeleton {
     }
 }
 
-fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
+fn bake_model(
+    cfg: &ModelConfig,
+    path: &Path,
+    albedo: Option<&Image>,
+) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
-    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(|v| v.as_slice());
+    let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(std::vec::Vec::as_slice);
     let skel = Skeleton::new(doc);
     let rest_globals = skel.globals(&skel.rest);
 
@@ -505,12 +538,14 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
             let material = prim.material();
             let pbr = material.pbr_metallic_roughness();
             let factor = Vec4::from(pbr.base_color_factor());
-            let texture = pbr
-                .base_color_texture()
-                .and_then(|t| src.images.get(t.texture().source().index()))
-                .and_then(|i| i.as_ref());
+            let texture = albedo.or_else(|| {
+                pbr.base_color_texture()
+                    .and_then(|t| src.images.get(t.texture().source().index()))
+                    .and_then(|i| i.as_ref())
+            });
 
             let base = verts.len() as u32;
+            let mut mirrored = false;
             for k in 0..positions.len() {
                 let (bones, to_model) = match influences.get(k) {
                     Some(inf) if skinned => (top_weights(inf), bind_space),
@@ -520,6 +555,7 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                         (rigid_skin(bone as u8), to_model)
                     }
                 };
+                mirrored = to_model.determinant() < 0.0;
                 let tangent = tangents.as_ref().map_or(Vec4::ZERO, |t| {
                     let dir = to_model
                         .transform_vector3(t[k].truncate())
@@ -535,7 +571,7 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                 let mut color = Vec3::splat(255.0) * factor.truncate();
                 if let Some(img) = texture {
                     let c = img.sample(uvs[k]);
-                    color *= Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
+                    color *= Vec3::new(f32::from(c[0]), f32::from(c[1]), f32::from(c[2])) / 255.0;
                 }
                 verts.push(Vert {
                     pos: to_model.transform_point3(positions[k]),
@@ -546,14 +582,24 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
                     bones,
                 });
             }
+            let first = indices.len();
             match reader.read_indices() {
                 Some(i) => indices.extend(i.into_u32().map(|i| base + i)),
                 None => indices.extend(base..verts.len() as u32),
+            }
+            if mirrored {
+                // Keep the outside counter-clockwise, as back-face culling expects.
+                for tri in indices[first..].as_chunks_mut::<3>().0 {
+                    tri.swap(1, 2);
+                }
             }
         }
     }
     if indices.is_empty() {
         return Err("no triangles".into());
+    }
+    if cfg.textures.is_some() && verts.iter().any(|v| v.tangent == Vec4::ZERO) {
+        return Err("a textured model needs tangents (export them with the glTF)".into());
     }
 
     // 2. Into game space: face +z, feet on the ground, `height` tall.
@@ -605,23 +651,24 @@ fn bake_model(cfg: &ModelConfig, path: &Path) -> Result<BakedModel, String> {
     // 4. Two levels of detail, each ordered for the vertex cache.
     let positions: Vec<[f32; 3]> = welded
         .iter()
-        .map(|v| v.pos.map(|c| c as f32 / POSITION_SCALE))
+        .map(|v| v.pos.map(|c| f32::from(c) / POSITION_SCALE))
         .collect();
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&positions), 12, 0)
         .map_err(|e| e.to_string())?;
+    let textured = cfg.textures.is_some();
     let simplify = |indices: &[u32], tris: usize| -> Vec<u32> {
         if indices.len() / 3 <= tris {
             return indices.to_vec();
         }
-        let mut out = meshopt::simplify(
-            indices,
-            &adapter,
-            tris * 3,
-            0.05,
-            meshopt::SimplifyOptions::Permissive,
-            None,
-        );
-        if out.len() / 3 > tris * 5 / 4 {
+        // Texture seams must hold, or reduced triangles would span unrelated
+        // parts of the atlas; vertex-coloured models may collapse across them.
+        let options = if textured {
+            meshopt::SimplifyOptions::None
+        } else {
+            meshopt::SimplifyOptions::Permissive
+        };
+        let mut out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
+        if !textured && out.len() / 3 > tris * 5 / 4 {
             // Attribute seams can stop the careful simplifier early.
             out = meshopt::simplify_sloppy(indices, &adapter, tris * 3, 0.1, None);
         }
@@ -698,11 +745,15 @@ fn quantise(
     let q = |c: f32| {
         (c * POSITION_SCALE)
             .round()
-            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
     };
     let n = |c: f32| (c * 127.0).round().clamp(-127.0, 127.0) as i8;
     let unorm16 = |c: f32| (c.clamp(0.0, 1.0) * 65535.0).round() as u16;
-    let color = Vec3::new(v.color[0] as f32, v.color[1] as f32, v.color[2] as f32);
+    let color = Vec3::new(
+        f32::from(v.color[0]),
+        f32::from(v.color[1]),
+        f32::from(v.color[2]),
+    );
     let (hue, saturation) = hue_saturation(color / 255.0);
     let is_team = team.iter().any(|t| t.distance(color) <= tolerance)
         || team_hue.is_some_and(|(lo, hi, sat)| hue >= lo && hue <= hi && saturation >= sat);
@@ -710,7 +761,7 @@ fn quantise(
     ModelVertex {
         pos: [q(v.pos.x), q(v.pos.y), q(v.pos.z)],
         team: if is_team { 255 } else { 0 },
-        _pad: 0,
+        material: 0,
         bones,
         weights,
         normal: [n(v.normal.x), n(v.normal.y), n(v.normal.z), 0],
@@ -771,7 +822,7 @@ fn quantise_weights(
         }
     }
     b[0] = bones[0].0;
-    w[0] = 255 - w[1..].iter().map(|&x| x as u32).sum::<u32>().min(255) as u8;
+    w[0] = 255 - w[1..].iter().map(|&x| u32::from(x)).sum::<u32>().min(255) as u8;
     (b, w)
 }
 
@@ -909,7 +960,7 @@ fn sample_clip<'a>(
                 Keys::Translation(v) => trs.t = ch.key(v, a).lerp(ch.key(v, b), x),
                 Keys::Scale(v) => trs.s = ch.key(v, a).lerp(ch.key(v, b), x),
                 Keys::Rotation(v) => {
-                    trs.r = ch.key(v, a).normalize().slerp(ch.key(v, b).normalize(), x)
+                    trs.r = ch.key(v, a).normalize().slerp(ch.key(v, b).normalize(), x);
                 }
             }
         }
@@ -934,15 +985,15 @@ mod tests {
         let skin = top_weights(&[(3, 0.2), (7, 0.7), (9, 0.08), (2, 0.02)]);
         let (bones, weights) = quantise_weights(&skin);
         assert_eq!(bones, [7, 3, 9, 0]);
-        assert_eq!(weights.iter().map(|&w| w as u32).sum::<u32>(), 255);
+        assert_eq!(weights.iter().map(|&w| u32::from(w)).sum::<u32>(), 255);
         assert_eq!(weights[3], 0);
         let (_, even) = quantise_weights(&top_weights(&[(1, 0.5), (2, 0.5)]));
-        assert!(even[0] >= even[1] && even[0] as u32 + even[1] as u32 == 255);
+        assert!(even[0] >= even[1] && u32::from(even[0]) + u32::from(even[1]) == 255);
     }
 
     #[test]
     fn the_heaviest_four_of_eight_influences_are_kept() {
-        let inf: Vec<(u16, f32)> = (0..8).map(|j| (j, j as f32 + 1.0)).collect();
+        let inf: Vec<(u16, f32)> = (0..8).map(|j| (j, f32::from(j) + 1.0)).collect();
         let (bones, _) = quantise_weights(&top_weights(&inf));
         assert_eq!(bones, [7, 6, 5, 4]);
     }

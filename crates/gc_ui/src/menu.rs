@@ -453,6 +453,10 @@ impl<N: Network> Menu<N> {
         let col_w = (panel.w - 48 - 36) / 4;
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
+        // Champions may duel before a battle with a computer player: in the
+        // footer, beside Leave.
+        let champions_r = Rect::new(panel.x + 24 + 140 + 24, panel.bottom() - 52, 320, 44);
+        const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
             let mut map = settings.map;
@@ -497,6 +501,7 @@ impl<N: Network> Menu<N> {
                 settings.on_drop = OnDrop::ALL[on_drop];
                 changed = true;
             }
+            changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
         } else {
             let map = MAPS.get(settings.map).copied().unwrap_or("?");
             for (i, text) in [
@@ -510,6 +515,8 @@ impl<N: Network> Menu<N> {
             {
                 ui.label_centered(slot_rect(i as i32), 1, theme::TEXT, text);
             }
+            let on = if settings.champions { "on" } else { "off" };
+            ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
         }
         if changed {
             self.net.edit_settings(settings);
@@ -839,7 +846,7 @@ mod tests {
     /// Where `needle` is drawn (centre of its glyphs), found in the quads.
     fn find_all(draw: &DrawList, needle: &str) -> Vec<(i32, i32)> {
         let mut found = Vec::new();
-        let want: Vec<u32> = needle.bytes().map(|b| (b - 32) as u32).collect();
+        let want: Vec<u32> = needle.bytes().map(|b| u32::from(b - 32)).collect();
         let q = &draw.quads;
         'start: for i in 0..q.len() {
             if q[i].glyph == SOLID {
@@ -864,8 +871,8 @@ mod tests {
             }
             let (a, b) = (q[i], q[j - 1]);
             found.push((
-                (a.pos[0] as i32 + b.pos[0] as i32 + b.size[0] as i32) / 2,
-                a.pos[1] as i32 + a.size[1] as i32 / 2,
+                (i32::from(a.pos[0]) + i32::from(b.pos[0]) + i32::from(b.size[0])) / 2,
+                i32::from(a.pos[1]) + i32::from(a.size[1]) / 2,
             ));
         }
         found
@@ -1010,6 +1017,11 @@ mod tests {
         assert!(h.has("Veteran"));
         h.click("Veteran");
         assert!(h.has("General"));
+        // Champions are allowed unless the host says otherwise.
+        let champions = |h: &Harness| h.menu.net.lobby().unwrap().settings.champions;
+        assert!(champions(&h));
+        h.click("Champions before AI battles");
+        assert!(!champions(&h));
         let (x, y) = h.text_pos("Start");
         h.frame(UiInput {
             mouse: (x, y),
@@ -1022,6 +1034,7 @@ mod tests {
                 assert_eq!(m.players.len(), 2);
                 assert_eq!(m.local_player, 0);
                 assert_eq!(AI_LEVELS[m.players[1].ai_level as usize], "General");
+                assert!(!m.settings.champions);
             }
             other => panic!("expected StartMatch, got {other:?}"),
         }
@@ -1134,8 +1147,8 @@ mod tests {
                 h.menu.frame(&mut h.ui);
                 h.ui.end_frame();
                 for q in &h.ui.draw.quads {
-                    let right = q.pos[0] as i32 + q.size[0] as i32;
-                    let bottom = q.pos[1] as i32 + q.size[1] as i32;
+                    let right = i32::from(q.pos[0]) + i32::from(q.size[0]);
+                    let bottom = i32::from(q.pos[1]) + i32::from(q.size[1]);
                     assert!(
                         right <= size.0 && bottom <= size.1,
                         "{screen:?} {size:?} overflows: {q:?}"

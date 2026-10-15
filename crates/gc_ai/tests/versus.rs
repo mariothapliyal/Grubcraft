@@ -80,6 +80,7 @@ fn field(seed: u64) -> (World, Terrain, PlayerId) {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     let terrain = Terrain::open(MAP);
     let apart = 70.0 + rng.below(31) as f32;
@@ -104,8 +105,8 @@ fn config(seed: u64, party: PlayerId) -> MindConfig {
         party,
         difficulty: Difficulty::General,
         // Personalities take turns, so every one is tested.
-        personality: (seed / 2) as usize + party as usize * 3,
-        seed: seed * 2 + party as u64,
+        personality: (seed / 2) as usize + usize::from(party) * 3,
+        seed: seed * 2 + u64::from(party),
     }
 }
 
@@ -198,9 +199,9 @@ fn fight(seed: u64, side: Side, against: Side) -> Outcome {
     let standing = |party: PlayerId| {
         let (mut left, mut all) = (0.0, 0.0);
         for r in view.regiments.iter().filter(|r| r.owner == party) {
-            all += r.full as f32;
+            all += f32::from(r.full);
             if !r.broken() {
-                left += r.models as f32;
+                left += f32::from(r.models);
             }
         }
         left / all.max(1.0)
@@ -378,7 +379,7 @@ fn print_field(view: &Perception, us: PlayerId, mind: Option<&Mind>) {
 /// One General battle, traced: against charge-straight-in, or against
 /// `AI_AGAINST=Recruit|Veteran|General|Warlord`.
 #[test]
-#[ignore]
+#[ignore = "traces one battle, run by hand"]
 fn one() {
     let seed = std::env::var("AI_TRACE")
         .ok()
@@ -427,7 +428,7 @@ fn level() -> Difficulty {
 /// parallel, with the time it took. `AI_LEVEL=Hands` is the Warlord without
 /// its rehearsals.
 #[test]
-#[ignore]
+#[ignore = "slow: hundreds of arena battles, run by hand"]
 fn duel() {
     let level = match std::env::var("AI_LEVEL").as_deref() {
         Ok("Hands") => Side::Tuned(Difficulty::Warlord, |k| k.rehearse = false),
@@ -446,7 +447,7 @@ fn duel() {
 /// Win rates over many battles, every level against charge-straight-in and
 /// against the level below.
 #[test]
-#[ignore]
+#[ignore = "slow: hundreds of arena battles, run by hand"]
 fn sweep() {
     let n = battles();
     let seeds = first_seed()..=first_seed() + n - 1;
@@ -467,7 +468,7 @@ fn sweep() {
 
 /// What a fair fight and doing nothing score, for scale.
 #[test]
-#[ignore]
+#[ignore = "slow: arena battles for scale, run by hand"]
 fn yardsticks() {
     let n = battles();
     for side in [Side::Charge, Side::Idle] {
@@ -482,7 +483,7 @@ type Tune = (&'static str, fn(&mut Knobs));
 /// `AI_AGAINST=Veteran` the opponent (charge straight in by default), and
 /// `AI_TUNE=<text>` runs only the variants whose name contains it.
 #[test]
-#[ignore]
+#[ignore = "slow: arena battles per tuning knob, run by hand"]
 fn knob_study() {
     let n = battles();
     let level = match std::env::var("AI_LEVEL").as_deref() {
@@ -517,7 +518,7 @@ fn knob_study() {
 /// Every plan fought throughout by the Warlord's hands against `AI_AGAINST`
 /// (the General by default): is one plan simply better?
 #[test]
-#[ignore]
+#[ignore = "slow: every plan over many arena battles, run by hand"]
 fn plans() {
     let against = match std::env::var("AI_AGAINST") {
         Ok(_) => against(),
@@ -540,7 +541,7 @@ fn plans() {
 /// [`contest`] spread over the machine's cores.
 fn contest_parallel(side: Side, against: Side, seeds: std::ops::RangeInclusive<u64>) -> u32 {
     let seeds: Vec<u64> = seeds.collect();
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     std::thread::scope(|s| {
         seeds
             .chunks(seeds.len().div_ceil(threads).max(1))
@@ -556,7 +557,10 @@ fn contest_parallel(side: Side, against: Side, seeds: std::ops::RangeInclusive<u
 // runs these with `cargo test --release -p gc_ai --test versus warlord`.
 
 #[test]
-#[cfg_attr(debug_assertions, ignore)]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "too slow unoptimised: CI runs it in release"
+)]
 fn the_warlord_beats_the_general_seven_times_in_ten() {
     let warlord = Side::Mind(Difficulty::Warlord);
     let wins = contest_parallel(warlord, Side::Mind(Difficulty::General), 1..=24);
@@ -564,7 +568,10 @@ fn the_warlord_beats_the_general_seven_times_in_ten() {
 }
 
 #[test]
-#[cfg_attr(debug_assertions, ignore)]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "too slow unoptimised: CI runs it in release"
+)]
 fn a_warlord_battle_plays_out_the_same_every_time() {
     let warlord = Side::Mind(Difficulty::Warlord);
     let general = Side::Mind(Difficulty::General);

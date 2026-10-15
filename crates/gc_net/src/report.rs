@@ -15,8 +15,9 @@ use crate::proto::{read_settings, read_slot, write_settings, write_slot};
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 const MAGIC: &[u8; 8] = b"GCDESYNC";
-/// Bumped whenever the report layout changes.
-const FORMAT: u8 = 1;
+/// Bumped whenever the report layout changes, including the lobby settings
+/// it carries (2: the champions option).
+const FORMAT: u8 = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Report {
@@ -54,14 +55,14 @@ impl Report {
             write_slot(&mut w, s);
         }
         w.u8(self.me);
-        w.var(self.desync_tick as u64);
+        w.var(u64::from(self.desync_tick));
         w.var(self.turns.len() as u64);
         for t in &self.turns {
             write_player_commands(&mut w, t);
         }
         w.var(self.hashes.len() as u64);
         for &(tick, hash) in &self.hashes {
-            w.var(tick as u64);
+            w.var(u64::from(tick));
             w.u64(hash);
         }
         w.buf

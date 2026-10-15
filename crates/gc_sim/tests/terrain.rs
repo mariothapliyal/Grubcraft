@@ -50,6 +50,7 @@ fn world_on(seed: u64, units: &[UnitStats], heights: &[u16]) -> World {
             water_level: WATER_LEVEL,
             cover: &[],
         },
+        champions: false,
     })
 }
 
@@ -78,7 +79,7 @@ fn tile(n: i32) -> Fx {
 fn hp(w: &World, h: RegimentHandle) -> u32 {
     w.regiments
         .model_hp(h)
-        .map_or(0, |hp| hp.iter().map(|&v| v as u32).sum())
+        .map_or(0, |hp| hp.iter().copied().map(u32::from).sum())
 }
 
 fn run(w: &mut World, ticks: u32) {

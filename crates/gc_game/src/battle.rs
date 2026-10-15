@@ -4,15 +4,26 @@
 
 use gc_ai::army::{self, Preset};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
-use gc_sim::{PlayerCommand, PlayerId, UnitStats, World};
+use gc_sim::champions::{HEART, Outcome};
+use gc_sim::{Challenge, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
 use gc_ui::lobby::{LobbySettings, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
+
+/// Whether champions may duel before this battle: the lobby allows it and
+/// a computer player takes part (docs/05-combat.md, "Champions before
+/// battle").
+pub fn champions_allowed(setup: &MatchStart) -> bool {
+    setup.settings.champions && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
+}
 
 /// A Field Battle is won once one side alone has held the field (everyone
 /// still fighting is on its team) for this long, so a rout that might
 /// rally doesn't end it early.
 pub const HOLD_TICKS: u32 = 10 * gc_sim::TICKS_PER_SECOND;
+
+/// The champions' result stays on screen this long after the duel ends.
+const NEWS_TICKS: u32 = 8 * gc_sim::TICKS_PER_SECOND;
 
 /// One side of a match.
 pub struct Party {
@@ -182,6 +193,10 @@ pub struct Battle {
     pub outcome: Option<String>,
     /// Whether this machine's side won, once it is over.
     pub won: Option<bool>,
+    /// What the champions are doing, while there is news of them.
+    pub champions: Option<String>,
+    /// The state of the duel that news tells.
+    heard: Option<Outcome>,
 }
 
 impl Battle {
@@ -191,7 +206,26 @@ impl Battle {
             held: None,
             outcome: None,
             won: None,
+            champions: None,
+            heard: None,
         }
+    }
+
+    /// Follow the champions' duel: who steps out, then how it ended, for a
+    /// few seconds. Returns true when the news changed.
+    pub fn herald(&mut self, world: &World, parties: &[Party], unit_names: &[String]) -> bool {
+        let now = world.tick_count();
+        let duel = world
+            .challenge()
+            .filter(|c| now <= c.decided() + NEWS_TICKS)
+            .map(|c| (c, c.outcome(now)));
+        let heard = duel.map(|(_, o)| o);
+        if heard == self.heard {
+            return false;
+        }
+        self.heard = heard;
+        self.champions = duel.map(|(c, o)| champion_news(c, o, world, parties, unit_names));
+        true
     }
 
     /// Look at the field after a tick; once one side alone has held it
@@ -229,12 +263,48 @@ impl Battle {
     }
 }
 
+/// The line about the champions' duel `c`, which stands at `outcome`.
+fn champion_news(
+    c: &Challenge,
+    outcome: Outcome,
+    world: &World,
+    parties: &[Party],
+    unit_names: &[String],
+) -> String {
+    let [a, b] = c.sides.map(|s| party_name(parties, s));
+    match outcome {
+        Outcome::Fighting => {
+            // The regiments they step out of are there while they fight.
+            let [x, y] = c.champions.map(|h| {
+                world
+                    .regiments
+                    .get(h)
+                    .and_then(|r| unit_names.get(r.unit as usize))
+                    .map_or("regiment", String::as_str)
+            });
+            format!(
+                "CHAMPIONS  {a}'s {x} and {b}'s {y} each send out a champion to fight between the lines"
+            )
+        }
+        Outcome::CutShort => "CHAMPIONS  The battle swallows the duel before it is decided".into(),
+        Outcome::Killed { winner } => {
+            let (w, l) = if winner == 0 { (a, b) } else { (b, a) };
+            format!(
+                "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
+            )
+        }
+        Outcome::Parted => {
+            "CHAMPIONS  Neither champion can beat the other, and both go back to their lines".into()
+        }
+    }
+}
+
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
 /// The AI plays your faction.
 pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
-    me.name = settings.player_name.clone();
+    me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
     me.color = settings.player_color % 4;
     let mut ai = Slot::open(1);
@@ -343,6 +413,7 @@ mod tests {
             nav: &nav,
             teams: &teams,
             ground: heightmap.ground(),
+            champions: champions_allowed(setup),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         // As in a real game (for measuring what the minds cost the game's
@@ -439,7 +510,7 @@ mod tests {
 
     /// Each faction's Veteran against each faction standing still.
     #[test]
-    #[ignore]
+    #[ignore = "slow: 64 full battles, run by hand"]
     fn matchups() {
         use gc_ui::lobby::Faction as F;
         for ai in F::ALL {
@@ -467,11 +538,12 @@ mod tests {
 
     /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
     /// factions, two Veterans, `AI_BATTLES` battles a pair (default 24),
-    /// swapping ends every battle. Prints the first faction's wins, losses
-    /// and battles nobody had won after ten minutes.
+    /// swapping ends every battle, with champions allowed unless
+    /// `AI_CHAMPIONS=off`. Prints the first faction's wins, losses and
+    /// battles nobody had won after ten minutes.
     /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
     #[test]
-    #[ignore]
+    #[ignore = "slow: the full faction balance table, run by hand"]
     fn faction_table() {
         use gc_ui::lobby::Faction as F;
         let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
@@ -500,6 +572,9 @@ mod tests {
                             let a_first = seed % 2 == 0;
                             setup.players[0].faction = if a_first { a } else { b };
                             setup.players[1].faction = if a_first { b } else { a };
+                            // `AI_CHAMPIONS=off` plays them without champions.
+                            setup.settings.champions =
+                                std::env::var("AI_CHAMPIONS").as_deref() != Ok("off");
                             match play(&setup, seed, 10).battle.won {
                                 Some(w) if w == a_first => won += 1,
                                 Some(_) => lost += 1,
@@ -548,6 +623,7 @@ mod tests {
                 water_level: 0,
                 cover: &cover,
             },
+            champions: false,
         });
         let spawn = |player, x| PlayerCommand {
             player,
@@ -578,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window to watch a battle"]
     fn watch() {
         let level = |v: &str| match v {
             "Recruit" => Difficulty::Recruit,
@@ -596,7 +672,7 @@ mod tests {
                 "seed {seed}: {:?} after {} s; minds {:.3} ms a tick on average, {:.2} ms at worst",
                 played.battle.outcome,
                 played.ticks / gc_sim::TICKS_PER_SECOND,
-                played.ai_time.as_secs_f64() * 1000.0 / played.ticks.max(1) as f64,
+                played.ai_time.as_secs_f64() * 1000.0 / f64::from(played.ticks.max(1)),
                 played.ai_worst.as_secs_f64() * 1000.0,
             );
         }

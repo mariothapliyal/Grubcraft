@@ -9,6 +9,7 @@
 //! out, and its own regiments say whether they are hidden.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::champions::Outcome;
 use gc_sim::{
     Formation, MoraleState, PlayerId, RegimentHandle, Stances, TICKS_PER_SECOND, UnitId, UnitStats,
     World,
@@ -82,7 +83,7 @@ impl UnitInfo {
 
     /// Seconds between volleys.
     pub fn reload_seconds(&self) -> f32 {
-        self.stats.reload_ticks.max(1) as f32 / TICKS_PER_SECOND as f32
+        f32::from(self.stats.reload_ticks.max(1)) / TICKS_PER_SECOND as f32
     }
 }
 
@@ -127,7 +128,7 @@ impl Seen {
 
     /// Fraction of full strength still standing.
     pub fn strength(&self) -> f32 {
-        self.models as f32 / self.full.max(1) as f32
+        f32::from(self.models) / f32::from(self.full.max(1))
     }
 
     /// Radius of a circle that holds the block.
@@ -197,6 +198,8 @@ pub struct Perception {
     /// Live regiments in pool order.
     pub regiments: Vec<Seen>,
     pub stances: Stances,
+    /// The two parties whose champions are fighting between the lines now.
+    pub champions: Option<[PlayerId; 2]>,
     /// Index into `regiments` by pool index, for handle lookups.
     by_index: Vec<u32>,
     /// Every enemy seen lately, as last seen, and the tick it was.
@@ -241,6 +244,10 @@ impl Perception {
         if self.stances != *world.stances() {
             self.stances = world.stances().clone();
         }
+        self.champions = world
+            .challenge()
+            .filter(|c| c.outcome(self.tick) == Outcome::Fighting)
+            .map(|c| c.sides);
         self.regiments.clear();
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);

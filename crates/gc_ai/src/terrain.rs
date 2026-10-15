@@ -208,7 +208,7 @@ impl Terrain {
             if x < 0 || y < 0 || x >= side || y >= side {
                 0
             } else {
-                clear[(y * side + x) as usize] as u16
+                u16::from(clear[(y * side + x) as usize])
             }
         };
         for y in 0..side {
@@ -271,6 +271,7 @@ mod tests {
             nav: &nav,
             teams: &[],
             ground: gc_sim::Ground::FLAT,
+            champions: false,
         });
         let t = Terrain::new(&nav, 256);
         for y in (3..253).step_by(3) {

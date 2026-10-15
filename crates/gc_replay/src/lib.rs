@@ -35,9 +35,10 @@ use codec::{Reader, Writer};
 
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older replays are refused
-/// with [`Error::Format`], except format 2, which is format 3 without the
-/// cover layer (read as a map with no woods or grass).
-pub const FORMAT: u16 = 3;
+/// with [`Error::Format`], except format 3, which is format 4 without the
+/// champions flag (read as no champions), and format 2, which is format 3
+/// without the cover layer (read as a map with no woods or grass).
+pub const FORMAT: u16 = 4;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -65,6 +66,8 @@ pub struct Replay {
     pub water_level: u16,
     /// Woods and tall grass, as [`Ground::cover`] (empty: none).
     pub cover: Vec<u8>,
+    /// Whether champions may duel before battle, as [`MatchSetup::champions`].
+    pub champions: bool,
     /// Ticks recorded.
     pub ticks: u32,
     /// The commands of each tick that had any, in tick order.
@@ -148,6 +151,7 @@ impl Replay {
                 water_level: self.water_level,
                 cover: &self.cover,
             },
+            champions: self.champions,
         }
     }
 
@@ -227,8 +231,8 @@ impl Replay {
         let mut w = Writer::default();
         w.bytes(self.note.as_bytes());
         w.u64(self.seed);
-        w.var(self.regiments as u64);
-        w.var(self.map_tiles as u64);
+        w.var(u64::from(self.regiments));
+        w.var(u64::from(self.map_tiles));
         w.var(self.units.len() as u64);
         for u in &self.units {
             w.stats(u);
@@ -240,16 +244,17 @@ impl Replay {
         w.var(self.heights.len() as u64);
         let mut prev = 0u16;
         for &h in &self.heights {
-            w.ivar(h.wrapping_sub(prev) as i16 as i64);
+            w.ivar(i64::from(h.wrapping_sub(prev) as i16));
             prev = h;
         }
-        w.var(self.water_level as u64);
+        w.var(u64::from(self.water_level));
         w.bytes(&self.cover);
-        w.var(self.ticks as u64);
+        w.bool(self.champions);
+        w.var(u64::from(self.ticks));
         w.var(self.turns.len() as u64);
         let mut prev = 0;
         for (tick, commands) in &self.turns {
-            w.var((tick - prev) as u64);
+            w.var(u64::from(tick - prev));
             prev = *tick;
             w.var(commands.len() as u64);
             for c in commands {
@@ -259,7 +264,7 @@ impl Replay {
         w.var(self.checkpoints.len() as u64);
         let mut prev = 0;
         for &(tick, hash) in &self.checkpoints {
-            w.var((tick - prev) as u64);
+            w.var(u64::from(tick - prev));
             prev = tick;
             w.u64(hash);
         }
@@ -327,6 +332,7 @@ impl Replay {
         if !cover.is_empty() && cover.len() != (map_tiles as usize).pow(2) {
             return None;
         }
+        let champions = format >= 4 && r.bool()?;
         let ticks = r.var_as()?;
         let n: usize = r.var_as()?;
         let mut turns = Vec::with_capacity(n.min(r.remaining()));
@@ -365,6 +371,7 @@ impl Replay {
             heights,
             water_level,
             cover,
+            champions,
             ticks,
             turns,
             checkpoints,
@@ -408,6 +415,7 @@ impl Recorder {
                 } else {
                     Vec::new()
                 },
+                champions: setup.champions,
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
@@ -471,6 +479,7 @@ mod tests {
                 water_level: 200,
                 cover: &cover,
             },
+            champions: false,
         };
         let mut world = World::new(&setup);
         let mut rec = Recorder::new(&setup, &world, "test drill");

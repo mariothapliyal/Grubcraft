@@ -66,7 +66,8 @@ impl Standing {
 
 impl World {
     /// An empty world on the same map as this one, sharing its walkable
-    /// grid, with the same regiment types and stances, its clock at this
+    /// grid, with the same regiment types and stances (and no champions),
+    /// its clock at this
     /// world's tick (so staggered checks fall on the same ticks), room for
     /// `capacity` regiments and its own random streams from `seed`.
     pub fn scratch(&self, capacity: u32, seed: u64) -> World {
@@ -82,6 +83,7 @@ impl World {
             stances: self.stances.clone(),
             terrain: self.terrain.clone(),
             vision: Vision::new(n as usize, &self.terrain, &self.stances),
+            champions: None,
             regiments: Regiments::with_capacity(n),
         }
     }
@@ -126,7 +128,7 @@ impl World {
         let m = MAX_MODELS as usize;
         r.hp[i * m..][models as usize..m].fill(0);
         if stats.morale > 0 {
-            let points = (s.morale_points as i16).min(stats.morale as i16);
+            let points = i16::from(s.morale_points).min(i16::from(stats.morale));
             r.morale[i] = points * morale::SCALE;
         }
         r.morale_state[i] = s.morale;
@@ -145,15 +147,16 @@ impl World {
     /// within `radius` of `centre` (engine hook 5), each exactly as it is
     /// here, with the same handle, orders and route, on the same map and at
     /// the same tick, with the same random streams. Orders aimed at
-    /// regiments left out lapse in the copy. Arrows already in the air are
-    /// left out, and later volleys may land in a different order than in
-    /// this world, so a copy where archers shoot plays on alike but not
-    /// identically.
+    /// regiments left out lapse in the copy. Arrows already in the air and
+    /// a duel of champions under way are left out (what the last duel did
+    /// to each side's heart is kept), and later volleys may land in a
+    /// different order than in this world, so a copy where archers shoot
+    /// plays on alike but not identically.
     pub fn fork_region(&self, centre: FxVec2, radius: Fx) -> World {
         let near = |p: FxVec2| {
-            let dx = (p.x - centre.x).raw() as i64;
-            let dy = (p.y - centre.y).raw() as i64;
-            let r = radius.raw() as i64;
+            let dx = i64::from((p.x - centre.x).raw());
+            let dy = i64::from((p.y - centre.y).raw());
+            let r = i64::from(radius.raw());
             dx * dx + dy * dy <= r * r
         };
         let regs = &self.regiments;
@@ -164,6 +167,7 @@ impl World {
         let mut w = self.scratch(capacity, 0);
         w.rng = self.rng.clone();
         w.combat_rng = self.combat_rng.clone();
+        w.regiments.party_morale.clone_from(&regs.party_morale);
         let mut copied = alloc::vec![false; capacity as usize];
         for &i in &picked {
             if w.regiments.copy_from(regs, i) {
