@@ -52,6 +52,9 @@ struct Golden {
     minds: bool,
     /// Commands added to the computer players' at some ticks.
     extra: fn(&World, &mut Vec<PlayerCommand>),
+    /// Whether champions may duel before battle, as the lobby allows by
+    /// default in battles with computer players.
+    champions: bool,
 }
 
 const fn side(faction: Faction, level: Difficulty, team: u8) -> Side {
@@ -153,6 +156,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     Golden {
         name: "field-2v2",
@@ -169,6 +173,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     Golden {
         name: "sandbox-tuning",
@@ -183,6 +188,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 3,
         minds: true,
         extra: tuning,
+        champions: false,
     },
     // Woods and tall grass in play (docs/20-ambushes.md): regiments hide,
     // are spotted, and spring ambushes, so the vision rules are checked on
@@ -216,8 +222,24 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: false,
         extra: charge,
+        champions: false,
+    },
+    // Champions come out before the armies close, and one kills the other.
+    Golden {
+        name: "field-champions-1v1",
+        seed: CHAMPIONS_SEED,
+        map_tiles: 256,
+        sides: &[side(EmberClans, Veteran, 0), side(Choir, Veteran, 1)],
+        soldiers: 0,
+        rows: 1,
+        minutes: 4,
+        minds: true,
+        extra: no_extra,
+        champions: true,
     },
 ];
+
+const CHAMPIONS_SEED: u64 = 0xc4a1;
 
 #[test]
 #[ignore = "records the golden replays; run by hand (see the module docs)"]
@@ -255,6 +277,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         nav: &nav,
         teams: &teams,
         ground: heightmap.ground(),
+        champions: golden.champions,
     };
     let mut world = World::new(&setup);
     let mut minds = Minds::new(heightmap.ai_terrain(&nav));
@@ -369,10 +392,29 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         }
         _ => "cut at the time limit".into(),
     };
+    let champions = match world.challenge() {
+        Some(c) if c.abandoned.is_none() => {
+            let at = c.ends() / gc_sim::TICKS_PER_SECOND;
+            let end = if c.winner.is_some() {
+                "a kill"
+            } else {
+                "a draw"
+            };
+            format!("; champions duel to {end} at {}:{:02}", at / 60, at % 60)
+        }
+        Some(_) => "; the champions' duel is cut short".into(),
+        None => String::new(),
+    };
+    assert_eq!(
+        champions.is_empty(),
+        !golden.champions,
+        "{}: champions should come out exactly when allowed",
+        golden.name
+    );
     let note = format!(
         "{}: Field Battle recorded from gc_game's goldens.rs, seed {:#x}, {}-tile map; {}; \
          {}:{:02}, {ending}; most soldiers in melee at once {} (at {}:{:02}); \
-         ambushes sprung {ambushes}",
+         ambushes sprung {ambushes}{champions}",
         golden.name,
         golden.seed,
         golden.map_tiles,

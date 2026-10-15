@@ -665,6 +665,31 @@ impl<N: Network> Menu<N> {
             ButtonStyle::Normal,
             true,
         );
+        // Champions may duel before a battle with a computer player.
+        let champions_r = Rect::new(panel.x + 24 + 140 + 24, btn_y, 320, 44);
+        const CHAMPIONS: &str = "Champions before AI battles";
+        if lobby.is_host {
+            let mut on = lobby.settings.champions;
+            if ui.toggle(champions_r, CHAMPIONS, &mut on) {
+                self.net.edit_settings(LobbySettings {
+                    champions: on,
+                    ..lobby.settings.clone()
+                });
+            }
+        } else {
+            let on = if lobby.settings.champions {
+                "on"
+            } else {
+                "off"
+            };
+            ui.label(
+                champions_r.x,
+                champions_r.y + (champions_r.h - 16) / 2,
+                1,
+                theme::MUTED,
+                &format!("{CHAMPIONS}: {on}"),
+            );
+        }
         if lobby.is_host {
             let go = Rect::new(panel.right() - 24 - 200, btn_y - 4, 200, 48);
             if ui.button(go, "Start", ButtonStyle::Primary, blocker.is_none()) {

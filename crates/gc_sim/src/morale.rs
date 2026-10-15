@@ -9,7 +9,9 @@
 //!   when fighting while badly outnumbered nearby;
 //! - it recovers when the regiment is out of the fight and losing nobody, up
 //!   to the unit's stat scaled by how much of the regiment is left (half the
-//!   stat for a regiment that has lost almost everyone).
+//!   stat for a regiment that has lost almost everyone), raised or lowered
+//!   for the rest of the battle when its side's champion wins or loses
+//!   (see [`crate::champions`]).
 //!
 //! Below [`WAVER_BELOW`] points a regiment is *wavering* and deals less
 //! damage. At zero it *routs*: it breaks off, ignores orders and runs from
@@ -157,9 +159,11 @@ fn check(
         tenths += (RECOVERY * SCALE) as i32;
     }
     // A battered regiment never gets all its nerve back: the cap falls from
-    // the unit's stat at full strength to half of it with nobody left.
-    let cap = fresh(stats) as i32 * (full + regs.models[i] as i32) / (2 * full);
-    let morale = (regs.morale[i] as i32 + tenths).clamp(0, cap) as i16;
+    // the unit's stat at full strength to half of it with nobody left. A
+    // champion's win or loss raises or lowers it for the rest of the battle.
+    let cap = fresh(stats) as i32 * (full + regs.models[i] as i32) / (2 * full)
+        + regs.morale_bonus[i] as i32;
+    let morale = (regs.morale[i] as i32 + tenths).clamp(0, cap.max(1)) as i16;
     regs.morale[i] = morale;
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
@@ -168,7 +172,7 @@ fn check(
     }
 }
 
-fn steady_or_wavering(morale: i16) -> MoraleState {
+pub(crate) fn steady_or_wavering(morale: i16) -> MoraleState {
     if morale < WAVER_BELOW * SCALE {
         MoraleState::Wavering
     } else {

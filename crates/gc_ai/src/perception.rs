@@ -10,8 +10,8 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::{
-    Formation, MoraleState, PlayerId, RegimentHandle, Stances, TICKS_PER_SECOND, UnitId, UnitStats,
-    World,
+    Challenge, Formation, MoraleState, PlayerId, RegimentHandle, Stances, TICKS_PER_SECOND, UnitId,
+    UnitStats, World,
 };
 use glam::Vec2;
 
@@ -169,6 +169,8 @@ pub struct Perception {
     /// Live regiments in pool order.
     pub regiments: Vec<Seen>,
     pub stances: Stances,
+    /// The champions' duel, once one has been called.
+    pub challenge: Option<Challenge>,
     /// Index into `regiments` by pool index, for handle lookups.
     by_index: Vec<u32>,
     /// Every enemy seen lately, as last seen, and the tick it was.
@@ -213,6 +215,7 @@ impl Perception {
         if self.stances != *world.stances() {
             self.stances = world.stances().clone();
         }
+        self.challenge = world.challenge().copied();
         self.regiments.clear();
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);
@@ -290,6 +293,11 @@ impl Perception {
     /// How fast `r` marches in its formation, tiles per second.
     pub fn pace(&self, r: &Seen) -> f32 {
         self.unit(r).speed * r.formation.pace_percent() as f32 / 100.0
+    }
+
+    /// Whether champions are fighting between the lines now.
+    pub fn champions_fighting(&self) -> bool {
+        self.challenge.is_some_and(|c| c.fighting(self.tick))
     }
 
     pub fn hostile(&self, a: PlayerId, b: PlayerId) -> bool {

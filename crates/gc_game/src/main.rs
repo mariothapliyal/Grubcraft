@@ -731,6 +731,7 @@ impl App {
                     nav: &nav,
                     teams: &[],
                     ground: heightmap.ground(),
+                    champions: false,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -1588,6 +1589,8 @@ impl Running {
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
+        let now = world.tick_count() as f32 - 1.0 + alpha;
+        self.puppets.champions(world.challenge(), now);
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -2168,9 +2171,12 @@ impl Running {
         }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
-        let teams: Vec<u8> = match &kind {
-            MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
-            _ => Vec::new(),
+        let (teams, champions): (Vec<u8>, bool) = match &kind {
+            MatchKind::Battle(setup) => (
+                setup.players.iter().map(|s| s.team).collect(),
+                battle::champions_allowed(setup),
+            ),
+            _ => (Vec::new(), false),
         };
         self.world = tagged_alloc::scope(Tag::Sim, || {
             World::new(&MatchSetup {
@@ -2181,6 +2187,7 @@ impl Running {
                 nav: &nav,
                 teams: &teams,
                 ground: self.heightmap.ground(),
+                champions,
             })
         });
         self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
@@ -2285,9 +2292,14 @@ impl Running {
         }
     }
 
-    /// How the battle ended, once it has.
-    fn battle_outcome(&self) -> Option<&str> {
-        self.battle.as_ref()?.outcome.as_deref()
+    /// How the battle ended, once it has, and news of the champions.
+    fn battle_news(&self) -> Option<String> {
+        let battle = self.battle.as_ref()?;
+        let lines: Vec<&str> = [&battle.outcome, &battle.champions]
+            .into_iter()
+            .filter_map(|l| l.as_deref())
+            .collect();
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// Once one side alone has held the field long enough, say who won.
@@ -2298,6 +2310,12 @@ impl Running {
         if battle.judge(&self.world, &self.parties) {
             if let Some(outcome) = &battle.outcome {
                 eprintln!("grubcraft: {outcome}");
+            }
+            self.sandbox.dirty = true;
+        }
+        if battle.herald(&self.world, &self.parties, &self.unit_names) {
+            if let Some(news) = &battle.champions {
+                eprintln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
         }
@@ -2550,7 +2568,7 @@ impl Running {
         } else if self.sandbox.panel {
             self.sandbox_panel()
         } else {
-            self.battle_outcome().unwrap_or_default().to_string()
+            self.battle_news().unwrap_or_default()
         };
         if self.lens && !self.menu_open {
             let lenses = lens::lenses(&self.minds);
@@ -2819,8 +2837,8 @@ impl Running {
             lines.extend(o.lines(lan.status(), lan.waiting()));
             lines.push(String::new());
         }
-        if let Some(outcome) = self.battle_outcome() {
-            lines.push(outcome.to_string());
+        if let Some(news) = self.battle_news() {
+            lines.push(news);
             lines.push(String::new());
         }
         if self.online.is_some() {

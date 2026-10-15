@@ -13,6 +13,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod champions;
 pub mod combat;
 pub mod formation;
 mod hash;
@@ -24,6 +25,7 @@ pub mod stances;
 pub mod terrain;
 pub mod vision;
 
+pub use champions::Challenge;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
@@ -31,6 +33,7 @@ pub use stances::Stances;
 pub use terrain::{Cover, Ground, Terrain};
 pub use vision::Ambush;
 
+use champions::Champions;
 use combat::Combat;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
@@ -384,6 +387,10 @@ pub struct MatchSetup<'a> {
     /// [`terrain`]) and hiding (see [`vision`]). [`Ground::FLAT`] means
     /// flat, dry, open ground.
     pub ground: Ground<'a>,
+    /// Whether champions may duel between the lines before battle (see
+    /// [`champions`]): the lobby's option, for battles with a computer
+    /// player.
+    pub champions: bool,
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -454,6 +461,7 @@ pub struct World {
     stances: Stances,
     terrain: Terrain,
     vision: Vision,
+    champions: Champions,
     pub regiments: Regiments,
 }
 
@@ -477,6 +485,7 @@ impl World {
             stances,
             terrain,
             vision,
+            champions: Champions::new(setup.champions, Pcg32::new(setup.seed, streams::EVENTS)),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -538,6 +547,8 @@ impl World {
             self.tick,
             self.map_tiles,
         );
+        self.champions
+            .update(&mut self.regiments, &self.units, &self.stances, self.tick);
         self.vision.update(
             &mut self.regiments,
             &self.combat,
@@ -710,7 +721,14 @@ impl World {
         self.combat.hash_into(&mut h);
         self.nav.hash_into(&mut h);
         self.vision.hash_into(&self.regiments, &mut h);
+        self.champions.hash_into(&mut h);
         h.finish()
+    }
+
+    /// The champions' challenge, once one has been called (it stays after
+    /// the duel is over).
+    pub fn challenge(&self) -> Option<&Challenge> {
+        self.champions.challenge()
     }
 
     /// The match's deterministic random stream (combat, events, ...).

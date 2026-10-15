@@ -42,6 +42,7 @@ fn world(nav: &[u8]) -> World {
         nav,
         teams: &[],
         ground: Ground::FLAT,
+        champions: false,
     })
 }
 

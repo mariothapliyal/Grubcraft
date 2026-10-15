@@ -1302,7 +1302,9 @@ impl Captain {
                 );
             }
             let behind_water = self.river.is_some() && !self.crossing;
-            let advance = if behind_water {
+            // Champions are fighting between the lines: stand and watch.
+            let watching = view.champions_fighting();
+            let advance = if behind_water || watching {
                 false
             } else if only_archers {
                 true
@@ -1325,7 +1327,7 @@ impl Captain {
             // Give each posture a moment before changing it again, so the
             // line doesn't stop and start with every look.
             let settled = now >= self.posture_since + POSTURE_TICKS;
-            if want != self.posture && settled {
+            if want != self.posture && (settled || watching) {
                 self.posture = want;
                 if want == Posture::Advance && self.covered != 0.0 {
                     // Leaving its cover behind: hammers on both wings again.
@@ -1333,8 +1335,14 @@ impl Captain {
                     self.relayout = true;
                 }
                 if want == Posture::Hold {
-                    // Halt where the line stands now.
-                    self.standoff_since = now;
+                    // Halt where the line stands now. Watching champions
+                    // doesn't use up its patience.
+                    if watching {
+                        ctx.journal
+                            .note(now, "Halting to watch the champions".to_string());
+                    } else {
+                        self.standoff_since = now;
+                    }
                     let our_c = centroid(ours);
                     self.anchor = ctx
                         .terrain

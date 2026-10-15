@@ -96,6 +96,7 @@ fn world() -> World {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     })
 }
 

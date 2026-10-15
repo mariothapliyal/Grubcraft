@@ -106,6 +106,9 @@ pub struct Regiments {
     /// Morale in tenths of a point (see [`crate::morale`]), and what it means.
     pub(crate) morale: Vec<i16>,
     pub(crate) morale_state: Vec<MoraleState>,
+    /// Morale tenths added to (or taken from) its ceiling for the rest of
+    /// the battle, by a champion's win or loss (see [`crate::champions`]).
+    pub(crate) morale_bonus: Vec<i16>,
     /// Soldiers lost, and flank (bit 0) or rear (bit 1) hits taken, since the
     /// regiment's last morale check.
     pub(crate) losses: Vec<u16>,
@@ -152,6 +155,7 @@ impl Regiments {
             full_models: vec![0; n],
             morale: vec![0; n],
             morale_state: vec![MoraleState::Steady; n],
+            morale_bonus: vec![0; n],
             losses: vec![0; n],
             shock: vec![0; n],
             rout_clock: vec![0; n],
@@ -211,6 +215,7 @@ impl Regiments {
         self.full_models[i] = stats.models;
         self.morale[i] = morale::fresh(stats);
         self.morale_state[i] = MoraleState::Steady;
+        self.morale_bonus[i] = 0;
         self.losses[i] = 0;
         self.shock[i] = 0;
         self.rout_clock[i] = 0;
@@ -545,6 +550,10 @@ impl Regiments {
             h.u16(self.full_models[i]);
             h.u16(self.morale[i] as u16);
             h.u8(self.morale_state[i] as u8);
+            // Only when set, as for the formation above.
+            if self.morale_bonus[i] != 0 {
+                h.u16(self.morale_bonus[i] as u16);
+            }
             h.u16(self.losses[i]);
             h.u8(self.shock[i]);
             h.u16(self.rout_clock[i]);

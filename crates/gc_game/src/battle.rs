@@ -4,15 +4,26 @@
 
 use gc_ai::army::{self, Preset};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
-use gc_sim::{PlayerCommand, PlayerId, UnitStats, World};
+use gc_sim::champions::HEART;
+use gc_sim::{Challenge, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
 use gc_ui::lobby::{LobbySettings, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
+
+/// Whether champions may duel before this battle: the lobby allows it and
+/// a computer player takes part (docs/05-combat.md, "Champions before
+/// battle").
+pub fn champions_allowed(setup: &MatchStart) -> bool {
+    setup.settings.champions && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
+}
 
 /// A Field Battle is won once one side alone has held the field (everyone
 /// still fighting is on its team) for this long, so a rout that might
 /// rally doesn't end it early.
 pub const HOLD_TICKS: u32 = 10 * gc_sim::TICKS_PER_SECOND;
+
+/// The champions' result stays on screen this long after the duel ends.
+const NEWS_TICKS: u32 = 8 * gc_sim::TICKS_PER_SECOND;
 
 /// One side of a match.
 pub struct Party {
@@ -182,6 +193,8 @@ pub struct Battle {
     pub outcome: Option<String>,
     /// Whether this machine's side won, once it is over.
     pub won: Option<bool>,
+    /// What the champions are doing, while there is news of them.
+    pub champions: Option<String>,
 }
 
 impl Battle {
@@ -191,7 +204,19 @@ impl Battle {
             held: None,
             outcome: None,
             won: None,
+            champions: None,
         }
+    }
+
+    /// Follow the champions' duel: who steps out, then how it ended, for a
+    /// few seconds. Returns true when the news changed.
+    pub fn herald(&mut self, world: &World, parties: &[Party], unit_names: &[String]) -> bool {
+        let news = world
+            .challenge()
+            .and_then(|c| champion_news(c, world, parties, unit_names));
+        let changed = news != self.champions;
+        self.champions = news;
+        changed
     }
 
     /// Look at the field after a tick; once one side alone has held it
@@ -227,6 +252,43 @@ impl Battle {
         });
         true
     }
+}
+
+/// The line about the champions' duel `c` at the world's tick, or `None`
+/// once it is old news.
+fn champion_news(
+    c: &Challenge,
+    world: &World,
+    parties: &[Party],
+    unit_names: &[String],
+) -> Option<String> {
+    let now = world.tick_count();
+    let decided = c.abandoned.unwrap_or(c.ends());
+    if now > decided + NEWS_TICKS {
+        return None;
+    }
+    let who = |side: usize| {
+        let r = world.regiments.get(c.champions[side])?;
+        let unit = unit_names.get(r.unit as usize).map_or("", String::as_str);
+        Some((party_name(parties, r.owner), unit))
+    };
+    let side = |side: usize| who(side).map_or("one side".to_string(), |(p, _)| p);
+    let news = if now < decided {
+        let [a, b] =
+            [0, 1].map(|s| who(s).map_or("a champion".to_string(), |(p, u)| format!("{p}'s {u}")));
+        format!("CHAMPIONS  {a} and {b} each send out a champion to fight between the lines")
+    } else if c.abandoned.is_some() {
+        "CHAMPIONS  The battle swallows the duel before it is decided".to_string()
+    } else if let Some(w) = c.winner {
+        let (w, l) = (side(w as usize), side(1 - w as usize));
+        format!(
+            "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
+        )
+    } else {
+        "CHAMPIONS  Neither champion can beat the other, and both go back to their lines"
+            .to_string()
+    };
+    Some(news)
 }
 
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
@@ -343,6 +405,7 @@ mod tests {
             nav: &nav,
             teams: &teams,
             ground: heightmap.ground(),
+            champions: champions_allowed(setup),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
         let mut out = Vec::new();
