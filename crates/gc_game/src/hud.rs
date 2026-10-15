@@ -87,7 +87,7 @@ fn minimap_terrain(hm: &Heightmap, tiles: u32) -> MinimapTerrain {
     MinimapTerrain::from_fn(TERRAIN_CELLS, |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
-        if h < hm.water_level {
+        if h < hm.water_level() {
             return [44, 84, 128, 255];
         }
         let cover = hm
@@ -100,7 +100,7 @@ fn minimap_terrain(hm: &Heightmap, tiles: u32) -> MinimapTerrain {
             Some(gc_sim::Cover::Grass) => [104, 140, 70, 255],
             _ => {
                 // A few shades, so neighbouring cells merge into one rectangle.
-                let t = ((h / hm.max_height).clamp(0.0, 1.0) * 6.0).round() / 6.0;
+                let t = ((h / hm.max_height()).clamp(0.0, 1.0) * 6.0).round() / 6.0;
                 let lerp = |a: f32, b: f32| (a + (b - a) * t) as u8;
                 [
                     lerp(120.0, 168.0),
