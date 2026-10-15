@@ -167,7 +167,7 @@
             stats: (
                 name: "Yumi Ashigaru",
                 faction: EmberClans,
-                models: 16,
+                models: 15,
                 hp_per_model: 8,
                 files: 8,
                 speed: 3.0,

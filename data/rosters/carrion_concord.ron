@@ -168,7 +168,7 @@
                 models: 19,
                 hp_per_model: 7,
                 files: 10,
-                speed: 2.6,
+                speed: 2.75,
                 turn_rate: 45.0,
                 file_spacing: 0.7,
                 rank_spacing: 0.9,
