@@ -24,7 +24,10 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_REAR, WAVERING_DAMAGE_PERCEN
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, hash_handle};
 use crate::terrain::Terrain;
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{
+    Formation, PlayerId, SECOND_RANK_PERCENT, SHIELD_WALL_ARROW_PERCENT, Stances, StateHasher,
+    TICKS_PER_SECOND, UnitStats, formation,
+};
 
 /// Ticks between a regiment's melee blows.
 pub const STRIKE_INTERVAL: u32 = TICKS_PER_SECOND;
@@ -99,12 +102,7 @@ impl Block {
     /// Regiment `i`'s block if its centre were at `centre`.
     fn at(regs: &Regiments, units: &[UnitStats], i: usize, centre: FxVec2) -> Block {
         let stats = &units[regs.unit[i] as usize];
-        let (w, d) = formation::block_size(
-            regs.files[i],
-            regs.models[i],
-            stats.file_spacing,
-            stats.rank_spacing,
-        );
+        let (w, d) = stats.block_size_in(regs.formation[i], regs.files[i], regs.models[i]);
         let forward = regs.facing[i].to_vec();
         Block {
             centre,
@@ -628,14 +626,18 @@ impl Combat {
             if let Some((_, j)) = best {
                 if !was_engaged {
                     // Hitting home at speed is a charge, but nobody charges
-                    // out of a river. A fight ends any march.
+                    // out of a river, or from behind a shield wall. A fight
+                    // ends any march.
                     let charging = regs.target[i].is_some()
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
-                        && !terrain.wet(regs.position[i]);
+                        && !terrain.wet(regs.position[i])
+                        && regs.formation[i] != Formation::ShieldWall;
                     if charging {
                         regs.charge[i] = CHARGE_TICKS;
                     }
                     regs.target[i] = None;
+                    // Long weapons hit first when lines meet.
+                    regs.first_strike[i] = units[regs.unit[i] as usize].reach;
                 }
                 regs.target_facing[i] = Some(Angle::of_vec(regs.position[j] - regs.position[i]));
             }
@@ -686,37 +688,68 @@ impl Combat {
             }
             regs.charge[i] = regs.charge[i].saturating_sub(1);
             regs.reload[i] = regs.reload[i].saturating_sub(1);
+            // Each regiment strikes on its turn, once a second. Spears and
+            // pikes that have just met their foe strike at once instead, and
+            // then sit out their next turn, so lines that touch and part
+            // again don't earn them extra blows.
+            let first = core::mem::take(&mut regs.first_strike[i]);
+            let on_turn = (tick + i as u32).is_multiple_of(STRIKE_INTERVAL);
+            let rested = on_turn && core::mem::take(&mut regs.struck_early[i]);
             let Some(j) = regs.engaged[i].and_then(|h| regs.resolve(h)) else {
                 continue;
             };
-            if !(tick + i as u32).is_multiple_of(STRIKE_INTERVAL) || regs.models[i] == 0 {
+            let strikes = if on_turn {
+                !rested
+            } else {
+                first && !regs.struck_early[i]
+            };
+            if !strikes || regs.models[i] == 0 {
                 continue;
+            }
+            if !on_turn {
+                regs.struck_early[i] = true;
             }
             let attacker = &units[regs.unit[i] as usize];
             let defender = &units[regs.unit[j] as usize];
             let me = Block::of(regs, units, i);
             let them = Block::of(regs, units, j);
             let ranks = formation::ranks(regs.files[i], regs.models[i]);
-            let fighters = match me.side_facing(them.centre) {
-                Side::Front => regs.files[i].min(regs.models[i]),
-                Side::Flank => ranks,
-                Side::Rear => regs.files[i].min(regs.models[i]).div_ceil(2),
-            } as u64;
-            let hit = (50 + attacker.melee_attack as i32 - defender.melee_defence as i32)
-                .clamp(10, 90) as u64;
+            let front = regs.files[i].min(regs.models[i]);
+            // Soldiers who can reach the foe, in halves: spears and pikes
+            // facing it fight from the second rank too, at half weight.
+            let halves = match me.side_facing(them.centre) {
+                Side::Front if attacker.reach => {
+                    let second = front.min(regs.models[i] - front) as u64;
+                    2 * front as u64 + second * 2 * SECOND_RANK_PERCENT / 100
+                }
+                Side::Front => 2 * front as u64,
+                Side::Flank => 2 * ranks as u64,
+                Side::Rear => 2 * front.div_ceil(2) as u64,
+            };
             let side = them.side_facing(me.centre);
+            // A shield wall guards its front and nothing else.
+            let guard = match regs.formation[j] {
+                Formation::ShieldWall if side != Side::Front => Formation::Line,
+                f => f,
+            };
+            let defence = defender.melee_defence as i32 + defender.formation_defence(guard);
+            let hit = (50 + attacker.melee_attack as i32 - defence).clamp(10, 90) as u128;
             let charge =
-                100 + attacker.charge_bonus as u64 * regs.charge[i] as u64 / CHARGE_TICKS as u64;
-            let heart = heart_percent(regs.morale_state[i]);
+                100 + attacker.charge_bonus as u128 * regs.charge[i] as u128 / CHARGE_TICKS as u128;
+            let heart = heart_percent(regs.morale_state[i]) as u128;
+            let room = attacker.weapon_room_percent(regs.formation[i]) as u128;
             let ground = terrain.melee_percent(regs.position[i], regs.position[j]);
-            let expected = fighters
+            // In u128: the extra factors would overflow u64 for big blows.
+            // With every new factor at 100 this is exactly the old formula.
+            let expected = (halves as u128
                 * hit
-                * attacker.melee_damage as u64
-                * side.damage_percent()
+                * attacker.melee_damage as u128
+                * side.damage_percent() as u128
                 * charge
                 * heart
+                * room
                 * 256
-                / (100 * 100 * 100 * 100)
+                / (2 * 100 * 100 * 100 * 100 * 100)) as u64
                 * ground
                 / 100;
             deal(regs, units, j, expected, side, rng);
@@ -788,13 +821,21 @@ impl Combat {
             let density = (regs.models[j] as i64 * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
                 .clamp(25, 125) as u64;
             let side = block.side_facing(vs.from[v]);
+            // Arrows from the front mostly glance off a shield wall.
+            let shields = if side == Side::Front && regs.formation[j] == Formation::ShieldWall {
+                SHIELD_WALL_ARROW_PERCENT
+            } else {
+                100
+            };
             let expected = vs.shots[v] as u64
                 * vs.accuracy[v] as u64
                 * density
                 * vs.damage[v] as u64
                 * side.damage_percent()
                 * 256
-                / (100 * 100 * 100);
+                / (100 * 100 * 100)
+                * shields
+                / 100;
             deal(regs, units, j, expected, side, rng);
         }
 

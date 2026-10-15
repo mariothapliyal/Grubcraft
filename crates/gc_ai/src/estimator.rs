@@ -6,9 +6,11 @@
 //! how many hit points a second it deals in melee and with arrows. The model
 //! then steps the fight forward half a second at a time, the way the sim's
 //! rules play out on average:
-//! - **Melee:** every front-rank soldier strikes once a second and lands with
-//!   chance 50 + attack - defence percent (10 to 90); regiments beyond the
-//!   enemy's frontage hit flanks for 40% more.
+//! - **Melee:** every front-rank soldier strikes once a second (spears and
+//!   pikes add half their second rank; formations cramp or free weapons and
+//!   change defence) and lands with chance 50 + attack - defence percent
+//!   (10 to 90); regiments beyond the enemy's frontage hit flanks for 40%
+//!   more.
 //! - **Arrows:** soldiers x accuracy x damage per volley, from as soon as the
 //!   enemy is in range, and on through the melee.
 //! - **Breaking:** losses cost 0.9 morale per 1% of strength, plus the
@@ -98,7 +100,7 @@ impl Force {
                 f.morale += r.morale_points as f32 * n;
                 morale_soldiers += n;
             }
-            f.defence += s.melee_defence as f32 * n;
+            f.defence += (s.melee_defence as i32 + s.formation_defence(r.formation)) as f32 * n;
             defence_soldiers += n;
             f.speed = f.speed.min(u.speed);
             if u.class == Class::Ranged {
@@ -108,7 +110,16 @@ impl Force {
                     n * s.accuracy as f32 / 100.0 * s.missile_damage as f32 / u.reload_seconds();
                 f.range = f.range.max(u.range);
             } else {
-                let front = r.files.min(r.models) as f32;
+                // Spears and pikes fight from the second rank too, at half
+                // weight; the formation can cramp the weapons.
+                let first = r.files.min(r.models);
+                let second = if s.reach {
+                    first.min(r.models - first) as f32 * 0.5
+                } else {
+                    0.0
+                };
+                let front =
+                    (first as f32 + second) * s.weapon_room_percent(r.formation) as f32 / 100.0;
                 f.melee_regiments += 1.0;
                 f.front_damage += front * s.melee_damage as f32;
                 f.front_damage_attack += front * s.melee_damage as f32 * s.melee_attack as f32;

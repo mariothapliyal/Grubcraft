@@ -28,8 +28,12 @@
 //! away from the camera side of the line); a big selection forms several
 //! lines. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
-//! touch fight. Banners show morale: blinking amber is wavering, white is
-//! routing (no orders until it rallies), grey is shattered. Regiments find
+//! touch fight. F changes the selection's formation: Line, Tight (stronger
+//! to hold, cramped for swinging blades), Loose (gaps for blades to swing
+//! and arrows to miss) and, for regiments with shields, Shield wall (turns
+//! arrows from the front, marches at half pace, never charges). Banners
+//! show morale: blinking amber is wavering, white is routing (no orders
+//! until it rallies), grey is shattered. Regiments find
 //! their own way around cliffs and deep water; a selected regiment's route
 //! shows as a dotted line, and G shows the ground no regiment can cross.
 //! Ctrl (or Cmd) + a number key saves the selection as a control group; the
@@ -95,8 +99,8 @@ use gc_render::{
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
-    Capacities, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle, UnitId,
-    UnitStats, World,
+    Capacities, Formation, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle,
+    UnitId, UnitStats, World,
 };
 use gc_ui::lobby::MatchStart;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
@@ -437,6 +441,22 @@ impl Sandbox {
             credits: false,
             message: None,
             dirty: true,
+        }
+    }
+}
+
+/// What a formation does, in a line for the panel.
+fn formation_hint(f: Formation) -> &'static str {
+    match f {
+        Formation::Line => "each regiment's own spacing",
+        Formation::Tight => {
+            "closer ranks hold better (+10 defence) but arrows find more marks; big swings are cramped"
+        }
+        Formation::Loose => {
+            "fewer arrows hit, but gaps cost 10 defence (not for big swings); spears and shields lose their support"
+        }
+        Formation::ShieldWall => {
+            "arrows from the front mostly glance off; half pace, no charging, no help on the flanks"
         }
     }
 }
@@ -998,6 +1018,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
+                        KeyCode::KeyF if down && !event.repeat => r.cycle_formation(),
                         KeyCode::KeyL if down && !event.repeat => {
                             r.lens = !r.lens;
                             r.sandbox.dirty = true;
@@ -1107,6 +1128,8 @@ impl Running {
                 if !self.selected.is_empty() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
+                // The panel shows the selection's formation.
+                self.sandbox.dirty = true;
                 self.input.left_down = None;
             }
             (MouseButton::Right, ElementState::Pressed) => {
@@ -1209,14 +1232,15 @@ impl Running {
         for &h in &self.selected {
             let r = self.world.regiments.get(h).unwrap();
             let stats = &self.world.units()[r.unit as usize];
+            let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             self.group.push(GroupMember {
                 handle: h,
                 position: r.position,
                 facing: r.facing,
                 files: r.files,
                 models: r.models,
-                file_spacing: stats.file_spacing,
-                rank_spacing: stats.rank_spacing,
+                file_spacing,
+                rank_spacing,
                 speed: stats.speed,
             });
         }
@@ -1243,7 +1267,7 @@ impl Running {
             };
             let stats = &self.unit_stats[r.unit as usize];
             let files = if files == 0 { r.files } else { files };
-            let (width, depth) = stats.block_size(files, r.models);
+            let (width, depth) = stats.block_size_in(r.formation, files, r.models);
             self.instances.push(BoxInstance {
                 pos: from_fx_vec(target).to_array(),
                 facing: angle_vec(facing.unwrap_or(r.facing)).to_array(),
@@ -1358,7 +1382,7 @@ impl Running {
             .filter(|r| r.owner != self.sandbox.side)
             .filter_map(|r| {
                 let stats = &self.unit_stats[r.unit as usize];
-                let (width, depth) = stats.block_size(r.files, r.models);
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 let to = p - from_fx_vec(r.position);
                 let facing = angle_vec(r.facing);
                 let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
@@ -1368,6 +1392,46 @@ impl Running {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(h, _)| h)
+    }
+
+    /// F: the selection's next formation, Line, Tight, Loose, then Shield
+    /// wall when any of them carry shields. Regiments without shields form
+    /// Tight instead of a shield wall.
+    fn cycle_formation(&mut self) {
+        let regiments = &self.world.regiments;
+        self.selected.retain(|&h| regiments.get(h).is_some());
+        let Some(first) = self.selected.first().and_then(|&h| regiments.get(h)) else {
+            return;
+        };
+        let units = self.world.units();
+        let shields = self
+            .selected
+            .iter()
+            .filter_map(|&h| regiments.get(h))
+            .any(|r| units[r.unit as usize].shield);
+        let next = match first.formation {
+            Formation::Line => Formation::Tight,
+            Formation::Tight => Formation::Loose,
+            Formation::Loose if shields => Formation::ShieldWall,
+            Formation::Loose | Formation::ShieldWall => Formation::Line,
+        };
+        for &regiment in &self.selected {
+            let r = regiments.get(regiment).unwrap();
+            let formation = if units[r.unit as usize].can_form(next) {
+                next
+            } else {
+                Formation::Tight
+            };
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::SetFormation {
+                    regiment,
+                    formation,
+                },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(format!("{}: {}", next.name(), formation_hint(next)));
     }
 
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
@@ -1474,10 +1538,10 @@ impl Running {
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.unit_stats[r.unit as usize];
-            let (file_spacing, rank_spacing) =
-                (fx_to_f32(stats.file_spacing), fx_to_f32(stats.rank_spacing));
+            let (file_spacing, rank_spacing) = stats.spacing(r.formation);
+            let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             if selected || marked == Some(r.handle) {
-                let (width, depth) = stats.block_size(r.files, r.models);
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -1514,7 +1578,7 @@ impl Running {
             if self.commander {
                 // One block per regiment with a tall banner: the flag shows
                 // the team, or the morale colour when shaken.
-                let (width, depth) = stats.block_size(r.files, r.models);
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
                 let shade = if selected { 255 } else { 210 };
                 let tint = |c: u8| (c as u32 * shade / 255) as u8;
@@ -2616,6 +2680,7 @@ impl Running {
                 "view     soldiers   L: AI lens   C: credits   Esc: menu (the battle goes on)"
                     .to_string()
             });
+            lines.push(self.formation_line());
             if let Some((message, _)) = &sb.message {
                 lines.push(String::new());
                 lines.push(message.clone());
@@ -2668,6 +2733,7 @@ impl Running {
             } else {
                 "view     soldiers (zoom far out for the Commander View)   C: credits".to_string()
             },
+            self.formation_line(),
         ]);
         if sb.tuning {
             let on_field = self
@@ -2691,6 +2757,24 @@ impl Running {
             lines.push(message.clone());
         }
         lines.join("\n")
+    }
+
+    /// The selection's formation, for the panel.
+    fn formation_line(&self) -> String {
+        let mut names: Vec<&str> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .map(|r| r.formation.name())
+            .collect();
+        names.dedup();
+        match names.as_slice() {
+            [] => {
+                "order    F: formation (Line, Tight, Loose, Shield wall) for the selection".into()
+            }
+            [one] => format!("order    {one}   F: next formation"),
+            _ => "order    mixed formations   F: next formation".into(),
+        }
     }
 
     /// " · paused" or " · speed 0.25x"; empty at normal speed.
