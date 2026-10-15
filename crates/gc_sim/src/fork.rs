@@ -40,11 +40,15 @@ pub struct Standing {
     /// the state it is in.
     pub morale_points: u8,
     pub morale: MoraleState,
+    /// Hidden from every enemy: standing in cover, it starts unseen by
+    /// them. Otherwise everyone has seen it for a while, so it is no
+    /// surprise to anyone.
+    pub hidden: bool,
 }
 
 impl Standing {
-    /// How the regiment `view` shows stands.
-    pub fn of(view: &RegimentView) -> Standing {
+    /// How the regiment `view` shows stands, `hidden` or not.
+    pub fn of(view: &RegimentView, hidden: bool) -> Standing {
         Standing {
             owner: view.owner,
             unit: view.unit,
@@ -55,6 +59,7 @@ impl Standing {
             models: view.models,
             morale_points: view.morale_points,
             morale: view.morale,
+            hidden,
         }
     }
 }
@@ -91,7 +96,7 @@ impl World {
     /// hook 6). With `slot`, it takes that handle (its slot must be free),
     /// so it can be found by the handle it has in another world. It stands
     /// with no orders; a routing or shattered regiment counts as having just
-    /// broken. Returns `None` if the unit is unknown, there are no soldiers,
+    /// broken; one not `hidden` has been seen by everyone for a while. Returns `None` if the unit is unknown, there are no soldiers,
     /// or there is no room (or `slot` is taken).
     pub fn spawn_standing(
         &mut self,
@@ -130,6 +135,9 @@ impl World {
         }
         self.vision
             .start(&self.regiments, &self.units, &self.terrain, i);
+        if !s.hidden {
+            self.vision.show(i);
+        }
         Some(h)
     }
 
@@ -138,7 +146,9 @@ impl World {
     /// here, with the same handle, orders and route, on the same map and at
     /// the same tick, with the same random streams. Orders aimed at
     /// regiments left out lapse in the copy. Arrows already in the air are
-    /// left out.
+    /// left out, and later volleys may land in a different order than in
+    /// this world, so a copy where archers shoot plays on alike but not
+    /// identically.
     pub fn fork_region(&self, centre: FxVec2, radius: Fx) -> World {
         let near = |p: FxVec2| {
             let dx = (p.x - centre.x).raw() as i64;

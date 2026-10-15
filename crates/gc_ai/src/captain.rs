@@ -163,7 +163,7 @@ pub enum Stance {
     /// March on the enemy as soon as formed (still never into water it is
     /// waiting behind).
     Advance,
-    /// Stand and receive them.
+    /// Stand and receive them (but go to fetch an enemy that doesn't come).
     Hold,
 }
 
@@ -825,7 +825,9 @@ impl Captain {
         });
         let mut best: Option<(f32, Doctrine)> = None;
         for &d in ctx.knobs.doctrines {
-            if !fits(d, line, shock, ranged) {
+            // An ambush has its own test, which keeps one already laid going
+            // whatever the army has lost since.
+            if d != Doctrine::Ambush && !fits(d, line, shock, ranged) {
                 continue;
             }
             let fit = match d {
@@ -1447,7 +1449,22 @@ impl Captain {
             };
             let advance = match self.plan.map(|plan| plan.stance) {
                 Some(Stance::Advance) => !behind_water,
-                Some(Stance::Hold) => only_archers,
+                Some(Stance::Hold) => {
+                    // Holding still gives up on an enemy that never comes,
+                    // or the battle never ends: once nobody has come on or
+                    // fought for longer than anyone waits before going to
+                    // fetch an enemy, so it never gives up a standoff first.
+                    let quiet = self.closing <= 1.0 && !ours.iter().any(|r| r.engaged);
+                    if !behind_water && !only_archers && quiet && !self.fetching {
+                        let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
+                        if (now - since) as f32 / TICKS > 2.0 * TIRED_OF_WAITING {
+                            self.fetching = true;
+                            ctx.journal
+                                .note(now, "Tired of waiting: going to fetch them".to_string());
+                        }
+                    }
+                    !behind_water && only_archers
+                }
                 _ => advance,
             };
             let want = if advance {
@@ -2407,7 +2424,8 @@ fn meeting(r: &Seen, f: &Seen) -> Seen {
 /// Whether an army with this many line, shock and ranged regiments can
 /// fight as `d` asks: a hammer needs fast troops and something to pin the
 /// enemy with, a refused flank a line long enough to bend, a screen archers
-/// and a line to fall back behind.
+/// and a line to fall back behind, an ambush regiments to hide (and, on
+/// the field, somewhere to hide them: see `Captain::may_ambush`).
 pub fn fits(d: Doctrine, line: usize, shock: usize, ranged: usize) -> bool {
     match d {
         Doctrine::HoldTheLine => true,

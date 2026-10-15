@@ -349,6 +349,8 @@ impl Regiments {
         self.last_rout[i] = from.last_rout[i];
         self.held[i] = from.held[i];
         self.clear[i] = from.clear[i];
+        self.crowd[i] = from.crowd[i];
+        self.disorder[i] = from.disorder[i];
         true
     }
 

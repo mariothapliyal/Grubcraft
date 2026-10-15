@@ -98,7 +98,7 @@ impl Difficulty {
             Difficulty::Warlord => Knobs {
                 reaction_ticks: 5,
                 orders_per_minute: 150,
-                think_ticks: 5,
+                think_ticks: 4,
                 doctrines: &Doctrine::ALL,
                 reserve: true,
                 morale_targeting: true,

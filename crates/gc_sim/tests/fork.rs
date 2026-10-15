@@ -129,6 +129,7 @@ fn a_scratch_world_shares_the_map() {
         models: 24,
         morale_points: 60,
         morale: MoraleState::Steady,
+        hidden: false,
     };
     let ha = a.spawn_standing(&standing, None).unwrap();
     let hb = b.spawn_standing(&standing, None).unwrap();
@@ -165,10 +166,11 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
         models: 10,
         morale_points: 20,
         morale: MoraleState::Wavering,
+        hidden: false,
     };
     let h = world.spawn_standing(&s, None).unwrap();
     let r = world.regiments.get(h).unwrap();
-    assert_eq!(Standing::of(&r), s);
+    assert_eq!(Standing::of(&r, false), s);
     assert!(!r.moving && !r.engaged);
     assert_eq!(world.regiments.model_hp(h).unwrap(), &[10; 10]);
 
@@ -180,7 +182,10 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
     let mut other = world_on(&[]);
     assert_eq!(other.spawn_standing(&s, Some(wanted)), Some(wanted));
     assert_eq!(other.spawn_standing(&s, Some(wanted)), None, "taken");
-    assert_eq!(Standing::of(&other.regiments.get(wanted).unwrap()), s);
+    assert_eq!(
+        Standing::of(&other.regiments.get(wanted).unwrap(), false),
+        s
+    );
     // The next ordinary spawn still takes the first free slot.
     let next = other.spawn_standing(&s, None).unwrap();
     assert_eq!(next.index, 0);
@@ -226,6 +231,7 @@ fn morale_carries_over() {
             models: 24,
             morale_points: points,
             morale: state,
+            hidden: false,
         };
         let h = world.spawn_standing(&us, None).unwrap();
         // Two regiments of skitterlings at its front and flank.
@@ -271,6 +277,7 @@ fn morale_carries_over() {
         models: 24,
         morale_points: 0,
         morale: MoraleState::Routing,
+        hidden: false,
     };
     let h = world.spawn_standing(&routing, None).unwrap();
     world

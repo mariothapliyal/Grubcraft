@@ -88,6 +88,8 @@ pub struct Mind {
     verdict: Option<Verdict>,
     /// What it makes of each enemy (Warlord only).
     readings: Vec<reading::Reading>,
+    /// Playing in real time (see [`Minds::live`]).
+    live: bool,
 }
 
 impl Mind {
@@ -141,6 +143,7 @@ impl Mind {
             next_round: 0,
             verdict: None,
             readings: Vec::new(),
+            live: false,
         }
     }
 
@@ -180,33 +183,6 @@ impl Mind {
     }
 
     /// Fight with `plan` from now on (until a rehearsal picks another).
-    /// A copy of this mind as it stands, with no rehearsals under way and
-    /// an empty journal: how a rehearsal plays the side it knows fully.
-    pub fn fork(&self) -> Mind {
-        Mind {
-            party: self.party,
-            difficulty: self.difficulty,
-            knobs: self.knobs,
-            persona: self.persona,
-            rng: self.rng.clone(),
-            captain: self.captain.clone(),
-            orders: self.orders.clone(),
-            journal: Journal::new(),
-            next_think: self.next_think,
-            next_slip: self.next_slip,
-            wants: self.wants.clone(),
-            sight: self.sight.clone(),
-            round: None,
-            next_round: self.next_round,
-            verdict: None,
-            readings: Vec::new(),
-        }
-    }
-
-    pub fn set_knobs(&mut self, knobs: Knobs) {
-        self.knobs = knobs;
-    }
-
     pub fn follow(&mut self, plan: Plan) {
         self.captain.follow(plan);
     }
@@ -252,9 +228,10 @@ impl Mind {
     /// start the next round when it is time: every [`rehearsal::EVERY`]
     /// while the battle is still to be decided.
     fn rehearse(&mut self, view: &Perception, terrain: &Arc<Terrain>, world: &World) {
-        if self.round.as_ref().is_some_and(|r| view.tick >= r.due) {
+        let answered = |r: &rehearsal::Round| view.tick >= r.due && (!self.live || r.ready());
+        if self.round.as_ref().is_some_and(answered) {
             let round = self.round.take().unwrap();
-            let v = round.finish(self.persona.caution(), self.captain.plan);
+            let v = round.finish(self.captain.plan);
             if self.captain.plan != Some(v.plan) {
                 let runner_up = v
                     .plans
@@ -284,25 +261,27 @@ impl Mind {
             .any(|r| view.hostile(party, r.owner) && !r.broken());
         if self.round.is_none()
             && view.tick >= self.next_round
-            && !(rehearsal::once() && self.verdict.is_some())
             && self.captain.started()
-            && view.tick >= rehearsal::first()
             && !self.captain.finishing
             && contested
         {
-            self.next_round = view.tick + rehearsal::every();
-            let plans = rehearsal::plans_for(view, terrain, party, &self.knobs);
-            self.round = rehearsal::Round::start(
-                world,
-                view,
-                terrain,
-                party,
-                &self.captain,
-                &self.knobs,
-                self.persona,
-                self.readings.iter().filter_map(reading::Reading::guess).collect(),
-                plans,
-            );
+            self.next_round = view.tick + rehearsal::EVERY;
+            let mut foes = Vec::new();
+            for x in &mut self.readings {
+                let Some(g) = x.guess() else { continue };
+                if x.news(&g) {
+                    self.journal.note(
+                        view.tick,
+                        format!(
+                            "Reads the enemy as {} ({:.0}% fit)",
+                            g.persona.name,
+                            g.fit * 100.0
+                        ),
+                    );
+                }
+                foes.push(g);
+            }
+            self.round = rehearsal::Round::start(world, view, terrain, self, foes);
         }
     }
 
@@ -312,21 +291,12 @@ impl Mind {
         for r in &view.regiments {
             if view.hostile(party, r.owner) && !self.readings.iter().any(|x| x.party() == r.owner) {
                 let seed = u64::from(r.owner) << 8 | u64::from(party);
-                self.readings.push(reading::Reading::new(r.owner, Difficulty::General, seed));
+                self.readings
+                    .push(reading::Reading::new(r.owner, Difficulty::General, seed));
             }
         }
         for x in &mut self.readings {
-            let before = x.guess().map(|g| g.persona.name.as_str());
             x.tick(view, terrain, world);
-            let now = x.guess();
-            if let Some(g) = now
-                && before != Some(g.persona.name.as_str())
-            {
-                self.journal.note(
-                    view.tick,
-                    format!("Reads the enemy as {} ({:.0}% fit)", g.persona.name, g.fit * 100.0),
-                );
-            }
         }
     }
 
@@ -359,19 +329,37 @@ pub struct Minds {
     view: Perception,
     terrain: Arc<Terrain>,
     minds: Vec<Mind>,
+    live: bool,
 }
 
 impl Minds {
     pub fn new(terrain: Terrain) -> Minds {
+        Minds::sharing(Arc::new(terrain))
+    }
+
+    /// Minds planning on ground another set of minds plans on too (a
+    /// rehearsal's).
+    pub(crate) fn sharing(terrain: Arc<Terrain>) -> Minds {
         Minds {
             view: Perception::new(),
-            terrain: Arc::new(terrain),
+            terrain,
             minds: Vec::new(),
+            live: false,
         }
     }
 
+    /// Minds playing in real time: a Warlord takes its rehearsals' answer
+    /// as soon as it is ready after it is due, rather than make the game
+    /// wait on a machine too slow to finish in time. Without this a battle
+    /// plays out the same way on any machine, which tests rely on.
+    pub fn live(mut self) -> Minds {
+        self.live = true;
+        self
+    }
+
     /// Put `mind` in charge of its party (replacing any mind already there).
-    pub fn add(&mut self, mind: Mind) {
+    pub fn add(&mut self, mut mind: Mind) {
+        mind.live = self.live;
         self.remove(mind.party);
         self.minds.push(mind);
         self.minds.sort_by_key(|m| m.party);

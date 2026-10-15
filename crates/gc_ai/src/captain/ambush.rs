@@ -107,6 +107,12 @@ impl Captain {
         self.doctrine == Doctrine::Ambush && self.ambush.hideouts.iter().any(|h| !h.sprung)
     }
 
+    /// Whether the Ambush doctrine can still be fought with: one is laid,
+    /// or nobody has come to blows yet.
+    pub fn may_ambush(&self) -> bool {
+        self.doctrine == Doctrine::Ambush && !self.ambush.hideouts.is_empty() || !self.ambush.joined
+    }
+
     /// How much better the Ambush doctrine fits than Hammer and anvil now,
     /// or `None` when it can't be used: no cover on the map, the armies
     /// already close, or nowhere for a would-be ambusher to hide. `line`

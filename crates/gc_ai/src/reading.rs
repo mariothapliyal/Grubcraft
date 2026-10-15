@@ -49,6 +49,8 @@ pub struct Reading {
     next_look: u32,
     /// Orders the shadows give, thrown away.
     out: Vec<PlayerCommand>,
+    /// The temper last told of (see [`Reading::news`]).
+    told: Option<&'static Personality>,
 }
 
 struct Shadow {
@@ -105,6 +107,7 @@ impl Reading {
             last: Vec::new(),
             next_look: 0,
             out: Vec::new(),
+            told: None,
         }
     }
 
@@ -135,9 +138,16 @@ impl Reading {
             .map(|r| (r.handle, r.pos))
             .collect();
         // Once the fighting starts, regiments go where the fight takes
-        // them rather than where a plan puts them: judge the approach only.
+        // them rather than where a plan puts them: judge the approach only,
+        // and keep only the shadow that fits best.
         let fighting = view.regiments.iter().any(|r| r.owner == party && r.engaged);
-        if fighting && std::env::var_os("R_JUDGE_ALL").is_none() {
+        if fighting {
+            if let Some(best) = self.best() {
+                self.shadows.swap(0, best);
+                self.shadows.truncate(1);
+            } else {
+                self.shadows.clear();
+            }
             self.last = now;
             return;
         }
@@ -164,25 +174,43 @@ impl Reading {
             }
             if n > 0 {
                 let m = sum / n as f32;
-                s.miss = if s.looks == 0 { m } else { s.miss + FRESH * (m - s.miss) };
+                s.miss = if s.looks == 0 {
+                    m
+                } else {
+                    s.miss + FRESH * (m - s.miss)
+                };
                 s.looks += 1;
             }
         }
         self.last = now;
     }
 
+    /// Which shadow fits best so far, if any has been judged.
+    fn best(&self) -> Option<usize> {
+        (0..self.shadows.len())
+            .filter(|&k| self.shadows[k].looks > 0)
+            .min_by(|&a, &b| self.shadows[a].miss.total_cmp(&self.shadows[b].miss))
+    }
+
     /// The commander that fits best so far, if any shadow has been judged.
     pub fn guess(&self) -> Option<Guess> {
-        self.shadows
-            .iter()
-            .filter(|s| s.looks > 0)
-            .min_by(|a, b| a.miss.total_cmp(&b.miss))
-            .map(|s| Guess {
+        self.best().map(|k| {
+            let s = &self.shadows[k];
+            Guess {
                 party: self.party,
                 persona: s.mind.personality(),
                 captain: s.mind.captain().clone(),
                 fit: 1.0 - s.miss,
-            })
+            }
+        })
+    }
+
+    /// Whether `guess` names a different temper from the last one passed
+    /// here, so the journal tells of each change once.
+    pub fn news(&mut self, guess: &Guess) -> bool {
+        let new = !self.told.is_some_and(|t| std::ptr::eq(t, guess.persona));
+        self.told = Some(guess.persona);
+        new
     }
 
     /// Every temper and how well it fits, best first (for the journal and

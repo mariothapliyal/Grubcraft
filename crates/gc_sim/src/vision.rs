@@ -295,6 +295,17 @@ impl Vision {
         }
     }
 
+    /// Let every party have seen the regiment in slot `i` for a while, so
+    /// it is no surprise to anyone (it stays seen while a reason holds).
+    pub(crate) fn show(&mut self, i: usize) {
+        if !self.active {
+            return;
+        }
+        let k = i * PARTIES;
+        self.sighting[k..k + PARTIES].fill(SURPRISE_TICKS);
+        self.linger[k..k + PARTIES].fill(LINGER_TICKS);
+    }
+
     /// Give slot `i` what `from`, a world on the same map, knows about the
     /// regiment in it: who has seen it and for how long.
     pub(crate) fn copy_from(&mut self, from: &Vision, i: usize) {
