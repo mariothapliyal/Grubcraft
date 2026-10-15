@@ -70,6 +70,8 @@ mod battle;
 mod camera;
 mod credits;
 mod data;
+#[cfg(test)]
+mod goldens;
 mod lens;
 mod models;
 mod online;
@@ -710,7 +712,13 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            map_hash: online::map_hash(&nav),
+            map_hash: online::map_hash(
+                &nav,
+                &gc_sim::Ground {
+                    heights: &heights,
+                    water_level,
+                },
+            ),
         });
         let menu = Menu::new(lan, settings, settings_path, &online::version());
         let show_menu = opts
@@ -924,6 +932,16 @@ impl ApplicationHandler for App {
                             | KeyCode::KeyT
                             | KeyCode::KeyR
                     );
+                    // P carries on without a player the match is paused for.
+                    if code == KeyCode::KeyP
+                        && down
+                        && !event.repeat
+                        && r.online.is_some()
+                        && r.menu.network().paused_for_player()
+                    {
+                        r.menu.net().carry_on();
+                        return;
+                    }
                     if r.online.is_some() && sandbox_tool {
                         if down && !event.repeat {
                             r.say("That sandbox tool is off in a network battle.".into());
@@ -1715,7 +1733,10 @@ impl Running {
             match e {
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
-                    o.desync.get_or_insert(tick);
+                    if o.desync.is_none() {
+                        o.desync = Some(tick);
+                        o.report = lan.desync_report().map(online::save_report);
+                    }
                 }
                 gc_net::MatchEvent::Ended(why) => {
                     eprintln!("grubcraft: {why}");
@@ -1958,7 +1979,13 @@ impl Running {
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
             // before saying it is ready.
-            let mine = online::map_hash(&nav);
+            let mine = online::map_hash(
+                &nav,
+                &gc_sim::Ground {
+                    heights: &heights,
+                    water_level,
+                },
+            );
             let lan = self.menu.net();
             let result = match lan.host_map() {
                 Some(host) if host.map_hash != mine => Err(format!(

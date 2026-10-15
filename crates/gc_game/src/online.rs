@@ -7,6 +7,7 @@
 //! switching sides, placing, tuning) are off because they would change one
 //! machine's game and not the others'.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// How long a notice ("Alex lost connection") stays on screen.
@@ -20,13 +21,42 @@ pub fn version() -> String {
 
 /// A fingerprint of a map's walkable ground (FNV-1a), so a joiner whose
 /// map came out differently finds out before the battle starts.
-pub fn map_hash(nav: &[u8]) -> u64 {
+pub fn map_hash(nav: &[u8], ground: &gc_sim::Ground) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in nav {
+    let mut eat = |b: u8| {
         h ^= b as u64;
         h = h.wrapping_mul(0x0100_0000_01b3);
+    };
+    nav.iter().for_each(|&b| eat(b));
+    for v in ground.heights.iter().chain([&ground.water_level]) {
+        v.to_le_bytes().into_iter().for_each(&mut eat);
     }
     h ^ nav.len() as u64
+}
+
+/// Save a desync report beside the settings file (or in the working
+/// folder), returning a line saying where.
+pub fn save_report(report: &gc_net::Report) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let dir = gc_ui::settings::settings_path()
+        .and_then(|p| p.parent().map(|d| d.join("desync-reports")))
+        .unwrap_or_else(|| PathBuf::from("desync-reports"));
+    let path = dir.join(format!(
+        "desync-{stamp}-player{}.gcdesync",
+        report.me as u32 + 1
+    ));
+    let saved = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, report.encode()));
+    let line = match saved {
+        Ok(()) => format!(
+            "Saved a desync report for the developers: {}",
+            path.display()
+        ),
+        Err(e) => format!("Could not save the desync report ({e})"),
+    };
+    eprintln!("grubcraft: {line}");
+    line
 }
 
 /// A networked match under way.
@@ -37,6 +67,8 @@ pub struct Online {
     pub notice: Option<(String, Instant)>,
     /// Set once a state hash disagreed with the host's.
     pub desync: Option<u32>,
+    /// Where the desync report went (or why it couldn't be saved).
+    pub report: Option<String>,
     /// Set when the match is over for this machine, with why.
     pub ended: Option<String>,
     /// When the last turn was simulated, for smooth movement in between.
@@ -49,6 +81,7 @@ impl Online {
             host,
             notice: None,
             desync: None,
+            report: None,
             ended: None,
             last_turn: Instant::now(),
         }
@@ -73,12 +106,19 @@ impl Online {
             status.unwrap_or_else(|| "not connected".into())
         ));
         if let Some(w) = waiting {
-            lines.push(w);
+            lines.push(if self.host && w.starts_with("Paused") {
+                format!("{w}   P: carry on without them")
+            } else {
+                w
+            });
         }
         if let Some(tick) = self.desync {
             lines.push(format!(
                 "Out of sync with the host since turn {tick}: this battle may look different on each machine."
             ));
+            if let Some(r) = &self.report {
+                lines.push(r.clone());
+            }
         }
         if let Some((text, at)) = &self.notice
             && at.elapsed() < NOTICE_TIME
@@ -95,12 +135,25 @@ mod tests {
 
     #[test]
     fn map_hash_sees_every_cell() {
+        let flat = gc_sim::Ground::FLAT;
         let a = vec![1u8; 1000];
         let mut b = a.clone();
         b[999] = 2;
-        assert_ne!(map_hash(&a), map_hash(&b));
-        assert_ne!(map_hash(&a), map_hash(&a[..999]));
-        assert_eq!(map_hash(&a), map_hash(&a.clone()));
+        assert_ne!(map_hash(&a, &flat), map_hash(&b, &flat));
+        assert_ne!(map_hash(&a, &flat), map_hash(&a[..999], &flat));
+        assert_eq!(map_hash(&a, &flat), map_hash(&a.clone(), &flat));
+        // Heights and water count too.
+        let heights = vec![7u16; 1000];
+        let mut raised = heights.clone();
+        raised[3] = 8;
+        let ground = |heights, water_level| gc_sim::Ground {
+            heights,
+            water_level,
+        };
+        let base = map_hash(&a, &ground(&heights, 2));
+        assert_ne!(base, map_hash(&a, &ground(&raised, 2)));
+        assert_ne!(base, map_hash(&a, &ground(&heights, 3)));
+        assert_ne!(base, map_hash(&a, &flat));
     }
 
     #[test]
