@@ -217,7 +217,7 @@ No new commands and no new wire format. Cover is computed from the heights and s
 | Step | What | Who | Status |
 |---|---|---|---|
 | **A · Hiding and surprise** | Cover layer; seen and hidden, spotting, lingering, shared sight; targeting and hold-fire rules; springing an ambush; woods and grass on the generated maps; trees, tufts, hidden marker and the Ambush! alert; AI fair sight and the Ambush doctrine; tests | This thread, Opus (sim rules are Opus work by the [staffing plan](15-staffing-plan.md)) | Built (see below) |
-| **B · Traits and terrain** | Unit schema with scout, stealthy, tall and detector flags and a `vision` stat; forest slow-down and arrows into trees (with the terrain rules); last-seen ghosts and tooltips | Opus for the schema and sim; the unit data thread for numbers; Sonnet for the UI | Next |
+| **B · Traits and terrain** | Unit schema with scout, stealthy, tall and detector flags and a `vision` stat; forest slow-down and arrows into trees (with the terrain rules); last-seen ghosts and tooltips | Opus for the schema and sim (forest slow-down and arrows into trees: the Terrain effects thread, which owns the combat and terrain rules); the unit data thread for numbers; Sonnet for the UI | Next |
 | **C · Fog of war** | Sight ranges, line of sight and dead ground, the explored layer, minimap fog, Gut Fog; Brood burrowing and reveal abilities | M3 economy and sim core thread (Opus), Conquest UI (Sonnet) | With M3 |
 | **D · Campaign ambushes** | Lie in wait posture, ambush battles with column deployment, the shown spotting chance, ambush encounter cards | Campaign track C-2 and C-3 | With the campaign |
 
