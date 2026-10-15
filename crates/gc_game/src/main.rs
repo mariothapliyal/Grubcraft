@@ -1689,11 +1689,13 @@ impl Running {
         if self.lens && !self.minds.is_empty() {
             let lenses = lens::lenses(&self.minds);
             let parties = &self.parties;
+            let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
             lens::push(
                 &lenses,
                 &self.minds,
                 lens::scale_for(self.camera.distance),
                 |p| color_of(parties, p),
+                |h| reveal || world.sees(viewer, h),
                 &mut self.instances,
             );
         }
@@ -1783,6 +1785,7 @@ impl Running {
     fn alert_ambushes(&mut self) {
         let side = self.sandbox.side;
         let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
+        let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
         let news = self.world.ambushes().iter().rev().find_map(|a| {
             let by = self.world.regiments.get(a.ambusher)?;
             let on = self.world.regiments.get(a.victim)?;
@@ -1792,17 +1795,27 @@ impl Running {
                 } else {
                     "burst out of hiding on"
                 };
+                let theirs = if on.owner == side {
+                    "your".to_string()
+                } else {
+                    whose(on.owner)
+                };
                 format!(
-                    "AMBUSH! {}'s {} {how} your {}",
-                    party_name(&self.parties, by.owner),
+                    "AMBUSH! {} {} {how} {theirs} {}",
+                    whose(by.owner),
                     name(by.unit),
                     name(on.unit)
                 )
             } else if !self.world.hostile(side, by.owner) {
+                let ours = if by.owner == side {
+                    "Your".to_string()
+                } else {
+                    whose(by.owner)
+                };
                 format!(
-                    "AMBUSH! Your {} caught {}'s {} off guard",
+                    "AMBUSH! {ours} {} caught {} {} off guard",
                     name(by.unit),
-                    party_name(&self.parties, on.owner),
+                    whose(on.owner),
                     name(on.unit)
                 )
             } else {
@@ -2052,6 +2065,8 @@ impl Running {
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
+        // Seeing through the woods stays in the sandbox.
+        self.reveal_all &= matches!(kind, MatchKind::Sandbox);
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;

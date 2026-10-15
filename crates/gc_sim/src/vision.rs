@@ -20,10 +20,12 @@
 //! regiment springs one ambush: after it, the victim's side has it fully in
 //! view.
 //!
-//! Combat asks [`Vision::sees`] before an archer picks a target, and
-//! holds a hidden archer's fire; morale counts only seen enemies; an
-//! attack order needs a seen target, and a chase after a target that goes
-//! out of sight becomes a march to where it was last seen.
+//! Combat asks [`Vision::sees`] before an archer picks a target, holds a
+//! hidden archer's fire, and lists the volleys loosed each tick for the
+//! volley check; morale (being outnumbered, a router's flight and rally)
+//! counts only seen enemies; an attack order needs a seen target, and a
+//! chase after a target that goes out of sight becomes a march to where it
+//! was last seen.
 //!
 //! On a map with no cover all of this is switched off: everyone sees
 //! everything, nothing is a surprise, nothing is stored or hashed.
@@ -172,35 +174,36 @@ impl Vision {
             return;
         }
         self.ambushes.clear();
+        // Timers, and regiments new to their slots.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 self.tracked[i] = None;
                 continue;
             }
-            let owner = regs.owner[i];
-            let stats = &units[regs.unit[i] as usize];
-            let new = self.tracked[i] != Some(regs.generation[i]);
-            if new {
-                self.tracked[i] = Some(regs.generation[i]);
-                self.revealed[i] = 0;
-                self.off_guard[i] = 0;
-                self.was_engaged[i] = false;
+            if self.tracked[i] != Some(regs.generation[i]) {
+                self.start(regs, units, terrain, i);
             }
-            // Loosed a volley this tick: combat just reset its reload.
-            let shot = stats.range.raw() > 0
-                && regs.models[i] > 0
-                && regs.reload[i] == stats.reload_ticks.max(1);
             self.revealed[i] = self.revealed[i].saturating_sub(1);
             self.off_guard[i] = self.off_guard[i].saturating_sub(1);
-            if shot {
-                self.revealed[i] = VOLLEY_REVEAL_TICKS;
-            }
-            let spot = self.spotting(regs, units, terrain, i);
-            if new {
-                self.meet(i, owner, spot.is_none());
-            }
+        }
 
-            // Ambushes, judged on what each side saw before this tick.
+        // Ambushes, judged on what each side saw before this tick: volleys
+        // loosed from hiding, then charges out of it.
+        for &(shooter, target) in combat.loosed() {
+            let Some(i) = regs.resolve(shooter) else {
+                continue;
+            };
+            self.revealed[i] = VOLLEY_REVEAL_TICKS;
+            if let Some(j) = regs.resolve(target)
+                && self.surprises(i, regs.owner[j])
+            {
+                self.spring(regs, combat, stances, i, j, true);
+            }
+        }
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] {
+                continue;
+            }
             let engaged = regs.engaged[i].and_then(|h| regs.resolve(h));
             if let Some(j) = engaged
                 && !self.was_engaged[i]
@@ -208,16 +211,16 @@ impl Vision {
             {
                 self.spring(regs, combat, stances, i, j, false);
             }
-            if shot
-                && let Some(j) = regs.attack_target[i].and_then(|h| regs.resolve(h))
-                && self.surprises(i, regs.owner[j])
-            {
-                self.spring(regs, combat, stances, i, j, true);
-            }
             self.was_engaged[i] = engaged.is_some();
+        }
 
-            // Who sees it now.
-            let direct = match spot {
+        // Who sees whom now.
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            let owner = regs.owner[i];
+            let direct = match self.spotting(regs, units, terrain, i) {
                 None => u8::MAX,
                 Some(_) if owner as usize >= PARTIES => u8::MAX,
                 Some(distance) => {
@@ -258,11 +261,29 @@ impl Vision {
         }
     }
 
-    /// Start tracking the regiment that now stands in slot `i`: seen by
+    /// Start tracking the regiment just placed in slot `i`: seen by
     /// everyone if it stands in the open (so a regiment placed in plain
     /// view is no surprise), by its own side only if it starts in cover.
-    fn meet(&mut self, i: usize, owner: PlayerId, in_open: bool) {
-        let friends = self.allies.get(owner as usize).copied().unwrap_or(u8::MAX);
+    pub(crate) fn start(
+        &mut self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        terrain: &Terrain,
+        i: usize,
+    ) {
+        if !self.active {
+            return;
+        }
+        self.tracked[i] = Some(regs.generation[i]);
+        self.revealed[i] = 0;
+        self.off_guard[i] = 0;
+        self.was_engaged[i] = false;
+        let in_open = self.spotting(regs, units, terrain, i).is_none();
+        let friends = self
+            .allies
+            .get(regs.owner[i] as usize)
+            .copied()
+            .unwrap_or(u8::MAX);
         for p in 0..PARTIES {
             let k = i * PARTIES + p;
             self.sighting[k] = if in_open || friends & (1 << p) != 0 {

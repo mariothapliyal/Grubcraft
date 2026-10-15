@@ -114,7 +114,7 @@ pub(crate) fn update(
         let stats = &units[regs.unit[i] as usize];
         if stats.morale != 0 {
             if regs.morale_state[i].broken() {
-                flee(regs, combat, stances, i, map_tiles);
+                flee(regs, combat, stances, vision, i, map_tiles);
             } else {
                 check(regs, combat, stances, vision, stats, i, tick, map_tiles);
             }
@@ -164,7 +164,7 @@ fn check(
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
     } else {
-        rout(regs, combat, stances, i, tick, map_tiles);
+        rout(regs, combat, stances, vision, i, tick, map_tiles);
     }
 }
 
@@ -205,11 +205,15 @@ fn local_strength(
 /// less than a tenth of a point: its own next check decides whether it
 /// breaks. Routers and regiments that never rout are left alone.
 pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
-    if regs.morale_state[i].broken() || regs.morale[i] <= 0 {
+    lose(&mut regs.morale[i], &mut regs.morale_state[i], points);
+}
+
+fn lose(morale: &mut i16, state: &mut MoraleState, points: i16) {
+    if state.broken() || *morale <= 0 {
         return;
     }
-    regs.morale[i] = (regs.morale[i] - points * SCALE).max(1);
-    regs.morale_state[i] = steady_or_wavering(regs.morale[i]);
+    *morale = (*morale - points * SCALE).max(1);
+    *state = steady_or_wavering(*morale);
 }
 
 /// Every friend of regiment `i` within `tiles` of it (not `i` itself) that
@@ -227,18 +231,19 @@ pub(crate) fn shake_friends(
     let morale = &mut regs.morale;
     let state = &mut regs.morale_state;
     combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
-        if j != i && !state[j].broken() && morale[j] > 0 {
-            morale[j] = (morale[j] - points * SCALE).max(1);
-            state[j] = steady_or_wavering(morale[j]);
+        if j != i {
+            lose(&mut morale[j], &mut state[j], points);
         }
     });
 }
 
 /// Regiment `i` breaks and runs.
+#[allow(clippy::too_many_arguments)]
 fn rout(
     regs: &mut Regiments,
     combat: &Combat,
     stances: &Stances,
+    vision: &Vision,
     i: usize,
     tick: u32,
     map_tiles: u32,
@@ -282,12 +287,20 @@ fn rout(
             state[j] = steady_or_wavering(morale[j]);
         }
     });
-    flee(regs, combat, stances, i, map_tiles);
+    flee(regs, combat, stances, vision, i, map_tiles);
 }
 
 /// Steer a routing regiment away from the enemy, and rally (or, shattered,
-/// stand) once the enemy has been gone long enough.
-fn flee(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize, map_tiles: u32) {
+/// stand) once the enemy has been gone long enough. Enemies its side can't
+/// see don't count.
+fn flee(
+    regs: &mut Regiments,
+    combat: &Combat,
+    stances: &Stances,
+    vision: &Vision,
+    i: usize,
+    map_tiles: u32,
+) {
     let p = regs.position[i];
     let owner = regs.owner[i];
     let at = placement!(regs, stances);
@@ -299,6 +312,9 @@ fn flee(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize, map_
         Fx::from_int(RALLY_CLEAR_TILES),
         Whose::Enemies(owner),
         |j| {
+            if !vision.sees(owner, j, regs.owner[j]) {
+                return;
+            }
             near = true;
             let d = p - at.position[j];
             // Closer enemies push harder: weight by 1 / distance.

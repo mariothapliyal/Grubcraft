@@ -334,9 +334,20 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
-                self.regiments
+                let Some(h) = self
+                    .regiments
                     .spawn(pc.player, unit, position, facing, stats)
-                    .is_some()
+                else {
+                    return false;
+                };
+                // Hidden or seen from the moment it is placed.
+                self.vision.start(
+                    &self.regiments,
+                    &self.units,
+                    &self.terrain,
+                    h.index as usize,
+                );
+                true
             }
             Command::MoveTo {
                 regiment,

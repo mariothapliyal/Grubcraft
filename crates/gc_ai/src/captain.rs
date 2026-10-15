@@ -750,12 +750,10 @@ impl Captain {
                 // Hammer and anvil with the hammers hidden (or, with no fast
                 // troops, the ends of the line): scores on top of it when
                 // there is somewhere to hide.
-                Doctrine::Ambush => {
-                    match self.ambush_fit(ctx, ours, fighting, (line, shock, ranged)) {
-                        Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
-                        None => continue,
-                    }
-                }
+                Doctrine::Ambush => match self.ambush_fit(ctx, ours, fighting, (line, shock)) {
+                    Some(extra) => hammers.unwrap_or(0.4 + 0.3 * p.cunning()) + extra,
+                    None => continue,
+                },
             };
             let jitter = ctx.rng.below(1000) as f32 / 1000.0 * 0.15;
             let stick = if !self.doctrine_chosen || d != self.doctrine {

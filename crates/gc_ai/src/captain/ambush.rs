@@ -80,13 +80,13 @@ pub(super) fn line_ambushers(line: usize) -> usize {
     }
 }
 
-/// The class that would lie in wait in an army of `line`, `shock` and
-/// `ranged` regiments: its fast troops when they can be hammers (beside a
-/// line, or a third of an army of fast troops only), otherwise its line
-/// infantry when there are enough to spare.
-fn ambusher_class(line: usize, shock: usize, ranged: usize) -> Option<Class> {
-    if shock > 0 {
-        (line + ranged > 0 || shock >= 3).then_some(Class::Shock)
+/// The class that would lie in wait in an army of `line` line and `shock`
+/// fast regiments, as the layout makes hammers of them: its fast troops
+/// beside a line (or a third of an army of fast troops only), otherwise its
+/// line infantry when there are enough to spare.
+fn ambusher_class(line: usize, shock: usize) -> Option<Class> {
+    if shock > 0 && (line > 0 || shock >= 3) {
+        Some(Class::Shock)
     } else {
         (line_ambushers(line) > 0).then_some(Class::Line)
     }
@@ -109,15 +109,15 @@ impl Captain {
 
     /// How much better the Ambush doctrine fits than Hammer and anvil now,
     /// or `None` when it can't be used: no cover on the map, the armies
-    /// already close, or nowhere for a would-be ambusher to hide. `counts`
-    /// are our line, shock and ranged regiments. Lying in wait suits the
-    /// cunning and the patient, not the headlong.
+    /// already close, or nowhere for a would-be ambusher to hide. `line`
+    /// and `shock` count our regiments of each class. Lying in wait suits
+    /// the cunning and the patient, not the headlong.
     pub(super) fn ambush_fit(
         &self,
         ctx: &Ctx,
         ours: &[&Seen],
         fighting: &[&Seen],
-        (line, shock, ranged): (usize, usize, usize),
+        (line, shock): (usize, usize),
     ) -> Option<f32> {
         if !ctx.terrain.has_cover() {
             return None;
@@ -131,7 +131,7 @@ impl Captain {
             return None;
         }
         let view = ctx.view;
-        let class = ambusher_class(line, shock, ranged)?;
+        let class = ambusher_class(line, shock)?;
         let (_, wood) = ours
             .iter()
             .filter(|r| view.unit(r).class == class)
@@ -154,9 +154,14 @@ impl Captain {
             self.ambush.hideouts.clear();
             return;
         }
-        self.ambush
-            .hideouts
-            .retain(|h| view.get(h.handle).is_some_and(|r| !r.broken()));
+        // A hider the layout took back into a smaller line is out of it.
+        let members = &self.members;
+        self.ambush.hideouts.retain(|h| {
+            view.get(h.handle).is_some_and(|r| !r.broken())
+                && members.iter().any(|m| {
+                    m.handle == h.handle && matches!(m.home, Role::Hammer | Role::Ambusher)
+                })
+        });
         let fighting: Vec<&Seen> = view
             .regiments
             .iter()

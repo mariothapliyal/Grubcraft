@@ -12,7 +12,7 @@
 use gc_ai::lens::Lens;
 use gc_ai::{Minds, Role};
 use gc_render::BoxInstance;
-use gc_sim::PlayerId;
+use gc_sim::{PlayerId, RegimentHandle};
 use glam::Vec2;
 
 /// Dashes: this long, one every this many tiles.
@@ -67,15 +67,18 @@ pub fn lenses(minds: &Minds) -> Vec<Lens> {
 }
 
 /// Draw `lenses` on the ground, marks `scale` times their size. `team`
-/// gives a player's colour.
+/// gives a player's colour; only regiments the player `sees` are marked,
+/// so the lens gives away nobody hiding in the woods.
 pub fn push(
     lenses: &[Lens],
     minds: &Minds,
     scale: f32,
     team: impl Fn(PlayerId) -> [u8; 3],
+    sees: impl Fn(RegimentHandle) -> bool,
     out: &mut Vec<BoxInstance>,
 ) {
-    let view = minds.view();
+    let full = minds.view();
+    let get = |h: RegimentHandle| full.get(h).filter(|_| sees(h));
     let start = out.len();
     let room = |out: &Vec<BoxInstance>| out.len() - start < MAX_BOXES;
     for lens in lenses {
@@ -100,7 +103,7 @@ pub fn push(
                 });
             }
         }
-        if let Some(r) = lens.focus.and_then(|h| view.get(h)) {
+        if let Some(r) = lens.focus.and_then(get) {
             out.push(BoxInstance {
                 pos: r.pos.to_array(),
                 facing: r.facing.to_array(),
@@ -113,7 +116,7 @@ pub fn push(
             if !room(out) {
                 return;
             }
-            let Some(r) = view.get(m.regiment) else {
+            let Some(r) = get(m.regiment) else {
                 continue;
             };
             let color = role_color(m.role);
@@ -126,7 +129,7 @@ pub fn push(
                     lift: 0.0,
                 });
             }
-            match (m.target.and_then(|t| view.get(t)), m.place) {
+            match (m.target.and_then(get), m.place) {
                 (Some(t), _) => dashes(r.pos, t.pos, color, BRIGHT, scale, out),
                 (None, Some(place)) if place.distance(r.pos) > OFF_PLACE => {
                     dashes(r.pos, place, color, FAINT, scale, out)

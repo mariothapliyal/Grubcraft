@@ -193,6 +193,8 @@ pub struct Combat {
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
     volleys: Volleys,
+    /// Volleys loosed this tick: (shooter, target), for vision.
+    loosed: Vec<(RegimentHandle, RegimentHandle)>,
 }
 
 /// Where every regiment is, borrowed field by field from [`Regiments`] so a
@@ -290,7 +292,13 @@ impl Combat {
                 accuracy: vec![0; MAX_VOLLEYS],
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
+            loosed: Vec::with_capacity(regiment_capacity),
         }
+    }
+
+    /// The volleys loosed in the last tick: (shooter, target).
+    pub(crate) fn loosed(&self) -> &[(RegimentHandle, RegimentHandle)] {
+        &self.loosed
     }
 
     /// Volleys in flight, in pool order.
@@ -701,6 +709,7 @@ impl Combat {
         tick: u32,
         rng: &mut Pcg32,
     ) {
+        self.loosed.clear();
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -776,13 +785,19 @@ impl Combat {
             };
             let v = v as usize;
             let flight = (to.length().raw() / MISSILE_SPEED.raw()).max(1) as u32;
-            let vs = &mut self.volleys;
-            vs.alive[v] = true;
-            vs.owner[v] = regs.owner[i];
-            vs.target[v] = RegimentHandle {
+            let target = RegimentHandle {
                 index: j as u32,
                 generation: regs.generation[j],
             };
+            let shooter = RegimentHandle {
+                index: i as u32,
+                generation: regs.generation[i],
+            };
+            self.loosed.push((shooter, target));
+            let vs = &mut self.volleys;
+            vs.alive[v] = true;
+            vs.owner[v] = regs.owner[i];
+            vs.target[v] = target;
             vs.from[v] = regs.position[i];
             vs.aim[v] = regs.position[j];
             vs.launch[v] = tick;

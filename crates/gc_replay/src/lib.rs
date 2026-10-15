@@ -402,7 +402,12 @@ impl Recorder {
                 nav: setup.nav.to_vec(),
                 heights: setup.ground.heights.to_vec(),
                 water_level: setup.ground.water_level,
-                cover: setup.ground.cover.to_vec(),
+                // Cover that doesn't fit the map is none, as in the sim.
+                cover: if setup.ground.cover.len() == (setup.map_tiles as usize).pow(2) {
+                    setup.ground.cover.to_vec()
+                } else {
+                    Vec::new()
+                },
                 ticks: 0,
                 turns: Vec::new(),
                 checkpoints: vec![(0, world.state_hash())],
