@@ -4,7 +4,9 @@
 use gc_fixed::{Angle, FxVec2};
 use gc_sim::champions::{CALL_TILES, HEART};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
-use gc_sim::{Capacities, Challenge, Command, MatchSetup, PlayerCommand, RegimentHandle, World};
+use gc_sim::{
+    Capacities, Challenge, Command, Cover, Ground, MatchSetup, PlayerCommand, RegimentHandle, World,
+};
 
 const SOUTH: Angle = Angle(0x4000);
 /// Drill unit 0: 24 spearmen, attack 30, defence 45, morale 60.
@@ -13,6 +15,11 @@ const SPEARS: u16 = 0;
 const SKITTERS: u16 = 1;
 
 fn world(seed: u64, champions: bool) -> World {
+    world_in(seed, champions, &[])
+}
+
+/// A world whose cover map is `cover` (empty: open ground everywhere).
+fn world_in(seed: u64, champions: bool, cover: &[u8]) -> World {
     World::new(&MatchSetup {
         seed,
         capacities: Capacities::default(),
@@ -21,9 +28,27 @@ fn world(seed: u64, champions: bool) -> World {
         nav: &[],
         // Players 0 and 2 against player 1.
         teams: &[0, 1, 0],
-        ground: gc_sim::Ground::FLAT,
+        ground: Ground {
+            heights: &[],
+            water_level: 0,
+            cover,
+        },
         champions,
     })
+}
+
+/// A 256-tile cover map with a wood on the tiles `x0..x1` by `y0..y1`.
+fn wood(x0: u32, x1: u32, y0: u32, y1: u32) -> Vec<u8> {
+    (0..256 * 256)
+        .map(|i| {
+            let (x, y) = (i % 256, i / 256);
+            if (x0..x1).contains(&x) && (y0..y1).contains(&y) {
+                Cover::Wood as u8
+            } else {
+                Cover::Open as u8
+            }
+        })
+        .collect()
 }
 
 fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32, facing: Angle) -> RegimentHandle {
@@ -169,4 +194,47 @@ fn the_same_seed_calls_the_same_duel() {
     let (again, _) = face_off(seed, true);
     assert_eq!(again.challenge(), Some(&c));
     assert_eq!(again.state_hash(), w.state_hash());
+}
+
+#[test]
+fn an_enemy_hidden_in_a_wood_calls_out_no_champion() {
+    let gap = CALL_TILES - 4;
+    let called = |cover: &[u8]| {
+        (0..40)
+            .filter(|&seed| {
+                let mut w = world_in(seed, true, cover);
+                spawn(&mut w, 0, SPEARS, 100, 100, NORTH);
+                spawn(&mut w, 1, SPEARS, 100, 100 - gap, SOUTH);
+                for _ in 0..60 {
+                    w.tick(&[]);
+                }
+                w.challenge().is_some()
+            })
+            .count()
+    };
+    assert!(called(&[]) > 0);
+    let hidden = 100 - gap as u32;
+    assert_eq!(called(&wood(88, 112, hidden - 12, hidden + 12)), 0);
+}
+
+#[test]
+fn a_regiment_hiding_in_a_wood_sends_no_champion() {
+    // Our spearmen, the better fighters, wait in a wood; the skitterlings
+    // beside them stand in the open and answer the challenge.
+    let cover = wood(88, 112, 88, 112);
+    for seed in 0..40 {
+        let mut w = world_in(seed, true, &cover);
+        let ours = spawn(&mut w, 0, SPEARS, 100, 100, NORTH);
+        let ally = spawn(&mut w, 2, SKITTERS, 125, 100, NORTH);
+        let theirs = spawn(&mut w, 1, SPEARS, 100, 50, SOUTH);
+        for _ in 0..60 {
+            w.tick(&[]);
+        }
+        if let Some(c) = w.challenge() {
+            assert_eq!(c.champions, [ally, theirs], "seed {seed}");
+            assert!(!c.champions.contains(&ours));
+            return;
+        }
+    }
+    panic!("no champions in 40 seeds");
 }

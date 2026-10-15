@@ -203,6 +203,7 @@ const GOLDENS: &[Golden] = &[
         minutes: 5,
         minds: true,
         extra: no_extra,
+        champions: false,
     },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings

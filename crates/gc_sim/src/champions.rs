@@ -2,15 +2,15 @@
 //! Mario's pick MB-4).
 //!
 //! In a match that allows it ([`crate::MatchSetup::champions`]), the first
-//! time two hostile regiments come within [`CALL_TILES`] of each other
-//! there is a [`CHANCE_PERCENT`] chance that each side sends a champion out
-//! between the lines. Until heroes exist, a side's champion is the best man
-//! of its best fighting regiment near the front (melee attack plus
-//! defence). The two run to the point halfway between their regiments and
-//! trade blows, one swing each in turn: a blow lands with the simulation's
-//! chance to hit for their regiments' attack and defence, and a man it
-//! lands on reels and loses his next swing. The [`WOUNDS`]th blow to land
-//! kills.
+//! time two hostile regiments that see each other come within
+//! [`CALL_TILES`] there is a [`CHANCE_PERCENT`] chance that each side
+//! sends a champion out between the lines. Until heroes exist, a side's
+//! champion is the best man of its best fighting regiment near the front
+//! (melee attack plus defence) that isn't hiding in cover. The two run to
+//! the point halfway between their regiments and trade blows, one swing
+//! each in turn: a blow lands with the simulation's chance to hit for
+//! their regiments' attack and defence, and a man it lands on reels and
+//! loses his next swing. The [`WOUNDS`]th blow to land kills.
 //!
 //! The whole fight is rolled when the challenge is called, from the match's
 //! events stream, so every machine and every replay sees the same duel and
@@ -29,6 +29,7 @@ use gc_fixed::{Fx, FxVec2, Pcg32};
 use crate::combat::hit_percent;
 use crate::morale::{self, SCALE};
 use crate::regiments::{Regiments, hash_handle};
+use crate::vision::Vision;
 use crate::{RegimentHandle, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Hostile regiments this close (centre to centre, in tiles) call out
@@ -144,6 +145,7 @@ impl Champions {
         regs: &mut Regiments,
         units: &[UnitStats],
         stances: &Stances,
+        vision: &Vision,
         tick: u32,
     ) {
         if !self.allowed {
@@ -151,7 +153,7 @@ impl Champions {
         }
         if !self.rolled {
             if tick.is_multiple_of(TICKS_PER_SECOND) {
-                self.look(regs, units, stances, tick);
+                self.look(regs, units, stances, vision, tick);
             }
             return;
         }
@@ -175,9 +177,17 @@ impl Champions {
         }
     }
 
-    /// Once two hostile regiments are within [`CALL_TILES`], roll whether
-    /// champions come out, and if so pick them and roll their duel.
-    fn look(&mut self, regs: &mut Regiments, units: &[UnitStats], stances: &Stances, tick: u32) {
+    /// Once two hostile regiments that see each other are within
+    /// [`CALL_TILES`], roll whether champions come out, and if so pick them
+    /// and roll their duel.
+    fn look(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        vision: &Vision,
+        tick: u32,
+    ) {
         let reach = Fx::from_int(CALL_TILES).raw() as u64;
         let mut nearest: Option<(u64, usize, usize)> = None;
         for a in 0..regs.alive.len() {
@@ -188,6 +198,8 @@ impl Champions {
                 if !regs.alive[b]
                     || regs.morale_state[b].broken()
                     || !stances.hostile(regs.owner[a], regs.owner[b])
+                    || !vision.sees(regs.owner[a], b, regs.owner[b])
+                    || !vision.sees(regs.owner[b], a, regs.owner[a])
                 {
                     continue;
                 }
@@ -204,8 +216,10 @@ impl Champions {
         if self.rng.below(100) >= CHANCE_PERCENT {
             return;
         }
-        let (Some(x), Some(y)) = (pick(regs, units, stances, a), pick(regs, units, stances, b))
-        else {
+        let (Some(x), Some(y)) = (
+            pick(regs, units, stances, vision, a),
+            pick(regs, units, stances, vision, b),
+        ) else {
             return;
         };
         let spot = FxVec2::new(
@@ -271,8 +285,15 @@ fn midpoint(a: i32, b: i32) -> i32 {
 /// The regiment that sends out the champion for the side of regiment `a`:
 /// the best fighter (melee attack plus defence, then the nearest to `a`)
 /// among `a` and its allies within [`PICK_TILES`] that are ready to fight,
-/// can spare a man, and fight in melee at all.
-fn pick(regs: &Regiments, units: &[UnitStats], stances: &Stances, a: usize) -> Option<usize> {
+/// can spare a man, fight in melee at all, and are not hiding (a champion
+/// would give them away).
+fn pick(
+    regs: &Regiments,
+    units: &[UnitStats],
+    stances: &Stances,
+    vision: &Vision,
+    a: usize,
+) -> Option<usize> {
     let near = Fx::from_int(PICK_TILES).raw() as u64;
     let mut best: Option<(i32, u64, usize)> = None;
     for i in 0..regs.alive.len() {
@@ -283,6 +304,7 @@ fn pick(regs: &Regiments, units: &[UnitStats], stances: &Stances, a: usize) -> O
             || regs.engaged[i].is_some()
             || regs.models[i] < 2
             || stats.melee_attack == 0
+            || vision.hidden(i, regs.owner[i])
         {
             continue;
         }

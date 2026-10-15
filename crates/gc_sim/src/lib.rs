@@ -547,8 +547,13 @@ impl World {
             self.tick,
             self.map_tiles,
         );
-        self.champions
-            .update(&mut self.regiments, &self.units, &self.stances, self.tick);
+        self.champions.update(
+            &mut self.regiments,
+            &self.units,
+            &self.stances,
+            &self.vision,
+            self.tick,
+        );
         self.vision.update(
             &mut self.regiments,
             &self.combat,

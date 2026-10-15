@@ -606,6 +606,7 @@ mod tests {
                 water_level: 0,
                 cover: &cover,
             },
+            champions: false,
         });
         let spawn = |player, x| PlayerCommand {
             player,
