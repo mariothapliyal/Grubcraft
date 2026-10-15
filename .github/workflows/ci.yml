@@ -52,7 +52,7 @@ jobs:
       - name: Golden replays in release mode
         run: cargo run --release -p gc_replay -- verify replays
       - name: Maps are valid and fair
-        run: cargo run -p gc_mapcheck -- check
+        run: cargo run --release -p gc_mapcheck -- check
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
 

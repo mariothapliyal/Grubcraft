@@ -10,6 +10,12 @@ fn load(path: &Path) -> Result<MapDef, String> {
     MapDef::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+fn png_cmd(src: &str, out: &str) -> Result<(), String> {
+    let map = Map::build(&load(Path::new(src))?);
+    let (side, rgb) = preview::render(&map, if map.tiles > 192 { 3 } else { 4 });
+    std::fs::write(out, preview::png(side, &rgb)).map_err(|e| format!("{out}: {e}"))
+}
+
 fn files(args: &[String]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let roots: Vec<PathBuf> = if args.is_empty() {
@@ -74,18 +80,8 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
-        Some("png") if args.len() == 3 => match load(Path::new(&args[1])) {
-            Ok(def) => {
-                let map = Map::build(&def);
-                let (side, rgb) = preview::render(&map, if map.tiles > 192 { 3 } else { 4 });
-                match std::fs::write(&args[2], preview::png(side, &rgb)) {
-                    Ok(()) => ExitCode::SUCCESS,
-                    Err(e) => {
-                        eprintln!("{}: {e}", args[2]);
-                        ExitCode::FAILURE
-                    }
-                }
-            }
+        Some("png") if args.len() == 3 => match png_cmd(&args[1], &args[2]) {
+            Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::FAILURE

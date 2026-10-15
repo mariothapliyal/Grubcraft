@@ -9,6 +9,13 @@ fn source(name: &str) -> String {
     std::fs::read_to_string(maps_dir().join(name)).unwrap()
 }
 
+/// The shipped map with one piece of text swapped; the piece must be there.
+fn edited(name: &str, from: &str, to: &str) -> String {
+    let text = source(name);
+    assert!(text.contains(from), "the map no longer has {from:?}");
+    text.replace(from, to)
+}
+
 fn errors_of(text: &str) -> Vec<String> {
     check(&MapDef::parse(text).unwrap()).errors
 }
@@ -60,19 +67,24 @@ fn building_a_map_twice_gives_the_same_hash() {
 
 #[test]
 fn a_missing_seep_is_an_error() {
-    let text =
-        source("ribcage_pass.ron").replace("(kind: GrubSeep, at: (13, 30), owner: Some(0)),", "");
+    let text = edited(
+        "ribcage_pass.ron",
+        "(kind: GrubSeep, at: (13, 30), owner: Some(0)),",
+        "",
+    );
     let e = errors_of(&text);
     assert!(e.iter().any(|m| m.contains("in its base area")), "{e:?}");
 }
 
 #[test]
-fn a_start_on_a_cliff_is_an_error() {
-    let text = source("ribcage_pass.ron").replace(
+fn a_start_on_an_unreachable_ridge_is_an_error() {
+    let text = edited(
+        "ribcage_pass.ron",
         "(kind: Start, at: (22, 22), owner: Some(0))",
-        "(kind: Start, at: (42, 20), owner: Some(0))",
+        "(kind: Start, at: (42, 36), owner: Some(0))",
     );
-    assert!(!errors_of(&text).is_empty());
+    let e = errors_of(&text);
+    assert!(e.iter().any(|m| m.contains("can't be reached")), "{e:?}");
 }
 
 /// A flat 2-player map written out in full (no symmetry), with player 1's
@@ -131,7 +143,8 @@ fn a_lopsided_resource_is_unfair() {
 fn a_walled_off_map_has_no_counter_route() {
     // Close the two passes and the flanks and narrow the ford's gap: one way
     // across is left, and a rush along it could be walled off.
-    let text = source("ribcage_pass.ron").replace(
+    let text = edited(
+        "ribcage_pass.ron",
         "// The ford.",
         "(shape: Line(a: (88, 40), b: (92, 36), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (108, 20), b: (126, 2), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (60, 68), b: (62, 66), half_width: 3), mode: Raise, height: 120, edge: 2),\n        (shape: Line(a: (66, 62), b: (68, 60), half_width: 3), mode: Raise, height: 120, edge: 2),\n        // The ford.",
     );
@@ -141,7 +154,11 @@ fn a_walled_off_map_has_no_counter_route() {
 
 #[test]
 fn objects_must_be_unique_where_the_rules_say() {
-    let text = source("ribcage_pass.ron").replace("(kind: Heart, at: (64, 64), once: true),", "");
+    let text = edited(
+        "ribcage_pass.ron",
+        "(kind: Heart, at: (64, 64), once: true),",
+        "",
+    );
     let e = errors_of(&text);
     assert!(e.iter().any(|m| m.contains("Heart")), "{e:?}");
 }
@@ -149,7 +166,8 @@ fn objects_must_be_unique_where_the_rules_say() {
 #[test]
 fn a_cut_off_stretch_of_land_is_an_error() {
     // A ring of cliffs round a wide meadow nobody can reach.
-    let text = source("ribcage_pass.ron").replace(
+    let text = edited(
+        "ribcage_pass.ron",
         "// The ford.",
         "(shape: Disc(at: (100, 100), r: 12), mode: Set, height: 48, edge: 0),\n        (shape: Disc(at: (100, 100), r: 16), mode: Lower, height: 40, edge: 0),\n        (shape: Line(a: (84, 84), b: (116, 84), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (116, 84), b: (116, 116), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (116, 116), b: (84, 116), half_width: 1), mode: Raise, height: 140, edge: 1),\n        (shape: Line(a: (84, 116), b: (84, 84), half_width: 1), mode: Raise, height: 140, edge: 1),\n        // The ford.",
     );

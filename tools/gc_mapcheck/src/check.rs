@@ -67,8 +67,7 @@ pub fn check(def: &MapDef) -> Report {
     }
 
     placement(&map, &walk, &mut r);
-    let counts_ok = counts(&map, &mut r);
-    if !counts_ok {
+    if !counts(&map, &mut r) {
         return r;
     }
 
@@ -246,7 +245,7 @@ impl Search {
                         continue;
                     }
                     let base = if dx != 0 && dy != 0 { 14 } else { 10 };
-                    let step = base * map.ground[j].cost().unwrap_or(10) / 10;
+                    let step = base * map.ground[j].cost() / 10;
                     let nd = d + step;
                     if nd < dist[j] {
                         dist[j] = nd;
@@ -306,10 +305,7 @@ fn connectivity(map: &Map, walk: &[bool], from: &[Search], r: &mut Report) {
             }
         }
     }
-    let mut seen = vec![false; walk.len()];
-    for (i, d) in from[0].dist.iter().enumerate() {
-        seen[i] = *d != UNSEEN;
-    }
+    let mut seen: Vec<bool> = from[0].dist.iter().map(|&d| d != UNSEEN).collect();
     for y in 0..map.tiles {
         for x in 0..map.tiles {
             let i = map.idx((x, y));
@@ -335,14 +331,6 @@ fn connectivity(map: &Map, walk: &[bool], from: &[Search], r: &mut Report) {
     }
 }
 
-fn kind_label(k: Kind) -> &'static str {
-    match k {
-        Kind::GrubSeep => "seep",
-        Kind::MarrowVein => "vein",
-        _ => "object",
-    }
-}
-
 /// Each start has its base seeps and vein close, a natural expansion a
 /// little further, and a hamlet within reach.
 fn areas(map: &Map, from: &[Search], r: &mut Report) {
@@ -352,13 +340,12 @@ fn areas(map: &Map, from: &[Search], r: &mut Report) {
         let near = |o: &&Placed| euclid(o.at, start) <= BASE_AREA;
         let base_seeps = own(Kind::GrubSeep).filter(near).count();
         let natural = own(Kind::GrubSeep)
-            .filter(|o| (BASE_AREA..=EXPANSION_AREA).contains(&euclid(o.at, start)))
+            .filter(|o| (BASE_AREA + 1..=EXPANSION_AREA).contains(&euclid(o.at, start)))
             .count();
         let veins = own(Kind::MarrowVein).filter(near).count();
         if base_seeps < 2 {
             r.err(format!(
-                "player {p} has {base_seeps} {}s in its base area, not 2",
-                kind_label(Kind::GrubSeep)
+                "player {p} has {base_seeps} seeps in its base area, not 2"
             ));
         }
         if natural < 2 {
@@ -385,11 +372,13 @@ fn areas(map: &Map, from: &[Search], r: &mut Report) {
     }
 }
 
-fn nearest(map: &Map, s: &Search, kinds: &[Kind], owned: Option<bool>, k: usize) -> u32 {
+/// Total walking cost to the `k` nearest objects of the kinds (only the
+/// ones no player owns, when `unowned_only`).
+fn nearest(map: &Map, s: &Search, kinds: &[Kind], unowned_only: bool, k: usize) -> u32 {
     let mut d: Vec<u32> = kinds
         .iter()
         .flat_map(|&kind| map.objects_of(kind))
-        .filter(|o| owned.is_none_or(|w| o.owner.is_some() == w))
+        .filter(|o| !unowned_only || o.owner.is_none())
         .filter_map(|o| s.to_object(o.at))
         .collect();
     d.sort_unstable();
@@ -404,84 +393,67 @@ fn spread(values: &[u32]) -> u32 {
     ((hi - lo) * 100).checked_div(hi).unwrap_or(0)
 }
 
-/// One number per start that must come out the same for every player.
-type Metric<'a> = Box<dyn Fn(&Search, Pos) -> u32 + 'a>;
-
-fn fairness(map: &Map, from: &[Search], r: &mut Report) {
-    let metrics: [(&str, Metric); 7] = [
-        (
-            "4 nearest seeps",
-            Box::new(|s, _| nearest(map, s, &[Kind::GrubSeep], None, 4)),
-        ),
-        (
-            "nearest vein",
-            Box::new(|s, _| nearest(map, s, &[Kind::MarrowVein], None, 1)),
-        ),
-        (
-            "Heart",
-            Box::new(|s, _| nearest(map, s, &[Kind::Heart], None, 1)),
-        ),
-        (
-            "nearest hamlet",
-            Box::new(|s, _| nearest(map, s, &[Kind::Village, Kind::Town, Kind::Bazaar], None, 1)),
-        ),
-        (
-            "2 nearest contested",
-            Box::new(|s, _| nearest(map, s, &[Kind::GrubSeep, Kind::MarrowVein], Some(false), 2)),
-        ),
-        (
-            "nearest Shrine",
-            Box::new(|s, _| nearest(map, s, &[Kind::Shrine], None, 1)),
-        ),
-        (
-            "nearest enemy start",
-            Box::new(|s, from| {
-                map.objects_of(Kind::Start)
-                    .filter(|o| o.at != from)
-                    .filter_map(|o| s.to_object(o.at))
-                    .min()
-                    .unwrap_or(0)
-            }),
-        ),
-    ];
-    for (name, f) in &metrics {
-        let v: Vec<u32> = (0..map.players as usize)
-            .map(|p| f(&from[p], map.start_of(p as u8).unwrap()))
-            .collect();
-        let sp = spread(&v);
-        r.notes.push(format!(
-            "{name:<22} {}   spread {sp}%",
-            v.iter()
-                .map(|d| format!("{:>7}", tenths(*d)))
-                .collect::<Vec<_>>()
-                .join(" ")
+/// Note one number per player, and make it an error if they differ too much.
+fn compare(r: &mut Report, label: &str, values: &[u32], show: impl Fn(u32) -> String) {
+    let sp = spread(values);
+    let shown: Vec<String> = values.iter().map(|&v| format!("{:>7}", show(v))).collect();
+    r.notes
+        .push(format!("{label:<22} {}   spread {sp}%", shown.join(" ")));
+    if sp > TOLERANCE_PERCENT {
+        r.err(format!(
+            "unfair: {label} differs by {sp}% between starts (limit {TOLERANCE_PERCENT}%)"
         ));
-        if sp > TOLERANCE_PERCENT {
-            r.err(format!(
-                "unfair: {name} differs by {sp}% between starts (limit {TOLERANCE_PERCENT}%)"
-            ));
-        }
-    }
-    let curves: Vec<[u32; 3]> = (0..map.players as usize)
-        .map(|p| income(map, &from[p], p as u8))
-        .collect();
-    for (i, minutes) in [5, 10, 15].iter().enumerate() {
-        let v: Vec<u32> = curves.iter().map(|c| c[i]).collect();
-        let sp = spread(&v);
-        r.notes.push(format!(
-            "income by minute {minutes:<2}      {}   spread {sp}%",
-            v.iter()
-                .map(|d| format!("{d:>7}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
-        if sp > TOLERANCE_PERCENT {
-            r.err(format!(
-                "unfair: income by minute {minutes} differs by {sp}% between starts"
-            ));
-        }
     }
 }
+
+fn fairness(map: &Map, from: &[Search], r: &mut Report) {
+    // (name, kinds, only unowned, how many nearest to add up)
+    let hamlets = [Kind::Village, Kind::Town, Kind::Bazaar];
+    let metrics: [(&str, &[Kind], bool, usize); 6] = [
+        ("4 nearest seeps", &[Kind::GrubSeep], false, 4),
+        ("nearest vein", &[Kind::MarrowVein], false, 1),
+        ("Heart", &[Kind::Heart], false, 1),
+        ("nearest hamlet", &hamlets, false, 1),
+        (
+            "2 nearest contested",
+            &[Kind::GrubSeep, Kind::MarrowVein],
+            true,
+            2,
+        ),
+        ("nearest Shrine", &[Kind::Shrine], false, 1),
+    ];
+    for (name, kinds, unowned_only, k) in metrics {
+        let v: Vec<u32> = from
+            .iter()
+            .map(|s| nearest(map, s, kinds, unowned_only, k))
+            .collect();
+        compare(r, name, &v, tenths);
+    }
+    let foes: Vec<u32> = (0..map.players)
+        .map(|p| {
+            let start = map.start_of(p).unwrap();
+            map.objects_of(Kind::Start)
+                .filter(|o| o.at != start)
+                .filter_map(|o| from[p as usize].to_object(o.at))
+                .min()
+                .unwrap_or(0)
+        })
+        .collect();
+    compare(r, "nearest enemy start", &foes, tenths);
+
+    let curves: Vec<[u32; 3]> = (0..map.players)
+        .map(|p| income(map, &from[p as usize], p))
+        .collect();
+    for (i, minutes) in MINUTES.iter().enumerate() {
+        let v: Vec<u32> = curves.iter().map(|c| c[i]).collect();
+        compare(r, &format!("income by minute {minutes}"), &v, |v| {
+            v.to_string()
+        });
+    }
+}
+
+/// When the economy check looks, in minutes.
+const MINUTES: [u32; 3] = [5, 10, 15];
 
 /// A first-pass economy: what a start has gathered (Grub plus Marrow) by
 /// minutes 5, 10 and 15 if it takes nodes nearest-first. The base nodes come
@@ -498,22 +470,20 @@ fn income(map: &Map, s: &Search, player: u8) -> [u32; 3] {
         .filter_map(|o| s.to_object(o.at).map(|d| (d, o.kind == Kind::MarrowVein)))
         .collect();
     nodes.sort_unstable();
-    let mut out = [0u32; 3];
-    for (i, minutes) in [5u32, 10, 15].iter().enumerate() {
-        let end = minutes * 60;
-        let mut total = 0f64;
-        for (rank, &(d, vein)) in nodes.iter().enumerate() {
+    // Per node: when it comes online (seconds), its yield per second and its stock.
+    let nodes: Vec<(f64, f64, f64)> = nodes
+        .iter()
+        .enumerate()
+        .map(|(rank, &(d, vein))| {
             let tiles = d as f64 / 10.0;
-            let online = if tiles <= BASE_AREA as f64 {
+            let near = tiles <= BASE_AREA as f64;
+            let online = if near {
                 60.0
             } else {
                 60.0 + 120.0 * (rank as f64 - 2.0).max(1.0) + tiles * 0.8
             };
-            if online >= end as f64 {
-                continue;
-            }
             // Base nodes feed a hall some way off; expansions get their own.
-            let eff = if tiles <= BASE_AREA as f64 {
+            let eff = if near {
                 1.0 / (1.0 + tiles / 60.0)
             } else {
                 0.9
@@ -523,18 +493,25 @@ fn income(map: &Map, s: &Search, player: u8) -> [u32; 3] {
             } else {
                 (200.0 / 60.0, 7500.0)
             };
-            total += ((end as f64 - online) * rate * eff).min(cap);
-        }
-        out[i] = total as u32;
-    }
-    out
+            (online, rate * eff, cap)
+        })
+        .collect();
+    MINUTES.map(|minutes| {
+        let end = minutes as f64 * 60.0;
+        let total: f64 = nodes
+            .iter()
+            .filter(|n| n.0 < end)
+            .map(|&(online, rate, cap)| ((end - online) * rate).min(cap))
+            .sum();
+        total as u32
+    })
 }
 
 /// Every base has more than one way out, and every rush has a counter-route.
 fn routes(map: &Map, walk: &[bool], from: &[Search], r: &mut Report) {
     for p in 0..map.players {
         let start = map.start_of(p).unwrap();
-        let gate = gate_width(map, &from[p as usize]);
+        let gate = gate_width(&from[p as usize]);
         r.notes
             .push(format!("player {p} base gate: {} tiles wide", gate));
         if gate < MIN_GATE_TILES {
@@ -585,7 +562,7 @@ fn routes(map: &Map, walk: &[bool], from: &[Search], r: &mut Report) {
 /// How many tiles it takes to wall off a base: walkable tiles whose walk
 /// from the start costs between 26 and 27.5 tiles. That ring is a cross-section
 /// of every way out, so a base that opens through a narrow gap has a small one.
-fn gate_width(_map: &Map, s: &Search) -> usize {
+fn gate_width(s: &Search) -> usize {
     s.dist.iter().filter(|&&d| (260..=275).contains(&d)).count()
 }
 

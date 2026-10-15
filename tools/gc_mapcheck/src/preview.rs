@@ -23,12 +23,12 @@ fn object_colour(k: Kind) -> [u8; 3] {
 /// RGB pixels, `scale` per tile, row by row.
 pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
     let side = (map.tiles * scale) as usize;
-    let max = *map.heights.iter().max().unwrap_or(&1) as i32;
+    let max = (*map.heights.iter().max().unwrap_or(&1) as i32).max(1);
     let mut px = vec![0u8; side * side * 3];
     for y in 0..side {
         for x in 0..side {
             let t = ((y as i32 / scale) * map.tiles + x as i32 / scale) as usize;
-            let h = map.heights[t] as i32 * 255 / max.max(1);
+            let h = map.heights[t] as i32 * 255 / max;
             let mut c = match map.ground[t] {
                 Ground::Blocked if map.heights[t] < map.water => [20, 40, 110],
                 Ground::Blocked => [95, 95, 100],
@@ -56,6 +56,7 @@ pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
         }
     }
     for o in &map.objects {
+        let colour = object_colour(o.kind);
         let r = if o.kind == Kind::Start || o.kind == Kind::Heart {
             2 * scale
         } else {
@@ -64,8 +65,7 @@ pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
         let (cx, cy) = (o.at.0 * scale + scale / 2, o.at.1 * scale + scale / 2);
         for y in (cy - r).max(0)..(cy + r).min(side as i32) {
             for x in (cx - r).max(0)..(cx + r).min(side as i32) {
-                px[(y as usize * side + x as usize) * 3..][..3]
-                    .copy_from_slice(&object_colour(o.kind));
+                px[(y as usize * side + x as usize) * 3..][..3].copy_from_slice(&colour);
             }
         }
     }

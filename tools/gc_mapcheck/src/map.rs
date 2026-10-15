@@ -2,7 +2,11 @@
 //! rotated copies, and working out which tiles a regiment can walk.
 //!
 //! Everything here is integer arithmetic, so every machine builds the same
-//! bytes from the same file (this is what the lobby's map hash will compare).
+//! bytes from the same file.
+//!
+//! The cliff, ford and clearance rules below repeat those of the game's
+//! walkable-ground grid (`Heightmap::nav_costs` in `gc_game`), which works on
+//! half-tile cells; sharing one implementation is the job of the baked-map step.
 
 use crate::def::*;
 use gc_sim::terrain::HEIGHT_UNITS;
@@ -26,13 +30,13 @@ pub enum Ground {
 }
 
 impl Ground {
-    /// Cost of stepping onto the tile, ten for open ground.
-    pub fn cost(self) -> Option<u32> {
+    /// Cost of stepping onto the tile, ten for open ground (a blocked tile is
+    /// never stepped on).
+    pub fn cost(self) -> u32 {
         match self {
-            Ground::Blocked => None,
-            Ground::Open => Some(10),
-            Ground::Steep => Some(14),
-            Ground::Ford => Some(20),
+            Ground::Blocked | Ground::Open => 10,
+            Ground::Steep => 14,
+            Ground::Ford => 20,
         }
     }
 }
@@ -43,13 +47,10 @@ pub struct Placed {
     pub kind: Kind,
     pub at: Pos,
     pub owner: Option<u8>,
-    pub label: String,
 }
 
 pub struct Map {
-    pub name: String,
     pub size: SizeClass,
-    pub symmetry: Symmetry,
     pub players: u8,
     pub tiles: i32,
     /// One height per tile in `gc_sim` units, row by row.
@@ -62,25 +63,40 @@ pub struct Map {
     pub set_pieces: Vec<SetPiece>,
 }
 
-/// A point turned a quarter circle about the centre of a `tiles`-wide map.
-fn turn_point(p: Pos, tiles: i32) -> Pos {
-    (tiles - p.1, p.0)
+/// Quarter turns between one copy and the next.
+fn step_turns(sym: Symmetry) -> u32 {
+    match sym {
+        Symmetry::None => 0,
+        Symmetry::Rot2 => 2,
+        Symmetry::Rot4 => 1,
+    }
 }
 
-/// A tile turned a quarter circle (tiles are offset by one from points).
-fn turn_tile(p: Pos, tiles: i32) -> Pos {
-    (tiles - 1 - p.1, p.0)
+/// A point turned `n` quarter circles about the centre of a `tiles`-wide map.
+fn turn_point(mut p: Pos, tiles: i32, n: u32) -> Pos {
+    for _ in 0..n {
+        p = (tiles - p.1, p.0);
+    }
+    p
 }
 
-fn turn_shape(s: Shape, tiles: i32) -> Shape {
+/// A tile turned `n` quarter circles (a tile's index is one less than its far corner).
+fn turn_tile(mut p: Pos, tiles: i32, n: u32) -> Pos {
+    for _ in 0..n {
+        p = (tiles - 1 - p.1, p.0);
+    }
+    p
+}
+
+fn turn_shape(s: Shape, tiles: i32, n: u32) -> Shape {
     match s {
         Shape::Disc { at, r } => Shape::Disc {
-            at: turn_point(at, tiles),
+            at: turn_point(at, tiles, n),
             r,
         },
         Shape::Line { a, b, half_width } => Shape::Line {
-            a: turn_point(a, tiles),
-            b: turn_point(b, tiles),
+            a: turn_point(a, tiles, n),
+            b: turn_point(b, tiles, n),
             half_width,
         },
     }
@@ -88,22 +104,9 @@ fn turn_shape(s: Shape, tiles: i32) -> Shape {
 
 /// The shape and its copies under the symmetry.
 fn images(s: Shape, sym: Symmetry, tiles: i32) -> Vec<Shape> {
-    let mut out = vec![s];
-    let steps = match sym {
-        Symmetry::None => 0,
-        Symmetry::Rot2 => 1,
-        Symmetry::Rot4 => 3,
-    };
-    for i in 0..steps {
-        let mut t = out[i];
-        // Rot2 is two quarter turns.
-        t = turn_shape(t, tiles);
-        if sym == Symmetry::Rot2 {
-            t = turn_shape(t, tiles);
-        }
-        out.push(t);
-    }
-    out
+    (0..sym.copies() as u32)
+        .map(|k| turn_shape(s, tiles, k * step_turns(sym)))
+        .collect()
 }
 
 /// Distance in half tiles from the centre of tile (x, y) to the shape's core,
@@ -203,9 +206,7 @@ impl Map {
 
         let ground = classify(&heights, water, tiles);
         Map {
-            name: def.name.clone(),
             size: def.size,
-            symmetry: def.symmetry,
             players: def.players,
             tiles,
             heights,
@@ -289,7 +290,7 @@ fn classify(heights: &[u16], water: u16, tiles: i32) -> Vec<Ground> {
     let mut out = Vec::with_capacity(heights.len());
     for y in 0..tiles {
         for x in 0..tiles {
-            let here = h(x, y).unwrap();
+            let here = heights[(y * tiles + x) as usize] as i32;
             let rise = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                 .iter()
                 .filter_map(|(dx, dy)| h(x + dx, y + dy))
@@ -314,31 +315,25 @@ fn classify(heights: &[u16], water: u16, tiles: i32) -> Vec<Ground> {
 
 fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
     let mut out: Vec<Placed> = Vec::new();
-    let steps = def.symmetry.copies();
+    let turns = step_turns(def.symmetry);
     for o in &def.objects {
-        let mut at = o.at;
-        let mut owner = o.owner;
-        for k in 0..steps {
-            if k > 0 && o.once {
-                break;
-            }
-            if k > 0 {
-                at = match def.symmetry {
-                    Symmetry::Rot2 => (tiles - 1 - at.0, tiles - 1 - at.1),
-                    _ => turn_tile(at, tiles),
-                };
-                owner = owner.map(|p| (p + 1) % def.players.max(1));
-            }
+        let copies = if o.once {
+            1
+        } else {
+            def.symmetry.copies() as u32
+        };
+        for k in 0..copies {
+            let at = turn_tile(o.at, tiles, k * turns);
+            // Each copy belongs to the next player round.
+            let owner = o.owner.map(|p| (p + k as u8) % def.players);
             // An object that turns onto itself is kept once.
-            if out.iter().any(|p| p.kind == o.kind && p.at == at) {
-                continue;
+            if !out.iter().any(|p| p.kind == o.kind && p.at == at) {
+                out.push(Placed {
+                    kind: o.kind,
+                    at,
+                    owner,
+                });
             }
-            out.push(Placed {
-                kind: o.kind,
-                at,
-                owner,
-                label: o.label.clone(),
-            });
         }
     }
     out
