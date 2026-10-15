@@ -48,4 +48,5 @@ Everyone must run the same version of Grubcraft. If the lobby says the
 versions differ, get the same zip from the same person.
 
 Playing over the internet needs a virtual LAN tool such as Tailscale or
-ZeroTier. Then join by address or join code as above.
+ZeroTier. Then join by typing the host's address on that tool (the
+join code shows the home network address, which friends elsewhere cannot reach).
