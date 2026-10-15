@@ -44,7 +44,7 @@ fn main() -> ExitCode {
             "info" => info(file),
             _ => return usage(),
         };
-        failed += !ok as usize;
+        failed += usize::from(!ok);
     }
     if failed > 0 {
         eprintln!("{failed} of {} replays failed", files.len());
@@ -183,7 +183,7 @@ fn info(file: &Path) -> bool {
                     spawned.resize(p + 1, (0, 0));
                 }
                 spawned[p].0 += 1;
-                spawned[p].1 += replay.units.get(unit as usize).map_or(0, |u| u.models) as u32;
+                spawned[p].1 += u32::from(replay.units.get(unit as usize).map_or(0, |u| u.models));
             }
         }
     }
@@ -198,7 +198,7 @@ fn info(file: &Path) -> bool {
         size as f64 / 1024.0
     );
     println!(
-        "  seed {:#x}, {} tiles across, {} unit types, {}{}{}",
+        "  seed {:#x}, {} tiles across, {} unit types, {}{}{}{}",
         replay.seed,
         replay.map_tiles,
         replay.units.len(),
@@ -214,6 +214,11 @@ fn info(file: &Path) -> bool {
         },
         if replay.cover.iter().any(|&c| c != 0) {
             ", with woods and tall grass"
+        } else {
+            ""
+        },
+        if replay.champions {
+            ", champions allowed"
         } else {
             ""
         }

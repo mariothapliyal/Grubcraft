@@ -231,9 +231,9 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
                     ));
                 }
             },
-            weapons: (def.reach as u8 * WEAPON_REACH)
-                | (def.swing_room as u8 * WEAPON_SWING_ROOM)
-                | (def.shield as u8 * WEAPON_SHIELD),
+            weapons: (u8::from(def.reach) * WEAPON_REACH)
+                | (u8::from(def.swing_room) * WEAPON_SWING_ROOM)
+                | (u8::from(def.shield) * WEAPON_SHIELD),
             points: def.points,
             reserved: 0,
         };
@@ -258,11 +258,11 @@ fn to_fx(v: f64) -> Result<i32, &'static str> {
         return Err("must be a finite number");
     }
     let raw = (v * 65536.0).round();
-    if raw < i32::MIN as f64 || raw > i32::MAX as f64 {
+    if raw < f64::from(i32::MIN) || raw > f64::from(i32::MAX) {
         return Err("is out of range");
     }
     let raw = raw as i32;
-    debug_assert!(Fx::from_raw(raw).raw() == raw);
+    debug_assert_eq!(Fx::from_raw(raw).raw(), raw);
     Ok(raw)
 }
 
@@ -272,7 +272,7 @@ fn to_ticks(seconds: f64) -> Result<u16, &'static str> {
         return Err("must be a positive number of seconds");
     }
     let ticks = (seconds * 20.0).round();
-    if ticks > u16::MAX as f64 {
+    if ticks > f64::from(u16::MAX) {
         return Err("is too long");
     }
     Ok(ticks as u16)
@@ -284,8 +284,8 @@ fn to_angle_rate(degrees: f64) -> Result<u32, &'static str> {
     if !degrees.is_finite() || degrees <= 0.0 {
         return Err("must be a positive number of degrees per second");
     }
-    let steps = (degrees * ANGLE_STEPS_PER_TURN as f64 / 360.0).round();
-    if steps > u32::MAX as f64 {
+    let steps = (degrees * f64::from(ANGLE_STEPS_PER_TURN) / 360.0).round();
+    if steps > f64::from(u32::MAX) {
         return Err("is out of range");
     }
     Ok(steps as u32)

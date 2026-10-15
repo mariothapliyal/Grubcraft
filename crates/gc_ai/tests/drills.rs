@@ -216,6 +216,7 @@ fn run(drill: Drill, seconds: u32, mut watch: impl FnMut(&Field)) -> Option<Play
             water_level: (WATER_LEVEL * per_tile) as u16,
             cover: &[],
         },
+        champions: false,
     });
     let mut out: Vec<PlayerCommand> = Vec::new();
     spawn_commands(AI, &drill.ai, &mut out);
@@ -623,7 +624,7 @@ fn a_wavering_regiment_is_pulled_out_of_the_line_and_its_place_filled() {
             // Until the lines have been at it a while: once the battle is
             // lost, everyone runs.
             if first_contact.is_none_or(|t0| f.seconds() <= t0 + 15.0) {
-                ran |= shaken.is_none_or(|r| r.broken());
+                ran |= shaken.is_none_or(gc_ai::perception::Seen::broken);
             }
             let fresh = contacts.new_ones(f);
             if first_contact.is_none() && !fresh.is_empty() {
@@ -826,7 +827,9 @@ fn soldiers_left(view: &Perception) -> [f32; 2] {
             .regiments
             .iter()
             .filter(|r| r.owner == p && !r.broken())
-            .fold((0, 0), |(l, f), r| (l + r.models as u32, f + r.full as u32));
+            .fold((0, 0), |(l, f), r| {
+                (l + u32::from(r.models), f + u32::from(r.full))
+            });
         left as f32 / full.max(1) as f32
     })
 }

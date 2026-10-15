@@ -89,6 +89,7 @@ fn fight(seed: u64) -> Battle {
         nav: &[],
         teams: &[],
         ground: gc_sim::Ground::FLAT,
+        champions: false,
     });
     let mid = Vec2::splat(128.0);
     let mut out: Vec<PlayerCommand> = Vec::new();
@@ -189,7 +190,7 @@ fn the_estimator_calls_eight_drill_battles_in_ten() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "slow: many arena battles, run by hand"]
 fn calls() {
     let n: u64 = std::env::var("AI_BATTLES")
         .ok()

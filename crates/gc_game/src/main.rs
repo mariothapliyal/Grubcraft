@@ -73,7 +73,8 @@
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
-//! the sound card; `--latency 1|2|3` sets
+//! the sound card; `--no-shadows` and `--no-glow` turn off the sun's
+//! shadows and the glow around bright light; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost.
@@ -278,6 +279,14 @@ fn parse_args() -> Options {
             opts.audio = false;
             continue;
         }
+        if flag == "--no-shadows" {
+            opts.render.shadows = false;
+            continue;
+        }
+        if flag == "--no-glow" {
+            opts.render.glow = false;
+            continue;
+        }
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
@@ -333,7 +342,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -514,7 +523,7 @@ fn formation_hint(f: Formation) -> String {
 /// screen: the simulation's numbers for its unit and state.
 fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
-        attack: stats.melee_attack as i32,
+        attack: i32::from(stats.melee_attack),
         defence: stats.melee_defence_in(r.formation, true),
         flank_defence: stats.melee_defence_in(r.formation, false),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
@@ -688,7 +697,7 @@ impl App {
                 max_height: heightmap.max_height(),
                 water_level: heightmap.water_level(),
                 heights: &heightmap.heights,
-            })
+            });
         });
         self.memory_timeline.mark("map generated + uploaded");
 
@@ -728,7 +737,11 @@ impl App {
             .iter()
             .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
             .collect();
-        let unit_points: Vec<u32> = game_data.units.iter().map(|u| u.points as u32).collect();
+        let unit_points: Vec<u32> = game_data
+            .units
+            .iter()
+            .map(|u| u32::from(u.points))
+            .collect();
         // gc_data and the lobby list the factions in the same order.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
             .units
@@ -737,7 +750,7 @@ impl App {
             .map(|(u, name)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
                 faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
-                points: u.points as u32,
+                points: u32::from(u.points),
             })
             .collect();
         let capacities = Capacities::default();
@@ -756,6 +769,7 @@ impl App {
                     nav: &nav,
                     teams: &[],
                     ground: heightmap.ground(),
+                    champions: false,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
@@ -793,7 +807,7 @@ impl App {
             game_data
                 .units
                 .iter()
-                .map(|u| u.name())
+                .map(gc_data::UnitRecord::name)
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -1650,6 +1664,9 @@ impl Running {
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
+        // The simulation's time, in ticks, interpolated as the regiments are.
+        let now = world.tick_count() as f32 - 1.0 + alpha;
+        self.puppets.champions(world.challenge(), now);
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -1718,7 +1735,7 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
-                disorder: r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32,
+                disorder: f32::from(r.disorder) / f32::from(gc_sim::combat::DISORDER_TICKS),
                 charge: r.charge,
                 fighter: fighter_of(stats, &r),
             };
@@ -1760,7 +1777,7 @@ impl Running {
                 // One block per regiment with a tall banner: the flag shows
                 // the team, or the morale colour when shaken.
                 let shade = if selected { 255 } else { 210 };
-                let tint = |c: u8| (c as u32 * shade / 255) as u8;
+                let tint = |c: u8| (u32::from(c) * shade / 255) as u8;
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -1818,7 +1835,7 @@ impl Running {
                     self.camera.focus_height,
                     pos.y,
                 )) > LOD_DISTANCE;
-                let bucket = &mut art.buckets[model * 2 + far as usize];
+                let bucket = &mut art.buckets[model * 2 + usize::from(far)];
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
@@ -1840,7 +1857,12 @@ impl Running {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [(pose.blend * 255.0) as u8, highlight, flat as u8 * 255, 0],
+                            flags: [
+                                (pose.blend * 255.0) as u8,
+                                highlight,
+                                u8::from(flat) * 255,
+                                0,
+                            ],
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -1872,7 +1894,7 @@ impl Running {
         if let Some(art) = &mut self.art {
             art.finish();
         }
-        self.push_arrows(alpha);
+        self.push_arrows(now);
         self.push_routes();
         if self.lens && !self.minds.is_empty() {
             let lenses = lens::lenses(&self.minds);
@@ -2215,7 +2237,7 @@ impl Running {
         // built (whatever the sandbox tuned stays in the sandbox).
         let net_seed = match &kind {
             MatchKind::Battle(setup) => setup.seed,
-            _ => None,
+            MatchKind::Sandbox => None,
         };
         if net_seed.is_none() && self.menu.net().in_match() {
             // Starting something else leaves the network match.
@@ -2229,9 +2251,12 @@ impl Running {
         }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
-        let teams: Vec<u8> = match &kind {
-            MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
-            _ => Vec::new(),
+        let (teams, champions): (Vec<u8>, bool) = match &kind {
+            MatchKind::Battle(setup) => (
+                setup.players.iter().map(|s| s.team).collect(),
+                battle::champions_allowed(setup),
+            ),
+            MatchKind::Sandbox => (Vec::new(), false),
         };
         self.world = tagged_alloc::scope(Tag::Sim, || {
             World::new(&MatchSetup {
@@ -2242,6 +2267,7 @@ impl Running {
                 nav: &nav,
                 teams: &teams,
                 ground: self.heightmap.ground(),
+                champions,
             })
         });
         self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
@@ -2300,7 +2326,7 @@ impl Running {
                 max_height: hm.max_height(),
                 water_level: hm.water_level(),
                 heights: &hm.heights,
-            })
+            });
         });
         self.hud.set_terrain(&self.heightmap, MAP_TILES);
         let nav = self.heightmap.nav_costs();
@@ -2348,9 +2374,13 @@ impl Running {
         }
     }
 
-    /// How the battle ended, once it has.
-    fn battle_outcome(&self) -> Option<&str> {
-        self.battle.as_ref()?.outcome.as_deref()
+    /// How the battle ended, once it has, and news of the champions.
+    fn battle_news(&self) -> Option<String> {
+        let battle = self.battle.as_ref()?;
+        match (&battle.outcome, &battle.champions) {
+            (Some(o), Some(c)) => Some(format!("{o}\n{c}")),
+            (o, c) => o.clone().or_else(|| c.clone()),
+        }
     }
 
     /// Once one side alone has held the field long enough, say who won.
@@ -2361,6 +2391,12 @@ impl Running {
         if battle.judge(&self.world, &self.parties) {
             if let Some(outcome) = &battle.outcome {
                 eprintln!("grubcraft: {outcome}");
+            }
+            self.sandbox.dirty = true;
+        }
+        if battle.herald(&self.world, &self.parties, &self.unit_names) {
+            if let Some(news) = &battle.champions {
+                eprintln!("grubcraft: {news}");
             }
             self.sandbox.dirty = true;
         }
@@ -2472,11 +2508,11 @@ impl Running {
                         self.camera.focus_height,
                         c.pos.y,
                     )) > LOD_DISTANCE;
-                    art.buckets[model * 2 + far as usize].push(SoldierInstance {
+                    art.buckets[model * 2 + usize::from(far)].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, flat as u8 * 255, 0],
+                        flags: [(pose.blend * 255.0) as u8, 0, u8::from(flat) * 255, 0],
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,
@@ -2495,9 +2531,9 @@ impl Running {
     }
 
     /// Volleys in flight: a few arrows each, arcing from the archers to where
-    /// they aimed. Only a picture; the simulation decides what they hit.
-    fn push_arrows(&mut self, alpha: f32) {
-        let now = self.world.tick_count() as f32 - 1.0 + alpha;
+    /// they aimed, at `now` (the simulation's time in ticks, interpolated).
+    /// Only a picture; the simulation decides what they hit.
+    fn push_arrows(&mut self, now: f32) {
         for v in self.world.volleys() {
             let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
             let t = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
@@ -2534,31 +2570,31 @@ impl Running {
             self.input.arrows
         };
         if up {
-            dy += 1.0
+            dy += 1.0;
         }
         if down {
-            dy -= 1.0
+            dy -= 1.0;
         }
         if left {
-            dx -= 1.0
+            dx -= 1.0;
         }
         if right {
-            dx += 1.0
+            dx += 1.0;
         }
         if let (Some(c), true, false) = (self.input.cursor, self.input.focused, self.menu_open) {
             let size = self.window.inner_size();
             if c.x <= EDGE_SCROLL_PX {
-                dx -= 1.0
+                dx -= 1.0;
             }
-            if c.x >= size.width as f64 - EDGE_SCROLL_PX {
-                dx += 1.0
+            if c.x >= f64::from(size.width) - EDGE_SCROLL_PX {
+                dx += 1.0;
             }
             if c.y <= EDGE_SCROLL_PX {
-                dy += 1.0
+                dy += 1.0;
             }
             // The bar fills the bottom edge during a match.
-            if c.y >= size.height as f64 - EDGE_SCROLL_PX && !self.match_started {
-                dy -= 1.0
+            if c.y >= f64::from(size.height) - EDGE_SCROLL_PX && !self.match_started {
+                dy -= 1.0;
             }
         }
         if dx != 0.0 || dy != 0.0 {
@@ -2594,12 +2630,12 @@ impl Running {
         let frame_avg = secs * 1000.0 / frames as f32;
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         let tick_avg = if self.stats.ticks > 0 {
-            ms(self.stats.tick_time) / self.stats.ticks as f64
+            ms(self.stats.tick_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
         let ai_avg = if self.stats.ticks > 0 {
-            ms(self.stats.ai_time) / self.stats.ticks as f64
+            ms(self.stats.ai_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
@@ -2643,7 +2679,7 @@ impl Running {
             self.data_label,
             self.sounds
                 .as_ref()
-                .map_or("off".to_string(), |s| s.overlay_line()),
+                .map_or("off".to_string(), sounds::Sounds::overlay_line),
             info.name,
             info.backend,
         );
@@ -2660,7 +2696,7 @@ impl Running {
         } else if self.sandbox.panel {
             self.sandbox_panel()
         } else {
-            self.battle_outcome().unwrap_or_default().to_string()
+            self.battle_news().unwrap_or_default()
         };
         if self.lens && !self.menu_open {
             let lenses = lens::lenses(&self.minds);
@@ -2716,13 +2752,13 @@ impl Running {
         };
         let faction = self.faction_of(side);
         let personality = persona.unwrap_or_else(|| {
-            gc_ai::personality::pick(faction, self.world.tick_count() ^ side as u32)
+            gc_ai::personality::pick(faction, self.world.tick_count() ^ u32::from(side))
         });
         let mind = Mind::new(MindConfig {
             party: side,
             difficulty: level,
             personality,
-            seed: self.seed ^ (self.matches << 8) ^ side as u64,
+            seed: self.seed ^ (self.matches << 8) ^ u64::from(side),
         });
         let who = mind.personality().name.clone();
         tagged_alloc::scope(Tag::Ai, || self.minds.add(mind));
@@ -2755,7 +2791,8 @@ impl Running {
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
         let types = self.unit_stats.len() as i32;
-        self.sandbox.unit = (self.sandbox.unit as i32 + step).rem_euclid(types.max(1)) as UnitId;
+        self.sandbox.unit =
+            (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
         self.sandbox.dirty = true;
     }
 
@@ -2929,8 +2966,8 @@ impl Running {
             lines.extend(o.lines(lan.status(), lan.waiting()));
             lines.push(String::new());
         }
-        if let Some(outcome) = self.battle_outcome() {
-            lines.push(outcome.to_string());
+        if let Some(news) = self.battle_news() {
+            lines.push(news);
             lines.push(String::new());
         }
         if self.online.is_some() {
@@ -3199,7 +3236,7 @@ fn digit(code: KeyCode) -> Option<usize> {
 
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
 fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
-    Vec2::from_angle(a.0 as f32 / 65536.0 * std::f32::consts::TAU)
+    Vec2::from_angle(f32::from(a.0) / 65536.0 * std::f32::consts::TAU)
 }
 
 fn main() {

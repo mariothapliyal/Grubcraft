@@ -191,6 +191,9 @@ pub struct LobbySettings {
     pub on_drop: OnDrop,
     /// Field Battle: points each side raises its army with.
     pub budget: Budget,
+    /// Whether champions may duel between the lines before a battle with a
+    /// computer player (a chance, not every time).
+    pub champions: bool,
 }
 
 impl Default for LobbySettings {
@@ -201,6 +204,7 @@ impl Default for LobbySettings {
             tempo: Tempo::Normal,
             on_drop: OnDrop::Wait,
             budget: Budget::Battle,
+            champions: true,
         }
     }
 }
@@ -713,7 +717,7 @@ mod tests {
             .filter(|s| s.occupied())
             .map(|s| s.color)
             .collect();
-        colours.sort();
+        colours.sort_unstable();
         colours.dedup();
         assert_eq!(colours.len(), 3);
     }
