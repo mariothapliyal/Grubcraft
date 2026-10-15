@@ -483,7 +483,7 @@ A Field Battle army is ten regiments from the faction's roster (see [06 · Game 
 | Bone Pikes | 20 × 8, speed 2.5, spacing 0.55, Def 50 | 19 × 7, speed 2.75, spacing 0.7, Def 55 (fewer hit points, harder to hit, looser block, a little quicker) |
 | Yumi Ashigaru | unchanged | |
 
-Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins on today's rules, after the [lines that push retune](#lines-that-push-retune) below (champions off; with them allowed no pair moves by more than 4 points):
+Two Veteran AIs, one per faction, on the generated map with the terrain rules (high ground and fords, [05 · Combat](05-combat.md)), 192 battles a pair (seeds 2001 to 2192, ends swapped every battle); the first faction's wins on today's rules, after the [lines that push retune](#lines-that-push-retune) below (champions off; with them allowed no pair moves by more than 6 points):
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
