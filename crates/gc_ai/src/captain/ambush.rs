@@ -84,7 +84,7 @@ pub(super) fn line_ambushers(line: usize) -> usize {
 /// fast regiments, as the layout makes hammers of them: its fast troops
 /// beside a line (or a third of an army of fast troops only), otherwise its
 /// line infantry when there are enough to spare.
-fn ambusher_class(line: usize, shock: usize) -> Option<Class> {
+pub(super) fn ambusher_class(line: usize, shock: usize) -> Option<Class> {
     if shock > 0 && (line > 0 || shock >= 3) {
         Some(Class::Shock)
     } else {

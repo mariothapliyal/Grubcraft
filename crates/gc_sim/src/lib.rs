@@ -11,9 +11,11 @@
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod combat;
+pub mod fork;
 pub mod formation;
 mod hash;
 pub mod morale;
@@ -24,6 +26,7 @@ pub mod stances;
 pub mod terrain;
 pub mod vision;
 
+pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
@@ -452,7 +455,8 @@ pub struct World {
     map_tiles: u32,
     nav: Nav,
     stances: Stances,
-    terrain: Terrain,
+    /// Shared with this world's scratch copies (see [`fork`]).
+    terrain: Arc<Terrain>,
     vision: Vision,
     pub regiments: Regiments,
 }
@@ -475,7 +479,7 @@ impl World {
                 setup.capacities.regiments as usize,
             ),
             stances,
-            terrain,
+            terrain: Arc::new(terrain),
             vision,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }

@@ -153,6 +153,51 @@ impl Posture {
 /// Seconds a side expecting to lose waits for an enemy that doesn't come
 /// before going to fetch it.
 const TIRED_OF_WAITING: f32 = 30.0;
+
+/// Whether the army waits for the enemy or goes to meet it, when a plan
+/// says (see [`Plan`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Stance {
+    /// Left to the Captain's own judgement, as without a plan.
+    Own,
+    /// March on the enemy as soon as formed (still never into water it is
+    /// waiting behind).
+    Advance,
+    /// Stand and receive them.
+    Hold,
+}
+
+impl Stance {
+    pub const ALL: [Stance; 3] = [Stance::Own, Stance::Advance, Stance::Hold];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Stance::Own => "as it sees fit",
+            Stance::Advance => "advancing",
+            Stance::Hold => "holding",
+        }
+    }
+}
+
+/// A battle plan chosen ahead (by rehearsing it, see [`crate::rehearsal`]):
+/// the doctrine to fight with and whether to wait or go. The Captain follows
+/// it until given another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Plan {
+    pub doctrine: Doctrine,
+    pub stance: Stance,
+}
+
+impl Plan {
+    /// "Hammer and anvil, advancing".
+    pub fn describe(&self) -> String {
+        match self.stance {
+            Stance::Own => self.doctrine.name().to_string(),
+            s => format!("{}, {}", self.doctrine.name(), s.name()),
+        }
+    }
+}
+
 /// Space left between regiments side by side in the line, tiles.
 const LINE_GAP: f32 = 1.5;
 /// A regiment shouldn't meet an enemy where it would overlap a friend's
@@ -333,9 +378,13 @@ impl Ctx<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct Captain {
     pub doctrine: Doctrine,
     pub posture: Posture,
+    /// The plan it was told to follow, if any; without one it picks its own
+    /// doctrine and posture as it goes.
+    pub plan: Option<Plan>,
     /// The enemy is beaten and the regiments are finishing off the rest.
     pub finishing: bool,
     /// Expecting to lose, it waited for an enemy that never came, and has
@@ -425,6 +474,7 @@ impl Captain {
         Captain {
             doctrine: Doctrine::HoldTheLine,
             posture: Posture::Form,
+            plan: None,
             finishing: false,
             fetching: false,
             estimate: None,
@@ -461,6 +511,21 @@ impl Captain {
             ambush: ambush::Plan::default(),
             taken: Vec::new(),
         }
+    }
+
+    /// Follow `plan` from the next look: switch to its doctrine (if this
+    /// army can fight that way) and wait or advance as it says.
+    pub fn follow(&mut self, plan: Plan) {
+        if self.plan != Some(plan) {
+            self.plan = Some(plan);
+            self.next_doctrine = 0;
+        }
+    }
+
+    /// Whether the battle has started for it: it has seen the enemy and laid
+    /// out its line.
+    pub fn started(&self) -> bool {
+        self.started
     }
 
     /// Where the line stands and which way it faces.
@@ -760,6 +825,9 @@ impl Captain {
         });
         let mut best: Option<(f32, Doctrine)> = None;
         for &d in ctx.knobs.doctrines {
+            if !fits(d, line, shock, ranged) {
+                continue;
+            }
             let fit = match d {
                 Doctrine::HoldTheLine => {
                     0.5 + if mine.ranged > theirs.ranged {
@@ -774,15 +842,9 @@ impl Captain {
                     None => continue,
                 },
                 Doctrine::RefusedFlank => {
-                    if line < 4 {
-                        continue;
-                    }
                     0.3 + if margin < -0.05 { 0.4 } else { 0.0 } + 0.3 * p.cunning()
                 }
                 Doctrine::SkirmishScreen => {
-                    if ranged < 2 || line == 0 {
-                        continue;
-                    }
                     0.3 + if mine.ranged > theirs.ranged * 1.3 {
                         0.5
                     } else {
@@ -803,7 +865,13 @@ impl Captain {
             } else {
                 COMMITMENT
             };
-            let score = fit + 0.6 * p.doctrines.of(d) + jitter + stick;
+            // A plan's doctrine wins, when this army can fight that way.
+            let planned = self.plan.is_some_and(|plan| plan.doctrine == d);
+            let score = if planned {
+                f32::INFINITY
+            } else {
+                fit + 0.6 * p.doctrines.of(d) + jitter + stick
+            };
             if best.is_none_or(|(s, _)| score > s) {
                 best = Some((score, d));
             }
@@ -1376,6 +1444,11 @@ impl Captain {
                 // Ambushers lying in wait need the enemy to come to them,
                 // archers in range or not.
                 outshot || (out_of_range && !self.lying_in_wait()) || waited > patience.max(0.0)
+            };
+            let advance = match self.plan.map(|plan| plan.stance) {
+                Some(Stance::Advance) => !behind_water,
+                Some(Stance::Hold) => only_archers,
+                _ => advance,
             };
             let want = if advance {
                 Posture::Advance
@@ -2328,6 +2401,20 @@ fn meeting(r: &Seen, f: &Seen) -> Seen {
         pos: f.pos - dir * (f.half_extent(dir) + 0.5 * r.depth + MEET_GAP),
         facing: dir,
         ..*r
+    }
+}
+
+/// Whether an army with this many line, shock and ranged regiments can
+/// fight as `d` asks: a hammer needs fast troops and something to pin the
+/// enemy with, a refused flank a line long enough to bend, a screen archers
+/// and a line to fall back behind.
+pub fn fits(d: Doctrine, line: usize, shock: usize, ranged: usize) -> bool {
+    match d {
+        Doctrine::HoldTheLine => true,
+        Doctrine::HammerAndAnvil => shock > 0 && line + ranged > 0,
+        Doctrine::RefusedFlank => line >= 4,
+        Doctrine::SkirmishScreen => ranged >= 2 && line > 0,
+        Doctrine::Ambush => ambush::ambusher_class(line, shock).is_some(),
     }
 }
 
