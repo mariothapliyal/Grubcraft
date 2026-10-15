@@ -38,14 +38,18 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Field Battle mode: army builder with points, deployment phase, victory conditions, 2 battle maps.
 - Teams: teammates are allied, through one hostility test that reads a stance table filled from the lobby ([18 · AI](18-ai.md#engine-hooks), hook 1). *Built with AI-1 step 1: lobby teams reach the sim and teammates don't fight.*
 - AI track: the battle AI (phases AI-1 and AI-2), so any Field Battle or sandbox slot can be an AI opponent or ally.
+- Terrain rules for battle maps: high ground and fords ([05 · Combat](05-combat.md#terrain)). *Built (2026-10-13): fighting downhill and shooting from high ground, slow wading, no charging out of a river, extra blows on waders. Friendly regiments queue in fords and passes instead of stacking (built the same day).*
 - Desync detection with report files; cross-platform determinism CI on golden replays.
 - Replays (record and play back).
+- Soldier fighting, stage 1: duel pairs and living formations (acceleration, settle, idle sway), see [09](09-art-and-audio.md#animation). *Built.*
 - Packaging: Mac `.app` (ad-hoc signed), Windows `.exe`, one zip each.
 - **Exit:** a 2v2 Field Battle across two Macs and two Windows PCs on home Wi-Fi with zero desyncs.
+- **Progress (2026-10-13):** the netcode is built in steps. Step 1 is built: `gc_net` hosts and joins lobbies over UDP, finds games on the network, checks builds, data and maps match, and plays Field Battles in host-sequenced lockstep with desync detection and disconnect notices ([11 · Networking](11-networking.md#transport) has the detail and the next steps: adaptive input delay and desync reports, encryption and join codes, baked maps, army builder, replays, packaging).
 
 ### M3 · First Harvest (Conquest playable)
 *Goal: the primary mode, with two factions.*
 - Workers, Grub seeps and Marrow veins, structures and construction, production queues, supply and upkeep, tech tiers.
+- Soldier fighting, stage 2: block, stagger and hit-reaction clips and partner kills, with the chosen faction art kits.
 - Ember Clans economy and Honor; Brood veins, larvae, metamorphosis, Reclaimers.
 - Unit, hero and ability data for all four factions is already drafted in `data/rosters/` ([17 · Unit Rosters](17-unit-rosters.md)); M3 bakes it into the game.
 - Heroes: levelling, abilities from the effect-primitive system, items, altar revive.
@@ -79,7 +83,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Disconnect handling and rejoin, multiplayer save and load.
 - Settings completeness, key rebinding, accessibility options.
 - Performance pass against every budget; stretch targets attempted.
-- Art pass: custom models for faction-defining units and heroes.
+- Art pass: custom models for faction-defining units and heroes, moving toward high-fidelity soldiers (smooth skinning, richer skeletons); soldier fighting stage 3, matched kills for heroes, charges and cavalry.
 - Simple self-update check (host's version offered to joining friends).
 - Lobby option: an AI runs a disconnected player's army until they rejoin.
 - **Exit:** 1.0 tagged; a month of game nights with no crash or desync.
