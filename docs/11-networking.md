@@ -61,7 +61,7 @@ Tests: three `Lan`s in one process play 300 turns over real UDP on this machine,
 
 **Built in step 2 (2026-10-15):** the adaptive input delay, desync reports, and Wait or Play on when a player drops (all described above).
 
-**Next steps for M2:** (3) encryption (X25519 and ChaCha20-Poly1305), join codes and the lobby password; (4) baked battle maps, so every machine has the identical map without relying on floating point; (5) the army builder with points and a deployment phase; (6) replays and golden-replay determinism CI (in step with the golden replays the M1 thread is adding), sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging. Until the maps are baked, the map is generated from the seed with floating-point maths, which is identical between two Macs but not guaranteed between a Mac and a Windows PC; the map hash check catches a difference before the battle starts.
+**Next steps for M2:** (3) encryption (X25519 and ChaCha20-Poly1305), join codes and the lobby password; (4) baked battle maps, so every machine has the identical map without relying on floating point; (5) the army builder with points and a deployment phase; (6) replays in the game: recording every match on `gc_replay::Recorder` and playback (the file format and the golden-replay CI were built for the M1 exit), desync reports moved onto the same file, sim snapshots, and with them resyncing a diverged player and rejoining after a restart; (7) packaging. Until the maps are baked, the map is generated from the seed with floating-point maths, which is identical between two Macs but not guaranteed between a Mac and a Windows PC; the map hash check catches a difference before the battle starts.
 
 ## Session flow
 
@@ -104,6 +104,8 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 - **Replays** are the match header (build, data hash, settings, seed, players) plus the turn-by-turn command stream, delta-encoded and LZ4-compressed: about **50 to 150 KB per hour** of play. Every match is saved automatically.
 - Seeking in long replays uses keyframe snapshots the viewer generates on first playback and caches locally.
 - Replays are tied to the build and data hash they were recorded with. For a personal game that's acceptable; the replay browser marks incompatible ones.
+
+**Built so far (M1 exit, 2026-10-15):** the replay file and its tools, `gc_replay`, used for the golden replays. A `.gcr` file is the magic `GCRP`, a format number, then an LZ4-compressed body: a note, the seed, the regiment capacity, the unit table, teams, the walkable-ground costs and heights (so the map needs no generator), the command of every tick that had any, and the state hash at tick 0 and every second after. It has its own command encoding, separate from `gc_net::wire`, so a protocol change never invalidates stored replays. `gc_replay::Recorder` records any match (`Recorder::new(&setup, &world, note)`, then `recorder.tick(&mut world, &commands)` in place of `world.tick`). Not built yet: recording every match in the game, a playback viewer, keyframes for seeking, and the build and data hash in the header; those come with M2 step 6. Most of a short replay is the stored map (about 90 KB for a 256-tile map); the commands of a 4-minute 2v2 take about 10 KB.
 
 ## Playing beyond one Wi-Fi network
 
