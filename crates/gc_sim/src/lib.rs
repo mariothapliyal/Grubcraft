@@ -99,9 +99,9 @@ pub enum Formation {
     /// defence (not for swinging weapons, which want the room), and spears
     /// and shields lose their mutual support.
     Loose = 2,
-    /// Shields locked (shielded regiments only): as Tight, and arrows from
-    /// the front mostly glance off, but it marches at half pace and can't
-    /// charge.
+    /// Shields locked (shielded regiments only): as Tight from the front,
+    /// where arrows mostly glance off too, but no help on the flanks; it
+    /// marches at half pace and can't charge.
     ShieldWall = 3,
 }
 
@@ -143,31 +143,50 @@ impl Formation {
         }
     }
 
-    /// Distance between soldiers, percent of the unit's own spacing.
-    pub fn spacing_percent(self) -> i32 {
-        match self {
+    /// `spacing` (a unit's file or rank spacing) in this formation.
+    pub fn space(self, spacing: Fx) -> Fx {
+        let percent = match self {
             Formation::Line => 100,
             Formation::Tight => 80,
             Formation::Loose => 150,
             Formation::ShieldWall => 70,
-        }
-    }
-
-    /// `spacing` (a unit's file or rank spacing) in this formation.
-    pub fn space(self, spacing: Fx) -> Fx {
-        match self {
-            Formation::Line => spacing,
-            f => Fx::from_raw(
-                (spacing.raw() as i64 * f.spacing_percent() as i64 / 100).max(1) as i32,
-            ),
-        }
+        };
+        Fx::from_raw((spacing.raw() as i64 * percent / 100).max(1) as i32)
     }
 
     /// Whether the soldiers stand closer than usual.
     pub fn close(self) -> bool {
         matches!(self, Formation::Tight | Formation::ShieldWall)
     }
+
+    /// Marching pace, percent of the regiment's speed.
+    pub fn pace_percent(self) -> i32 {
+        match self {
+            Formation::ShieldWall => SHIELD_WALL_PACE_PERCENT,
+            _ => 100,
+        }
+    }
+
+    /// Whether a regiment in this formation can charge.
+    pub fn can_charge(self) -> bool {
+        self != Formation::ShieldWall
+    }
+
+    /// Damage, percent, a volley does to a regiment in this formation,
+    /// landing on its `front` or not.
+    pub fn arrow_percent(self, front: bool) -> u64 {
+        match self {
+            Formation::ShieldWall if front => SHIELD_WALL_ARROW_PERCENT,
+            _ => 100,
+        }
+    }
 }
+
+/// Weapon flags as bits ([`UnitStats::weapons`]), as the data, the network
+/// and replays carry them.
+pub const WEAPON_REACH: u8 = 1;
+pub const WEAPON_SWING_ROOM: u8 = 2;
+pub const WEAPON_SHIELD: u8 = 4;
 
 /// What the simulation needs from a regiment type's definition. The game
 /// builds these from the baked data tables (`gc_data`); tests build them by
@@ -265,14 +284,23 @@ impl UnitStats {
         }
     }
 
-    /// The weapon flags as bits: reach 1, swing room 2, shield 4.
+    /// The weapon flags as `WEAPON_*` bits.
     pub fn weapons(&self) -> u8 {
-        self.reach as u8 | (self.swing_room as u8) << 1 | (self.shield as u8) << 2
+        let bit = |on: bool, b: u8| if on { b } else { 0 };
+        bit(self.reach, WEAPON_REACH)
+            | bit(self.swing_room, WEAPON_SWING_ROOM)
+            | bit(self.shield, WEAPON_SHIELD)
     }
 
-    /// Size of a block of `models` soldiers in `files` files: (width, depth).
-    pub fn block_size(&self, files: u16, models: u16) -> (Fx, Fx) {
-        formation::block_size(files, models, self.file_spacing, self.rank_spacing)
+    /// The same stats with the weapon flags `bits` (as [`Self::weapons`]
+    /// gives them); `None` if a bit is unknown.
+    pub fn with_weapons(self, bits: u8) -> Option<UnitStats> {
+        (bits & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) == 0).then_some(UnitStats {
+            reach: bits & WEAPON_REACH != 0,
+            swing_room: bits & WEAPON_SWING_ROOM != 0,
+            shield: bits & WEAPON_SHIELD != 0,
+            ..self
+        })
     }
 
     /// File and rank spacing in `formation`.
@@ -283,7 +311,8 @@ impl UnitStats {
         )
     }
 
-    /// Size of a block in `formation`: (width, depth).
+    /// Size of a block of `models` soldiers in `files` files, standing in
+    /// `formation`: (width, depth).
     pub fn block_size_in(&self, formation: Formation, files: u16, models: u16) -> (Fx, Fx) {
         let (fs, rs) = self.spacing(formation);
         formation::block_size(files, models, fs, rs)
@@ -292,6 +321,19 @@ impl UnitStats {
     /// Whether this regiment may stand in `formation`.
     pub fn can_form(&self, formation: Formation) -> bool {
         formation != Formation::ShieldWall || self.shield
+    }
+
+    /// Soldiers who strike at a foe ahead, in percent of a soldier: the
+    /// front rank, and for spears and pikes the second rank at
+    /// [`SECOND_RANK_PERCENT`].
+    pub fn front_fighters_percent(&self, files: u16, models: u16) -> u64 {
+        let front = files.min(models) as u64;
+        let second = if self.reach {
+            front.min(models as u64 - front)
+        } else {
+            0
+        };
+        front * 100 + second * SECOND_RANK_PERCENT
     }
 
     /// Percent of its usual melee damage it deals in `formation`.
@@ -305,13 +347,14 @@ impl UnitStats {
         }
     }
 
-    /// Melee defence it gains (or, negative, loses) in `formation`.
-    pub fn formation_defence(&self, formation: Formation) -> i32 {
+    /// Melee defence it gains (or, negative, loses) in `formation` against
+    /// a blow on its `front` or not. A shield wall guards its front only.
+    pub fn formation_defence(&self, formation: Formation, front: bool) -> i32 {
         match formation {
-            Formation::Line => 0,
-            Formation::Tight | Formation::ShieldWall => TIGHT_DEFENCE,
-            Formation::Loose if self.swing_room => 0,
-            Formation::Loose => -LOOSE_DEFENCE,
+            Formation::ShieldWall if !front => 0,
+            f if f.close() => TIGHT_DEFENCE,
+            Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
+            _ => 0,
         }
     }
 }
@@ -542,10 +585,10 @@ impl World {
             Command::SetFormation {
                 regiment,
                 formation,
-            } => match self.regiments.resolve(regiment) {
-                Some(i) if self.regiments.owner[i] == pc.player => {
-                    let stats = &self.units[self.regiments.unit[i] as usize];
-                    self.regiments.set_formation(i, formation, stats)
+            } => match self.regiments.owner(regiment) {
+                Some(owner) if owner == pc.player => {
+                    self.regiments
+                        .set_formation(regiment, formation, &self.units)
                 }
                 _ => false,
             },

@@ -8,10 +8,7 @@ use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::Nav;
 use crate::terrain::Terrain;
-use crate::{
-    Formation, PlayerId, SHIELD_WALL_PACE_PERCENT, Stances, StateHasher, TICKS_PER_SECOND, UnitId,
-    UnitStats,
-};
+use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// Generational handle to a regiment. Stale handles (to a slot that has since
 /// been freed and reused) are detected and rejected.
@@ -31,6 +28,19 @@ pub struct Order {
     pub files: u16,
     /// Tiles per second; zero or negative means the regiment's own speed.
     pub pace: Fx,
+}
+
+/// Where a regiment is in its rhythm of melee blows (see `Combat`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Strike {
+    /// Strikes on its turn, once a second.
+    #[default]
+    Turn,
+    /// Spears or pikes that have just met their foe: strike this tick.
+    Early,
+    /// Struck early, so it sits out its next turn: long weapons strike
+    /// sooner, never more often.
+    Rest,
 }
 
 /// When the travel direction is further than this from the facing, the
@@ -86,12 +96,7 @@ pub struct Regiments {
     pub(crate) engaged: Vec<Option<RegimentHandle>>,
     /// Ticks of charge bonus left.
     pub(crate) charge: Vec<u16>,
-    /// A spear or pike regiment that has just met its foe strikes this tick,
-    /// whatever its usual turn (set and spent within one tick).
-    pub(crate) first_strike: Vec<bool>,
-    /// It struck early when lines met, so it sits out its next turn: long
-    /// weapons strike sooner, never more often.
-    pub(crate) struck_early: Vec<bool>,
+    pub(crate) strike: Vec<Strike>,
     /// Ticks until a ranged regiment can loose its next volley.
     pub(crate) reload: Vec<u16>,
     /// Damage taken but not yet a whole hit point, in 1/256ths.
@@ -141,8 +146,7 @@ impl Regiments {
             attack_target: vec![None; n],
             engaged: vec![None; n],
             charge: vec![0; n],
-            first_strike: vec![false; n],
-            struck_early: vec![false; n],
+            strike: vec![Strike::Turn; n],
             reload: vec![0; n],
             damage_carry: vec![0; n],
             full_models: vec![0; n],
@@ -201,8 +205,7 @@ impl Regiments {
         self.attack_target[i] = None;
         self.engaged[i] = None;
         self.charge[i] = 0;
-        self.first_strike[i] = false;
-        self.struck_early[i] = false;
+        self.strike[i] = Strike::Turn;
         self.reload[i] = 0;
         self.damage_carry[i] = 0;
         self.full_models[i] = stats.models;
@@ -248,11 +251,14 @@ impl Regiments {
     /// only shielded ones can form a shield wall.
     pub(crate) fn set_formation(
         &mut self,
-        i: usize,
+        h: RegimentHandle,
         formation: Formation,
-        stats: &UnitStats,
+        units: &[UnitStats],
     ) -> bool {
-        if self.morale_state[i].broken() || !stats.can_form(formation) {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if self.morale_state[i].broken() || !units[self.unit[i] as usize].can_form(formation) {
             return false;
         }
         self.formation[i] = formation;
@@ -416,11 +422,10 @@ impl Regiments {
                 };
                 let delta = point - self.position[i];
                 let dist = delta.length();
-                let pace = if self.formation[i] == Formation::ShieldWall {
-                    let wall = self.speed[i].raw() * SHIELD_WALL_PACE_PERCENT / 100;
-                    self.pace[i].min(Fx::from_raw(wall.max(1)))
-                } else {
-                    self.pace[i]
+                // A shield wall shuffles along at half its speed.
+                let pace = match self.formation[i].pace_percent() {
+                    100 => self.pace[i],
+                    p => self.pace[i].min(Fx::from_raw((self.speed[i].raw() * p / 100).max(1))),
                 };
                 let shuffle = last && dist <= SHUFFLE_DISTANCE && self.target_facing[i].is_some();
                 let step = if shuffle {
@@ -526,7 +531,7 @@ impl Regiments {
             hash_handle(h, self.engaged[i]);
             h.u16(self.charge[i]);
             // Only when set, as for the formation above.
-            if self.struck_early[i] {
+            if self.strike[i] == Strike::Rest {
                 h.u8(1);
             }
             h.u16(self.reload[i]);

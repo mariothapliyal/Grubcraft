@@ -99,8 +99,8 @@ use gc_render::{
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
-    Capacities, Formation, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle,
-    UnitId, UnitStats, World,
+    Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState, PlayerCommand, PlayerId,
+    RegimentHandle, TIGHT_DEFENCE, UnitId, UnitStats, World,
 };
 use gc_ui::lobby::MatchStart;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
@@ -446,17 +446,18 @@ impl Sandbox {
 }
 
 /// What a formation does, in a line for the panel.
-fn formation_hint(f: Formation) -> &'static str {
+fn formation_hint(f: Formation) -> String {
     match f {
-        Formation::Line => "each regiment's own spacing",
-        Formation::Tight => {
-            "closer ranks hold better (+10 defence) but arrows find more marks; big swings are cramped"
-        }
-        Formation::Loose => {
-            "fewer arrows hit, but gaps cost 10 defence (not for big swings); spears and shields lose their support"
-        }
+        Formation::Line => "each regiment's own spacing".into(),
+        Formation::Tight => format!(
+            "closer ranks hold better (+{TIGHT_DEFENCE} defence) but arrows find more marks; big swings are cramped"
+        ),
+        Formation::Loose => format!(
+            "fewer arrows hit, but gaps cost {LOOSE_DEFENCE} defence (not for big swings); spears and shields lose their support"
+        ),
         Formation::ShieldWall => {
             "arrows from the front mostly glance off; half pace, no charging, no help on the flanks"
+                .into()
         }
     }
 }
@@ -1231,18 +1232,8 @@ impl Running {
         self.group.clear();
         for &h in &self.selected {
             let r = self.world.regiments.get(h).unwrap();
-            let stats = &self.world.units()[r.unit as usize];
-            let (file_spacing, rank_spacing) = stats.spacing(r.formation);
-            self.group.push(GroupMember {
-                handle: h,
-                position: r.position,
-                facing: r.facing,
-                files: r.files,
-                models: r.models,
-                file_spacing,
-                rank_spacing,
-                speed: stats.speed,
-            });
+            self.group
+                .push(GroupMember::of(&r, &self.world.units()[r.unit as usize]));
         }
         self.group_commands.clear();
         formation::group_move(&mut self.group, order, &mut self.group_commands);
@@ -1399,24 +1390,20 @@ impl Running {
     /// Tight instead of a shield wall.
     fn cycle_formation(&mut self) {
         let regiments = &self.world.regiments;
-        self.selected.retain(|&h| regiments.get(h).is_some());
-        let Some(first) = self.selected.first().and_then(|&h| regiments.get(h)) else {
+        let units = self.world.units();
+        let selection = || self.selected.iter().filter_map(|&h| regiments.get(h));
+        let Some(first) = selection().next() else {
             return;
         };
-        let units = self.world.units();
-        let shields = self
-            .selected
-            .iter()
-            .filter_map(|&h| regiments.get(h))
-            .any(|r| units[r.unit as usize].shield);
+        let shields = selection().any(|r| units[r.unit as usize].shield);
         let next = match first.formation {
             Formation::Line => Formation::Tight,
             Formation::Tight => Formation::Loose,
             Formation::Loose if shields => Formation::ShieldWall,
             Formation::Loose | Formation::ShieldWall => Formation::Line,
         };
-        for &regiment in &self.selected {
-            let r = regiments.get(regiment).unwrap();
+        for r in selection() {
+            // Regiments without shields close up instead.
             let formation = if units[r.unit as usize].can_form(next) {
                 next
             } else {
@@ -1425,7 +1412,7 @@ impl Running {
             self.human_orders.push(PlayerCommand {
                 player: self.sandbox.side,
                 command: gc_sim::Command::SetFormation {
-                    regiment,
+                    regiment: r.handle,
                     formation,
                 },
             });
@@ -2523,7 +2510,7 @@ impl Running {
             return;
         };
         let stats = &self.unit_stats[self.sandbox.unit as usize];
-        let (width, depth) = stats.block_size(stats.files, stats.models);
+        let (width, depth) = stats.block_size_in(Formation::Line, stats.files, stats.models);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = if self.world.nav().walkable(fx_vec(at)) {
             [cr, cg, cb, 200]
@@ -2761,19 +2748,19 @@ impl Running {
 
     /// The selection's formation, for the panel.
     fn formation_line(&self) -> String {
-        let mut names: Vec<&str> = self
+        let mut formations = self
             .selected
             .iter()
             .filter_map(|&h| self.world.regiments.get(h))
-            .map(|r| r.formation.name())
-            .collect();
-        names.dedup();
-        match names.as_slice() {
-            [] => {
+            .map(|r| r.formation);
+        match formations.next() {
+            None => {
                 "order    F: formation (Line, Tight, Loose, Shield wall) for the selection".into()
             }
-            [one] => format!("order    {one}   F: next formation"),
-            _ => "order    mixed formations   F: next formation".into(),
+            Some(f) if formations.all(|g| g == f) => {
+                format!("order    {}   F: next formation", f.name())
+            }
+            Some(_) => "order    mixed formations   F: next formation".into(),
         }
     }
 

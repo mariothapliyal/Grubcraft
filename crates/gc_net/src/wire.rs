@@ -180,7 +180,7 @@ fn write_stats(w: &mut Writer, s: &UnitStats) {
 }
 
 fn read_stats(r: &mut Reader) -> Option<UnitStats> {
-    Some(UnitStats {
+    UnitStats {
         speed: r.fx()?,
         turn_rate: r.var_as()?,
         models: r.var_as()?,
@@ -201,14 +201,8 @@ fn read_stats(r: &mut Reader) -> Option<UnitStats> {
         reach: false,
         swing_room: false,
         shield: false,
-    })
-    .zip(r.u8().filter(|&w| w < 8))
-    .map(|(s, weapons)| UnitStats {
-        reach: weapons & 1 != 0,
-        swing_room: weapons & 2 != 0,
-        shield: weapons & 4 != 0,
-        ..s
-    })
+    }
+    .with_weapons(r.u8()?)
 }
 
 pub fn write_command(w: &mut Writer, c: &Command) {

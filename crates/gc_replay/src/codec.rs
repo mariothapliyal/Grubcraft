@@ -205,7 +205,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn stats(&mut self) -> Option<UnitStats> {
-        let mut stats = UnitStats {
+        UnitStats {
             speed: self.fx()?,
             turn_rate: self.var_as()?,
             models: self.var_as()?,
@@ -222,20 +222,12 @@ impl<'a> Reader<'a> {
             reload_ticks: self.var_as()?,
             accuracy: self.u8()?,
             morale: self.u8()?,
-            mass: Mass::Medium,
+            mass: Mass::from_u8(self.u8()?)?,
             reach: false,
             swing_room: false,
             shield: false,
-        };
-        stats.mass = Mass::from_u8(self.u8()?)?;
-        let weapons = self.u8()?;
-        if weapons >= 8 {
-            return None;
         }
-        stats.reach = weapons & 1 != 0;
-        stats.swing_room = weapons & 2 != 0;
-        stats.shield = weapons & 4 != 0;
-        Some(stats)
+        .with_weapons(self.u8()?)
     }
 
     pub fn command(&mut self) -> Option<PlayerCommand> {

@@ -10,6 +10,7 @@ use gc_sim::{
 };
 
 const SOUTH: Angle = Angle(0x4000);
+const WEST: Angle = Angle(0x8000);
 /// Drill unit 0: 24 spearmen in 8 files, 10 hp each. Here it is the
 /// regiment under test (player 0), its stats changed per test.
 const TESTED: u16 = 0;
@@ -92,43 +93,58 @@ fn run(w: &mut World, ticks: u32) {
     }
 }
 
+/// March `regiment` to (`x`, `y`) at `pace` (zero for its own speed).
+fn march(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32, pace: Fx) -> bool {
+    order(
+        w,
+        player,
+        Command::MoveTo {
+            regiment,
+            target: FxVec2::from_ints(x, y),
+            facing: None,
+            files: 0,
+            pace,
+        },
+    )
+}
+
+/// Tick until `regiment` is in melee (at most 20 seconds).
+fn until_engaged(w: &mut World, regiment: RegimentHandle) {
+    for _ in 0..20 * 20 {
+        w.tick(&[]);
+        if w.regiments.get(regiment).unwrap().engaged {
+            return;
+        }
+    }
+    panic!("the regiments never met");
+}
+
+/// Where the dummy starts and which way it faces: straight ahead of the
+/// tested regiment, or off its right flank.
+const AHEAD: ((i32, i32), Angle) = ((100, 90), SOUTH);
+const RIGHT: ((i32, i32), Angle) = ((110, 100), WEST);
+
 /// The tested regiment stands facing north in `mine`; the dummy, in
-/// `theirs`, walks into its front without charging. Returns the hit points
-/// the dummy lost on the tick they met, and in the `ticks` after it, and
-/// the hit points the tested regiment lost in that time.
+/// `theirs`, walks into it from `from` without charging. Returns the hit
+/// points the dummy lost on the tick they met, and in the `ticks` after it,
+/// and the hit points the tested regiment lost in that time.
 fn melee(
     tested: impl FnOnce(&mut UnitStats),
     mine: Formation,
     theirs: Formation,
+    ((x, y), facing): ((i32, i32), Angle),
     ticks: u32,
 ) -> (u32, u32, u32) {
     let units = units(tested);
     let mut w = world(&units);
     let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
-    let foe = spawn(&mut w, 1, DUMMY, 100, 90, SOUTH);
+    let foe = spawn(&mut w, 1, DUMMY, x, y, facing);
     assert!(form(&mut w, 0, me, mine));
     assert!(form(&mut w, 1, foe, theirs));
-    assert!(order(
-        &mut w,
-        1,
-        Command::MoveTo {
-            regiment: foe,
-            target: FxVec2::from_ints(100, 100),
-            facing: Some(SOUTH),
-            files: 0,
-            pace: Fx::ONE,
-        },
-    ));
+    assert!(march(&mut w, 1, foe, 100, 100, Fx::ONE));
     let full = hp(&w, foe);
-    let mut first = None;
-    for _ in 0..20 * 20 {
-        w.tick(&[]);
-        if w.regiments.get(me).unwrap().engaged {
-            first = Some(full - hp(&w, foe));
-            break;
-        }
-    }
-    let first = first.expect("the dummy never reached the tested regiment");
+    until_engaged(&mut w, me);
+    let first = full - hp(&w, foe);
     let (mine_before, theirs_before) = (hp(&w, me), hp(&w, foe));
     run(&mut w, ticks);
     (first, theirs_before - hp(&w, foe), mine_before - hp(&w, me))
@@ -138,8 +154,14 @@ const FIGHT: u32 = 20 * 12;
 
 #[test]
 fn spears_fight_from_two_ranks() {
-    let (_, plain, _) = melee(|_| {}, Formation::Line, Formation::Line, FIGHT);
-    let (_, spears, _) = melee(|u| u.reach = true, Formation::Line, Formation::Line, FIGHT);
+    let (_, plain, _) = melee(|_| {}, Formation::Line, Formation::Line, AHEAD, FIGHT);
+    let (_, spears, _) = melee(
+        |u| u.reach = true,
+        Formation::Line,
+        Formation::Line,
+        AHEAD,
+        FIGHT,
+    );
     // Eight in the front rank and eight behind at half weight: about half
     // as much again.
     let ratio = spears as f32 / plain as f32;
@@ -151,15 +173,21 @@ fn spears_fight_from_two_ranks() {
 
 #[test]
 fn spears_strike_first_when_lines_meet() {
-    let (first, ..) = melee(|u| u.reach = true, Formation::Line, Formation::Line, 0);
+    let (first, ..) = melee(
+        |u| u.reach = true,
+        Formation::Line,
+        Formation::Line,
+        AHEAD,
+        0,
+    );
     assert!(first > 0, "no blow landed the moment they met");
 }
 
 #[test]
 fn swinging_weapons_are_cramped_in_tight_order() {
     let swing = |u: &mut UnitStats| u.swing_room = true;
-    let (_, line, _) = melee(swing, Formation::Line, Formation::Line, FIGHT);
-    let (_, tight, _) = melee(swing, Formation::Tight, Formation::Line, FIGHT);
+    let (_, line, _) = melee(swing, Formation::Line, Formation::Line, AHEAD, FIGHT);
+    let (_, tight, _) = melee(swing, Formation::Tight, Formation::Line, AHEAD, FIGHT);
     let ratio = tight as f32 / line as f32;
     assert!((0.65..0.92).contains(&ratio), "line {line}, tight {tight}");
 }
@@ -167,15 +195,16 @@ fn swinging_weapons_are_cramped_in_tight_order() {
 #[test]
 fn spears_lose_their_support_in_loose_order() {
     let reach = |u: &mut UnitStats| u.reach = true;
-    let (_, line, _) = melee(reach, Formation::Line, Formation::Line, FIGHT);
-    let (_, loose, _) = melee(reach, Formation::Loose, Formation::Line, FIGHT);
+    let (_, line, _) = melee(reach, Formation::Line, Formation::Line, AHEAD, FIGHT);
+    let (_, loose, _) = melee(reach, Formation::Loose, Formation::Line, AHEAD, FIGHT);
     assert!(loose < line, "line {line}, loose {loose}");
 }
 
 #[test]
 fn tight_order_holds_and_loose_order_has_gaps() {
     // The dummy attacks the tested regiment in each formation.
-    let taken = |tested: fn(&mut UnitStats), mine| melee(tested, mine, Formation::Line, FIGHT).2;
+    let taken =
+        |tested: fn(&mut UnitStats), mine| melee(tested, mine, Formation::Line, AHEAD, FIGHT).2;
     let line = taken(|_| {}, Formation::Line);
     let tight = taken(|_| {}, Formation::Tight);
     let loose = taken(|_| {}, Formation::Loose);
@@ -229,14 +258,14 @@ fn a_shield_wall_turns_arrows_from_the_front() {
 
 #[test]
 fn only_shields_form_a_wall() {
-    let units = units(|_| {});
-    let mut w = world(&units);
-    let plain = spawn(&mut w, 0, TESTED, 50, 50, NORTH);
-    assert!(!form(&mut w, 0, plain, Formation::ShieldWall));
-    assert_eq!(w.regiments.get(plain).unwrap().formation, Formation::Line);
+    let plain = units(|_| {});
+    let mut w = world(&plain);
+    let r = spawn(&mut w, 0, TESTED, 50, 50, NORTH);
+    assert!(!form(&mut w, 0, r, Formation::ShieldWall));
+    assert_eq!(w.regiments.get(r).unwrap().formation, Formation::Line);
 
-    let units = units_with_shields();
-    let mut w = world(&units);
+    let shielded = units(|u| u.shield = true);
+    let mut w = world(&shielded);
     let shields = spawn(&mut w, 0, TESTED, 50, 50, NORTH);
     // Only its owner can order it.
     assert!(!form(&mut w, 1, shields, Formation::ShieldWall));
@@ -259,47 +288,19 @@ fn only_shields_form_a_wall() {
     assert_eq!(w.regiments.get(shields).unwrap().formation, Formation::Line);
 }
 
-fn units_with_shields() -> [UnitStats; 4] {
-    units(|u| u.shield = true)
-}
-
-/// Hit points the tested shield regiment, standing in `formation` facing
-/// north, loses to the dummy walking into it from `from` (facing `facing`).
-/// It can't turn to face a flank attack.
-fn melee_taken(formation: Formation, from: (i32, i32), facing: Angle) -> u32 {
-    let mut units = units_with_shields();
-    units[TESTED as usize].turn_rate = 0;
-    let mut w = world(&units);
-    let me = spawn(&mut w, 0, TESTED, 100, 100, NORTH);
-    let foe = spawn(&mut w, 1, DUMMY, from.0, from.1, facing);
-    assert!(form(&mut w, 0, me, formation));
-    assert!(order(
-        &mut w,
-        1,
-        Command::MoveTo {
-            regiment: foe,
-            target: FxVec2::from_ints(100, 100),
-            facing: Some(facing),
-            files: 0,
-            pace: Fx::ONE,
-        },
-    ));
-    for _ in 0..20 * 20 {
-        w.tick(&[]);
-        if w.regiments.get(me).unwrap().engaged {
-            break;
-        }
-    }
-    let before = hp(&w, me);
-    run(&mut w, FIGHT);
-    before - hp(&w, me)
-}
-
 #[test]
 fn a_shield_wall_guards_its_front_and_nothing_else() {
-    const WEST: Angle = Angle(0x8000);
-    let front = |f| melee_taken(f, (100, 90), SOUTH);
-    let flank = |f| melee_taken(f, (110, 100), WEST);
+    // Hit points the shield regiment loses; it can't turn to face a flank
+    // attack.
+    let taken = |formation, from| {
+        let shields = |u: &mut UnitStats| {
+            u.shield = true;
+            u.turn_rate = 0;
+        };
+        melee(shields, formation, Formation::Line, from, FIGHT).2
+    };
+    let front = |f| taken(f, AHEAD);
+    let flank = |f| taken(f, RIGHT);
     let (line, wall) = (front(Formation::Line), front(Formation::ShieldWall));
     assert!(wall < line, "front: line {line}, wall {wall}");
     let (line, wall) = (flank(Formation::Line), flank(Formation::ShieldWall));
@@ -313,21 +314,11 @@ fn a_shield_wall_guards_its_front_and_nothing_else() {
 #[test]
 fn a_shield_wall_marches_at_half_pace() {
     let walked = |formation| {
-        let units = units_with_shields();
+        let units = units(|u| u.shield = true);
         let mut w = world(&units);
         let r = spawn(&mut w, 0, TESTED, 50, 100, NORTH);
         assert!(form(&mut w, 0, r, formation));
-        assert!(order(
-            &mut w,
-            0,
-            Command::MoveTo {
-                regiment: r,
-                target: FxVec2::from_ints(50, 20),
-                facing: None,
-                files: 0,
-                pace: Fx::ZERO,
-            },
-        ));
+        assert!(march(&mut w, 0, r, 50, 20, Fx::ZERO));
         let y0 = w.regiments.get(r).unwrap().position.y;
         run(&mut w, 20 * 4);
         (y0 - w.regiments.get(r).unwrap().position.y).raw()
@@ -342,7 +333,7 @@ fn a_shield_wall_cannot_charge() {
     // Charging damage with a big bonus: from Line it hits home hard, from a
     // shield wall it is an ordinary blow.
     let charge_taken = |formation| {
-        let mut units = units_with_shields();
+        let mut units = units(|u| u.shield = true);
         units[TESTED as usize].charge_bonus = 200;
         let mut w = world(&units);
         let me = spawn(&mut w, 0, TESTED, 100, 110, NORTH);
@@ -358,12 +349,7 @@ fn a_shield_wall_cannot_charge() {
         ));
         let full = hp(&w, foe);
         // Walk in (a shield wall takes longer), then two seconds of blows.
-        for _ in 0..20 * 20 {
-            w.tick(&[]);
-            if w.regiments.get(me).unwrap().engaged {
-                break;
-            }
-        }
+        until_engaged(&mut w, me);
         run(&mut w, 40);
         full - hp(&w, foe)
     };

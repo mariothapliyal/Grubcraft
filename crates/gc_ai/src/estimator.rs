@@ -100,9 +100,13 @@ impl Force {
                 f.morale += r.morale_points as f32 * n;
                 morale_soldiers += n;
             }
-            f.defence += (s.melee_defence as i32 + s.formation_defence(r.formation)) as f32 * n;
+            // Taking the enemy head on.
+            f.defence +=
+                (s.melee_defence as i32 + s.formation_defence(r.formation, true)) as f32 * n;
             defence_soldiers += n;
-            f.speed = f.speed.min(u.speed);
+            f.speed = f
+                .speed
+                .min(u.speed * r.formation.pace_percent() as f32 / 100.0);
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
@@ -110,21 +114,18 @@ impl Force {
                     n * s.accuracy as f32 / 100.0 * s.missile_damage as f32 / u.reload_seconds();
                 f.range = f.range.max(u.range);
             } else {
-                // Spears and pikes fight from the second rank too, at half
-                // weight; the formation can cramp the weapons.
-                let first = r.files.min(r.models);
-                let second = if s.reach {
-                    first.min(r.models - first) as f32 * 0.5
-                } else {
-                    0.0
-                };
-                let front =
-                    (first as f32 + second) * s.weapon_room_percent(r.formation) as f32 / 100.0;
+                // The front rank (and a spear block's second); the formation
+                // can cramp the weapons.
+                let front = (s.front_fighters_percent(r.files, r.models)
+                    * s.weapon_room_percent(r.formation)) as f32
+                    / 10_000.0;
                 f.melee_regiments += 1.0;
                 f.front_damage += front * s.melee_damage as f32;
                 f.front_damage_attack += front * s.melee_damage as f32 * s.melee_attack as f32;
-                f.charge +=
-                    front * s.melee_damage as f32 * s.charge_bonus as f32 / 100.0 * CHARGE_SECONDS;
+                if r.formation.can_charge() {
+                    f.charge += front * s.melee_damage as f32 * s.charge_bonus as f32 / 100.0
+                        * CHARGE_SECONDS;
+                }
             }
         }
         if morale_soldiers > 0.0 {

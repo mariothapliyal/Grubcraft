@@ -248,17 +248,7 @@ impl Drill {
                     continue;
                 }
                 let r = world.regiments.get(handle).unwrap();
-                let stats = &world.units()[r.unit as usize];
-                members[count] = GroupMember {
-                    handle,
-                    position: r.position,
-                    facing: r.facing,
-                    files: r.files,
-                    models: r.models,
-                    file_spacing: stats.file_spacing,
-                    rank_spacing: stats.rank_spacing,
-                    speed: stats.speed,
-                };
+                members[count] = GroupMember::of(&r, &world.units()[r.unit as usize]);
                 count += 1;
             }
             let target = self.random_point();
