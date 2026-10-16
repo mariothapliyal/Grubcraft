@@ -4,8 +4,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use gc_assets::model::{
-    BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, ModelVertex, Models, TEXELS_PER_LAYER, TEXTURE_MIPS,
-    TEXTURE_SIZE,
+    BLOCK_SIDE, BLOCKS_PER_LAYER, BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, LODS, ModelVertex,
+    Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
 
 /// Fixed capacity of the soldier instance buffer; never reallocated.
@@ -36,7 +36,8 @@ pub struct SoldierInstance {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SoldierBatch {
     pub model: u16,
-    /// 0 for full detail, 1 for the reduced mesh.
+    /// Level of detail: 0 is full, up to `LODS - 1` for the fewest
+    /// triangles.
     pub lod: u8,
     pub first: u32,
     pub count: u32,
@@ -47,8 +48,8 @@ pub(crate) struct ModelGpu {
     pub indices: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     /// Per model: first vertex, (first index, count) per level of detail,
-    /// and whether it is textured.
-    pub ranges: Vec<(i32, [[u32; 2]; 2], bool)>,
+    /// and whether it is drawn textured.
+    pub ranges: Vec<(i32, [[u32; 2]; LODS], bool)>,
     pub gpu_bytes: u64,
 }
 
@@ -227,13 +228,14 @@ impl SoldiersGpu {
                 });
                 textured_now = Some(textured);
             }
-            // A model without the reduced mesh draws its full one.
-            let lod = (b.lod as usize).min(1);
-            let [first, len] = if lods[lod][1] == 0 {
-                lods[0]
-            } else {
-                lods[lod]
-            };
+            // A model without that level draws the next finer one it has.
+            let lod = (b.lod as usize).min(LODS - 1);
+            let [first, len] = lods[..=lod]
+                .iter()
+                .rev()
+                .copied()
+                .find(|l| l[1] > 0)
+                .unwrap_or_default();
             let end = (b.first + b.count).min(count as u32);
             if b.first >= end || len == 0 {
                 continue;
@@ -310,16 +312,22 @@ pub(crate) fn upload(
         size,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let materials = upload_materials(device, queue, m);
-    let array_view = |format| {
+    // Without BC7 the textured models draw in their vertex colours.
+    let textures = device
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        && m.materials() > 0;
+    let materials = upload_materials(device, queue, textures.then_some(m));
+    let array_view = |format: wgpu::TextureFormat| {
         materials.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         })
     };
-    let srgb_view = array_view(wgpu::TextureFormat::Rgba8UnormSrgb);
-    let linear_view = array_view(wgpu::TextureFormat::Rgba8Unorm);
+    let linear = materials.format();
+    let srgb_view = array_view(linear.add_srgb_suffix());
+    let linear_view = array_view(linear);
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("soldier materials"),
         mag_filter: wgpu::FilterMode::Linear,
@@ -354,10 +362,10 @@ pub(crate) fn upload(
         .models
         .iter()
         .map(|r| {
-            let textured = m
-                .vertices
-                .get(r.first_vertex as usize)
-                .is_some_and(|v| v.material > 0);
+            let textured = textures
+                && m.vertices
+                    .get(r.first_vertex as usize)
+                    .is_some_and(|v| v.material > 0);
             (r.first_vertex as i32, r.lods, textured)
         })
         .collect();
@@ -365,7 +373,11 @@ pub(crate) fn upload(
         gpu_bytes: vertices.size()
             + indices.size()
             + (texels.len() * 8) as u64
-            + (m.textures.len() * 4) as u64,
+            + if textures {
+                size_of_val(m.textures) as u64
+            } else {
+                4
+            },
         vertices,
         indices,
         bind_group,
@@ -374,34 +386,42 @@ pub(crate) fn upload(
 }
 
 /// The material texture array, every layer with its mips; a single blank
-/// texel when no model is textured, since the binding must exist.
-fn upload_materials(device: &wgpu::Device, queue: &wgpu::Queue, m: &Models<'_>) -> wgpu::Texture {
-    let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
-    let (side, mips) = if layers == 0 {
-        (1, 1)
-    } else {
-        (TEXTURE_SIZE, TEXTURE_MIPS)
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+/// texel when no model is drawn textured, since the binding must exist.
+fn upload_materials(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    m: Option<&Models<'_>>,
+) -> wgpu::Texture {
+    let descriptor = |format, side, mips, layers| wgpu::TextureDescriptor {
         label: Some("soldier materials"),
         size: wgpu::Extent3d {
             width: side,
             height: side,
-            depth_or_array_layers: layers.max(1),
+            depth_or_array_layers: layers,
         },
         mip_level_count: mips,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+        view_formats: &[],
+    };
+    let Some(m) = m else {
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        return device.create_texture(&wgpu::TextureDescriptor {
+            view_formats: &[format.add_srgb_suffix()],
+            ..descriptor(format, 1, 1, 1)
+        });
+    };
+    let format = wgpu::TextureFormat::Bc7RgbaUnorm;
+    let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        view_formats: &[format.add_srgb_suffix()],
+        ..descriptor(format, TEXTURE_SIZE, TEXTURE_MIPS, layers)
     });
-    if layers == 0 {
-        return texture;
-    }
-    for (layer, texels) in m
+    for (layer, blocks) in m
         .textures
-        .as_chunks::<TEXELS_PER_LAYER>()
+        .as_chunks::<BLOCKS_PER_LAYER>()
         .0
         .iter()
         .enumerate()
@@ -409,7 +429,8 @@ fn upload_materials(device: &wgpu::Device, queue: &wgpu::Queue, m: &Models<'_>) 
         let mut offset = 0;
         for mip in 0..TEXTURE_MIPS {
             let side = TEXTURE_SIZE >> mip;
-            let count = (side * side) as usize;
+            let across = side / BLOCK_SIDE;
+            let count = (across * across) as usize;
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -421,11 +442,11 @@ fn upload_materials(device: &wgpu::Device, queue: &wgpu::Queue, m: &Models<'_>) 
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
-                bytemuck::cast_slice(&texels[offset..offset + count]),
+                bytemuck::cast_slice(&blocks[offset..offset + count]),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(side * 4),
-                    rows_per_image: Some(side),
+                    bytes_per_row: Some(across * 16),
+                    rows_per_image: Some(across),
                 },
                 wgpu::Extent3d {
                     width: side,

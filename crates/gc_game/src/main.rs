@@ -81,7 +81,8 @@
 //! shadows and the glow around bright light; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
-//! parts of the frame off to measure what they cost.
+//! parts of the frame off to measure what they cost; `--lod 0..3` draws
+//! every soldier at one level of detail, to inspect it.
 
 mod battle;
 mod camera;
@@ -106,6 +107,7 @@ use std::time::{Duration, Instant};
 
 use battle::{Battle, Party, party_name};
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
+use gc_assets::model::LODS;
 use gc_net::Lan;
 use gc_platform::logln;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
@@ -150,8 +152,9 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
 const EDGE_SCROLL_PX: f64 = 6.0;
 /// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
-/// Soldiers further than this from the camera, in tiles, use the reduced mesh.
-const LOD_DISTANCE: f32 = 70.0;
+/// Soldiers drawn at least this many pixels tall use levels of detail 0, 1
+/// and 2; smaller ones the last.
+const LOD_PIXELS: [f32; LODS - 1] = [100.0, 40.0, 16.0];
 /// Commander View: past this camera distance soldiers give way to one
 /// banner block per regiment, and come back below the second distance.
 const COMMANDER_IN: f32 = 175.0;
@@ -257,6 +260,8 @@ struct Options {
     /// Panic once the game has started, to check that a crash report is
     /// written (`--crash-test`).
     crash_test: bool,
+    /// Draw every soldier at this level of detail (`--lod N`).
+    lod: Option<usize>,
     render: RendererOptions,
 }
 
@@ -273,6 +278,7 @@ fn parse_args() -> Options {
         join: None,
         password: String::new(),
         crash_test: false,
+        lod: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -341,6 +347,13 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
+            "--lod" => match value.parse() {
+                Ok(v) if v < LODS => {
+                    opts.lod = Some(v);
+                    true
+                }
+                _ => false,
+            },
             "--draw" => {
                 let (terrain, blocks) = match value.as_str() {
                     "all" => (true, true),
@@ -365,7 +378,7 @@ fn parse_args() -> Options {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3]"
     );
     std::process::exit(2);
 }
@@ -481,10 +494,21 @@ struct Art {
     clips: models::Clips,
     /// The model of each unit type, if it has one.
     unit_model: Vec<Option<usize>>,
-    /// Instances per model and level of detail (model * 2 + lod).
+    /// Each model's height, in tiles.
+    heights: Vec<f32>,
+    /// Every soldier at this level of detail, from `--lod`.
+    force_lod: Option<usize>,
+    /// Instances per model and level of detail (model * LODS + lod).
     buckets: Vec<Vec<SoldierInstance>>,
     soldiers: Vec<SoldierInstance>,
     batches: Vec<SoldierBatch>,
+}
+
+/// The level of detail for a model `height` tiles tall, `distance` tiles
+/// from the eye (`pixel_scale` is from `RtsCamera::pixel_scale`).
+fn lod_for(height: f32, distance: f32, pixel_scale: f32) -> usize {
+    let pixels = height * pixel_scale / distance.max(1.0);
+    LOD_PIXELS.iter().take_while(|&&p| pixels < p).count()
 }
 
 impl Art {
@@ -492,6 +516,16 @@ impl Art {
         for b in &mut self.buckets {
             b.clear();
         }
+    }
+
+    /// The bucket for `model` seen `distance` tiles from the eye: its level
+    /// of detail follows how tall it shows on screen (`pixel_scale` is from
+    /// `RtsCamera::pixel_scale`).
+    fn bucket(&self, model: usize, distance: f32, pixel_scale: f32) -> usize {
+        let lod = self
+            .force_lod
+            .unwrap_or_else(|| lod_for(self.heights[model], distance, pixel_scale));
+        model * LODS + lod
     }
 
     /// Gather the buckets into one instance list with a batch per bucket.
@@ -503,8 +537,8 @@ impl Art {
                 continue;
             }
             self.batches.push(SoldierBatch {
-                model: (k / 2) as u16,
-                lod: (k % 2) as u8,
+                model: (k / LODS) as u16,
+                lod: (k % LODS) as u8,
                 first: self.soldiers.len() as u32,
                 count: b.len() as u32,
             });
@@ -756,9 +790,11 @@ impl App {
                         .iter()
                         .map(|u| models.by_name(u.name()))
                         .collect(),
-                    buckets: vec![Vec::new(); models.models.len() * 2],
+                    heights: models.models.iter().map(|m| m.height).collect(),
+                    force_lod: opts.lod,
+                    buckets: vec![Vec::new(); models.models.len() * LODS],
                     soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
-                    batches: Vec::with_capacity(models.models.len() * 2),
+                    batches: Vec::with_capacity(models.models.len() * LODS),
                 }),
                 Err(e) => {
                     logln!("grubcraft: soldier models off: {e}");
@@ -1827,6 +1863,9 @@ impl Running {
         } else {
             1.0
         };
+        let pixel_scale = self
+            .camera
+            .pixel_scale(self.window.inner_size().height as f32);
         for r in self.world.regiments.iter() {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -1968,12 +2007,13 @@ impl Running {
                 .as_ref()
                 .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
-                let far = self.camera.eye().distance(glam::Vec3::new(
+                let distance = self.camera.eye().distance(glam::Vec3::new(
                     pos.x,
                     self.camera.focus_height,
                     pos.y,
-                )) > LOD_DISTANCE;
-                let bucket = &mut art.buckets[model * 2 + usize::from(far)];
+                ));
+                let bucket = art.bucket(model, distance, pixel_scale);
+                let bucket = &mut art.buckets[bucket];
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
@@ -2880,6 +2920,9 @@ impl Running {
 
     /// Fallen soldiers lie flat in a darker shade of their team's colour.
     fn push_corpses(&mut self) {
+        let pixel_scale = self
+            .camera
+            .pixel_scale(self.window.inner_size().height as f32);
         for c in self.puppets.corpses() {
             let [r, g, b] = color_of(&self.parties, c.owner);
             let model = self
@@ -2890,12 +2933,13 @@ impl Running {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
-                    let far = self.camera.eye().distance(glam::Vec3::new(
+                    let distance = self.camera.eye().distance(glam::Vec3::new(
                         c.pos.x,
                         self.camera.focus_height,
                         c.pos.y,
-                    )) > LOD_DISTANCE;
-                    art.buckets[model * 2 + usize::from(far)].push(SoldierInstance {
+                    ));
+                    let bucket = art.bucket(model, distance, pixel_scale);
+                    art.buckets[bucket].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
@@ -3683,5 +3727,48 @@ fn main() {
     if let Err(e) = event_loop.run_app(&mut app) {
         logln!("grubcraft: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod lod_tests {
+    use super::*;
+
+    /// A scale of 1 makes `height / distance` the pixel count directly.
+    fn lod_at_pixels(pixels: f32) -> usize {
+        lod_for(pixels, 1.0, 1.0)
+    }
+
+    #[test]
+    fn thresholds_pick_the_expected_level() {
+        assert_eq!(lod_at_pixels(500.0), 0);
+        assert_eq!(lod_at_pixels(100.0), 0);
+        assert_eq!(lod_at_pixels(99.9), 1);
+        assert_eq!(lod_at_pixels(40.0), 1);
+        assert_eq!(lod_at_pixels(39.9), 2);
+        assert_eq!(lod_at_pixels(16.0), 2);
+        assert_eq!(lod_at_pixels(15.0), 3);
+        assert_eq!(lod_at_pixels(0.0), 3);
+    }
+
+    #[test]
+    fn nearer_is_never_coarser() {
+        let mut last = 0;
+        for step in 0..2000 {
+            let distance = 0.5 + step as f32 * 0.5;
+            let lod = lod_for(2.0, distance, 1000.0);
+            assert!(lod >= last, "distance {distance}: {lod} after {last}");
+            assert!(lod < LODS);
+            last = lod;
+        }
+        assert_eq!(lod_for(2.0, 1.0, 1000.0), 0);
+        assert_eq!(last, LODS - 1);
+    }
+
+    #[test]
+    fn distance_below_one_counts_as_one() {
+        assert_eq!(lod_for(50.0, 0.0, 1.0), lod_for(50.0, 1.0, 1.0));
+        assert_eq!(lod_for(100.0, 0.25, 1.0), 0);
+        assert_eq!(lod_for(39.0, 0.001, 1.0), lod_for(39.0, 1.0, 1.0));
     }
 }

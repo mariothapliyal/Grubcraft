@@ -58,6 +58,13 @@ impl RtsCamera {
     }
 
     /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
+    /// How many pixels tall something 1 tile tall shows, 1 tile from the
+    /// eye, on a viewport `height` pixels tall (divide by the distance for
+    /// anything further).
+    pub fn pixel_scale(&self, height: f32) -> f32 {
+        height / (2.0 * (FOV_Y * 0.5).tan())
+    }
+
     pub fn pan(&mut self, dx: f32, dy: f32) {
         let (s, c) = self.yaw.sin_cos();
         let right = Vec2::new(c, -s);
@@ -148,5 +155,13 @@ mod tests {
         assert_eq!(cam.yaw, cam.home_yaw);
         cam.face(Vec2::NEG_Y);
         assert_eq!(cam.yaw, 0.0);
+    }
+
+    #[test]
+    fn pixel_scale_gives_the_projected_size() {
+        let cam = RtsCamera::new(256.0, Vec2::ZERO);
+        let expected = 760.0 / (2.0 * 17.5_f32.to_radians().tan());
+        let scale = cam.pixel_scale(760.0);
+        assert!((scale - expected).abs() < 0.01, "{scale} vs {expected}");
     }
 }
