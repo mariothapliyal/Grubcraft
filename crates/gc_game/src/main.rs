@@ -2728,10 +2728,10 @@ impl Running {
         if w.diverged_at.is_some() {
             return;
         }
-        let Ok(i) = w.replay.checkpoints.binary_search_by_key(&tick, |c| c.0) else {
-            return;
-        };
-        if w.replay.checkpoints[i].1 == self.world.state_hash() {
+        if w.replay
+            .checkpoint_at(tick)
+            .is_none_or(|h| h == self.world.state_hash())
+        {
             return;
         }
         w.diverged_at = Some(tick);

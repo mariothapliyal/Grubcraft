@@ -220,17 +220,20 @@ impl Replay {
         self.turns.iter().map(|(_, c)| c.len()).sum()
     }
 
+    /// The state hash recorded for `tick`, if it is a checkpoint.
+    pub fn checkpoint_at(&self, tick: u32) -> Option<u64> {
+        self.checkpoints
+            .binary_search_by_key(&tick, |&(t, _)| t)
+            .ok()
+            .map(|i| self.checkpoints[i].1)
+    }
+
     /// The first checkpoint tick both recordings have where their state
     /// hashes differ: where two machines' worlds of one match parted.
     pub fn first_difference(&self, other: &Replay) -> Option<u32> {
         self.checkpoints
             .iter()
-            .find(|&&(tick, hash)| {
-                other
-                    .checkpoints
-                    .binary_search_by_key(&tick, |&(t, _)| t)
-                    .is_ok_and(|i| other.checkpoints[i].1 != hash)
-            })
+            .find(|&&(tick, hash)| other.checkpoint_at(tick).is_some_and(|h| h != hash))
             .map(|&(tick, _)| tick)
     }
 
@@ -274,8 +277,9 @@ impl Replay {
     }
 
     /// Play the replay with its recorded commands and store the hashes the
-    /// simulation produces now, under this build's sim version. For when a change to the simulation is
-    /// meant to change how recorded matches play out.
+    /// simulation produces now, under this build's sim version. For when a
+    /// change to the simulation is meant to change how recorded matches
+    /// play out.
     pub fn bless(&mut self) {
         let mut world = self.new_world();
         let mut checkpoints = vec![(0, world.state_hash())];

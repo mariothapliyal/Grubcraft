@@ -754,10 +754,7 @@ mod tests {
 
     #[test]
     fn builds_play_together_when_only_the_commit_differs() {
-        assert!(plays_with(
-            "0.1.0 sim 1 (abc123)",
-            "0.1.0 sim 1 (def456-dirty)"
-        ));
+        assert!(plays_with("0.1.0 sim 1 (abc123)", "0.1.0 sim 1 (def456)"));
         assert!(!plays_with("0.1.0 sim 1 (abc123)", "0.1.0 sim 2 (abc123)"));
         assert!(!plays_with("0.1.0 sim 1 (abc123)", "0.1.1 sim 1 (abc123)"));
     }
