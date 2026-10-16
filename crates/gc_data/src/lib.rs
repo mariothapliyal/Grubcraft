@@ -15,9 +15,7 @@ use gc_fixed::Fx;
 
 pub mod conquest;
 
-pub use conquest::{
-    BUILDINGS_PATH, BuildingRecord, CONQUEST_UNITS_PATH, ConquestUnitRecord,
-};
+pub use conquest::{BUILDINGS_PATH, BuildingRecord, CONQUEST_UNITS_PATH, ConquestUnitRecord};
 
 /// Pack path of the unit table.
 pub const UNITS_PATH: &str = "data/units";
@@ -219,17 +217,13 @@ impl<'a> GameData<'a> {
         for (i, u) in units.iter().enumerate() {
             validate_unit(u).map_err(|why| DataError::BadUnit(i, why))?;
         }
-        let buildings =
-            table::<BuildingRecord>(pack, BUILDINGS_PATH, conquest::BUILDING_SCHEMA)?;
+        let buildings = table::<BuildingRecord>(pack, BUILDINGS_PATH, conquest::BUILDING_SCHEMA)?;
         for (i, b) in buildings.iter().enumerate() {
             conquest::validate_building(b, buildings.len())
                 .map_err(|why| DataError::BadBuilding(i, why))?;
         }
-        let conquest_units = table::<ConquestUnitRecord>(
-            pack,
-            CONQUEST_UNITS_PATH,
-            conquest::CONQUEST_UNIT_SCHEMA,
-        )?;
+        let conquest_units =
+            table::<ConquestUnitRecord>(pack, CONQUEST_UNITS_PATH, conquest::CONQUEST_UNIT_SCHEMA)?;
         for (i, u) in conquest_units.iter().enumerate() {
             conquest::validate_conquest_unit(u, buildings.len(), conquest_units.len())
                 .map_err(|why| DataError::BadConquestUnit(i, why))?;
