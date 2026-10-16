@@ -1435,9 +1435,8 @@ impl ApplicationHandler for App {
                     // A building's card or the build menu owns the grid's keys.
                     if grid_key
                         && let Some(slot) = GRID_CODES.iter().position(|&c| c == code)
-                        && r.card_takes(slot)
+                        && r.card_press(slot)
                     {
-                        r.grid_press(slot);
                         return;
                     }
                     match code {
@@ -1469,9 +1468,7 @@ impl ApplicationHandler for App {
                         KeyCode::Tab if down && !event.repeat => r.switch_side(),
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
                         KeyCode::KeyB if down && !event.repeat && r.conquest_units => {
-                            r.hud.build_menu =
-                                !r.hud.build_menu && r.selected_workers().next().is_some();
-                            r.hud.armed = None;
+                            r.set_build_menu(!r.hud.build_menu);
                         }
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
@@ -1544,7 +1541,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
-                        KeyCode::Escape if down && r.hud.build_menu => r.hud.build_menu = false,
+                        KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         KeyCode::Escape
                             if down
                                 && (r.sandbox.placing
@@ -1698,12 +1695,7 @@ impl Running {
                     self.input.right_down = None;
                     return;
                 }
-                let enemy = drag
-                    .is_none()
-                    .then(|| self.ground_under_cursor())
-                    .flatten()
-                    .and_then(|p| self.enemy_at(p));
-                if let Some(target) = enemy {
+                if let Some(target) = plain.and_then(|p| self.enemy_at(p)) {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
                     .is_none()
@@ -1711,9 +1703,7 @@ impl Running {
                     .flatten()
                 {
                     self.issue_siege(building);
-                } else if let Some(order) =
-                    drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
-                {
+                } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
                     self.issue_group_order(order);
                 }
                 self.input.right_down = None;
@@ -3907,11 +3897,14 @@ impl Running {
         let at = self.ground_under_cursor()?;
         let stats = *self.buildings.stats.get(usize::from(id))?;
         let tile = buildings::tile_for(at, stats.width, stats.depth);
+        // Conquest asks what a worker may lay; the sandbox only the ground.
         let why = if self.conquest_units {
-            (self.world.can_lay(self.sandbox.side, id, tile).err()).map(buildings::why)
+            self.world.can_lay(self.sandbox.side, id, tile)
         } else {
-            buildings::refusal(&self.world, id, tile)
-        };
+            self.world.can_build(id, tile)
+        }
+        .err()
+        .map(buildings::why);
         Some((stats, tile, why))
     }
 
@@ -4715,6 +4708,13 @@ mod lod_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_codes_are_the_grids_keys() {
+        for (code, key) in GRID_CODES.iter().zip(gc_ui::hud::GRID_KEYS) {
+            assert_eq!(format!("{code:?}"), format!("Key{key}"));
+        }
+    }
 
     const HANDLE: RegimentHandle = RegimentHandle {
         index: 3,

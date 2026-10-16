@@ -7,12 +7,15 @@
 use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
-use gc_sim::{BuildingId, Command, PlayerCommand, RegimentHandle, StructureView, UnitId};
+use gc_sim::{
+    BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
+    UnitId,
+};
 use gc_ui::hud::{GRID_SLOTS, SlotState};
 use glam::Vec2;
 
 use crate::hud::Armed;
-use crate::{Running, from_fx_vec, fx_vec, sounds};
+use crate::{Running, buildings, from_fx_vec, fx_vec, sounds};
 
 /// A worker's Build button: F, the special slot.
 pub const SLOT_BUILD: usize = 7;
@@ -52,21 +55,19 @@ impl Running {
             return None;
         }
         let mut slots = [None; GRID_SLOTS];
-        if let Some(s) = self
-            .picked_structure()
-            .and_then(|h| self.world.structures()?.get(h))
-        {
+        let structures = self.world.structures()?;
+        if let Some(s) = self.picked_structure().and_then(|h| structures.get(h)) {
             if !s.finished() || s.upgrading.is_some() {
                 slots[SLOT_LAST] = Some(Action::CallOff);
             } else {
-                let root = self.buildings.root(s.building);
+                // What the simulation lets it train: what its upgrade chain does.
                 let trains = (self.data.conquest_units.iter().enumerate())
-                    .filter(|(_, u)| u.trained_at == root)
+                    .filter(|(_, u)| structures.grew_from(s.building, u.trained_at))
                     .map(|(i, _)| Action::Train(i as UnitId));
                 for (slot, a) in slots[..SLOT_LAST].iter_mut().zip(trains) {
                     *slot = Some(a);
                 }
-                slots[SLOT_LAST] = self.buildings.upgrade_of(s.building).map(Action::Upgrade);
+                slots[SLOT_LAST] = structures.upgrade_of(s.building).map(Action::Upgrade);
             }
             return Some(Card { slots, whole: true });
         }
@@ -92,45 +93,31 @@ impl Running {
 
     /// The selected regiments that are workers.
     pub fn selected_workers(&self) -> impl Iterator<Item = RegimentHandle> + '_ {
-        self.selected.iter().copied().filter(|&h| {
-            self.world.regiments.get(h).is_some_and(|r| {
-                self.data
-                    .conquest_units
-                    .get(usize::from(r.unit))
-                    .is_some_and(ConquestUnitRecord::worker)
-            })
-        })
+        let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
+        (self.selected.iter().copied()).filter(|&h| is_worker(regiments, units, h))
     }
 
-    /// Why `action` can't be done now, if it can't: its price or the tier
-    /// it needs.
+    /// Open or close the workers' build menu. Opening it puts down an armed
+    /// order; closing it puts down a building chosen to lay.
+    pub fn set_build_menu(&mut self, open: bool) {
+        self.hud.build_menu = open;
+        if open || matches!(self.hud.armed, Some(Armed::Lay(_))) {
+            self.hud.armed = None;
+        }
+    }
+
+    /// Why `action` can't be done now, if it can't: the simulation's own
+    /// check, in the panel's words.
     fn blocked(&self, action: Action) -> Option<&'static str> {
         let side = self.sandbox.side;
-        let bank = self.world.bank(side)?;
-        let tier = self.world.structures().map_or(0, |s| s.tier_of(side));
-        let (grub, marrow, needs) = match action {
-            Action::Lay(b) | Action::Upgrade(b) => {
-                let s = self.buildings.stats.get(usize::from(b))?;
-                (s.cost_grub, s.cost_marrow, s.tier)
-            }
-            Action::Train(u) => {
-                let u = self.data.conquest_units.get(usize::from(u))?;
-                (u.cost_grub, u.cost_marrow, u.tier)
-            }
-            Action::OpenBuild | Action::CallOff => return None,
-        };
-        // An upgrade is to the tier it makes, so the one below will do.
-        let needs = match action {
-            Action::Upgrade(_) => needs.saturating_sub(1),
-            _ => needs,
-        };
-        if tier < needs {
-            Some("Your tier is too low for that.")
-        } else if bank.grub < u32::from(grub) || bank.marrow < u32::from(marrow) {
-            Some("You can't afford that.")
-        } else {
-            None
+        let structure = self.picked_structure();
+        match action {
+            Action::Lay(b) => self.world.may_lay(side, b).err(),
+            Action::Train(u) => structure.and_then(|h| self.world.can_train(side, h, u).err()),
+            Action::Upgrade(_) => structure.and_then(|h| self.world.can_upgrade(side, h).err()),
+            Action::OpenBuild | Action::CallOff => None,
         }
+        .map(buildings::why)
     }
 
     /// Each slot of `card` as the grid shows it: its name into `labels`,
@@ -149,31 +136,21 @@ impl Running {
             let Some(action) = *action else {
                 continue;
             };
-            let price = |d: &mut String, grub: u16, marrow: u16| {
-                let _ = match marrow {
-                    0 => write!(d, "{grub}"),
-                    m => write!(d, "{grub}/{m}"),
-                };
-            };
             match action {
                 Action::OpenBuild => {
                     label.push_str("Build");
                     detail.push('B');
                 }
-                Action::Lay(b) | Action::Upgrade(b) => {
+                Action::Lay(b) => {
                     if let Some(s) = self.buildings.stats.get(usize::from(b)) {
                         price(detail, s.cost_grub, s.cost_marrow);
                     }
-                    match action {
-                        Action::Upgrade(_) => {
-                            let tier = self
-                                .buildings
-                                .stats
-                                .get(usize::from(b))
-                                .map_or(0, |s| s.tier);
-                            let _ = write!(label, "Tier {tier}");
-                        }
-                        _ => label.push_str(short(self.buildings.name(b))),
+                    label.push_str(short(self.buildings.name(b)));
+                }
+                Action::Upgrade(b) => {
+                    if let Some(s) = self.buildings.stats.get(usize::from(b)) {
+                        price(detail, s.cost_grub, s.cost_marrow);
+                        let _ = write!(label, "Tier {}", s.tier);
                     }
                 }
                 Action::Train(u) => {
@@ -204,12 +181,6 @@ impl Running {
         states
     }
 
-    /// Whether the grid key for `slot` belongs to the Conquest card now.
-    pub fn card_takes(&self, slot: usize) -> bool {
-        self.conquest_card()
-            .is_some_and(|c| c.whole || c.slots[slot].is_some())
-    }
-
     /// Carry out the card's slot `slot`; false if the card has nothing there
     /// and the battle grid should have it.
     pub fn card_press(&mut self, slot: usize) -> bool {
@@ -223,29 +194,27 @@ impl Running {
             self.say(why.into());
             return true;
         }
-        let structure = self.picked_structure();
         match action {
-            Action::OpenBuild => self.hud.build_menu = true,
+            Action::OpenBuild => {
+                self.set_build_menu(true);
+                return true;
+            }
             Action::Lay(b) => {
                 self.hud.armed = (self.hud.armed != Some(Armed::Lay(b))).then_some(Armed::Lay(b));
                 self.say(format!("Where should the {} go?", self.buildings.name(b)));
+                return true;
             }
-            Action::Train(unit) => {
-                if let Some(structure) = structure {
-                    self.order(Command::Train { structure, unit });
-                }
-            }
-            Action::Upgrade(_) => {
-                if let Some(structure) = structure {
-                    self.order(Command::Upgrade { structure });
-                }
-            }
-            Action::CallOff => {
-                if let Some(structure) = structure {
-                    self.order(Command::CallOff { structure });
-                }
-            }
+            Action::Train(_) | Action::Upgrade(_) | Action::CallOff => {}
         }
+        // The rest are the selected building's.
+        let Some(structure) = self.picked_structure() else {
+            return true;
+        };
+        self.order(match action {
+            Action::Train(unit) => Command::Train { structure, unit },
+            Action::Upgrade(_) => Command::Upgrade { structure },
+            _ => Command::CallOff { structure },
+        });
         true
     }
 
@@ -268,10 +237,7 @@ impl Running {
             self.say(why.into());
             return;
         }
-        let spot = Vec2::new(
-            tile.0 as f32 + f32::from(stats.width) / 2.0,
-            tile.1 as f32 + f32::from(stats.depth) / 2.0,
-        );
+        let spot = buildings::centre_of(tile, stats.width, stats.depth);
         let regiments = &self.world.regiments;
         let Some(regiment) = self.selected_workers().min_by(|&a, &b| {
             let d = |h| {
@@ -289,8 +255,7 @@ impl Running {
             tile: (tile.0 as i16, tile.1 as i16),
         });
         if !self.input.shift {
-            self.hud.armed = None;
-            self.hud.build_menu = false;
+            self.set_build_menu(false);
         }
     }
 
@@ -308,10 +273,6 @@ impl Running {
             });
             return true;
         }
-        let workers: Vec<RegimentHandle> = self.selected_workers().collect();
-        if workers.is_empty() {
-            return false;
-        }
         let side = self.sandbox.side;
         let mend = self.building_under_cursor(|o| o == side).filter(|&h| {
             self.world
@@ -319,20 +280,36 @@ impl Running {
                 .and_then(|s| s.get(h))
                 .is_some_and(needs_hands)
         });
-        let node = mend.is_none().then(|| self.node_near(at)).flatten();
-        if mend.is_none() && node.is_none() {
+        enum Job {
+            Mend(StructureHandle),
+            Gather(u16),
+        }
+        let job = match (mend, self.node_near(at)) {
+            (Some(structure), _) => Job::Mend(structure),
+            (None, Some(node)) => Job::Gather(node),
+            (None, None) => return false,
+        };
+        let work = |regiment| match job {
+            Job::Mend(structure) => Command::Construct {
+                regiment,
+                structure,
+            },
+            Job::Gather(node) => Command::Gather { regiment, node },
+        };
+        let given = self.human_orders.len();
+        let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
+        self.human_orders.extend(
+            (self.selected.iter().copied())
+                .filter(|&h| is_worker(regiments, units, h))
+                .map(|regiment| PlayerCommand {
+                    player: side,
+                    command: work(regiment),
+                }),
+        );
+        if self.human_orders.len() == given {
             return false;
         }
-        for regiment in workers {
-            self.order(match (mend, node) {
-                (Some(structure), _) => Command::Construct {
-                    regiment,
-                    structure,
-                },
-                (None, Some(node)) => Command::Gather { regiment, node },
-                (None, None) => unreachable!("checked above"),
-            });
-        }
+        self.ui_sound(sounds::UiSound::Move);
         true
     }
 
@@ -355,6 +332,23 @@ impl Running {
         });
         self.ui_sound(sounds::UiSound::Move);
     }
+}
+
+/// Whether regiment `h` is a worker.
+fn is_worker(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHandle) -> bool {
+    regiments.get(h).is_some_and(|r| {
+        units
+            .get(usize::from(r.unit))
+            .is_some_and(ConquestUnitRecord::worker)
+    })
+}
+
+/// A grid slot's price: Grub, and Marrow after a slash if it costs any.
+fn price(detail: &mut String, grub: u16, marrow: u16) {
+    let _ = match marrow {
+        0 => write!(detail, "{grub}"),
+        m => write!(detail, "{grub}/{m}"),
+    };
 }
 
 /// A building still going up, or damaged: workers have work there.

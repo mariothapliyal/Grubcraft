@@ -373,15 +373,16 @@ impl Running {
         }
         let picked_structure = self.picked_structure();
         if self.selected_workers().next().is_none() {
-            self.hud.build_menu = false;
-            if matches!(self.hud.armed, Some(Armed::Lay(_))) {
-                self.hud.armed = None;
-            }
+            self.set_build_menu(false);
         }
-        let card = self.conquest_card();
         let mut card_labels = std::mem::take(&mut self.hud.card_labels);
         let mut card_details = std::mem::take(&mut self.hud.card_details);
-        let card_states = card.map(|c| self.describe_card(&c, &mut card_labels, &mut card_details));
+        let card = (self.conquest_card()).map(|c| {
+            (
+                c,
+                self.describe_card(&c, &mut card_labels, &mut card_details),
+            )
+        });
 
         let hud = &mut self.hud;
         if self.selected.is_empty() {
@@ -507,7 +508,7 @@ impl Running {
             grid[SLOT_FORMATION].detail = f.name();
         }
         // Conquest's card goes over the battle grid, or takes all of it.
-        if let (Some(card), Some(states)) = (card, card_states) {
+        if let Some((card, states)) = card {
             for (i, slot) in grid.iter_mut().enumerate() {
                 if card.slots[i].is_some() {
                     *slot = GridSlot {

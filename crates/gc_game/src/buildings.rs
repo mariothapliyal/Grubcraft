@@ -147,31 +147,6 @@ impl Table {
         self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
-    /// The building type `id` is a tier upgrade of, all the way down: what
-    /// a unit's `trained_at` names.
-    pub fn root(&self, mut id: BuildingId) -> BuildingId {
-        // A chain is never longer than the table (the bake refuses loops).
-        for _ in 0..self.len() {
-            match self
-                .stats
-                .get(usize::from(id))
-                .and_then(|s| s.upgrades_from)
-            {
-                Some(from) => id = from,
-                None => break,
-            }
-        }
-        id
-    }
-
-    /// The tier upgrade of building type `id`, if it has one.
-    pub fn upgrade_of(&self, id: BuildingId) -> Option<BuildingId> {
-        self.stats
-            .iter()
-            .position(|s| s.upgrades_from == Some(id))
-            .map(|i| i as BuildingId)
-    }
-
     /// What a worker of `faction` can lay: every building of theirs but
     /// the main building and its upgrades.
     pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + '_ {
@@ -225,10 +200,12 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
 }
 
 /// The middle of a footprint, in tiles.
-fn centre_of(s: &StructureView) -> Vec2 {
+/// The middle of a `width` by `depth` footprint whose north-west tile is
+/// `tile`: the inverse of [`tile_for`].
+pub fn centre_of(tile: (i32, i32), width: u8, depth: u8) -> Vec2 {
     Vec2::new(
-        s.tile.0 as f32 + f32::from(s.width) / 2.0,
-        s.tile.1 as f32 + f32::from(s.depth) / 2.0,
+        tile.0 as f32 + f32::from(width) / 2.0,
+        tile.1 as f32 + f32::from(depth) / 2.0,
     )
 }
 
@@ -243,7 +220,7 @@ fn block(
     // The box drapes over the terrain, each corner on the ground below it:
     // sunk by the slope under it, so its top follows the ground at `height`.
     BoxInstance {
-        pos: centre_of(s).to_array(),
+        pos: centre_of(s.tile, s.width, s.depth).to_array(),
         facing: [0.0, 1.0],
         size: [f32::from(s.width), height + (hi - lo), f32::from(s.depth)],
         color,
@@ -284,7 +261,7 @@ pub fn push(
         let frac = s.hp as f32 / s.max_hp.max(1) as f32;
         let fill = len * frac;
         let lift = height + (hi - lo) + BAR_LIFT;
-        let centre = centre_of(&s);
+        let centre = centre_of(s.tile, s.width, s.depth);
         out.push(BoxInstance {
             pos: centre.to_array(),
             facing: across.to_array(),
@@ -466,16 +443,11 @@ pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
     )
 }
 
-/// Why building `id` can't stand with its north-west tile at `tile`, if it
-/// can't: the simulation's own check, in the panel's words.
-pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'static str> {
-    world.can_build(id, tile).err().map(why)
-}
-
 /// A refusal in the panel's words.
 pub fn why(refusal: Refusal) -> &'static str {
     match refusal {
-        Refusal::NoBuildings | Refusal::Unknown => "There are no buildings here.",
+        Refusal::NoBuildings => "There are no buildings here.",
+        Refusal::Unknown => "That can't be done here.",
         Refusal::OffMap => "That would hang over the edge of the map.",
         Refusal::Rough => "The ground there is too rough to build on.",
         Refusal::Built => "Another building is in the way.",
@@ -483,6 +455,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Node => "Workers need room at a seep or vein.",
         Refusal::Tier => "Your tier is too low for that.",
         Refusal::Price => "You can't afford that.",
+        Refusal::Busy => "That building is busy.",
     }
 }
 
@@ -587,11 +560,11 @@ mod tests {
             .position(|s| s.role == Role::Housing)
             .unwrap();
         let farm = farm as BuildingId;
-        assert_eq!(refusal(&world, farm, (8, 8)), None);
-        assert!(refusal(&world, farm, (-1, 8)).is_some());
-        assert!(refusal(&world, farm, (tiles as i32 - 1, 8)).is_some());
+        assert_eq!(world.can_build(farm, (8, 8)), Ok(()));
+        assert!(world.can_build(farm, (-1, 8)).is_err());
+        assert!(world.can_build(farm, (tiles as i32 - 1, 8)).is_err());
         // Cell (20, 6) is tile (10, 3).
-        assert!(refusal(&world, farm, (9, 2)).is_some());
+        assert!(world.can_build(farm, (9, 2)).is_err());
         // What the check allows, the simulation accepts, and then the
         // spot is taken.
         let place = |world: &mut World, tile: (i32, i32)| {
@@ -606,7 +579,7 @@ mod tests {
         };
         assert!(place(&mut world, (8, 8)));
         assert_eq!(world.structures().unwrap().len(), 1);
-        assert!(refusal(&world, farm, (9, 9)).is_some());
+        assert!(world.can_build(farm, (9, 9)).is_err());
         assert!(!place(&mut world, (9, 9)));
         let standing = world.structures().unwrap().iter().next().unwrap();
         assert_eq!(standing.tile, (8, 8));
@@ -623,12 +596,6 @@ mod tests {
                 .find(|&b| table.name(b) == name)
                 .unwrap()
         };
-        let (hall, keep, citadel) = (id("Clan Hall"), id("Castle Keep"), id("Daimyo's Citadel"));
-        assert_eq!(table.upgrade_of(hall), Some(keep));
-        assert_eq!(table.upgrade_of(keep), Some(citadel));
-        assert_eq!(table.upgrade_of(citadel), None);
-        assert_eq!(table.root(citadel), hall);
-        assert_eq!(table.root(id("Dojo")), id("Dojo"));
         for f in Faction::ALL {
             let menu: Vec<BuildingId> = table.buildable(f).collect();
             assert!(
@@ -646,11 +613,14 @@ mod tests {
                 .buildable(Faction::EmberClans)
                 .any(|b| b == id("Farmstead"))
         );
+        // A building trains what its whole upgrade chain does.
         for b in 0..table.len() as BuildingId {
-            let trains = data
-                .conquest_units
-                .iter()
-                .filter(|u| u.trained_at == b)
+            let mut chain = vec![b];
+            while let Some(from) = table.stats[usize::from(*chain.last().unwrap())].upgrades_from {
+                chain.push(from);
+            }
+            let trains = (data.conquest_units.iter())
+                .filter(|u| chain.contains(&u.trained_at))
                 .count();
             assert!(trains <= 11, "{} trains {trains}", table.name(b));
         }
