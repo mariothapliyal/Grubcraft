@@ -53,7 +53,10 @@ pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
 pub use terrain::{Cover, Ground, Terrain};
-pub use verdict::{HOLD_TICKS, Verdict};
+pub use verdict::{
+    EXILE_TICKS, HEART_HOLD_TICKS, HEART_REACH, HEART_UNLOCK_TICKS, HOLD_TICKS, HeartView, Verdict,
+    Victories, Win,
+};
 pub use vision::Ambush;
 
 use champions::Champions;
@@ -88,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 7;
+pub const SIM_VERSION: u32 = 8;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -706,6 +709,13 @@ impl World {
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.events.reserve(setup.structures as usize);
+        // A match played for a victory is won only that way; the sandbox's
+        // buildings leave holding the field as it was.
+        let v = setup.victories;
+        if v.annihilation || v.heart {
+            self.judge
+                .conquest(verdict::Throne::new(v, setup.heart, setup.build_percent));
+        }
         true
     }
 
@@ -955,7 +965,59 @@ impl World {
         self.tick += 1;
         self.judge
             .update(&self.regiments, &self.stances, &self.vision, self.tick);
+        if self.judge.conquest_due(self.tick) {
+            self.judge_conquest();
+        }
         stats
+    }
+
+    /// Conquest's once-a-second look (see [`verdict`]): who still has a
+    /// main building, who is at the Heart, and who is out.
+    fn judge_conquest(&mut self) {
+        let Some(c) = &mut self.conquest else {
+            return;
+        };
+        let stats = c.structures.buildings();
+        let mains = (c.structures.iter())
+            .filter(|s| stats[usize::from(s.building)].role == structures::Role::Main)
+            .fold(0u8, |m, s| m | 1 << s.owner);
+        let regs = &self.regiments;
+        let at_heart = self
+            .judge
+            .throne()
+            .and_then(verdict::Throne::heart_at)
+            .map_or(0, |at| {
+                let reach = u64::from(HEART_REACH.raw().unsigned_abs()).pow(2);
+                (0..regs.alive.len())
+                    .filter(|&i| {
+                        regs.alive[i]
+                            && regs.models[i] > 0
+                            && !regs.morale_state[i].broken()
+                            && (regs.position[i] - at).length_sq_raw() <= reach
+                    })
+                    .fold(0u8, |m, i| m | 1 << regs.owner[i])
+            });
+        let battle = self.deploy.battle_ticks(self.tick);
+        let out = (self.judge).update_conquest(mains, at_heart, &self.stances, self.tick, battle);
+        if out == 0 {
+            return;
+        }
+        // Whoever is out leaves the field: their regiments, then their
+        // buildings.
+        for i in 0..self.regiments.alive.len() {
+            if self.regiments.alive[i] && out & (1 << self.regiments.owner[i]) != 0 {
+                c.stop_work(i);
+                let h = self.regiments.handle(i);
+                self.regiments.despawn(h);
+            }
+        }
+        let gone: Vec<StructureHandle> = (c.structures.iter())
+            .filter(|s| out & (1 << s.owner) != 0)
+            .map(|s| s.handle)
+            .collect();
+        for h in gone {
+            c.structures.despawn(h, &mut self.nav, &self.regiments);
+        }
     }
 
     fn apply(&mut self, pc: &PlayerCommand) -> bool {
@@ -1377,6 +1439,22 @@ impl World {
     /// (see [`verdict`]).
     pub fn verdict(&self) -> Option<Verdict> {
         self.judge.verdict()
+    }
+
+    /// The tick Conquest player `party` lost its last main building, while
+    /// it has none and has [`EXILE_TICKS`] from then to lay one.
+    pub fn exiled(&self, party: PlayerId) -> Option<u32> {
+        self.judge.throne()?.exiled(party)
+    }
+
+    /// Whether Conquest player `party` is out of the match.
+    pub fn is_out(&self, party: PlayerId) -> bool {
+        self.judge.throne().is_some_and(|t| t.is_out(party))
+    }
+
+    /// The Titan's Heart, in a Conquest match played for it.
+    pub fn heart(&self) -> Option<HeartView> {
+        self.judge.throne()?.heart()
     }
 
     /// The party holding the field right now, if one is (see [`verdict`]).

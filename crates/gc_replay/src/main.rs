@@ -252,6 +252,20 @@ fn info(file: &Path) -> bool {
             c.gather_percent,
             c.build_percent
         );
+        let won_by = match (c.victories.annihilation, c.victories.heart) {
+            (true, true) => "Annihilation or the Titan's Heart",
+            (true, false) => "Annihilation",
+            (false, true) => "the Titan's Heart",
+            (false, false) => "holding the field (sandbox)",
+        };
+        let heart = c.heart.map_or(String::new(), |at| {
+            format!(
+                ", the Heart at ({}, {})",
+                at.x.floor_int(),
+                at.y.floor_int()
+            )
+        });
+        println!("  won by {won_by}{heart}");
     }
     for (p, (regiments, soldiers)) in spawned.iter().enumerate() {
         let team = replay

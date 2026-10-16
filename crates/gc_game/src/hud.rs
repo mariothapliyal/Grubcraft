@@ -448,6 +448,16 @@ impl Running {
                     selected: picked_structure == Some(s.handle),
                 }));
         }
+        if let Some(heart) = self.world.heart() {
+            let at = from_fx_vec(heart.at);
+            hud.blocks.push(Block {
+                rect: [at.x - 1.5, at.y - 1.5, 3.0, 3.0],
+                color: (heart.held).map_or(crate::buildings::HEART_COLOR, |(p, _)| {
+                    crate::color_of(&self.parties, p)
+                }),
+                selected: false,
+            });
+        }
         for &h in shown {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
