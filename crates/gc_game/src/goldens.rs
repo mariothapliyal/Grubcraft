@@ -19,7 +19,6 @@
 //! that keeps the recorded commands.
 
 use gc_ai::army::{self, Placement};
-use gc_ai::perception::to_fx_vec;
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::Recorder;
@@ -30,7 +29,7 @@ use gc_sim::{
 };
 use glam::Vec2;
 
-use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field, zone_radius};
+use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field, zone_order};
 use crate::terrain_gen::{Heightmap, start_positions};
 
 /// One side of a recorded battle: a computer player.
@@ -156,6 +155,7 @@ fn tuning(world: &World, out: &mut Vec<PlayerCommand>) {
 /// battle begins.
 fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
     let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
+    let enemy = world.regiments.iter().find(|r| r.owner == 1);
     let Some(zone) = world.deploy_zone(0) else {
         return;
     };
@@ -183,7 +183,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
                     pace: Fx::ZERO,
                 }));
             }
-            if let Some(enemy) = world.regiments.iter().find(|r| r.owner == 1) {
+            if let Some(enemy) = enemy {
                 out.push(order(Command::MoveTo {
                     regiment: enemy.handle,
                     target: at(0, 0),
@@ -206,7 +206,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
                     regiment: fourth.handle,
                     formation: Formation::Tight,
                 }));
-                if let Some(enemy) = world.regiments.iter().find(|r| r.owner == 1) {
+                if let Some(enemy) = enemy {
                     out.push(order(Command::Attack {
                         regiment: third.handle,
                         target: enemy.handle,
@@ -461,13 +461,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         let forward = (foe - starts[i]).normalize_or(Vec2::NEG_Y);
         let placed = deploy(&units, &raised, starts[i], forward, golden.rows, &minds);
         if golden.deployment {
-            zones.push(PlayerCommand {
-                player: party,
-                command: Command::DeployZone {
-                    center: to_fx_vec(starts[i]),
-                    radius: Fx::from_int(zone_radius(&placed, starts[i])),
-                },
-            });
+            zones.push(zone_order(party, &placed, starts[i]));
             if i > 0 {
                 ready.push(PlayerCommand {
                     player: party,
@@ -488,10 +482,13 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         }
     }
 
-    zones.append(&mut out);
-    zones.append(&mut ready);
+    let first: Vec<_> = zones
+        .into_iter()
+        .chain(out.drain(..))
+        .chain(ready)
+        .collect();
     let mut rec = Recorder::new(&setup, &world, String::new());
-    rec.tick(&mut world, &zones);
+    rec.tick(&mut world, &first);
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
     let mut held: Option<(PlayerId, u32)> = None;
     let mut most_engaged = (0, 0);
