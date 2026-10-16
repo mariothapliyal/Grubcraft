@@ -55,8 +55,9 @@ pub const EXTENSION: &str = "gcr";
 /// State hashes are kept every this many ticks (one second of game time).
 pub const CHECKPOINT_EVERY: u32 = TICKS_PER_SECOND;
 /// A desync report keeps each system's hashes for this many of the last
-/// checkpoints (seconds of a network match, at its hashing rate).
-pub const SYSTEM_TRAIL: usize = 64;
+/// checkpoints: as many as the host keeps to compare with (gc_net's
+/// `HASHES_KEPT`), so a report covers any tick a desync is found at.
+pub const SYSTEM_TRAIL: usize = 256;
 /// A replay body larger than this is refused rather than allocated.
 const MAX_BODY: usize = 256 << 20;
 
@@ -256,7 +257,8 @@ impl Replay {
 
     /// Where two desync reports' system trails first disagree: the tick,
     /// and the names of the systems ([`gc_sim::SYSTEMS`]) whose hashes
-    /// differ there. `None` when the trails share no differing tick.
+    /// differ there. `None` when the trails share no differing tick (or
+    /// come from builds with other systems).
     pub fn first_system_difference(&self, other: &Replay) -> Option<(u32, Vec<&'static str>)> {
         self.systems.iter().find_map(|(tick, mine)| {
             let (_, theirs) = other.systems.iter().find(|(t, _)| t == tick)?;
@@ -265,7 +267,7 @@ impl Replay {
                 .filter(|(_, (a, b))| a != b)
                 .map(|(i, _)| gc_sim::SYSTEMS.get(i).copied().unwrap_or("unknown"))
                 .collect();
-            (!differ.is_empty() || mine.len() != theirs.len()).then_some((*tick, differ))
+            (!differ.is_empty()).then_some((*tick, differ))
         })
     }
 
@@ -323,6 +325,8 @@ impl Replay {
         }
         self.checkpoints = checkpoints;
         self.header.sim_version = Some(gc_sim::SIM_VERSION);
+        // A desync report's system hashes were the old rules'.
+        self.systems.clear();
         self.header.result = world.verdict();
     }
 
@@ -503,7 +507,7 @@ impl Replay {
             for _ in 0..n {
                 let tick = r.var_as()?;
                 let k: usize = r.var_as()?;
-                if k > 64 {
+                if k > 4 * gc_sim::SYSTEMS.len() {
                     return None;
                 }
                 let hashes = (0..k).map(|_| r.u64()).collect::<Option<_>>()?;
@@ -903,13 +907,8 @@ mod tests {
 
     #[test]
     fn a_format_8_replay_has_no_system_trail() {
-        let replay = record();
-        // Format 8 is format 9 without the trail's count (0) at the end.
-        let mut body = lz4_flex::decompress_size_prepended(&replay.encode()[6..]).unwrap();
-        assert_eq!(body.pop(), Some(0));
-        let mut old = MAGIC.to_vec();
-        old.extend_from_slice(&8u16.to_le_bytes());
-        old.extend_from_slice(&lz4_flex::compress_prepend_size(&body));
+        let mut replay = record();
+        let old = older(&mut replay, 8, 0);
         assert_eq!(Replay::decode(&old).unwrap(), replay);
     }
 

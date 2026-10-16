@@ -50,8 +50,8 @@ use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
 use vision::Vision;
 
-/// The parts of the simulation's state, as [`World::system_hashes`] names
-/// them.
+/// The parts of the simulation's state, in the order [`World::state_hash`]
+/// hashes them and [`World::system_hashes`] lists them.
 pub const SYSTEMS: [&str; 10] = [
     "clock",
     "random streams",
@@ -959,36 +959,39 @@ impl World {
         })
     }
 
-    /// Feed one of [`SYSTEMS`] into `h`.
+    /// Feed one of [`SYSTEMS`] into `h`. Matching on the name keeps each
+    /// arm tied to its entry: a name with no arm fails every test that
+    /// hashes a world.
     fn hash_system(&self, system: usize, h: &mut StateHasher) {
-        match system {
-            0 => h.u32(self.tick),
-            1 => {
+        match SYSTEMS[system] {
+            "clock" => h.u32(self.tick),
+            "random streams" => {
                 for rng in [&self.rng, &self.combat_rng] {
                     let (state, inc) = rng.raw_state();
                     h.u64(state);
                     h.u64(inc);
                 }
             }
-            2 => {
+            "unit stats" => {
                 h.u32(self.units.len() as u32);
                 for u in &self.units {
                     u.hash_into(h);
                 }
             }
-            3 => self.regiments.hash_into(h),
-            4 => self.combat.hash_into(h),
-            5 => self.nav.hash_into(h),
-            6 => self.vision.hash_into(&self.regiments, h),
-            7 => self.deploy.hash_into(h),
-            8 => self.judge.hash_into(h),
+            "regiments" => self.regiments.hash_into(h),
+            "combat" => self.combat.hash_into(h),
+            "pathfinding" => self.nav.hash_into(h),
+            "vision" => self.vision.hash_into(&self.regiments, h),
+            "deployment" => self.deploy.hash_into(h),
+            "verdict" => self.judge.hash_into(h),
             // Only in matches that allow champions, so other worlds hash as
             // they did before champions existed.
-            _ => {
+            "champions" => {
                 if let Some(champions) = &self.champions {
                     champions.hash_into(h);
                 }
             }
+            other => unreachable!("no hash for system {other}"),
         }
     }
 
