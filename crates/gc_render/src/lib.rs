@@ -650,7 +650,9 @@ impl Renderer {
         Cull::new(view_proj, sun)
     }
 
-    /// GPU memory allocated by the renderer itself, in bytes.
+    /// GPU memory allocated by the renderer itself, in bytes: the sizes of the
+    /// buffers and textures it creates, added up by hand (there is no
+    /// allocation wrapper), so a figure to read, not to enforce.
     pub fn gpu_bytes(&self) -> u64 {
         self.static_gpu_bytes
             + self.terrain_gpu_bytes

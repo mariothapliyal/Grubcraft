@@ -259,7 +259,7 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 
 ### Rules
 1. **Pools, not heaps, for gameplay.** All sim pools, flow-field caches, puppet arrays and per-frame instance buffers are allocated at match load. A test (`gc_sim/tests/no_alloc_in_tick.rs`) and the `gc_bench` gate fail if anything allocates during a sim tick.
-2. **Tagged accounting.** A thin global-allocator wrapper attributes every allocation to a subsystem tag (`sim`, `render`, `audio`, `ui`, `net`, `assets`). GPU buffers and textures are tracked by our renderer wrapper. The dev overlay shows a live table; the benchmark suite fails if any tag exceeds its budget.
+2. **Tagged accounting.** A thin global-allocator wrapper attributes every allocation to a subsystem tag (`sim`, `render`, `audio`, `ui`, `net`, `assets`). GPU buffers and textures are not covered by it: the renderer adds up the sizes of what it creates (`Renderer::gpu_bytes`, shown on the dev overlay), which is a display figure, not an exact one, and a wrapper around the graphics device is planned for when the renderer gets its next pass. The dev overlay shows a live table; the benchmark suite fails if any tag exceeds its budget.
 3. **Upload and forget.** Texture and mesh bytes go from the memory-mapped pack straight into GPU staging buffers; no CPU copy is retained.
 4. **Unified memory counts.** On Apple Silicon, GPU memory *is* system RAM, so GPU allocations are budgeted alongside CPU ones, not separately.
 5. **Memory-mapped, read-only asset pack.** Pages the OS can evict and re-read don't count against the game's private working set, and nothing is read until touched.
