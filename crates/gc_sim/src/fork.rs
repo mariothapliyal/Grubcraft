@@ -94,6 +94,7 @@ impl World {
             // Rehearsals are of battles: buildings still block the shared
             // ground, but can't be attacked or put up here.
             structures: None,
+            economy: None,
             regiments: Regiments::with_capacity(n),
         }
     }
