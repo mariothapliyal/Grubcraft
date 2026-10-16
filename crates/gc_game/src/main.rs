@@ -11,8 +11,8 @@
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. Shift+R reloads `data/units.ron`
-//! when the game runs from the repository. H hides the sandbox panel; C
-//! shows the credits for the art. I hands the side you command to the
+//! when the game runs from the repository and was built with `--features dev`.
+//! H hides the sandbox panel; C shows the credits for the art. I hands the side you command to the
 //! battle AI (Recruit, then Veteran, then General, then back to you); the
 //! panel shows what each computer player is doing and expects.
 //!
@@ -411,6 +411,9 @@ struct Running {
     human_orders: Vec<PlayerCommand>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
+    /// How far between the last two ticks the last frame drew, 0 to 1.
+    /// Picking uses it to aim at what is on screen.
+    alpha: f32,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
@@ -704,6 +707,9 @@ struct Watching {
     title: String,
     /// The unit stats to go back to afterwards.
     stats_before: Vec<UnitStats>,
+    /// The first tick whose state differs from the recording's, if any:
+    /// the replay was made with other rules (docs/10-replays.md).
+    diverged_at: Option<u32>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -971,6 +977,7 @@ impl App {
             pending,
             human_orders: Vec::with_capacity(64),
             prev_positions,
+            alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             art,
@@ -1625,7 +1632,7 @@ impl Running {
             .iter()
             .filter(|r| r.owner == self.sandbox.side)
         {
-            let p = from_fx_vec(r.position);
+            let p = drawn_position(&self.prev_positions, self.alpha, &r);
             let ground = self.heightmap.height_at(p.x, p.y);
             let clip = view_proj * glam::Vec4::new(p.x, ground + 0.5, p.y, 1.0);
             if clip.w <= 0.0 {
@@ -1688,8 +1695,8 @@ impl Running {
             .filter_map(|r| {
                 let stats = &self.unit_stats[r.unit as usize];
                 let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
-                let to = p - from_fx_vec(r.position);
-                let facing = angle_vec(r.facing);
+                let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
+                let to = p - at;
                 let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
                 let across = to.perp_dot(facing).abs() - fx_to_f32(width) / 2.0;
                 let outside = ahead.max(across);
@@ -1765,7 +1772,10 @@ impl Running {
             .regiments
             .iter()
             .filter(|r| r.owner == self.sandbox.side)
-            .map(|r| (r.handle, from_fx_vec(r.position).distance(p)))
+            .map(|r| {
+                let at = drawn_position(&self.prev_positions, self.alpha, &r);
+                (r.handle, at.distance(p))
+            })
             .filter(|(_, d)| *d <= radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(h, _)| h)
@@ -1824,6 +1834,7 @@ impl Running {
                 self.pending.extend_from_slice(w.replay.commands_at(tick));
                 self.human_orders.clear();
                 self.step();
+                self.check_replay_divergence();
                 continue;
             }
             if let Some(drill) = &mut self.drill {
@@ -1841,6 +1852,11 @@ impl Running {
             self.pending.append(&mut self.human_orders);
             self.step();
         }
+        // A slow frame at high speed can owe more ticks than one frame may
+        // run. Owe less than one: more would have the game run flat out for
+        // a long while after the slowdown (even through a pause), and draw
+        // past the newest tick.
+        self.sim_clock = self.sim_clock.min(TICK - Duration::from_nanos(1));
         if ticks_this_frame > 0 {
             // Tuned stats take effect in the tick after they are sent.
             self.unit_stats.clone_from_slice(self.world.units());
@@ -1857,6 +1873,7 @@ impl Running {
             Some(o) => (o.last_turn.elapsed().as_secs_f32() / TICK.as_secs_f32()).min(1.0),
             None => self.sim_clock.as_secs_f32() / TICK.as_secs_f32(),
         };
+        self.alpha = alpha;
 
         self.instances.clear();
         self.boxed.clear();
@@ -1907,15 +1924,7 @@ impl Running {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
             let seen = self.reveal_all || self.world.sees(viewer, r.handle);
-            let cur = from_fx_vec(r.position);
-            let cur_facing = angle_vec(r.facing);
-            let (pos, facing) = match self.prev_positions[r.handle.index as usize] {
-                Some((h, prev, prev_facing)) if h == r.handle => (
-                    prev.lerp(cur, alpha),
-                    prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
-                ),
-                _ => (cur, cur_facing),
-            };
+            let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
             let stats = &self.unit_stats[r.unit as usize];
@@ -2635,6 +2644,13 @@ impl Running {
         self.boxed.clear();
         self.control_groups = Default::default();
         self.last_group_key = None;
+        // Regiment handles are reissued: a leftover pick or cool-down from
+        // the last match would match the new match's regiments.
+        self.formation_pick = None;
+        self.shown_formation = None;
+        if let Some(sounds) = &mut self.sounds {
+            sounds.new_match();
+        }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
@@ -2770,7 +2786,34 @@ impl Running {
             title: replays::title(&replay),
             replay,
             stats_before,
+            diverged_at: None,
         });
+    }
+
+    /// After a replay tick: if it was a checkpoint and the state no longer
+    /// matches the recording, pause and say so once. A replay from older
+    /// rules plays on, but it is no longer the battle that was fought.
+    fn check_replay_divergence(&mut self) {
+        let tick = self.world.tick_count();
+        let Some(w) = &mut self.watching else {
+            return;
+        };
+        if w.diverged_at.is_some() {
+            return;
+        }
+        if w.replay
+            .checkpoint_at(tick)
+            .is_none_or(|h| h == self.world.state_hash())
+        {
+            return;
+        }
+        w.diverged_at = Some(tick);
+        self.paused = true;
+        self.sim_clock = Duration::ZERO;
+        self.say(format!(
+            "This replay plays differently from {}: it was made with other rules. P carries on.",
+            gc_ai::lens::clock(tick)
+        ));
     }
 
     /// Once a frame: reopen a lost sound output, log what the GPU driver
@@ -2937,7 +2980,7 @@ impl Running {
             };
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let color = [cr, cg, cb, 160];
-            let mut from = from_fx_vec(r.position);
+            let mut from = drawn_position(&self.prev_positions, self.alpha, &r);
             let route = self.world.route(h);
             for (k, &p) in route.iter().enumerate() {
                 let to = from_fx_vec(p);
@@ -3411,16 +3454,17 @@ impl Running {
         });
     }
 
-    /// R: read `data/units.ron` again and tune every type that changed.
+    /// Shift+R: read `data/units.ron` again and tune every type that changed.
+    #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
-        let Some(dir) = sandbox::data_dir() else {
+        let Some(dir) = sandbox::disk::data_dir() else {
             self.say(
                 "Shift+R reloads data/units.ron, but there is none here (run from the repository)."
                     .into(),
             );
             return;
         };
-        let (names, stats) = match sandbox::reload(&dir) {
+        let (names, stats) = match sandbox::disk::reload(&dir) {
             Ok(fresh) => fresh,
             Err(e) => {
                 logln!("grubcraft: reloading data: {e}");
@@ -3428,25 +3472,35 @@ impl Running {
                 return;
             }
         };
+        // By name, so a row added or removed above a type cannot hand it
+        // another type's stats.
+        let plan = match sandbox::plan_reload(&self.unit_names, &names) {
+            Ok(plan) => plan,
+            Err(e) => {
+                self.say(format!("data/units.ron not reloaded: {e}."));
+                return;
+            }
+        };
         let mut changed = 0;
-        for (unit, new) in stats.iter().enumerate().take(self.unit_stats.len()) {
-            let new = new.sanitized();
-            if new != self.unit_stats[unit] {
-                self.tune(unit as UnitId, new);
+        for &(fresh, running) in &plan.matched {
+            let new = stats[fresh].sanitized();
+            if new != self.unit_stats[running] {
+                self.tune(running as UnitId, new);
                 changed += 1;
             }
         }
-        for (old, new) in self.unit_names.iter_mut().zip(names) {
-            *old = new;
-        }
         let mut message = format!("Reloaded data/units.ron: {changed} unit types changed.");
-        if stats.len() != self.unit_stats.len() {
-            message += &format!(
-                " It now has {} types; restart to add or remove types.",
-                stats.len()
-            );
+        for (what, names) in [("add", &plan.added), ("remove", &plan.removed)] {
+            if !names.is_empty() {
+                message += &format!(" Restart to {what}: {}.", names.join(", "));
+            }
         }
         self.say(message);
+    }
+
+    #[cfg(not(feature = "dev"))]
+    fn reload_data(&mut self) {
+        self.say("Shift+R reloads data/units.ron in a build made with --features dev.".into());
     }
 
     /// Show a line in the sandbox panel for a few seconds.
@@ -3494,6 +3548,12 @@ impl Running {
                     gc_ai::lens::clock(w.replay.ticks)
                 )
             });
+            if let Some(at) = w.diverged_at {
+                lines.push(format!(
+                    "plays differently from {} on: made with other rules",
+                    gc_ai::lens::clock(at)
+                ));
+            }
             lines.push(format!(
                 "following {} (player {})   Tab: next side   H: hide",
                 party_name(&self.parties, sb.side),
@@ -3776,6 +3836,53 @@ fn digit(code: KeyCode) -> Option<usize> {
     DIGITS.iter().position(|&d| d == code)
 }
 
+/// Where a regiment is drawn, and which way it faces: `alpha` of the way
+/// from its previous tick to the current one. A regiment with no record of
+/// the previous tick (just spawned, or the slot was reused) is drawn where
+/// it is. Picking, routes and the minimap use this too, so they agree with
+/// what the player sees.
+fn drawn_pose(
+    prev_positions: &[Option<(RegimentHandle, Vec2, Vec2)>],
+    alpha: f32,
+    r: &gc_sim::RegimentView,
+) -> (Vec2, Vec2) {
+    pose_between(
+        prev_positions[r.handle.index as usize],
+        r.handle,
+        (from_fx_vec(r.position), angle_vec(r.facing)),
+        alpha,
+    )
+}
+
+/// Just the position of [`drawn_pose`], for the many callers that need no
+/// facing (the minimap runs it over every regiment each frame).
+fn drawn_position(
+    prev_positions: &[Option<(RegimentHandle, Vec2, Vec2)>],
+    alpha: f32,
+    r: &gc_sim::RegimentView,
+) -> Vec2 {
+    let cur = from_fx_vec(r.position);
+    match prev_positions[r.handle.index as usize] {
+        Some((h, prev, _)) if h == r.handle => prev.lerp(cur, alpha),
+        _ => cur,
+    }
+}
+
+fn pose_between(
+    prev: Option<(RegimentHandle, Vec2, Vec2)>,
+    handle: RegimentHandle,
+    (cur, cur_facing): (Vec2, Vec2),
+    alpha: f32,
+) -> (Vec2, Vec2) {
+    match prev {
+        Some((h, prev, prev_facing)) if h == handle => (
+            prev.lerp(cur, alpha),
+            prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
+        ),
+        _ => (cur, cur_facing),
+    }
+}
+
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
 fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
     Vec2::from_angle(f32::from(a.0) / 65536.0 * std::f32::consts::TAU)
@@ -3867,5 +3974,36 @@ mod lod_tests {
             ..view
         };
         assert_eq!(forced.lod(2.0, glam::Vec3::new(0.0, 0.0, -1.0)), 3);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HANDLE: RegimentHandle = RegimentHandle {
+        index: 3,
+        generation: 1,
+    };
+
+    #[test]
+    fn a_regiment_is_aimed_at_where_it_is_drawn() {
+        let prev = Some((HANDLE, Vec2::new(10.0, 0.0), Vec2::X));
+        let now = (Vec2::new(12.0, 0.0), Vec2::X);
+        assert_eq!(pose_between(prev, HANDLE, now, 0.0).0, Vec2::new(10.0, 0.0));
+        assert_eq!(pose_between(prev, HANDLE, now, 0.5).0, Vec2::new(11.0, 0.0));
+        assert_eq!(pose_between(prev, HANDLE, now, 1.0).0, Vec2::new(12.0, 0.0));
+    }
+
+    #[test]
+    fn a_reused_slot_is_drawn_where_it_is() {
+        let other = RegimentHandle {
+            generation: 2,
+            ..HANDLE
+        };
+        let prev = Some((other, Vec2::new(99.0, 99.0), Vec2::Y));
+        let now = (Vec2::new(12.0, 0.0), Vec2::X);
+        assert_eq!(pose_between(prev, HANDLE, now, 0.5), now);
+        assert_eq!(pose_between(None, HANDLE, now, 0.5), now);
     }
 }

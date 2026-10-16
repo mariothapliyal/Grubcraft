@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use gc_replay::{EXTENSION, Replay};
-use gc_sim::Command;
+use gc_sim::{Command, SIM_VERSION};
 
 /// Every golden replay, by file.
 fn goldens() -> Vec<(PathBuf, Replay)> {
@@ -81,4 +81,66 @@ fn the_goldens_cover_every_kind_of_command() {
         .collect();
     let missing: Vec<&str> = KINDS.into_iter().filter(|k| !seen.contains(k)).collect();
     assert!(missing.is_empty(), "no golden gives {missing:?}");
+}
+
+/// Each golden's checkpoint hashes, folded into one number.
+fn fingerprint(replay: &Replay) -> u64 {
+    replay
+        .checkpoints
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325, |h, &(tick, hash)| {
+            (h ^ hash ^ u64::from(tick)).wrapping_mul(0x0100_0000_01b3)
+        })
+}
+
+/// How the goldens played under [`SIM_VERSION`] (and were blessed with it).
+/// A change that makes them play differently must bump `SIM_VERSION`, so
+/// that other builds and old replays know: this table then fails, and is
+/// updated from the test's output.
+const PINNED: (u32, &[(&str, u64)]) = (
+    3,
+    &[
+        ("field-1v1", 0xe7a1c8b0443e735f),
+        ("field-2v2", 0xce982155f9b26d6c),
+        ("field-8000pt-2v2", 0x01bad62aa201de96),
+        ("field-champions-1v1", 0x8e0d2410f72c4c0d),
+        ("field-deploy-1v1", 0x8cea9186ff1f608e),
+        ("field-woods-1v1", 0xc6ab0e1b02ae9cbd),
+        ("sandbox-tuning", 0x065a1dfc0e02dff8),
+    ],
+);
+
+#[test]
+fn the_sim_version_changes_when_the_goldens_do() {
+    let goldens = goldens();
+    let table: Vec<String> = goldens
+        .iter()
+        .map(|(file, replay)| {
+            let name = file.file_stem().unwrap().to_string_lossy();
+            format!("        (\"{name}\", {:#018x}),", fingerprint(replay))
+        })
+        .collect();
+    let table = table.join("\n");
+    assert_eq!(
+        PINNED.0, SIM_VERSION,
+        "SIM_VERSION changed: bless the goldens, then set PINNED to \
+         ({SIM_VERSION}, &[\n{table}\n])"
+    );
+    for (file, replay) in &goldens {
+        let name = file.file_stem().unwrap().to_string_lossy();
+        assert_eq!(
+            replay.header.sim_version,
+            Some(SIM_VERSION),
+            "{name} wasn't blessed under this sim version: \
+             cargo run --release -p gc_replay -- bless replays"
+        );
+        let pinned = PINNED.1.iter().find(|(n, _)| *n == name).map(|&(_, f)| f);
+        assert_eq!(
+            pinned,
+            Some(fingerprint(replay)),
+            "{name} plays differently from how it did under sim version {SIM_VERSION} \
+             (or is new). If the sim changed, bump gc_sim::SIM_VERSION; then set PINNED to \
+             ({SIM_VERSION} or the new version, &[\n{table}\n])"
+        );
+    }
 }
