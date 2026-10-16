@@ -113,24 +113,36 @@ impl Settings {
         }
     }
 
-    /// Read settings; a missing file gives the defaults. A file that does
-    /// not parse also gives the defaults, but is first copied to
-    /// `settings.ron.broken` and logged, so one typo or a half-written file
-    /// does not silently wipe what the player had.
+    /// Read settings; a missing file gives the defaults. A file that cannot
+    /// be read or does not parse also gives the defaults, but is first
+    /// copied to `settings.ron.broken` and logged, so one typo or a
+    /// half-written file does not silently wipe what the player had.
     pub fn load(path: &Path) -> Settings {
-        let mut s = match std::fs::read_to_string(path) {
-            Ok(text) => ron::from_str::<Settings>(&text).unwrap_or_else(|e| {
-                let mut broken = path.as_os_str().to_owned();
-                broken.push(".broken");
+        let mut s = match std::fs::read(path) {
+            Ok(bytes) => std::str::from_utf8(&bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|text| ron::from_str::<Settings>(text).map_err(|e| e.to_string()))
+                .unwrap_or_else(|e| {
+                    let mut broken = path.as_os_str().to_owned();
+                    broken.push(".broken");
+                    let kept = match gc_platform::fsutil::write_atomic(Path::new(&broken), &bytes) {
+                        Ok(()) => format!("a copy is in {}", Path::new(&broken).display()),
+                        Err(e) => format!("the copy failed too: {e}"),
+                    };
+                    logln!(
+                        "grubcraft: {} would not load ({e}); using the defaults, {kept}",
+                        path.display()
+                    );
+                    Settings::default()
+                }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+            Err(e) => {
                 logln!(
-                    "grubcraft: {} would not load ({e}); using the defaults, a copy is in {}",
-                    path.display(),
-                    Path::new(&broken).display()
+                    "grubcraft: cannot read {} ({e}); using the defaults",
+                    path.display()
                 );
-                let _ = std::fs::write(&broken, text);
                 Settings::default()
-            }),
-            Err(_) => Settings::default(),
+            }
         };
         s.sanitize();
         s

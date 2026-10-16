@@ -6,10 +6,12 @@ use std::path::Path;
 
 /// Write `bytes` to `path` so that a reader (or a crash halfway through)
 /// sees either the old file or the new one, never half of the new one:
-/// write a temporary file beside it, flush it to disk, then rename it over
-/// the target. The folder is made if it is missing.
+/// write a temporary file beside it, then rename it over the target. The
+/// folder is made if it is missing. There is no fsync (it stalls the frame
+/// loop for milliseconds), so this guards against a crash of the game, not
+/// against power loss.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+    if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let mut tmp = path.as_os_str().to_owned();
@@ -18,7 +20,6 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let result = (|| {
         let mut file = File::create(tmp)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
         // Replaces an existing file on Unix and on Windows.
         fs::rename(tmp, path)
     })();
