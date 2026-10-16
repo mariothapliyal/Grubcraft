@@ -57,14 +57,7 @@ const RISE_REACH: i32 = 5 + 14;
 /// The description a recipe makes from a seed, `tiles` on a side.
 pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     let mut rng = Pcg32::new(seed, 0x006d_6170);
-    let mut w = Writer {
-        rng: &mut rng,
-        tiles,
-        mid: tiles / 2,
-        terrain: Vec::new(),
-        cover: Vec::new(),
-        set_pieces: Vec::new(),
-    };
+    let mut w = Writer::new(&mut rng, tiles);
     // Rolling ground first, then the start plateaus, then the recipe's
     // shape, then cover.
     let noise = Noise {
@@ -121,24 +114,36 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     }
 }
 
-/// Writes the north half of a map.
-struct Writer<'a> {
-    rng: &'a mut Pcg32,
-    tiles: i32,
+/// Writes the first player's share of a map: the north half of a Field
+/// Battle map (the Conquest recipes use it too).
+pub(crate) struct Writer<'a> {
+    pub(crate) rng: &'a mut Pcg32,
+    pub(crate) tiles: i32,
     /// The middle line, where the halves meet.
-    mid: i32,
-    terrain: Vec<TerrainOp>,
-    cover: Vec<CoverOp>,
-    set_pieces: Vec<SetPiece>,
+    pub(crate) mid: i32,
+    pub(crate) terrain: Vec<TerrainOp>,
+    pub(crate) cover: Vec<CoverOp>,
+    pub(crate) set_pieces: Vec<SetPiece>,
 }
 
-impl Writer<'_> {
+impl<'a> Writer<'a> {
+    pub(crate) fn new(rng: &'a mut Pcg32, tiles: i32) -> Self {
+        Writer {
+            rng,
+            tiles,
+            mid: tiles / 2,
+            terrain: Vec::new(),
+            cover: Vec::new(),
+            set_pieces: Vec::new(),
+        }
+    }
+
     /// A whole number from `lo` to `hi`, both included.
-    fn range(&mut self, lo: i32, hi: i32) -> i32 {
+    pub(crate) fn range(&mut self, lo: i32, hi: i32) -> i32 {
         lo + self.rng.below((hi - lo + 1) as u32) as i32
     }
 
-    fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
+    pub(crate) fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
         self.terrain.push(TerrainOp {
             shape,
             mode,
