@@ -74,7 +74,7 @@
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
-//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
+//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed and the map the Host a game card starts on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
@@ -100,6 +100,7 @@ mod data;
 mod goldens;
 mod hud;
 mod lens;
+mod map_preview;
 mod models;
 mod online;
 mod profile;
@@ -569,6 +570,8 @@ struct Running {
     sounds: Option<sounds::Sounds>,
     /// The replay list being read on another thread, until it arrives.
     replay_list: Option<replays::Listing>,
+    /// Makes the pictures of maps the menus show, off the frame loop.
+    map_previews: map_preview::MapPreviews,
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -1057,6 +1060,7 @@ impl App {
         });
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
+        menu.set_host_map_seed(opts.seed);
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -1161,6 +1165,7 @@ impl App {
             quit: false,
             sounds,
             replay_list: None,
+            map_previews: map_preview::MapPreviews::new(),
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -1170,7 +1175,10 @@ impl App {
                     Some(addr) => r.menu.net().join(&me, addr, &opts.password),
                     None => r.menu.net().host(
                         &me,
-                        gc_ui::lobby::LobbySettings::default(),
+                        gc_ui::lobby::LobbySettings {
+                            map_seed: opts.seed,
+                            ..Default::default()
+                        },
                         &opts.password,
                     ),
                 };
@@ -2611,6 +2619,7 @@ impl Running {
         }
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
+        self.map_previews.poll(&mut self.menu);
         self.ui.end_frame();
         hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {

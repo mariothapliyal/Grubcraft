@@ -126,6 +126,48 @@ pub const MAPS: [&str; 6] = [
 /// played on before maps could be picked).
 pub const DEFAULT_MAP_SEED: u64 = 0x6772_7562;
 
+/// One step of splitmix64 from `x`: a well mixed 64-bit number, whatever
+/// `x` looks like. Nothing but a way to turn a clock reading into a seed.
+fn splitmix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A new map seed for the host's "New map" button. It mixes the clock's
+/// nanoseconds with a counter, so two presses in the same clock tick still
+/// differ. It is not secret and the simulation never sees it, which is why
+/// gc_ui needs no random number crate.
+pub fn fresh_map_seed() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static PRESSES: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let count = PRESSES.fetch_add(1, Ordering::Relaxed);
+    splitmix64(nanos ^ splitmix64(count))
+}
+
+/// A map seed as players share it: all 16 hex digits in four groups,
+/// "0000-0000-6772-7562". [`parse_map_code`] reads it back exactly.
+pub fn map_code(seed: u64) -> String {
+    let hex = format!("{seed:016X}");
+    let groups: Vec<&str> = (0..4).map(|i| &hex[i * 4..i * 4 + 4]).collect();
+    groups.join("-")
+}
+
+/// The seed a map code stands for. Dashes, spaces and letter case don't
+/// matter; anything else, or anything but 16 hex digits, is not a code.
+pub fn parse_map_code(text: &str) -> Option<u64> {
+    let digits: String = text.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
+    if digits.len() != 16 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(&digits, 16).ok()
+}
+
 /// How many points each side has to raise its army in a Field Battle
 /// (docs/06-game-modes.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -652,6 +694,66 @@ mod tests {
         let mut n = LocalNetwork::new();
         n.host(&me(), LobbySettings::default(), "").unwrap();
         n
+    }
+
+    #[test]
+    fn map_codes_round_trip_exactly() {
+        for seed in [0, 1, DEFAULT_MAP_SEED, 0xDEAD_BEEF_0123_4567, u64::MAX] {
+            let code = map_code(seed);
+            assert_eq!(code.len(), 19, "{code}");
+            assert_eq!(parse_map_code(&code), Some(seed), "{code}");
+        }
+        assert_eq!(map_code(DEFAULT_MAP_SEED), "0000-0000-6772-7562");
+        assert_eq!(map_code(u64::MAX), "FFFF-FFFF-FFFF-FFFF");
+        let mut seed = 0x1234_5678_9ABC_DEF0;
+        for _ in 0..200 {
+            seed = splitmix64(seed);
+            assert_eq!(parse_map_code(&map_code(seed)), Some(seed));
+        }
+    }
+
+    #[test]
+    fn map_codes_forgive_case_dashes_and_spaces() {
+        let want = Some(0xDEAD_BEEF_0123_4567);
+        assert_eq!(parse_map_code("DEAD-BEEF-0123-4567"), want);
+        assert_eq!(parse_map_code("dead-beef-0123-4567"), want);
+        assert_eq!(parse_map_code("deadbeef01234567"), want);
+        assert_eq!(parse_map_code("  DEAD BEEF 0123 4567 "), want);
+        assert_eq!(parse_map_code("DEADBEEF-01234567"), want);
+    }
+
+    #[test]
+    fn map_codes_reject_junk() {
+        for junk in [
+            "",
+            "-",
+            "hello",
+            "DEAD-BEEF-0123-456",
+            "DEAD-BEEF-0123-45678",
+            "DEAD-BEEF-0123-456G",
+            "0xDEADBEEF01234567",
+            "DEAD-BEEF-0123-4567-0000",
+            "DEAD_BEEF_0123_4567",
+            "\u{FF24}EAD-BEEF-0123-4567",
+        ] {
+            assert_eq!(parse_map_code(junk), None, "{junk:?}");
+        }
+    }
+
+    #[test]
+    fn splitmix64_matches_its_published_first_output() {
+        // The reference generator seeded with 0 starts with this number.
+        assert_eq!(splitmix64(0), 0xE220_A839_7B1D_CDAF);
+    }
+
+    #[test]
+    fn fresh_map_seeds_differ_every_press() {
+        let seeds: Vec<u64> = (0..1000).map(|_| fresh_map_seed()).collect();
+        let mut sorted = seeds.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), seeds.len());
+        assert!(seeds.iter().any(|&s| s > u64::from(u32::MAX)));
     }
 
     #[test]
