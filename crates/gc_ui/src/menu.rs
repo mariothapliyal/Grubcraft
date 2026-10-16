@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use crate::draw::{Rect, fit};
 use crate::lobby::{
-    AI_LEVELS, Budget, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY, MAX_PLAYERS,
-    MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit, SlotEdit, SlotKind,
-    Tempo, army_points, thousands,
+    AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY,
+    MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
+    SlotEdit, SlotKind, Tempo, army_points, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -498,7 +498,7 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         // Header and settings, one row per lobby slot, then the footer (three
         // lines of text and the buttons, which keep a fixed pixel size).
-        let row_h = sp(46);
+        let row_h = sp(56);
         let row_gap = sp(6);
         let rows_h = MAX_PLAYERS as i32 * (row_h + row_gap);
         let panel = centered(ui.screen, 880, sp(64 + 36 + 20 + 4) + rows_h + 124);
@@ -622,7 +622,7 @@ impl<N: Network> Menu<N> {
             let is_me = i == lobby.local_slot;
             let swatch_sz = row_h - 16;
             let swatch = Rect::new(row.x + 8, row.y + 8, swatch_sz, swatch_sz);
-            let [r, g, b] = PLAYER_COLORS[slot.color as usize % PLAYER_COLORS.len()].1;
+            let [r, g, b] = PLAYER_COLORS[usize::from(slot.color % COLORS)].1;
             let editable =
                 slot.occupied() && (is_me || (lobby.is_host && slot.kind == SlotKind::Ai));
             if !slot.occupied() {
@@ -675,7 +675,8 @@ impl<N: Network> Menu<N> {
                 }
             } else {
                 ui.label_centered(faction_r, 1, theme::TEXT, slot.faction.name());
-                ui.label_centered(team_r, 1, theme::TEXT, &format!("Team {}", slot.team + 1));
+                let team = TEAM_NAMES[usize::from(slot.team) % MAX_PLAYERS];
+                ui.label_centered(team_r, 1, theme::TEXT, team);
             }
             match slot.kind {
                 SlotKind::Ai if lobby.is_host => {
