@@ -231,9 +231,7 @@ impl StructureView {
     pub fn finished(&self) -> bool {
         self.built_percent == 100
     }
-}
 
-impl StructureView {
     /// Centre of the footprint.
     pub fn centre(&self) -> FxVec2 {
         let (x, y) = self.tile;
@@ -346,11 +344,10 @@ const REPAIR_HP: u32 = 8;
 pub const CANCEL_REFUND_PERCENT: u32 = 75;
 
 /// What a regiment does at a building it was sent to.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Work {
     /// Knock it down (an enemy's).
-    #[default]
     Attack = 0,
     /// Build it, or mend it once it is up (its owner's).
     Build = 1,
@@ -460,6 +457,11 @@ impl Structures {
         self.resolve(h).map(|i| self.owner[i])
     }
 
+    /// Building `h`'s slot, if it stands and is `player`'s.
+    pub(crate) fn owned(&self, h: StructureHandle, player: PlayerId) -> Option<usize> {
+        self.resolve(h).filter(|&i| self.owner[i] == player)
+    }
+
     pub fn get(&self, h: StructureHandle) -> Option<StructureView> {
         self.resolve(h).map(|i| self.view(i))
     }
@@ -539,19 +541,30 @@ impl Structures {
             .map(|i| i as BuildingId)
     }
 
-    /// The type of building slot `i`, and its owner.
-    pub(crate) fn kind_of(&self, i: usize) -> (BuildingId, PlayerId) {
-        (self.building[i], self.owner[i])
+    /// The type of building slot `i`.
+    pub(crate) fn kind_of(&self, i: usize) -> BuildingId {
+        self.building[i]
     }
 
-    /// Building slot `i`'s footprint centre and the point just off its
-    /// south edge, where what it trains comes out.
-    pub(crate) fn door(&self, i: usize) -> FxVec2 {
+    /// Where what building slot `i` trains comes out: two tiles off the
+    /// middle of its south side, or of its east, west or north side where
+    /// that is blocked.
+    pub(crate) fn door(&self, i: usize, nav: &Nav) -> FxVec2 {
         let [x, y, w, d] = self.footprint(i);
-        FxVec2::new(
+        let (mid_x, mid_y) = (
             Fx::from_int(x) + Fx::from_ratio(w, 2),
-            Fx::from_int(y + d) + Fx::from_int(2),
-        )
+            Fx::from_int(y) + Fx::from_ratio(d, 2),
+        );
+        let off = Fx::from_int(2);
+        let south = FxVec2::new(mid_x, Fx::from_int(y + d) + off);
+        [
+            FxVec2::new(Fx::from_int(x + w) + off, mid_y),
+            FxVec2::new(Fx::from_int(x) - off, mid_y),
+            FxVec2::new(mid_x, Fx::from_int(y) - off),
+        ]
+        .into_iter()
+        .find(|&p| !nav.walkable(south) && nav.walkable(p))
+        .unwrap_or(south)
     }
 
     /// Live buildings in index order.
@@ -600,11 +613,10 @@ impl Structures {
         self.upgrade_to[i].is_some()
     }
 
-    /// Building slot `i`'s type and owner, if the building of generation
+    /// Building slot `i`'s owner, if the building of generation
     /// `generation` still stands there.
-    pub(crate) fn live_slot(&self, i: usize, generation: u16) -> Option<(BuildingId, PlayerId)> {
-        (self.hp[i] > 0 && self.generation[i] == generation)
-            .then(|| (self.building[i], self.owner[i]))
+    pub(crate) fn live_slot(&self, i: usize, generation: u16) -> Option<PlayerId> {
+        (self.hp[i] > 0 && self.generation[i] == generation).then(|| self.owner[i])
     }
 
     /// What `owner`'s finished buildings add to their supply cap.

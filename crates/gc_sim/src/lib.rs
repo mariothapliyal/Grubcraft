@@ -1132,17 +1132,15 @@ impl World {
         let Some(conquest) = &mut self.conquest else {
             return;
         };
-        for t in conquest.production.trained.drain(..) {
+        // Taken out and put back, so the list keeps its room.
+        let trained = core::mem::take(&mut conquest.production.trained);
+        for t in &trained {
             let Some(stats) = self.units.get(usize::from(t.unit)) else {
                 continue;
             };
             let Some(h) = self.regiments.spawn(t.owner, t.unit, t.at, SOUTH, stats) else {
                 // No room for it: what it cost comes back.
-                let u = conquest
-                    .units
-                    .get(usize::from(t.unit))
-                    .copied()
-                    .unwrap_or_default();
+                let u = conquest.unit(t.unit);
                 conquest
                     .economy
                     .refund(t.owner, u32::from(u.cost_grub), u32::from(u.cost_marrow));
@@ -1166,6 +1164,7 @@ impl World {
                 );
             }
         }
+        conquest.production.trained = trained;
     }
 
     /// Regiment `h` was given another order: it stops attacking any

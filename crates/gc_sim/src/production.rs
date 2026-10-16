@@ -7,8 +7,8 @@
 //! - A queue holds [`QUEUE`] regiments. The one at the front starts once
 //!   its owner has the supply for it, counting those already in training,
 //!   and takes its `train_ticks` at the match's tempo.
-//! - A finished regiment comes out at the building's south side and marches
-//!   to its rally point, if it has one.
+//! - A finished regiment comes out at the building's south side (or another
+//!   where that is blocked) and marches to its rally point, if it has one.
 //! - Calling off the last in a queue gives back all it cost. A building
 //!   that falls takes its queue with it, and gives back nothing.
 
@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use gc_fixed::FxVec2;
 
 use crate::conquest::ConquestUnit;
+use crate::nav::Nav;
 use crate::structures::{StructureHandle, Structures};
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitId};
 
@@ -80,26 +81,27 @@ impl Production {
         i
     }
 
+    /// Building `h`'s slot, if its record is for that building.
+    fn live(&self, h: StructureHandle) -> Option<usize> {
+        let i = h.index as usize;
+        (self.queue_gen.get(i) == Some(&h.generation)).then_some(i)
+    }
+
     /// What building `h` has queued, front first.
     pub fn queue_of(&self, h: StructureHandle) -> &[UnitId] {
-        let i = h.index as usize;
-        if self.queue_gen.get(i) != Some(&h.generation) {
-            return &[];
-        }
-        &self.queue[i][..usize::from(self.queued[i])]
+        self.live(h)
+            .map_or(&[], |i| &self.queue[i][..usize::from(self.queued[i])])
     }
 
     /// Ticks left for the regiment at the front of building `h`'s queue,
     /// once it has started.
     pub fn front_ticks_left(&self, h: StructureHandle) -> Option<u32> {
-        let i = h.index as usize;
-        (self.queue_gen.get(i) == Some(&h.generation) && self.clock[i] > 0).then(|| self.clock[i])
+        self.live(h).map(|i| self.clock[i]).filter(|&t| t > 0)
     }
 
     /// Building `h`'s rally point.
     pub fn rally_of(&self, h: StructureHandle) -> Option<FxVec2> {
-        let i = h.index as usize;
-        self.rally[i].filter(|_| self.queue_gen[i] == h.generation)
+        self.rally[self.live(h)?]
     }
 
     /// Whether building `h` has room in its queue.
@@ -112,10 +114,8 @@ impl Production {
     pub(crate) fn enqueue(&mut self, h: StructureHandle, unit: UnitId) {
         let i = self.slot(h);
         let n = usize::from(self.queued[i]);
-        if n < QUEUE {
-            self.queue[i][n] = unit;
-            self.queued[i] += 1;
-        }
+        self.queue[i][n] = unit;
+        self.queued[i] += 1;
     }
 
     /// Take the last regiment off building `h`'s queue, for its price back.
@@ -132,9 +132,9 @@ impl Production {
         Some(self.queue[i][n - 1])
     }
 
-    pub(crate) fn set_rally(&mut self, h: StructureHandle, at: Option<FxVec2>) {
+    pub(crate) fn set_rally(&mut self, h: StructureHandle, at: FxVec2) {
         let i = self.slot(h);
-        self.rally[i] = at;
+        self.rally[i] = Some(at);
     }
 
     /// Add the supply regiments in training take to `used`, by player.
@@ -147,7 +147,7 @@ impl Production {
         for i in 0..self.queued.len() {
             if self.queued[i] > 0
                 && self.clock[i] > 0
-                && let Some((_, owner)) = structures.live_slot(i, self.queue_gen[i])
+                && let Some(owner) = structures.live_slot(i, self.queue_gen[i])
                 && let Some(u) = used.get_mut(usize::from(owner))
             {
                 *u += supply(units, self.queue[i][0]);
@@ -155,22 +155,23 @@ impl Production {
         }
     }
 
-    /// One tick of training. `used` is each player's supply in use by
-    /// their regiments; `cap` their supply cap.
+    /// One tick of training. `used` gives each player's supply in use by
+    /// their regiments, worked out only if a queue is waiting to start.
     pub(crate) fn update(
         &mut self,
         structures: &Structures,
+        nav: &Nav,
         units: &[ConquestUnit],
-        mut used: [u32; MAX_PARTIES],
-        cap: impl Fn(PlayerId) -> u32,
+        used: impl FnOnce() -> [u32; MAX_PARTIES],
     ) {
         self.trained.clear();
-        self.in_training(structures, units, &mut used);
+        let mut used = Some(used);
+        let mut room: Option<[u32; MAX_PARTIES]> = None;
         for i in 0..self.queued.len() {
             if self.queued[i] == 0 {
                 continue;
             }
-            let Some((_, owner)) = structures.live_slot(i, self.queue_gen[i]) else {
+            let Some(owner) = structures.live_slot(i, self.queue_gen[i]) else {
                 // It fell: the queue goes with it.
                 self.queued[i] = 0;
                 self.clock[i] = 0;
@@ -178,13 +179,23 @@ impl Production {
             };
             let unit = self.queue[i][0];
             if self.clock[i] == 0 {
-                let p = usize::from(owner);
+                // Supply left under each player's cap, counting those in
+                // training.
+                let room = room.get_or_insert_with(|| {
+                    let mut taken = used.take().map_or([0; MAX_PARTIES], |f| f());
+                    self.in_training(structures, units, &mut taken);
+                    core::array::from_fn(|p| {
+                        structures
+                            .supply_cap(p as PlayerId)
+                            .saturating_sub(taken[p])
+                    })
+                });
                 let need = supply(units, unit);
-                if p >= MAX_PARTIES || used[p] + need > cap(owner) {
+                let Some(left) = room.get_mut(usize::from(owner)).filter(|l| **l >= need) else {
                     // Waits for room.
                     continue;
-                }
-                used[p] += need;
+                };
+                *left -= need;
                 let ticks = units
                     .get(usize::from(unit))
                     .map_or(1, |u| u32::from(u.train_ticks));
@@ -197,7 +208,7 @@ impl Production {
             self.trained.push(Trained {
                 owner,
                 unit,
-                at: structures.door(i),
+                at: structures.door(i, nav),
                 rally: self.rally[i],
             });
             self.queue[i].copy_within(1.., 0);

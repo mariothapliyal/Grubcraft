@@ -703,3 +703,23 @@ fn training_is_in_the_state_hash() {
     b.tick(&[]);
     assert_ne!(a.state_hash(), b.state_hash());
 }
+
+#[test]
+fn a_building_walled_in_on_the_south_trains_out_of_another_side() {
+    let mut w = conquest(100);
+    put_up(&mut w, 0, HALL, 20, 20);
+    let barracks = put_up(&mut w, 0, BARRACKS, 30, 20);
+    put_up(&mut w, 0, HOUSE, 31, 24);
+    assert!(order(
+        &mut w,
+        0,
+        Command::Train {
+            structure: barracks,
+            unit: SPEARS
+        }
+    ));
+    until(&mut w, 1000, |w| count(w, SPEARS) == 1);
+    let out = w.regiments.iter().find(|r| r.unit == SPEARS).unwrap();
+    let east = FxVec2::new(gc_fixed::Fx::from_int(35), gc_fixed::Fx::from_ratio(43, 2));
+    assert!((out.position - east).length() < gc_fixed::Fx::from_int(1));
+}

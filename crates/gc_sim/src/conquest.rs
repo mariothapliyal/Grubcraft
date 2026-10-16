@@ -133,10 +133,10 @@ impl Conquest {
         self.structures.update(regs, stats, &self.units, nav);
         self.economy
             .update(regs, stats, &self.units, &self.structures);
-        let used = self.economy.supply_in_use(&self.units, regs);
-        let structures = &self.structures;
-        self.production
-            .update(structures, &self.units, used, |p| structures.supply_cap(p));
+        let (units, economy) = (&self.units, &self.economy);
+        self.production.update(&self.structures, nav, units, || {
+            economy.supply_in_use(units, regs)
+        });
     }
 
     /// Player `p`'s store and supply. Supply in use counts the regiments in
@@ -236,7 +236,7 @@ impl Conquest {
         h: StructureHandle,
         regs: &mut Regiments,
     ) -> bool {
-        if !self.unit(regs.unit[r]).worker || self.structures.owner(h) != Some(player) {
+        if !self.unit(regs.unit[r]).worker || self.structures.owned(h, player).is_none() {
             return false;
         }
         self.stop_work(r);
@@ -275,12 +275,11 @@ impl Conquest {
             return false;
         };
         let u = self.unit(unit);
-        let (building, _) = self.structures.kind_of(i);
+        let building = self.structures.kind_of(i);
         let trains = u
             .trained_at
             .is_some_and(|at| self.structures.grew_from(building, at));
         if !trains
-            || usize::from(unit) >= self.units.len()
             || self.structures.tier_of(player) < u.tier
             || !self.production.has_room(h)
             || !self
@@ -313,7 +312,7 @@ impl Conquest {
         let Some(i) = self.ready(player, h) else {
             return false;
         };
-        let (building, _) = self.structures.kind_of(i);
+        let building = self.structures.kind_of(i);
         let Some(to) = self.structures.upgrade_of(building) else {
             return false;
         };
@@ -331,18 +330,18 @@ impl Conquest {
 
     /// `player` sets where what building `h` trains goes.
     pub(crate) fn set_rally(&mut self, player: PlayerId, h: StructureHandle, at: FxVec2) -> bool {
-        if self.structures.owner(h) != Some(player) {
+        if self.structures.owned(h, player).is_none() {
             return false;
         }
-        self.production.set_rally(h, Some(at));
+        self.production.set_rally(h, at);
         true
     }
 
     /// The slot of building `h` if it is `player`'s and finished.
     fn ready(&self, player: PlayerId, h: StructureHandle) -> Option<usize> {
         self.structures
-            .resolve(h)
-            .filter(|&i| self.structures.owner(h) == Some(player) && self.structures.finished(i))
+            .owned(h, player)
+            .filter(|&i| self.structures.finished(i))
     }
 
     /// Regiment slot `r` was given another order: it stops attacking or
