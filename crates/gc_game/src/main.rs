@@ -3199,6 +3199,11 @@ impl Running {
             .filter(|&&t| tagged_alloc::live_bytes(t) > 0)
             .map(|&t| format!("{} {:.2}", t.name(), mb(tagged_alloc::live_bytes(t))))
             .collect();
+        let dropped = if rs.dropped > 0 {
+            format!("   {} NOT DRAWN: over capacity", rs.dropped)
+        } else {
+            String::new()
+        };
         let info = self.renderer.adapter_info();
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
@@ -3206,7 +3211,7 @@ impl Running {
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
              routes  {} portals   {} waiting\n\
              ai      {} computer players   {ai_avg:6.3} ms a tick\n\
-             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles\n\
+             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles{dropped}\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\

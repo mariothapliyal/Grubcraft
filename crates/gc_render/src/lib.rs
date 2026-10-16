@@ -137,6 +137,9 @@ pub struct RenderStats {
     pub boxes_drawn: u32,
     pub soldiers_drawn: u32,
     pub triangles: u64,
+    /// Boxes and soldiers asked for beyond the fixed instance buffers this
+    /// frame, so left undrawn. Zero unless a match outgrows the capacity.
+    pub dropped: u32,
 }
 
 #[repr(C)]
@@ -893,7 +896,9 @@ impl Renderer {
             self.visible_chunks.clear();
             self.sun_chunks.clear();
         }
+        let mut dropped = 0;
         let boxes = if self.options.draw_blocks {
+            dropped += boxes.len().saturating_sub(MAX_BOX_INSTANCES);
             &boxes[..boxes.len().min(MAX_BOX_INSTANCES)]
         } else {
             &[]
@@ -904,6 +909,7 @@ impl Renderer {
         }
         let soldiers = match &self.soldiers.models {
             Some(_) if self.options.draw_blocks => {
+                dropped += soldiers.len().saturating_sub(MAX_SOLDIER_INSTANCES);
                 &soldiers[..soldiers.len().min(MAX_SOLDIER_INSTANCES)]
             }
             _ => &[],
@@ -1091,6 +1097,7 @@ impl Renderer {
             boxes_drawn: boxes.len() as u32,
             soldiers_drawn,
             triangles,
+            dropped: dropped as u32,
         };
         FrameOutcome::Presented
     }
