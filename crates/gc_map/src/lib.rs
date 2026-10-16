@@ -64,17 +64,6 @@ pub struct FieldMap {
 }
 
 impl FieldMap {
-    /// The map a battle of `players` on lobby choice `choice` is played
-    /// on: 256 tiles a side, or 320 for five or six players, whose Grand
-    /// Battle armies don't fit on 256.
-    pub fn for_battle(choice: usize, players: usize, seed: u64) -> FieldMap {
-        FieldMap {
-            choice,
-            tiles: if players > 4 { 320 } else { 256 },
-            seed,
-        }
-    }
-
     /// Make the map. A random map whose starts aren't all joined by
     /// walkable ground is made again from the next seed (none of the seeds
     /// the tests sweep need it), so nobody is shown a broken one.

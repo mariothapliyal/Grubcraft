@@ -984,7 +984,6 @@ impl Lan {
             }
             Msg::Refuse { reason } => self.lose_host(reason),
             Msg::Start {
-                seed,
                 map_hash,
                 settings,
                 players,
@@ -994,6 +993,7 @@ impl Lan {
                 if c.game.is_some() {
                     return;
                 }
+                let seed = settings.map_seed;
                 c.game = Some(ClientGame {
                     map: HostMap { seed, map_hash },
                     me: you,
@@ -1549,7 +1549,6 @@ impl HostGame {
     /// as it is now.
     fn start_msg(&self, you: PlayerId) -> Msg {
         Msg::Start {
-            seed: self.start.seed.unwrap_or_default(),
             map_hash: self.map_hash,
             settings: self.start.settings.clone(),
             players: self.start.players.clone(),

@@ -39,10 +39,14 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         while let Ok(newer) = jobs.try_recv() {
             key = newer;
         }
-        let (choice, players, seed) = key;
-        let field = FieldMap::for_battle(choice, players, seed);
-        // The last map made is kept, so the same ground for another player
-        // count, or the match then started on it, costs only a copy.
+        let (choice, tiles, seed) = key;
+        let field = FieldMap {
+            choice,
+            tiles,
+            seed,
+        };
+        // The last map made is kept, so the match then started on it costs
+        // only a copy.
         let map = make_map(field);
         let answer = Made {
             key,
@@ -149,7 +153,7 @@ mod tests {
         let mut previews = MapPreviews::new();
         menu.show(Screen::Play);
         step(&mut menu, &mut ui, &mut previews);
-        let first = (0, 2, DEFAULT_MAP_SEED);
+        let first = (0, 256, DEFAULT_MAP_SEED);
         assert_eq!(menu.wanted_map_preview(), Some(first));
         // Not made yet, so not shown.
         assert_eq!(menu.shown_map_preview(), None);
@@ -158,9 +162,9 @@ mod tests {
         // the old one is not shown for it.
         menu.set_host_map_seed(7);
         step(&mut menu, &mut ui, &mut previews);
-        assert_eq!(menu.wanted_map_preview(), Some((0, 2, 7)));
+        assert_eq!(menu.wanted_map_preview(), Some((0, 256, 7)));
         assert_eq!(menu.shown_map_preview(), None);
-        wait_for(&mut menu, &mut ui, &mut previews, (0, 2, 7));
+        wait_for(&mut menu, &mut ui, &mut previews, (0, 256, 7));
         // Leaving for the main menu wants nothing.
         menu.show(Screen::Main);
         step(&mut menu, &mut ui, &mut previews);

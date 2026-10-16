@@ -8,7 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY,
     MAX_PLAYERS, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit,
-    SlotEdit, SlotKind, Tempo, army_points, fresh_map_seed, map_code, parse_map_code, thousands,
+    SlotEdit, SlotKind, Tempo, army_points, field_map_tiles, fresh_map_seed, map_code,
+    parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -62,9 +63,9 @@ pub enum MenuAction {
 }
 
 /// Which map picture a screen wants: the map choice (an index into
-/// [`MAPS`]), how many players it is for (that decides the map's size), and
-/// the map seed. See [`Menu::wanted_map_preview`].
-pub type MapPreviewKey = (usize, usize, u64);
+/// [`MAPS`]), its size in tiles ([`field_map_tiles`]) and the map seed. See
+/// [`Menu::wanted_map_preview`].
+pub type MapPreviewKey = (usize, u32, u64);
 
 /// A picture of a map the game made for the lobby.
 struct MapPreview {
@@ -181,8 +182,8 @@ impl<N: Network> Menu<N> {
         self.host.map_seed = seed;
     }
 
-    /// The map picture the screen on show would like: the map choice, how
-    /// many players it is for and the map seed (see [`MapPreviewKey`]).
+    /// The map picture the screen on show would like: the map choice, its
+    /// size and the map seed (see [`MapPreviewKey`]).
     /// `None` when no screen shows one. It is worked out while a frame
     /// draws, so ask after [`Menu::frame`]; when it changes the game makes
     /// that map (off the frame loop, it takes a moment) and answers with
@@ -555,7 +556,7 @@ impl<N: Network> Menu<N> {
         self.host_password = password;
         // A Field Battle map is made for the players in it; the card can't
         // know yet, so it shows the size two players get.
-        let key = (self.host.map, 2, self.host.map_seed);
+        let key = (self.host.map, field_map_tiles(2), self.host.map_seed);
         self.draw_map_preview(ui, preview_r, key);
         s.skip(sp(8));
         let host_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
@@ -820,7 +821,8 @@ impl<N: Network> Menu<N> {
         if preview_side > 0 {
             let occupied = lobby.slots.iter().filter(|s| s.occupied()).count();
             let picture = Rect::new(strip.x, strip.y, preview_side, preview_side);
-            self.draw_map_preview(ui, picture, (settings.map, occupied, settings.map_seed));
+            let key = (settings.map, field_map_tiles(occupied), settings.map_seed);
+            self.draw_map_preview(ui, picture, key);
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = MAPS.get(settings.map).copied().unwrap_or("?");
             ui.label(x, strip.y, 2, theme::TEXT, &fit(name, (w / 16) as usize));
@@ -2103,19 +2105,20 @@ mod tests {
         assert!(h.has("New map") && h.has("Map code") && h.has("0000-0000-6772-7562"));
         // The lobby asks for the map it is on, sized for the players in it.
         let seed = crate::lobby::DEFAULT_MAP_SEED;
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 1, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        // Up to four players share a map, so a new one changes nothing.
         h.click("Add AI");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 2, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
         // Until the game answers there is a grey box, not a picture.
         assert_eq!(picture_quads(&h.ui.draw), 0);
         assert_eq!(h.menu.shown_map_preview(), None);
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
-        assert_eq!(h.menu.shown_map_preview(), Some((0, 2, seed)));
+        assert_eq!(h.menu.shown_map_preview(), Some((0, 256, seed)));
         assert!(picture_quads(&h.ui.draw) > 0);
         // A picture of some other map is not shown.
         h.menu
-            .set_map_preview((1, 2, seed), MinimapTerrain::default(), Vec::new());
+            .set_map_preview((1, 256, seed), MinimapTerrain::default(), Vec::new());
         h.frame(UiInput::default());
         assert_eq!(h.menu.shown_map_preview(), None);
         assert_eq!(picture_quads(&h.ui.draw), 0);
@@ -2258,7 +2261,7 @@ mod tests {
         assert!(find_text(&ui.draw, "Use").is_none());
         assert_eq!(
             menu.wanted_map_preview(),
-            Some((2, 2, 0xABCD_EF01_2345_6789))
+            Some((2, 256, 0xABCD_EF01_2345_6789))
         );
     }
 
@@ -2268,7 +2271,7 @@ mod tests {
         h.click("Play");
         let seed = crate::lobby::DEFAULT_MAP_SEED;
         assert!(h.has("New map") && h.has(&map_code(seed)));
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 2, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
         assert!(picture_quads(&h.ui.draw) > 0);
@@ -2313,7 +2316,7 @@ mod tests {
         let mut h = Harness::new();
         h.menu.set_host_map_seed(12345);
         h.click("Play");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 2, 12345)));
+        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, 12345)));
         assert!(h.has(&map_code(12345)));
         h.click_last("Host");
         assert_eq!(lobby_seed(&h), 12345);
@@ -2341,7 +2344,7 @@ mod tests {
                 let wanted = h.menu.wanted_map_preview();
                 if round == 0 {
                     // Six players: a bigger map.
-                    assert!(wanted.is_none_or(|w| w.1 == 6), "{size:?}");
+                    assert!(wanted.is_none_or(|w| w.1 == 320), "{size:?}");
                     if wanted.is_some() {
                         send_picture(&mut h.menu);
                     }

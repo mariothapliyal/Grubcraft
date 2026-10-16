@@ -28,6 +28,9 @@ pub enum SizeClass {
     Field(i32),
 }
 
+/// The sides a Field map may have, in tiles.
+pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=512;
+
 impl SizeClass {
     pub fn tiles(self) -> i32 {
         match self {
@@ -203,7 +206,15 @@ pub struct MapDef {
 
 impl MapDef {
     pub fn parse(text: &str) -> Result<MapDef, String> {
-        ron::from_str(text).map_err(|e| e.to_string())
+        let def: MapDef = ron::from_str(text).map_err(|e| e.to_string())?;
+        match def.size {
+            SizeClass::Field(tiles) if !FIELD_TILES.contains(&tiles) => Err(format!(
+                "a Field map is {} to {} tiles a side, not {tiles}",
+                FIELD_TILES.start(),
+                FIELD_TILES.end()
+            )),
+            _ => Ok(def),
+        }
     }
 
     /// The description as RON text, as an author would save it.

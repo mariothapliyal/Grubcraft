@@ -132,10 +132,9 @@ pub enum Msg {
     Edit { slot: u8, edit: SlotEdit },
     /// Host → everyone: the match begins. `players` are the occupied slots
     /// in order; `you` is the reader's position among them. Every machine
-    /// builds the same world from `seed`; `map_hash` lets each check its
-    /// map came out identical to the host's.
+    /// builds the same map and world from the settings' map seed;
+    /// `map_hash` lets each check its map came out identical to the host's.
     Start {
-        seed: u64,
         map_hash: u64,
         settings: LobbySettings,
         players: Vec<Slot>,
@@ -342,7 +341,6 @@ impl Msg {
                 write_edit(&mut w, edit);
             }
             Msg::Start {
-                seed,
                 map_hash,
                 settings,
                 players,
@@ -350,7 +348,6 @@ impl Msg {
                 input_delay,
             } => {
                 w.u8(5);
-                w.u64(*seed);
                 w.u64(*map_hash);
                 write_settings(&mut w, settings);
                 w.var(players.len() as u64);
@@ -437,7 +434,6 @@ impl Msg {
                 edit: read_edit(&mut r)?,
             },
             5 => {
-                let seed = r.u64()?;
                 let map_hash = r.u64()?;
                 // A lobby may list a map another build lacks (the version
                 // line stops it starting); a match must be on one we have.
@@ -451,7 +447,6 @@ impl Msg {
                     players.push(read_slot(&mut r)?);
                 }
                 Msg::Start {
-                    seed,
                     map_hash,
                     settings,
                     you: r.u8().filter(|&you| usize::from(you) < players.len())?,
@@ -597,7 +592,6 @@ mod tests {
                 slot: MAX_PLAYERS as u8,
             },
             Msg::Start {
-                seed: 7,
                 map_hash: 0,
                 settings: grand.clone(),
                 players: slots[..2].to_vec(),
@@ -605,7 +599,6 @@ mod tests {
                 input_delay: 2,
             },
             Msg::Start {
-                seed: 7,
                 map_hash: 0,
                 settings: LobbySettings {
                     map: MAPS.len(),
@@ -620,7 +613,6 @@ mod tests {
             assert_eq!(Msg::decode(&m.encode()), None, "{m:?}");
         }
         round_trip(Msg::Start {
-            seed: 7,
             map_hash: u64::MAX,
             settings: grand,
             players: slots.to_vec(),

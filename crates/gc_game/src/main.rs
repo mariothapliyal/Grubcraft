@@ -74,7 +74,7 @@
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
-//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed and the map the Host a game card starts on; `--frames N` quits after N frames
+//! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
@@ -459,7 +459,7 @@ struct Running {
     window: Arc<Window>,
     renderer: Renderer,
     camera: RtsCamera,
-    heightmap: Map,
+    heightmap: Arc<Map>,
     /// Which Field Battle map `heightmap` is; `None` for one opened with
     /// `--map`.
     map_key: Option<FieldMap>,
@@ -899,7 +899,7 @@ impl App {
             2,
         );
         let heightmap = tagged_alloc::scope(Tag::Map, || match &opts.map {
-            Some(def) => Map::from_def(def),
+            Some(def) => Arc::new(Map::from_def(def)),
             None => make_map(first_key),
         });
         tagged_alloc::scope(Tag::Render, || {
@@ -1190,7 +1190,7 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let setup = battle::quick_battle(level, r.menu.settings());
+                let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
             }
         }
@@ -2725,10 +2725,7 @@ impl Running {
         // `--map` is for looking round in the sandbox; the first battle or
         // replay leaves it.
         let key = match &kind {
-            MatchKind::Battle(setup) => {
-                self.seed = setup.settings.map_seed;
-                Some(battle_map(&setup.settings, setup.players.len()))
-            }
+            MatchKind::Battle(setup) => Some(battle_map(&setup.settings, setup.players.len())),
             MatchKind::Replay(r) => Some(FieldMap {
                 choice: r.header.map.map_or(0, usize::from),
                 tiles: r.map_tiles,
@@ -2736,10 +2733,11 @@ impl Running {
             }),
             MatchKind::Sandbox => None,
         };
-        if let Some(key) = key
-            && self.map_key != Some(key)
-        {
-            self.use_map(key);
+        if let Some(key) = key {
+            self.seed = key.seed;
+            if self.map_key != Some(key) {
+                self.use_map(key);
+            }
         }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
@@ -3937,30 +3935,33 @@ impl Running {
 
 /// The map a lobby battle of `players` is played on.
 fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> FieldMap {
-    FieldMap::for_battle(settings.map, players, settings.map_seed)
+    FieldMap {
+        choice: settings.map,
+        tiles: gc_ui::lobby::field_map_tiles(players),
+        seed: settings.map_seed,
+    }
 }
 
 /// The last Field Battle map made, so the lobby's preview, the host's
 /// fingerprint and the match itself make it once between them.
-static LAST_MAP: std::sync::Mutex<Option<(FieldMap, Map)>> = std::sync::Mutex::new(None);
+static LAST_MAP: std::sync::Mutex<Option<(FieldMap, Arc<Map>)>> = std::sync::Mutex::new(None);
 
-/// Make the Field Battle map `key`, or copy it if it was the last made.
-fn make_map(key: FieldMap) -> Map {
-    let last = || {
-        LAST_MAP
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    };
-    tagged_alloc::scope(Tag::Map, || {
-        if let Some((k, map)) = &*last()
-            && *k == key
-        {
-            return map.clone();
-        }
-        let map = key.make();
-        *last() = Some((key, map.clone()));
-        map
-    })
+/// Make the Field Battle map `key`, or share it if it was the last made.
+/// The lock is held while a map is made, so a second ask for the same map
+/// (the match starting while its picture is being made) waits for it
+/// instead of making it again.
+fn make_map(key: FieldMap) -> Arc<Map> {
+    let mut last = LAST_MAP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((k, map)) = &*last
+        && *k == key
+    {
+        return Arc::clone(map);
+    }
+    let map = Arc::new(tagged_alloc::scope(Tag::Map, || key.make()));
+    *last = Some((key, Arc::clone(&map)));
+    map
 }
 
 /// The fingerprint of a lobby battle's map, which the host sends to every

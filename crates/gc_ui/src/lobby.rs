@@ -110,6 +110,13 @@ pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
+/// How many tiles a side a Field Battle map is for `players`: 256, or 320
+/// for five or six, whose Grand Battle armies don't fit on 256. The same
+/// map choice and code make a different map at each size.
+pub fn field_map_tiles(players: usize) -> u32 {
+    if players > 4 { 320 } else { 256 }
+}
+
 /// Maps the lobby offers: the seeded map, a random map from each recipe,
 /// and a random recipe. The same names in the same order as
 /// `gc_map::FIELD_MAPS` (the game checks).

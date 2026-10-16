@@ -71,7 +71,7 @@ pub fn check(def: &MapDef) -> Report {
     // for placement, for every start reaching every other, and for its set
     // pieces, and its fairness is its symmetry.
     let field = matches!(map.size, Some(SizeClass::Field(_)));
-    if !r.ok() || (!field && !counts(&map, &mut r)) {
+    if !r.ok() || !starts(&map, &mut r) || (!field && !counts(&map, &mut r)) {
         return r;
     }
 
@@ -192,7 +192,8 @@ fn count(map: &Map, kind: Kind) -> usize {
 }
 
 /// Each thing there should be the right number of times.
-fn counts(map: &Map, r: &mut Report) -> bool {
+/// One start for each player, and none for anyone else.
+fn starts(map: &Map, r: &mut Report) -> bool {
     let before = r.errors.len();
     for p in 0..map.players {
         let n = map
@@ -206,6 +207,13 @@ fn counts(map: &Map, r: &mut Report) -> bool {
     if count(map, Kind::Start) != map.players as usize {
         r.err("a start has an owner outside the player count");
     }
+    r.errors.len() == before
+}
+
+/// The economy's objects: one Heart, the Warfield's Old Mouth and Bazaar,
+/// the frontier slots and the Bloodseep sites.
+fn counts(map: &Map, r: &mut Report) -> bool {
+    let before = r.errors.len();
     if count(map, Kind::Heart) != 1 {
         r.err(format!(
             "a map needs exactly one Heart, this has {}",
