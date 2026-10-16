@@ -105,9 +105,6 @@ pub struct Identity {
     pub version: String,
     /// Hash of the game data; a joiner whose data differs is refused.
     pub data_hash: u64,
-    /// The seed of this machine's match world (the map has its own, in
-    /// the lobby settings).
-    pub seed: u64,
     /// The fingerprint of the map a match with these settings and this
     /// many players is played on (its walkable ground), so a joiner whose
     /// map came out differently finds out before the match, not as a
@@ -1834,7 +1831,6 @@ impl Network for Lan {
     }
 
     fn start_match(&mut self) -> Result<MatchStart, NetError> {
-        let seed = self.id.seed;
         let map_hash = self.id.map_hash;
         let Role::Host(h) = &mut self.role else {
             return Err(NetError::Refused("Only the host starts the match".into()));
@@ -1850,7 +1846,9 @@ impl Network for Lan {
         if !h.peers.iter().any(|p| p.slot.is_some() && !p.gone) {
             return Ok(h.lobby.match_start(None));
         }
-        let start = h.lobby.match_start(Some(seed));
+        // The world is seeded with the map seed, so the lobby's settings
+        // are all a joiner needs to make the same battle.
+        let start = h.lobby.match_start(Some(h.lobby.settings.map_seed));
         let mut g = HostGame {
             go_at: None,
             started_at: self.net.now(),

@@ -104,11 +104,11 @@ pub struct Header {
     /// ([`World::verdict`]); `None` too for files from before format 8.
     pub result: Option<Verdict>,
     /// The Field Battle map it was played on, as the lobby's choice (an
-    /// index into `gc_map::FIELD_MAPS`) and map seed; `None` for the
-    /// Proving Ground made from the match's own seed, as every replay
-    /// before format 11 was. The replay plays on the map it stores either
-    /// way; this is for drawing that map.
-    pub map: Option<(u8, u64)>,
+    /// index into `gc_map::FIELD_MAPS`), made from the match's seed;
+    /// `None` for the Proving Ground, as every replay before format 11
+    /// was. The replay plays on the map it stores either way; this is for
+    /// drawing that map.
+    pub map: Option<u8>,
 }
 
 /// What the replay list needs of a file, which format 10 keeps in a block
@@ -384,13 +384,7 @@ impl Replay {
             }
             None => w.var(0),
         }
-        match h.map {
-            Some((choice, seed)) => {
-                w.var(u64::from(choice) + 1);
-                w.u64(seed);
-            }
-            None => w.var(0),
-        }
+        w.var(h.map.map_or(0, |c| u64::from(c) + 1));
         w.u64(self.seed);
         w.var(u64::from(self.regiments));
         w.var(u64::from(self.map_tiles));
@@ -783,10 +777,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
         None
     };
     let map = if format >= 11 {
-        match maybe(r)? {
-            Some(choice) => Some((u8::try_from(choice).ok()?, r.u64()?)),
-            None => None,
-        }
+        maybe(r)?.map(u8::try_from).transpose().ok()?
     } else {
         None
     };
@@ -1233,7 +1224,7 @@ mod tests {
     #[test]
     fn the_map_choice_round_trips() {
         let mut replay = record();
-        replay.header.map = Some((3, 0xdead_beef_0123));
+        replay.header.map = Some(3);
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
     }
 

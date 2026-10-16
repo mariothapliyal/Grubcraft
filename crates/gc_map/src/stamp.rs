@@ -224,12 +224,20 @@ fn roll(field: &mut [i32], noise: Noise, symmetry: Symmetry, side: i64) {
     let per_swell = UNIT * i64::from(noise.scale.max(1));
     let copies = symmetry.copies() as i64;
     let turns = step_turns(symmetry);
+    // The noise at every tile, worked out once; a tile then averages it
+    // over its turned copies, so they all rise alike.
+    let mut swells = Vec::with_capacity((side * side) as usize);
+    for y in 0..side {
+        for x in 0..side {
+            swells.push(fbm.fbm(x * one / per_swell, y * one / per_swell, NOISE_OCTAVES));
+        }
+    }
     for y in 0..side {
         for x in 0..side {
             let mut sum = 0;
             let mut p = (x, y);
             for _ in 0..copies {
-                sum += fbm.fbm(p.0 * one / per_swell, p.1 * one / per_swell, NOISE_OCTAVES);
+                sum += swells[(p.1 * side + p.0) as usize];
                 for _ in 0..turns {
                     p = (last - p.1, p.0);
                 }
@@ -258,12 +266,13 @@ fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
                 continue;
             }
             spots.push(at);
-            // Each copy belongs to the next player round. (A file with no
-            // players or a bad owner builds without panicking; the map
-            // checker reports it.)
-            let owner = o
-                .owner
-                .map(|p| ((u32::from(p) + k) % u32::from(def.players.max(1))) as u8);
+            // Each turned copy belongs to the players a turn further round:
+            // with six players under Rot2, a start for player 0, 1 or 2 is
+            // also one for 3, 4 or 5. (A file with no players or a bad
+            // owner builds without panicking; the map checker reports it.)
+            let players = u32::from(def.players.max(1));
+            let step = (players / def.symmetry.copies() as u32).max(1);
+            let owner = o.owner.map(|p| ((u32::from(p) + k * step) % players) as u8);
             out.push(Placed {
                 kind: o.kind,
                 at,
@@ -288,6 +297,31 @@ mod tests {
               objects: [(kind: Start, at: (20, 20), owner: Some(0)), (kind: Heart, at: (64, 64), once: true)])"
         ))
         .unwrap()
+    }
+
+    /// Six players under Rot2: the three starts written on one half give
+    /// the other three their turned copies (0, 1, 2 to 3, 4, 5).
+    #[test]
+    fn turned_copies_go_to_the_players_a_turn_round() {
+        let def = MapDef::parse(
+            "MapDef(name: \"Six\", size: Grand, symmetry: Rot2, players: 6, base: 40, water: 24,
+              terrain: [], cover: [],
+              objects: [(kind: Start, at: (40, 40), owner: Some(0)), (kind: Start, at: (160, 40), owner: Some(1)),
+                        (kind: Start, at: (280, 40), owner: Some(2))])",
+        )
+        .unwrap();
+        let map = Map::from_def(&def);
+        assert_eq!(
+            map.starts(),
+            [
+                (40, 40),
+                (160, 40),
+                (280, 40),
+                (279, 279),
+                (159, 279),
+                (39, 279)
+            ]
+        );
     }
 
     #[test]

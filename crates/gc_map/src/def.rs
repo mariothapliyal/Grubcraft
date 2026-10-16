@@ -21,6 +21,8 @@ pub enum SizeClass {
     Skirmish,
     /// 256 × 256 tiles, 4 players.
     Warfield,
+    /// 320 × 320 tiles, 5 to 6 players.
+    Grand,
     /// A Field Battle map of this many tiles a side, for 2 to 6 players:
     /// armies and their starts, no economy.
     Field(i32),
@@ -32,6 +34,7 @@ impl SizeClass {
             SizeClass::Duel => 128,
             SizeClass::Skirmish => 192,
             SizeClass::Warfield => 256,
+            SizeClass::Grand => 320,
             SizeClass::Field(tiles) => tiles,
         }
     }
@@ -41,6 +44,7 @@ impl SizeClass {
             SizeClass::Duel => 2..=2,
             SizeClass::Skirmish => 2..=3,
             SizeClass::Warfield => 4..=4,
+            SizeClass::Grand => 5..=6,
             SizeClass::Field(_) => 2..=6,
         }
     }

@@ -126,36 +126,25 @@ pub const MAPS: [&str; 6] = [
 /// played on before maps could be picked).
 pub const DEFAULT_MAP_SEED: u64 = 0x6772_7562;
 
-/// One step of splitmix64 from `x`: a well mixed 64-bit number, whatever
-/// `x` looks like. Nothing but a way to turn a clock reading into a seed.
-fn splitmix64(x: u64) -> u64 {
-    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
-/// A new map seed for the host's "New map" button. It mixes the clock's
-/// nanoseconds with a counter, so two presses in the same clock tick still
-/// differ. It is not secret and the simulation never sees it, which is why
-/// gc_ui needs no random number crate.
+/// A new map seed for the host's "New map" button. Each `RandomState` gets
+/// fresh random keys from the standard library, so every press differs. It
+/// is not secret and the simulation never sees it, which is why gc_ui needs
+/// no random number crate.
 pub fn fresh_map_seed() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    static PRESSES: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64);
-    let count = PRESSES.fetch_add(1, Ordering::Relaxed);
-    splitmix64(nanos ^ splitmix64(count))
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(0u8)
 }
 
 /// A map seed as players share it: all 16 hex digits in four groups,
 /// "0000-0000-6772-7562". [`parse_map_code`] reads it back exactly.
 pub fn map_code(seed: u64) -> String {
-    let hex = format!("{seed:016X}");
-    let groups: Vec<&str> = (0..4).map(|i| &hex[i * 4..i * 4 + 4]).collect();
-    groups.join("-")
+    format!(
+        "{:04X}-{:04X}-{:04X}-{:04X}",
+        seed >> 48,
+        (seed >> 32) & 0xFFFF,
+        (seed >> 16) & 0xFFFF,
+        seed & 0xFFFF
+    )
 }
 
 /// The seed a map code stands for. Dashes, spaces and letter case don't
@@ -705,9 +694,9 @@ mod tests {
         }
         assert_eq!(map_code(DEFAULT_MAP_SEED), "0000-0000-6772-7562");
         assert_eq!(map_code(u64::MAX), "FFFF-FFFF-FFFF-FFFF");
-        let mut seed = 0x1234_5678_9ABC_DEF0;
+        let mut seed: u64 = 0x1234_5678_9ABC_DEF0;
         for _ in 0..200 {
-            seed = splitmix64(seed);
+            seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
             assert_eq!(parse_map_code(&map_code(seed)), Some(seed));
         }
     }
@@ -738,12 +727,6 @@ mod tests {
         ] {
             assert_eq!(parse_map_code(junk), None, "{junk:?}");
         }
-    }
-
-    #[test]
-    fn splitmix64_matches_its_published_first_output() {
-        // The reference generator seeded with 0 starts with this number.
-        assert_eq!(splitmix64(0), 0xE220_A839_7B1D_CDAF);
     }
 
     #[test]

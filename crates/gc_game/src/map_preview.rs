@@ -8,13 +8,14 @@
 
 use std::sync::mpsc;
 
+use gc_map::FieldMap;
 use gc_platform::logln;
 use gc_ui::hud::MinimapTerrain;
 use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, Network};
 
-use crate::MapKey;
 use crate::hud::minimap_terrain;
+use crate::make_map;
 
 /// One map's picture, as the worker makes it.
 struct Made {
@@ -34,32 +35,22 @@ fn starts_of(tiles: u32) -> Vec<[f32; 2]> {
 /// The worker: make each wanted map, newest request first (a request that
 /// has been overtaken is skipped). Ends when the game drops its end.
 fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
-    // Two to four players make the same map, so asking again for the same
-    // ground with another player count costs nothing.
-    let mut last: Option<(MapKey, MinimapTerrain, Vec<[f32; 2]>)> = None;
     while let Ok(mut key) = jobs.recv() {
         while let Ok(newer) = jobs.try_recv() {
             key = newer;
         }
         let (choice, players, seed) = key;
-        let map_key = MapKey {
-            choice,
-            tiles: gc_map::field_tiles(players),
-            seed,
+        let field = FieldMap::for_battle(choice, players, seed);
+        // The last map made is kept, so the same ground for another player
+        // count, or the match then started on it, costs only a copy.
+        let map = make_map(field);
+        let answer = Made {
+            key,
+            terrain: minimap_terrain(&map),
+            starts: starts_of(field.tiles),
         };
-        if last.as_ref().is_none_or(|l| l.0 != map_key) {
-            let map = map_key.make();
-            last = Some((map_key, minimap_terrain(&map), starts_of(map_key.tiles)));
-        }
-        if let Some((_, terrain, starts)) = &last {
-            let answer = Made {
-                key,
-                terrain: terrain.clone(),
-                starts: starts.clone(),
-            };
-            if made.send(answer).is_err() {
-                return;
-            }
+        if made.send(answer).is_err() {
+            return;
         }
     }
 }

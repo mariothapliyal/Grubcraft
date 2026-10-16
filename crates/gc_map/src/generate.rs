@@ -98,7 +98,6 @@ impl Map {
         }
         let mut map = Map::from_samples(tiles, heights, WATER);
         map.name = format!("Seed {seed}");
-        map.seed = Some(seed);
         map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
         map.objects = (0..)
@@ -119,7 +118,7 @@ pub(crate) const ONE: i64 = 1 << 16;
 
 /// Woods and tall grass stay this far from the start plateaus' centres
 /// (tiles), so armies deploy in the open and see each other.
-const COVER_CLEAR_OF_STARTS: i64 = 34;
+pub(crate) const COVER_CLEAR_OF_STARTS: i64 = 34;
 /// ... and this far from the map's edge.
 const COVER_CLEAR_OF_EDGE: i64 = 10;
 /// Ground steeper than this (height units per tile) grows no wood or grass.

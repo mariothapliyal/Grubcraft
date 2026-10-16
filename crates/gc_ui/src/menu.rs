@@ -211,8 +211,14 @@ impl<N: Network> Menu<N> {
     /// The key of the map picture now on screen, if a real one is (not the
     /// grey box).
     pub fn shown_map_preview(&self) -> Option<MapPreviewKey> {
-        let shown = self.preview.as_ref()?.key;
-        (self.wanted_preview == Some(shown)).then_some(shown)
+        self.current_preview().map(|p| p.key)
+    }
+
+    /// The map picture, if it is for the map now wanted.
+    fn current_preview(&self) -> Option<&MapPreview> {
+        self.preview
+            .as_ref()
+            .filter(|p| Some(p.key) == self.wanted_preview)
     }
 
     /// The regiment types the army builder offers: the game's unit table,
@@ -330,13 +336,11 @@ impl<N: Network> Menu<N> {
     }
 
     /// The map picture in `r` (square): the ground and the start
-    /// positions when the game has made this map, a grey box until then.
-    fn draw_map_preview(&self, ui: &mut Ui, r: Rect) {
-        let shown = self
-            .preview
-            .as_ref()
-            .filter(|p| Some(p.key) == self.wanted_preview);
-        let Some(p) = shown else {
+    /// positions when the game has made the map `key`, a grey box until
+    /// then. Drawing it is what asks the game for that map.
+    fn draw_map_preview(&mut self, ui: &mut Ui, r: Rect, key: MapPreviewKey) {
+        self.wanted_preview = Some(key);
+        let Some(p) = self.current_preview() else {
             ui.draw.rect(r, theme::FIELD);
             ui.draw.text_centered(r, 1, theme::DISABLED, "...");
             ui.draw.border(r, 2, theme::PANEL_EDGE);
@@ -551,8 +555,8 @@ impl<N: Network> Menu<N> {
         self.host_password = password;
         // A Field Battle map is made for the players in it; the card can't
         // know yet, so it shows the size two players get.
-        self.wanted_preview = Some((self.host.map, 2, self.host.map_seed));
-        self.draw_map_preview(ui, preview_r);
+        let key = (self.host.map, 2, self.host.map_seed);
+        self.draw_map_preview(ui, preview_r, key);
         s.skip(sp(8));
         let host_btn = Rect::new(s.x, panel.bottom() - sp(64) - 60, card_w, 52);
         let playable = self.host.mode.playable();
@@ -815,9 +819,8 @@ impl<N: Network> Menu<N> {
         let (mut x, mut w) = (strip.x, strip.w);
         if preview_side > 0 {
             let occupied = lobby.slots.iter().filter(|s| s.occupied()).count();
-            self.wanted_preview = Some((settings.map, occupied, settings.map_seed));
             let picture = Rect::new(strip.x, strip.y, preview_side, preview_side);
-            self.draw_map_preview(ui, picture);
+            self.draw_map_preview(ui, picture, (settings.map, occupied, settings.map_seed));
             (x, w) = (strip.x + preview_side + 16, strip.w - preview_side - 16);
             let name = MAPS.get(settings.map).copied().unwrap_or("?");
             ui.label(x, strip.y, 2, theme::TEXT, &fit(name, (w / 16) as usize));

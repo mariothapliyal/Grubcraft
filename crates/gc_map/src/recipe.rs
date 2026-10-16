@@ -14,7 +14,7 @@ use crate::def::{
     CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece, SetPieceKind, Shape,
     SizeClass, Symmetry, TerrainOp,
 };
-use crate::generate::plateaus;
+use crate::generate::{COVER_CLEAR_OF_STARTS, plateaus};
 
 /// The kinds of Field Battle map a seed can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,9 +50,9 @@ const WATER: i32 = 24;
 /// the walking rules allow), and this far is too deep to wade.
 const FORD: i32 = WATER - 3;
 const DEEP: i32 = WATER - 14;
-/// Woods and grass stay this far from the starts (tiles), so armies
-/// deploy in the open, as on the seeded maps.
-const COVER_CLEAR_OF_STARTS: i32 = 34;
+/// How far a rise's slope reaches from its centre, in tiles: the widest
+/// top plus the widest edge (see [`Writer::rise`]).
+const RISE_REACH: i32 = 5 + 14;
 
 /// The description a recipe makes from a seed, `tiles` on a side.
 pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
@@ -72,11 +72,12 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         amplitude: w.range(28, 48),
         scale: w.range(36, 64),
     };
+    // The north starts' plateaus; the south ones are their turned copies.
     let starts = plateaus(tiles as u32);
-    for &at in &starts[..2] {
+    let mid = w.mid;
+    for &at in starts.iter().filter(|s| s.1 < mid) {
         w.flat(at, 16, 12);
     }
-    w.flat(starts[4], 16, 12);
     match recipe {
         Recipe::Pass => w.pass(),
         Recipe::Ford => w.river(),
@@ -249,10 +250,11 @@ impl Writer<'_> {
             at: fords[0],
             label: "The ford".into(),
         });
-        // A rise above the first ford, far enough back (a rise reaches 19
-        // tiles) that its slope stops short of the middle line, where a
-        // centre ford meets the turned copy's rise.
-        let bank = (fords[0].0, self.mid - self.range(20, 26));
+        // A rise above the first ford, far enough back that its slope
+        // stops short of the middle line, where a centre ford meets the
+        // turned copy's rise.
+        let back = self.range(RISE_REACH + 1, RISE_REACH + 7);
+        let bank = (fords[0].0, self.mid - back);
         self.rise(bank, "The bank");
     }
 
@@ -315,7 +317,7 @@ impl Writer<'_> {
             // south starts are in `starts` too).
             let clear = starts.iter().all(|&s| {
                 let (dx, dy) = (s.0 - at.0, s.1 - at.1);
-                let near = COVER_CLEAR_OF_STARTS + r;
+                let near = COVER_CLEAR_OF_STARTS as i32 + r;
                 dx * dx + dy * dy >= near * near
             });
             if clear {

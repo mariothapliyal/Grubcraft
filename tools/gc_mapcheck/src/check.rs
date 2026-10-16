@@ -104,11 +104,11 @@ fn header(def: &MapDef, r: &mut Report) -> bool {
         ));
         ok = false;
     }
-    let field = matches!(def.size, SizeClass::Field(_));
+    // Each turned copy belongs to the players a turn further round, so the
+    // players must split evenly between the copies.
     match (def.symmetry, def.players) {
-        (Symmetry::Rot2, 2) | (Symmetry::Rot4, 4) | (Symmetry::None, _) => {}
-        // Field Battle starts come in pairs facing each other.
-        (Symmetry::Rot2, n) if field && n % 2 == 0 => {}
+        (Symmetry::None, _) => {}
+        (s, n) if n % s.copies() as u8 == 0 => {}
         (s, n) => {
             r.err(format!("{s:?} symmetry doesn't fit {n} players"));
             ok = false;
