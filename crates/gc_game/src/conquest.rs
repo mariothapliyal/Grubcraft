@@ -13,7 +13,7 @@ use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
     Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand, PlayerId,
-    RegimentHandle, Resource, World,
+    Resource, World,
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
@@ -154,29 +154,6 @@ pub fn plan(
         gather_percent: tempo.gather_percent(),
         build_percent: tempo.build_percent(),
     }
-}
-
-/// Side `side`'s workers with nothing to do: standing still, gathering
-/// nothing and building nothing.
-pub fn idle_workers<'a>(
-    world: &'a World,
-    data: &'a GameData,
-    side: PlayerId,
-) -> impl Iterator<Item = RegimentHandle> + 'a {
-    world
-        .regiments
-        .iter()
-        .filter(move |r| {
-            r.owner == side
-                && !r.moving
-                && data
-                    .conquest_units
-                    .get(usize::from(r.unit))
-                    .is_some_and(ConquestUnitRecord::worker)
-                && world.gathers_at(r.handle).is_none()
-                && world.building_target(r.handle).is_none()
-        })
-        .map(|r| r.handle)
 }
 
 /// The map's Grub seeps and Marrow veins, in the map's order, each at its
@@ -501,7 +478,7 @@ mod tests {
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
         world.tick(&opening);
-        let idle: Vec<_> = idle_workers(&world, &data, 0).collect();
+        let idle: Vec<_> = world.idle_workers(0).collect();
         let workers = data
             .conquest_units
             .iter()
@@ -523,7 +500,7 @@ mod tests {
                 node,
             },
         }]);
-        let now: Vec<_> = idle_workers(&world, &data, 0).collect();
+        let now: Vec<_> = world.idle_workers(0).collect();
         assert_eq!(now.len(), workers - 1);
         assert!(!now.contains(&idle[0]));
     }

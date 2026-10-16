@@ -2994,6 +2994,7 @@ impl Running {
         self.human_orders.clear();
         self.selected.clear();
         self.selected_structure = None;
+        self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();
         self.last_group_key = None;
@@ -3707,7 +3708,7 @@ impl Running {
         }
         let scale = self.window.scale_factor() as f32;
         // Below Conquest's top bar.
-        let top = if self.world.economy().is_some() {
+        let top = if self.top_bar().is_some() {
             gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
         } else {
             0.0
@@ -3904,21 +3905,17 @@ impl Running {
         let look = self.camera.forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties) = (&self.heightmap, &self.parties);
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
         buildings::push(
             &self.world,
             &self.buildings,
-            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            ground,
             |p| color_of(parties, p),
             across,
             &mut self.instances,
         );
-        if let Some(h) = self.selected_structure {
-            buildings::push_rim(
-                &self.world,
-                h,
-                |x, z| hm.height_at(x, z).max(hm.water_level()),
-                &mut self.instances,
-            );
+        if let Some(h) = self.picked_structure() {
+            buildings::push_rim(&self.world, h, ground, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
     }

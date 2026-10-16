@@ -759,6 +759,28 @@ impl World {
         self.economy()?.work_of(&self.regiments, i)
     }
 
+    /// `player`'s workers with nothing to do (Conquest only): standing
+    /// still, unbroken, out of melee, and gathering, building or attacking
+    /// nothing.
+    pub fn idle_workers(&self, player: PlayerId) -> impl Iterator<Item = RegimentHandle> + '_ {
+        self.conquest.iter().flat_map(move |c| {
+            self.regiments
+                .iter()
+                .filter(move |r| {
+                    r.owner == player
+                        && !r.moving
+                        && !r.engaged
+                        && !r.morale.broken()
+                        && c.units.get(usize::from(r.unit)).is_some_and(|u| u.worker)
+                        && self.regiments.resolve(r.handle).is_some_and(|i| {
+                            c.economy.work_of(&self.regiments, i).is_none()
+                                && c.structures.job_of(&self.regiments, i).is_none()
+                        })
+                })
+                .map(|r| r.handle)
+        })
+    }
+
     /// What regiment `h` carries, if anything (Conquest only).
     pub fn carries(&self, h: RegimentHandle) -> Option<(Resource, u32)> {
         let i = self.regiments.resolve(h)?;
