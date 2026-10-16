@@ -59,7 +59,7 @@ const GRACE_TICKS: u32 = 20;
 /// The group for orders to attack `target`, one per target (0 is no group
 /// and 1 is the formation's moves).
 pub fn attack_group(target: RegimentHandle) -> u32 {
-    2 + target.index
+    target.index.saturating_add(2)
 }
 
 /// Orders at this priority or below are routine: they wait while attention
@@ -93,6 +93,9 @@ pub struct Orders {
     sent: Vec<Option<Sent>>,
     /// Orders decided but not yet sent, in the order they were decided.
     queue: VecDeque<(u32, Command)>,
+    /// Groups already paid for in this look (a handful at most), kept to
+    /// reuse its room.
+    paid_groups: Vec<u32>,
     /// Orders sent so far, for the journal and tests.
     pub count: u32,
     /// Orders decided so far, by priority, and how many were repeats of
@@ -118,6 +121,7 @@ impl Orders {
             last_tick: None,
             sent: Vec::new(),
             queue: VecDeque::new(),
+            paid_groups: Vec::new(),
             count: 0,
             decided: [0; 8],
             waited: [0; 8],
@@ -137,8 +141,8 @@ impl Orders {
         self.last_tick = Some(now);
         // Most urgent first; among equals, the order they were decided.
         wants.sort_by_key(|w| std::cmp::Reverse(w.priority));
-        // Groups already paid for this tick: a handful at most.
-        let mut paid_groups: Vec<u32> = Vec::new();
+        let mut paid_groups = std::mem::take(&mut self.paid_groups);
+        paid_groups.clear();
         for w in wants.iter() {
             let i = w.regiment.index as usize;
             if self.sent.len() <= i {
@@ -198,6 +202,7 @@ impl Orders {
             self.queue
                 .push_back((now + self.reaction, command(w.regiment, &w.act)));
         }
+        self.paid_groups = paid_groups;
     }
 
     /// Whether the last order sent to `r` plainly isn't being carried out,
