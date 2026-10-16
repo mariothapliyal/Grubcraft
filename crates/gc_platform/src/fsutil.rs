@@ -9,17 +9,33 @@ use std::path::Path;
 /// write a temporary file beside it, then rename it over the target. The
 /// folder is made if it is missing. There is no fsync (it stalls the frame
 /// loop for milliseconds), so this guards against a crash of the game, not
-/// against power loss.
+/// against power loss; see [`write_durable`] for that.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write(path, bytes, false)
+}
+
+/// [`write_atomic`] that also flushes the data to disk before the rename,
+/// so a power cut cannot leave an empty file. For small files saved rarely
+/// (settings); it can take many milliseconds.
+pub fn write_durable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write(path, bytes, true)
+}
+
+fn write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
+    // The process id keeps two running copies of the game from sharing a
+    // temporary file.
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".tmp{}", std::process::id()));
     let tmp = Path::new(&tmp);
     let result = (|| {
         let mut file = File::create(tmp)?;
         file.write_all(bytes)?;
+        if sync {
+            file.sync_all()?;
+        }
         // Replaces an existing file on Unix and on Windows.
         fs::rename(tmp, path)
     })();
@@ -44,7 +60,7 @@ mod tests {
         let dir = temp("replace");
         let path = dir.join("sub").join("a.txt");
         write_atomic(&path, b"first").unwrap();
-        write_atomic(&path, b"second").unwrap();
+        write_durable(&path, b"second").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"second");
         let names: Vec<_> = fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -60,7 +76,7 @@ mod tests {
         let path = dir.join("keep.txt");
         write_atomic(&path, b"old").unwrap();
         // A directory where the temp file should go makes the write fail.
-        fs::create_dir(dir.join("keep.txt.tmp")).unwrap();
+        fs::create_dir(dir.join(format!("keep.txt.tmp{}", std::process::id()))).unwrap();
         assert!(write_atomic(&path, b"new").is_err());
         assert_eq!(fs::read(&path).unwrap(), b"old");
         let _ = fs::remove_dir_all(&dir);

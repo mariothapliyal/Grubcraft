@@ -151,7 +151,7 @@ impl Settings {
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(std::io::Error::other)?;
-        gc_platform::fsutil::write_atomic(path, text.as_bytes())
+        gc_platform::fsutil::write_durable(path, text.as_bytes())
     }
 }
 
