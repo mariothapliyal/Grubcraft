@@ -172,15 +172,21 @@ pub(crate) fn draw_nodes(
     let bounds = r.inset(1);
     for n in nodes {
         let (x, y) = to_screen(n.pos);
-        let base = if n.marrow { MARROW_NODE } else { GRUB_NODE };
-        let color = if n.dry {
-            base.map(|c| (u16::from(c) * 9 / 20) as u8)
-        } else {
-            base
-        };
+        let color = node_color(n.marrow, n.dry);
         if let Some(dot) = Rect::new(x - 1, y - 1, 3, 3).intersect(bounds) {
             draw.rect(dot, rgb(color));
         }
+    }
+}
+
+/// A gathering spot's colour, on the minimap and the field alike: gold
+/// for Grub, bone white for Marrow, dimmed once it has run dry.
+pub fn node_color(marrow: bool, dry: bool) -> [u8; 3] {
+    let base = if marrow { MARROW_NODE } else { GRUB_NODE };
+    if dry {
+        base.map(|c| (u16::from(c) * 9 / 20) as u8)
+    } else {
+        base
     }
 }
 

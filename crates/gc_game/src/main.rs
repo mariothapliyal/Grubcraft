@@ -532,8 +532,8 @@ struct Running {
     selected: Vec<RegimentHandle>,
     /// The building selected, when no regiment is (Conquest).
     selected_structure: Option<StructureHandle>,
-    /// Where F1 last looked for an idle worker, to go on from there.
-    idle_from: u32,
+    /// The idle worker F1 last picked, to go on from there.
+    idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
     /// pressing F again soon after cycles on from it, before the orders
     /// have landed.
@@ -1171,7 +1171,7 @@ impl App {
             },
             selected: Vec::with_capacity(64),
             selected_structure: None,
-            idle_from: 0,
+            idle_from: None,
             formation_pick: None,
             shown_formation: None,
             group: Vec::with_capacity(64),
@@ -1629,14 +1629,24 @@ impl Running {
                             self.selected.push(h);
                         }
                     }
-                } else if let Some(h) = self
-                    .ground_under_cursor()
-                    .and_then(|p| self.nearest_own(p, 6.0))
-                {
-                    self.toggle_selected(h);
-                } else if self.selected.is_empty() {
+                } else {
+                    // A click on one of your buildings picks it, unless one
+                    // of your regiments stands right there (workers crowd
+                    // round their hall); elsewhere the nearest regiment.
                     let side = self.sandbox.side;
-                    self.selected_structure = self.building_under_cursor(|o| o == side);
+                    let building = self
+                        .selected
+                        .is_empty()
+                        .then(|| self.building_under_cursor(|o| o == side))
+                        .flatten();
+                    let reach = if building.is_some() { 1.5 } else { 6.0 };
+                    match self
+                        .ground_under_cursor()
+                        .and_then(|p| self.nearest_own(p, reach))
+                    {
+                        Some(h) => self.toggle_selected(h),
+                        None => self.selected_structure = building,
+                    }
                 }
                 if !self.selected.is_empty() || self.selected_structure.is_some() {
                     self.ui_sound(sounds::UiSound::Select);
@@ -2994,6 +3004,7 @@ impl Running {
         self.human_orders.clear();
         self.selected.clear();
         self.selected_structure = None;
+        self.idle_from = None;
         self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();

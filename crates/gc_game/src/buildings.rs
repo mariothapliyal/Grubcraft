@@ -10,7 +10,7 @@ use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, Resource,
     StructureHandle, StructureView, World,
 };
-use gc_ui::conquest::{GRUB_NODE, MARROW_NODE};
+use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
 // The baked flag bits mean the same to the simulation.
@@ -46,10 +46,10 @@ const GHOST_GLOW: u8 = 110;
 const NODE_HEIGHT: f32 = 0.35;
 const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
-/// Seeps and veins glow in their minimap colours; dry ones are dim.
+/// Seeps and veins glow in their minimap colours; dry ones don't.
 const NODE_GLOW: u8 = 90;
-/// The white rim round the selected building, beyond its footprint (tiles).
-const RIM: f32 = 0.6;
+/// The selected building's white rim: one tile beyond its footprint, this
+/// thick (tiles).
 const PLATE: f32 = 0.08;
 const RIM_COLOR: [u8; 4] = [240, 240, 240, 120];
 
@@ -274,22 +274,15 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
         if out.len() >= MAX_BOX_INSTANCES {
             return;
         }
-        let [r, g, b] = match n.resource {
-            Resource::Grub => GRUB_NODE,
-            Resource::Marrow => MARROW_NODE,
-        };
+        let [r, g, b] = node_color(n.resource == Resource::Marrow, n.left == 0);
         let left = n.left as f32 / n.full.max(1) as f32;
         let width = NODE_WIDTH * (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0;
-        let color = if n.left == 0 {
-            [r / 2, g / 2, b / 2, 0]
-        } else {
-            [r, g, b, NODE_GLOW]
-        };
+        let glow = if n.left == 0 { 0 } else { NODE_GLOW };
         out.push(BoxInstance {
             pos: crate::from_fx_vec(n.at).to_array(),
             facing: [0.0, 1.0],
             size: [width, NODE_HEIGHT, width],
-            color,
+            color: [r, g, b, glow],
             lift: 0.0,
         });
     }
@@ -308,10 +301,14 @@ pub fn push_rim(
     if out.len() >= MAX_BOX_INSTANCES {
         return;
     }
-    let mut plate = block(&s, PLATE, RIM_COLOR, &ground);
-    plate.size[0] += 2.0 * RIM;
-    plate.size[2] += 2.0 * RIM;
-    out.push(plate);
+    // Laid over the wider footprint, so it sits on the ground it covers.
+    let rim = StructureView {
+        tile: (s.tile.0 - 1, s.tile.1 - 1),
+        width: s.width.saturating_add(2),
+        depth: s.depth.saturating_add(2),
+        ..s
+    };
+    out.push(block(&rim, PLATE, RIM_COLOR, &ground));
 }
 
 fn bar_colour(frac: f32) -> [u8; 4] {
