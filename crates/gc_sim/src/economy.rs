@@ -98,6 +98,8 @@ pub const UPKEEP: [(u32, u32); 3] = [(60, 100), (100, 75), (SUPPLY_LIMIT, 55)];
 pub const NODE_REACH: Fx = Fx::from_int(2);
 /// Ticks a worker that can't get on waits before trying again.
 const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
+/// Tries in a row that bring a worker no nearer before it gives up.
+const STALLS: u8 = 3;
 /// Grub is kept in hundredths, so upkeep's cut of a small load isn't lost.
 const GRUB_SCALE: u32 = 100;
 
@@ -120,7 +122,7 @@ pub struct NodeView {
     /// Left before dregs.
     pub left: u32,
     pub full: u32,
-    /// Workers gathering there now.
+    /// Workers filling a load there, as of the last tick.
     pub workers: u8,
 }
 
@@ -184,6 +186,13 @@ pub struct Economy {
     work_gen: Vec<u16>,
     load: Vec<Option<(Resource, u8)>>,
     clock: Vec<u16>,
+    /// By regiment slot, while filling: what it took from the node when it
+    /// began (0 from dregs), given back if it stops before its load is full.
+    taking: Vec<u8>,
+    /// By regiment slot: how far it was from where it was going when it
+    /// last set off, and how many times in a row that brought it no nearer.
+    gap: Vec<Fx>,
+    stalls: Vec<u8>,
 }
 
 impl Economy {
@@ -204,6 +213,9 @@ impl Economy {
             work_gen: vec![0; n],
             load: vec![None; n],
             clock: vec![0; n],
+            taking: vec![0; n],
+            gap: vec![Fx::MAX; n],
+            stalls: vec![0; n],
         }
     }
 
@@ -213,7 +225,8 @@ impl Economy {
         if i >= MAX_PARTIES {
             return Bank::default();
         }
-        let (supply_used, supply_cap) = self.supply(regs, structures, p);
+        let supply_used = self.supply_in_use(regs)[i];
+        let supply_cap = structures.supply_of(p).min(SUPPLY_LIMIT);
         Bank {
             grub: self.grub[i] / GRUB_SCALE,
             marrow: self.marrow[i],
@@ -222,18 +235,21 @@ impl Economy {
         }
     }
 
-    /// Player `p`'s supply in use, and their cap: what their standing
-    /// buildings add, up to [`SUPPLY_LIMIT`].
-    fn supply(&self, regs: &Regiments, structures: &Structures, p: PlayerId) -> (u32, u32) {
-        let used = (0..regs.alive.len())
-            .filter(|&r| regs.alive[r] && regs.owner[r] == p)
-            .map(|r| {
-                self.units
+    /// Each player's supply in use: what their regiments take. (Their cap
+    /// is what their standing buildings add, up to [`SUPPLY_LIMIT`].)
+    fn supply_in_use(&self, regs: &Regiments) -> [u32; MAX_PARTIES] {
+        let mut used = [0; MAX_PARTIES];
+        for r in 0..regs.alive.len() {
+            if regs.alive[r]
+                && let Some(u) = used.get_mut(usize::from(regs.owner[r]))
+            {
+                *u += self
+                    .units
                     .get(usize::from(regs.unit[r]))
-                    .map_or(0, |u| u32::from(u.supply))
-            })
-            .sum();
-        (used, structures.supply_of(p).min(SUPPLY_LIMIT))
+                    .map_or(0, |unit| u32::from(unit.supply));
+            }
+        }
+        used
     }
 
     /// Every node, in index order.
@@ -246,6 +262,11 @@ impl Economy {
             full: self.node_full[i],
             workers: self.node_busy[i],
         })
+    }
+
+    /// Where each node is, by index.
+    pub(crate) fn node_positions(&self) -> &[FxVec2] {
+        &self.node_at
     }
 
     /// Whether regiment type `unit` gathers.
@@ -292,12 +313,49 @@ impl Economy {
         self.node[r] = node;
         self.work_gen[r] = regs.generation[r];
         self.clock[r] = 0;
+        self.set_off(r);
     }
 
     /// Regiment slot `r` was given another order: it stops gathering, but
     /// keeps what it carries.
     pub(crate) fn stop(&mut self, r: usize) {
+        self.leave_node(r);
         self.step[r] = Step::Idle;
+    }
+
+    /// A worker filling a load stops short: what it took goes back to the
+    /// node, and it is back on its way there.
+    fn leave_node(&mut self, r: usize) {
+        if self.step[r] == Step::Filling {
+            let n = usize::from(self.node[r]);
+            self.node_left[n] += u32::from(self.taking[r]);
+            self.taking[r] = 0;
+            self.step[r] = Step::ToNode;
+        }
+    }
+
+    /// Slot `r` sets off somewhere new: no tries counted yet.
+    fn set_off(&mut self, r: usize) {
+        self.gap[r] = Fx::MAX;
+        self.stalls[r] = 0;
+    }
+
+    /// Slot `r`, `gap` from where it is going, sets off for it again.
+    /// Returns false, and gives up gathering, once tries in a row have
+    /// brought it no nearer.
+    fn try_again(&mut self, r: usize, gap: Fx) -> bool {
+        if gap >= self.gap[r] {
+            self.stalls[r] += 1;
+        } else {
+            self.stalls[r] = 0;
+        }
+        self.gap[r] = gap;
+        if self.stalls[r] >= STALLS {
+            self.step[r] = Step::Idle;
+            return false;
+        }
+        self.clock[r] = RETRY_TICKS;
+        true
     }
 
     /// One tick of the economy: every worker on its round.
@@ -313,12 +371,19 @@ impl Economy {
                 self.node_busy[usize::from(self.node[r])] += 1;
             }
         }
+        // Each player's supply in use, counted at the first Grub brought in.
+        let mut used = None;
         for r in 0..self.step.len() {
             if self.step[r] == Step::Idle {
                 continue;
             }
-            if !self.ours(regs, r) || regs.morale_state[r].broken() {
-                self.step[r] = Step::Idle;
+            if !self.ours(regs, r) {
+                self.stop(r);
+                continue;
+            }
+            if regs.morale_state[r].broken() {
+                // Running for it; back to work once rallied.
+                self.leave_node(r);
                 continue;
             }
             if regs.engaged[r].is_some() {
@@ -329,7 +394,7 @@ impl Economy {
             match self.step[r] {
                 Step::ToNode => self.walk_to_node(regs, r, n),
                 Step::Filling if self.clock[r] == 0 => self.fill(r, n),
-                Step::Carrying => self.carry(regs, units, structures, r),
+                Step::Carrying => self.carry(regs, units, structures, r, &mut used),
                 Step::Idle | Step::Filling => {}
             }
         }
@@ -341,7 +406,10 @@ impl Economy {
         let here = regs.position[r];
         let reach = u64::from(NODE_REACH.raw().unsigned_abs());
         if (at - here).length_sq_raw() > reach * reach {
-            if regs.target[r].is_none() && self.clock[r] == 0 {
+            if regs.target[r].is_none()
+                && self.clock[r] == 0
+                && self.try_again(r, (at - here).length())
+            {
                 // A tile short on the side it comes from, so workers
                 // arriving from different ways don't all crowd one point.
                 let stand = at + (here - at).normalized();
@@ -355,7 +423,6 @@ impl Economy {
                         pace: Fx::ZERO,
                     },
                 );
-                self.clock[r] = RETRY_TICKS;
             }
             return;
         }
@@ -366,8 +433,15 @@ impl Economy {
         }
         self.node_busy[n] += 1;
         self.step[r] = Step::Filling;
+        self.set_off(r);
+        // The load is taken from the node now, so workers filling at once
+        // can't take more than it holds. A dry node gives a whole load,
+        // only slower.
+        let left = self.node_left[n];
+        self.taking[r] = kind.load().min(left) as u8;
+        self.node_left[n] = left - u32::from(self.taking[r]);
         let mut ticks = kind.fill_ticks() * 100 / self.gather_percent;
-        if self.node_left[n] == 0 {
+        if left == 0 {
             ticks = ticks * 100 / DREGS_PERCENT;
         }
         self.clock[r] = u16::try_from(ticks.max(1)).unwrap_or(u16::MAX);
@@ -376,14 +450,11 @@ impl Economy {
     /// The load from node `n` is full: take it and head for a drop-off.
     fn fill(&mut self, r: usize, n: usize) {
         let kind = self.node_resource[n];
-        // A dry node gives a whole load, only slower (see `walk_to_node`).
-        let left = self.node_left[n];
-        let take = if left == 0 {
-            kind.load()
-        } else {
-            kind.load().min(left)
+        let take = match self.taking[r] {
+            0 => kind.load(),
+            some => u32::from(some),
         };
-        self.node_left[n] = left.saturating_sub(take);
+        self.taking[r] = 0;
         self.node_busy[n] -= 1;
         self.load[r] = Some((kind, take as u8));
         self.step[r] = Step::Carrying;
@@ -397,6 +468,7 @@ impl Economy {
         units: &[UnitStats],
         structures: &Structures,
         r: usize,
+        used: &mut Option<[u32; MAX_PARTIES]>,
     ) {
         if regs.target[r].is_some() || self.clock[r] > 0 {
             // On the way, or waiting to try again.
@@ -415,15 +487,16 @@ impl Economy {
         };
         let way = Approach::of(regs, &units[usize::from(regs.unit[r])], r, foot);
         if way.gap > way.reach() {
-            way.walk(regs, r);
-            self.clock[r] = RETRY_TICKS;
+            if self.try_again(r, way.gap) {
+                way.walk(regs, r);
+            }
             return;
         }
         let p = usize::from(owner);
         let amount = u32::from(amount);
         match kind {
             Resource::Grub => {
-                let (used, _) = self.supply(regs, structures, owner);
+                let used = used.get_or_insert_with(|| self.supply_in_use(regs))[p];
                 let kept = amount * upkeep_percent(used) * GRUB_SCALE / 100;
                 self.grub[p] = self.grub[p].saturating_add(kept);
             }
@@ -431,6 +504,7 @@ impl Economy {
         }
         self.load[r] = None;
         self.step[r] = Step::ToNode;
+        self.set_off(r);
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
@@ -462,6 +536,9 @@ impl Economy {
             h.u8(kind);
             h.u8(amount);
             h.u16(self.clock[r]);
+            h.u8(self.taking[r]);
+            h.i32(self.gap[r].raw());
+            h.u8(self.stalls[r]);
         }
     }
 }

@@ -2,8 +2,9 @@
 //! seeps and veins run to dregs, supply and upkeep (docs/04-economy.md).
 
 use gc_fixed::{Fx, FxVec2};
+use gc_sim::Refusal;
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, Resource};
-use gc_sim::nav::CELLS_PER_TILE;
+use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, Role};
 use gc_sim::{
@@ -96,11 +97,31 @@ fn marrow(x: i32, y: i32, amount: u32) -> NodeSetup {
     }
 }
 
+const TILES: u32 = 64;
+
 /// An open map 64 tiles across, in Conquest, with these nodes.
 fn conquest(nodes: &[NodeSetup], gather_percent: u32) -> World {
-    const TILES: u32 = 64;
+    conquest_on(|_, _| false, nodes, gather_percent)
+}
+
+/// The same, with the tiles `rough` says no regiment can walk on.
+fn conquest_on(
+    rough: impl Fn(i32, i32) -> bool,
+    nodes: &[NodeSetup],
+    gather_percent: u32,
+) -> World {
     let side = TILES as usize * CELLS_PER_TILE as usize;
-    let nav = vec![1u8; side * side];
+    let cells = CELLS_PER_TILE;
+    let nav: Vec<u8> = (0..side * side)
+        .map(|i| {
+            let (x, y) = ((i % side) as i32, (i / side) as i32);
+            if rough(x / cells, y / cells) {
+                BLOCKED
+            } else {
+                1
+            }
+        })
+        .collect();
     let mut w = World::new(&MatchSetup {
         seed: 4,
         capacities: Capacities { regiments: 64 },
@@ -433,4 +454,65 @@ fn the_economy_is_part_of_the_state_hash() {
         .unwrap();
     assert_ne!(sent[economy], idle[economy]);
     assert_eq!(play(true), sent, "the same commands play out the same");
+}
+
+#[test]
+fn a_seep_running_dry_gives_no_more_than_it_held_at_the_full_rate() {
+    // Ten Grub: one load. The other four workers fill from dregs, four
+    // times as slowly.
+    let mut w = conquest(&[grub(32, 22, 10)], 100);
+    base_with_workers(&mut w, 5);
+    run(&mut w, 20 * TICKS_PER_SECOND);
+    assert_eq!(w.bank(0).unwrap().grub, 500 + 10);
+    assert_eq!(w.economy().unwrap().nodes().next().unwrap().left, 0);
+}
+
+#[test]
+fn sent_again_to_its_seep_a_worker_keeps_filling() {
+    let mut w = conquest(&[grub(32, 22, 7500)], 100);
+    let r = base_with_workers(&mut w, 1)[0];
+    let filling = |w: &World| w.economy().unwrap().nodes().next().unwrap().workers == 1;
+    let mut ticks = 0;
+    while !filling(&w) {
+        w.tick(&[]);
+        ticks += 1;
+        assert!(ticks < MINUTE, "never began filling");
+    }
+    run(&mut w, 5 * TICKS_PER_SECOND);
+    assert!(gather(&mut w, 0, r, 0));
+    // Done in the 9 s it began with, not 9 s from the new order.
+    run(&mut w, 5 * TICKS_PER_SECOND);
+    assert_eq!(w.carries(r), Some((Resource::Grub, 10)));
+}
+
+#[test]
+fn nothing_is_built_on_a_seep() {
+    let mut w = conquest(&[grub(32, 22, 7500)], 100);
+    assert_eq!(w.can_build(HOUSE, (31, 21)), Err(Refusal::Node));
+    assert_eq!(w.can_build(HOUSE, (30, 22)), Err(Refusal::Node), "too near");
+    assert_eq!(w.can_build(HOUSE, (36, 22)), Ok(()));
+    assert!(!order(
+        &mut w,
+        0,
+        Command::SpawnStructure {
+            building: HOUSE,
+            tile: (31, 21)
+        }
+    ));
+}
+
+#[test]
+fn a_worker_that_cannot_reach_its_node_gives_up() {
+    // The vein stands in the middle of rough ground 8 tiles across.
+    let rough = |x: i32, y: i32| (36..44).contains(&x) && (36..44).contains(&y);
+    let mut w = conquest_on(rough, &[marrow(40, 40, 3000)], 100);
+    let r = spawn(&mut w, 0, WORKER, 30, 30);
+    assert!(gather(&mut w, 0, r, 0));
+    let mut ticks = 0;
+    while w.gathers_at(r).is_some() {
+        w.tick(&[]);
+        ticks += 1;
+        assert!(ticks < 2 * MINUTE, "kept trying");
+    }
+    assert_eq!(w.carries(r), None);
 }

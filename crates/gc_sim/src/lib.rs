@@ -671,7 +671,7 @@ impl World {
     /// north-west tile at `tile`, and if not, why: the check
     /// [`Command::SpawnStructure`] makes.
     pub fn can_build(&self, building: BuildingId, tile: (i32, i32)) -> Result<(), Refusal> {
-        self.structures().ok_or(Refusal::NoBuildings)?.check(
+        self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.check(
             building,
             tile,
             &self.nav,
@@ -931,15 +931,16 @@ impl World {
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
             Command::SpawnStructure { building, tile } => {
-                let Some(Conquest { structures, .. }) = &mut self.conquest else {
+                let Some(conquest) = &mut self.conquest else {
                     return false;
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 usize::from(pc.player) < MAX_PARTIES
-                    && structures
+                    && conquest
                         .check(building, tile, &self.nav, &self.regiments)
                         .is_ok()
-                    && structures
+                    && conquest
+                        .structures
                         .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
                         .is_some()
             }
@@ -978,8 +979,11 @@ impl World {
                             && !self.regiments.morale_state[r].broken()
                             && conquest.economy.can_gather(&self.regiments, r, node) =>
                     {
-                        conquest.stop_work(r);
-                        conquest.economy.gather(&mut self.regiments, r, node);
+                        // Sent again to the node it works: it keeps on.
+                        if conquest.economy.work_of(&self.regiments, r) != Some(node) {
+                            conquest.stop_work(r);
+                            conquest.economy.gather(&mut self.regiments, r, node);
+                        }
                         true
                     }
                     _ => false,

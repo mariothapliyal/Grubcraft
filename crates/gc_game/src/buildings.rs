@@ -347,6 +347,7 @@ pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'stat
         Refusal::Rough => "The ground there is too rough to build on.",
         Refusal::Built => "Another building is in the way.",
         Refusal::Crowded => "A regiment is standing in the way.",
+        Refusal::Node => "Workers need room at a seep or vein.",
     })
 }
 

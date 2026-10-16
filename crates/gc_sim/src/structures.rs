@@ -105,6 +105,8 @@ pub enum Refusal {
     Built,
     /// A regiment is standing there.
     Crowded,
+    /// A Grub seep or Marrow vein is there.
+    Node,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -463,13 +465,14 @@ impl Structures {
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`: on the map, on ground regiments can walk, clear of
     /// other buildings (see `Nav::footing`), and with no regiment standing
-    /// on it.
+    /// on it or node (`nodes`) within it.
     pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
         nav: &Nav,
         regs: &Regiments,
+        nodes: &[FxVec2],
     ) -> Result<(), Refusal> {
         let b = self
             .buildings
@@ -484,12 +487,12 @@ impl Structures {
             FxVec2::from_ints(tile.0, tile.1) - FxVec2::new(margin, margin),
             FxVec2::from_ints(tile.0 + w, tile.1 + d) + FxVec2::new(margin, margin),
         );
-        let crowded = (0..regs.alive.len()).any(|i| {
-            let p = regs.position[i];
-            regs.alive[i] && p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y
-        });
-        if crowded {
+        let near = |p: FxVec2| p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y;
+        if (0..regs.alive.len()).any(|i| regs.alive[i] && near(regs.position[i])) {
             Err(Refusal::Crowded)
+        } else if nodes.iter().any(|&at| near(at)) {
+            // Workers must be able to stand at it.
+            Err(Refusal::Node)
         } else {
             Ok(())
         }

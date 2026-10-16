@@ -2,7 +2,9 @@
 //! buildings ([`crate::structures`]) and the economy ([`crate::economy`]).
 
 use crate::economy::{Economy, NodeSetup};
-use crate::structures::{Breaker, BuildingStats, Structures};
+use crate::nav::Nav;
+use crate::regiments::Regiments;
+use crate::structures::{Breaker, BuildingId, BuildingStats, Refusal, Structures};
 use crate::{MAX_PARTIES, StateHasher};
 
 /// What a Conquest match knows about each regiment type beyond its battle
@@ -78,6 +80,19 @@ impl Conquest {
             structures: Structures::new(setup.buildings, setup.units, setup.structures, regiments),
             economy: Economy::new(setup, regiments),
         }
+    }
+
+    /// Whether a building of type `building` may go up with its north-west
+    /// tile at `tile` (see `Structures::check`).
+    pub(crate) fn check(
+        &self,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &Nav,
+        regs: &Regiments,
+    ) -> Result<(), Refusal> {
+        self.structures
+            .check(building, tile, nav, regs, self.economy.node_positions())
     }
 
     /// Regiment slot `r` was given another order: it stops attacking any
