@@ -63,6 +63,7 @@ grubcraft/
 │  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19) (later)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
+│  ├─ gc_match/      a match with no window: map making (no floats), map hash; set-out and judging to follow
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
 │  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings, battle HUD minimap and army tray built)
@@ -84,7 +85,7 @@ grubcraft/
 └─ docs/
 ```
 
-Crates marked *(later)* don't exist yet. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
+Crates marked *(later)* don't exist yet. `gc_match` (review fix 13, 2026-10-16) is the start of the headless match layer: everything a battle needs that has no window, GPU or sound, so goldens, AI ladders and benchmarks can play matches the way the game does. So far it holds the map generator (`terrain_gen`), its float views for drawing and the computer players (`terrain_view`) and `map_hash`; battle set-out, judging and a `play()` driver move in next. Until `gc_present` is needed, interpolation and the soldier puppets live in `gc_game` (`src/puppets.rs`).
 
 `gc_sim` depends on nothing platform-related. It cannot read the clock, open files, spawn threads or use floating point. This boundary is what makes lockstep, replays, rejoin, "Restage this battle" and AI players possible (they read the sim's public views and send commands; see [18 · AI](18-ai.md)).
 

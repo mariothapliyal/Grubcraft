@@ -13,8 +13,8 @@ use gc_ui::hud::{
 };
 use glam::{Vec2, Vec3};
 
-use crate::terrain_gen::Heightmap;
 use crate::{Running, from_fx_vec, fx_vec, sounds};
+use gc_match::terrain_gen::Heightmap;
 
 /// Cells per side of the minimap's ground picture.
 const TERRAIN_CELLS: usize = 48;

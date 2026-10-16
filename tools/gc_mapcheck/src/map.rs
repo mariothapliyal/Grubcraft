@@ -5,7 +5,7 @@
 //! bytes from the same file.
 //!
 //! The cliff, ford and clearance rules below repeat those of the game's
-//! walkable-ground grid (`Heightmap::nav_costs` in `gc_game`), which works on
+//! walkable-ground grid (`Heightmap::nav_costs` in `gc_match`), which works on
 //! half-tile cells; sharing one implementation is to be done when the game first loads these maps.
 
 use crate::def::*;

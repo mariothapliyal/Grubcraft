@@ -804,6 +804,7 @@ dependencies = [
  "gc_bake",
  "gc_data",
  "gc_fixed",
+ "gc_match",
  "gc_net",
  "gc_platform",
  "gc_render",
@@ -824,6 +825,16 @@ dependencies = [
  "gc_sim",
  "ron",
  "serde",
+]
+
+[[package]]
+name = "gc_match"
+version = "0.1.0"
+dependencies = [
+ "gc_ai",
+ "gc_fixed",
+ "gc_sim",
+ "glam",
 ]
 
 [[package]]

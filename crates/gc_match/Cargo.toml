@@ -1,0 +1,17 @@
+[package]
+name = "gc_match"
+description = "A Grubcraft match without a window: the map it is played on, and how it is set out and judged"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gc_ai.workspace = true
+gc_fixed.workspace = true
+gc_sim.workspace = true
+glam.workspace = true
+
+[lints]
+workspace = true

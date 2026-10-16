@@ -30,8 +30,8 @@ use gc_sim::{
 use glam::Vec2;
 
 use crate::battle::{battle_starts, zone_order};
-use crate::terrain_gen::Heightmap;
-use crate::terrain_view::start_positions;
+use gc_match::terrain_gen::Heightmap;
+use gc_match::terrain_view::start_positions;
 
 /// One side of a recorded battle: a computer player.
 struct Side {

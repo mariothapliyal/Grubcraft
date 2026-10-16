@@ -100,8 +100,6 @@ mod replays;
 mod sandbox;
 mod scenery;
 mod sounds;
-mod terrain_gen;
-mod terrain_view;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -134,9 +132,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::RtsCamera;
+use gc_match::terrain_gen::Heightmap;
 use models::Action;
 use puppets::{Block, Fighter, Puppets, Soldier};
-use terrain_gen::Heightmap;
 
 #[global_allocator]
 static ALLOC: TaggedAlloc = TaggedAlloc;
@@ -965,7 +963,7 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            map_hash: online::map_hash(&nav, &heightmap.ground()),
+            map_hash: gc_match::map_hash(&nav, &heightmap.ground()),
         });
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
@@ -2717,7 +2715,7 @@ impl Running {
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
             // before saying it is ready.
-            let mine = online::map_hash(&nav, &self.heightmap.ground());
+            let mine = gc_match::map_hash(&nav, &self.heightmap.ground());
             let lan = self.menu.net();
             let result = match lan.host_map() {
                 Some(host) if host.map_hash != mine => Err(format!(
@@ -2767,7 +2765,7 @@ impl Running {
                 &self.unit_stats,
                 &self.unit_factions,
                 &self.unit_points,
-                terrain_view::start_positions(MAP_TILES),
+                gc_match::terrain_view::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,

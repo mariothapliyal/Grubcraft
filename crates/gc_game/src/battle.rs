@@ -12,7 +12,7 @@ use gc_ui::Settings;
 use gc_ui::lobby::{COLORS, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
 
-use crate::terrain_gen::START_PLATEAUS;
+use gc_match::terrain_gen::START_PLATEAUS;
 
 // A start plateau for every lobby slot.
 const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
@@ -435,8 +435,8 @@ pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain_gen::Heightmap;
-    use crate::terrain_view::start_positions;
+    use gc_match::terrain_gen::Heightmap;
+    use gc_match::terrain_view::start_positions;
     use gc_sim::{Capacities, MatchSetup};
 
     const MAP: u32 = 256;

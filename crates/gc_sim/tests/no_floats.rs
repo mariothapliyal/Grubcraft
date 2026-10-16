@@ -2,7 +2,7 @@
 //! float results can differ between CPUs and compilers and would desync
 //! lockstep multiplayer. Test modules (after `#[cfg(test)]`) may use floats to
 //! check results against a reference. The battle map generator
-//! (`gc_game`'s `terrain_gen.rs`) is held to the same rule.
+//! (`gc_match`'s `terrain_gen.rs`) is held to the same rule.
 
 use std::path::Path;
 
@@ -43,7 +43,7 @@ fn simulation_crates_contain_no_floats() {
     check_dir(&root.join("src"), &mut offenders);
     check_dir(&root.join("../gc_fixed/src"), &mut offenders);
     // The battle map generator must make the same map on every machine.
-    check_file(&root.join("../gc_game/src/terrain_gen.rs"), &mut offenders);
+    check_file(&root.join("../gc_match/src/terrain_gen.rs"), &mut offenders);
     assert!(
         offenders.is_empty(),
         "floating point in simulation code:\n{}",

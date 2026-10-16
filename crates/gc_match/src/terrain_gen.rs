@@ -440,11 +440,8 @@ mod tests {
     fn the_map_is_the_same_on_every_machine() {
         let fingerprint = |seed, tiles| {
             let hm = Heightmap::generate(seed, tiles);
-            let heights = crate::online::fnv1a(hm.heights.iter().flat_map(|v| v.to_le_bytes()));
-            (
-                heights,
-                crate::online::map_hash(&hm.nav_costs(), &hm.ground()),
-            )
+            let heights = crate::fnv1a(hm.heights.iter().flat_map(|v| v.to_le_bytes()));
+            (heights, crate::map_hash(&hm.nav_costs(), &hm.ground()))
         };
         assert_eq!(
             fingerprint(1, 256),
