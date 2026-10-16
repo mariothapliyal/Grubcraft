@@ -7,18 +7,21 @@
 use gc_data::conquest::{Class, ConquestUnitRecord, NONE};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
-use glam::Vec2;
 use gc_map::{Kind, Map};
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
     BuildingStats, Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand,
-    PlayerId, Resource, UnitStats, World,
+    PlayerId, Resource, World,
 };
-use gc_ui::lobby::Tempo;
+use gc_ui::Settings;
+use gc_ui::lobby::{
+    COLORS, CONQUEST_MAP_PLAYERS, Faction as LobbyFaction, GameMode, LobbySettings, MatchStart,
+    Slot, SlotKind, Tempo,
+};
+use glam::Vec2;
 
 use crate::buildings::{self, Table};
-use crate::sandbox;
 
 /// The shipped maps the lobby's Conquest maps are made from, in the order
 /// of `gc_ui::lobby::CONQUEST_MAPS`.
@@ -54,10 +57,11 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
 
 /// The battle stats of every Conquest unit type, by unit type: the unit
 /// table a Conquest world is made with.
-pub fn unit_stats(data: &GameData) -> Vec<UnitStats> {
+#[cfg(test)]
+fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
     data.conquest_units
         .iter()
-        .map(|u| sandbox::stats_of(&u.stats))
+        .map(|u| crate::sandbox::stats_of(&u.stats))
         .collect()
 }
 
@@ -67,6 +71,54 @@ pub fn start_stores(f: Faction) -> (u32, u32) {
     match f {
         Faction::CarrionConcord => (400, 0),
         _ => (300, 0),
+    }
+}
+
+/// Each lobby player's faction, in player order.
+pub fn factions(start: &MatchStart) -> Vec<Faction> {
+    // gc_data and the lobby list the factions in the same order.
+    start
+        .players
+        .iter()
+        .map(|s| Faction::ALL[s.faction.index()])
+        .collect()
+}
+
+/// `--conquest MAP`: Conquest on the lobby's Conquest map `choice`, you at
+/// the first start and an idle side at each of the others, the factions
+/// in turn from yours so a four-player map shows all four.
+pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> MatchStart {
+    let players = CONQUEST_MAP_PLAYERS.get(choice).copied().unwrap_or(2);
+    let slots = (0..players)
+        .map(|i| {
+            let mut slot = Slot::open(i);
+            slot.kind = if i == 0 {
+                SlotKind::Human
+            } else {
+                SlotKind::Ai
+            };
+            slot.name = if i == 0 {
+                settings.player_name.clone()
+            } else {
+                format!("AI {}", i + 1)
+            };
+            slot.faction =
+                LobbyFaction::ALL[(settings.faction.index() + i) % LobbyFaction::ALL.len()];
+            slot.color = (settings.player_color + i as u8) % COLORS;
+            slot.team = i as u8;
+            slot
+        })
+        .collect();
+    MatchStart {
+        settings: LobbySettings {
+            mode: GameMode::Conquest,
+            map: choice,
+            map_seed,
+            ..LobbySettings::default()
+        },
+        players: slots,
+        local_player: 0,
+        seed: None,
     }
 }
 
@@ -138,7 +190,7 @@ pub fn nodes_of(map: &Map) -> Vec<NodeSetup> {
 }
 
 /// A footprint, `[x, y, width, depth]` in tiles.
-type Foot = [i32; 4];
+pub(crate) type Foot = [i32; 4];
 
 /// Whether `p` is within `margin` tiles of footprint `f`.
 fn near(f: Foot, p: (f32, f32), margin: f32) -> bool {
@@ -187,7 +239,8 @@ pub fn opening(
             let s = table.stats[i];
             let (w, d) = (i32::from(s.width), i32::from(s.depth));
             for _ in 0..data.buildings[i].start_count {
-                let at = |(x, y): (f32, f32)| buildings::tile_for(Vec2::new(x, y), s.width, s.depth);
+                let at =
+                    |(x, y): (f32, f32)| buildings::tile_for(Vec2::new(x, y), s.width, s.depth);
                 let fits = |t: (i32, i32)| {
                     let foot = [t.0, t.1, w, d];
                     world.can_build(i as u16, t).is_ok()
@@ -236,7 +289,11 @@ pub fn opening(
                     // and right of it, a ring further out each lap.
                     let lap = (k / 16) as f32;
                     let step = (k % 16) as i32;
-                    let turn = if step % 2 == 0 { step / 2 } else { -(step + 1) / 2 };
+                    let turn = if step % 2 == 0 {
+                        step / 2
+                    } else {
+                        -(step + 1) / 2
+                    };
                     let angle = toward + turn as f32 * std::f32::consts::TAU / 16.0;
                     let r = radius + 2.5 * lap;
                     let p = (mid.0 + r * angle.cos(), mid.1 + r * angle.sin());
@@ -264,7 +321,7 @@ pub fn opening(
 /// Tiles round footprint `f` for a building's north-west corner, a ring
 /// further out each lap, starting `gap` tiles off: candidates for the
 /// opening's extra buildings.
-fn ring(f: Foot, gap: i32) -> impl Iterator<Item = (i32, i32)> {
+pub(crate) fn ring(f: Foot, gap: i32) -> impl Iterator<Item = (i32, i32)> {
     let [x, y, w, d] = f;
     (0..8).flat_map(move |lap| {
         let r = gap + lap * 2;
@@ -320,7 +377,13 @@ mod tests {
             let c = unit_of(u);
             if let Some(b) = c.trained_at {
                 let b = &data.buildings[usize::from(b)];
-                assert_eq!(b.faction(), u.faction(), "{} trains at {}", u.name(), b.name());
+                assert_eq!(
+                    b.faction(),
+                    u.faction(),
+                    "{} trains at {}",
+                    u.name(),
+                    b.name()
+                );
             }
             assert_eq!(c.worker, u.worker());
         }
@@ -343,7 +406,10 @@ mod tests {
                     .iter()
                     .filter(|n| n.resource == r)
                     .filter(|n| {
-                        let (x, y) = (crate::fx_to_f32(n.at.x) - sx as f32, crate::fx_to_f32(n.at.y) - sy as f32);
+                        let (x, y) = (
+                            crate::fx_to_f32(n.at.x) - sx as f32,
+                            crate::fx_to_f32(n.at.y) - sy as f32,
+                        );
                         x.hypot(y) < 20.0
                     })
                     .count()
@@ -361,13 +427,21 @@ mod tests {
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
         let stats = world.tick(&opening);
-        assert_eq!(stats.commands_applied as usize, opening.len(), "every command applies");
+        assert_eq!(
+            stats.commands_applied as usize,
+            opening.len(),
+            "every command applies"
+        );
         for (p, &f) in factions.iter().enumerate() {
             let p = p as PlayerId;
             let s = world.structures().unwrap();
             let mains = s
                 .iter()
-                .filter(|v| v.owner == p && table.stats[usize::from(v.building)].role == gc_sim::structures::Role::Main)
+                .filter(|v| {
+                    v.owner == p
+                        && table.stats[usize::from(v.building)].role
+                            == gc_sim::structures::Role::Main
+                })
                 .count();
             assert_eq!(mains, 1, "{f:?} has its main building");
             let buildings: usize = data
@@ -376,14 +450,22 @@ mod tests {
                 .filter(|b| b.faction() == f)
                 .map(|b| usize::from(b.start_count))
                 .sum();
-            assert_eq!(s.iter().filter(|v| v.owner == p).count(), buildings, "{f:?}");
+            assert_eq!(
+                s.iter().filter(|v| v.owner == p).count(),
+                buildings,
+                "{f:?}"
+            );
             let units: usize = data
                 .conquest_units
                 .iter()
                 .filter(|u| u.faction() == f)
                 .map(|u| usize::from(u.start_count))
                 .sum();
-            assert_eq!(world.regiments.iter().filter(|r| r.owner == p).count(), units, "{f:?}");
+            assert_eq!(
+                world.regiments.iter().filter(|r| r.owner == p).count(),
+                units,
+                "{f:?}"
+            );
             let bank = world.bank(p).unwrap();
             assert_eq!((bank.grub, bank.marrow), start_stores(f), "{f:?}");
             assert!(bank.supply_cap > 0, "{f:?}'s hall gives supply");

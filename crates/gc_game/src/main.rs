@@ -76,6 +76,8 @@
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
+//! `--conquest ribcage_pass|four_teeth` starts Conquest on that map, every
+//! other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
@@ -99,8 +101,10 @@ mod battle;
 #[cfg(test)]
 mod battle_tables;
 mod buildings;
-mod conquest;
 mod camera;
+mod conquest;
+#[cfg(test)]
+mod conquest_golden;
 mod credits;
 mod data;
 #[cfg(test)]
@@ -140,7 +144,7 @@ use gc_sim::{
     PlayerCommand, PlayerId, RegimentHandle, StructureHandle, TIGHT_DEFENCE, UnitId, UnitStats,
     World,
 };
-use gc_ui::lobby::MatchStart;
+use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -275,6 +279,8 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// Start straight into Conquest on this lobby Conquest map.
+    conquest: Option<usize>,
     /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
     /// or join code), with `--password` if it has one.
     host: bool,
@@ -302,6 +308,7 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        conquest: None,
         host: false,
         join: None,
         password: String::new(),
@@ -366,6 +373,10 @@ fn parse_args() -> Options {
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--conquest" => {
+                let choice = conquest::MAP_FILES.iter().position(|m| *m == value);
+                choice.map(|c| opts.conquest = Some(c)).is_some()
+            }
             "--battle" => {
                 let level = gc_ui::lobby::AI_LEVELS
                     .iter()
@@ -423,7 +434,11 @@ fn parse_args() -> Options {
     }
     // The showroom is not a match: nothing to fight, host or join.
     if opts.showroom.is_some()
-        && (opts.sandbox || opts.battle.is_some() || opts.host || opts.join.is_some())
+        && (opts.sandbox
+            || opts.battle.is_some()
+            || opts.conquest.is_some()
+            || opts.host
+            || opts.join.is_some())
     {
         usage();
     }
@@ -456,7 +471,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
     );
     std::process::exit(2);
@@ -468,9 +483,8 @@ struct Running {
     renderer: Renderer,
     camera: RtsCamera,
     heightmap: Arc<Map>,
-    /// Which Field Battle map `heightmap` is; `None` for one opened with
-    /// `--map`.
-    map_key: Option<FieldMap>,
+    /// Which lobby map `heightmap` is; `None` for one opened with `--map`.
+    map_key: Option<MapKey>,
     world: World,
     /// Orders the other sides about; None in an empty-field sandbox or a
     /// lobby battle.
@@ -510,8 +524,16 @@ struct Running {
     unit_factions: Vec<gc_ai::Faction>,
     /// Each regiment type's cost in a Field Battle army.
     unit_points: Vec<u32>,
-    /// The building types, for the sandbox's Conquest world.
+    /// The regiment types not in play: the Conquest ones in a Field Battle
+    /// or the sandbox, the Field Battle ones in Conquest. See
+    /// [`Running::use_units`].
+    other_units: UnitTable,
+    /// Whether the regiment types in play are the Conquest ones.
+    conquest_units: bool,
+    /// The building types, for Conquest worlds.
     buildings: buildings::Table,
+    /// The game data as built, which Conquest matches are set up from.
+    data: gc_data::GameData<'static>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -580,6 +602,45 @@ struct Running {
     replay_list: Option<replays::Listing>,
     /// Makes the pictures of maps the menus show, off the frame loop.
     map_previews: map_preview::MapPreviews,
+}
+
+/// A table of regiment types as the game names, draws and prices them.
+/// Field Battles and the sandbox play with the Field Battle units, Conquest
+/// with its own (`GameData::conquest_units`), whose ids number another
+/// table.
+struct UnitTable {
+    /// As in play (the sandbox may have tuned them).
+    stats: Vec<UnitStats>,
+    /// As built.
+    data_stats: Vec<UnitStats>,
+    names: Vec<String>,
+    factions: Vec<gc_ai::Faction>,
+    points: Vec<u32>,
+    /// Each type's soldier model, if it has one.
+    models: Vec<Option<usize>>,
+}
+
+impl UnitTable {
+    fn of<'a>(
+        units: impl Iterator<Item = &'a gc_data::UnitRecord>,
+        models: Option<&gc_assets::model::Models<'_>>,
+    ) -> UnitTable {
+        let units: Vec<&gc_data::UnitRecord> = units.collect();
+        let stats: Vec<UnitStats> = units.iter().map(|u| sandbox::stats_of(u)).collect();
+        UnitTable {
+            data_stats: stats.clone(),
+            stats,
+            names: units.iter().map(|u| u.name().to_string()).collect(),
+            factions: units
+                .iter()
+                .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
+                .collect(),
+            points: units.iter().map(|u| u32::from(u.points)).collect(),
+            models: models.map_or_else(Vec::new, |m| {
+                units.iter().map(|u| m.by_name(u.name())).collect()
+            }),
+        }
+    }
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -924,15 +985,24 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
+        let mut field_units = None;
+        let mut conquest_units = None;
+        let tables = |models: Option<&gc_assets::model::Models<'_>>| {
+            (
+                UnitTable::of(game_data.units.iter(), models),
+                UnitTable::of(game_data.conquest_units.iter().map(|u| &u.stats), models),
+            )
+        };
         let art = match models::load() {
             Ok(models) => match renderer.set_models(&models) {
                 Ok(()) => Some(Art {
                     clips: models::Clips::new(&models),
-                    unit_model: game_data
-                        .units
-                        .iter()
-                        .map(|u| models.by_name(u.name()))
-                        .collect(),
+                    unit_model: {
+                        let (mut field, conquest) = tables(Some(&models));
+                        let unit_model = std::mem::take(&mut field.models);
+                        (field_units, conquest_units) = (Some(field), Some(conquest));
+                        unit_model
+                    },
                     heights: models.models.iter().map(|m| m.height).collect(),
                     view: LodView {
                         eye: glam::Vec3::ZERO,
@@ -956,22 +1026,17 @@ impl App {
             }
         };
         self.memory_timeline.mark("models uploaded");
-        let unit_stats: Vec<UnitStats> = game_data.units.iter().map(sandbox::stats_of).collect();
-        let unit_names: Vec<String> = game_data
-            .units
-            .iter()
-            .map(|u| u.name().to_string())
-            .collect();
-        let unit_factions: Vec<gc_ai::Faction> = game_data
-            .units
-            .iter()
-            .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
-            .collect();
-        let unit_points: Vec<u32> = game_data
-            .units
-            .iter()
-            .map(|u| u32::from(u.points))
-            .collect();
+        let (field_units, other_units) = match (field_units, conquest_units) {
+            (Some(f), Some(c)) => (f, c),
+            _ => tables(None),
+        };
+        let UnitTable {
+            stats: unit_stats,
+            names: unit_names,
+            factions: unit_factions,
+            points: unit_points,
+            ..
+        } = field_units;
         // gc_data and the lobby list the factions in the same order.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
             .units
@@ -1091,7 +1156,7 @@ impl App {
         menu.set_host_map_seed(opts.seed);
         let show_menu = opts
             .menu
-            .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
+            .unwrap_or(opts.frames.is_none() && opts.battle.is_none() && opts.conquest.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
                 sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
@@ -1127,6 +1192,8 @@ impl App {
             unit_names,
             unit_factions,
             unit_points,
+            other_units,
+            conquest_units: false,
             buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
@@ -1191,6 +1258,7 @@ impl App {
             sounds,
             replay_list: None,
             map_previews: map_preview::MapPreviews::new(),
+            data: game_data,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -1214,6 +1282,10 @@ impl App {
             }
             if let Some(level) = opts.battle {
                 let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                r.start_match(MatchKind::Battle(setup));
+            }
+            if let Some(choice) = opts.conquest {
+                let setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
             }
         }
@@ -2720,29 +2792,27 @@ impl Running {
                 if self.replay_list.is_none() {
                     self.replay_list = Some(replays::list_in_background(
                         replays::folder(),
-                        self.data_stats.len(),
+                        self.unit_types(),
                         self.capacities,
                         self.data_hash,
                     ));
                 }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => {
-                    match replays::unplayable(&r.info(), self.data_stats.len(), self.capacities) {
-                        None => {
-                            logln!("grubcraft: watching {}", path.display());
-                            self.start_match(MatchKind::Replay(Box::new(r)));
-                        }
-                        Some(why) => self.menu.tell(why),
+                Ok(r) => match replays::unplayable(&r.info(), self.unit_types(), self.capacities) {
+                    None => {
+                        logln!("grubcraft: watching {}", path.display());
+                        self.start_match(MatchKind::Replay(Box::new(r)));
                     }
-                }
+                    Some(why) => self.menu.tell(why),
+                },
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
                 logln!(
                     "grubcraft: starting {} on {} with {} players",
                     setup.settings.mode.name(),
-                    gc_ui::lobby::MAPS[setup.settings.map],
+                    setup.settings.map_name(),
                     setup.players.len()
                 );
                 self.start_match(MatchKind::Battle(setup));
@@ -2784,6 +2854,13 @@ impl Running {
         if let Some(w) = self.watching.take() {
             self.unit_stats = w.stats_before;
         }
+        // Conquest plays with its own regiment types.
+        let conquest = match &kind {
+            MatchKind::Battle(setup) => setup.settings.mode == GameMode::Conquest,
+            MatchKind::Replay(r) => r.conquest.is_some(),
+            MatchKind::Sandbox => false,
+        };
+        self.use_units(conquest);
         let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
@@ -2795,23 +2872,34 @@ impl Running {
         if networked {
             self.unit_stats.clone_from(&self.data_stats);
         }
-        // A Field Battle plays on the map the lobby picked, its world seeded
-        // with the map's seed (the same on every machine). A replay is shown
-        // on the map it was played on, made again from its choice and seed,
-        // and plays on the map it stored. A described map opened with
-        // `--map` is for looking round in the sandbox; the first battle or
-        // replay leaves it.
+        // A lobby match plays on the map the lobby picked, its world seeded
+        // with the lobby's map seed (the same on every machine). A replay is
+        // shown on the map it was played on, made again from its choice (and
+        // a Field Battle's size and seed), and plays on the map it stored. A
+        // described map opened with `--map` is for looking round in the
+        // sandbox; the first battle or replay leaves it.
         let key = match &kind {
-            MatchKind::Battle(setup) => Some(battle_map(&setup.settings, setup.players.len())),
-            MatchKind::Replay(r) => Some(FieldMap {
-                choice: r.header.map.map_or(0, usize::from),
-                tiles: r.map_tiles,
-                seed: r.seed,
-            }),
+            MatchKind::Battle(setup) => Some((
+                battle_map(&setup.settings, setup.players.len()),
+                setup.settings.map_seed,
+            )),
+            MatchKind::Replay(r) => {
+                let choice = r.header.map.map_or(0, usize::from);
+                let key = if conquest {
+                    MapKey::Conquest(choice)
+                } else {
+                    MapKey::Field(FieldMap {
+                        choice,
+                        tiles: r.map_tiles,
+                        seed: r.seed,
+                    })
+                };
+                Some((key, r.seed))
+            }
             MatchKind::Sandbox => None,
         };
-        if let Some(key) = key {
-            self.seed = key.seed;
+        if let Some((key, seed)) = key {
+            self.seed = seed;
             if self.map_key != Some(key) {
                 self.use_map(key);
             }
@@ -2838,7 +2926,7 @@ impl Running {
         let (teams, champions): (Vec<u8>, bool) = match &kind {
             MatchKind::Battle(setup) => (
                 setup.players.iter().map(|s| s.team).collect(),
-                battle::champions_allowed(setup),
+                !conquest && battle::champions_allowed(setup),
             ),
             MatchKind::Sandbox | MatchKind::Replay(_) => (Vec::new(), false),
         };
@@ -2852,13 +2940,29 @@ impl Running {
             ground: self.heightmap.ground(),
             champions,
         };
+        // A lobby Conquest match: what every machine makes its world with,
+        // from the lobby's settings and the game data.
+        let plan = match &kind {
+            MatchKind::Battle(start) if conquest => Some(conquest::ConquestPlan::new(
+                &self.buildings,
+                &self.data,
+                &self.heightmap,
+                &conquest::factions(start),
+                start.settings.tempo,
+            )),
+            _ => None,
+        };
         self.world = tagged_alloc::scope(Tag::Sim, || match &kind {
             MatchKind::Replay(r) => r.new_world(),
             _ => World::new(&setup),
         });
-        // Only the sandbox has buildings so far. It is never recorded (only
-        // `Battle` below makes a recorder), which matters: a replay doesn't
-        // carry the Conquest setup, so it would play back without them.
+        // Before the recorder, which hashes the world as it starts.
+        if let Some(plan) = &plan {
+            let done = self.world.conquest(&plan.setup());
+            debug_assert!(done, "conquest() on a world that has already begun");
+        }
+        // The sandbox has buildings to try. It is never recorded (only
+        // `Battle` below makes a recorder).
         if matches!(kind, MatchKind::Sandbox) {
             self.buildings.conquer(&mut self.world);
         }
@@ -2867,7 +2971,7 @@ impl Running {
             let dir = replays::folder();
             replays::prune(&dir, replays::KEEP - 1);
             let mode = start.settings.mode.name();
-            let map = gc_ui::lobby::MAPS[start.settings.map];
+            let map = start.settings.map_name();
             let place = if networked {
                 "over the network"
             } else {
@@ -2878,6 +2982,10 @@ impl Running {
                 &self.world,
                 format!("{mode} on {map}, played {place}"),
             );
+            let recorder = match &plan {
+                Some(plan) => recorder.conquest(&plan.setup()),
+                None => recorder,
+            };
             self.recording = Some(Recording {
                 // A network match hashes as often as the machines compare,
                 // and keeps each system's hashes for a desync report.
@@ -2922,6 +3030,7 @@ impl Running {
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         match kind {
+            MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
             MatchKind::Replay(r) => self.watch(*r, stats_before),
             MatchKind::Sandbox => {}
@@ -2949,13 +3058,54 @@ impl Running {
         }
     }
 
-    /// Make the Field Battle map `key` names and put it on screen.
-    fn use_map(&mut self, key: FieldMap) {
+    /// What the panel calls a lobby match.
+    fn mode_name(&self) -> &'static str {
+        if self.conquest_units {
+            "CONQUEST"
+        } else {
+            "FIELD BATTLE"
+        }
+    }
+
+    /// Play with the Conquest regiment types (`conquest`) or the Field
+    /// Battle ones. The table put away keeps what the sandbox tuned.
+    fn use_units(&mut self, conquest: bool) {
+        if self.conquest_units == conquest {
+            return;
+        }
+        self.conquest_units = conquest;
+        let other = &mut self.other_units;
+        std::mem::swap(&mut self.unit_stats, &mut other.stats);
+        std::mem::swap(&mut self.data_stats, &mut other.data_stats);
+        std::mem::swap(&mut self.unit_names, &mut other.names);
+        std::mem::swap(&mut self.unit_factions, &mut other.factions);
+        std::mem::swap(&mut self.unit_points, &mut other.points);
+        if let Some(art) = &mut self.art {
+            std::mem::swap(&mut art.unit_model, &mut other.models);
+        }
+    }
+
+    /// How many regiment types each table has, which a replay must match.
+    fn unit_types(&self) -> replays::UnitTypes {
+        let (here, other) = (self.data_stats.len(), self.other_units.data_stats.len());
+        let (field, conquest) = if self.conquest_units {
+            (other, here)
+        } else {
+            (here, other)
+        };
+        replays::UnitTypes { field, conquest }
+    }
+
+    /// Make the lobby map `key` names and put it on screen.
+    fn use_map(&mut self, key: MapKey) {
         logln!(
             "grubcraft: switching to {} (seed {:x}, {} tiles)",
-            gc_map::FIELD_MAPS.get(key.choice).unwrap_or(&"?"),
-            key.seed,
-            key.tiles
+            key.name(),
+            self.seed,
+            match key {
+                MapKey::Field(k) => k.tiles,
+                MapKey::Conquest(_) => 0,
+            }
         );
         self.map_key = Some(key);
         self.heightmap = make_map(key);
@@ -2968,7 +3118,7 @@ impl Running {
         let nav = hm.nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, key.seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, self.seed)
         });
     }
 
@@ -2996,17 +3146,7 @@ impl Running {
                 party_name(&set.parties, m.party())
             );
         }
-        self.parties = set.parties;
-        self.sandbox.side = set.me;
-        self.battle = Some(Battle::new(Some(set.me)));
-        if let Some(rec) = &mut self.recording {
-            let header = rec.recorder.header_mut();
-            header.build = online::version();
-            header.data_hash = self.data_hash;
-            header.players = replays::players(&self.parties);
-            header.recorded_by = Some(set.me);
-            header.map = Some(setup.settings.map as u8);
-        }
+        self.seat(set.parties, set.me, setup);
         // Look over your army towards the enemy.
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
@@ -3016,6 +3156,56 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+    }
+
+    /// Seat `parties` for a lobby match, this machine playing `me`, and
+    /// note them in the recording.
+    fn seat(&mut self, parties: Vec<Party>, me: PlayerId, setup: &MatchStart) {
+        self.parties = parties;
+        self.sandbox.side = me;
+        self.battle = Some(Battle::new(Some(me)));
+        if let Some(rec) = &mut self.recording {
+            let header = rec.recorder.header_mut();
+            header.build = online::version();
+            header.data_hash = self.data_hash;
+            header.players = replays::players(&self.parties);
+            header.recorded_by = Some(me);
+            header.map = Some(setup.settings.map as u8);
+        }
+    }
+
+    /// Seat every side of a lobby Conquest match and, on the host (or
+    /// alone), put each one's start buildings and workers on the field.
+    /// No computer player plays Conquest yet.
+    fn set_out_conquest(&mut self, setup: &MatchStart) {
+        let me = setup
+            .local_player
+            .min(setup.players.len().saturating_sub(1)) as PlayerId;
+        self.seat(
+            setup.players.iter().map(battle::party_of).collect(),
+            me,
+            setup,
+        );
+        if self.online.as_ref().is_none_or(|o| o.host) {
+            self.human_orders.extend(conquest::opening(
+                &self.data,
+                &self.buildings,
+                &self.heightmap,
+                &self.world,
+                &conquest::factions(setup),
+            ));
+        }
+        // Look over your start.
+        let focus = self
+            .heightmap
+            .starts()
+            .get(usize::from(me))
+            .map_or(Vec2::splat(self.heightmap.tiles as f32 / 2.0), |&(x, y)| {
+                Vec2::new(x as f32 + 0.5, y as f32 + 0.5)
+            });
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
+        self.camera.distance = 80.0;
     }
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
@@ -3967,7 +4157,8 @@ impl Running {
         }
         if self.online.is_some() {
             lines.push(format!(
-                "FIELD BATTLE over the network   commanding {} (player {})   H: hide",
+                "{} over the network   commanding {} (player {})   H: hide",
+                self.mode_name(),
                 party_name(&self.parties, sb.side),
                 sb.side + 1
             ));
@@ -3993,7 +4184,7 @@ impl Running {
             return lines.join("\n");
         }
         let mode = if self.battle.is_some() {
-            "FIELD BATTLE"
+            self.mode_name()
         } else {
             "SANDBOX"
         };
@@ -4141,24 +4332,54 @@ impl Running {
     }
 }
 
-/// The map a lobby battle of `players` is played on.
-fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> FieldMap {
-    FieldMap {
-        choice: settings.map,
-        tiles: gc_ui::lobby::field_map_tiles(players),
-        seed: settings.map_seed,
+/// A map the lobby can play on: a Field Battle map made from its choice,
+/// size and seed, or one of the shipped Conquest maps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MapKey {
+    Field(FieldMap),
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`.
+    Conquest(usize),
+}
+
+impl MapKey {
+    fn make(self) -> Map {
+        match self {
+            MapKey::Field(key) => key.make(),
+            MapKey::Conquest(choice) => conquest::make_map(choice),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            MapKey::Field(key) => gc_map::FIELD_MAPS.get(key.choice),
+            MapKey::Conquest(choice) => gc_ui::lobby::CONQUEST_MAPS.get(choice),
+        }
+        .copied()
+        .unwrap_or("?")
     }
 }
 
-/// The last Field Battle map made, so the lobby's preview, the host's
-/// fingerprint and the match itself make it once between them.
-static LAST_MAP: std::sync::Mutex<Option<(FieldMap, Arc<Map>)>> = std::sync::Mutex::new(None);
+/// The map a lobby match of `players` is played on.
+fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> MapKey {
+    match settings.mode {
+        GameMode::Conquest => MapKey::Conquest(settings.map),
+        _ => MapKey::Field(FieldMap {
+            choice: settings.map,
+            tiles: gc_ui::lobby::field_map_tiles(players),
+            seed: settings.map_seed,
+        }),
+    }
+}
 
-/// Make the Field Battle map `key`, or share it if it was the last made.
+/// The last lobby map made, so the lobby's preview, the host's
+/// fingerprint and the match itself make it once between them.
+static LAST_MAP: std::sync::Mutex<Option<(MapKey, Arc<Map>)>> = std::sync::Mutex::new(None);
+
+/// Make the lobby map `key`, or share it if it was the last made.
 /// The lock is held while a map is made, so a second ask for the same map
 /// (the match starting while its picture is being made) waits for it
 /// instead of making it again.
-fn make_map(key: FieldMap) -> Arc<Map> {
+fn make_map(key: MapKey) -> Arc<Map> {
     let mut last = LAST_MAP
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4454,6 +4675,7 @@ mod tests {
     fn a_new_lobby_plays_on_the_old_map() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
         assert_eq!(key.make().hash(), Map::generate(0x6772_7562, 256).hash());
+        assert!(matches!(key, MapKey::Field(_)));
     }
 
     #[test]

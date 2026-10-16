@@ -5,7 +5,7 @@
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::structures::{Armour, Role, TowerAttack};
+use gc_sim::structures::{Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, Role, TowerAttack};
 use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, StructureHandle,
     StructureView, World,
@@ -69,7 +69,15 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
         width: b.width,
         depth: b.depth,
         supply: b.supply,
-        flags: b.flags,
+        // Every faction gathers with plain workers until its own economy
+        // comes (Brood veins, Choir Resonators, Concord caravans), so
+        // every main building takes both resources in the meantime
+        // (docs/04-economy.md).
+        flags: if b.role() == record::Role::Main {
+            b.flags | DROP_OFF_GRUB | DROP_OFF_MARROW
+        } else {
+            b.flags
+        },
         attack: (b.attack_range > 0).then(|| TowerAttack {
             range: b.attack_range(),
             damage: b.attack_damage,

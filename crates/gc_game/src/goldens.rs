@@ -382,6 +382,20 @@ fn record_golden_replays() {
         replay.verify().expect("the recording plays back");
         println!("wrote {}", path.display());
     }
+    if only
+        .as_deref()
+        .is_none_or(|o| o == crate::conquest_golden::NAME)
+    {
+        let replay = crate::conquest_golden::record();
+        let path = folder.join(format!(
+            "{}.{}",
+            crate::conquest_golden::NAME,
+            gc_replay::EXTENSION
+        ));
+        replay.save(&path).unwrap();
+        replay.verify().expect("the recording plays back");
+        println!("{}\nwrote {}", replay.note, path.display());
+    }
 }
 
 fn record(golden: &Golden) -> gc_replay::Replay {

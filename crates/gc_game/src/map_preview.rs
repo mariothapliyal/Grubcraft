@@ -15,7 +15,7 @@ use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, Network};
 
 use crate::hud::minimap_terrain;
-use crate::make_map;
+use crate::{MapKey, make_map};
 
 /// One map's picture, as the worker makes it.
 struct Made {
@@ -39,19 +39,33 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         while let Ok(newer) = jobs.try_recv() {
             key = newer;
         }
+        // A Conquest map's key has no size (see `gc_ui::menu::preview_key`).
         let (choice, tiles, seed) = key;
-        let field = FieldMap {
-            choice,
-            tiles,
-            seed,
+        let map_key = if tiles == 0 {
+            MapKey::Conquest(choice)
+        } else {
+            MapKey::Field(FieldMap {
+                choice,
+                tiles,
+                seed,
+            })
         };
         // The last map made is kept, so the match then started on it costs
         // only a copy.
-        let map = make_map(field);
+        let map = make_map(map_key);
+        let starts = if tiles == 0 {
+            let side = map.tiles as f32;
+            map.starts()
+                .iter()
+                .map(|&(x, y)| [(x as f32 + 0.5) / side, (y as f32 + 0.5) / side])
+                .collect()
+        } else {
+            starts_of(tiles)
+        };
         let answer = Made {
             key,
             terrain: minimap_terrain(&map),
-            starts: starts_of(field.tiles),
+            starts,
         };
         if made.send(answer).is_err() {
             return;
