@@ -291,6 +291,17 @@ fn compare(a: &Path, b: &Path) -> ExitCode {
                     "; their commands first differ at tick {t}"
                 ))
             );
+            match ra.first_system_difference(&rb) {
+                Some((t, systems)) => println!(
+                    "        at tick {t} ({}) these parted: {}",
+                    clock(t),
+                    systems.join(", ")
+                ),
+                None if ra.systems.is_empty() || rb.systems.is_empty() => {
+                    println!("        (no system hashes: these aren't both desync reports)");
+                }
+                None => println!("        (their system hashes share no tick that differs)"),
+            }
             ExitCode::FAILURE
         }
     }
