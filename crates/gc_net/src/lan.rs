@@ -69,7 +69,7 @@ const DISCOVERED_FOR: Duration = Duration::from_secs(3);
 /// packets are ignored until some are dropped.
 const MAX_WAITING: usize = 8;
 /// Wrong-password answers one address gets per GUESS_WINDOW; past that
-/// its guesses go unanswered.
+/// its guesses go unanswered and it gets no new key exchange.
 const MAX_GUESSES: usize = 5;
 const GUESS_WINDOW: Duration = Duration::from_secs(60);
 /// Commands per turn bundle are capped so a bundle fits a packet; the rest
@@ -683,8 +683,12 @@ impl Lan {
                 }
             }
             k if k == Kind::WrongProtocol as u8 => {
+                // Plain and unsigned, so only heeded while joining: once in
+                // the lobby or the match the host has spoken our protocol.
                 if let Role::Client(c) = &self.role
                     && c.host == from
+                    && c.lobby.is_none()
+                    && c.game.is_none()
                 {
                     let theirs = r.str().unwrap_or_default();
                     let why = format!(
@@ -742,7 +746,7 @@ impl Lan {
                     None => {}
                 }
                 let waiting = h.peers.iter().filter(|p| p.slot.is_none() && !p.gone);
-                if waiting.count() >= MAX_WAITING {
+                if waiting.count() >= MAX_WAITING || h.out_of_guesses(from.ip(), now) {
                     return;
                 }
                 let Some(mine) = KeyPair::new() else { return };
@@ -787,9 +791,8 @@ impl Lan {
                     }
                     peer.gone = true;
                     peer.drop_at = Some(now + Duration::from_secs(2));
-                    h.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
                     let ip = from.ip();
-                    if h.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES {
+                    if h.out_of_guesses(ip, now) {
                         return;
                     }
                     h.guesses.push((ip, now));
@@ -1472,6 +1475,15 @@ fn start_turns(h: &mut Host, now: Instant) {
     g.go_at = Some(now);
     for turn in 0..g.delay {
         close_turn(h, turn);
+    }
+}
+
+impl Host {
+    /// Whether `ip` has used up its wrong passwords for now: its guesses go
+    /// unanswered, and it gets no key exchange to guess with.
+    fn out_of_guesses(&mut self, ip: IpAddr, now: Instant) -> bool {
+        self.guesses.retain(|&(_, at)| now < at + GUESS_WINDOW);
+        self.guesses.iter().filter(|&&(g, _)| g == ip).count() >= MAX_GUESSES
     }
 }
 
