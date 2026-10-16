@@ -39,8 +39,11 @@ const PRI_CHARGE: u8 = 170;
 const PRI_MORALE: u8 = 220;
 const PRI_UI: u8 = 255;
 
-/// How long to wait between tries to reopen a lost sound output.
-const REOPEN_EVERY: Duration = Duration::from_secs(3);
+/// How long to wait before the first try to reopen a lost sound output, and
+/// the most between tries. The wait doubles after each failure, because
+/// probing for a device blocks the frame loop for a moment.
+const REOPEN_FIRST: Duration = Duration::from_secs(3);
+const REOPEN_MAX: Duration = Duration::from_secs(60);
 
 /// Short clicks for the interface.
 #[derive(Clone, Copy, Debug)]
@@ -79,8 +82,10 @@ pub struct Sounds {
     last_intensity: u8,
     muted: bool,
     music_on: bool,
-    /// Set while the output is lost: when to try opening it again.
-    reopen_at: Option<Instant>,
+    /// When the output may next be reopened, and how long to wait after
+    /// that if it fails again. Kept after a success, so a stream that dies
+    /// again at once still waits.
+    reopen: Option<(Instant, Duration)>,
 }
 
 /// Open the default output with the embedded sound bank.
@@ -111,7 +116,7 @@ impl Sounds {
                     last_intensity: 0,
                     muted: false,
                     music_on: true,
-                    reopen_at: None,
+                    reopen: None,
                 };
                 sounds.apply_state();
                 Some(sounds)
@@ -135,19 +140,19 @@ impl Sounds {
     }
 
     /// If the sound card went away (headphones unplugged), open the default
-    /// one again, a few seconds apart until it works, keeping the player's
+    /// one again, waiting longer after each failed try, keeping the player's
     /// mute and music settings. Call once a frame.
     pub fn reopen_if_lost(&mut self) {
         if !self.audio.stream_lost() {
             return;
         }
-        let now = Instant::now();
-        if self.reopen_at.is_some_and(|t| now < t) {
+        let (at, wait) = self
+            .reopen
+            .unwrap_or_else(|| (Instant::now(), REOPEN_FIRST));
+        if Instant::now() < at {
             return;
         }
-        if self.reopen_at.is_none() {
-            logln!("audio: the output was lost, trying to reopen it");
-        }
+        logln!("audio: the output was lost, trying to reopen it");
         match open_audio() {
             Ok(audio) => {
                 logln!(
@@ -157,9 +162,13 @@ impl Sounds {
                 );
                 self.audio = audio;
                 self.apply_state();
-                self.reopen_at = None;
+                // A stream that dies again at once waits too, instead of
+                // being rebuilt every frame.
+                self.reopen = Some((Instant::now() + REOPEN_FIRST, REOPEN_FIRST));
             }
-            Err(_) => self.reopen_at = Some(now + REOPEN_EVERY),
+            Err(_) => {
+                self.reopen = Some((Instant::now() + wait, (wait * 2).min(REOPEN_MAX)));
+            }
         }
     }
 
@@ -300,15 +309,13 @@ impl Sounds {
     /// M: silence or restore everything.
     pub fn toggle_mute(&mut self) {
         self.muted = !self.muted;
-        self.audio
-            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
+        self.apply_state();
     }
 
     /// N: music off or on, effects stay.
     pub fn toggle_music(&mut self) {
         self.music_on = !self.music_on;
-        self.audio
-            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        self.apply_state();
     }
 
     /// One line for the dev overlay.

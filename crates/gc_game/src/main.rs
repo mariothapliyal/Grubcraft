@@ -2710,8 +2710,8 @@ impl Running {
             sounds.reopen_if_lost();
         }
         if self.renderer.device_lost() {
+            // Quitting saves the battle (`App::exiting`).
             logln!("grubcraft: the GPU is gone; saving the battle and quitting");
-            self.save_recording();
             self.quit = true;
         }
     }

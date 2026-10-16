@@ -210,8 +210,10 @@ pub struct Renderer {
     ui: OverlayGpu,
 }
 
-/// How many driver messages are kept between two looks at them.
+/// How many driver messages are kept between two looks at them, and how
+/// many different ones are remembered so a repeating error is logged once.
 const MAX_GPU_MESSAGES: usize = 16;
+const MAX_GPU_DISTINCT: usize = 64;
 
 /// Problems the GPU driver reports from its own threads: a lost device, or
 /// (in release builds, where we log instead of panicking) an error that no
@@ -219,15 +221,30 @@ const MAX_GPU_MESSAGES: usize = 16;
 #[derive(Default)]
 struct GpuHealth {
     lost: AtomicBool,
-    messages: Mutex<Vec<String>>,
+    messages: Mutex<GpuMessages>,
+}
+
+#[derive(Default)]
+struct GpuMessages {
+    /// Not yet taken by the game.
+    pending: Vec<String>,
+    /// Everything reported so far; a repeat is dropped, since an error that
+    /// recurs every frame would otherwise flood the log.
+    seen: Vec<String>,
 }
 
 impl GpuHealth {
     fn report(&self, message: String) {
-        if let Ok(mut m) = self.messages.lock()
-            && m.len() < MAX_GPU_MESSAGES
-        {
-            m.push(message);
+        let Ok(mut m) = self.messages.lock() else {
+            return;
+        };
+        if m.seen.contains(&message) || m.seen.len() >= MAX_GPU_DISTINCT {
+            return;
+        }
+        m.seen.push(message.clone());
+        if m.pending.len() < MAX_GPU_MESSAGES {
+            m.pending
+                .push(format!("{message} (repeats are not logged again)"));
         }
     }
 }
@@ -297,7 +314,10 @@ impl Renderer {
         let lost = health.clone();
         device.set_device_lost_callback(move |reason, message| {
             lost.report(format!("GPU device lost ({reason:?}): {message}"));
-            lost.lost.store(true, Ordering::Release);
+            // Destroyed is our own teardown at exit, not a failure.
+            if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                lost.lost.store(true, Ordering::Release);
+            }
         });
         // wgpu's default handler panics. Debug builds keep that, so a
         // validation error is a loud bug. A release build logs it and carries
@@ -567,7 +587,7 @@ impl Renderer {
         self.health
             .messages
             .lock()
-            .map(|mut m| std::mem::take(&mut *m))
+            .map(|mut m| std::mem::take(&mut m.pending))
             .unwrap_or_default()
     }
 
@@ -1443,5 +1463,25 @@ mod tests {
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
         assert_eq!(size_of::<SoldierInstance>(), 36);
+    }
+
+    #[test]
+    fn a_repeating_gpu_error_is_reported_once() {
+        let health = GpuHealth::default();
+        let take = |h: &GpuHealth| std::mem::take(&mut h.messages.lock().unwrap().pending);
+        for _ in 0..1000 {
+            health.report("bad bind group".into());
+        }
+        assert_eq!(take(&health).len(), 1);
+        health.report("something else".into());
+        health.report("bad bind group".into());
+        assert_eq!(take(&health).len(), 1);
+        // Endless different messages are bounded too.
+        for n in 0..1000 {
+            health.report(format!("error {n}"));
+        }
+        let m = health.messages.lock().unwrap();
+        assert!(m.seen.len() <= MAX_GPU_DISTINCT);
+        assert!(m.pending.len() <= MAX_GPU_MESSAGES);
     }
 }
