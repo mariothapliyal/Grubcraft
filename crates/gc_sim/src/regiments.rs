@@ -130,6 +130,9 @@ pub struct Regiments {
     pub(crate) crowd: Vec<Fx>,
     /// Ticks left until it is back in order (0: in order).
     pub(crate) disorder: Vec<u8>,
+    /// Ticks it has stepped forward since it last halted or fought, up to
+    /// [`crate::combat::RUN_UP_TICKS`]: only a run-up makes a charge.
+    pub(crate) run_up: Vec<u8>,
     /// Melee damage dealt and taken lately, in 1/256ths of a hit point
     /// weighted by the striker's mass: who is winning the exchange, for
     /// lines that push (see [`Combat::push_lines`]). Both fade by an
@@ -145,7 +148,7 @@ pub struct Regiments {
 }
 
 impl Regiments {
-    pub fn with_capacity(capacity: u32) -> Regiments {
+    pub(crate) fn with_capacity(capacity: u32) -> Regiments {
         let n = capacity as usize;
         Regiments {
             alive: vec![false; n],
@@ -181,6 +184,7 @@ impl Regiments {
             clear: vec![0; n],
             crowd: vec![Fx::ZERO; n],
             disorder: vec![0; n],
+            run_up: vec![0; n],
             pressing: vec![0; n],
             pressed: vec![0; n],
             giving: vec![0; n],
@@ -203,7 +207,7 @@ impl Regiments {
     /// Create a full-strength regiment. `stats` must already be sanitised
     /// (see [`UnitStats::sanitized`]). `None` when the pool is full or the
     /// owner is past [`MAX_PARTIES`](crate::MAX_PARTIES).
-    pub fn spawn(
+    pub(crate) fn spawn(
         &mut self,
         owner: PlayerId,
         unit: UnitId,
@@ -249,6 +253,7 @@ impl Regiments {
         self.clear[i] = 0;
         self.crowd[i] = Fx::ZERO;
         self.disorder[i] = 0;
+        self.run_up[i] = 0;
         self.pressing[i] = 0;
         self.pressed[i] = 0;
         self.giving[i] = 0;
@@ -306,7 +311,7 @@ impl Regiments {
         true
     }
 
-    pub fn despawn(&mut self, h: RegimentHandle) -> bool {
+    pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
@@ -373,6 +378,7 @@ impl Regiments {
         self.clear[i] = from.clear[i];
         self.crowd[i] = from.crowd[i];
         self.disorder[i] = from.disorder[i];
+        self.run_up[i] = from.run_up[i];
         self.pressing[i] = from.pressing[i];
         self.pressed[i] = from.pressed[i];
         self.giving[i] = from.giving[i];
@@ -424,7 +430,7 @@ impl Regiments {
     }
 
     /// Give a move order. Routing regiments don't listen.
-    pub fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
+    pub(crate) fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
@@ -450,7 +456,7 @@ impl Regiments {
 
     /// Put a regiment straight down at `position` (deployment): no march,
     /// no order left over. `files` 0 keeps its frontage. Returns its slot.
-    pub fn place(
+    pub(crate) fn place(
         &mut self,
         h: RegimentHandle,
         position: FxVec2,
@@ -471,7 +477,7 @@ impl Regiments {
 
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
-    pub fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
+    pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
         let (Some(i), Some(t)) = (self.resolve(h), self.resolve(target)) else {
             return false;
         };
@@ -550,6 +556,10 @@ impl Regiments {
         for i in 0..self.alive.len() {
             if !self.alive[i] {
                 continue;
+            }
+            // Halting or fighting ends a run-up.
+            if self.target[i].is_none() || self.engaged[i].is_some() {
+                self.run_up[i] = 0;
             }
             if self.target[i].is_none() {
                 self.held[i] = 0;
@@ -640,9 +650,11 @@ impl Regiments {
                     }
                 } else if nav.blocks(here, next) {
                     nav.lost(i);
+                    continue;
                 } else {
                     self.position[i] = next;
                 }
+                self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
             } else if let Some(want) = self.target_facing[i] {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
                 if self.facing[i] == want {
@@ -712,6 +724,11 @@ impl Regiments {
         if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
             h.i32(self.crowd[i].raw());
             h.u8(self.disorder[i]);
+        }
+        // Only while marching, so worlds where nobody marches hash as
+        // they did before.
+        if self.run_up[i] != 0 {
+            h.u8(self.run_up[i]);
         }
         // Only once it has fought, so worlds without melee hash as
         // they did before lines pushed.

@@ -23,8 +23,9 @@ static BANK: &[u8] = include_bytes!("../../../assets/audio/sounds.gcsnd");
 /// camera distance, in tiles.
 const HEAR_BASE: f32 = 50.0;
 const HEAR_PER_ZOOM: f32 = 0.8;
-/// Music volume while playing.
-const MUSIC_VOLUME: f32 = 0.6;
+/// How near a visible regiment must stand to a volley's launch point for its
+/// twang to be heard: archers loose from the middle of their ranks.
+const SHOOTER_NEAR: f32 = 6.0;
 /// Engaged regiments near the camera that bring the battle music to full.
 const FULL_BATTLE: f32 = 4.0;
 /// Ticks between blows heard from one regiment.
@@ -82,6 +83,11 @@ pub struct Sounds {
     last_intensity: u8,
     muted: bool,
     music_on: bool,
+    /// The Master and Music sliders from Settings, 0..=100.
+    master: u8,
+    music: u8,
+    /// True while `observe` only records what it sees: no sound plays.
+    hushed: bool,
     /// When the output may next be reopened, and how long to wait after
     /// that if it fails again. Kept after a success, so a stream that dies
     /// again at once still waits.
@@ -93,6 +99,20 @@ fn forget_match(seen: &mut [Option<Seen>], flights: &mut Vec<Flight>) {
     flights.clear();
 }
 
+/// A Settings slider (0..=100) as a volume, 0.0..=1.0.
+fn slider_gain(slider: u8) -> f32 {
+    f32::from(slider.min(100)) / 100.0
+}
+
+/// The master and music volumes to send to the mixer: the sliders, with M
+/// (mute) silencing everything and N (music off) the music alone.
+fn levels(master: u8, music: u8, muted: bool, music_on: bool) -> (f32, f32) {
+    (
+        if muted { 0.0 } else { slider_gain(master) },
+        if music_on { slider_gain(music) } else { 0.0 },
+    )
+}
+
 /// Open the default output with the embedded sound bank.
 fn open_audio() -> Result<Audio, gc_audio::AudioError> {
     Bank::parse(BANK)
@@ -101,9 +121,10 @@ fn open_audio() -> Result<Audio, gc_audio::AudioError> {
 }
 
 impl Sounds {
-    /// Open the sound card and start the music. None (with a note on stderr)
-    /// if there is no usable output; the game then runs silently.
-    pub fn start(regiment_capacity: usize) -> Option<Sounds> {
+    /// Open the sound card and start the music, at the Master and Music
+    /// sliders' settings (0..=100). None (with a note on stderr) if there
+    /// is no usable output; the game then runs silently.
+    pub fn start(regiment_capacity: usize, master: u8, music: u8) -> Option<Sounds> {
         match open_audio() {
             Ok(audio) => {
                 logln!(
@@ -121,6 +142,9 @@ impl Sounds {
                     last_intensity: 0,
                     muted: false,
                     music_on: true,
+                    master,
+                    music,
+                    hushed: false,
                     reopen: None,
                 };
                 sounds.apply_state();
@@ -143,10 +167,9 @@ impl Sounds {
     /// Tell a freshly opened output what the player has set: mute, music
     /// on or off, and how much of the battle layer is playing.
     fn apply_state(&self) {
-        self.audio
-            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
-        self.audio
-            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        let (master, music) = levels(self.master, self.music, self.muted, self.music_on);
+        self.audio.set_master_volume(master);
+        self.audio.set_music_volume(music);
         self.audio
             .set_music_intensity(f32::from(self.last_intensity) / 20.0);
     }
@@ -185,19 +208,31 @@ impl Sounds {
         }
     }
 
-    /// Call after every simulation tick.
-    pub fn observe(&mut self, world: &World, camera: &RtsCamera) {
+    /// Call after every simulation tick. `heard` is false while a rejoining
+    /// player replays the match: the tick is still remembered, so nothing
+    /// bursts out when play catches up, but it makes no noise. `shown` says
+    /// whether the player can see a regiment: one they can't gives nothing
+    /// away, though its state is still remembered for when it is revealed.
+    pub fn observe(
+        &mut self,
+        world: &World,
+        camera: &RtsCamera,
+        heard: bool,
+        shown: impl Fn(RegimentHandle) -> bool,
+    ) {
         self.focus = camera.focus;
         self.right = Vec2::new(camera.yaw.cos(), -camera.yaw.sin());
         self.hearing = HEAR_BASE + camera.distance * HEAR_PER_ZOOM;
         let tick = world.tick_count();
 
-        self.volleys(world);
+        self.hushed = !heard;
+        self.volleys(world, &shown);
 
         let mut fighting = 0.0f32;
         for r in world.regiments.iter() {
             let i = r.handle.index as usize;
             let at = from_fx_vec(r.position);
+            self.hushed = !heard || !shown(r.handle);
             let prev = self.seen[i].filter(|s| s.handle == r.handle);
             let mut quiet_until = prev.map_or(0, |s| s.quiet_until);
             if let Some(p) = prev {
@@ -225,10 +260,14 @@ impl Sounds {
                 engaged: r.engaged,
                 quiet_until,
             });
+            if self.hushed {
+                continue;
+            }
             if r.engaged && (at - self.focus).length() < self.hearing * 1.5 {
                 fighting += 1.0;
             }
         }
+        self.hushed = false;
 
         let intensity = (fighting / FULL_BATTLE).min(1.0);
         let byte = (intensity * 20.0).round() as u8;
@@ -240,7 +279,9 @@ impl Sounds {
 
     /// Volleys launched this tick sound a twang; volleys that were in flight
     /// last tick and are gone now have landed.
-    fn volleys(&mut self, world: &World) {
+    /// A twang is heard only from a launch with a regiment the player can see
+    /// standing near it (the volley doesn't say who shot it).
+    fn volleys(&mut self, world: &World, shown: &impl Fn(RegimentHandle) -> bool) {
         for f in &mut self.flights {
             f.in_view = false;
         }
@@ -260,7 +301,12 @@ impl Sounds {
             .collect();
         self.flights.retain(|f| f.in_view);
         for (from, key, aim, shots) in launches {
-            self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
+            let hidden = !world.regiments.iter().any(|r| {
+                shown(r.handle) && (from_fx_vec(r.position) - from).length() < SHOOTER_NEAR
+            });
+            if !hidden {
+                self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
+            }
             self.flights.push(Flight {
                 key,
                 aim,
@@ -290,6 +336,9 @@ impl Sounds {
     /// camera's ground point, panned by which side of the screen it is on.
     /// `reach` stretches how far it carries (horns carry further than blows).
     fn play_at(&self, sound: SoundId, at: Vec2, gain: f32, reach: f32, priority: u8) {
+        if self.hushed {
+            return;
+        }
         let radius = self.hearing * reach;
         let offset = at - self.focus;
         let distance = offset.length();
@@ -317,6 +366,17 @@ impl Sounds {
             UiSound::Attack => SoundId::UiAttack,
         };
         self.audio.play(id, 0.8, 0.0, PRI_UI);
+    }
+
+    /// The Master and Music sliders moved (0..=100): applies at once.
+    pub fn set_volumes(&mut self, master: u8, music: u8) {
+        // Any settings change comes here, a typed name included.
+        if (master, music) == (self.master, self.music) {
+            return;
+        }
+        self.master = master;
+        self.music = music;
+        self.apply_state();
     }
 
     /// M: silence or restore everything.
@@ -380,6 +440,23 @@ mod tests {
         assert!(seen.iter().all(Option::is_none));
         assert_eq!(seen.len(), 4, "one slot per regiment stays");
         assert!(flights.is_empty());
+    }
+
+    #[test]
+    fn sliders_become_volumes() {
+        assert_eq!(slider_gain(0), 0.0);
+        assert_eq!(slider_gain(50), 0.5);
+        assert_eq!(slider_gain(100), 1.0);
+        // A hand-edited setting past the end does not boost.
+        assert_eq!(slider_gain(200), 1.0);
+    }
+
+    #[test]
+    fn mute_and_music_off_override_the_sliders() {
+        assert_eq!(levels(80, 60, false, true), (0.8, 0.6));
+        assert_eq!(levels(80, 60, true, true), (0.0, 0.6));
+        assert_eq!(levels(80, 60, false, false), (0.8, 0.0));
+        assert_eq!(levels(0, 0, false, true), (0.0, 0.0));
     }
 
     #[test]

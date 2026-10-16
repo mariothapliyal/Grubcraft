@@ -8,7 +8,7 @@ This is the engineering plan for an RTS that is lightweight without looking or p
 2. **Simulate little, show a lot.** The deterministic simulation tracks hundreds of regiments; the screen shows thousands of soldiers. The expensive-looking part is presentation, which can be approximate.
 3. **Send inputs, not state.** Lockstep networking means bandwidth and replays scale with *player actions*, not army size.
 4. **Allocate once.** All gameplay memory is reserved at match load from fixed-capacity pools. Zero heap allocations per simulation tick, verified by tests.
-5. **Data on disk is data in memory.** Assets are stored in GPU-ready, zero-copy layouts and memory-mapped, so loading is mostly the operating system paging bytes in.
+5. **Data on disk is data in memory.** Assets are stored in GPU-ready, zero-copy layouts, so loading is mostly copying bytes. *(Target: memory-mapping the packs so the operating system pages them in. Today both packs are compiled into the executable with `include_bytes!`; nothing is mapped.)*
 6. **Own the stack, keep it small.** A small number of well-chosen libraries for windowing, GPU access and audio output; everything game-specific is ours and sized to fit.
 
 ## Stack
@@ -49,7 +49,7 @@ No general-purpose engine, no ECS framework, no async runtime, no scripting VM i
 - The **main thread** must own the window on macOS. It runs input, UI, presentation and rendering.
 - The **sim thread** is single-threaded and deterministic. At the target scale a tick costs ~1 to 2 ms out of 50 ms, so parallelising the sim is unnecessary and would only add determinism risk.
 - Threads communicate through fixed-size lock-free ring buffers and a triple-buffered snapshot. No locks on hot paths.
-- An **AI thread** runs on the host (and in solo play) when the match has AI players or world parties with minds. It reads the latest snapshot and sends commands into the host's turn bundle exactly like a remote player, so it never slows the sim and cannot cause a desync; other machines don't run it. See [AI players and world parties](#ai-players-and-world-parties).
+- *(Target)* An **AI thread** runs on the host (and in solo play) when the match has AI players or world parties with minds. It reads the latest snapshot and sends commands into the host's turn bundle exactly like a remote player, so it never slows the sim and cannot cause a desync; other machines don't run it. See [AI players and world parties](#ai-players-and-world-parties).
 - **Built so far (M1):** one thread. The sim ticks inside the main thread's frame loop (at most eight ticks per frame, so 4× speed keeps up at 30 fps) and the renderer interpolates between the last two ticks; the sim and net threads arrive with networking in M2. Computer players think on the main thread just before each tick (about 0.003 ms a tick for two of them). The Warlord's rehearsals (AI-2) run on worker threads, all of the cores but one, while the game goes on, and a live game never waits for them, so the AI still needs no thread of its own.
 
 ## Workspace layout
@@ -60,26 +60,26 @@ grubcraft/
 │  ├─ gc_fixed/      fixed-point math, angles, trig tables, isqrt (no_std)
 │  ├─ gc_sim/        deterministic simulation (no_std + alloc, no floats)
 │  ├─ gc_ai/         AI players and world-party minds; reads sim views, sends commands
-│  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19)
+│  ├─ gc_campaign/   campaign mode: regions, seasons, hosts, the long-term ledger (C-1, see 19) (later)
 │  ├─ gc_data/       unit/faction/ability definitions, compiled tables
 │  ├─ gc_net/        transport, lockstep turns, lobby protocol, discovery
 │  ├─ gc_present/    interpolation, soldier puppets, effects triggers       (later)
 │  ├─ gc_render/     wgpu renderer: terrain, instancing, VAT, fog, UI batch
 │  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings, battle HUD minimap and army tray built)
 │  ├─ gc_audio/      mixer, voices, ADPCM decoder, music layers, cpal output
-│  ├─ gc_assets/     pack format, mmap loader, asset ids
+│  ├─ gc_assets/     pack and manifest formats, asset ids (packs are embedded; an mmap loader is a target)
+│  ├─ gc_replay/     replay file, recorder, headless runner, golden checks
 │  ├─ gc_platform/   per-OS glue: memory stats, the log file and crash reports
 │  └─ gc_game/       the application: states, input mapping, glue
 ├─ tools/
 │  ├─ gc_bake/       data baker: data/*.ron → compiled tables
 │  ├─ gc_artbake/    model baker: glTF → meshes, LODs, bone animation textures
 │  ├─ gc_sfx/        generates the prototype sound set
-│  ├─ gc_replay/     replay file, recorder, headless runner, golden checks
 │  ├─ gc_bench/      performance benchmarks with budget gates
 │  ├─ gc_mapcheck/   map validator and map builder: RON map to heights, cover, objects
 │  └─ gc_arena/      headless AI-against-AI ladders and tactical drills      (later)
 ├─ data/             RON definitions (factions, units, abilities, maps)
-├─ assets/           baked packs embedded in the game (models.pak, audio)
+├─ assets/           baked packs embedded in the game (models.pak, audio), each with a .manifest beside it
 ├─ assets-src/       model list for gc_artbake and small CC0 sources; big packs live in the shared project folder
 └─ docs/
 ```
@@ -131,8 +131,8 @@ Crates marked *(later)* don't exist yet. Until `gc_present` is needed, interpola
 8. Morale and routing.
 9. Vision and fog of war.
 10. Titan events and world-party rules: creep camps, hamlet garrisons, relations and contracts. (Choices made by AI players and other minds are not here: they arrive as commands in step 1.)
-11. Victory checks.
-12. State hash (every 10 ticks) and snapshot publish.
+11. Victory checks. *(Target: a sim step. Built: app code, `gc_game` `Battle::judge`, run once per frame.)*
+12. State hash (every 10 ticks) and snapshot publish. *(Target. Built: the hash is computed on request; online play hashes every `HASH_EVERY` ticks from the game, not inside the tick.)*
 
 **Built so far:** commands (including the sandbox's `RemoveRegiment` and `TuneUnit`, and `SetFormation`), then combat's contact, charge and chase checks, then lines that push (losers give ground, winners follow, the pinned are disordered), then route planning (budgeted searches), then movement and turning along the routes, then melee blows and volleys, then morale, then the champions' challenge, then vision (on maps with woods and tall grass: who sees each regiment, springing ambushes, ending chases after targets gone out of sight; see [Fog of war](#fog-of-war)). While a Field Battle's armies deploy (`gc_sim::deploy`), a tick applies its commands and does nothing else. The state hash is computed on request (the determinism test checks it every 600 ticks); snapshots come with M2.
 
@@ -203,6 +203,8 @@ Abilities are composed in data files from a fixed vocabulary of deterministic ef
    volley hit results, deaths        ──▶   arrows in flight, who falls, how
 ```
 
+*Built so far:* the sim sends no volley results or death events to presentation, and `gc_present` does not exist (the code is in `gc_game`). Presentation reads `RegimentView`s, infers deaths by diffing a regiment's model count between ticks (`puppets.rs`), and guesses each volley's shooter in the glue; an event stream is a target.
+
 The **presentation layer** turns regiment state into believable soldiers:
 - Each soldier is a ~36-byte puppet that steers toward its formation slot with a little lag and separation, so blocks ripple and jostle rather than sliding rigidly. The front two ranks of a fighting regiment lunge at the enemy. When the simulation removes soldiers from the back slots, the puppets show a front-rank soldier falling (anyone, for a block under arrows) and the soldier from the emptied slot stepping up into the gap; the fallen lie on the field for 20 s, then sink away.
 - Melee pairs, sword swings, arrows arcing to individual soldiers: all chosen by presentation to match the sim's numbers.
@@ -240,10 +242,10 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 
 ### Units: instancing and vertex-animation textures
 - Every soldier, of every regiment of a given unit type, is drawn in **one instanced draw call**.
-- Per-instance data is packed into **16 bytes**: quantised position (2 × `u16`), facing, animation id and frame, team colour row, flags. 10,000 soldiers is 160 KB of upload per frame.
+- Per-instance data is kept small: position, facing, animation id and frame, team colour row, flags. *(Target: 16 bytes. Built: `SoldierInstance` is 36 bytes, `gc_render/src/soldiers.rs`, so 10,000 soldiers is 360 KB of upload per frame.)*
 - Animation uses **bone animation textures**: each unit type's skeleton poses are baked per frame into a small texture, and each vertex follows up to four weighted bones (smooth skinning, so high-detail models bend at the joints instead of creasing). About 100 to 150 KB per unit type for all its animations, against several megabytes for per-vertex animation textures.
 - Meshes use 16-bit quantised positions, octahedral-encoded normals and a palette index per vertex: around 8 bytes per vertex.
-- **Built so far (M1 step 8):** soldiers are drawn from `assets/models.pak` (baked by `tools/gc_artbake`, format in `gc_assets::model`), with one instanced draw per model and level of detail. Vertices are 32 bytes (model schema 4: quantised position, team-colour weight, material, up to four bones with byte weights summing to 255, normal, tangent, colour sampled from the model's texture, texture coordinate). Animation is a bone animation texture: one `Rgba16Float` row per frame holding a 3×4 matrix for each of up to 63 bones plus one that never moves; the shader blends two frame rows, then blends each vertex's bone matrices by weight. `gc_artbake` keeps a glTF vertex's four heaviest joints (from up to eight) and drops any under 5% of it (each bone costs the shader six texture reads); parts parented to a bone instead of skinned follow that bone fully. Meshes bound in a different pose from the skeleton's rest pose (some Quaternius models are) stay in their bind pose, and each bone's matrices absorb the difference, so the blend is exact skinning. The tangent (copied from the source when it has one) and texture coordinate serve textured models. **Textured soldiers (model schema 4):** a pack's `models/textures` table holds three layers per material, 512 × 512 with mips down to 4 × 4, each BC7-compressed (16 bytes per 4 × 4 block, a quarter of RGBA8): albedo with the team mask in alpha (sRGB), normal x and y with occlusion and roughness (linear), and emitted light with metalness in alpha. The renderer uploads them as one texture array viewed both as sRGB and as linear; each vertex names its material (0 for vertex colours only; all of a model's vertices agree), and textured models draw with their own shader pair, skipping back faces (they are built closed, unlike the stand-ins' single-sided cloaks; the baker reverses the winding of mirrored parts). `gc_artbake` reads a model's maps from PNGs listed under `textures` in `models.ron`, shrinks them with box filtering (normals averaged as vectors), compresses them to BC7 with Intel's ISPC texture compressor (through the `intel_tex_2` crate, at its slow, highest-quality alpha settings), and refuses a textured model without tangents. The renderer requests wgpu's `TEXTURE_COMPRESSION_BC` feature, which every Mac with Apple silicon and every Windows GPU we target has; on a GPU without it, textured models draw in their vertex colours instead, without their team colour (the Yari Ashigaru's team mask lives only in its texture). Repeating texture coordinates are still clamped to the texture, and tangents are not generated, so textured models must bring their own (Blender's glTF export does). Instances are still 36 bytes (`SoldierInstance`: position, facing, two frame rows, blend, highlight, fallen flag, team colour, lift, scale) with up to 65,536 of them; packing them to 16 bytes is left until a profile shows upload cost matters. The five models plus all their clips and the one material are 2.3 MB (2,282 KB), and the material's BC7 textures are about 1 MB of that. Selection plates, order previews, arrows and Commander View blocks are still `BoxInstance` boxes, and the game falls back to boxes for soldiers if the model pack fails to load.
+- **Built so far (M1 step 8):** soldiers are drawn from `assets/models.pak` (baked by `tools/gc_artbake`, format in `gc_assets::model`), with one instanced draw per model and level of detail. Vertices are 32 bytes (model schema 4: quantised position, team-colour weight, material, up to four bones with byte weights summing to 255, normal, tangent, colour sampled from the model's texture, texture coordinate). Animation is a bone animation texture: one `Rgba16Float` row per frame holding a 3×4 matrix for each of up to 63 bones plus one that never moves; the shader blends two frame rows, then blends each vertex's bone matrices by weight. `gc_artbake` keeps a glTF vertex's four heaviest joints (from up to eight) and drops any under 5% of it (each bone costs the shader six texture reads); parts parented to a bone instead of skinned follow that bone fully. Meshes bound in a different pose from the skeleton's rest pose (some Quaternius models are) stay in their bind pose, and each bone's matrices absorb the difference, so the blend is exact skinning. The tangent (copied from the source when it has one) and texture coordinate serve textured models. **Textured soldiers (model schema 4):** a pack's `models/textures` table holds three layers per material, 512 × 512 with mips down to 4 × 4, each BC7-compressed (16 bytes per 4 × 4 block, a quarter of RGBA8): albedo with the team mask in alpha (sRGB), normal x and y with occlusion and roughness (linear), and emitted light with metalness in alpha. The renderer uploads them as one texture array viewed both as sRGB and as linear; each vertex names its material (0 for vertex colours only; all of a model's vertices agree), and textured models draw with their own shader pair, skipping back faces (they are built closed, unlike the stand-ins' single-sided cloaks; the baker reverses the winding of mirrored parts). `gc_artbake` reads a model's maps from PNGs listed under `textures` in `models.ron`, shrinks them with box filtering (normals averaged as vectors), compresses them to BC7 with Intel's ISPC texture compressor (through the `intel_tex_2` crate, at its slow, highest-quality alpha settings), and refuses a textured model without tangents. The renderer requests wgpu's `TEXTURE_COMPRESSION_BC` feature, which every Mac with Apple silicon and every Windows GPU we target has; on a GPU without it, textured models draw in their vertex colours instead, without their team colour (the Yari Ashigaru's team mask lives only in its texture). Repeating texture coordinates are still clamped to the texture, and tangents are not generated, so textured models must bring their own (Blender's glTF export does). Instances are still 36 bytes (`SoldierInstance`: position, facing, two frame rows, blend, highlight, fallen flag, team colour, lift, scale) with up to 65,536 of them (the same cap holds for boxes; anything past it is left undrawn but counted, and the dev overlay's render line then adds "N NOT DRAWN: over capacity"); packing them to 16 bytes is left until a profile shows upload cost matters. The five models plus all their clips and the one material are 2.3 MB (2,282 KB), and the material's BC7 textures are about 1 MB of that. Selection plates, order previews, arrows and Commander View blocks are still `BoxInstance` boxes, and the game falls back to boxes for soldiers if the model pack fails to load.
 
 ### Level of detail and Commander View
 - Soldiers have four mesh levels of detail: level 0 is full detail, and each further level is simplified from the one before.
@@ -259,10 +261,10 @@ Forward renderer on `wgpu`. Target **under 300 draw calls** per frame in the hea
 
 ### Rules
 1. **Pools, not heaps, for gameplay.** All sim pools, flow-field caches, puppet arrays and per-frame instance buffers are allocated at match load. A test (`gc_sim/tests/no_alloc_in_tick.rs`) and the `gc_bench` gate fail if anything allocates during a sim tick.
-2. **Tagged accounting.** A thin global-allocator wrapper attributes every allocation to a subsystem tag (`sim`, `render`, `audio`, `ui`, `net`, `assets`). GPU buffers and textures are tracked by our renderer wrapper. The dev overlay shows a live table; the benchmark suite fails if any tag exceeds its budget.
-3. **Upload and forget.** Texture and mesh bytes go from the memory-mapped pack straight into GPU staging buffers; no CPU copy is retained.
+2. **Tagged accounting.** A thin global-allocator wrapper (`gc_platform::tagged_alloc`) attributes every allocation to a subsystem tag (`sim`, `render`, `audio`, `ui`, `net`, `assets`). GPU buffers and textures are not covered by it: the renderer adds up the sizes of what it creates (`Renderer::gpu_bytes`, shown on the dev overlay), which is a display figure, not an exact one, and a wrapper around the graphics device is planned for when the renderer gets its next pass. The dev overlay shows a live table; `gc_bench` checks the `sim` tag against its budget today; per-tag gates for the other tags are a target.
+3. **Upload and forget.** *(Target.)* Texture and mesh bytes go from the memory-mapped pack straight into GPU staging buffers; no CPU copy is retained. Today the pack is read from the embedded bytes and decoded at match load.
 4. **Unified memory counts.** On Apple Silicon, GPU memory *is* system RAM, so GPU allocations are budgeted alongside CPU ones, not separately.
-5. **Memory-mapped, read-only asset pack.** Pages the OS can evict and re-read don't count against the game's private working set, and nothing is read until touched.
+5. **Memory-mapped, read-only asset pack** *(target; not built)*. Pages the OS can evict and re-read don't count against the game's private working set, and nothing is read until touched.
 
 The budget table lives in [12 · Performance](12-performance.md#memory-budget).
 
@@ -273,21 +275,23 @@ The budget table lives in [12 · Performance](12-performance.md#memory-budget).
 Blender / glTF / WAV / PNG / RON
         │  gc_bake (offline, deterministic, cached by content hash)
         ▼
-grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim tables
+models.pak, sounds.gcsnd  ── embedded in the executable ──▶ GPU / mixer / sim tables
+(target: one memory-mapped grubcraft.pak)
 ```
 
 ### Pack format
-- A single file with a sorted table of contents: 64-bit asset id (hash of the source path) → offset, size, type, flags.
-- Every entry is aligned and stored in its final in-memory layout: no parsing, just pointer casts over validated headers.
+- A single file with a sorted table of contents: 64-bit asset id (hash of the source path) → offset, size, type, flags. **Built so far:** a pack is a set of named tables (`models/index`, `models/vertices` and so on, read with `gc_assets::read_table`), not yet an id-keyed table of contents.
+- Every entry is aligned and stored in its final in-memory layout: no parsing, just pointer casts over validated headers. (Built: tables are cast with `bytemuck` after validation.)
 - Textures are meant to be stored **BC-compressed** (BC7 colour, BC4/BC5 masks and normals) with mipmaps, uploaded as-is. BC formats are supported by the Metal GPUs in every Mac we target and by every Windows GPU. **Built so far (engine upgrade step 4):** soldier material textures are BC7, with mips down to 4 × 4; terrain and the other textures are not yet stored this way.
 - Small data tables may be LZ4-compressed when it pays off.
-- Dev builds can load loose files and hot-reload them; release builds read only the pack.
+- Dev builds (`--features dev`) can re-bake `data/units.ron` and hot-reload it; release builds read only the pack and do not contain the baker.
+- **Manifests (built):** a pack records nothing about where it came from, so each baker writes a text manifest beside its pack (`gc_assets::manifest`: `key = value` lines, XXH3-128 hashes). `assets/models.manifest` holds the baker version, the model schema, the hash of `assets-src/models.ron`, the pack's hash and size, and a hash per source file, with `shared:` sources (not in the repository, so CI cannot read them) marked "not in the repo". `assets/audio/sounds.manifest` holds the baker version, the clip count and the bank's hash and size; the sounds have no sources. The CI job `Packs match their manifests` runs `gc_artbake --check` (compares the manifest with `models.ron`, the committed pack and the repo-held sources) and `gc_sfx --check` (re-synthesises the bank and compares it byte for byte). The manifests sit beside the packs, not inside them, so the pack format and the game's `include_bytes!` are untouched.
 
 ### Game data
 - Factions, units, abilities, upgrades and maps are defined in RON under `data/`, compiled by `gc_bake` into binary tables.
-- The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in a separate pack that is memory-mapped, as above.
+- The game's build script bakes `data/` and embeds the resulting data pack in the executable, so a build can never run with stale or mismatched data. Art and audio (from M1) go in separate packs, which are also embedded today (memory-mapping them is a target, as above).
 - The compiled data has a **BLAKE3 hash**. The lobby refuses to start unless every player has the same game build hash and data hash, which rules out the most common cause of desyncs.
-- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `Shift`+`R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
+- In solo sandbox, RON files hot-reload for balance tuning. **Built so far (M1 step 7):** `Shift`+`R` re-bakes `data/units.ron` with `gc_bake` (the same checks as the build) and sends a `TuneUnit` command for each type that changed; the stats panel sends the same command. Types are matched by name, so a row added or removed above a type cannot hand it another's stats, and a changed order of the types is refused (2026-10-16). Reload is behind the `dev` feature of `gc_game` (`cargo run -p gc_game --features dev`), so release builds do not carry the baker. Tuning goes through the command stream like any order, so it is deterministic and will replay. The unit table is part of the state hash. Adding or removing unit types still needs a restart.
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.
@@ -330,7 +334,7 @@ A crash on a friend's machine has to leave something to read, because stderr is 
 
 ### Windows (10 and 11, x64)
 - DirectX 12 backend, Vulkan fallback.
-- Single `.exe` plus `grubcraft.pak`. Windows Firewall asks once when hosting; we document "allow on private networks".
+- Single `.exe` (the packs are inside it; a separate `grubcraft.pak` is a target). Windows Firewall asks once when hosting; we document "allow on private networks".
 - Unsigned builds show a SmartScreen warning on first run ("More info → Run anyway").
 - Memory reported from the process working set and commit size.
 
@@ -340,11 +344,11 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Tooling
 | Tool | Purpose |
 |---|---|
-| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree). Dumping state at a tick is still to come |
+| `gc_replay` | Run a replay headless at maximum speed and verify its state hashes: `cargo run --release -p gc_replay -- verify` (all of `replays/`), `bless FILE` (store the hashes the sim produces now), `info FILE` (with who played and which build recorded it), `compare A B` (where two machines' recordings of one match, such as desync reports, first disagree, and for two desync reports which systems parted first). Dumping state at a tick is still to come |
 | `gc_bench` | Fixed benchmark scenarios; reports tick time, frame time, memory by tag; enforces budgets |
 | `gc_mapcheck` | `cargo run -p gc_mapcheck -- check [FILE\|DIR]` (default `data/maps`) builds each map and reports errors (exit code 1) and the numbers behind them; `png FILE OUT.png` draws a map with its objects. Runs in CI. See [07 · Map format and tooling](07-world-and-maps.md#map-format-and-tooling) |
 | `gc_bake` | Data baker |
-| `gc_artbake` | Model baker: `cargo run -p gc_artbake --release` re-bakes `assets/models.pak` from `assets-src/models.ron`; `--report` prints each model's colours to help pick team-colour parts |
+| `gc_artbake` | Model baker: `cargo run -p gc_artbake --release` re-bakes `assets/models.pak` from `assets-src/models.ron`; `--report` prints each model's colours to help pick team-colour parts; `--check` compares the committed pack with `assets/models.manifest` (CI) |
 | Dev overlay (`` ` `` or `F11`) | Frame and tick timings, memory by tag, draw calls, network stats |
 | Sandbox (`--sandbox`) | In-game unit placement for any side, live stat tuning and `data/units.ron` reload, pause and 0.1× to 4× speed |
 | `gc_arena` *(later)* | Headless AI-against-AI ladders and tactical drills ([18 · AI](18-ai.md#testing-tuning-and-explaining)) |
@@ -361,7 +365,7 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 - **Network chaos test:** four local clients over a loopback shim that injects latency, jitter, loss and reordering.
 - **Performance gates** (see [12 · Performance](12-performance.md#hill-climbing-process)).
 - **Lints:** CI runs Clippy with warnings denied, plus a chosen set of `clippy::pedantic` lints listed in the workspace `Cargo.toml` (lossless casts written with `From`, so every `as` left is one that can truncate or wrap; ignored tests give a reason). `gc_sim` and `gc_fixed` also deny `clippy::float_arithmetic` outside tests, beside the token check in `tests/no_floats.rs`.
-- **Coverage** (`cargo llvm-cov`, measured in the M1 cleanup on 2026-10-15, by lines): `gc_sim` 98%, `gc_fixed` 98%, `gc_ai` 96%, `gc_net` 93%, `gc_ui` 91%, `gc_assets` 89%, `gc_replay` 71% (its command-line tool is run by CI rather than tests). The gaps are the GPU code in `gc_render` (14%) and the model baker `gc_artbake` (9%), which need a GPU or the source art to run; `gc_audio` and `gc_game` weren't measured (they need sound libraries).
+- **Coverage** (`cargo llvm-cov`, measured in the M1 cleanup on 2026-10-15, by lines): `gc_sim` 98%, `gc_fixed` 98%, `gc_ai` 96%, `gc_net` 93%, `gc_ui` 91%, `gc_assets` 89%, `gc_replay` 71% (its command-line tool is run by CI rather than tests). The gaps are the GPU code in `gc_render` (14%) and the model baker `gc_artbake` (9% when measured; it has since gained an in-memory bake test of the repo's CC0 Alien Bug, but most of its models need the shared source art); `gc_audio` and `gc_game` weren't measured (they need sound libraries).
 - **AI drills and arena:** tactical puzzles with expected outcomes run as tests, and nightly AI-against-AI ladders in `gc_arena` that check each difficulty beats the one below ([18 · AI](18-ai.md#testing-tuning-and-explaining)).
 
 **Built so far:** unit tests per crate (fixed-point maths, formations, group orders, combat, morale, pathfinding, data baking, puppets); a golden determinism test that runs a scripted 4-player drill (moves, group moves and fights) for 2,400 ticks, on an open plane and again on a ridged test map where most orders need routes, and compares state hashes on macOS, Windows and Linux CI; the no-float and no-allocation tests (the latter on the ridged map); and the `gc_bench` drill, pathing-storm and grand-battle benchmarks. **Golden replays (2026-10-15):** recorded battles in `replays/` (see `replays/README.md`): a 1v1 and a 2v2 Field Battle between computer players, a 1v1 in woods, a 1v1 with sandbox tuning and removal mid-fight, the 6,000-soldier `field-8000pt-2v2` brawl, `field-champions-1v1`, where champions duel to a kill before the armies close, and (2026-10-16) `field-deploy-1v1`, which opens with the deployment phase people play: zones, placing inside and outside them, a formation change, one side ready and the other running out the clock. A test (`the_goldens_cover_every_kind_of_command`) checks that the goldens together give every kind of command. Each stores its unit table and map, so retuning `data/units.ron` or the map generator never moves them; only simulation changes do. `cargo test` checks them (`gc_replay/tests/goldens.rs`) and CI plays them again in release mode on macOS, Windows and Linux. They were recorded headless by `gc_game`'s `goldens.rs` (an ignored test, run by hand); a PR that changes how battles play out re-blesses them with `gc_replay bless` in the same PR. **Benchmark baseline:** CI also counts the instructions the three `gc_bench` scenarios execute (`scripts/bench-gate.py`) and fails on more than 5% above `tools/gc_bench/baseline.json`; a PR that changes how much work a tick does on purpose runs `scripts/bench-gate.py bless` in the same PR ([12 · Performance](12-performance.md#gates-in-ci)).
@@ -369,4 +373,4 @@ Not a target, but the stack is cross-platform; it will very likely work via Vulk
 ## Dependency policy
 - Every third-party crate is listed in `docs/dependencies.md` with its purpose and its cost (binary size, transitive dependencies).
 - No async runtime, no large frameworks, no C++ build dependencies without a written justification.
-- `cargo deny` checks licences and duplicates; `cargo bloat` output is tracked so binary size regressions are visible.
+- `cargo deny` checks licences and duplicates; `cargo bloat` output tracked for binary size regressions is a target; no job runs it yet.

@@ -7,29 +7,27 @@
 //! Floats differ between CPUs and maths libraries, so a map made with them
 //! could differ between a Mac and a Windows PC in a LAN game; this one is
 //! the same everywhere (a test pins its hash, and CI runs it on all three
-//! systems). Floats are used only to draw it.
+//! systems). The float views of it, for drawing and the computer players,
+//! live in `terrain_view.rs`.
+
+// The lint also catches float maths through inferred types or literals,
+// which the token check in `gc_sim/tests/no_floats.rs` can miss. Test
+// modules may use floats as a reference.
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 use gc_fixed::{Angle, isqrt_u64};
-use glam::Vec2;
 
 /// How many start plateaus a map has: one for each lobby slot.
 pub const START_PLATEAUS: usize = 6;
 
-/// Centres of the six start plateaus: north-west, north-east, south-west,
-/// south-east, then north and south in the middle of their edges (north is
-/// towards smaller z, where the camera looks). The first four keep their
-/// places; the last two were added for six-player battles.
-pub fn start_positions(tiles: u32) -> [Vec2; START_PLATEAUS] {
-    start_tiles(tiles).map(|(x, y)| Vec2::new(x as f32, y as f32))
-}
-
-/// [`start_positions`] in whole tiles, for map making.
-fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
-    let (q1, q2, q3) = (
-        i64::from(tiles) / 4,
-        i64::from(tiles) / 2,
-        i64::from(tiles) * 3 / 4,
-    );
+/// Centres of the six start plateaus in whole tiles, for map making
+/// (`terrain_view::start_positions` is the float version for drawing):
+/// north-west, north-east, south-west, south-east, then north and south in
+/// the middle of their edges. The first four keep their places; the last
+/// two were added for six-player battles.
+pub(crate) fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
+    let n = i64::from(tiles);
+    let (q1, q2, q3) = (n / 4, n / 2, n * 3 / 4);
     [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
 }
 
@@ -128,46 +126,15 @@ impl Heightmap {
             cover: &self.cover,
         }
     }
-
-    /// The highest ground, in tiles, for drawing.
-    pub fn max_height(&self) -> f32 {
-        MAX_HEIGHT as f32
-    }
-
-    /// The water line, in tiles, for drawing and the computer players.
-    pub fn water_level(&self) -> f32 {
-        WATER as f32 * self.max_height() / f32::from(u16::MAX)
-    }
-
-    fn sample(&self, x: i32, z: i32) -> f32 {
-        let max = self.size as i32 - 1;
-        let i = (z.clamp(0, max) * self.size as i32 + x.clamp(0, max)) as usize;
-        f32::from(self.heights[i]) * (self.max_height() / f32::from(u16::MAX))
-    }
-
-    /// Bilinear height in tiles at a map position in tiles (matches the shader).
-    pub fn height_at(&self, x: f32, z: f32) -> f32 {
-        let sx = x * self.samples_per_tile as f32;
-        let sz = z * self.samples_per_tile as f32;
-        let (ix, iz) = (sx.floor() as i32, sz.floor() as i32);
-        let (fx, fz) = (sx - ix as f32, sz - iz as f32);
-        let h00 = self.sample(ix, iz);
-        let h10 = self.sample(ix + 1, iz);
-        let h01 = self.sample(ix, iz + 1);
-        let h11 = self.sample(ix + 1, iz + 1);
-        let top = h00 + (h10 - h00) * fx;
-        let bottom = h01 + (h11 - h01) * fx;
-        top + (bottom - top) * fz
-    }
 }
 
 /// Fixed point for map making: 1.0.
 const ONE: i64 = 1 << 16;
 const SAMPLES_PER_TILE: i64 = 4;
 /// The highest ground, in tiles: a stored height of 65,535.
-const MAX_HEIGHT: i64 = 14;
+pub(crate) const MAX_HEIGHT: i64 = 14;
 /// The water line as a stored height: 0.17 of the highest ground.
-const WATER: i64 = u16::MAX as i64 * 17 / 100;
+pub(crate) const WATER: i64 = u16::MAX as i64 * 17 / 100;
 /// Ground steeper than this many hundredths of a tile of rise per tile is
 /// a cliff no regiment climbs; over half of it is slow going that routes
 /// avoid.
@@ -247,22 +214,6 @@ impl Heightmap {
             }
         }
         (heights, (WATER as u64 * scale / u64::from(u16::MAX)) as u16)
-    }
-
-    /// The ground as the computer players read it: the walkable-ground
-    /// grid plus each tile's height and where the water is, so they can
-    /// pick a line beside a cliff, on a rise or behind a river.
-    pub fn ai_terrain(&self, nav: &[u8]) -> gc_ai::Terrain {
-        let tiles = (self.size - 1) / self.samples_per_tile;
-        let mut heights = Vec::with_capacity((tiles * tiles) as usize);
-        for y in 0..tiles {
-            for x in 0..tiles {
-                heights.push(self.height_at(x as f32 + 0.5, y as f32 + 0.5));
-            }
-        }
-        gc_ai::Terrain::new(nav, tiles)
-            .with_heights(heights, self.water_level())
-            .with_cover(self.cover.clone())
     }
 }
 
@@ -423,28 +374,27 @@ mod tests {
         assert_eq!(hm.size, 257);
         assert_eq!(hm.heights.len(), 257 * 257);
         // Start plateaus are flat, all six of them.
-        for Vec2 { x, y } in start_positions(64) {
+        for (x, y) in start_tiles(64) {
+            let (x, y) = (x as f32, y as f32);
             let a = hm.height_at(x, y);
             let b = hm.height_at(x + 2.0, y + 1.0);
             assert!((a - b).abs() < 0.05, "{x},{y}: {a} vs {b}");
         }
-        assert_eq!(start_positions(64).len(), START_PLATEAUS);
     }
 
     #[test]
     fn the_first_four_plateaus_keep_their_places() {
-        let p = start_positions(256);
         assert_eq!(
-            &p[..4],
-            &[
-                Vec2::new(64.0, 64.0),
-                Vec2::new(192.0, 64.0),
-                Vec2::new(64.0, 192.0),
-                Vec2::new(192.0, 192.0),
+            start_tiles(256),
+            [
+                (64, 64),
+                (192, 64),
+                (64, 192),
+                (192, 192),
+                (128, 64),
+                (128, 192)
             ]
         );
-        assert_eq!(p[4], Vec2::new(128.0, 64.0));
-        assert_eq!(p[5], Vec2::new(128.0, 192.0));
     }
 
     #[test]
@@ -474,15 +424,8 @@ mod tests {
             assert!((4.0..18.0).contains(&wood), "seed {seed}: {wood}% wood");
             assert!((3.0..14.0).contains(&grass), "seed {seed}: {grass}% grass");
             // The start plateaus are open.
-            for (x, y) in [
-                (64, 64),
-                (192, 64),
-                (64, 192),
-                (192, 192),
-                (128, 64),
-                (128, 192),
-            ] {
-                assert_eq!(cover[y * 256 + x], gc_sim::Cover::Open as u8);
+            for (x, y) in start_tiles(256) {
+                assert_eq!(cover[(y * 256 + x) as usize], gc_sim::Cover::Open as u8);
             }
         }
     }
@@ -495,8 +438,8 @@ mod tests {
     /// don't move).
     #[test]
     fn the_map_is_the_same_on_every_machine() {
-        let fingerprint = |seed| {
-            let hm = Heightmap::generate(seed, 256);
+        let fingerprint = |seed, tiles| {
+            let hm = Heightmap::generate(seed, tiles);
             let heights = crate::online::fnv1a(hm.heights.iter().flat_map(|v| v.to_le_bytes()));
             (
                 heights,
@@ -504,12 +447,17 @@ mod tests {
             )
         };
         assert_eq!(
-            fingerprint(1),
+            fingerprint(1, 256),
             (0x7dca_be37_90bd_1f7b, 0x74c0_f127_3369_0296)
         );
         assert_eq!(
-            fingerprint(42),
+            fingerprint(42, 256),
             (0x8f2d_3f4f_0515_4bee, 0x2f45_a429_cb5c_bc85)
+        );
+        // The size the field-8000pt-2v2 golden replay plays on.
+        assert_eq!(
+            fingerprint(1, 384),
+            (0x276a_c467_503d_c5b9, 0x705a_6793_4b4a_d292)
         );
     }
 
@@ -525,9 +473,8 @@ mod tests {
         assert!(open > 50, "{open}% open");
         assert_eq!(nav[0], 0);
         // Start plateaus are open ground (two nav cells to a tile).
-        for p in start_positions(256) {
-            let (x, y) = (p.x as usize * 2, p.y as usize * 2);
-            assert_eq!(nav[y * 512 + x], OPEN, "{p}");
+        for (x, y) in start_tiles(256) {
+            assert_eq!(nav[(y * 2 * 512 + x * 2) as usize], OPEN, "{x},{y}");
         }
     }
 }
