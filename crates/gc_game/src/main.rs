@@ -1257,7 +1257,6 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 r.frame();
-                r.check_devices();
                 if r.quit {
                     event_loop.exit();
                 }
@@ -1281,8 +1280,14 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(r) = &self.running {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(r) = &mut self.running {
+            // Here rather than in the redraw, so a minimised window notices
+            // a lost GPU or sound card too.
+            r.check_devices();
+            if r.quit {
+                event_loop.exit();
+            }
             r.window.request_redraw();
         }
     }

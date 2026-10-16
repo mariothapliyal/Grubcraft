@@ -313,11 +313,16 @@ impl Renderer {
         let health = Arc::new(GpuHealth::default());
         let lost = health.clone();
         device.set_device_lost_callback(move |reason, message| {
-            lost.report(format!("GPU device lost ({reason:?}): {message}"));
             // Destroyed is our own teardown at exit, not a failure.
-            if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
-                lost.lost.store(true, Ordering::Release);
+            if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                return;
             }
+            // Never deduplicated or dropped: it is why the game is quitting.
+            if let Ok(mut m) = lost.messages.lock() {
+                m.pending
+                    .push(format!("GPU device lost ({reason:?}): {message}"));
+            }
+            lost.lost.store(true, Ordering::Release);
         });
         // wgpu's default handler panics. Debug builds keep that, so a
         // validation error is a loud bug. A release build logs it and carries

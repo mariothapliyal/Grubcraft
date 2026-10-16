@@ -166,7 +166,8 @@ impl Sounds {
                 // being rebuilt every frame.
                 self.reopen = Some((Instant::now() + REOPEN_FIRST, REOPEN_FIRST));
             }
-            Err(_) => {
+            Err(e) => {
+                logln!("audio: could not reopen it ({e}); trying again in {wait:?}");
                 self.reopen = Some((Instant::now() + wait, (wait * 2).min(REOPEN_MAX)));
             }
         }
