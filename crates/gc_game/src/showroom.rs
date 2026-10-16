@@ -23,14 +23,14 @@ const FILL: f32 = 1.0 / 1.1;
 /// Closest the camera comes (a lone model fills the window from near), and
 /// the furthest, short of Commander View.
 const NEAREST: f32 = 4.0;
-const FURTHEST: f32 = 170.0;
+const FURTHEST: f32 = 150.0;
 /// Seconds each clip plays in the default cycle.
 const CLIP_SECONDS: f32 = 4.0;
 /// The way the models face: towards the camera, which sits south of the
 /// focus when the view is not turned.
 const FACING: Vec2 = Vec2::Y;
 
-const _: () = assert!(FURTHEST < crate::COMMANDER_IN);
+const _: () = assert!(FURTHEST < crate::COMMANDER_OUT);
 const _: () = assert!(NEAREST < MIN_DISTANCE);
 
 /// What a model shows: one of the clips soldiers play, or a fall.
@@ -85,14 +85,23 @@ fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -> Option<(P
 }
 
 /// The models `spec` names: `all`, or names separated by commas, matched
-/// without regard to case. An unknown name comes back in `Err`.
+/// without regard to case (blank entries are skipped). An unknown name, or
+/// none at all, comes back in `Err`.
 pub fn choose(spec: &str, models: &gc_assets::model::Models) -> Result<Vec<usize>, String> {
     if spec.trim().eq_ignore_ascii_case("all") {
         return Ok((0..models.models.len()).collect());
     }
-    spec.split(',')
+    let names: Vec<&str> = spec
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    if names.is_empty() {
+        return Err(String::new());
+    }
+    names
+        .into_iter()
         .map(|n| {
-            let n = n.trim();
             models
                 .models
                 .iter()
@@ -161,18 +170,20 @@ impl Layout {
         (self.low + self.high) * 0.5
     }
 
-    /// Hold `camera` on the arrangement, standing on ground this `high`,
-    /// looking from the south at the usual pitch: at half the tallest
-    /// model, from as near as lets every corner (feet to the top of the
-    /// tallest, slot edges, front to back) fit with a tenth to spare.
-    fn aim(&self, camera: &mut RtsCamera, ground: f32) {
+    /// Hold `camera` on the arrangement, its models standing on ground
+    /// between `low` and `high`, looking from the south at the usual pitch:
+    /// at the middle height, from as near as lets every corner (lowest feet
+    /// to the top of the tallest on the highest ground, slot edges, front to
+    /// back) fit with a tenth to spare.
+    fn aim(&self, camera: &mut RtsCamera, low: f32, high: f32) {
+        let (bottom, top) = (low, high + self.top);
         camera.face(-FACING);
         camera.focus = self.focus();
-        camera.focus_height = ground + self.top * 0.5;
+        camera.focus_height = (bottom + top) * 0.5;
         let corners = [self.low.x, self.high.x].into_iter().flat_map(|x| {
             [self.low.y, self.high.y]
                 .into_iter()
-                .flat_map(move |z| [ground, ground + self.top].map(|y| Vec3::new(x, y, z)))
+                .flat_map(move |z| [bottom, top].map(|y| Vec3::new(x, y, z)))
         });
         camera.distance = camera.fit_distance(corners, FILL).clamp(NEAREST, FURTHEST);
     }
@@ -199,7 +210,15 @@ impl Showroom {
 
     /// Hold the camera on the models.
     pub fn aim(&self, camera: &mut RtsCamera, ground: impl Fn(Vec2) -> f32) {
-        self.layout.aim(camera, ground(self.layout.focus()));
+        let (low, high) = self
+            .layout
+            .positions
+            .iter()
+            .map(|&p| ground(p))
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), g| {
+                (low.min(g), high.max(g))
+            });
+        self.layout.aim(camera, low, high);
     }
 
     /// Stand the models in this frame's drawing, `time` seconds in.
@@ -239,7 +258,7 @@ mod tests {
     fn aimed(l: &Layout, aspect: f32) -> RtsCamera {
         let mut cam = RtsCamera::new(256.0, Vec2::ZERO);
         cam.aspect = aspect;
-        l.aim(&mut cam, 10.0);
+        l.aim(&mut cam, 10.0, 10.0);
         cam
     }
 
@@ -257,6 +276,7 @@ mod tests {
             Err("Spearman".into())
         );
         assert_eq!(choose("", &models), Err(String::new()));
+        assert_eq!(choose(&format!("{a}, ,"), &models), Ok(vec![0]));
         for (k, m) in models.models.iter().enumerate() {
             assert_eq!(choose(&m.name().to_uppercase(), &models), Ok(vec![k]));
         }

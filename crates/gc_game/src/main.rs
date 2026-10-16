@@ -371,7 +371,7 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
-            "--showroom" => {
+            "--showroom" if !value.trim().is_empty() => {
                 opts.showroom = Some(showroom_models(&value));
                 true
             }
@@ -397,6 +397,12 @@ fn parse_args() -> Options {
         }
     }
     if opts.showroom_clip.is_some() && opts.showroom.is_none() {
+        usage();
+    }
+    // The showroom is not a match: nothing to fight, host or join.
+    if opts.showroom.is_some()
+        && (opts.sandbox || opts.battle.is_some() || opts.host || opts.join.is_some())
+    {
         usage();
     }
     if opts.showroom.is_some() {
@@ -2661,6 +2667,13 @@ impl Running {
     }
 
     fn restart_match(&mut self, kind: MatchKind) {
+        // A match started from the showroom's menu leaves it, and the field
+        // gets its trees back.
+        if self.showroom.take().is_some() {
+            self.scenery = tagged_alloc::scope(Tag::Render, || {
+                scenery::Scenery::new(&self.heightmap.cover, MAP_TILES, self.seed)
+            });
+        }
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
@@ -3236,6 +3249,13 @@ impl Running {
     }
 
     fn update_camera(&mut self, dt: f32) {
+        // The showroom's camera stays on the models, whatever the window or
+        // the player does.
+        if let Some(room) = &self.showroom {
+            let heightmap = &self.heightmap;
+            room.aim(&mut self.camera, |p| heightmap.height_at(p.x, p.y));
+            return;
+        }
         if self.menu_open && !self.match_started {
             // A slow sway behind the main menu.
             self.camera.yaw = 0.3 * (self.started.elapsed().as_secs_f32() * 0.12).sin();
@@ -3301,11 +3321,6 @@ impl Running {
             .height_at(self.camera.focus.x, self.camera.focus.y);
         let k = 1.0 - (-dt * 6.0).exp();
         self.camera.focus_height += (ground - self.camera.focus_height) * k;
-        // The showroom's camera stays on the models, whatever the window does.
-        if let Some(room) = &self.showroom {
-            let heightmap = &self.heightmap;
-            room.aim(&mut self.camera, |p| heightmap.height_at(p.x, p.y));
-        }
     }
 
     /// Rebuild the overlay: the sandbox panel, and the dev overlay's text
