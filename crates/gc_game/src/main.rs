@@ -101,6 +101,7 @@ mod sandbox;
 mod scenery;
 mod sounds;
 mod terrain_gen;
+mod terrain_view;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -2763,7 +2764,7 @@ impl Running {
                 &self.unit_stats,
                 &self.unit_factions,
                 &self.unit_points,
-                terrain_gen::start_positions(MAP_TILES),
+                terrain_view::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
