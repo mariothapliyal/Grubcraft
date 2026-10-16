@@ -145,7 +145,7 @@ pub struct Regiments {
 }
 
 impl Regiments {
-    pub fn with_capacity(capacity: u32) -> Regiments {
+    pub(crate) fn with_capacity(capacity: u32) -> Regiments {
         let n = capacity as usize;
         Regiments {
             alive: vec![false; n],
@@ -203,7 +203,7 @@ impl Regiments {
     /// Create a full-strength regiment. `stats` must already be sanitised
     /// (see [`UnitStats::sanitized`]). `None` when the pool is full or the
     /// owner is past [`MAX_PARTIES`](crate::MAX_PARTIES).
-    pub fn spawn(
+    pub(crate) fn spawn(
         &mut self,
         owner: PlayerId,
         unit: UnitId,
@@ -306,7 +306,7 @@ impl Regiments {
         true
     }
 
-    pub fn despawn(&mut self, h: RegimentHandle) -> bool {
+    pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
@@ -424,7 +424,7 @@ impl Regiments {
     }
 
     /// Give a move order. Routing regiments don't listen.
-    pub fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
+    pub(crate) fn order(&mut self, h: RegimentHandle, order: Order) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };
@@ -450,7 +450,7 @@ impl Regiments {
 
     /// Put a regiment straight down at `position` (deployment): no march,
     /// no order left over. `files` 0 keeps its frontage. Returns its slot.
-    pub fn place(
+    pub(crate) fn place(
         &mut self,
         h: RegimentHandle,
         position: FxVec2,
@@ -471,7 +471,7 @@ impl Regiments {
 
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
-    pub fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
+    pub(crate) fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
         let (Some(i), Some(t)) = (self.resolve(h), self.resolve(target)) else {
             return false;
         };
