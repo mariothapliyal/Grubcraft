@@ -7,7 +7,7 @@
 //! passes the map.
 
 use gc_map::conquest::{CONQUEST_SIZES, ConquestRecipe};
-use gc_mapcheck::{BUDGET, Map, MapDef, check, generate, preview};
+use gc_mapcheck::{Map, MapDef, check, generate, preview};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -33,7 +33,7 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
             .into_iter()
             .find(|s| format!("{s:?}").eq_ignore_ascii_case(size))
             .ok_or_else(|| format!("{size} isn't Duel, Skirmish or Warfield"))?;
-        let (used, def) = generate(conquest, size, seed, BUDGET).map_err(|e| e.join("\n"))?;
+        let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;
         if used != seed {
             eprintln!("seed {seed} failed the checker; seed {used} passed");
         }

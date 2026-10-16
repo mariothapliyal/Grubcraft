@@ -17,10 +17,11 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece, SetPieceKind, Shape,
-    SizeClass, Symmetry,
+    CoverKind, CoverOp, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
+    SetPieceKind, Shape, SizeClass, Symmetry,
 };
-use crate::recipe::Writer;
+use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
+use crate::stamp::tile_copies;
 
 /// The kinds of Conquest map a seed can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,15 +59,12 @@ impl ConquestRecipe {
 pub const CONQUEST_SIZES: [SizeClass; 3] =
     [SizeClass::Duel, SizeClass::Skirmish, SizeClass::Warfield];
 
-/// Ground level and the water line (sixteenths of a tile), as the shipped
-/// maps have them.
+/// Ground level (sixteenths of a tile), as the shipped maps have it, and
+/// a fen's dry ground, half a tile above the water.
 const BASE: i32 = 40;
-const WATER: i32 = 24;
-/// Water this far under the line is a ford, and this far too deep to wade.
-const FORD: i32 = WATER - 3;
-const DEEP: i32 = WATER - 14;
-/// A fen's dry ground: half a tile above the water.
 const FEN_BASE: i32 = WATER + 8;
+/// Objects and shaped ground keep this far in from the map's edge.
+const MARGIN: i32 = 8;
 
 /// The description a recipe makes from a seed, or `None` for a size it
 /// doesn't make (see [`CONQUEST_SIZES`]).
@@ -79,9 +77,8 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         BASE
     };
     let mut share = Share {
-        w: Writer::new(&mut rng, frame.n),
+        w: Writer::new(&mut rng, frame.n, base),
         f: frame,
-        base,
         objects: Vec::new(),
         features: Vec::new(),
     };
@@ -104,7 +101,7 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         name: format!("{} {size:?} {seed}", recipe.name()),
         size,
         symmetry: f.symmetry,
-        players: f.players,
+        players: f.symmetry.copies() as u8,
         base,
         water: WATER,
         noise: Some(noise),
@@ -122,24 +119,24 @@ struct Frame {
     start: Pos,
     centre: Pos,
     symmetry: Symmetry,
-    players: u8,
 }
 
 impl Frame {
     fn of(size: SizeClass) -> Option<Frame> {
-        // (tiles, how far the start is in from the north-west corner, symmetry, players)
-        let (n, inset, symmetry, players) = match size {
-            SizeClass::Duel => (128, 22, Symmetry::Rot2, 2),
-            SizeClass::Skirmish => (192, 30, Symmetry::Rot2, 2),
-            SizeClass::Warfield => (256, 48, Symmetry::Rot4, 4),
+        // How far the start is in from the north-west corner; one player
+        // to each turned copy.
+        let (inset, symmetry) = match size {
+            SizeClass::Duel => (22, Symmetry::Rot2),
+            SizeClass::Skirmish => (30, Symmetry::Rot2),
+            SizeClass::Warfield => (48, Symmetry::Rot4),
             SizeClass::Grand | SizeClass::Field(_) => return None,
         };
+        let n = size.tiles();
         Some(Frame {
             n,
             start: (inset, inset),
             centre: (n / 2, n / 2),
             symmetry,
-            players,
         })
     }
 
@@ -160,18 +157,10 @@ impl Frame {
         t * self.n / 256
     }
 
-    /// A tile and its turned copies, as the loader makes them.
-    fn copies(&self, p: Pos) -> Vec<Pos> {
-        let turns = 4 / self.symmetry.copies() as u32;
-        let mut out = vec![p];
-        let mut q = p;
-        for _ in 1..self.symmetry.copies() {
-            for _ in 0..turns {
-                q = (self.n - 1 - q.1, q.0);
-            }
-            out.push(q);
-        }
-        out
+    /// Whether a tile is far enough in from the map's edge.
+    fn inside(&self, (x, y): Pos) -> bool {
+        let keep = MARGIN..self.n - MARGIN;
+        keep.contains(&x) && keep.contains(&y)
     }
 }
 
@@ -179,8 +168,6 @@ impl Frame {
 struct Share<'a> {
     w: Writer<'a>,
     f: Frame,
-    /// The recipe's ground level before its stamps.
-    base: i32,
     objects: Vec<Object>,
     /// Ground already shaped (hills, pools, meres, spines): the centre and
     /// how far it reaches, kept clear of each other.
@@ -193,46 +180,28 @@ fn dist2(a: Pos, b: Pos) -> i32 {
 }
 
 impl Share<'_> {
-    /// An object of the first player's share; `owned` ones belong to it.
-    fn put(&mut self, kind: Kind, at: Pos, owned: bool, label: &str) {
+    /// An object of the first player's share (`owned` ones belong to it),
+    /// or one placed `once`, not turned.
+    fn put(&mut self, kind: Kind, at: Pos, owned: bool, once: bool, label: &str) {
         self.objects.push(Object {
             kind,
             at,
             owner: owned.then_some(0),
             label: label.into(),
-            once: false,
-        });
-    }
-
-    /// An object placed once, not turned.
-    fn once(&mut self, kind: Kind, at: Pos) {
-        self.objects.push(Object {
-            kind,
-            at,
-            owner: None,
-            label: String::new(),
-            once: true,
+            once,
         });
     }
 
     /// Whether ground stamped at `at` reaching `r` tiles (and its turned
     /// copies) stays clear of every object and every feature already
-    /// shaped, turned copies included.
+    /// shaped, turned copies included. Turning is a rigid move, so
+    /// checking each copy of `at` against each thing where it was written
+    /// covers every pair of copies.
     fn clear(&self, at: Pos, r: i32) -> bool {
-        let spots = self.f.copies(at);
+        let spots = tile_copies(at, self.f.symmetry, self.f.n);
         let apart = |p: Pos, d: i32| spots.iter().all(|&s| dist2(p, s) >= d * d);
-        let objects = self.objects.iter().all(|o| {
-            if o.once {
-                apart(o.at, r)
-            } else {
-                self.f.copies(o.at).into_iter().all(|p| apart(p, r))
-            }
-        });
-        objects
-            && self
-                .features
-                .iter()
-                .all(|&(p, fr)| self.f.copies(p).into_iter().all(|q| apart(q, r + fr)))
+        self.objects.iter().all(|o| apart(o.at, r))
+            && self.features.iter().all(|&(p, fr)| apart(p, r + fr))
     }
 
     /// A random spot in the share, `u` and `v` within the ranges (see
@@ -241,8 +210,7 @@ impl Share<'_> {
     fn spot(&mut self, u: (i32, i32), v: (i32, i32), r: i32) -> Option<Pos> {
         for _ in 0..32 {
             let at = self.f.at(self.w.range(u.0, u.1), self.w.range(v.0, v.1));
-            let inside = (8..self.f.n - 8).contains(&at.0) && (8..self.f.n - 8).contains(&at.1);
-            if inside && self.clear(at, r) {
+            if self.f.inside(at) && self.clear(at, r) {
                 return Some(at);
             }
         }
@@ -251,72 +219,77 @@ impl Share<'_> {
 
     /// The economy: the same for every recipe, with a little jitter.
     fn economy(&mut self) {
-        let s = self.f.start;
-        let jitter = |w: &mut Writer, (x, y): Pos| (x + w.range(-1, 1), y + w.range(-1, 1));
-        self.put(Kind::Start, s, true, "");
-        // The base: two seeps and a vein within a dozen tiles.
-        let a = jitter(&mut self.w, (s.0 - 9, s.1 + 8));
-        let b = jitter(&mut self.w, (s.0 + 8, s.1 - 9));
-        let v = jitter(&mut self.w, (s.0 + 8, s.1 + 8));
-        self.put(Kind::GrubSeep, a, true, "");
-        self.put(Kind::GrubSeep, b, true, "");
-        self.put(Kind::MarrowVein, v, true, "");
-        // The natural expansion, out of the base to the east.
-        let e1 = jitter(&mut self.w, (s.0 + 32, s.1 - 6));
-        let e2 = jitter(&mut self.w, (s.0 + 34, s.1 + 6));
-        self.put(Kind::GrubSeep, e1, true, "");
-        self.put(Kind::GrubSeep, e2, true, "");
-        // A hamlet on the way out to the south-west.
         let f = self.f;
+        let s = f.start;
+        self.put(Kind::Start, s, true, false, "");
+        // The base, within a dozen tiles (well inside BASE_AREA), and the
+        // natural expansion out to the east, past BASE_AREA.
+        let own = [
+            (Kind::GrubSeep, -9, 8),
+            (Kind::GrubSeep, 8, -9),
+            (Kind::MarrowVein, 8, 8),
+            (Kind::GrubSeep, 32, -6),
+            (Kind::GrubSeep, 34, 6),
+        ];
+        for (kind, dx, dy) in own {
+            let at = (
+                s.0 + dx + self.w.range(-1, 1),
+                s.1 + dy + self.w.range(-1, 1),
+            );
+            self.put(kind, at, true, false, "");
+        }
+        // A hamlet on the way out to the south-west.
         let village = f.at(self.w.range(420, 480), -f.scaled(24));
-        self.put(Kind::Village, village, false, "");
+        self.put(Kind::Village, village, false, false, "");
         // Contested nodes, each with a camp of creeps between it and the middle.
-        let seep = f.at(self.w.range(640, 700), f.scaled(28));
-        let vein = f.at(self.w.range(620, 680), -f.scaled(30));
-        self.put(Kind::GrubSeep, seep, false, "");
-        self.put(
-            Kind::CreepCamp,
-            (seep.0 + 4, seep.1 + 2),
-            false,
-            "Bile Toads",
-        );
-        self.put(Kind::MarrowVein, vein, false, "");
-        self.put(
-            Kind::CreepCamp,
-            (vein.0 + 2, vein.1 + 4),
-            false,
-            "Marrow Golems",
-        );
-        // Bloodseep sites (three at least on the map) and frontier slots
-        // (four to eight).
-        let bloodseep = f.at(self.w.range(820, 860), f.scaled(18));
-        self.put(Kind::Bloodseep, bloodseep, false, "");
-        match f.symmetry {
-            Symmetry::Rot2 => {
-                let other = f.at(self.w.range(820, 860), -f.scaled(22));
-                self.put(Kind::Bloodseep, other, false, "");
-                let n = f.n;
-                self.put(Kind::FrontierSlot, (n - n / 8, n / 8), false, "");
-                let far = f.at(self.w.range(560, 620), f.scaled(84));
-                self.put(Kind::FrontierSlot, far, false, "");
-            }
-            _ => {
-                let edge = f.at(self.w.range(380, 420), -f.scaled(64));
-                self.put(Kind::FrontierSlot, edge, false, "");
+        let contested = [
+            (Kind::GrubSeep, (640, 700), 28, (4, 2), "Bile Toads"),
+            (Kind::MarrowVein, (620, 680), -30, (2, 4), "Marrow Golems"),
+        ];
+        for (kind, u, v, (dx, dy), creeps) in contested {
+            let at = f.at(self.w.range(u.0, u.1), f.scaled(v));
+            self.put(kind, at, false, false, "");
+            self.put(
+                Kind::CreepCamp,
+                (at.0 + dx, at.1 + dy),
+                false,
+                false,
+                creeps,
+            );
+        }
+        // Enough Bloodseep sites and frontier slots in each share that the
+        // turned copies make up the map's minimum.
+        let copies = f.symmetry.copies();
+        let bloodseeps = [((820, 860), 18), ((820, 860), -22)];
+        let slots = [((380, 420), -64), ((560, 620), 84)];
+        let wanted = [
+            (
+                Kind::Bloodseep,
+                &bloodseeps[..MIN_BLOODSEEPS.div_ceil(copies)],
+            ),
+            (
+                Kind::FrontierSlot,
+                &slots[..FRONTIER_SLOTS.start().div_ceil(copies)],
+            ),
+        ];
+        for (kind, places) in wanted {
+            for &(u, v) in places {
+                let at = f.at(self.w.range(u.0, u.1), f.scaled(v));
+                self.put(kind, at, false, false, "");
             }
         }
         // The middle.
         let (cx, cy) = f.centre;
-        self.once(Kind::Heart, (cx, cy));
+        self.put(Kind::Heart, (cx, cy), false, true, "");
         if f.symmetry == Symmetry::Rot4 {
-            self.once(Kind::OldMouth, (cx + 4, cy - 1));
-            self.once(Kind::Bazaar, (cx, cy - 12));
+            self.put(Kind::OldMouth, (cx + 4, cy - 1), false, true, "");
+            self.put(Kind::Bazaar, (cx, cy - 12), false, true, "");
         }
         // A Shrine off to the north-east, wherever there is room.
         let shrine = self
             .spot((250, 450), (f.scaled(36), f.scaled(60)), 4)
             .unwrap_or_else(|| f.at(300, f.scaled(52)));
-        self.put(Kind::Shrine, shrine, false, "");
+        self.put(Kind::Shrine, shrine, false, false, "");
     }
 
     /// Mark ground shaped at `at` out to `r` tiles, so later features keep
@@ -325,26 +298,20 @@ impl Share<'_> {
         self.features.push((at, r));
     }
 
-    /// A hill a line can hold, clear of objects, named as a set piece.
+    /// A hill a line can hold, clear of objects (its top and the upper
+    /// half of its slope) and of the steeper ground round other features,
+    /// named as a set piece.
     fn hill(&mut self, u: (i32, i32), v: (i32, i32), label: &str) {
-        let r = self.w.range(3, 4);
-        let edge = self.w.range(10, 12);
+        let clearance = RISE_REACH / 2 + 2;
         let wide = self.f.scaled(60);
         let Some(at) = self
-            .spot(u, v, r + edge / 2 + 2)
-            .or_else(|| self.spot((250, 900), (-wide, wide), r + edge / 2 + 2))
+            .spot(u, v, clearance)
+            .or_else(|| self.spot((250, 900), (-wide, wide), clearance))
         else {
             return;
         };
-        self.claim(at, r + edge);
-        let height = self.base + self.w.range(40, 52);
-        self.w
-            .stamp(Shape::Disc { at, r }, Mode::Raise, height, edge);
-        self.w.set_pieces.push(SetPiece {
-            kind: SetPieceKind::High,
-            at,
-            label: label.into(),
-        });
+        self.claim(at, RISE_REACH * 2 / 3);
+        self.w.rise(at, label);
     }
 
     /// A few clumps of `kind` clear of the objects.
@@ -396,11 +363,7 @@ impl Share<'_> {
                 (cx, (y0 + y1) / 2)
             }
         };
-        self.w.set_pieces.push(SetPiece {
-            kind: SetPieceKind::Ford,
-            at,
-            label: "The wading place".into(),
-        });
+        self.w.set_piece(SetPieceKind::Ford, at, "The wading place");
     }
 
     /// Fangs: a high plateau with cliff sides for the start, two ramps
@@ -446,10 +409,9 @@ impl Share<'_> {
             } else {
                 ((mid.0, mid.1 - half), (mid.0, mid.1 + half))
             };
-            let inside = |(x, y): Pos| (8..f.n - 8).contains(&x) && (8..f.n - 8).contains(&y);
             let along = (0..=4).map(|k| (a.0 + (b.0 - a.0) * k / 4, a.1 + (b.1 - a.1) * k / 4));
             let points: Vec<Pos> = along.collect();
-            if points.iter().all(|&p| inside(p) && self.clear(p, 7)) {
+            if points.iter().all(|&p| f.inside(p) && self.clear(p, 7)) {
                 for &p in &points {
                     self.claim(p, 4);
                 }
@@ -490,11 +452,7 @@ impl Share<'_> {
             BASE + 6,
             6,
         );
-        self.w.set_pieces.push(SetPiece {
-            kind: SetPieceKind::High,
-            at: f.centre,
-            label: "The tongue".into(),
-        });
+        self.w.set_piece(SetPieceKind::High, f.centre, "The tongue");
         let s = f.start;
         self.w
             .stamp(Shape::Disc { at: s, r: 14 }, Mode::Set, BASE + 10, 10);
@@ -526,11 +484,7 @@ impl Share<'_> {
             self.claim(at, r + 2);
             self.w.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
             if !named && r >= 5 {
-                self.w.set_pieces.push(SetPiece {
-                    kind: SetPieceKind::Ford,
-                    at,
-                    label: "The reed ford".into(),
-                });
+                self.w.set_piece(SetPieceKind::Ford, at, "The reed ford");
                 named = true;
             }
         }
