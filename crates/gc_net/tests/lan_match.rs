@@ -687,7 +687,7 @@ fn friends_join_with_a_code() {
     // has one); here, a code for this machine itself.
     if let Some(invite) = host.invite() {
         assert!(
-            invite.starts_with("Wi-Fi code ") || invite.starts_with("Tailscale code "),
+            invite.starts_with("Join code ") || invite.starts_with("Tailscale code "),
             "{invite}"
         );
     }

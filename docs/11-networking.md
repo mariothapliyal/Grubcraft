@@ -125,7 +125,7 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 
 In order of effort:
 
-1. **Now:** a virtual LAN tool such as Tailscale or ZeroTier, the way Mario plays (over the internet, 2026-10-16). Friends install it once, the host shares their computer with them in Tailscale, and they join with the lobby's Tailscale code or the host's 100.x address. The Join list only finds games on the same Wi-Fi. No code needed from us, and traffic is end-to-end encrypted by the tool as well as by us.
+1. **Now:** a virtual LAN tool such as Tailscale or ZeroTier. Friends install it once, the host shares their computer with them in Tailscale, and they join with the lobby's Tailscale code or the host's 100.x address. The Join list only finds games on the same Wi-Fi. No code needed from us, and traffic is end-to-end encrypted by the tool as well as by us.
 2. **Later:** port forwarding on the host's router, with a connection-test button in the Host screen.
 3. **Later still:** UDP hole punching through a tiny rendezvous service so join codes work across the internet without extra software.
 
