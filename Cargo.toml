@@ -83,7 +83,13 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
-strip = "symbols"
+# Keep function names and line tables so a crash report's backtrace can be
+# read. The bulky debug info goes to a separate file (a .dSYM on macOS, a
+# .pdb on Windows) that the release zips leave out; CI keeps it as its own
+# artifact.
+debug = "line-tables-only"
+split-debuginfo = "packed"
+strip = "none"
 
 # Fast dev builds of our code, optimised dependencies (wgpu is slow unoptimised).
 [profile.dev.package."*"]

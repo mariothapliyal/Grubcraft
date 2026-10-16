@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gc_platform::logln;
 use gc_replay::{EXTENSION, Header, Player, Replay};
 use gc_sim::{Capacities, TICKS_PER_SECOND};
 use gc_ui::ReplayEntry;
@@ -100,7 +101,7 @@ pub fn prune(dir: &Path, keep: usize) {
     let found = files(dir);
     for old in &found[..found.len().saturating_sub(keep)] {
         if let Err(e) = std::fs::remove_file(old) {
-            eprintln!("grubcraft: could not delete {}: {e}", old.display());
+            logln!("grubcraft: could not delete {}: {e}", old.display());
         }
     }
 }

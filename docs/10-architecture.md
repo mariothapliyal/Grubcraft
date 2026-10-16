@@ -68,7 +68,7 @@ grubcraft/
 │  ├─ gc_ui/         game UI (immediate mode; menus, lobby, settings, battle HUD minimap and army tray built)
 │  ├─ gc_audio/      mixer, voices, ADPCM decoder, music layers, cpal output
 │  ├─ gc_assets/     pack format, mmap loader, asset ids
-│  ├─ gc_platform/   per-OS glue: paths, local-network permission, memory stats
+│  ├─ gc_platform/   per-OS glue: memory stats, the log file and crash reports
 │  └─ gc_game/       the application: states, input mapping, glue
 ├─ tools/
 │  ├─ gc_bake/       data baker: data/*.ron → compiled tables
@@ -308,6 +308,13 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 - Music streamed from the pack in small chunks, decoded on the fly; adaptive layers crossfade on battle intensity.
 - The main thread sends play/stop/parameter events through a lock-free queue; the audio thread never allocates.
 - **Built so far:** `gc_audio` has the ADPCM codec, the sound bank format, the lock-free queue (a ring of atomics holding one packed command per slot, no `unsafe`), the mixer (32 effect voices, at most 8 of any one sound, lowest priority then quietest voice stolen first; two music layers crossfaded by battle intensity; soft clipping) and `cpal` output (`f32` or `i16` devices, any channel count). The mixer has no device code and is unit-tested without a sound card. Music is held as ADPCM in the embedded bank and looped, not streamed from disk yet (two 19-second loops are about 300 KB); streamed Ogg comes with real recorded music. `gc_sim` knows nothing about audio: `gc_game/src/sounds.rs` reads the same public views the renderer reads (regiments, volleys in flight) after each tick and plays a sound for each change, positioned by distance and side relative to the camera. If there is no output device the game runs silently. Unit voices and per-faction music come later.
+
+## Diagnostics
+
+A crash on a friend's machine has to leave something to read, because stderr is invisible from a Finder-launched app or a double-clicked exe. `gc_platform::diag` (built 2026-10-16, review item R6) does three things, all in the per-user folder that holds `settings.ron`:
+- **A log file.** `logln!` is `eprintln!` that also writes `logs/grubcraft.log`, each line stamped with seconds since start. The last four runs are kept (`grubcraft.1.log` is the run before). Startup failures, GPU and audio notes, desync reports and save errors all go through it.
+- **A crash report.** `diag::init` installs a panic hook. A panic writes `crashes/crash-<unix time>.txt` with the message, location, thread, backtrace, the build (version and commit), the game data hash, the GPU, the operating system and the simulation tick; the newest 20 are kept. The release profile aborts on panic, but the hook runs first. `grubcraft --crash-test` panics once the game has started, to check the whole chain.
+- **Readable backtraces.** Release builds keep function names and line tables, and put the bulky debug info in a separate file (`.dSYM` on macOS, `.pdb` on Windows). The bundle scripts leave it out of the player zip and CI keeps it as the `Grubcraft-macOS-symbols` and `Grubcraft-Windows-symbols` artifacts (attached to a release too). To read a crash report from a friend's build, take the symbols from the same commit; the report names it.
 
 ## Platform specifics
 

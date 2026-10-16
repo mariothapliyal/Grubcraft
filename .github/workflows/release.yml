@@ -26,6 +26,11 @@ jobs:
         with:
           name: Grubcraft-macOS
           path: target/Grubcraft-macOS.zip
+      # Debug info for reading crash reports from this build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-macOS-symbols
+          path: target/Grubcraft-macOS-symbols.zip
 
   windows-exe:
     name: Windows build
@@ -40,6 +45,11 @@ jobs:
         with:
           name: Grubcraft-Windows
           path: target/Grubcraft-Windows.zip
+      # Debug info for reading crash reports from this build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-Windows-symbols
+          path: target/Grubcraft-Windows-symbols.zip
 
   publish:
     name: GitHub Release
@@ -60,5 +70,7 @@ jobs:
           gh release create "$TAG" \
             dist/Grubcraft-macOS/Grubcraft-macOS.zip \
             dist/Grubcraft-Windows/Grubcraft-Windows.zip \
+            dist/Grubcraft-macOS-symbols/Grubcraft-macOS-symbols.zip \
+            dist/Grubcraft-Windows-symbols/Grubcraft-Windows-symbols.zip \
             --title "Grubcraft $TAG" \
             --generate-notes

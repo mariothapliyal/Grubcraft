@@ -23,3 +23,9 @@ if (Test-Path $zip) { Remove-Item -Force $zip }
 # Zipping the folder itself keeps "Grubcraft/" as the top level of the zip.
 Compress-Archive -Path $dir -DestinationPath $zip
 Write-Host "Built $zip"
+
+# The debug info stays out of the player zip. Keep it to read crash reports
+# from this build.
+$symbols = 'target/Grubcraft-Windows-symbols.zip'
+if (Test-Path $symbols) { Remove-Item -Force $symbols }
+Compress-Archive -Path 'target/release/grubcraft.pdb' -DestinationPath $symbols

@@ -9,7 +9,7 @@ How to cut a release and what to test before telling friends.
 3. Tag the commit and push the tag:
    `git tag v0.2.0` then `git push origin v0.2.0`.
 4. The Release workflow builds both zips and attaches them to a GitHub Release for the tag. It takes about 15 minutes.
-5. Open the release page. Check both zips are there: `Grubcraft-macOS.zip` and `Grubcraft-Windows.zip`.
+5. Open the release page. Check both zips are there: `Grubcraft-macOS.zip` and `Grubcraft-Windows.zip`, and the two `-symbols.zip` files (the debug info for this build; keep them, a crash report is only readable with the symbols of the same commit).
 6. Run the tests below. If one fails, delete the release and the tag, fix, and tag again.
 
 Everyone in a LAN game must run the same build. Send all friends the same release.
@@ -39,3 +39,7 @@ Do this from the downloaded zip on a machine with no repo checkout. Not from `ta
 - The lobby shows the same version on both. Start works.
 - A short battle ends with no desync message.
 - Quit one game mid-battle and start it again. It rejoins.
+
+### Crash reports
+
+- Start the game from a terminal as `grubcraft --crash-test` (on a Mac: `Grubcraft.app/Contents/MacOS/grubcraft --crash-test`). It panics on purpose. The game folder (`%APPDATA%\Grubcraft` on Windows, `~/Library/Application Support/Grubcraft` on a Mac) now holds a `crashes/crash-….txt` naming the build, the GPU and a backtrace, and `logs/grubcraft.log` ends with a `PANIC` line.

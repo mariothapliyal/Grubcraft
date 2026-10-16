@@ -76,6 +76,12 @@ jobs:
           name: Grubcraft-macOS
           path: target/Grubcraft-macOS.zip
           retention-days: 14
+      # Debug info for reading crash reports from this build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-macOS-symbols
+          path: target/Grubcraft-macOS-symbols.zip
+          retention-days: 14
 
   windows-exe:
     name: Windows build
@@ -90,4 +96,10 @@ jobs:
         with:
           name: Grubcraft-Windows
           path: target/Grubcraft-Windows.zip
+          retention-days: 14
+      # Debug info for reading crash reports from this build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Grubcraft-Windows-symbols
+          path: target/Grubcraft-Windows-symbols.zip
           retention-days: 14
