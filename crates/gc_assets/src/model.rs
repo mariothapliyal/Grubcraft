@@ -265,6 +265,10 @@ impl<'a> Models<'a> {
             {
                 return Err(bad);
             }
+            // Every level has triangles, no more than the level before.
+            if r.lods.iter().any(|l| l[1] == 0) || r.lods.windows(2).any(|w| w[1][1] > w[0][1]) {
+                return Err(bad);
+            }
             for &[first, count] in &r.lods {
                 let (first, count) = (first as usize, count as usize);
                 let Some(tris) = m.indices.get(first..first + count) else {
@@ -520,6 +524,17 @@ mod tests {
         });
         let mut bad = one_model();
         bad.indices[2] = 3;
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
+        });
+        let mut bad = one_model();
+        bad.models[0].lods[3] = [0, 0];
+        parsed(&bad, |m| {
+            assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
+        });
+        let mut bad = one_model();
+        bad.indices.extend_from_slice(&[0, 2, 1]);
+        bad.models[0].lods[2] = [0, 6];
         parsed(&bad, |m| {
             assert_eq!(m.err(), Some(ModelError::OutOfRange(0)));
         });

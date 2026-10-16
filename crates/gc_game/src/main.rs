@@ -498,6 +498,11 @@ struct Art {
     heights: Vec<f32>,
     /// Every soldier at this level of detail, from `--lod`.
     force_lod: Option<usize>,
+    /// This frame's eye, the height of the ground under the camera's
+    /// focus, and `RtsCamera::pixel_scale`, for choosing levels of detail.
+    eye: glam::Vec3,
+    ground: f32,
+    pixel_scale: f32,
     /// Instances per model and level of detail (model * LODS + lod).
     buckets: Vec<Vec<SoldierInstance>>,
     soldiers: Vec<SoldierInstance>,
@@ -512,19 +517,26 @@ fn lod_for(height: f32, distance: f32, pixel_scale: f32) -> usize {
 }
 
 impl Art {
-    fn clear(&mut self) {
+    /// Empty the buckets for a frame seen from `camera` on a viewport
+    /// `height` pixels tall.
+    fn begin(&mut self, camera: &RtsCamera, height: f32) {
         for b in &mut self.buckets {
             b.clear();
         }
+        self.eye = camera.eye();
+        self.ground = camera.focus_height;
+        self.pixel_scale = camera.pixel_scale(height);
     }
 
-    /// The bucket for `model` seen `distance` tiles from the eye: its level
-    /// of detail follows how tall it shows on screen (`pixel_scale` is from
-    /// `RtsCamera::pixel_scale`).
-    fn bucket(&self, model: usize, distance: f32, pixel_scale: f32) -> usize {
-        let lod = self
-            .force_lod
-            .unwrap_or_else(|| lod_for(self.heights[model], distance, pixel_scale));
+    /// The bucket for `model` standing at `pos`: its level of detail
+    /// follows how tall it shows on screen.
+    fn bucket(&self, model: usize, pos: Vec2) -> usize {
+        let lod = self.force_lod.unwrap_or_else(|| {
+            let distance = self
+                .eye
+                .distance(glam::Vec3::new(pos.x, self.ground, pos.y));
+            lod_for(self.heights[model], distance, self.pixel_scale)
+        });
         model * LODS + lod
     }
 
@@ -792,6 +804,9 @@ impl App {
                         .collect(),
                     heights: models.models.iter().map(|m| m.height).collect(),
                     force_lod: opts.lod,
+                    eye: glam::Vec3::ZERO,
+                    ground: 0.0,
+                    pixel_scale: 0.0,
                     buckets: vec![Vec::new(); models.models.len() * LODS],
                     soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
                     batches: Vec::with_capacity(models.models.len() * LODS),
@@ -1839,7 +1854,7 @@ impl Running {
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
         if let Some(art) = &mut self.art {
-            art.clear();
+            art.begin(&self.camera, self.window.inner_size().height as f32);
         }
         self.mark_shooting();
         self.scenery.push(
@@ -1863,9 +1878,6 @@ impl Running {
         } else {
             1.0
         };
-        let pixel_scale = self
-            .camera
-            .pixel_scale(self.window.inner_size().height as f32);
         for r in self.world.regiments.iter() {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2007,12 +2019,7 @@ impl Running {
                 .as_ref()
                 .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
-                let distance = self.camera.eye().distance(glam::Vec3::new(
-                    pos.x,
-                    self.camera.focus_height,
-                    pos.y,
-                ));
-                let bucket = art.bucket(model, distance, pixel_scale);
+                let bucket = art.bucket(model, pos);
                 let bucket = &mut art.buckets[bucket];
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
@@ -2920,9 +2927,6 @@ impl Running {
 
     /// Fallen soldiers lie flat in a darker shade of their team's colour.
     fn push_corpses(&mut self) {
-        let pixel_scale = self
-            .camera
-            .pixel_scale(self.window.inner_size().height as f32);
         for c in self.puppets.corpses() {
             let [r, g, b] = color_of(&self.parties, c.owner);
             let model = self
@@ -2933,12 +2937,7 @@ impl Running {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
-                    let distance = self.camera.eye().distance(glam::Vec3::new(
-                        c.pos.x,
-                        self.camera.focus_height,
-                        c.pos.y,
-                    ));
-                    let bucket = art.bucket(model, distance, pixel_scale);
+                    let bucket = art.bucket(model, c.pos);
                     art.buckets[bucket].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),

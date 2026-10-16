@@ -57,7 +57,6 @@ impl RtsCamera {
         proj * view
     }
 
-    /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
     /// How many pixels tall something 1 tile tall shows, 1 tile from the
     /// eye, on a viewport `height` pixels tall (divide by the distance for
     /// anything further).
@@ -65,6 +64,7 @@ impl RtsCamera {
         height / (2.0 * (FOV_Y * 0.5).tan())
     }
 
+    /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
     pub fn pan(&mut self, dx: f32, dy: f32) {
         let (s, c) = self.yaw.sin_cos();
         let right = Vec2::new(c, -s);

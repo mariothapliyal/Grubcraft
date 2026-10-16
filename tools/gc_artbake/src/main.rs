@@ -687,7 +687,7 @@ fn bake_model(
         } else {
             meshopt::SimplifyOptions::Permissive
         };
-        let mut out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
+        let out = meshopt::simplify(indices, &adapter, tris * 3, 0.05, options, None);
         if out.len() / 3 <= tris * 5 / 4 {
             return out;
         }
@@ -724,8 +724,7 @@ fn bake_model(
                 None,
             ));
         }
-        out = cut;
-        out
+        cut
     };
     let mut chain: Vec<Vec<u32>> = Vec::with_capacity(LODS);
     for &tris in &cfg.lod_triangles {

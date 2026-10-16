@@ -4,8 +4,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use gc_assets::model::{
-    BLOCK_SIDE, BLOCKS_PER_LAYER, BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, LODS, ModelVertex,
-    Models, TEXTURE_MIPS, TEXTURE_SIZE,
+    BLOCK_SIDE, BLOCKS_PER_LAYER, BONE_TEXELS_PER_ROW, Block, LAYERS_PER_MATERIAL, LODS,
+    ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
 
 /// Fixed capacity of the soldier instance buffer; never reallocated.
@@ -228,14 +228,7 @@ impl SoldiersGpu {
                 });
                 textured_now = Some(textured);
             }
-            // A model without that level draws the next finer one it has.
-            let lod = (b.lod as usize).min(LODS - 1);
-            let [first, len] = lods[..=lod]
-                .iter()
-                .rev()
-                .copied()
-                .find(|l| l[1] > 0)
-                .unwrap_or_default();
+            let [first, len] = lods[(b.lod as usize).min(LODS - 1)];
             let end = (b.first + b.count).min(count as u32);
             if b.first >= end || len == 0 {
                 continue;
@@ -317,7 +310,7 @@ pub(crate) fn upload(
         .features()
         .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
         && m.materials() > 0;
-    let materials = upload_materials(device, queue, textures.then_some(m));
+    let materials = upload_materials(device, queue, m, textures);
     let array_view = |format: wgpu::TextureFormat| {
         materials.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format),
@@ -373,11 +366,7 @@ pub(crate) fn upload(
         gpu_bytes: vertices.size()
             + indices.size()
             + (texels.len() * 8) as u64
-            + if textures {
-                size_of_val(m.textures) as u64
-            } else {
-                4
-            },
+            + if textures { size_of_val(m.textures) } else { 4 } as u64,
         vertices,
         indices,
         bind_group,
@@ -385,14 +374,22 @@ pub(crate) fn upload(
     }
 }
 
-/// The material texture array, every layer with its mips; a single blank
-/// texel when no model is drawn textured, since the binding must exist.
+/// The material texture array, every layer with its mips (BC7); a single
+/// blank texel without `textures`, since the binding must exist.
 fn upload_materials(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    m: Option<&Models<'_>>,
+    m: &Models<'_>,
+    textures: bool,
 ) -> wgpu::Texture {
-    let descriptor = |format, side, mips, layers| wgpu::TextureDescriptor {
+    let (format, side, mips, layers) = if textures {
+        let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
+        let format = wgpu::TextureFormat::Bc7RgbaUnorm;
+        (format, TEXTURE_SIZE, TEXTURE_MIPS, layers)
+    } else {
+        (wgpu::TextureFormat::Rgba8Unorm, 1, 1, 1)
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("soldier materials"),
         size: wgpu::Extent3d {
             width: side,
@@ -404,21 +401,11 @@ fn upload_materials(
         dimension: wgpu::TextureDimension::D2,
         format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    };
-    let Some(m) = m else {
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        return device.create_texture(&wgpu::TextureDescriptor {
-            view_formats: &[format.add_srgb_suffix()],
-            ..descriptor(format, 1, 1, 1)
-        });
-    };
-    let format = wgpu::TextureFormat::Bc7RgbaUnorm;
-    let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
         view_formats: &[format.add_srgb_suffix()],
-        ..descriptor(format, TEXTURE_SIZE, TEXTURE_MIPS, layers)
     });
+    if !textures {
+        return texture;
+    }
     for (layer, blocks) in m
         .textures
         .as_chunks::<BLOCKS_PER_LAYER>()
@@ -445,7 +432,7 @@ fn upload_materials(
                 bytemuck::cast_slice(&blocks[offset..offset + count]),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(across * 16),
+                    bytes_per_row: Some(across * size_of::<Block>() as u32),
                     rows_per_image: Some(across),
                 },
                 wgpu::Extent3d {
