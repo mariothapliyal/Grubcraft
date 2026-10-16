@@ -187,7 +187,7 @@ pub fn list(
                         detail.push_str(", older game data");
                     }
                     if r.header.sim_version != Some(gc_sim::SIM_VERSION) {
-                        detail.push_str(", older rules: may play differently");
+                        detail.push_str(", other rules: may play differently");
                     }
                     ReplayEntry {
                         title: title(&r),
