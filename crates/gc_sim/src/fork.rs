@@ -209,8 +209,9 @@ mod tests {
             .collect()
     }
 
-    /// A copy taken mid-melee carries every regiment's unseen state too,
-    /// such as how hard each block is pushing, and plays on with it.
+    /// A copy taken mid-melee carries each regiment's hashed state, unseen
+    /// parts too (such as how hard each block is pushing), and plays on
+    /// with it.
     #[test]
     fn a_copy_mid_melee_keeps_every_regiments_state() {
         let nav = ribs_map(256);

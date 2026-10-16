@@ -50,8 +50,8 @@ fn golden_replays_play_as_recorded() {
 
 /// Between them the goldens give every kind of command, so a change to how
 /// any of them plays out shows up. A new kind of command fails to compile
-/// here until it has a place in this list, and then this test until a
-/// golden gives it.
+/// here until `kind` names it; add the name to `KINDS` too, and this test
+/// fails until a golden gives it.
 #[test]
 fn the_goldens_cover_every_kind_of_command() {
     let kind = |c: &Command| match c {
