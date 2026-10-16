@@ -146,6 +146,8 @@ use terrain_gen::Heightmap;
 static ALLOC: TaggedAlloc = TaggedAlloc;
 
 const MAP_TILES: u32 = 256;
+/// The middle of the map, in tiles.
+const MAP_CENTRE: Vec2 = Vec2::splat(MAP_TILES as f32 * 0.5);
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
 const HUMAN: PlayerId = 0;
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
@@ -398,8 +400,7 @@ fn parse_args() -> Options {
         usage();
     }
     if opts.showroom.is_some() {
-        // The showroom starts like the sandbox, straight into the field.
-        opts.sandbox = true;
+        // The showroom goes straight into the field.
         opts.menu = Some(false);
     }
     opts
@@ -411,12 +412,12 @@ fn showroom_models(spec: &str) -> Vec<usize> {
         eprintln!("grubcraft: {e}");
         std::process::exit(1);
     });
-    let names: Vec<&str> = models
-        .models
-        .iter()
-        .map(gc_assets::model::ModelRecord::name)
-        .collect();
-    showroom::choose(spec, &names).unwrap_or_else(|unknown| {
+    showroom::choose(spec, &models).unwrap_or_else(|unknown| {
+        let names: Vec<&str> = models
+            .models
+            .iter()
+            .map(gc_assets::model::ModelRecord::name)
+            .collect();
         eprintln!(
             "grubcraft: --showroom: no model named {unknown:?}; the models are all, or any of: {}",
             names.join(", ")
@@ -939,7 +940,13 @@ impl App {
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
         let scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&heightmap.cover, MAP_TILES, opts.seed)
+            // The showroom stands on bare ground, with no trees in the way.
+            let cover = if opts.showroom.is_some() {
+                &[][..]
+            } else {
+                &heightmap.cover[..]
+            };
+            scenery::Scenery::new(cover, MAP_TILES, opts.seed)
         });
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
@@ -957,7 +964,7 @@ impl App {
                 Vec::with_capacity(1024),
             )
         });
-        let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
+        let drill = (!opts.sandbox && opts.showroom.is_none()).then(|| make_drill(opts.seed));
         let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)).live());
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
@@ -966,15 +973,13 @@ impl App {
         camera.aspect = renderer.aspect_ratio();
         let showroom = art.as_ref().and_then(|a| {
             let models = opts.showroom.clone()?;
-            let show = opts
-                .showroom_clip
-                .map_or(showroom::Show::Cycle, showroom::Show::Hold);
-            Some(showroom::Showroom::new(models, &a.heights, show))
+            Some(showroom::Showroom::new(
+                models,
+                &a.heights,
+                MAP_CENTRE,
+                opts.showroom_clip,
+            ))
         });
-        if let Some(room) = &showroom {
-            let at = room.layout.focus;
-            room.aim(&mut camera, heightmap.height_at(at.x, at.y));
-        }
 
         self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
@@ -1064,11 +1069,10 @@ impl App {
             unit_names,
             unit_factions,
             unit_points,
-            sandbox: {
-                let mut sandbox = Sandbox::new(opts.sandbox && opts.showroom.is_none());
-                // The showroom hides the panel (H shows it).
-                sandbox.panel = opts.showroom.is_none();
-                sandbox
+            // The showroom hides the panel (H shows it).
+            sandbox: Sandbox {
+                panel: opts.showroom.is_none(),
+                ..Sandbox::new(opts.sandbox)
             },
             selected: Vec::with_capacity(64),
             formation_pick: None,
@@ -1983,15 +1987,12 @@ impl Running {
             art.begin(&self.camera, self.window.inner_size().height as f32, cull);
         }
         self.mark_shooting();
-        // The showroom stands on bare ground, with no trees in the way.
-        if self.showroom.is_none() {
-            self.scenery.push(
-                self.camera.focus,
-                self.camera.distance,
-                !self.commander,
-                &mut self.instances,
-            );
-        }
+        self.scenery.push(
+            self.camera.focus,
+            self.camera.distance,
+            !self.commander,
+            &mut self.instances,
+        );
         let viewer = self.sandbox.side;
         if let Some(zone) = self.world.deploy_zone(viewer) {
             Self::push_zone_ring(
@@ -2175,12 +2176,7 @@ impl Running {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [
-                                (pose.blend * 255.0) as u8,
-                                highlight,
-                                u8::from(flat) * 255,
-                                0,
-                            ],
+                            flags: models::pose_flags(pose, highlight, flat),
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -2914,7 +2910,7 @@ impl Running {
             })
             .collect();
         let focus = if spawns.is_empty() {
-            Vec2::splat(MAP_TILES as f32 / 2.0)
+            MAP_CENTRE
         } else {
             spawns.iter().sum::<Vec2>() / spawns.len() as f32
         };
@@ -3171,7 +3167,7 @@ impl Running {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, u8::from(flat) * 255, 0],
+                        flags: models::pose_flags(pose, 0, flat),
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,
@@ -3307,8 +3303,8 @@ impl Running {
         self.camera.focus_height += (ground - self.camera.focus_height) * k;
         // The showroom's camera stays on the models, whatever the window does.
         if let Some(room) = &self.showroom {
-            let at = room.layout.focus;
-            room.aim(&mut self.camera, self.heightmap.height_at(at.x, at.y));
+            let heightmap = &self.heightmap;
+            room.aim(&mut self.camera, |p| heightmap.height_at(p.x, p.y));
         }
     }
 

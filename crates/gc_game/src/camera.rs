@@ -4,8 +4,8 @@
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
-pub const PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
-pub const FOV_Y: f32 = 35.0 * std::f32::consts::PI / 180.0;
+const PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
+const FOV_Y: f32 = 35.0 * std::f32::consts::PI / 180.0;
 const MAX_YAW: f32 = 45.0 * std::f32::consts::PI / 180.0;
 pub const MIN_DISTANCE: f32 = 14.0;
 pub const MAX_DISTANCE: f32 = 260.0;
@@ -67,6 +67,24 @@ impl RtsCamera {
     /// anything further).
     pub fn pixel_scale(&self, height: f32) -> f32 {
         height / (2.0 * (FOV_Y * 0.5).tan())
+    }
+
+    /// How far from the focus the camera must be, at its current focus,
+    /// height and turn, for every point in `points` to fall inside the
+    /// middle `fill` of the window (1 is edge to edge).
+    pub fn fit_distance(&self, points: impl IntoIterator<Item = Vec3>, fill: f32) -> f32 {
+        let back = self.offset_dir();
+        let right = Vec3::Y.cross(back).normalize();
+        let up = back.cross(right);
+        let half = (FOV_Y * 0.5).tan() * fill;
+        points.into_iter().fold(0.0, |need: f32, p| {
+            // The point across the screen, up it, and how much nearer the
+            // eye than the focus it lies.
+            let q = p - self.target();
+            let nearer = q.dot(back);
+            need.max(q.dot(right).abs() / (half * self.aspect) + nearer)
+                .max(q.dot(up).abs() / half + nearer)
+        })
     }
 
     /// Pan in screen-relative directions; `dx`/`dy` in screen fractions.
