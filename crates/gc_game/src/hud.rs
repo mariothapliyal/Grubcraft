@@ -387,11 +387,8 @@ impl Running {
                 self.describe_card(&c, &mut card_labels, &mut card_details),
             )
         });
-        let (view_proj, _) = self.view();
-        let view_plane = match &self.ride {
-            Some(ride) => ride.camera.ground(),
-            None => self.camera.focus_height,
-        };
+        let camera = self.active_camera();
+        let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
         let hud = &mut self.hud;
         if self.selected.is_empty() {
@@ -478,13 +475,7 @@ impl Running {
         }
         hud.view.clear();
         // The minimap's outline is the ground the camera in use shows.
-        let ray = |ndc: Vec2| match &self.ride {
-            Some(ride) => ride.camera.ray(ndc),
-            None => self.camera.ray(ndc),
-        };
-        for ndc in [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
-            hud.view.push(view_corner(&ray, view_plane, ndc, map));
-        }
+        hud.view.extend(view_outline(view_proj, plane, map));
 
         let hero = hud
             .hero_preview
@@ -546,7 +537,6 @@ impl Running {
 
         hud.alerts.clear();
         if !hud.notes.is_empty() {
-            let plane = view_plane;
             hud.alerts.extend(hud.notes.iter().map(|n| Alert {
                 id: n.id,
                 kind: n.kind,
@@ -821,12 +811,11 @@ impl Running {
     }
 
     pub fn look_at(&mut self, p: Vec2) {
-        // Looking somewhere else is a move of the view: back to the map.
-        self.leave_ride();
-        self.camera.focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
-        self.camera.focus_height = self
-            .heightmap
-            .height_at(self.camera.focus.x, self.camera.focus.y);
+        let focus = p.clamp(Vec2::ZERO, Vec2::splat(self.camera.map_size));
+        let height = self.heightmap.height_at(focus.x, focus.y);
+        let camera = self.camera_mut();
+        camera.focus = focus;
+        camera.focus_height = height;
     }
 }
 
@@ -898,23 +887,21 @@ fn project(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> [f32; 2] {
     ]
 }
 
-/// Where the screen corner `ndc` looks at the ground, in tiles, clamped to
-/// the map, through the camera whose rays `ray` gives. The ground is taken
-/// as flat at height `plane`.
-fn view_corner(
-    ray: &dyn Fn(Vec2) -> (Vec3, Vec3),
-    plane: f32,
-    ndc: (f32, f32),
-    map: f32,
-) -> [f32; 2] {
-    let (origin, dir) = ray(Vec2::new(ndc.0, ndc.1));
-    let hit: Vec3 = if dir.y < -1e-4 {
-        origin + dir * ((plane - origin.y) / dir.y)
-    } else {
-        // Looking at the sky: far along the ray's heading instead.
-        origin + dir * 1000.0
-    };
-    [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
+/// Where the four screen corners look at the ground, in tiles, clamped to
+/// the map, through the camera with this `view_proj`. The ground is taken as
+/// flat at height `plane`.
+fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
+    let inv = view_proj.inverse();
+    [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)].map(|(x, y)| {
+        let (origin, dir) = crate::camera::unproject(inv, Vec2::new(x, y));
+        let hit: Vec3 = if dir.y < -1e-4 {
+            origin + dir * ((plane - origin.y) / dir.y)
+        } else {
+            // Looking at the sky: far along the ray's heading instead.
+            origin + dir * 1000.0
+        };
+        [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
+    })
 }
 
 #[cfg(test)]

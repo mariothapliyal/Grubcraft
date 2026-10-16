@@ -2,6 +2,7 @@
 //! by distance) and the ride-with-the-banner camera that follows one regiment
 //! from just above head height. See docs/08-ui-ux.md#camera.
 
+use crate::buildings::ray_box;
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
@@ -138,11 +139,6 @@ impl RtsCamera {
         self.yaw = self.home_yaw;
     }
 
-    /// World-space ray through a point given in normalised device coordinates.
-    pub fn ray(&self, ndc: Vec2) -> (Vec3, Vec3) {
-        ray_through(self.view_proj(), ndc)
-    }
-
     /// Where sounds are heard from: the ground point looked at, widening
     /// as the camera pulls back.
     pub fn listener(&self) -> Listener {
@@ -171,10 +167,88 @@ impl RtsCamera {
     }
 }
 
-/// World-space ray (origin on the near plane, unit direction) through a point
-/// given in normalised device coordinates, for any camera's `view_proj`.
-fn ray_through(view_proj: Mat4, ndc: Vec2) -> (Vec3, Vec3) {
-    let inv = view_proj.inverse();
+/// Whichever camera is in use this frame: the bird's-eye one, or the ride
+/// camera on a viewport of the given aspect ratio. Everything that must
+/// follow the view (picking, culling, shadows, the minimap, sound) asks this
+/// instead of knowing which one it is.
+#[derive(Clone, Copy)]
+pub enum ActiveCamera<'a> {
+    Rts(&'a RtsCamera),
+    Ride(&'a FollowCamera, f32),
+}
+
+impl ActiveCamera<'_> {
+    pub fn view_proj(self) -> Mat4 {
+        match self {
+            Self::Rts(c) => c.view_proj(),
+            Self::Ride(c, aspect) => c.view_proj(aspect),
+        }
+    }
+
+    pub fn eye(self) -> Vec3 {
+        match self {
+            Self::Rts(c) => c.eye(),
+            Self::Ride(c, _) => c.eye(),
+        }
+    }
+
+    /// The direction the camera looks.
+    pub fn forward(self) -> Vec3 {
+        match self {
+            Self::Rts(c) => c.forward(),
+            Self::Ride(c, _) => c.forward(),
+        }
+    }
+
+    /// World-space ray (origin on the near plane, unit direction) through a
+    /// point given in normalised device coordinates.
+    pub fn ray(self, ndc: Vec2) -> (Vec3, Vec3) {
+        unproject(self.view_proj().inverse(), ndc)
+    }
+
+    /// Where sounds are heard from.
+    pub fn listener(self) -> Listener {
+        match self {
+            Self::Rts(c) => c.listener(),
+            Self::Ride(c, _) => c.listener(),
+        }
+    }
+
+    /// How wide the view is, for sizing marks that must stay readable: the
+    /// zoom distance (a ride is as close as the bird's-eye camera gets).
+    pub fn zoom_distance(self) -> f32 {
+        self.listener().distance
+    }
+
+    pub fn pixel_scale(self, height: f32) -> f32 {
+        match self {
+            Self::Rts(c) => c.pixel_scale(height),
+            Self::Ride(c, _) => c.pixel_scale(height),
+        }
+    }
+
+    /// The height of the ground under the view, for working out where things
+    /// at ground level are on screen.
+    pub fn ground_plane(self) -> f32 {
+        match self {
+            Self::Rts(c) => c.focus_height,
+            Self::Ride(c, _) => c.ground(),
+        }
+    }
+
+    /// The ground point and zoom distance to draw the scenery for.
+    pub fn scenery_view(self) -> (Vec2, f32) {
+        match self {
+            Self::Rts(c) => (c.focus, c.distance),
+            Self::Ride(c, _) => c.scenery_view(),
+        }
+    }
+}
+
+/// The world-space ray through a point given in normalised device
+/// coordinates, from the inverse of the camera's `view_proj` (invert once to
+/// take several rays through one camera).
+pub fn unproject(inv: Mat4, ndc: Vec2) -> (Vec3, Vec3) {
     let near = inv * ndc.extend(0.0).extend(1.0);
     let far = inv * ndc.extend(1.0).extend(1.0);
     let near = near.xyz() / near.w;
@@ -218,8 +292,12 @@ const RIDE_GROUND_RATE: f32 = 6.0;
 /// if the bird's-eye camera were this far out (trees to 70 + 1.6 times it).
 const RIDE_SCENERY_AHEAD: f32 = 40.0;
 const RIDE_SCENERY_DISTANCE: f32 = 60.0;
-/// The ride listens as if zoomed fully in: the fight is loud and close.
-const RIDE_LISTEN_DISTANCE: f32 = MIN_DISTANCE;
+
+/// How far the eye hangs behind the block's centre: half its depth and the
+/// gap behind the rear rank.
+fn back_for(target: RideTarget) -> f32 {
+    target.depth * 0.5 + RIDE_BEHIND_REAR
+}
 
 /// What the ride camera follows, as the renderer draws it this frame.
 #[derive(Clone, Copy, Debug)]
@@ -247,19 +325,17 @@ pub struct FollowCamera {
     ground: f32,
     /// Lowest the eye may be: true ground under it plus the clearance.
     floor: f32,
-    pub aspect: f32,
 }
 
 impl FollowCamera {
     /// Start exactly on the target (no swoop in from somewhere else).
-    pub fn new(target: RideTarget, aspect: f32, ground_at: impl Fn(Vec2) -> f32) -> FollowCamera {
+    pub fn new(target: RideTarget, ground_at: impl Fn(Vec2) -> f32) -> FollowCamera {
         let mut cam = FollowCamera {
             anchor: target.centre,
             heading: heading_of(target.facing),
-            back: target.depth * 0.5 + RIDE_BEHIND_REAR,
+            back: back_for(target),
             ground: 0.0,
             floor: 0.0,
-            aspect,
         };
         let g = ground_at(cam.eye_xz());
         cam.ground = g;
@@ -274,8 +350,7 @@ impl FollowCamera {
         self.anchor += (target.centre - self.anchor) * ease(RIDE_MOVE_RATE);
         let want = heading_of(target.facing);
         self.heading += wrap_angle(want - self.heading) * ease(RIDE_TURN_RATE);
-        let back = target.depth * 0.5 + RIDE_BEHIND_REAR;
-        self.back += (back - self.back) * ease(RIDE_MOVE_RATE);
+        self.back += (back_for(target) - self.back) * ease(RIDE_MOVE_RATE);
         let g = ground_at(self.eye_xz());
         self.ground += (g - self.ground) * ease(RIDE_GROUND_RATE);
         self.floor = g + RIDE_MIN_CLEARANCE;
@@ -332,15 +407,12 @@ impl FollowCamera {
         )
     }
 
-    pub fn view_proj(&self) -> Mat4 {
+    /// The view and projection matrix on a viewport of this `aspect` ratio.
+    pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let eye = self.eye();
         let view = look_at_mat4(eye, eye + self.forward(), Vec3::Y);
-        let proj = perspective(RIDE_FOV_Y, self.aspect, RIDE_NEAR, RIDE_FAR);
+        let proj = perspective(RIDE_FOV_Y, aspect, RIDE_NEAR, RIDE_FAR);
         proj * view
-    }
-
-    pub fn ray(&self, ndc: Vec2) -> (Vec3, Vec3) {
-        ray_through(self.view_proj(), ndc)
     }
 
     pub fn listener(&self) -> Listener {
@@ -348,7 +420,9 @@ impl FollowCamera {
         Listener {
             position: self.eye_xz(),
             right: Vec2::new(-f.y, f.x),
-            distance: RIDE_LISTEN_DISTANCE,
+            // The ride listens as if zoomed fully in: the fight is loud and
+            // close.
+            distance: MIN_DISTANCE,
         }
     }
 }
@@ -374,24 +448,12 @@ pub fn ray_hits_block(
     let local = |v: Vec2| Vec2::new(v.dot(facing), v.dot(across_axis));
     let o = local(Vec2::new(origin.x, origin.z) - centre);
     let d = local(Vec2::new(dir.x, dir.z));
-    let mut enter = 0.0f32;
-    let mut leave = f32::INFINITY;
-    for (o, d, lo, hi) in [
-        (o.x, d.x, -half.x, half.x),
-        (origin.y, dir.y, low, high),
-        (o.y, d.y, -half.y, half.y),
-    ] {
-        if d.abs() < 1e-6 {
-            if o < lo || o > hi {
-                return None;
-            }
-        } else {
-            let (a, b) = ((lo - o) / d, (hi - o) / d);
-            enter = enter.max(a.min(b));
-            leave = leave.min(a.max(b));
-        }
-    }
-    (enter <= leave).then_some(enter)
+    ray_box(
+        Vec3::new(o.x, origin.y, o.y),
+        Vec3::new(d.x, dir.y, d.y),
+        Vec3::new(-half.x, low, -half.y),
+        Vec3::new(half.x, high, half.y),
+    )
 }
 
 /// Heading angle of a facing vector (the sim's convention: 0 is +x, a quarter
@@ -417,7 +479,7 @@ mod tests {
     #[test]
     fn centre_ray_hits_focus() {
         let cam = RtsCamera::new(256.0, Vec2::new(100.0, 120.0));
-        let (o, d) = cam.ray(Vec2::ZERO);
+        let (o, d) = ActiveCamera::Rts(&cam).ray(Vec2::ZERO);
         let t = -o.y / d.y;
         let hit = o + d * t;
         assert!(
@@ -462,6 +524,11 @@ mod tests {
         assert!((scale - expected).abs() < 0.01, "{scale} vs {expected}");
     }
 
+    /// The ray through `ndc` of a ride camera on a 1.6 aspect screen.
+    fn ray(cam: &FollowCamera, ndc: Vec2) -> (Vec3, Vec3) {
+        ActiveCamera::Ride(cam, 1.6).ray(ndc)
+    }
+
     fn flat(_: Vec2) -> f32 {
         3.0
     }
@@ -477,7 +544,7 @@ mod tests {
     #[test]
     fn ride_eye_sits_behind_the_rear_rank_and_above_head_height() {
         let t = target(Vec2::new(100.0, 100.0), Vec2::X);
-        let cam = FollowCamera::new(t, 16.0 / 9.0, flat);
+        let cam = FollowCamera::new(t, flat);
         let eye = cam.eye();
         // Facing +x: behind is smaller x, same z. Half the depth plus the gap.
         assert!(
@@ -491,7 +558,7 @@ mod tests {
 
     #[test]
     fn ride_eye_stays_above_ground_even_on_a_sudden_ridge() {
-        let mut cam = FollowCamera::new(target(Vec2::new(50.0, 50.0), Vec2::X), 1.6, flat);
+        let mut cam = FollowCamera::new(target(Vec2::new(50.0, 50.0), Vec2::X), flat);
         // The ground under the eye jumps up 10 tiles; the smoothed height has
         // not caught up yet, but the eye must not be under the terrain.
         let ridge = |_: Vec2| 13.0;
@@ -511,7 +578,7 @@ mod tests {
 
     #[test]
     fn ride_follows_a_marching_block_and_converges() {
-        let mut cam = FollowCamera::new(target(Vec2::ZERO, Vec2::Y), 1.6, flat);
+        let mut cam = FollowCamera::new(target(Vec2::ZERO, Vec2::Y), flat);
         let goal = target(Vec2::new(30.0, -20.0), Vec2::new(1.0, 1.0).normalize());
         for _ in 0..600 {
             cam.update(0.016, goal, flat);
@@ -524,8 +591,8 @@ mod tests {
     fn ride_damping_does_not_depend_on_frame_rate() {
         let goal = target(Vec2::new(10.0, 5.0), Vec2::new(0.0, -1.0));
         let start = target(Vec2::ZERO, Vec2::X);
-        let mut coarse = FollowCamera::new(start, 1.6, flat);
-        let mut fine = FollowCamera::new(start, 1.6, flat);
+        let mut coarse = FollowCamera::new(start, flat);
+        let mut fine = FollowCamera::new(start, flat);
         coarse.update(0.2, goal, flat);
         for _ in 0..20 {
             fine.update(0.01, goal, flat);
@@ -540,7 +607,7 @@ mod tests {
         // (heading near -pi) is a tiny turn, not nearly a full circle.
         let a = Vec2::from_angle(3.0);
         let b = Vec2::from_angle(-3.0);
-        let mut cam = FollowCamera::new(target(Vec2::ZERO, a), 1.6, flat);
+        let mut cam = FollowCamera::new(target(Vec2::ZERO, a), flat);
         cam.update(0.016, target(Vec2::ZERO, b), flat);
         assert!(cam.forward_xz().dot(a) > 0.99, "{}", cam.forward_xz());
     }
@@ -548,8 +615,8 @@ mod tests {
     #[test]
     fn ride_ray_through_screen_centre_hits_the_ground_ahead() {
         let t = target(Vec2::new(100.0, 100.0), Vec2::X);
-        let cam = FollowCamera::new(t, 16.0 / 9.0, flat);
-        let (o, d) = cam.ray(Vec2::ZERO);
+        let cam = FollowCamera::new(t, flat);
+        let (o, d) = ray(&cam, Vec2::ZERO);
         assert!(d.y < 0.0, "looks down");
         let hit = o + d * ((3.0 - o.y) / d.y);
         // In front of the block (further along +x than its centre), on its line.
@@ -565,8 +632,8 @@ mod tests {
 
     #[test]
     fn ride_ray_right_of_centre_lands_to_the_blocks_right() {
-        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), 1.6, flat);
-        let (o, d) = cam.ray(Vec2::new(0.5, -0.3));
+        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), flat);
+        let (o, d) = ray(&cam, Vec2::new(0.5, -0.3));
         let hit = o + d * ((3.0 - o.y) / d.y);
         // Facing +x with +y up, +z is the right-hand side.
         assert!(hit.z > 100.0, "{hit}");
@@ -574,14 +641,14 @@ mod tests {
 
     #[test]
     fn ride_listener_is_the_eye_with_the_right_ear_to_the_right() {
-        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), 1.6, flat);
+        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), flat);
         let l = cam.listener();
         assert!((l.position.x - cam.eye().x).abs() < 1e-4);
         assert!(l.right.distance(Vec2::Y) < 1e-4, "{}", l.right);
         assert_eq!(l.distance, MIN_DISTANCE);
         // Same convention as the bird's-eye camera: looking north, right is +x.
         let rts = RtsCamera::new(256.0, Vec2::ZERO).listener();
-        let north = FollowCamera::new(target(Vec2::ZERO, Vec2::new(0.0, -1.0)), 1.6, flat);
+        let north = FollowCamera::new(target(Vec2::ZERO, Vec2::new(0.0, -1.0)), flat);
         assert!(north.listener().right.distance(rts.right) < 1e-4);
     }
 
@@ -597,7 +664,7 @@ mod tests {
         // actually looks east-ish.
         cam.resume_from_ride(Vec2::new(40.0, 40.0), 2.0, Vec2::X);
         assert!((cam.yaw.abs() - MAX_YAW).abs() < 1e-5);
-        let (_, d) = cam.ray(Vec2::ZERO);
+        let (_, d) = ActiveCamera::Rts(&cam).ray(Vec2::ZERO);
         assert!(d.x > 0.0, "{d}");
         // Riding south cannot be matched; the yaw still stays in range.
         cam.resume_from_ride(Vec2::new(40.0, 40.0), 2.0, Vec2::Y);
@@ -610,8 +677,8 @@ mod tests {
 
     #[test]
     fn a_low_ray_picks_the_block_it_passes_through_not_the_ground_behind() {
-        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), 1.6, flat);
-        let (o, d) = cam.ray(Vec2::ZERO);
+        let cam = FollowCamera::new(target(Vec2::new(100.0, 100.0), Vec2::X), flat);
+        let (o, d) = ray(&cam, Vec2::ZERO);
         let ground_hit = o + d * ((3.0 - o.y) / d.y);
         // A block a few tiles ahead of the eye, standing 3..4.95 high. The ray
         // goes through its body well before it reaches the ground.
@@ -654,8 +721,8 @@ mod tests {
     fn ride_view_reaches_across_the_map() {
         // A point on the far side of the map (about 360 tiles away) is
         // inside the clip volume at the screen centre height.
-        let cam = FollowCamera::new(target(Vec2::new(10.0, 128.0), Vec2::X), 1.6, flat);
-        let p = cam.view_proj() * glam::Vec4::new(250.0, 3.0, 128.0, 1.0);
+        let cam = FollowCamera::new(target(Vec2::new(10.0, 128.0), Vec2::X), flat);
+        let p = cam.view_proj(1.6) * glam::Vec4::new(250.0, 3.0, 128.0, 1.0);
         let ndc = p.xyz() / p.w;
         assert!(ndc.z > 0.0 && ndc.z < 1.0, "{ndc}");
     }
