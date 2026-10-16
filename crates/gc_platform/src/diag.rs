@@ -15,7 +15,7 @@ use std::fmt::{Arguments, Write as _};
 use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -27,7 +27,6 @@ const CRASH_REPORTS: usize = 20;
 
 static STATE: OnceLock<State> = OnceLock::new();
 static TICK: AtomicU64 = AtomicU64::new(0);
-static IN_HOOK: AtomicBool = AtomicBool::new(false);
 
 struct State {
     dir: PathBuf,
@@ -59,10 +58,7 @@ pub fn init(dir: &Path) {
     logln!("log started, unix time {}", unix_now());
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // A panic inside the hook itself must not loop.
-        if !IN_HOOK.swap(true, Ordering::SeqCst) {
-            on_panic(info);
-        }
+        on_panic(info);
         previous(info);
     }));
 }
@@ -91,14 +87,14 @@ pub fn set_tick(tick: u64) {
 pub fn log(args: Arguments<'_>) {
     eprintln!("{args}");
     let Some(state) = STATE.get() else { return };
-    // `try_lock`: a log line from inside the panic hook must not deadlock on
-    // a lock the panicking thread holds.
+    let t = state.started.elapsed().as_secs_f32();
+    // One write a line. `try_lock`: a line from inside the panic hook must
+    // not deadlock on a lock the panicking thread holds.
     if let Ok(mut file) = state.log.try_lock()
         && let Some(f) = file.as_mut()
     {
-        let t = state.started.elapsed().as_secs_f32();
         // A full disk is not worth interrupting the game for.
-        let _ = writeln!(f, "[{t:8.2}] {args}");
+        let _ = f.write_all(format!("[{t:8.2}] {args}\n").as_bytes());
     }
 }
 
@@ -128,7 +124,8 @@ fn rotate(logs: &Path) {
     }
 }
 
-fn unix_now() -> u64 {
+/// Seconds since 1970 now.
+pub fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -146,6 +143,8 @@ fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
         .location()
         .map_or_else(|| "unknown".into(), ToString::to_string);
     let thread = std::thread::current();
+    let thread = thread.name().unwrap_or("unnamed");
+    let unix_time = unix_now();
     let backtrace = Backtrace::force_capture().to_string();
     let context = state
         .context
@@ -155,25 +154,19 @@ fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
     let report = crash_report(&CrashInfo {
         message: &message,
         location: &location,
-        thread: thread.name().unwrap_or("unnamed"),
+        thread,
         backtrace: &backtrace,
         context: &context,
         tick: TICK.load(Ordering::Relaxed),
-        unix_time: unix_now(),
+        unix_time,
         log_file: &state.dir.join("logs").join("grubcraft.log"),
     });
     log(format_args!(
-        "PANIC on thread {} at {location}: {message}",
-        thread.name().unwrap_or("unnamed")
+        "PANIC on thread {thread} at {location}: {message}"
     ));
-    if let Ok(mut file) = state.log.try_lock()
-        && let Some(f) = file.as_mut()
-    {
-        let _ = f.flush();
-    }
-    match write_report(&state.dir.join("crashes"), unix_now(), &report) {
-        Ok(path) => eprintln!("grubcraft: crash report saved to {}", path.display()),
-        Err(e) => eprintln!("grubcraft: could not save a crash report: {e}"),
+    match write_report(&state.dir.join("crashes"), unix_time, &report) {
+        Ok(path) => logln!("crash report saved to {}", path.display()),
+        Err(e) => logln!("could not save a crash report: {e}"),
     }
 }
 
@@ -201,7 +194,7 @@ fn crash_report(c: &CrashInfo<'_>) -> String {
     for (k, v) in c.context {
         let _ = writeln!(s, "{k}: {v}");
     }
-    let _ = writeln!(s, "simulation tick: {}", c.tick);
+    let _ = writeln!(s, "last simulation tick: {}", c.tick);
     let _ = writeln!(s, "thread: {}", c.thread);
     let _ = writeln!(s, "location: {}", c.location);
     let _ = writeln!(s, "message: {}", c.message);
@@ -283,7 +276,7 @@ mod tests {
         });
         for want in [
             "build: 0.1.0 (abc1234)",
-            "simulation tick: 1234",
+            "last simulation tick: 1234",
             "message: boom",
             "location: src/main.rs:1:1",
             "frame 0",

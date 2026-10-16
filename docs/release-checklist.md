@@ -9,7 +9,7 @@ How to cut a release and what to test before telling friends.
 3. Tag the commit and push the tag:
    `git tag v0.2.0` then `git push origin v0.2.0`.
 4. The Release workflow builds both zips and attaches them to a GitHub Release for the tag. It takes about 15 minutes.
-5. Open the release page. Check both zips are there: `Grubcraft-macOS.zip` and `Grubcraft-Windows.zip`, and the two `-symbols.zip` files (the debug info for this build; keep them, a crash report is only readable with the symbols of the same commit).
+5. Open the release page. Check both zips are there: `Grubcraft-macOS.zip` and `Grubcraft-Windows.zip`.
 6. Run the tests below. If one fails, delete the release and the tag, fix, and tag again.
 
 Everyone in a LAN game must run the same build. Send all friends the same release.
@@ -20,7 +20,7 @@ Do this from the downloaded zip on a machine with no repo checkout. Not from `ta
 
 ### Windows
 
-- The zip holds a `Grubcraft` folder with `grubcraft.exe` and `Read me.txt`.
+- The zip holds a `Grubcraft` folder with `grubcraft.exe`, `grubcraft.pdb` and `Read me.txt`.
 - SmartScreen shows. More info, then Run anyway, starts the game.
 - The firewall question appears when hosting. Allow on Private networks.
 - The main menu, a battle with AI, and sound all work.
@@ -42,4 +42,4 @@ Do this from the downloaded zip on a machine with no repo checkout. Not from `ta
 
 ### Crash reports
 
-- Start the game from a terminal as `grubcraft --crash-test` (on a Mac: `Grubcraft.app/Contents/MacOS/grubcraft --crash-test`). It panics on purpose. The game folder (`%APPDATA%\Grubcraft` on Windows, `~/Library/Application Support/Grubcraft` on a Mac) now holds a `crashes/crash-….txt` naming the build, the GPU and a backtrace, and `logs/grubcraft.log` ends with a `PANIC` line.
+- Start the game from a terminal as `grubcraft --crash-test` (on a Mac: `Grubcraft.app/Contents/MacOS/grubcraft --crash-test`). It panics on purpose. The game folder (`%APPDATA%\Grubcraft` on Windows, `~/Library/Application Support/Grubcraft` on a Mac) now holds a `crashes/crash-….txt` naming the build, the GPU and a backtrace with function names, and `logs/grubcraft.log` ends with a `PANIC` line.

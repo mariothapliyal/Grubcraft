@@ -8,7 +8,7 @@
 //! `desync-reports` with the tick the worlds parted at.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use gc_platform::logln;
 use gc_replay::{EXTENSION, Header, Player, Replay};
@@ -24,9 +24,7 @@ pub const SAVE_EVERY: u32 = 60 * TICKS_PER_SECOND;
 
 /// `name` beside the settings file, or in the working folder.
 fn beside_settings(name: &str) -> PathBuf {
-    gc_ui::settings::settings_path()
-        .and_then(|p| p.parent().map(|d| d.join(name)))
-        .unwrap_or_else(|| PathBuf::from(name))
+    gc_ui::settings::app_dir().map_or_else(|| PathBuf::from(name), |d| d.join(name))
 }
 
 pub fn folder() -> PathBuf {
@@ -39,9 +37,7 @@ pub fn desync_folder() -> PathBuf {
 
 /// Seconds since 1970 now.
 pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+    gc_platform::diag::unix_now()
 }
 
 /// `secs` since 1970 as "2026-10-15 21:50" (UTC).

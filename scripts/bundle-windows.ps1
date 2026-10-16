@@ -1,5 +1,5 @@
 # Build the Windows package: target/Grubcraft-Windows.zip, holding a
-# Grubcraft folder with grubcraft.exe and "Read me.txt".
+# Grubcraft folder with grubcraft.exe, grubcraft.pdb and "Read me.txt".
 # The exe embeds the game data, models and sounds, so it needs no other files.
 # Run from anywhere on Windows: ./scripts/bundle-windows.ps1
 $ErrorActionPreference = 'Stop'
@@ -14,6 +14,8 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path $dir | Out-Null
 
 Copy-Item 'target/release/grubcraft.exe' $dir
+# The pdb lets a crash report name the functions on the player's machine.
+Copy-Item 'target/release/grubcraft.pdb' $dir
 # Notepad on older Windows wants CRLF line endings.
 $text = (Get-Content 'packaging/readme-windows.txt') -join "`r`n"
 Set-Content -Path (Join-Path $dir 'Read me.txt') -Value $text -Encoding UTF8
@@ -23,9 +25,3 @@ if (Test-Path $zip) { Remove-Item -Force $zip }
 # Zipping the folder itself keeps "Grubcraft/" as the top level of the zip.
 Compress-Archive -Path $dir -DestinationPath $zip
 Write-Host "Built $zip"
-
-# The debug info stays out of the player zip. Keep it to read crash reports
-# from this build.
-$symbols = 'target/Grubcraft-Windows-symbols.zip'
-if (Test-Path $symbols) { Remove-Item -Force $symbols }
-Compress-Archive -Path 'target/release/grubcraft.pdb' -DestinationPath $symbols

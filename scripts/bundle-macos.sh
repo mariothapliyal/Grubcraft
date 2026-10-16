@@ -53,13 +53,4 @@ mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/Grubcraft.app"
 cp packaging/readme-macos.txt "$STAGE/Read me.txt"
 (cd "$STAGE" && rm -f ../Grubcraft-macOS.zip && ditto -c -k . ../Grubcraft-macOS.zip)
-# The debug info stays out of the player zip. Keep it, one dSYM per
-# architecture, to read crash reports from this build.
-SYMBOLS=target/macos-symbols
-rm -rf "$SYMBOLS"
-mkdir -p "$SYMBOLS"
-for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  ditto "target/$target/release/grubcraft.dSYM" "$SYMBOLS/grubcraft-$target.dSYM"
-done
-(cd "$SYMBOLS" && rm -f ../Grubcraft-macOS-symbols.zip && ditto -c -k . ../Grubcraft-macOS-symbols.zip)
 echo "Built target/Grubcraft-macOS.zip ($(lipo -archs "$APP/Contents/MacOS/grubcraft"))"

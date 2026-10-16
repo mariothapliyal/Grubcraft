@@ -311,10 +311,11 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ## Diagnostics
 
-A crash on a friend's machine has to leave something to read, because stderr is invisible from a Finder-launched app or a double-clicked exe. `gc_platform::diag` (built 2026-10-16, review item R6) does three things, all in the per-user folder that holds `settings.ron`:
+A crash on a friend's machine has to leave something to read, because stderr is invisible from a Finder-launched app or a double-clicked exe. `gc_platform::diag` does three things, all in the per-user folder that holds `settings.ron`:
 - **A log file.** `logln!` is `eprintln!` that also writes `logs/grubcraft.log`, each line stamped with seconds since start. The last four runs are kept (`grubcraft.1.log` is the run before). Startup failures, GPU and audio notes, desync reports and save errors all go through it.
 - **A crash report.** `diag::init` installs a panic hook. A panic writes `crashes/crash-<unix time>.txt` with the message, location, thread, backtrace, the build (version and commit), the game data hash, the GPU, the operating system and the simulation tick; the newest 20 are kept. The release profile aborts on panic, but the hook runs first. `grubcraft --crash-test` panics once the game has started, to check the whole chain.
-- **Readable backtraces.** Release builds keep function names and line tables, and put the bulky debug info in a separate file (`.dSYM` on macOS, `.pdb` on Windows). The bundle scripts leave it out of the player zip and CI keeps it as the `Grubcraft-macOS-symbols` and `Grubcraft-Windows-symbols` artifacts (attached to a release too). To read a crash report from a friend's build, take the symbols from the same commit; the report names it.
+- **Readable backtraces.** Release builds keep the symbol table (about 4 MB), so the backtrace names the functions but gives no line numbers; debug info would make the binary 49 MB instead of 19. On Windows the names come from `grubcraft.pdb`, which the Windows zip carries beside the exe.
+- **Limits.** Only Rust panics are covered. A fault inside a graphics driver or an abort from the allocator leaves just the log. The tick in a report is the last one simulated, so after a match ends it is stale.
 
 ## Platform specifics
 
