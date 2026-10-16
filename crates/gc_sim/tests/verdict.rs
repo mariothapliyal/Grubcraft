@@ -3,7 +3,8 @@
 use gc_fixed::{Angle, FxVec2};
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::{
-    Capacities, Command, Cover, HOLD_TICKS, MatchSetup, PlayerCommand, PlayerId, Verdict, World,
+    Capacities, Command, Cover, HOLD_TICKS, MatchSetup, PlayerCommand, PlayerId, TICKS_PER_SECOND,
+    Verdict, World,
 };
 
 fn world(cover: &[u8]) -> World {
@@ -68,7 +69,8 @@ fn the_field_held_long_enough_decides_the_battle_for_good() {
     // Two armies in the open, in each other's sight.
     assert_eq!(world.holding_the_field(), None);
     world.tick(&remove_all(&world, 1));
-    let since = world.tick_count();
+    // The field is looked at once a second.
+    let since = world.tick_count().next_multiple_of(TICKS_PER_SECOND);
     while world.verdict().is_none() {
         assert!(
             world.tick_count() < since + HOLD_TICKS,

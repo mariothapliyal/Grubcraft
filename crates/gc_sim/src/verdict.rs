@@ -4,7 +4,7 @@
 //!
 //! A side wins by **holding the field**: it still has regiments fighting,
 //! and none of its enemies' fighting regiments are in its sight, for
-//! [`HOLD_TICKS`] in a row. Allies share the hold. Once decided, the
+//! [`HOLD_TICKS`] in a row (looked at once a second). Allies share the hold. Once decided, the
 //! verdict stands for the rest of the match; the battle itself goes on.
 
 use crate::hash::StateHasher;
@@ -45,7 +45,8 @@ impl Judge {
         vision: &Vision,
         now: u32,
     ) {
-        if self.decided.is_some() {
+        // Once a second is plenty for a ruling that needs ten.
+        if self.decided.is_some() || !now.is_multiple_of(TICKS_PER_SECOND) {
             return;
         }
         self.held = match (self.held, holding_the_field(regs, stances, vision)) {

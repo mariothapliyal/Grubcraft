@@ -519,7 +519,9 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
     let result = if format >= 8 {
         match maybe(r)? {
             Some(holder) => Some(Verdict {
-                holder: u8::try_from(holder).ok()?,
+                holder: u8::try_from(holder)
+                    .ok()
+                    .filter(|&p| usize::from(p) < gc_sim::MAX_PARTIES)?,
                 tick: r.var_as()?,
             }),
             None => None,

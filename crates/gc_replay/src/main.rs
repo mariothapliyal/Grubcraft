@@ -202,7 +202,11 @@ fn info(file: &Path) -> bool {
         None => println!("  sim version unknown (before format 7)"),
     }
     if let Some(v) = h.result {
-        println!("  party {} held the field at {}", v.holder, clock(v.tick));
+        println!(
+            "  party {} held the field, decided {} into the match",
+            v.holder,
+            clock(v.tick)
+        );
     }
     if let Some(tick) = h.desync_tick {
         println!("  desync report: out of sync with the host from tick {tick}");
