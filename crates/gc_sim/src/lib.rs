@@ -54,6 +54,12 @@ pub const TICKS_PER_SECOND: u32 = 20;
 /// Player slot index (0..=3 for four players; more reserved for neutrals).
 pub type PlayerId = u8;
 
+/// Most parties (players, and later other factions) a match may have,
+/// numbered from 0. Combat and sight keep one slot each (8-bit masks);
+/// widening them is engine hook 8 (docs/18-ai.md). Regiments for a party
+/// past this are refused.
+pub const MAX_PARTIES: usize = 8;
+
 /// Fixed capacities reserved when a match starts.
 #[derive(Clone, Copy, Debug)]
 pub struct Capacities {
@@ -527,6 +533,7 @@ pub struct World {
 
 impl World {
     pub fn new(setup: &MatchSetup) -> World {
+        assert!(setup.teams.len() <= MAX_PARTIES, "too many parties");
         let stances = Stances::from_teams(setup.teams);
         let terrain = Terrain::new(&setup.ground, setup.map_tiles);
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
@@ -670,6 +677,9 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
+                if usize::from(pc.player) >= MAX_PARTIES {
+                    return false;
+                }
                 // Inside your zone while deploying, if you have one.
                 if self.deploying()
                     && self

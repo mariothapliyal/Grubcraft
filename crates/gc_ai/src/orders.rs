@@ -42,7 +42,7 @@ pub struct Want {
     pub priority: u8,
     /// Orders in the same nonzero group are given together and cost one
     /// order between them.
-    pub group: u8,
+    pub group: u32,
 }
 
 /// Moves to points closer than this to the last one sent aren't re-sent.
@@ -56,10 +56,10 @@ const SETTLE: f32 = 1.5;
 const ARRIVED: f32 = 2.0;
 /// Ticks after an order lands before checking it is being carried out.
 const GRACE_TICKS: u32 = 20;
-/// The group for orders to attack `target`: 2 to 63 (0 is no group and 1
-/// is the formation's moves).
-pub fn attack_group(target: RegimentHandle) -> u8 {
-    2 + (target.index % 62) as u8
+/// The group for orders to attack `target`, one per target (0 is no group
+/// and 1 is the formation's moves).
+pub fn attack_group(target: RegimentHandle) -> u32 {
+    2 + target.index
 }
 
 /// Orders at this priority or below are routine: they wait while attention
@@ -137,7 +137,8 @@ impl Orders {
         self.last_tick = Some(now);
         // Most urgent first; among equals, the order they were decided.
         wants.sort_by_key(|w| std::cmp::Reverse(w.priority));
-        let mut paid_groups: u64 = 0;
+        // Groups already paid for this tick: a handful at most.
+        let mut paid_groups: Vec<u32> = Vec::new();
         for w in wants.iter() {
             let i = w.regiment.index as usize;
             if self.sent.len() <= i {
@@ -159,7 +160,7 @@ impl Orders {
             if !needed {
                 continue;
             }
-            let free = w.group != 0 && paid_groups & (1 << (w.group % 64)) != 0;
+            let free = w.group != 0 && paid_groups.contains(&w.group);
             if !free {
                 // Routine orders leave some attention in hand for urgent ones.
                 let keep = if w.priority <= ROUTINE {
@@ -174,7 +175,7 @@ impl Orders {
                 self.attention -= 1.0;
                 self.spent += 1;
                 if w.group != 0 {
-                    paid_groups |= 1 << (w.group % 64);
+                    paid_groups.push(w.group);
                 }
             }
             let retries = match prev {
@@ -321,5 +322,22 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
             pace: to_fx(pace),
         },
         Act::Attack(target) => Command::Attack { regiment, target },
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn each_target_has_its_own_attack_group() {
+        let h = |index| RegimentHandle {
+            index,
+            generation: 0,
+        };
+        // Once they shared a group 62 slots apart, so one attack rode free
+        // on another's order.
+        assert_ne!(attack_group(h(3)), attack_group(h(65)));
+        assert!(attack_group(h(0)) > 1);
     }
 }
