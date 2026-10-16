@@ -142,6 +142,40 @@ pub struct RenderStats {
     pub dropped: u32,
 }
 
+/// What a frame draws, for leaving out the soldiers nobody would see: the
+/// camera's view and, with shadows on, the sun's shadow map (a soldier
+/// outside the screen can still cast onto it).
+#[derive(Clone, Copy, Debug)]
+pub struct Cull {
+    camera: [Vec4; 6],
+    sun: Option<[Vec4; 6]>,
+}
+
+impl Cull {
+    /// Sees everything; for before the first frame.
+    pub const EVERYTHING: Cull = Cull {
+        camera: [Vec4::new(0.0, 0.0, 0.0, 1.0); 6],
+        sun: None,
+    };
+
+    fn new(camera: Mat4, sun: Option<Mat4>) -> Cull {
+        Cull {
+            camera: unit_planes(frustum_planes(camera)),
+            sun: sun.map(|m| unit_planes(frustum_planes(m))),
+        }
+    }
+
+    /// Whether a sphere of `radius` around `center` touches what is drawn.
+    pub fn sees(&self, center: Vec3, radius: f32) -> bool {
+        let inside = |planes: &[Vec4; 6]| {
+            planes
+                .iter()
+                .all(|p| p.truncate().dot(center) + p.w >= -radius)
+        };
+        inside(&self.camera) || self.sun.as_ref().is_some_and(inside)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Globals {
@@ -602,6 +636,18 @@ impl Renderer {
 
     pub fn stats(&self) -> RenderStats {
         self.stats
+    }
+
+    /// What a frame seen through `view_proj` will draw, for [`Cull::sees`].
+    pub fn cull(&self, view_proj: Mat4) -> Cull {
+        let sun = self
+            .terrain
+            .as_ref()
+            .filter(|_| self.options.shadows)
+            .map(|t| {
+                shadows::sun_view_proj(view_proj, SUN.normalize(), t.tiles as f32, t.max_height).0
+            });
+        Cull::new(view_proj, sun)
     }
 
     /// GPU memory allocated by the renderer itself, in bytes.
@@ -1394,6 +1440,15 @@ fn frustum_planes(view_proj: Mat4) -> [Vec4; 6] {
     [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2]
 }
 
+/// `planes` scaled so each normal has length one, which makes the distance
+/// to a plane a distance in tiles.
+fn unit_planes(planes: [Vec4; 6]) -> [Vec4; 6] {
+    planes.map(|p| {
+        let len = p.truncate().length();
+        if len > 0.0 { p / len } else { p }
+    })
+}
+
 fn aabb_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
     planes.iter().all(|p| {
         // The box corner furthest along the plane normal.
@@ -1447,6 +1502,34 @@ mod tests {
             Vec3::new(-5.0, 0.0, 20.0),
             Vec3::new(5.0, 2.0, 30.0)
         ));
+    }
+
+    #[test]
+    fn soldiers_off_screen_are_culled_unless_the_sun_sees_them() {
+        use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
+        let view = look_at_mat4(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::new(0.0, 0.0, -10.0),
+            Vec3::Y,
+        );
+        let proj = perspective(1.0, 1.5, 0.5, 500.0);
+        let on_screen = Vec3::new(0.0, 1.0, -25.0);
+        let behind = Vec3::new(0.0, 1.0, 25.0);
+        let cull = Cull::new(proj * view, None);
+        assert!(cull.sees(on_screen, 1.0));
+        assert!(!cull.sees(behind, 1.0));
+        // A soldier's size counts: its edge reaches the screen.
+        let beside = Vec3::new(-30.0, 1.0, -10.0);
+        assert!(!cull.sees(beside, 1.0));
+        assert!(cull.sees(beside, 20.0));
+        // Behind the camera but inside the sun's box: still drawn, for the
+        // shadow it casts.
+        let sun_view = look_at_mat4(Vec3::new(0.0, 50.0, 30.0), Vec3::ZERO, Vec3::Y);
+        let sun_proj =
+            glam::camera::rh::proj::directx::orthographic(-40.0, 40.0, -40.0, 40.0, 0.0, 200.0);
+        let cull = Cull::new(proj * view, Some(sun_proj * sun_view));
+        assert!(cull.sees(behind, 1.0));
+        assert!(Cull::EVERYTHING.sees(behind, 0.0));
     }
 
     #[test]
