@@ -111,6 +111,7 @@ impl World {
         slot: Option<RegimentHandle>,
     ) -> Option<RegimentHandle> {
         let stats = *self.units.get(s.unit as usize)?;
+        // The owner is checked before a slot is claimed for it.
         if s.models == 0 || usize::from(s.owner) >= crate::MAX_PARTIES {
             return None;
         }

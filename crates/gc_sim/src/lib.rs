@@ -677,9 +677,6 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
-                if usize::from(pc.player) >= MAX_PARTIES {
-                    return false;
-                }
                 // Inside your zone while deploying, if you have one.
                 if self.deploying()
                     && self

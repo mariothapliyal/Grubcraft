@@ -47,6 +47,8 @@ use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Parties whose sight is tracked.
 pub const PARTIES: usize = crate::MAX_PARTIES;
+// Ally masks are a byte per party: widen them before raising the limit.
+const _: () = assert!(PARTIES <= 8);
 /// Spotting distances, edge to edge, in tiles.
 pub const GRASS_STILL: Fx = Fx::from_int(3);
 pub const WOOD_STILL: Fx = Fx::from_int(4);
