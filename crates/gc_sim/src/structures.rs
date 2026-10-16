@@ -394,6 +394,23 @@ pub struct Structures {
     pub(crate) fallen: Vec<StructureHandle>,
 }
 
+/// The match's building table, each made sane, and with no tier upgrade
+/// from a building of another footprint (it would grow over its ground).
+fn sanitized(buildings: &[BuildingStats]) -> Vec<BuildingStats> {
+    let mut table: Vec<BuildingStats> = buildings.iter().map(|b| b.sanitized()).collect();
+    for i in 0..table.len() {
+        let size = |b: &BuildingStats| (b.width, b.depth);
+        if let Some(from) = table[i].upgrades_from
+            && table
+                .get(usize::from(from))
+                .is_none_or(|f| size(f) != size(&table[i]))
+        {
+            table[i].upgrades_from = None;
+        }
+    }
+    table
+}
+
 impl Structures {
     pub(crate) fn new(
         buildings: &[BuildingStats],
@@ -403,7 +420,7 @@ impl Structures {
     ) -> Structures {
         let n = capacity as usize;
         Structures {
-            buildings: buildings.iter().map(|b| b.sanitized()).collect(),
+            buildings: sanitized(buildings),
             generation: vec![0; n],
             owner: vec![0; n],
             building: vec![0; n],
@@ -481,7 +498,7 @@ impl Structures {
                 100
             } else {
                 // Never 100 until it is.
-                (99 - self.work_left[i] * 99 / self.work_full[i].max(1)) as u8
+                (99 - u64::from(self.work_left[i]) * 99 / u64::from(self.work_full[i].max(1))) as u8
             },
             upgrading: self.upgrade_to[i].map(|to| {
                 let done = self.upgrade_full[i] - self.upgrade_left[i];

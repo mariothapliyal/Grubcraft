@@ -1135,10 +1135,11 @@ impl World {
         // Taken out and put back, so the list keeps its room.
         let trained = core::mem::take(&mut conquest.production.trained);
         for t in &trained {
-            let Some(stats) = self.units.get(usize::from(t.unit)) else {
-                continue;
-            };
-            let Some(h) = self.regiments.spawn(t.owner, t.unit, t.at, SOUTH, stats) else {
+            let spawned = self
+                .units
+                .get(usize::from(t.unit))
+                .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, SOUTH, stats));
+            let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
                 let u = conquest.unit(t.unit);
                 conquest

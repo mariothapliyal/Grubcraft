@@ -184,6 +184,12 @@ impl Production {
                 let room = room.get_or_insert_with(|| {
                     let mut taken = used.take().map_or([0; MAX_PARTIES], |f| f());
                     self.in_training(structures, units, &mut taken);
+                    // Out this tick, but not on the field until it ends.
+                    for t in &self.trained {
+                        if let Some(n) = taken.get_mut(usize::from(t.owner)) {
+                            *n += supply(units, t.unit);
+                        }
+                    }
                     core::array::from_fn(|p| {
                         structures
                             .supply_cap(p as PlayerId)

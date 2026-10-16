@@ -687,21 +687,102 @@ fn tempo_scales_training_and_upgrades() {
 
 #[test]
 fn training_is_in_the_state_hash() {
+    let production = gc_sim::SYSTEMS
+        .iter()
+        .position(|&s| s == "production")
+        .unwrap();
     let mut a = conquest(100);
     let mut b = conquest(100);
     let hall = put_up(&mut a, 0, HALL, 20, 20);
     put_up(&mut b, 0, HALL, 20, 20);
     assert_eq!(a.state_hash(), b.state_hash());
-    assert!(order(
-        &mut a,
-        0,
-        Command::Train {
-            structure: hall,
-            unit: WORKER
-        }
-    ));
-    b.tick(&[]);
-    assert_ne!(a.state_hash(), b.state_hash());
+    // A rally point alone moves nothing else.
+    let rally = |w: &mut World, x| {
+        order(
+            w,
+            0,
+            Command::Rally {
+                structure: hall,
+                at: FxVec2::from_ints(x, 40),
+            },
+        )
+    };
+    assert!(rally(&mut a, 40));
+    assert!(rally(&mut b, 41));
+    let (ha, hb) = (a.system_hashes(), b.system_hashes());
+    assert_ne!(ha[production], hb[production]);
+    let others = |h: [u64; gc_sim::SYSTEMS.len()]| {
+        let mut h = h;
+        h[production] = 0;
+        h
+    };
+    assert_eq!(others(ha), others(hb));
+}
+
+#[test]
+fn one_finishing_makes_no_room_for_another_in_the_same_tick() {
+    let mut w = conquest(100);
+    put_up(&mut w, 0, HALL, 20, 20);
+    let first = put_up(&mut w, 0, BARRACKS, 30, 20);
+    let second = put_up(&mut w, 0, BARRACKS, 30, 30);
+    for i in 0..8 {
+        spawn(&mut w, 0, WORKER, 45, 10 + 2 * i);
+    }
+    let train = |w: &mut World, at| {
+        order(
+            w,
+            0,
+            Command::Train {
+                structure: at,
+                unit: SPEARS,
+            },
+        )
+    };
+    // 8 and 2 fill the hall's 10: the first starts, and the second waits
+    // until the first's spearmen are out and counted.
+    assert!(train(&mut w, first));
+    assert!(train(&mut w, second));
+    assert!(train(&mut w, second));
+    for _ in 0..2000 {
+        w.tick(&[]);
+        let b = bank(&w);
+        assert!(
+            b.supply_used <= b.supply_cap,
+            "{} of {}",
+            b.supply_used,
+            b.supply_cap
+        );
+    }
+    assert_eq!(count(&w, SPEARS), 1);
+}
+
+#[test]
+fn an_upgrade_of_another_footprint_is_no_upgrade() {
+    let mut table = buildings();
+    table[usize::from(KEEP)].width = 4;
+    let side = 64 * CELLS_PER_TILE as usize;
+    let nav = vec![1u8; side * side];
+    let mut w = World::new(&MatchSetup {
+        seed: 6,
+        capacities: Capacities { regiments: 64 },
+        units: &units(),
+        map_tiles: 64,
+        nav: &nav,
+        teams: &[],
+        ground: gc_sim::Ground::FLAT,
+        champions: false,
+    });
+    let mut start = [(0, 0); gc_sim::MAX_PARTIES];
+    start[0] = (2000, 500);
+    assert!(w.conquest(&ConquestSetup {
+        buildings: &table,
+        units: &conquest_units(),
+        structures: 32,
+        start,
+        ..ConquestSetup::default()
+    }));
+    let hall = put_up(&mut w, 0, HALL, 20, 20);
+    assert!(!order(&mut w, 0, Command::Upgrade { structure: hall }));
 }
 
 #[test]
