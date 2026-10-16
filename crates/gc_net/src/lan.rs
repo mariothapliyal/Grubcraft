@@ -105,11 +105,14 @@ pub struct Identity {
     pub version: String,
     /// Hash of the game data; a joiner whose data differs is refused.
     pub data_hash: u64,
-    /// The seed of this machine's match world and map.
+    /// The seed of this machine's match world (the map has its own, in
+    /// the lobby settings).
     pub seed: u64,
-    /// Hash of this machine's map (its walkable ground), so a joiner whose
-    /// map came out differently finds out before the match, not as a desync.
-    pub map_hash: u64,
+    /// The fingerprint of the map a match with these settings and this
+    /// many players is played on (its walkable ground), so a joiner whose
+    /// map came out differently finds out before the match, not as a
+    /// desync. The host works it out when the match starts.
+    pub map_hash: fn(&LobbySettings, usize) -> u64,
 }
 
 /// Things that happen during a match, for the game to show.
@@ -182,6 +185,8 @@ struct HostGame {
     history: Vec<Vec<PlayerCommand>>,
     /// The match as it started, to tell a player who rejoins.
     start: MatchStart,
+    /// The fingerprint of its map ([`Identity::map_hash`]).
+    map_hash: u64,
     /// Each player's lobby slot.
     slots: Vec<usize>,
     /// The address each human player plays from: only that computer may
@@ -1068,7 +1073,6 @@ impl Lan {
     /// and every turn so far, and catch up from the first. Returns false
     /// when there is no such place.
     fn rejoin(&mut self, index: usize, name: &str, now: Instant) -> bool {
-        let map_hash = self.id.map_hash;
         let Role::Host(h) = &mut self.role else {
             return false;
         };
@@ -1108,7 +1112,7 @@ impl Lan {
         peer.name.clone_from(&g.start.players[player].name);
         peer.drop_at = None;
         peer.loaded = true;
-        peer.link.send(&g.start_msg(map_hash, player as PlayerId));
+        peer.link.send(&g.start_msg(player as PlayerId));
         for (turn, commands) in g.history.iter().enumerate() {
             peer.link.send(&Msg::Bundle {
                 turn: turn as u32,
@@ -1546,10 +1550,10 @@ fn adapt_delay(h: &mut Host, length: Duration) {
 impl HostGame {
     /// The match's start as player `you` is told it, with the input delay
     /// as it is now.
-    fn start_msg(&self, map_hash: u64, you: PlayerId) -> Msg {
+    fn start_msg(&self, you: PlayerId) -> Msg {
         Msg::Start {
             seed: self.start.seed.unwrap_or_default(),
-            map_hash,
+            map_hash: self.map_hash,
             settings: self.start.settings.clone(),
             players: self.start.players.clone(),
             you,
@@ -1857,6 +1861,7 @@ impl Network for Lan {
             lower_votes: 0,
             waiting_for: String::new(),
             history: Vec::new(),
+            map_hash: map_hash(&start.settings, start.players.len()),
             start: start.clone(),
             slots: (0..MAX_PLAYERS)
                 .filter(|&i| h.lobby.slots[i].occupied())
@@ -1874,7 +1879,7 @@ impl Network for Lan {
             if let Some(ip) = g.ips.get_mut(usize::from(you)) {
                 *ip = Some(p.addr.ip());
             }
-            p.link.send(&g.start_msg(map_hash, you));
+            p.link.send(&g.start_msg(you));
         }
         h.game = Some(g);
         self.flush(self.net.now(), true);

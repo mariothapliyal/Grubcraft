@@ -34,12 +34,55 @@
 pub mod def;
 mod generate;
 mod map;
+pub mod recipe;
 mod stamp;
 pub mod view;
 
 pub use def::{Kind, MapDef, Pos, SizeClass, Symmetry};
 pub use generate::{START_PLATEAUS, plateaus};
 pub use map::{Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash};
+
+/// The maps a Field Battle can be played on, in the lobby's order: the
+/// seeded map, a random map from each recipe, and a random recipe.
+pub const FIELD_MAPS: [&str; 6] = [
+    "Proving Ground",
+    "Random: Pass",
+    "Random: Ford",
+    "Random: Hill",
+    "Random: Open",
+    "Random: Any",
+];
+
+/// Tiles a side for a Field Battle of `players`: 256, or 320 for five or
+/// six, whose Grand Battle armies don't fit on 256.
+pub fn field_tiles(players: usize) -> u32 {
+    if players > 4 { 320 } else { 256 }
+}
+
+/// The Field Battle map for a lobby choice (an index into [`FIELD_MAPS`]),
+/// `tiles` a side ([`field_tiles`]) and the map seed. The same three give
+/// the same map on every machine. A random map whose starts aren't all
+/// joined by walkable ground is made again from the next seed (none of
+/// the seeds the tests sweep need it), so nobody is shown a broken one.
+pub fn field_map(choice: usize, tiles: u32, seed: u64) -> Map {
+    let recipe = match choice {
+        1..=4 => recipe::Recipe::ALL[choice - 1],
+        5 => recipe::Recipe::ALL[(seed % 4) as usize],
+        _ => return Map::generate(seed, tiles),
+    };
+    let make = |k| {
+        Map::from_def(&recipe::describe(
+            recipe,
+            tiles as i32,
+            seed.wrapping_add(k),
+        ))
+    };
+    let first = make(0);
+    if first.starts_joined() {
+        return first;
+    }
+    (1..8).map(make).find(Map::starts_joined).unwrap_or(first)
+}
 
 /// The maps built into the game, by file name without `.ron`, in the
 /// order the lobby lists them.
@@ -96,5 +139,46 @@ mod tests {
         let hash = |name| Map::from_def(&shipped(name).unwrap()).hash();
         assert_eq!(hash("ribcage_pass"), 0x70a5_cdda_6c76_7fb4);
         assert_eq!(hash("four_teeth"), 0x7628_f079_c3f5_f126);
+    }
+
+    /// Choice 0 is the seeded map, as it has always been.
+    #[test]
+    fn field_map_choice_0_is_the_seeded_map() {
+        for seed in [1, 7] {
+            assert_eq!(
+                field_map(0, 256, seed).hash(),
+                Map::generate(seed, 256).hash(),
+                "seed {seed}"
+            );
+        }
+    }
+
+    /// Every lobby choice, at both Field Battle sizes, makes a map whose
+    /// starts can all walk to each other and that is the size asked for.
+    #[test]
+    fn every_field_map_joins_its_starts() {
+        for choice in 0..6 {
+            for tiles in [256, 320] {
+                for seed in 1..=4 {
+                    let map = field_map(choice, tiles, seed);
+                    let what = format!("choice {choice}, {tiles} tiles, seed {seed}");
+                    assert!(map.starts_joined(), "{what}");
+                    assert_eq!(map.tiles, tiles, "{what}");
+                }
+            }
+        }
+    }
+
+    /// Like the shipped maps' fingerprints: the random Field Battle maps
+    /// build the same bytes on every machine. The recipes and the stamping
+    /// set these numbers, so a change to either changes every random map.
+    /// Update the numbers only when that is meant.
+    #[test]
+    fn random_field_maps_are_the_same_on_every_machine() {
+        let hash = |choice| field_map(choice, 256, 7).hash();
+        assert_eq!(hash(1), 0x6ec3_affb_885e_d2e6);
+        assert_eq!(hash(2), 0x9e0b_d1c1_1491_b054);
+        assert_eq!(hash(3), 0xafeb_ffb7_aa74_4896);
+        assert_eq!(hash(4), 0x5e4b_ce70_42e9_fb7a);
     }
 }

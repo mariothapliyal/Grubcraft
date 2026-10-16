@@ -242,6 +242,40 @@ impl Map {
         starts.into_iter().map(|o| o.at).collect()
     }
 
+    /// Whether an army can walk from every start to every other, keeping
+    /// a tile clear of blocked ground as regiments do.
+    pub fn starts_joined(&self) -> bool {
+        let n = self.tiles as i32;
+        let ground = self.tile_ground(&self.nav_costs());
+        let open = |x: i32, y: i32| {
+            (-1..=1).all(|dy| {
+                (-1..=1).all(|dx| {
+                    let (px, py) = (x + dx, y + dy);
+                    (0..n).contains(&px)
+                        && (0..n).contains(&py)
+                        && ground[(py * n + px) as usize] != Ground::Blocked
+                })
+            })
+        };
+        let starts = self.starts();
+        let Some(&first) = starts.first() else {
+            return true;
+        };
+        let mut seen = vec![false; ground.len()];
+        let mut todo = vec![first];
+        seen[(first.1 * n + first.0) as usize] = true;
+        while let Some((x, y)) = todo.pop() {
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (px, py) = (x + dx, y + dy);
+                if open(px, py) && !seen[(py * n + px) as usize] {
+                    seen[(py * n + px) as usize] = true;
+                    todo.push((px, py));
+                }
+            }
+        }
+        starts.iter().all(|&(x, y)| seen[(y * n + x) as usize])
+    }
+
     /// The fingerprint machines compare before a network match
     /// ([`map_hash`] over this map's grid and ground).
     pub fn hash(&self) -> u64 {

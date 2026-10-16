@@ -8,7 +8,7 @@
 //! Everything is integer arithmetic, so every machine builds the same bytes
 //! from the same file.
 
-use crate::def::{CoverKind, MapDef, Mode, Pos, Shape, Symmetry};
+use crate::def::{CoverKind, MapDef, Mode, Noise, Pos, Shape, Symmetry};
 use crate::map::{Map, Placed, SAMPLES_PER_TILE, sample_of_sim};
 use gc_fixed::isqrt_u64;
 use gc_sim::terrain::HEIGHT_UNITS;
@@ -135,8 +135,12 @@ impl Map {
         let side = i64::from(tiles) * UNIT + 1;
         let last = side - 1;
         let at = |x: i64, y: i64| (y * side + x) as usize;
-        // Heights in simulation units, one per sample.
+        // Heights in simulation units, one per sample: the base, the
+        // rolling ground, then the stamps.
         let mut field = vec![def.base * SIXTEENTH; (side * side) as usize];
+        if let Some(noise) = def.noise {
+            roll(&mut field, noise, def.symmetry, side);
+        }
         // Each stamp's strength per sample, the strongest of its copies;
         // cleared again as the stamp is applied.
         let mut strength = vec![0u16; field.len()];
@@ -205,6 +209,35 @@ impl Map {
         map.objects = place_objects(def, tiles);
         map.set_pieces.clone_from(&def.set_pieces);
         map
+    }
+}
+
+/// Octaves of rolling ground: each finer and half as strong.
+const NOISE_OCTAVES: usize = 4;
+
+/// Add the rolling ground to the heights: noise averaged over the map's
+/// rotations, so it is as symmetric as the stamps.
+fn roll(field: &mut [i32], noise: Noise, symmetry: Symmetry, side: i64) {
+    let fbm = crate::generate::Noise { seed: noise.seed };
+    let one = crate::generate::ONE;
+    let last = side - 1;
+    let per_swell = UNIT * i64::from(noise.scale.max(1));
+    let copies = symmetry.copies() as i64;
+    let turns = step_turns(symmetry);
+    for y in 0..side {
+        for x in 0..side {
+            let mut sum = 0;
+            let mut p = (x, y);
+            for _ in 0..copies {
+                sum += fbm.fbm(p.0 * one / per_swell, p.1 * one / per_swell, NOISE_OCTAVES);
+                for _ in 0..turns {
+                    p = (last - p.1, p.0);
+                }
+            }
+            let v = sum / copies - one / 2;
+            let rise = i64::from(noise.amplitude * SIXTEENTH) * v / one;
+            field[(y * side + x) as usize] += rise as i32;
+        }
     }
 }
 

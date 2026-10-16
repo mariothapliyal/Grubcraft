@@ -287,7 +287,7 @@ struct Options {
 
 fn parse_args() -> Options {
     let mut opts = Options {
-        seed: 0x6772_7562,
+        seed: gc_ui::lobby::DEFAULT_MAP_SEED,
         map: None,
         sandbox: false,
         frames: None,
@@ -461,6 +461,9 @@ struct Running {
     renderer: Renderer,
     camera: RtsCamera,
     heightmap: Map,
+    /// Which Field Battle map `heightmap` is; `None` for one opened with
+    /// `--map`.
+    map_key: Option<MapKey>,
     world: World,
     /// Orders the other sides about; None in an empty-field sandbox or a
     /// lobby battle.
@@ -1050,11 +1053,7 @@ impl App {
             version: online::version(),
             data_hash: game_data.short_hash(),
             seed: opts.seed,
-            // Network matches play on the seeded map, whatever `--map` opened.
-            map_hash: match heightmap.seed {
-                Some(_) => gc_map::map_hash(&nav, &heightmap.ground()),
-                None => Map::generate(opts.seed, MAP_TILES).hash(),
-            },
+            map_hash: battle_map_hash,
         });
         let mut menu = Menu::new(lan, settings, settings_path, &online::version());
         menu.set_roster(roster);
@@ -1075,6 +1074,11 @@ impl App {
             renderer,
             camera,
             heightmap,
+            map_key: opts.map.is_none().then_some(MapKey {
+                choice: 0,
+                tiles: MAP_TILES,
+                seed: opts.seed,
+            }),
             world,
             drill,
             minds,
@@ -2706,20 +2710,31 @@ impl Running {
         if net_seed.is_some() {
             self.unit_stats.clone_from(&self.data_stats);
         }
-        // Field Battles play on the seeded map (a network match on the
-        // host's seed), and a replay is shown on the map made from its seed
+        // A Field Battle plays on the map the lobby picked, its world seeded
+        // with the map's seed (the same on every machine). A replay is shown
+        // on the map it was played on, made again from its choice and seed,
         // and plays on the map it stored. A described map opened with
         // `--map` is for looking round in the sandbox; the first battle or
         // replay leaves it.
-        let seeded = match &kind {
-            MatchKind::Battle(_) => Some(net_seed.unwrap_or(self.seed)),
-            MatchKind::Replay(r) => Some(r.seed),
+        let key = match &kind {
+            MatchKind::Battle(setup) => {
+                self.seed = setup.settings.map_seed;
+                Some(MapKey::of_battle(&setup.settings, setup.players.len()))
+            }
+            MatchKind::Replay(r) => {
+                let (choice, seed) = r.header.map.map_or((0, r.seed), |(c, s)| (c.into(), s));
+                Some(MapKey {
+                    choice,
+                    tiles: r.map_tiles,
+                    seed,
+                })
+            }
             MatchKind::Sandbox => None,
         };
-        if let Some(seed) = seeded
-            && self.heightmap.seed != Some(seed)
+        if let Some(key) = key
+            && self.map_key != Some(key)
         {
-            self.use_map(seed);
+            self.use_map(key);
         }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
@@ -2847,11 +2862,16 @@ impl Running {
         }
     }
 
-    /// Generate the seeded map for `seed` and put it on screen.
-    fn use_map(&mut self, seed: u64) {
-        logln!("grubcraft: switching to the map for seed {seed}");
-        self.seed = seed;
-        self.heightmap = tagged_alloc::scope(Tag::Map, || Map::generate(seed, MAP_TILES));
+    /// Make the Field Battle map `key` names and put it on screen.
+    fn use_map(&mut self, key: MapKey) {
+        logln!(
+            "grubcraft: switching to {} (seed {:x}, {} tiles)",
+            gc_map::FIELD_MAPS.get(key.choice).unwrap_or(&"?"),
+            key.seed,
+            key.tiles
+        );
+        self.map_key = Some(key);
+        self.heightmap = tagged_alloc::scope(Tag::Map, || key.make());
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
             self.renderer.set_terrain(&terrain_of(hm));
@@ -2861,7 +2881,7 @@ impl Running {
         let nav = hm.nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, key.seed)
         });
     }
 
@@ -2898,6 +2918,7 @@ impl Running {
             header.data_hash = self.data_hash;
             header.players = replays::players(&self.parties);
             header.recorded_by = Some(set.me);
+            header.map = Some((setup.settings.map as u8, setup.settings.map_seed));
         }
         // Look over your army towards the enemy.
         let focus = set.my_start + set.my_forward * 18.0;
@@ -3909,6 +3930,36 @@ impl Running {
 }
 
 /// The scripted opponents of the sandbox.
+/// A Field Battle map: the lobby's choice (an index into
+/// [`gc_map::FIELD_MAPS`]), its size and seed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MapKey {
+    choice: usize,
+    tiles: u32,
+    seed: u64,
+}
+
+impl MapKey {
+    /// The map a lobby battle of `players` is played on.
+    fn of_battle(settings: &gc_ui::lobby::LobbySettings, players: usize) -> MapKey {
+        MapKey {
+            choice: settings.map,
+            tiles: gc_map::field_tiles(players),
+            seed: settings.map_seed,
+        }
+    }
+
+    fn make(self) -> Map {
+        gc_map::field_map(self.choice, self.tiles, self.seed)
+    }
+}
+
+/// The fingerprint of a lobby battle's map, which the host sends to every
+/// player when a network match starts ([`gc_net::Identity::map_hash`]).
+fn battle_map_hash(settings: &gc_ui::lobby::LobbySettings, players: usize) -> u64 {
+    MapKey::of_battle(settings, players).make().hash()
+}
+
 fn make_drill(seed: u64, map_tiles: u32) -> Drill {
     let mut drill = Drill::new(seed);
     drill.map_tiles = map_tiles as i32;
@@ -4170,6 +4221,21 @@ mod tests {
         index: 3,
         generation: 1,
     };
+
+    /// The lobby lists the maps gc_map makes, in its order: a lobby's map
+    /// index picks the same map on every machine.
+    #[test]
+    fn the_lobby_offers_the_maps_gc_map_makes() {
+        assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
+    }
+
+    /// A new lobby's battle is on the Proving Ground every battle was
+    /// played on before maps could be picked.
+    #[test]
+    fn a_new_lobby_plays_on_the_old_map() {
+        let key = MapKey::of_battle(&gc_ui::lobby::LobbySettings::default(), 2);
+        assert_eq!(key.make().hash(), Map::generate(0x6772_7562, 256).hash());
+    }
 
     #[test]
     fn a_regiment_is_aimed_at_where_it_is_drawn() {

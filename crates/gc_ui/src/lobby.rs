@@ -110,8 +110,21 @@ pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
-/// Maps the lobby offers. Only the placeholder map exists so far.
-pub const MAPS: [&str; 1] = ["Proving Ground"];
+/// Maps the lobby offers: the seeded map, a random map from each recipe,
+/// and a random recipe. The same names in the same order as
+/// `gc_map::FIELD_MAPS` (the game checks).
+pub const MAPS: [&str; 6] = [
+    "Proving Ground",
+    "Random: Pass",
+    "Random: Ford",
+    "Random: Hill",
+    "Random: Open",
+    "Random: Any",
+];
+
+/// The map seed a new lobby starts on (the Proving Ground every battle was
+/// played on before maps could be picked).
+pub const DEFAULT_MAP_SEED: u64 = 0x6772_7562;
 
 /// How many points each side has to raise its army in a Field Battle
 /// (docs/06-game-modes.md).
@@ -190,7 +203,10 @@ impl OnDrop {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbySettings {
+    /// An index into [`MAPS`].
     pub map: usize,
+    /// The seed the map is made from; the host rerolls it for a new map.
+    pub map_seed: u64,
     pub mode: GameMode,
     pub tempo: Tempo,
     /// If a player drops out of a network match.
@@ -206,6 +222,7 @@ impl Default for LobbySettings {
     fn default() -> Self {
         LobbySettings {
             map: 0,
+            map_seed: DEFAULT_MAP_SEED,
             mode: GameMode::FieldBattle,
             tempo: Tempo::Normal,
             on_drop: OnDrop::Wait,

@@ -67,7 +67,11 @@ pub fn check(def: &MapDef) -> Report {
     }
 
     placement(&map, &walk, &mut r);
-    if !r.ok() || !counts(&map, &mut r) {
+    // A Field Battle map has armies and starts, no economy: it is checked
+    // for placement, for every start reaching every other, and for its set
+    // pieces, and its fairness is its symmetry.
+    let field = matches!(map.size, Some(SizeClass::Field(_)));
+    if !r.ok() || (!field && !counts(&map, &mut r)) {
         return r;
     }
 
@@ -76,6 +80,10 @@ pub fn check(def: &MapDef) -> Report {
         .collect();
     connectivity(&map, &walk, &from, &mut r);
     if !r.ok() {
+        return r;
+    }
+    if field {
+        set_pieces(&map, &walk, &mut r);
         return r;
     }
     areas(&map, &from, &mut r);
@@ -96,8 +104,11 @@ fn header(def: &MapDef, r: &mut Report) -> bool {
         ));
         ok = false;
     }
+    let field = matches!(def.size, SizeClass::Field(_));
     match (def.symmetry, def.players) {
         (Symmetry::Rot2, 2) | (Symmetry::Rot4, 4) | (Symmetry::None, _) => {}
+        // Field Battle starts come in pairs facing each other.
+        (Symmetry::Rot2, n) if field && n % 2 == 0 => {}
         (s, n) => {
             r.err(format!("{s:?} symmetry doesn't fit {n} players"));
             ok = false;

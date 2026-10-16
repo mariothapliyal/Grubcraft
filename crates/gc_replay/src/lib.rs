@@ -42,6 +42,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 11: the header's map choice (read as the Proving Ground);
 /// - 10: the separate info block (read from the one compressed body);
 /// - 8: the per-system hashes of a desync report (read as none);
 /// - 7: the header's battle result (read as undecided);
@@ -52,7 +53,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 10;
+pub const FORMAT: u16 = 11;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -102,6 +103,12 @@ pub struct Header {
     /// How the battle was decided, if it was by the end of the recording
     /// ([`World::verdict`]); `None` too for files from before format 8.
     pub result: Option<Verdict>,
+    /// The Field Battle map it was played on, as the lobby's choice (an
+    /// index into `gc_map::FIELD_MAPS`) and map seed; `None` for the
+    /// Proving Ground made from the match's own seed, as every replay
+    /// before format 11 was. The replay plays on the map it stores either
+    /// way; this is for drawing that map.
+    pub map: Option<(u8, u64)>,
 }
 
 /// What the replay list needs of a file, which format 10 keeps in a block
@@ -374,6 +381,13 @@ impl Replay {
             Some(v) => {
                 w.var(u64::from(v.holder) + 1);
                 w.var(u64::from(v.tick));
+            }
+            None => w.var(0),
+        }
+        match h.map {
+            Some((choice, seed)) => {
+                w.var(u64::from(choice) + 1);
+                w.u64(seed);
             }
             None => w.var(0),
         }
@@ -768,6 +782,14 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
     } else {
         None
     };
+    let map = if format >= 11 {
+        match maybe(r)? {
+            Some(choice) => Some((u8::try_from(choice).ok()?, r.u64()?)),
+            None => None,
+        }
+    } else {
+        None
+    };
     Some(Header {
         build,
         data_hash,
@@ -776,6 +798,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
         desync_tick,
         sim_version,
         result,
+        map,
     })
 }
 
@@ -947,6 +970,7 @@ mod tests {
             desync_tick: None,
             sim_version: Some(gc_sim::SIM_VERSION),
             result: None,
+            map: None,
         };
         let mut drill = Drill::new(7);
         drill.regiments_per_player = 6;
@@ -1069,8 +1093,8 @@ mod tests {
         replay.header = Header::default();
         let empty = replay.legacy_body();
         // The empty header: no build, data hash 0, no players, nobody, no
-        // desync, no sim version.
-        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1;
+        // desync, no sim version, no result, no map choice.
+        let header_len = 1 + 8 + 1 + 1 + 1 + 1 + 1 + 1;
         body.extend_from_slice(&empty[body.len() + header_len..]);
         // Nor, from format 8 down, the system trail's count.
         assert_eq!(body.pop(), Some(0));
@@ -1092,6 +1116,9 @@ mod tests {
         let mut w = Writer::default();
         w.bytes(replay.note.as_bytes());
         let at = w.buf.len() + 1 + 8 + 1 + 1 + 1;
+        // Every format older than 11 has no map choice (after the sim
+        // version and result).
+        assert_eq!(body.remove(at + 2), 0);
         assert!(body.drain(at..at + dropped).all(|b| b == 0));
         assert_eq!(body.pop(), Some(0));
         let mut old = MAGIC.to_vec();
@@ -1172,6 +1199,42 @@ mod tests {
             Replay::read_header("/nonexistent/x.gcr"),
             Err(Error::Io(_))
         ));
+    }
+
+    #[test]
+    fn a_format_10_replay_has_no_map_choice() {
+        let mut replay = record();
+        replay.header = Header::default();
+        let new = replay.encode();
+        // Format 10 is format 11 without the map choice: the last byte of
+        // the header, before the seed, map size and the rest of the info
+        // block.
+        let len = u32::from_le_bytes(new[6..10].try_into().unwrap()) as usize;
+        let info = &new[10..10 + len];
+        let mut tail = Writer::default();
+        tail.u64(replay.seed);
+        tail.var(u64::from(replay.regiments));
+        tail.var(u64::from(replay.map_tiles));
+        let at = info
+            .windows(tail.buf.len())
+            .position(|w| w == tail.buf)
+            .unwrap()
+            - 1;
+        assert_eq!(info[at], 0);
+        let mut old = MAGIC.to_vec();
+        old.extend_from_slice(&10u16.to_le_bytes());
+        old.extend_from_slice(&(len as u32 - 1).to_le_bytes());
+        old.extend_from_slice(&info[..at]);
+        old.extend_from_slice(&info[at + 1..]);
+        old.extend_from_slice(&new[10 + len..]);
+        assert_eq!(Replay::decode(&old).unwrap(), replay);
+    }
+
+    #[test]
+    fn the_map_choice_round_trips() {
+        let mut replay = record();
+        replay.header.map = Some((3, 0xdead_beef_0123));
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
     }
 
     #[test]

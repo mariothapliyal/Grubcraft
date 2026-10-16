@@ -115,7 +115,7 @@ impl Map {
 }
 
 /// Fixed point for map making: 1.0.
-const ONE: i64 = 1 << 16;
+pub(crate) const ONE: i64 = 1 << 16;
 
 /// Woods and tall grass stay this far from the start plateaus' centres
 /// (tiles), so armies deploy in the open and see each other.
@@ -222,8 +222,8 @@ fn smoothstep(e0: i64, e1: i64, x: i64) -> i64 {
 const OCTAVE_FREQ: [i64; 5] = [65_536, 133_038, 270_067, 548_237, 1_112_920];
 
 /// Smooth value noise in fixed point, 0 to 1.
-struct Noise {
-    seed: u32,
+pub(crate) struct Noise {
+    pub(crate) seed: u32,
 }
 
 impl Noise {
@@ -252,7 +252,7 @@ impl Noise {
     }
 
     /// `octaves` layers of noise, each finer and half as strong.
-    fn fbm(&self, x: i64, y: i64, octaves: usize) -> i64 {
+    pub(crate) fn fbm(&self, x: i64, y: i64, octaves: usize) -> i64 {
         debug_assert!(octaves <= OCTAVE_FREQ.len(), "add octave frequencies");
         let (mut sum, mut norm) = (0, 0);
         for (i, freq) in OCTAVE_FREQ[..octaves].iter().enumerate() {
