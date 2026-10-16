@@ -23,12 +23,12 @@ fn object_colour(k: Kind) -> [u8; 3] {
 /// RGB pixels, `scale` per tile, row by row.
 pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
     let side = (map.tiles * scale) as usize;
-    let max = (*map.heights.iter().max().unwrap_or(&1) as i32).max(1);
+    let max = i32::from(*map.heights.iter().max().unwrap_or(&1)).max(1);
     let mut px = vec![0u8; side * side * 3];
     for y in 0..side {
         for x in 0..side {
             let t = ((y as i32 / scale) * map.tiles + x as i32 / scale) as usize;
-            let h = map.heights[t] as i32 * 255 / max;
+            let h = i32::from(map.heights[t]) * 255 / max;
             let mut c = match map.ground[t] {
                 Ground::Blocked if map.heights[t] < map.water => [20, 40, 110],
                 Ground::Blocked => [95, 95, 100],
@@ -75,7 +75,7 @@ pub fn render(map: &Map, scale: i32) -> (u32, Vec<u8>) {
 fn crc32(data: &[u8]) -> u32 {
     let mut c = !0u32;
     for &b in data {
-        c ^= b as u32;
+        c ^= u32::from(b);
         for _ in 0..8 {
             c = if c & 1 != 0 {
                 0xEDB8_8320 ^ (c >> 1)
@@ -113,7 +113,7 @@ pub fn png(side: u32, rgb: &[u8]) -> Vec<u8> {
     }
     let (mut a, mut s) = (1u32, 0u32);
     for &b in &raw {
-        a = (a + b as u32) % 65_521;
+        a = (a + u32::from(b)) % 65_521;
         s = (s + a) % 65_521;
     }
     z.extend(((s << 16) | a).to_be_bytes());

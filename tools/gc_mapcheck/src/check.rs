@@ -126,7 +126,7 @@ fn cheb(a: Pos, b: Pos) -> i32 {
 }
 
 fn euclid(a: Pos, b: Pos) -> i32 {
-    let (dx, dy) = ((a.0 - b.0) as i64, (a.1 - b.1) as i64);
+    let (dx, dy) = (i64::from(a.0 - b.0), i64::from(a.1 - b.1));
     ((dx * dx + dy * dy) as u64).isqrt() as i32
 }
 
@@ -398,8 +398,8 @@ fn nearest(map: &Map, s: &Search, kinds: &[Kind], unowned_only: bool, k: usize) 
 
 fn spread(values: &[u32]) -> u32 {
     let (lo, hi) = (
-        values.iter().min().copied().unwrap_or(0) as u64,
-        values.iter().max().copied().unwrap_or(0) as u64,
+        u64::from(values.iter().min().copied().unwrap_or(0)),
+        u64::from(values.iter().max().copied().unwrap_or(0)),
     );
     ((hi - lo) * 100).checked_div(hi).unwrap_or(0) as u32
 }
@@ -492,7 +492,7 @@ fn income(map: &Map, s: &Search, player: u8) -> [u32; 3] {
     let nodes: Vec<(f64, f64, f64)> = nodes
         .iter()
         .map(|&(d, near, vein)| {
-            let tiles = d as f64 / 10.0;
+            let tiles = f64::from(d) / 10.0;
             let online = if near {
                 60.0
             } else {
@@ -514,7 +514,7 @@ fn income(map: &Map, s: &Search, player: u8) -> [u32; 3] {
         })
         .collect();
     MINUTES.map(|minutes| {
-        let end = minutes as f64 * 60.0;
+        let end = f64::from(minutes) * 60.0;
         let total: f64 = nodes
             .iter()
             .filter(|n| n.0 < end)
@@ -603,16 +603,16 @@ fn set_pieces(map: &Map, walk: &[bool], r: &mut Report) {
         match sp.kind {
             SetPieceKind::High => {
                 // Half a tile above the average of the ring ten tiles out.
-                let here = map.heights[map.idx(sp.at)] as i32;
+                let here = i32::from(map.heights[map.idx(sp.at)]);
                 let (mut sum, mut n) = (0, 0);
                 for k in 0..16 {
-                    let a = k as f64 * std::f64::consts::TAU / 16.0;
+                    let a = f64::from(k) * std::f64::consts::TAU / 16.0;
                     let q = (
                         sp.at.0 + (10.0 * a.cos()).round() as i32,
                         sp.at.1 + (10.0 * a.sin()).round() as i32,
                     );
                     if map.in_bounds(q) {
-                        sum += map.heights[map.idx(q)] as i32;
+                        sum += i32::from(map.heights[map.idx(q)]);
                         n += 1;
                     }
                 }

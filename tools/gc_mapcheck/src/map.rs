@@ -112,15 +112,18 @@ fn images(s: Shape, sym: Symmetry, tiles: i32) -> Vec<Shape> {
 /// Distance in half tiles from the centre of tile (x, y) to the shape's core,
 /// as an integer.
 fn distance2(s: Shape, x: i32, y: i32) -> (i64, i64) {
-    let (px, py) = (2 * x as i64 + 1, 2 * y as i64 + 1);
+    let (px, py) = (2 * i64::from(x) + 1, 2 * i64::from(y) + 1);
     match s {
         Shape::Disc { at, r } => {
-            let (dx, dy) = (px - 2 * at.0 as i64, py - 2 * at.1 as i64);
-            (((dx * dx + dy * dy) as u64).isqrt() as i64, 2 * r as i64)
+            let (dx, dy) = (px - 2 * i64::from(at.0), py - 2 * i64::from(at.1));
+            (
+                ((dx * dx + dy * dy) as u64).isqrt() as i64,
+                2 * i64::from(r),
+            )
         }
         Shape::Line { a, b, half_width } => {
-            let (ax, ay) = (2 * a.0 as i64, 2 * a.1 as i64);
-            let (bx, by) = (2 * b.0 as i64, 2 * b.1 as i64);
+            let (ax, ay) = (2 * i64::from(a.0), 2 * i64::from(a.1));
+            let (bx, by) = (2 * i64::from(b.0), 2 * i64::from(b.1));
             let (ex, ey) = (bx - ax, by - ay);
             let (dx, dy) = (px - ax, py - ay);
             let len2 = ex * ex + ey * ey;
@@ -134,7 +137,7 @@ fn distance2(s: Shape, x: i32, y: i32) -> (i64, i64) {
                 let cross = dx * ey - dy * ex;
                 cross * cross / len2
             };
-            ((d2 as u64).isqrt() as i64, 2 * half_width as i64)
+            ((d2 as u64).isqrt() as i64, 2 * i64::from(half_width))
         }
     }
 }
@@ -143,7 +146,7 @@ fn distance2(s: Shape, x: i32, y: i32) -> (i64, i64) {
 /// 256 inside the shape, fading to nothing over the edge.
 fn weight(s: Shape, edge: i32, x: i32, y: i32) -> i64 {
     let (d, core) = distance2(s, x, y);
-    let fade = 2 * edge.max(0) as i64;
+    let fade = 2 * i64::from(edge.max(0));
     if d <= core {
         256
     } else if d >= core + fade {
@@ -172,7 +175,7 @@ impl Map {
                         continue;
                     }
                     let h = &mut field[(y * tiles + x) as usize];
-                    let blended = *h + ((target - *h) as i64 * w / 256) as i32;
+                    let blended = *h + (i64::from(target - *h) * w / 256) as i32;
                     *h = match op.mode {
                         Mode::Set => blended,
                         Mode::Raise => (*h).max(blended),
@@ -183,9 +186,9 @@ impl Map {
         }
         let heights: Vec<u16> = field
             .iter()
-            .map(|&h| h.clamp(0, u16::MAX as i32) as u16)
+            .map(|&h| h.clamp(0, i32::from(u16::MAX)) as u16)
             .collect();
-        let water = (def.water * SIXTEENTH).clamp(0, u16::MAX as i32) as u16;
+        let water = (def.water * SIXTEENTH).clamp(0, i32::from(u16::MAX)) as u16;
 
         let mut cover = vec![0u8; n];
         for op in &def.cover {
@@ -285,12 +288,12 @@ impl Map {
 fn classify(heights: &[u16], water: u16, tiles: i32) -> Vec<Ground> {
     let h = |x: i32, y: i32| -> Option<i32> {
         ((0..tiles).contains(&x) && (0..tiles).contains(&y))
-            .then(|| heights[(y * tiles + x) as usize] as i32)
+            .then(|| i32::from(heights[(y * tiles + x) as usize]))
     };
     let mut out = Vec::with_capacity(heights.len());
     for y in 0..tiles {
         for x in 0..tiles {
-            let here = heights[(y * tiles + x) as usize] as i32;
+            let here = i32::from(heights[(y * tiles + x) as usize]);
             let rise = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                 .iter()
                 .filter_map(|(dx, dy)| h(x + dx, y + dy))
@@ -298,7 +301,7 @@ fn classify(heights: &[u16], water: u16, tiles: i32) -> Vec<Ground> {
                 .max()
                 .unwrap_or(0);
             let edge = x == 0 || y == 0 || x == tiles - 1 || y == tiles - 1;
-            let water = water as i32;
+            let water = i32::from(water);
             out.push(if edge || rise > CLIFF || here < water - DEEP {
                 Ground::Blocked
             } else if here < water {
