@@ -49,11 +49,6 @@ pub const EXTENSION: &str = "gcr";
 pub const CHECKPOINT_EVERY: u32 = TICKS_PER_SECOND;
 /// A replay body larger than this is refused rather than allocated.
 const MAX_BODY: usize = 256 << 20;
-/// Largest map a replay may name, in tiles a side: far beyond any battle
-/// map, and small enough that its grids' sizes can't overflow.
-const MAX_MAP_TILES: u32 = 4096;
-/// Most regiments a replay may ask room for.
-const MAX_REGIMENTS: u32 = 1 << 16;
 
 /// One side of a recorded match, as the game showed it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -379,7 +374,7 @@ impl Replay {
         let seed = r.u64()?;
         let regiments: u32 = r.var_as()?;
         let map_tiles: u32 = r.var_as()?;
-        if regiments > MAX_REGIMENTS || map_tiles > MAX_MAP_TILES {
+        if regiments > Capacities::MAX_REGIMENTS || map_tiles > gc_sim::MAX_MAP_TILES {
             return None;
         }
         let n: usize = r.var_as()?;

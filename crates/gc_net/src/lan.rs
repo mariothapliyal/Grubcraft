@@ -683,12 +683,11 @@ impl Lan {
                 }
             }
             k if k == Kind::WrongProtocol as u8 => {
-                // Plain and unsigned, so only heeded while joining: once in
-                // the lobby or the match the host has spoken our protocol.
+                // Plain and unsigned, so only heeded until the host lets us
+                // in: after that it has spoken our protocol.
                 if let Role::Client(c) = &self.role
                     && c.host == from
-                    && c.lobby.is_none()
-                    && c.game.is_none()
+                    && c.slot.is_none()
                 {
                     let theirs = r.str().unwrap_or_default();
                     let why = format!(
