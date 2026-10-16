@@ -1,60 +1,54 @@
-//! Placeholder map generator for M0: rolling hide, broken rib-ridges, flat
-//! start plateaus and a shallow central bowl where the Titan's Heart will sit.
+//! The seeded map: rolling hide, broken rib-ridges, flat start plateaus and
+//! a shallow central bowl where the Titan's Heart will sit. Every Field
+//! Battle so far has been played on one of these.
 //!
-//! Everything the simulation sees is made with whole-number maths from the
-//! seed: the heights (fixed point, 1.0 = 65,536, with `gc_fixed`'s sine
-//! table), then the walkable-ground grid, the tile heights and the cover.
+//! Everything is made with whole-number maths from the seed: the heights
+//! (fixed point, 1.0 = 65,536, with `gc_fixed`'s sine table) and the cover.
 //! Floats differ between CPUs and maths libraries, so a map made with them
-//! could differ between a Mac and a Windows PC in a LAN game; this one is
-//! the same everywhere (a test pins its hash, and CI runs it on all three
-//! systems). The float views of it, for drawing and the computer players,
-//! live in `terrain_view.rs`.
-
-// The lint also catches float maths through inferred types or literals,
-// which the token check in `gc_sim/tests/no_floats.rs` can miss. Test
-// modules may use floats as a reference.
-#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
+//! could differ between a Mac and a Windows PC in a network game; this one
+//! is the same everywhere (a test pins its hash, and CI runs it on all
+//! three systems).
 
 use gc_fixed::{Angle, isqrt_u64};
 
-/// Centres of the four start plateaus in whole tiles, for map making
-/// (`terrain_view::start_positions` is the float version for drawing).
-pub(crate) fn start_tiles(tiles: u32) -> [(i64, i64); 4] {
-    let (q1, q3) = (i64::from(tiles) / 4, i64::from(tiles) * 3 / 4);
-    [(q1, q1), (q3, q1), (q1, q3), (q3, q3)]
+use crate::def::Kind;
+use crate::map::{Map, Placed, SAMPLES_PER_TILE};
+
+/// How many start plateaus a generated map has: one for each lobby slot.
+pub const START_PLATEAUS: usize = 6;
+
+/// Centres of the six start plateaus in whole tiles: north-west,
+/// north-east, south-west, south-east, then north and south in the middle
+/// of their edges. The first four keep their places; the last two were
+/// added for six-player battles.
+fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
+    let n = i64::from(tiles);
+    let (q1, q2, q3) = (n / 4, n / 2, n * 3 / 4);
+    [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
 }
 
-pub struct Heightmap {
-    pub samples_per_tile: u32,
-    /// Samples per side: `tiles * samples_per_tile + 1`.
-    pub size: u32,
-    pub heights: Vec<u16>,
-    /// The simulation's tile heights and water line ([`Heightmap::sim_ground`]).
-    sim_heights: Vec<u16>,
-    sim_water: u16,
-    /// Woods and tall grass, one [`gc_sim::Cover`] byte per tile, row by
-    /// row (see [`Heightmap::grow_cover`]).
-    pub cover: Vec<u8>,
-}
+/// The water line as a sample: 0.17 of the highest ground.
+const WATER: u16 = (u16::MAX as u32 * 17 / 100) as u16;
 
-impl Heightmap {
-    pub fn generate(seed: u64, tiles: u32) -> Heightmap {
-        let samples_per_tile = SAMPLES_PER_TILE as u32;
-        let size = tiles * samples_per_tile + 1;
+impl Map {
+    /// The seeded map, `tiles` on a side, with a start for each of six
+    /// players on the plateaus.
+    pub fn generate(seed: u64, tiles: u32) -> Map {
+        let samples_per_tile = i64::from(SAMPLES_PER_TILE);
+        let size = tiles * SAMPLES_PER_TILE + 1;
         let noise = Noise { seed: seed as u32 };
         let n = i64::from(tiles);
         // In samples: the map's centre and the start plateaus' centres.
-        let centre = n * SAMPLES_PER_TILE / 2;
-        let starts = start_tiles(tiles).map(|(x, z)| (x * SAMPLES_PER_TILE, z * SAMPLES_PER_TILE));
+        let centre = n * samples_per_tile / 2;
+        let starts = start_tiles(tiles).map(|(x, z)| (x * samples_per_tile, z * samples_per_tile));
         // Squared distance in samples, and as a distance in tiles in fixed point.
         let dist2 = |dx: i64, dz: i64| dx * dx + dz * dz;
-        let tiles_apart = |d2: i64| isqrt_u64((d2 as u64) << 32) as i64 / SAMPLES_PER_TILE;
+        let tiles_apart = |d2: i64| isqrt_u64((d2 as u64) << 32) as i64 / samples_per_tile;
         // Beyond these the bowl and the plateaus leave the height as it is,
         // so their square roots are skipped (the bowl's with a sample to spare).
         let bowl_reach2 = (72 * n / 100 + 1).pow(2);
-        let plateau_reach2 = (30 * SAMPLES_PER_TILE).pow(2);
-        let last = n * SAMPLES_PER_TILE;
-
+        let plateau_reach2 = (30 * samples_per_tile).pow(2);
+        let last = n * samples_per_tile;
         let mut heights = Vec::with_capacity((size * size) as usize);
         for sz in 0..i64::from(size) {
             for sx in 0..i64::from(size) {
@@ -81,7 +75,7 @@ impl Heightmap {
                     h -= (ONE - smoothstep(0, ONE, dc)) / 10;
                 }
 
-                // Flat, buildable plateaus at the four start positions.
+                // Flat, buildable plateaus at the six start positions.
                 for (x, z) in starts {
                     let d2 = dist2(sx - x, sz - z);
                     if d2 < plateau_reach2 {
@@ -91,124 +85,31 @@ impl Heightmap {
                 }
 
                 // Edges fall away so the map reads as an island of hide.
-                let edge = sx.min(sz).min(last - sx).min(last - sz) * ONE / SAMPLES_PER_TILE;
+                let edge = sx.min(sz).min(last - sx).min(last - sz) * ONE / samples_per_tile;
                 h = h * (smoothstep(0, 10 * ONE, edge) * 85 / 100 + ONE * 15 / 100) / ONE;
 
                 heights.push((h.clamp(0, ONE) * i64::from(u16::MAX) / ONE) as u16);
             }
         }
-        let mut map = Heightmap {
-            samples_per_tile,
-            size,
-            heights,
-            sim_heights: Vec::new(),
-            sim_water: 0,
-            cover: Vec::new(),
-        };
-        (map.sim_heights, map.sim_water) = map.sim_ground();
+        let mut map = Map::from_samples(tiles, heights, WATER);
+        map.name = format!("Seed {seed}");
+        map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
+        map.objects = (0..)
+            .zip(start_tiles(tiles))
+            .map(|(owner, (x, y))| Placed {
+                kind: Kind::Start,
+                at: (x as i32, y as i32),
+                owner: Some(owner),
+                label: String::new(),
+            })
+            .collect();
         map
-    }
-
-    /// The ground the simulation plays on: tile heights, the water line,
-    /// and the woods and tall grass.
-    pub fn ground(&self) -> gc_sim::Ground<'_> {
-        gc_sim::Ground {
-            heights: &self.sim_heights,
-            water_level: self.sim_water,
-            cover: &self.cover,
-        }
     }
 }
 
 /// Fixed point for map making: 1.0.
 const ONE: i64 = 1 << 16;
-const SAMPLES_PER_TILE: i64 = 4;
-/// The highest ground, in tiles: a stored height of 65,535.
-pub(crate) const MAX_HEIGHT: i64 = 14;
-/// The water line as a stored height: 0.17 of the highest ground.
-pub(crate) const WATER: i64 = u16::MAX as i64 * 17 / 100;
-/// Ground steeper than this many hundredths of a tile of rise per tile is
-/// a cliff no regiment climbs; over half of it is slow going that routes
-/// avoid.
-const CLIFF_RISE_PER_TILE: i64 = 120;
-/// Water deeper than this (hundredths of a tile) can't be waded;
-/// shallower water is a ford.
-const FORD_DEPTH: i64 = 35;
-/// Nav costs: open ground, steep ground, fords (see `gc_sim::nav`).
-const OPEN: u8 = 1;
-const STEEP: u8 = 2;
-const FORD: u8 = 3;
-
-impl Heightmap {
-    /// The ground cost of each half-tile cell, row by row, for the
-    /// simulation's pathfinding: cliffs and deep water are blocked, steep
-    /// slopes and fords cost more. Integer rules over the stored heights,
-    /// so the same heights give the same grid everywhere.
-    pub fn nav_costs(&self) -> Vec<u8> {
-        let cells_per_tile = gc_sim::nav::CELLS_PER_TILE as u32;
-        let step = self.samples_per_tile / cells_per_tile; // samples per cell
-        let side = (self.size - 1) / step;
-        // Stored heights per hundredth of a tile is u16::MAX / (MAX_HEIGHT * 100).
-        let hundredths = |n: i64| (n * i64::from(u16::MAX) / (MAX_HEIGHT * 100)) as u32;
-        let cliff = hundredths(CLIFF_RISE_PER_TILE) / cells_per_tile;
-        let steep = cliff / 2;
-        let water = WATER as u32;
-        let deep = water.saturating_sub(hundredths(FORD_DEPTH));
-        let mut cells = Vec::with_capacity((side * side) as usize);
-        for cy in 0..side {
-            for cx in 0..side {
-                // The (step + 1)^2 samples covering the cell.
-                let (mut lo, mut hi, mut sum, mut n) = (u32::MAX, 0, 0, 0);
-                for sz in cy * step..=(cy + 1) * step {
-                    for sx in cx * step..=(cx + 1) * step {
-                        let h = u32::from(self.heights[(sz * self.size + sx) as usize]);
-                        lo = lo.min(h);
-                        hi = hi.max(h);
-                        sum += h;
-                        n += 1;
-                    }
-                }
-                let mean = sum / n;
-                let rise = hi - lo;
-                cells.push(if mean < deep || rise > cliff {
-                    gc_sim::nav::BLOCKED
-                } else if mean < water {
-                    FORD
-                } else if rise > steep {
-                    STEEP
-                } else {
-                    OPEN
-                });
-            }
-        }
-        cells
-    }
-
-    /// The heights the simulation's terrain rules use (see
-    /// [`gc_sim::terrain`]): one per tile, the sample at the tile's centre,
-    /// in [`gc_sim::terrain::HEIGHT_UNITS`] per tile, and the water line in
-    /// the same units. The same tile-centre heights the minds read
-    /// ([`Heightmap::ai_terrain`]), so both agree on what is high and wet.
-    fn sim_ground(&self) -> (Vec<u16>, u16) {
-        let tiles = (self.size - 1) / self.samples_per_tile;
-        let half = self.samples_per_tile / 2;
-        // Stored samples to sim units: an integer rule, so every machine
-        // agrees given the same samples.
-        let scale = MAX_HEIGHT as u64 * u64::from(gc_sim::terrain::HEIGHT_UNITS);
-        let mut heights = Vec::with_capacity((tiles * tiles) as usize);
-        for y in 0..tiles {
-            for x in 0..tiles {
-                let s = (y * self.samples_per_tile + half) * self.size
-                    + x * self.samples_per_tile
-                    + half;
-                let h = u64::from(self.heights[s as usize]) * scale / u64::from(u16::MAX);
-                heights.push(h as u16);
-            }
-        }
-        (heights, (WATER as u64 * scale / u64::from(u16::MAX)) as u16)
-    }
-}
 
 /// Woods and tall grass stay this far from the start plateaus' centres
 /// (tiles), so armies deploy in the open and see each other.
@@ -223,7 +124,7 @@ const WOOD_LEVEL: i64 = 42_000;
 const GRASS_FRINGE: i64 = 2_200;
 const MEADOW_LEVEL: i64 = 46_500;
 
-impl Heightmap {
+impl Map {
     /// Woods and tall grass, one [`gc_sim::Cover`] byte per tile, row by
     /// row (docs/20-ambushes.md). Integer rules over the simulation's tile
     /// heights and the seed, so every machine that agrees on the heights
@@ -231,12 +132,12 @@ impl Heightmap {
     /// by tall grass; more grass fills a few meadows. The start plateaus and
     /// the map's edge stay open.
     fn grow_cover(&self, seed: u64) -> Vec<u8> {
-        let (heights, water) = (&self.sim_heights, self.sim_water);
-        let n = i64::from((self.size - 1) / self.samples_per_tile);
+        let (heights, water) = (&self.heights, self.water);
+        let n = i64::from(self.tiles);
         let at = |x: i64, y: i64| {
             i64::from(heights[(y.clamp(0, n - 1) * n + x.clamp(0, n - 1)) as usize])
         };
-        let starts = start_tiles(n as u32);
+        let starts = start_tiles(self.tiles);
         let mut cover = Vec::with_capacity((n * n) as usize);
         for y in 0..n {
             for x in 0..n {
@@ -363,19 +264,40 @@ mod tests {
 
     #[test]
     fn size_and_plateaus() {
-        let hm = Heightmap::generate(1, 64);
-        assert_eq!(hm.size, 257);
-        assert_eq!(hm.heights.len(), 257 * 257);
-        // Start plateaus are flat.
-        let a = hm.height_at(16.0, 16.0);
-        let b = hm.height_at(18.0, 17.0);
-        assert!((a - b).abs() < 0.05, "{a} vs {b}");
+        let hm = Map::generate(1, 64);
+        assert_eq!(hm.side(), 257);
+        assert_eq!(hm.samples.len(), 257 * 257);
+        // Start plateaus are flat, all six of them.
+        for (x, y) in start_tiles(64) {
+            let (x, y) = (x as f32, y as f32);
+            let a = hm.height_at(x, y);
+            let b = hm.height_at(x + 2.0, y + 1.0);
+            assert!((a - b).abs() < 0.05, "{x},{y}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn the_first_four_plateaus_keep_their_places() {
+        assert_eq!(
+            start_tiles(256),
+            [
+                (64, 64),
+                (192, 64),
+                (64, 192),
+                (192, 192),
+                (128, 64),
+                (128, 192)
+            ]
+        );
+        let starts = Map::generate(1, 256).starts();
+        assert_eq!(starts.len(), START_PLATEAUS);
+        assert_eq!(starts[4], (128, 64));
     }
 
     #[test]
     fn sim_ground_matches_the_heights_the_minds_read() {
-        let hm = Heightmap::generate(1, 64);
-        let (heights, water) = hm.sim_ground();
+        let hm = Map::generate(1, 64);
+        let (heights, water) = (&hm.heights, hm.water);
         assert_eq!(heights.len(), 64 * 64);
         assert_eq!(water, (hm.water_level() * 256.0) as u16);
         for (x, y) in [(3, 5), (16, 16), (40, 22), (63, 63)] {
@@ -388,7 +310,7 @@ mod tests {
     #[test]
     fn woods_and_grass_grow_in_sensible_amounts() {
         for seed in [1, 2, 3, 42, 777] {
-            let hm = Heightmap::generate(seed, 256);
+            let hm = Map::generate(seed, 256);
             let cover = &hm.cover;
             assert_eq!(cover.len(), 256 * 256);
             let share = |c: gc_sim::Cover| {
@@ -399,8 +321,8 @@ mod tests {
             assert!((4.0..18.0).contains(&wood), "seed {seed}: {wood}% wood");
             assert!((3.0..14.0).contains(&grass), "seed {seed}: {grass}% grass");
             // The start plateaus are open.
-            for (x, y) in [(64, 64), (192, 64), (64, 192), (192, 192)] {
-                assert_eq!(cover[y * 256 + x], gc_sim::Cover::Open as u8);
+            for (x, y) in start_tiles(256) {
+                assert_eq!(cover[(y * 256 + x) as usize], gc_sim::Cover::Open as u8);
             }
         }
     }
@@ -414,40 +336,39 @@ mod tests {
     #[test]
     fn the_map_is_the_same_on_every_machine() {
         let fingerprint = |seed, tiles| {
-            let hm = Heightmap::generate(seed, tiles);
-            let heights = crate::online::fnv1a(hm.heights.iter().flat_map(|v| v.to_le_bytes()));
-            (
-                heights,
-                crate::online::map_hash(&hm.nav_costs(), &hm.ground()),
-            )
+            let hm = Map::generate(seed, tiles);
+            let heights = crate::fnv1a(hm.samples.iter().flat_map(|v| v.to_le_bytes()));
+            (heights, hm.hash())
         };
         assert_eq!(
             fingerprint(1, 256),
-            (0xfa16_1374_5be8_6d96, 0x10dc_5a39_1b6e_0613)
+            (0x7dca_be37_90bd_1f7b, 0x74c0_f127_3369_0296)
         );
         assert_eq!(
             fingerprint(42, 256),
-            (0xed6f_3282_3a3d_1a97, 0xebdd_c7ee_8ab8_9d84)
+            (0x8f2d_3f4f_0515_4bee, 0x2f45_a429_cb5c_bc85)
         );
         // The size the field-8000pt-2v2 golden replay plays on.
         assert_eq!(
             fingerprint(1, 384),
-            (0x4647_1d38_f01b_6aa0, 0x9aa2_1cd9_d4b3_0bc7)
+            (0x276a_c467_503d_c5b9, 0x705a_6793_4b4a_d292)
         );
     }
 
     #[test]
     fn nav_grid_blocks_cliffs_and_deep_water() {
-        let hm = Heightmap::generate(1, 256);
+        let hm = Map::generate(1, 256);
         let nav = hm.nav_costs();
         assert_eq!(nav.len(), 512 * 512);
         let count = |c: u8| nav.iter().filter(|&&v| v == c).count() * 100 / nav.len();
-        let (blocked, open, steep, ford) = (count(0), count(OPEN), count(STEEP), count(FORD));
+        let (blocked, open, steep, ford) = (count(0), count(1), count(2), count(3));
         println!("blocked {blocked}%, open {open}%, steep {steep}%, ford {ford}%");
         // Most of the map is walkable, the edges are not.
         assert!(open > 50, "{open}% open");
         assert_eq!(nav[0], 0);
-        // Start plateaus are open ground.
-        assert_eq!(nav[(128 * 512 + 128) as usize], OPEN);
+        // Start plateaus are open ground (two nav cells to a tile).
+        for (x, y) in start_tiles(256) {
+            assert_eq!(nav[(y * 2 * 512 + x * 2) as usize], 1, "{x},{y}");
+        }
     }
 }

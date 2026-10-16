@@ -1,6 +1,6 @@
 //! The checks: is the map valid, and is it fair.
 
-use crate::def::*;
+use gc_map::def::*;
 use crate::map::{Ground, Map, Placed};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -188,7 +188,7 @@ fn counts(map: &Map, r: &mut Report) -> bool {
             count(map, Kind::Heart)
         ));
     }
-    let warfield = map.size == SizeClass::Warfield;
+    let warfield = map.size == Some(SizeClass::Warfield);
     let mouths = count(map, Kind::OldMouth);
     if mouths != usize::from(warfield) {
         r.err(format!(

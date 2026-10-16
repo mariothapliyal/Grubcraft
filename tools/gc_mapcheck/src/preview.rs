@@ -2,7 +2,7 @@
 //! the objects. Written as a plain PNG with no compression, so it needs no
 //! image library.
 
-use crate::def::Kind;
+use gc_map::Kind;
 use crate::map::{Ground, Map};
 use gc_sim::terrain::Cover;
 

@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn load(path: &Path) -> Result<MapDef, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    MapDef::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+    MapDef::load(path)
 }
 
 fn png_cmd(src: &str, out: &str) -> Result<(), String> {
