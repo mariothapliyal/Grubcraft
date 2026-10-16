@@ -2243,10 +2243,20 @@ impl Running {
             Some(rec) => rec.recorder.tick(&mut self.world, &self.pending),
             None => self.world.tick(&self.pending),
         });
+        // A rejoining player replays the match: the sounds still note what
+        // happened but stay quiet, and old ambushes raise no alert.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
         if let Some(sounds) = &mut self.sounds {
-            tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
+            let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+            tagged_alloc::scope(Tag::Audio, || {
+                sounds.observe(world, &self.camera, !catching_up, |h| {
+                    reveal || world.sees(viewer, h)
+                });
+            });
         }
-        self.alert_ambushes();
+        if !catching_up {
+            self.alert_ambushes();
+        }
         if self.watching.is_none() {
             self.note_losses();
         }
