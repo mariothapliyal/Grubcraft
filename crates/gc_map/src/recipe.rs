@@ -123,7 +123,7 @@ pub(crate) struct Writer<'a> {
     /// The middle line, where the halves meet.
     mid: i32,
     /// Ground level before the stamps.
-    base: i32,
+    pub(crate) base: i32,
     pub(crate) terrain: Vec<TerrainOp>,
     pub(crate) cover: Vec<CoverOp>,
     pub(crate) set_pieces: Vec<SetPiece>,

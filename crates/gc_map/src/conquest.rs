@@ -65,6 +65,9 @@ const BASE: i32 = 40;
 const FEN_BASE: i32 = WATER + 8;
 /// Objects and shaped ground keep this far in from the map's edge.
 const MARGIN: i32 = 8;
+/// A share has two Bloodseep places and two frontier-slot places, and
+/// every frame turns it at least twice, so the rules' minimums fit.
+const _: () = assert!(MIN_BLOODSEEPS.div_ceil(2) <= 2 && FRONTIER_SLOTS.start().div_ceil(2) <= 2);
 
 /// The description a recipe makes from a seed, or `None` for a size it
 /// doesn't make (see [`CONQUEST_SIZES`]).
@@ -87,7 +90,13 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
     // its cover.
     let noise = Noise {
         seed: share.w.rng.next_u32(),
-        amplitude: share.w.range(12, 24),
+        // A fen's swells stay small, so its dry ground stays out of the
+        // water: the noise reaches half its amplitude either way.
+        amplitude: if recipe == ConquestRecipe::Fen {
+            share.w.range(8, 2 * (FEN_BASE - WATER) - 2)
+        } else {
+            share.w.range(12, 24)
+        },
         scale: share.w.range(32, 48),
     };
     share.economy();
@@ -196,12 +205,14 @@ impl Share<'_> {
     /// copies) stays clear of every object and every feature already
     /// shaped, turned copies included. Turning is a rigid move, so
     /// checking each copy of `at` against each thing where it was written
-    /// covers every pair of copies.
+    /// covers every pair of copies. Shaped ground turns about the map's
+    /// corner rather than its last tile, a tile further than objects
+    /// do, so features keep a tile more apart.
     fn clear(&self, at: Pos, r: i32) -> bool {
         let spots = tile_copies(at, self.f.symmetry, self.f.n);
         let apart = |p: Pos, d: i32| spots.iter().all(|&s| dist2(p, s) >= d * d);
         self.objects.iter().all(|o| apart(o.at, r))
-            && self.features.iter().all(|&(p, fr)| apart(p, r + fr))
+            && self.features.iter().all(|&(p, fr)| apart(p, r + fr + 1))
     }
 
     /// A random spot in the share, `u` and `v` within the ranges (see
@@ -260,6 +271,8 @@ impl Share<'_> {
         // Enough Bloodseep sites and frontier slots in each share that the
         // turned copies make up the map's minimum.
         let copies = f.symmetry.copies();
+        // Two places of each are enough while every frame has two or more
+        // copies (checked at compile time, by the assert by `MARGIN`).
         let bloodseeps = [((820, 860), 18), ((820, 860), -22)];
         let slots = [((380, 420), -64), ((560, 620), 84)];
         let wanted = [
@@ -338,12 +351,18 @@ impl Share<'_> {
                 let r = self.w.range(6, 8);
                 self.w
                     .stamp(Shape::Disc { at: f.centre, r }, Mode::Set, FORD, 4);
-                self.w
-                    .stamp(Shape::Disc { at: f.centre, r: 2 }, Mode::Set, BASE + 4, 2);
+                self.w.stamp(
+                    Shape::Disc { at: f.centre, r: 2 },
+                    Mode::Set,
+                    self.w.base + 4,
+                    2,
+                );
                 self.claim(f.centre, r + 4);
                 (cx, cy + 3)
             }
             _ => {
+                // Narrow, so its banks stop short of the contested seep
+                // beside it.
                 let (y0, y1) = (f.scaled(60), f.scaled(96));
                 let a = (cx, y0);
                 let b = (cx, y1);
@@ -351,11 +370,11 @@ impl Share<'_> {
                     Shape::Line {
                         a,
                         b,
-                        half_width: 3,
+                        half_width: 2,
                     },
                     Mode::Lower,
                     FORD - 1,
-                    3,
+                    2,
                 );
                 for y in (y0..=y1).step_by(6) {
                     self.claim((cx, y), 6);
@@ -373,12 +392,13 @@ impl Share<'_> {
         let s = f.start;
         let r = f.scaled(20).max(14);
         self.w
-            .stamp(Shape::Disc { at: s, r }, Mode::Set, BASE + 56, 1);
+            .stamp(Shape::Disc { at: s, r }, Mode::Set, self.w.base + 56, 1);
         self.claim(s, r + 6);
         // The ramps, east (to the natural expansion) and south.
         for at in [(s.0 + r, s.1), (s.0, s.1 + r)] {
             self.w
-                .stamp(Shape::Disc { at, r: 5 }, Mode::Set, BASE + 16, 5);
+                .stamp(Shape::Disc { at, r: 5 }, Mode::Set, self.w.base + 16, 5);
+            self.claim(at, 10);
         }
         self.wading_place();
         self.hill(
@@ -422,7 +442,7 @@ impl Share<'_> {
                         half_width: 2,
                     },
                     Mode::Raise,
-                    BASE + 80,
+                    self.w.base + 80,
                     2,
                 );
                 return;
@@ -439,7 +459,7 @@ impl Share<'_> {
         self.w.stamp(
             Shape::Disc { at: f.centre, r },
             Mode::Lower,
-            BASE - 14,
+            self.w.base - 14,
             edge,
         );
         let tongue = self.w.range(3, 4);
@@ -449,13 +469,19 @@ impl Share<'_> {
                 r: tongue,
             },
             Mode::Set,
-            BASE + 6,
+            self.w.base + 6,
             6,
         );
+        self.claim(f.centre, tongue + 6);
         self.w.set_piece(SetPieceKind::High, f.centre, "The tongue");
         let s = f.start;
-        self.w
-            .stamp(Shape::Disc { at: s, r: 14 }, Mode::Set, BASE + 10, 10);
+        self.w.stamp(
+            Shape::Disc { at: s, r: 14 },
+            Mode::Set,
+            self.w.base + 10,
+            10,
+        );
+        self.claim(s, 14);
         self.hill(
             (480, 680),
             (-f.scaled(48), -f.scaled(8)),
@@ -472,7 +498,8 @@ impl Share<'_> {
         let f = self.f;
         let s = f.start;
         self.w
-            .stamp(Shape::Disc { at: s, r: 16 }, Mode::Set, BASE + 4, 6);
+            .stamp(Shape::Disc { at: s, r: 16 }, Mode::Set, self.w.base + 12, 6);
+        self.claim(s, 22);
         self.hill((420, 680), (-f.scaled(36), f.scaled(36)), "The mound");
         let half = f.scaled(56);
         let mut named = false;
@@ -536,7 +563,9 @@ mod tests {
                 for seed in 1..=3 {
                     let a = describe(recipe, size, seed).unwrap().to_ron();
                     assert_eq!(a, describe(recipe, size, seed).unwrap().to_ron());
-                    assert_ne!(a, describe(recipe, size, seed + 1).unwrap().to_ron());
+                    let mut next = describe(recipe, size, seed + 1).unwrap();
+                    next.name = describe(recipe, size, seed).unwrap().name;
+                    assert_ne!(a, next.to_ron(), "the seed changes the ground");
                 }
             }
         }

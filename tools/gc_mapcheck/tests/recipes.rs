@@ -113,6 +113,13 @@ fn generate_rerolls_to_a_map_the_checker_passes() {
         let (seed, def) = generate(recipe, SizeClass::Duel, 7).unwrap();
         assert!(seed >= 7, "{} seed {seed}", recipe.name());
         assert_eq!(def.size, SizeClass::Duel);
+        let report = check(&def);
+        assert!(
+            report.ok(),
+            "{} seed {seed}: {:?}",
+            recipe.name(),
+            report.errors
+        );
     }
     let err = generate(ConquestRecipe::Fen, SizeClass::Grand, 1).unwrap_err();
     assert!(err[0].contains("Grand"), "{err:?}");

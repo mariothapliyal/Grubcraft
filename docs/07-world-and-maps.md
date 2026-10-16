@@ -144,7 +144,7 @@ Every recipe also scatters clumps of woods and tall grass over the north half, k
 - **Bowl:** a wide, shallow bowl in the middle, with the Heart on a raised tongue in it. The starts sit on the rim, with a hill on the rim either side of each.
 - **Fen:** low wet ground, with wadeable pools, channels between them, and a deep mere or two that no one wades. The starts sit on dry islands, with a mound and plenty of reeds (tall grass) to hide in.
 
-**Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed. `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at each size and needs 80% of them to pass (all 450 pass as built). The `gc_map` tests check that a seed always writes the same description.
+**Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed. `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at Duel, 25 at Skirmish and 12 at Warfield, and needs 80% of them to pass at each size. The `gc_map` tests check that a seed always writes the same description.
 
 ## Water (later)
 
