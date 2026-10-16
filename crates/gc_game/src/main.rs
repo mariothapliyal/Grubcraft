@@ -3706,8 +3706,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
+        // Below Conquest's top bar.
+        let top = if self.world.economy().is_some() {
+            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+        } else {
+            0.0
+        };
         self.renderer
-            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale);
+            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale, top);
         self.sandbox.dirty = false;
     }
 

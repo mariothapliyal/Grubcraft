@@ -46,8 +46,8 @@ const NODE_HEIGHT: f32 = 0.35;
 const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
 /// Grub seeps glow gold, Marrow veins bone white; dry ones are dim.
-pub const SEEP: [u8; 3] = [230, 190, 60];
-pub const VEIN: [u8; 3] = [235, 225, 200];
+const SEEP: [u8; 3] = [230, 190, 60];
+const VEIN: [u8; 3] = [235, 225, 200];
 const NODE_GLOW: u8 = 90;
 /// The white rim round the selected building, beyond its footprint (tiles).
 const RIM: f32 = 0.6;

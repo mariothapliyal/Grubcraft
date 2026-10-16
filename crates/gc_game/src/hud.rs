@@ -6,11 +6,11 @@ use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId};
 use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
+use gc_ui::conquest::{Block, NodeDot, QueueItem, StructurePanel, TopBar};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
-    Block, Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
-    HudEvent, HudInput, MinimapData, MinimapTerrain, NodeDot, QueueItem, SlotState,
-    StructurePanel, TopBar,
+    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
+    HudEvent, HudInput, MinimapData, MinimapTerrain, SlotState,
 };
 use glam::{Vec2, Vec3};
 
@@ -486,7 +486,11 @@ impl Running {
                     .iter()
                     .enumerate()
                     .map(|(i, &u)| QueueItem {
-                        name: self.units.names.get(usize::from(u)).map_or("", String::as_str),
+                        name: self
+                            .units
+                            .names
+                            .get(usize::from(u))
+                            .map_or("", String::as_str),
                         progress: if i == 0 { front } else { 0 },
                     })
                     .collect()

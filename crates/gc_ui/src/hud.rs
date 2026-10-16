@@ -1,5 +1,6 @@
 //! The in-battle HUD: the bottom bar with the minimap, the army tray and the
-//! command grid, and the alerts over the battlefield.
+//! command grid, the alerts over the battlefield and, in Conquest, the top
+//! bar.
 //! Docs: docs/08-ui-ux.md#screen-layout-1080p-reference.
 //!
 //! Like the menus this knows nothing about the GPU or the simulation. Each
@@ -10,12 +11,15 @@
 //! north (smaller z) at the top of the minimap.
 
 use crate::alerts::{self, AlertData};
+use crate::conquest::{self, Block, NodeDot, StructurePanel, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
 use crate::hero::{self, HeroPanel};
 use crate::ui::{Press, theme};
 
 /// Height of the bottom bar, in UI pixels.
 pub const BAR_HEIGHT: i32 = 168;
+/// Height of the top bar (Conquest), in UI pixels.
+pub const TOP_BAR_HEIGHT: i32 = 26;
 const MARGIN: i32 = 8;
 /// Width kept free at the bar's right end for the command grid.
 const GRID_WIDTH: i32 = 244;
@@ -110,6 +114,10 @@ pub struct MinimapData<'a> {
     /// The ground the camera sees, as a polygon in tiles, clamped to the map
     /// (empty draws nothing).
     pub view: &'a [[f32; 2]],
+    /// Gathering spots (Conquest), drawn under the regiments.
+    pub nodes: &'a [NodeDot],
+    /// Buildings, as their footprints, drawn under the regiments.
+    pub blocks: &'a [Block],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -167,6 +175,10 @@ pub struct HudData<'a> {
     /// While the armies deploy (docs/06-game-modes.md).
     pub deployment: Option<DeployStatus>,
     pub alerts: AlertData<'a>,
+    /// The economy and the clock across the top of the screen (Conquest).
+    pub top: Option<TopBar>,
+    /// A selected building: its card and queue replace the regiment cards.
+    pub structure: Option<StructurePanel<'a>>,
 }
 
 /// The deployment phase, as this player sees it.
@@ -184,6 +196,7 @@ pub(crate) const WIDGET_IDLE: u32 = 2 << 24;
 const WIDGET_SLOT: u32 = 3 << 24;
 const WIDGET_CARD: u32 = 4 << 24;
 pub(crate) const WIDGET_ALERT: u32 = 5 << 24;
+pub(crate) const WIDGET_QUEUE: u32 = 6 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -216,6 +229,9 @@ pub enum HudEvent {
     Alert(u32),
     /// The idle-worker button was clicked.
     IdleWorker,
+    /// Take this unit (its index in the queue) out of the selected building's
+    /// training queue.
+    Unqueue(usize),
 }
 
 #[derive(Default)]
@@ -228,6 +244,8 @@ pub struct Hud {
     press: Press,
     /// Alert badges and buttons over the battlefield as last drawn.
     over: Vec<Rect>,
+    /// The top bar as last drawn (None while it is hidden).
+    top: Option<Rect>,
 }
 
 pub(crate) fn rgb(c: [u8; 3]) -> Color {
@@ -240,6 +258,7 @@ impl Hud {
         self.dragging
             || HudLayout::new(screen).bar.contains(mouse.0, mouse.1)
             || self.over.iter().any(|r| r.contains(mouse.0, mouse.1))
+            || self.top.is_some_and(|r| r.contains(mouse.0, mouse.1))
     }
 
     /// Lay out and draw the bar, and report what was clicked.
@@ -268,6 +287,10 @@ impl Hud {
             self.grid(draw, &layout, input, data.grid, events);
         }
         self.over.clear();
+        self.top = data
+            .top
+            .as_ref()
+            .map(|t| conquest::draw_top_bar(draw, screen.0, t));
         if let Some(h) = &data.hero {
             hero::draw(draw, layout.bar.y, h, &mut self.over);
         }
@@ -275,6 +298,7 @@ impl Hud {
             draw,
             screen,
             layout.bar.h,
+            self.top.map_or(0, |r| r.h),
             input,
             &mut self.press,
             data.alerts,
@@ -387,6 +411,8 @@ impl Hud {
             )
         };
         let inside = |(x, y): (i32, i32)| r.inset(1).contains(x, y);
+        conquest::draw_blocks(draw, r, to_screen, m.blocks);
+        conquest::draw_nodes(draw, r, to_screen, m.nodes);
         // Selected regiments are drawn last and larger, so they stay on top.
         for pass in [false, true] {
             for d in m.dots.iter().filter(|d| d.selected == pass) {
@@ -428,6 +454,12 @@ impl Hud {
             return;
         }
         draw.border(r, 2, theme::PANEL_EDGE);
+        if let Some(s) = &data.structure {
+            draw.text(inner.x, inner.y, 1, theme::MUTED, data.tray_title);
+            let row = Rect::new(inner.x, inner.y + 20, inner.w, inner.h - 20);
+            conquest::draw_structure(draw, &mut self.press, row, input, s, events);
+            return;
+        }
         if data.cards.is_empty() {
             draw.text_centered(r, 1, theme::DISABLED, "Select a regiment");
             return;
@@ -668,6 +700,7 @@ fn line(draw: &mut DrawList, clip: Rect, a: (i32, i32), b: (i32, i32), color: Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conquest::QueueItem;
 
     const SCREEN: (i32, i32) = (1280, 760);
 
@@ -687,11 +720,30 @@ mod tests {
         }
     }
 
+    /// The Conquest extras a test may add to a frame.
+    #[derive(Default)]
+    struct Extras<'a> {
+        top: Option<TopBar>,
+        structure: Option<StructurePanel<'a>>,
+        nodes: &'a [NodeDot],
+        blocks: &'a [Block],
+    }
+
     fn run(
         hud: &mut Hud,
         input: HudInput,
         cards: &[Card],
         dots: &[Dot],
+    ) -> (Vec<HudEvent>, DrawList) {
+        run_with(hud, input, cards, dots, Extras::default())
+    }
+
+    fn run_with(
+        hud: &mut Hud,
+        input: HudInput,
+        cards: &[Card],
+        dots: &[Dot],
+        extras: Extras,
     ) -> (Vec<HudEvent>, DrawList) {
         let t = terrain();
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
@@ -710,12 +762,16 @@ mod tests {
                 terrain: &t,
                 dots,
                 view: &[],
+                nodes: extras.nodes,
+                blocks: extras.blocks,
             },
             cards,
             tray_title: "Selected",
             deployment: None,
             alerts: AlertData::default(),
             hero: None,
+            top: extras.top,
+            structure: extras.structure,
         };
         let mut draw = DrawList::default();
         let mut events = Vec::new();
@@ -737,6 +793,8 @@ mod tests {
                     terrain: &t,
                     dots: &[],
                     view: &[],
+                    nodes: &[],
+                    blocks: &[],
                 },
                 cards: &[],
                 tray_title: "",
@@ -746,6 +804,8 @@ mod tests {
                 }),
                 alerts: AlertData::default(),
                 hero: None,
+                top: None,
+                structure: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             Hud::default().frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -777,6 +837,8 @@ mod tests {
                     terrain: &t,
                     dots: &[],
                     view: &[],
+                    nodes: &[],
+                    blocks: &[],
                 },
                 cards: &[],
                 tray_title: "",
@@ -786,6 +848,8 @@ mod tests {
                 }),
                 alerts: AlertData::default(),
                 hero: None,
+                top: None,
+                structure: None,
             };
             let (mut draw, mut events) = (DrawList::default(), Vec::new());
             hud.frame(&mut draw, SCREEN, input, &data, &mut events);
@@ -851,11 +915,15 @@ mod tests {
                 terrain: &t,
                 dots: &[],
                 view: &[],
+                nodes: &[],
+                blocks: &[],
             },
             cards: &[],
             tray_title: "",
             deployment: None,
             alerts: AlertData::default(),
+            top: None,
+            structure: None,
         };
         let l = HudLayout::new(SCREEN);
         let over_panel = (30, l.bar.y - 40);
@@ -1043,5 +1111,211 @@ mod tests {
         let mut hud = Hud::default();
         let (_, draw) = run(&mut hud, HudInput::default(), &[], &[]);
         assert!(draw.quads.len() > 10);
+    }
+
+    fn top_bar() -> TopBar {
+        TopBar {
+            grub: 1240,
+            marrow: 185,
+            supply_used: 64,
+            supply_cap: 90,
+            upkeep_percent: 100,
+            clock_secs: 14 * 60 + 32,
+        }
+    }
+
+    /// How many quads of `colour` sit inside the top bar.
+    fn in_top_bar(draw: &DrawList, colour: Color) -> usize {
+        draw.quads
+            .iter()
+            .filter(|q| i32::from(q.pos[1]) < TOP_BAR_HEIGHT && q.color == colour)
+            .count()
+    }
+
+    fn with_top(top: TopBar) -> Extras<'static> {
+        Extras {
+            top: Some(top),
+            ..Extras::default()
+        }
+    }
+
+    #[test]
+    fn the_top_bar_is_drawn_only_when_given_and_keeps_the_mouse() {
+        let mouse = (400, 5);
+        let mut hud = Hud::default();
+        let (_, draw) = run(&mut hud, HudInput::default(), &[], &[]);
+        assert!(
+            draw.quads
+                .iter()
+                .all(|q| i32::from(q.pos[1]) >= TOP_BAR_HEIGHT)
+        );
+        assert!(!hud.wants(SCREEN, mouse));
+
+        let (_, draw) = run_with(&mut hud, HudInput::default(), &[], &[], with_top(top_bar()));
+        assert!(
+            draw.quads
+                .iter()
+                .any(|q| q.pos == [0, 0] && q.size == [SCREEN.0 as u16, TOP_BAR_HEIGHT as u16])
+        );
+        assert!(hud.wants(SCREEN, mouse));
+        assert!(hud.wants(SCREEN, (0, TOP_BAR_HEIGHT - 1)));
+        assert!(!hud.wants(SCREEN, (400, TOP_BAR_HEIGHT + 4)), "the field");
+        // Hidden again: the click is the world's.
+        run(&mut hud, HudInput::default(), &[], &[]);
+        assert!(!hud.wants(SCREEN, mouse));
+    }
+
+    #[test]
+    fn supply_at_the_cap_turns_red_and_upkeep_shows_in_amber() {
+        const AMBER: Color = [236, 190, 60, 255];
+        let mut hud = Hud::default();
+        let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
+        let roomy = bar(top_bar());
+        assert_eq!(in_top_bar(&roomy, theme::BAD), 0);
+        assert_eq!(in_top_bar(&roomy, AMBER), 0);
+        let full = bar(TopBar {
+            supply_used: 90,
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&full, theme::BAD), "90/90".len());
+        let taxed = bar(TopBar {
+            upkeep_percent: 80,
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&taxed, AMBER), "80%".len());
+    }
+
+    #[test]
+    fn the_minimap_draws_nothing_extra_without_marks() {
+        let (_, plain) = run(&mut Hud::default(), HudInput::default(), &[], &[]);
+        let nodes = [
+            NodeDot {
+                pos: [64.0, 64.0],
+                marrow: false,
+                dry: false,
+            },
+            NodeDot {
+                pos: [192.0, 64.0],
+                marrow: true,
+                dry: true,
+            },
+        ];
+        let blocks = [Block {
+            rect: [100.0, 150.0, 8.0, 8.0],
+            color: [30, 120, 200],
+            selected: true,
+        }];
+        let (_, marked) = run_with(
+            &mut Hud::default(),
+            HudInput::default(),
+            &[],
+            &[],
+            Extras {
+                nodes: &nodes,
+                blocks: &blocks,
+                ..Extras::default()
+            },
+        );
+        // A quad a node, and a fill and a rim for the selected block.
+        assert_eq!(marked.quads.len(), plain.quads.len() + 2 + 2);
+        let drawn = |colour: [u8; 3]| marked.quads.iter().any(|q| q.color == rgb(colour));
+        assert!(drawn([230, 190, 60]), "Grub");
+        assert!(drawn([105, 101, 90]), "dry Marrow, dimmed");
+        assert!(drawn([30, 120, 200]), "the block");
+        assert!(!plain.quads.iter().any(|q| q.color == rgb([30, 120, 200])));
+    }
+
+    fn queue<'a>() -> [QueueItem<'a>; 2] {
+        [
+            QueueItem {
+                name: "Spearmen",
+                progress: 40,
+            },
+            QueueItem {
+                name: "Archers",
+                progress: 0,
+            },
+        ]
+    }
+
+    fn panel<'a>(queue: &'a [QueueItem<'a>]) -> Extras<'a> {
+        Extras {
+            structure: Some(StructurePanel {
+                name: "Clan Hall",
+                color: [30, 120, 200],
+                hp: 900,
+                max_hp: 1200,
+                building: None,
+                upgrading: Some(("Clan Keep", 25)),
+                queue,
+            }),
+            ..Extras::default()
+        }
+    }
+
+    /// A point inside queue slot `i` of the tray.
+    fn queue_slot(i: i32) -> (i32, i32) {
+        let row = HudLayout::new(SCREEN).tray.inset(6);
+        (row.x + 232 + 4 + 10 + i * (64 + 4), row.y + 20 + 10)
+    }
+
+    #[test]
+    fn a_selected_building_replaces_the_cards_with_its_queue() {
+        let items = queue();
+        let cards = [card(7)];
+        let blue = rgb([30, 120, 200]);
+        let (_, with_cards) = run(&mut Hud::default(), HudInput::default(), &cards, &[]);
+        let (_, with_panel) = run_with(
+            &mut Hud::default(),
+            HudInput::default(),
+            &cards,
+            &[],
+            panel(&items),
+        );
+        assert!(!with_cards.quads.iter().any(|q| q.color == blue));
+        assert!(with_panel.quads.iter().any(|q| q.color == blue));
+        // The regiment's red portrait is gone.
+        let red = rgb([200, 60, 50]);
+        assert!(with_cards.quads.iter().any(|q| q.color == red));
+        assert!(!with_panel.quads.iter().any(|q| q.color == red));
+        // A click where the card was selects nothing now.
+        let l = HudLayout::new(SCREEN);
+        let click = HudInput {
+            mouse: (l.tray.x + 20, l.tray.y + 40),
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let (ev, _) = run_with(&mut Hud::default(), click, &cards, &[], panel(&items));
+        assert!(ev.is_empty(), "{ev:?}");
+    }
+
+    #[test]
+    fn clicking_a_filled_queue_slot_unqueues_it_and_an_empty_one_does_nothing() {
+        let items = queue();
+        let mut hud = Hud::default();
+        let at = |mouse, left_pressed, left_released| HudInput {
+            mouse,
+            left_pressed,
+            left_released,
+            ..HudInput::default()
+        };
+        let mut frame = |input| run_with(&mut hud, input, &[], &[], panel(&items)).0;
+        // Fires on the release, not the press.
+        assert!(frame(at(queue_slot(1), true, false)).is_empty());
+        assert_eq!(
+            frame(at(queue_slot(1), false, true)),
+            vec![HudEvent::Unqueue(1)]
+        );
+        assert_eq!(
+            frame(at(queue_slot(0), true, true)),
+            vec![HudEvent::Unqueue(0)]
+        );
+        // Empty slots do nothing.
+        assert!(frame(at(queue_slot(2), true, true)).is_empty());
+        assert!(frame(at(queue_slot(4), true, true)).is_empty());
+        // Pressed on one slot, let go over another: no click.
+        frame(at(queue_slot(0), true, false));
+        assert!(frame(at(queue_slot(1), false, true)).is_empty());
     }
 }
