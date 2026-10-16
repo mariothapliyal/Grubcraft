@@ -203,7 +203,7 @@ const ZONE_MARGIN: f32 = 10.0;
 
 /// A deployment zone round `start` that holds the standard deployment
 /// `placed` with room to spare.
-fn zone_radius(placed: &[army::Placement], start: Vec2) -> i32 {
+pub(crate) fn zone_radius(placed: &[army::Placement], start: Vec2) -> i32 {
     let reach = placed
         .iter()
         .map(|p| p.position.distance(start))

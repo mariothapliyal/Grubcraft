@@ -19,15 +19,18 @@
 //! that keeps the recorded commands.
 
 use gc_ai::army::{self, Placement};
+use gc_ai::perception::to_fx_vec;
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
+use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::Recorder;
 use gc_sim::champions::Outcome;
+use gc_sim::deploy::DEPLOY_SECONDS;
 use gc_sim::{
     Capacities, Command, Formation, MatchSetup, PlayerCommand, PlayerId, UnitStats, World,
 };
 use glam::Vec2;
 
-use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field};
+use crate::battle::{HOLD_TICKS, battle_starts, holding_the_field, zone_radius};
 use crate::terrain_gen::{Heightmap, start_positions};
 
 /// One side of a recorded battle: a computer player.
@@ -56,6 +59,11 @@ struct Golden {
     /// Whether champions may duel before battle, as the lobby allows by
     /// default in battles with computer players.
     champions: bool,
+    /// Whether the battle opens with a deployment phase, as when people
+    /// play: every side gets a zone, side 0 stands in for a person
+    /// (placing through `extra`, never pressing Ready, so the time runs
+    /// out) and the computer players are ready at once.
+    deployment: bool,
 }
 
 const fn side(faction: Faction, level: Difficulty, team: u8) -> Side {
@@ -143,6 +151,118 @@ fn tuning(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
+/// Side 0 deploys by hand (see [`Golden::deployment`]), with orders the
+/// phase accepts and some it refuses, and gives one paced move once the
+/// battle begins.
+fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
+    let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
+    let Some(zone) = world.deploy_zone(0) else {
+        return;
+    };
+    let order = |command| PlayerCommand { player: 0, command };
+    let at = |dx: i32, dy: i32| zone.center + FxVec2::from_ints(dx, dy);
+    let outside = zone.center + FxVec2::new(zone.radius * 2, Fx::ZERO);
+    let battle_starts = DEPLOY_SECONDS * gc_sim::TICKS_PER_SECOND;
+    match world.tick_count() {
+        // Placing: one regiment moved and turned within the zone, one
+        // sent outside it (refused), and an enemy regiment (refused).
+        20 => {
+            if let [first, second, ..] = mine.as_slice() {
+                out.push(order(Command::MoveTo {
+                    regiment: first.handle,
+                    target: at(6, 4),
+                    facing: Some(Angle(0x2000)),
+                    files: 6,
+                    pace: Fx::ZERO,
+                }));
+                out.push(order(Command::MoveTo {
+                    regiment: second.handle,
+                    target: outside,
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                }));
+            }
+            if let Some(enemy) = world.regiments.iter().find(|r| r.owner == 1) {
+                out.push(order(Command::MoveTo {
+                    regiment: enemy.handle,
+                    target: at(0, 0),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                }));
+            }
+        }
+        // Formations: a shield wall for a regiment without shields
+        // (refused), close order for another; an attack (refused until
+        // the battle begins).
+        40 => {
+            if let [_, _, third, fourth, ..] = mine.as_slice() {
+                out.push(order(Command::SetFormation {
+                    regiment: third.handle,
+                    formation: Formation::ShieldWall,
+                }));
+                out.push(order(Command::SetFormation {
+                    regiment: fourth.handle,
+                    formation: Formation::Tight,
+                }));
+                if let Some(enemy) = world.regiments.iter().find(|r| r.owner == 1) {
+                    out.push(order(Command::Attack {
+                        regiment: third.handle,
+                        target: enemy.handle,
+                    }));
+                }
+            }
+        }
+        // A late zone for side 0 is refused (one each), and a regiment
+        // raised outside the zone too.
+        60 => {
+            out.push(order(Command::DeployZone {
+                center: outside,
+                radius: zone.radius,
+            }));
+            if let Some(first) = mine.first() {
+                out.push(order(Command::SpawnRegiment {
+                    unit: first.unit,
+                    position: outside,
+                    facing: Angle(0),
+                }));
+            }
+        }
+        // What the phase took and refused, checked as it is recorded.
+        21 => {
+            let (first, second) = (mine[0], mine[1]);
+            assert_eq!(first.position, at(6, 4), "placed inside the zone");
+            assert_ne!(second.position, outside, "outside the zone");
+            assert!(world.deploying());
+        }
+        41 => {
+            assert_eq!(mine[2].formation, Formation::Line, "no shields");
+            assert_eq!(mine[3].formation, Formation::Tight);
+            assert!(!mine[2].moving, "no attacks while deploying");
+        }
+        61 => {
+            assert_eq!(world.deploy_zone(0), Some(zone), "one zone each");
+            assert_eq!(mine.len(), 10, "nothing raised outside the zone");
+        }
+        t if t == battle_starts - 1 => assert!(world.deploying(), "side 0 never readied"),
+        t if t == battle_starts + 1 => assert!(!world.deploying(), "the time ran out"),
+        // The battle has begun: a slow, wide advance.
+        t if t == battle_starts + 20 => {
+            if let Some(first) = mine.first() {
+                out.push(order(Command::MoveTo {
+                    regiment: first.handle,
+                    target: at(0, -20),
+                    facing: None,
+                    files: 10,
+                    pace: Fx::from_int(2),
+                }));
+            }
+        }
+        _ => {}
+    }
+}
+
 use Difficulty::{General, Veteran};
 use Faction::{Brood, CarrionConcord, Choir, EmberClans};
 
@@ -158,6 +278,7 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: no_extra,
         champions: false,
+        deployment: false,
     },
     Golden {
         name: "field-2v2",
@@ -175,6 +296,7 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: no_extra,
         champions: false,
+        deployment: false,
     },
     Golden {
         name: "sandbox-tuning",
@@ -190,6 +312,7 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: tuning,
         champions: false,
+        deployment: false,
     },
     // Woods and tall grass in play (docs/20-ambushes.md): regiments hide,
     // are spotted, and spring ambushes, so the vision rules are checked on
@@ -205,6 +328,7 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: no_extra,
         champions: false,
+        deployment: false,
     },
     // The `gc_bench` grand battle: about 6,000 soldiers, all four armies
     // charging into one brawl in the middle. Until the army builder brings
@@ -225,6 +349,7 @@ const GOLDENS: &[Golden] = &[
         minds: false,
         extra: charge,
         champions: false,
+        deployment: false,
     },
     // Champions come out before the armies close, and one kills the other.
     Golden {
@@ -238,6 +363,27 @@ const GOLDENS: &[Golden] = &[
         minds: true,
         extra: no_extra,
         champions: true,
+        deployment: false,
+    },
+    // The deployment phase every battle with people opens with (docs/06,
+    // "Deployment"): placing inside and outside the zone, orders the phase
+    // refuses, a formation change, one side ready at once and the other
+    // running out the clock, then a paced move once the battle begins.
+    Golden {
+        name: "field-deploy-1v1",
+        seed: 0xde9,
+        map_tiles: 256,
+        sides: &[
+            side(EmberClans, Veteran, 0),
+            side(CarrionConcord, Veteran, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 5,
+        minds: true,
+        extra: deploying,
+        champions: false,
+        deployment: true,
     },
 ];
 
@@ -286,6 +432,9 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let starts = battle_starts(&teams, 0, start_positions(golden.map_tiles));
     let middle = Vec2::splat(golden.map_tiles as f32 * 0.5);
     let mut fielded = Vec::new();
+    // As `battle::set_out` sends them: every zone, then the armies, then
+    // the computer players' Ready.
+    let (mut zones, mut ready) = (Vec::new(), Vec::new());
     for (i, s) in golden.sides.iter().enumerate() {
         let party = i as PlayerId;
         let roll = golden.seed ^ i as u64;
@@ -311,6 +460,21 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             .unwrap_or(middle);
         let forward = (foe - starts[i]).normalize_or(Vec2::NEG_Y);
         let placed = deploy(&units, &raised, starts[i], forward, golden.rows, &minds);
+        if golden.deployment {
+            zones.push(PlayerCommand {
+                player: party,
+                command: Command::DeployZone {
+                    center: to_fx_vec(starts[i]),
+                    radius: Fx::from_int(zone_radius(&placed, starts[i])),
+                },
+            });
+            if i > 0 {
+                ready.push(PlayerCommand {
+                    player: party,
+                    command: Command::Ready,
+                });
+            }
+        }
         army::spawn_commands(party, &placed, &mut out);
         fielded.push((
             raised.len(),
@@ -324,8 +488,10 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         }
     }
 
+    zones.append(&mut out);
+    zones.append(&mut ready);
     let mut rec = Recorder::new(&setup, &world, String::new());
-    rec.tick(&mut world, &out);
+    rec.tick(&mut world, &zones);
     let limit = golden.minutes * 60 * gc_sim::TICKS_PER_SECOND;
     let mut held: Option<(PlayerId, u32)> = None;
     let mut most_engaged = (0, 0);
@@ -359,6 +525,9 @@ fn record(golden: &Golden) -> gc_replay::Replay {
             most_engaged = (engaged, world.tick_count());
         }
         let now = world.tick_count();
+        if world.deploying() {
+            continue;
+        }
         held = match (held, holding_the_field(&world)) {
             (Some((p, since)), Some(h)) if !world.hostile(p, h) => Some((p, since)),
             (_, Some(h)) => Some((h, now)),
