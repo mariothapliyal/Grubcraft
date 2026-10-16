@@ -5,7 +5,7 @@
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::structures::{Armour, DROP_OFF_GRUB, DROP_OFF_MARROW, Role, TowerAttack};
+use gc_sim::structures::{Armour, Role, TowerAttack};
 use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, StructureHandle,
     StructureView, World,
@@ -69,15 +69,7 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
         width: b.width,
         depth: b.depth,
         supply: b.supply,
-        // Every faction gathers with plain workers until its own economy
-        // comes (Brood veins, Choir Resonators, Concord caravans), so
-        // every main building takes both resources in the meantime
-        // (docs/04-economy.md).
-        flags: if b.role() == record::Role::Main {
-            b.flags | DROP_OFF_GRUB | DROP_OFF_MARROW
-        } else {
-            b.flags
-        },
+        flags: b.flags,
         attack: (b.attack_range > 0).then(|| TowerAttack {
             range: b.attack_range(),
             damage: b.attack_damage,
@@ -87,16 +79,15 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
     }
 }
 
-/// Every building type in the game data, as the sandbox's Conquest world
-/// reads them.
+/// Every building type in the game data, as Conquest worlds read them.
 pub struct Table {
     pub stats: Vec<BuildingStats>,
     names: Vec<String>,
     factions: Vec<Faction>,
-    /// What Conquest knows of each regiment type, by unit type. The units
-    /// in play are the Field Battle ones, which are all plain regiments
-    /// (no workers, no supply); the Conquest unit table comes with M3
-    /// step 4.
+    /// What the sandbox's Conquest world knows of each regiment type. The
+    /// sandbox plays with the Field Battle units, which are all plain
+    /// regiments (no workers, no supply); Conquest matches use their own
+    /// unit table (`conquest::plan`).
     units: Vec<ConquestUnit>,
 }
 
@@ -114,9 +105,8 @@ impl Table {
         }
     }
 
-    /// Make `world`, fresh from `World::new`, a Conquest world with these
-    /// buildings. Only the sandbox does this: replays don't record the
-    /// setup yet, and the sandbox is never recorded.
+    /// Make `world`, fresh from `World::new`, the sandbox's Conquest world
+    /// with these buildings (the sandbox is never recorded).
     pub fn conquer(&self, world: &mut World) {
         let done = world.conquest(&ConquestSetup {
             buildings: &self.stats,

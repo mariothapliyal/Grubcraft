@@ -106,11 +106,12 @@ pub struct Header {
     /// How the battle was decided, if it was by the end of the recording
     /// ([`World::verdict`]); `None` too for files from before format 8.
     pub result: Option<Verdict>,
-    /// The Field Battle map it was played on, as the lobby's choice (an
-    /// index into `gc_map::FIELD_MAPS`), made from the match's seed;
-    /// `None` for the Proving Ground, as every replay before format 11
-    /// was. The replay plays on the map it stores either way; this is for
-    /// drawing that map.
+    /// The map it was played on, as the lobby's choice: in a Field Battle
+    /// an index into `gc_map::FIELD_MAPS`, made from the match's seed, and
+    /// in Conquest an index into the lobby's Conquest maps; `None` for the
+    /// Proving Ground, as every replay before format 11 was. The replay
+    /// plays on the map it stores either way; this is for drawing that
+    /// map.
     pub map: Option<u8>,
 }
 
@@ -517,8 +518,9 @@ impl Replay {
         w.bool(self.champions);
     }
 
+    /// The Conquest record, if any; the info block says whether there is
+    /// one.
     fn write_conquest(&self, w: &mut Writer) {
-        w.bool(self.conquest.is_some());
         if let Some(c) = &self.conquest {
             c.write(w);
         }
@@ -751,14 +753,11 @@ impl Replay {
             return None;
         }
         let champions = format >= 4 && r.bool()?;
-        let conquest = if format >= 12 && r.bool()? {
+        let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r)?)
         } else {
             None
         };
-        if format >= 10 && conquest.is_some() != info.conquest {
-            return None;
-        }
         if format < 10 {
             info.ticks = r.var_as()?;
         }
@@ -966,13 +965,13 @@ impl Recorder {
         }
     }
 
-    /// Record that the match is a Conquest one, made so by `setup`. The
-    /// world given to [`Recorder::new`] must already have been
+    /// Record that the match is a Conquest one, made so by `record`'s
+    /// setup. The world given to [`Recorder::new`] must already have been
     /// ([`World::conquest`]), so the first state hash counts it.
     #[must_use]
-    pub fn conquest(mut self, setup: &ConquestSetup) -> Recorder {
+    pub fn conquest(mut self, record: ConquestRecord) -> Recorder {
         assert_eq!(self.replay.ticks, 0, "recording starts at tick 0");
-        self.replay.conquest = Some(ConquestRecord::of(setup));
+        self.replay.conquest = Some(record);
         self
     }
 
@@ -1291,7 +1290,8 @@ mod tests {
         };
         let mut world = World::new(&setup);
         assert!(world.conquest(&conquest));
-        let mut rec = Recorder::new(&setup, &world, "test conquest").conquest(&conquest);
+        let mut rec =
+            Recorder::new(&setup, &world, "test conquest").conquest(ConquestRecord::of(&conquest));
         let say = |player: u8, command: Command| PlayerCommand { player, command };
         let structure = |w: &World, player: u8, x: i32| {
             w.structures()
@@ -1445,7 +1445,6 @@ mod tests {
         let mut body = Writer::default();
         replay.write_units(&mut body);
         replay.write_map(&mut body);
-        body.bool(false);
         replay.write_tail(&mut body);
         lying.extend_from_slice(&lz4_flex::compress_prepend_size(&body.buf));
         assert!(Replay::decode(&lying).is_err());

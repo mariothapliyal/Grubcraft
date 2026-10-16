@@ -21,12 +21,12 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::structures::Role;
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, Resource,
-    TICKS_PER_SECOND, UnitId, UnitStats, World,
+    TICKS_PER_SECOND, UnitId, World,
 };
 use gc_ui::lobby::Tempo;
 
 use crate::buildings::Table;
-use crate::conquest::{self, ConquestPlan, Foot};
+use crate::conquest::{self, Foot};
 
 pub const NAME: &str = "conquest-ribcage-1v1";
 const SEED: u64 = 0x00C0_9E57;
@@ -154,11 +154,7 @@ impl Match {
         let data = crate::data::load();
         let table = Table::new(&data);
         let map = conquest::make_map(0);
-        let units: Vec<UnitStats> = data
-            .conquest_units
-            .iter()
-            .map(|u| crate::sandbox::stats_of(&u.stats))
-            .collect();
+        let units = conquest::unit_stats(&data);
         let nav = map.nav_costs();
         let setup = MatchSetup {
             seed: SEED,
@@ -170,10 +166,10 @@ impl Match {
             ground: map.ground(),
             champions: false,
         };
-        let plan = ConquestPlan::new(&table, &data, &map, &FACTIONS, Tempo::Swift);
+        let plan = conquest::plan(&table, &data, &map, &FACTIONS, Tempo::Swift);
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
-        let rec = Recorder::new(&setup, &world, String::new()).conquest(&plan.setup());
+        let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);
         let opening = conquest::opening(&data, &table, &map, &world, &FACTIONS);
         let mut m = Match {
             kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
@@ -198,9 +194,13 @@ impl Match {
                 self.script(p, &mut out);
             }
             let stats = self.rec.tick(&mut self.world, &out);
-            if std::env::var_os("CONQUEST_TRACE").is_some() {
-                self.trace(&out, stats);
-            }
+            // The script only gives orders that can be carried out.
+            assert_eq!(
+                stats.commands_rejected,
+                0,
+                "at tick {}: {out:?}",
+                self.world.tick_count() - 1
+            );
         }
     }
 
@@ -267,7 +267,7 @@ impl Match {
             .world
             .economy()
             .into_iter()
-            .flat_map(|e| e.nodes())
+            .flat_map(gc_sim::Economy::nodes)
             .filter(|n| n.resource == resource && n.left > 0)
             .map(|n| ((n.at - start).length_sq_raw(), n.index))
             .collect();
@@ -455,12 +455,13 @@ impl Match {
             self.sides[usize::from(p)].charged = true;
         }
         // The host takes the first side's barracks away.
-        if t == REMOVE_AT && p == 0 {
-            if let Some(b) = barracks {
-                out.push(order(Command::RemoveStructure {
-                    structure: b.handle,
-                }));
-            }
+        if t == REMOVE_AT
+            && p == 0
+            && let Some(b) = barracks
+        {
+            out.push(order(Command::RemoveStructure {
+                structure: b.handle,
+            }));
         }
     }
 
@@ -473,39 +474,7 @@ impl Match {
         from + along * gc_fixed::Fx::from_int(tiles)
     }
 
-    /// `CONQUEST_TRACE=1`: the orders refused, and each side every 20
-    /// seconds.
-    fn trace(&self, out: &[PlayerCommand], stats: gc_sim::TickStats) {
-        let t = self.world.tick_count() - 1;
-        if stats.commands_rejected > 0 {
-            println!("t={t} refused {} of {out:?}", stats.commands_rejected);
-        }
-        if !t.is_multiple_of(20 * TICKS_PER_SECOND) {
-            return;
-        }
-        for p in 0..2u8 {
-            let k = self.kits[usize::from(p)];
-            let bank = self.world.bank(p).unwrap();
-            let blds: Vec<String> = self
-                .own(p, None)
-                .iter()
-                .map(|v| format!("{}@{:?} {}%", v.building, v.tile, v.built_percent))
-                .collect();
-            println!(
-                "t={}s p{p} grub {} marrow {} supply {}/{} workers {} fighters {} [{}]",
-                t / TICKS_PER_SECOND,
-                bank.grub,
-                bank.marrow,
-                bank.supply_used,
-                bank.supply_cap,
-                self.count(p, k.worker),
-                self.count(p, k.fighter),
-                blds.join(", ")
-            );
-        }
-    }
-
-    /// Side `p`'s buildings and regiments of each kind, for the checks.
+    /// How many regiments of type `unit` side `p` has.
     fn count(&self, p: PlayerId, unit: UnitId) -> usize {
         self.world
             .regiments

@@ -145,6 +145,7 @@ use gc_sim::{
     World,
 };
 use gc_ui::lobby::{GameMode, MatchStart};
+use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -374,7 +375,7 @@ fn parse_args() -> Options {
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
             "--conquest" => {
-                let choice = conquest::MAP_FILES.iter().position(|m| *m == value);
+                let choice = conquest::choice_of(&value);
                 choice.map(|c| opts.conquest = Some(c)).is_some()
             }
             "--battle" => {
@@ -515,15 +516,8 @@ struct Running {
     commander: bool,
     /// Regiments that loosed a volley lately, by pool index.
     shooting: Vec<bool>,
-    /// The match's regiment types, as the simulation sees them, and their names.
-    unit_stats: Vec<UnitStats>,
-    /// The regiment types as built, before any sandbox tuning.
-    data_stats: Vec<UnitStats>,
-    unit_names: Vec<String>,
-    /// Each regiment type's faction, as the AI names them.
-    unit_factions: Vec<gc_ai::Faction>,
-    /// Each regiment type's cost in a Field Battle army.
-    unit_points: Vec<u32>,
+    /// The match's regiment types.
+    units: UnitTable,
     /// The regiment types not in play: the Conquest ones in a Field Battle
     /// or the sandbox, the Field Battle ones in Conquest. See
     /// [`Running::use_units`].
@@ -609,14 +603,16 @@ struct Running {
 /// with its own (`GameData::conquest_units`), whose ids number another
 /// table.
 struct UnitTable {
-    /// As in play (the sandbox may have tuned them).
+    /// As the simulation sees them (the sandbox may have tuned them).
     stats: Vec<UnitStats>,
-    /// As built.
+    /// As built, before any sandbox tuning.
     data_stats: Vec<UnitStats>,
     names: Vec<String>,
+    /// Each type's faction, as the AI names them.
     factions: Vec<gc_ai::Faction>,
+    /// Each type's cost in a Field Battle army.
     points: Vec<u32>,
-    /// Each type's soldier model, if it has one.
+    /// Each type's soldier model, if it has one (none without art).
     models: Vec<Option<usize>>,
 }
 
@@ -646,8 +642,6 @@ impl UnitTable {
 /// Soldier models and the lists that draw them, rebuilt every frame.
 struct Art {
     clips: models::Clips,
-    /// The model of each unit type, if it has one.
-    unit_model: Vec<Option<usize>>,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
     /// This frame's camera, for choosing levels of detail.
@@ -985,63 +979,38 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
-        let mut field_units = None;
-        let mut conquest_units = None;
-        let tables = |models: Option<&gc_assets::model::Models<'_>>| {
-            (
-                UnitTable::of(game_data.units.iter(), models),
-                UnitTable::of(game_data.conquest_units.iter().map(|u| &u.stats), models),
-            )
-        };
-        let art = match models::load() {
-            Ok(models) => match renderer.set_models(&models) {
-                Ok(()) => Some(Art {
-                    clips: models::Clips::new(&models),
-                    unit_model: {
-                        let (mut field, conquest) = tables(Some(&models));
-                        let unit_model = std::mem::take(&mut field.models);
-                        (field_units, conquest_units) = (Some(field), Some(conquest));
-                        unit_model
-                    },
-                    heights: models.models.iter().map(|m| m.height).collect(),
-                    view: LodView {
-                        eye: glam::Vec3::ZERO,
-                        forward: glam::Vec3::NEG_Z,
-                        pixel_scale: 0.0,
-                        cull: gc_render::Cull::EVERYTHING,
-                        force: opts.lod,
-                    },
-                    buckets: vec![Vec::new(); models.models.len() * LODS],
-                    soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
-                    batches: Vec::with_capacity(models.models.len() * LODS),
-                }),
-                Err(e) => {
-                    logln!("grubcraft: soldier models off: {e}");
-                    None
-                }
-            },
+        let models = match models::load().and_then(|m| renderer.set_models(&m).map(|()| m)) {
+            Ok(m) => Some(m),
             Err(e) => {
                 logln!("grubcraft: soldier models off: {e}");
                 None
             }
         };
+        let units = UnitTable::of(game_data.units.iter(), models.as_ref());
+        let other_units = UnitTable::of(
+            game_data.conquest_units.iter().map(|u| &u.stats),
+            models.as_ref(),
+        );
+        let art = models.map(|models| Art {
+            clips: models::Clips::new(&models),
+            heights: models.models.iter().map(|m| m.height).collect(),
+            view: LodView {
+                eye: glam::Vec3::ZERO,
+                forward: glam::Vec3::NEG_Z,
+                pixel_scale: 0.0,
+                cull: gc_render::Cull::EVERYTHING,
+                force: opts.lod,
+            },
+            buckets: vec![Vec::new(); models.models.len() * LODS],
+            soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
+            batches: Vec::with_capacity(models.models.len() * LODS),
+        });
         self.memory_timeline.mark("models uploaded");
-        let (field_units, other_units) = match (field_units, conquest_units) {
-            (Some(f), Some(c)) => (f, c),
-            _ => tables(None),
-        };
-        let UnitTable {
-            stats: unit_stats,
-            names: unit_names,
-            factions: unit_factions,
-            points: unit_points,
-            ..
-        } = field_units;
         // gc_data and the lobby list the factions in the same order.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
             .units
             .iter()
-            .zip(&unit_names)
+            .zip(&units.names)
             .map(|(u, name)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
                 faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
@@ -1065,7 +1034,7 @@ impl App {
             let mut world = World::new(&MatchSetup {
                 seed: opts.seed,
                 capacities,
-                units: &unit_stats,
+                units: &units.stats,
                 map_tiles: heightmap.tiles,
                 nav: &nav,
                 teams: &[],
@@ -1187,11 +1156,7 @@ impl App {
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
-            data_stats: unit_stats.clone(),
-            unit_stats,
-            unit_names,
-            unit_factions,
-            unit_points,
+            units,
             other_units,
             conquest_units: false,
             buildings: building_table,
@@ -1850,7 +1815,7 @@ impl Running {
             let Some(r) = self.world.regiments.get(regiment) else {
                 continue;
             };
-            let stats = &self.unit_stats[r.unit as usize];
+            let stats = &self.units.stats[r.unit as usize];
             let files = if files == 0 { r.files } else { files };
             let (width, depth) = stats.block_size_in(r.formation, files, r.models);
             self.instances.push(BoxInstance {
@@ -1967,7 +1932,7 @@ impl Running {
             // Orders can only name regiments your side can see.
             .filter(|r| self.world.sees(self.sandbox.side, r.handle))
             .filter_map(|r| {
-                let stats = &self.unit_stats[r.unit as usize];
+                let stats = &self.units.stats[r.unit as usize];
                 let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
                 let to = p - at;
@@ -2133,7 +2098,7 @@ impl Running {
         self.sim_clock = self.sim_clock.min(TICK - Duration::from_nanos(1));
         if ticks_this_frame > 0 {
             // Tuned stats take effect in the tick after they are sent.
-            self.unit_stats.clone_from_slice(self.world.units());
+            self.units.stats.clone_from_slice(self.world.units());
             self.judge_battle();
             if self.recording.as_ref().is_some_and(|r| {
                 self.world.tick_count() >= r.saved_at.unwrap_or(0) + replays::SAVE_EVERY
@@ -2204,7 +2169,7 @@ impl Running {
             let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
-            let stats = &self.unit_stats[r.unit as usize];
+            let stats = &self.units.stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
@@ -2325,10 +2290,7 @@ impl Running {
                     lift: BANNER_LIFT,
                 });
             }
-            let model = self
-                .art
-                .as_ref()
-                .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
+            let model = self.units.models.get(r.unit as usize).copied().flatten();
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 let (view, height) = (art.view, art.heights[model]);
                 let buckets = &mut art.buckets;
@@ -2556,7 +2518,7 @@ impl Running {
     /// last tick (the latest, if several), with a drum roll and a horn.
     fn alert_ambushes(&mut self) {
         let side = self.sandbox.side;
-        let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
+        let name = |u: gc_sim::UnitId| self.units.names[u as usize].as_str();
         let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
         let news = self.world.events().iter().rev().find_map(|e| {
             let Event::Ambush(a) = e else { return None };
@@ -2852,7 +2814,7 @@ impl Running {
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
-            self.unit_stats = w.stats_before;
+            self.units.stats = w.stats_before;
         }
         // Conquest plays with its own regiment types.
         let conquest = match &kind {
@@ -2870,7 +2832,7 @@ impl Running {
             self.menu.net().leave();
         }
         if networked {
-            self.unit_stats.clone_from(&self.data_stats);
+            self.units.stats.clone_from(&self.units.data_stats);
         }
         // A lobby match plays on the map the lobby picked, its world seeded
         // with the lobby's map seed (the same on every machine). A replay is
@@ -2906,7 +2868,7 @@ impl Running {
         }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
-            stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
+            stats_before = std::mem::replace(&mut self.units.stats, r.units.clone());
         }
         self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
@@ -2926,14 +2888,14 @@ impl Running {
         let (teams, champions): (Vec<u8>, bool) = match &kind {
             MatchKind::Battle(setup) => (
                 setup.players.iter().map(|s| s.team).collect(),
-                !conquest && battle::champions_allowed(setup),
+                battle::champions_allowed(setup),
             ),
             MatchKind::Sandbox | MatchKind::Replay(_) => (Vec::new(), false),
         };
         let setup = MatchSetup {
             seed: self.seed,
             capacities: self.capacities,
-            units: &self.unit_stats,
+            units: &self.units.stats,
             map_tiles: self.heightmap.tiles,
             nav: &nav,
             teams: &teams,
@@ -2943,7 +2905,7 @@ impl Running {
         // A lobby Conquest match: what every machine makes its world with,
         // from the lobby's settings and the game data.
         let plan = match &kind {
-            MatchKind::Battle(start) if conquest => Some(conquest::ConquestPlan::new(
+            MatchKind::Battle(start) if conquest => Some(conquest::plan(
                 &self.buildings,
                 &self.data,
                 &self.heightmap,
@@ -2982,8 +2944,8 @@ impl Running {
                 &self.world,
                 format!("{mode} on {map}, played {place}"),
             );
-            let recorder = match &plan {
-                Some(plan) => recorder.conquest(&plan.setup()),
+            let recorder = match plan {
+                Some(plan) => recorder.conquest(plan),
                 None => recorder,
             };
             self.recording = Some(Recording {
@@ -3074,20 +3036,15 @@ impl Running {
             return;
         }
         self.conquest_units = conquest;
-        let other = &mut self.other_units;
-        std::mem::swap(&mut self.unit_stats, &mut other.stats);
-        std::mem::swap(&mut self.data_stats, &mut other.data_stats);
-        std::mem::swap(&mut self.unit_names, &mut other.names);
-        std::mem::swap(&mut self.unit_factions, &mut other.factions);
-        std::mem::swap(&mut self.unit_points, &mut other.points);
-        if let Some(art) = &mut self.art {
-            std::mem::swap(&mut art.unit_model, &mut other.models);
-        }
+        std::mem::swap(&mut self.units, &mut self.other_units);
     }
 
     /// How many regiment types each table has, which a replay must match.
     fn unit_types(&self) -> replays::UnitTypes {
-        let (here, other) = (self.data_stats.len(), self.other_units.data_stats.len());
+        let (here, other) = (
+            self.units.data_stats.len(),
+            self.other_units.data_stats.len(),
+        );
         let (field, conquest) = if self.conquest_units {
             (other, here)
         } else {
@@ -3098,17 +3055,14 @@ impl Running {
 
     /// Make the lobby map `key` names and put it on screen.
     fn use_map(&mut self, key: MapKey) {
+        self.map_key = Some(key);
+        self.heightmap = make_map(key);
         logln!(
             "grubcraft: switching to {} (seed {:x}, {} tiles)",
             key.name(),
             self.seed,
-            match key {
-                MapKey::Field(k) => k.tiles,
-                MapKey::Conquest(_) => 0,
-            }
+            self.heightmap.tiles
         );
-        self.map_key = Some(key);
-        self.heightmap = make_map(key);
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
             self.renderer.set_terrain(&terrain_of(hm));
@@ -3129,9 +3083,9 @@ impl Running {
         let set = tagged_alloc::scope(Tag::Ai, || {
             battle::set_out(
                 setup,
-                &self.unit_stats,
-                &self.unit_factions,
-                &self.unit_points,
+                &self.units.stats,
+                &self.units.factions,
+                &self.units.points,
                 terrain_view::plateau_positions(self.heightmap.tiles),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
@@ -3353,7 +3307,7 @@ impl Running {
             }
             self.sandbox.dirty = true;
         }
-        if battle.herald(&self.world, &self.parties, &self.unit_names) {
+        if battle.herald(&self.world, &self.parties, &self.units.names) {
             if let Some(news) = &battle.champions {
                 logln!("grubcraft: {news}");
             }
@@ -3473,10 +3427,7 @@ impl Running {
     fn push_corpses(&mut self) {
         for c in self.puppets.corpses() {
             let [r, g, b] = color_of(&self.parties, c.owner);
-            let model = self
-                .art
-                .as_ref()
-                .and_then(|a| a.unit_model.get(c.unit as usize).copied().flatten());
+            let model = self.units.models.get(c.unit as usize).copied().flatten();
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
@@ -3797,7 +3748,7 @@ impl Running {
         }
         let mut counts = [0u32; 4];
         for r in self.world.regiments.iter().filter(|r| r.owner == side) {
-            if let Some(f) = self.unit_factions.get(r.unit as usize) {
+            if let Some(f) = self.units.factions.get(r.unit as usize) {
                 counts[f.index() as usize] += 1;
             }
         }
@@ -3821,7 +3772,7 @@ impl Running {
 
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
-        let types = self.unit_stats.len() as i32;
+        let types = self.units.stats.len() as i32;
         self.sandbox.unit =
             (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
         self.sandbox.dirty = true;
@@ -3941,7 +3892,7 @@ impl Running {
         let Some((at, facing)) = self.placement() else {
             return;
         };
-        let stats = &self.unit_stats[self.sandbox.unit as usize];
+        let stats = &self.units.stats[self.sandbox.unit as usize];
         let (width, depth) = stats.block_size_in(Formation::Line, stats.files, stats.models);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = if self.world.nav().walkable(fx_vec(at)) {
@@ -4020,7 +3971,7 @@ impl Running {
         };
         if step != 0 {
             let unit = self.sandbox.unit;
-            let mut stats = self.unit_stats[unit as usize];
+            let mut stats = self.units.stats[unit as usize];
             let steps = if self.input.shift { step * 10 } else { step };
             (sandbox::TUNABLES[self.sandbox.row].nudge)(&mut stats, steps);
             self.tune(unit, stats.sanitized());
@@ -4031,7 +3982,7 @@ impl Running {
 
     /// Send new stats for a unit type, and show them straight away.
     fn tune(&mut self, unit: UnitId, stats: UnitStats) {
-        self.unit_stats[unit as usize] = stats;
+        self.units.stats[unit as usize] = stats;
         self.human_orders.push(PlayerCommand {
             player: self.sandbox.side,
             command: gc_sim::Command::TuneUnit { unit, stats },
@@ -4058,7 +4009,7 @@ impl Running {
         };
         // By name, so a row added or removed above a type cannot hand it
         // another type's stats.
-        let plan = match sandbox::plan_reload(&self.unit_names, &names) {
+        let plan = match sandbox::plan_reload(&self.units.names, &names) {
             Ok(plan) => plan,
             Err(e) => {
                 self.say(format!("data/units.ron not reloaded: {e}."));
@@ -4068,7 +4019,7 @@ impl Running {
         let mut changed = 0;
         for &(fresh, running) in &plan.matched {
             let new = stats[fresh].sanitized();
-            if new != self.unit_stats[running] {
+            if new != self.units.stats[running] {
                 self.tune(running as UnitId, new);
                 changed += 1;
             }
@@ -4098,7 +4049,7 @@ impl Running {
     fn sandbox_panel(&self) -> String {
         let sb = &self.sandbox;
         let unit = sb.unit as usize;
-        let name = &self.unit_names[unit];
+        let name = &self.units.names[unit];
         let speed = if self.paused {
             "paused".to_string()
         } else if self.speed == NORMAL_SPEED {
@@ -4261,7 +4212,7 @@ impl Running {
             lines.push(format!(
                 "TUNE {name} ({on_field} on the field)   Up/Down: pick   Left/Right: change   T: close"
             ));
-            let stats = &self.unit_stats[unit];
+            let stats = &self.units.stats[unit];
             for (k, t) in sandbox::TUNABLES.iter().enumerate() {
                 let mark = if k == sb.row { '>' } else { ' ' };
                 lines.push(format!("{mark} {:<15} {}", t.label, (t.show)(stats)));
@@ -4359,16 +4310,26 @@ impl MapKey {
     }
 }
 
+impl From<MapPreviewKey> for MapKey {
+    fn from(key: MapPreviewKey) -> MapKey {
+        match key {
+            MapPreviewKey::Field {
+                choice,
+                tiles,
+                seed,
+            } => MapKey::Field(FieldMap {
+                choice,
+                tiles,
+                seed,
+            }),
+            MapPreviewKey::Conquest(choice) => MapKey::Conquest(choice),
+        }
+    }
+}
+
 /// The map a lobby match of `players` is played on.
 fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> MapKey {
-    match settings.mode {
-        GameMode::Conquest => MapKey::Conquest(settings.map),
-        _ => MapKey::Field(FieldMap {
-            choice: settings.map,
-            tiles: gc_ui::lobby::field_map_tiles(players),
-            seed: settings.map_seed,
-        }),
-    }
+    gc_ui::menu::preview_key(settings, players).into()
 }
 
 /// The last lobby map made, so the lobby's preview, the host's

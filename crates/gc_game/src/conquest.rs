@@ -8,11 +8,12 @@ use gc_data::conquest::{Class, ConquestUnitRecord, NONE};
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
+use gc_replay::ConquestRecord;
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
-    BuildingStats, Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand,
-    PlayerId, Resource, World,
+    Command, ConquestSetup, ConquestUnit, MAX_PARTIES, NodeSetup, PlayerCommand, PlayerId,
+    Resource, World,
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
@@ -23,18 +24,20 @@ use glam::Vec2;
 
 use crate::buildings::{self, Table};
 
-/// The shipped maps the lobby's Conquest maps are made from, in the order
-/// of `gc_ui::lobby::CONQUEST_MAPS`.
-pub const MAP_FILES: [&str; 2] = ["ribcage_pass", "four_teeth"];
-
-/// The Conquest map the lobby's choice `choice` names.
+/// The Conquest map the lobby's choice `choice` names: gc_map ships them
+/// in the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`).
 pub fn make_map(choice: usize) -> Map {
-    let def = MAP_FILES
+    let def = gc_map::SHIPPED
         .get(choice)
-        .and_then(|name| gc_map::shipped(name))
+        .and_then(|&(name, _)| gc_map::shipped(name))
         // The shipped maps parse: gc_map's tests check every one.
         .unwrap_or_else(|| panic!("no shipped Conquest map {choice}"));
     Map::from_def(&def)
+}
+
+/// The lobby's Conquest map choice for a shipped map's file name.
+pub fn choice_of(file: &str) -> Option<usize> {
+    gc_map::SHIPPED.iter().position(|&(name, _)| name == file)
 }
 
 /// What a Conquest unit record is to the simulation.
@@ -57,8 +60,10 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
 
 /// The battle stats of every Conquest unit type, by unit type: the unit
 /// table a Conquest world is made with.
+/// The Conquest unit table's battle stats, as a Conquest world is made
+/// with them.
 #[cfg(test)]
-fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
+pub(crate) fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
     data.conquest_units
         .iter()
         .map(|u| crate::sandbox::stats_of(&u.stats))
@@ -122,49 +127,29 @@ pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> Matc
     }
 }
 
-/// Everything a Conquest world is made with beyond its battle setup, made
-/// alike on every machine from the lobby's settings, the map and the baked
-/// data.
-pub struct ConquestPlan {
-    buildings: Vec<BuildingStats>,
-    units: Vec<ConquestUnit>,
-    nodes: Vec<NodeSetup>,
-    start: [(u32, u32); MAX_PARTIES],
+/// What a Conquest world is made with beyond its battle setup, made alike
+/// on every machine from the lobby's settings, the map and the baked data:
+/// the world takes its [`ConquestRecord::setup`], and the recording keeps
+/// it. `factions` are the players', in player order.
+pub fn plan(
+    table: &Table,
+    data: &GameData,
+    map: &Map,
+    factions: &[Faction],
     tempo: Tempo,
-}
-
-impl ConquestPlan {
-    /// The plan for `factions` (one per player, in player order) on `map`.
-    pub fn new(
-        table: &Table,
-        data: &GameData,
-        map: &Map,
-        factions: &[Faction],
-        tempo: Tempo,
-    ) -> ConquestPlan {
-        let mut start = [(0, 0); MAX_PARTIES];
-        for (s, &f) in start.iter_mut().zip(factions) {
-            *s = start_stores(f);
-        }
-        ConquestPlan {
-            buildings: table.stats.clone(),
-            units: data.conquest_units.iter().map(unit_of).collect(),
-            nodes: nodes_of(map),
-            start,
-            tempo,
-        }
+) -> ConquestRecord {
+    let mut start = [(0, 0); MAX_PARTIES];
+    for (s, &f) in start.iter_mut().zip(factions) {
+        *s = start_stores(f);
     }
-
-    pub fn setup(&self) -> ConquestSetup<'_> {
-        ConquestSetup {
-            buildings: &self.buildings,
-            units: &self.units,
-            nodes: &self.nodes,
-            start: self.start,
-            gather_percent: self.tempo.gather_percent(),
-            build_percent: self.tempo.build_percent(),
-            ..ConquestSetup::default()
-        }
+    ConquestRecord {
+        buildings: table.stats.clone(),
+        units: data.conquest_units.iter().map(unit_of).collect(),
+        structures: ConquestSetup::default().structures,
+        nodes: nodes_of(map),
+        start,
+        gather_percent: tempo.gather_percent(),
+        build_percent: tempo.build_percent(),
     }
 }
 
@@ -243,8 +228,8 @@ pub fn opening(
                     |(x, y): (f32, f32)| buildings::tile_for(Vec2::new(x, y), s.width, s.depth);
                 let fits = |t: (i32, i32)| {
                     let foot = [t.0, t.1, w, d];
-                    world.can_build(i as u16, t).is_ok()
-                        && !taken.iter().any(|&f| overlaps(f, foot, 1))
+                    !taken.iter().any(|&f| overlaps(f, foot, 1))
+                        && world.can_build(i as u16, t).is_ok()
                 };
                 let tile = match first {
                     None => Some(at(centre)).filter(|&t| fits(t)),
@@ -288,7 +273,7 @@ pub fn opening(
                     // Out from the side towards the node, alternating left
                     // and right of it, a ring further out each lap.
                     let lap = (k / 16) as f32;
-                    let step = (k % 16) as i32;
+                    let step = k % 16;
                     let turn = if step % 2 == 0 {
                         step / 2
                     } else {
@@ -342,7 +327,7 @@ mod tests {
     }
 
     /// A fresh Conquest world on `map` for `factions`, and its plan.
-    fn world_on(map: &Map, factions: &[Faction], tempo: Tempo) -> (World, ConquestPlan, Table) {
+    fn world_on(map: &Map, factions: &[Faction], tempo: Tempo) -> (World, ConquestRecord, Table) {
         let data = data();
         let table = Table::new(&data);
         let stats = unit_stats(&data);
@@ -357,7 +342,7 @@ mod tests {
             ground: map.ground(),
             champions: false,
         });
-        let plan = ConquestPlan::new(&table, &data, map, factions, tempo);
+        let plan = plan(&table, &data, map, factions, tempo);
         assert!(world.conquest(&plan.setup()));
         (world, plan, table)
     }
@@ -390,15 +375,24 @@ mod tests {
         assert_eq!(unit_stats(&data).len(), data.conquest_units.len());
     }
 
+    /// The lobby's Conquest maps are gc_map's shipped maps, in its order.
+    #[test]
+    fn the_lobby_lists_the_shipped_maps() {
+        use gc_ui::lobby::{CONQUEST_MAP_PLAYERS, CONQUEST_MAPS};
+        assert_eq!(gc_map::SHIPPED.len(), CONQUEST_MAPS.len());
+        for (i, &(file, _)) in gc_map::SHIPPED.iter().enumerate() {
+            assert_eq!(gc_map::shipped(file).unwrap().name, CONQUEST_MAPS[i]);
+            assert_eq!(make_map(i).players as usize, CONQUEST_MAP_PLAYERS[i]);
+            assert_eq!(choice_of(file), Some(i));
+        }
+    }
+
     #[test]
     fn ribcage_pass_has_two_starts_each_with_its_seeps_and_vein() {
         let map = make_map(0);
         assert_eq!(map.players, 2);
         assert_eq!(map.starts().len(), 2);
-        assert_eq!(map.players as usize, gc_ui::lobby::CONQUEST_MAP_PLAYERS[0]);
-        let four = make_map(1);
-        assert_eq!(four.players as usize, gc_ui::lobby::CONQUEST_MAP_PLAYERS[1]);
-        assert_eq!(four.starts().len(), 4);
+        assert_eq!(make_map(1).starts().len(), 4);
         let nodes = nodes_of(&map);
         for (sx, sy) in map.starts() {
             let near = |r: Resource| {
@@ -470,6 +464,20 @@ mod tests {
             assert_eq!((bank.grub, bank.marrow), start_stores(f), "{f:?}");
             assert!(bank.supply_cap > 0, "{f:?}'s hall gives supply");
         }
+    }
+
+    /// `--conquest four_teeth` seats four sides, one of each faction, as
+    /// a lobby would.
+    #[test]
+    fn a_quick_conquest_start_is_a_lobby_conquest_start() {
+        let start = quick_conquest(1, &Settings::default(), 7);
+        assert_eq!(start.settings.mode, GameMode::Conquest);
+        assert_eq!(start.settings.map_name(), "The Four Teeth");
+        assert_eq!(start.players.len(), 4);
+        assert!(start.players.len() <= start.settings.max_players());
+        let mut factions = factions(&start);
+        factions.sort_by_key(|&f| f as u8);
+        assert_eq!(factions, Faction::ALL);
     }
 
     #[test]

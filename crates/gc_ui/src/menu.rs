@@ -62,18 +62,32 @@ pub enum MenuAction {
     Quit,
 }
 
-/// Which map picture a screen wants: the map choice (an index into
-/// [`MAPS`](crate::lobby::MAPS)), its size in tiles ([`field_map_tiles`]) and the map seed. A
-/// Conquest map has size 0, and its choice indexes
-/// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS). See
-/// [`Menu::wanted_map_preview`].
-pub type MapPreviewKey = (usize, u32, u64);
+/// Which map picture a screen wants (see [`Menu::wanted_map_preview`]):
+/// the map a lobby's settings pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapPreviewKey {
+    /// A Field Battle map: the choice (an index into
+    /// [`MAPS`](crate::lobby::MAPS)), its size in tiles
+    /// ([`field_map_tiles`]) and the map seed.
+    Field {
+        choice: usize,
+        tiles: u32,
+        seed: u64,
+    },
+    /// A shipped Conquest map, an index into
+    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS).
+    Conquest(usize),
+}
 
-/// The picture of the map `settings` pick for `players` players.
+/// The map `settings` pick for `players` players.
 pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
     match settings.mode {
-        GameMode::FieldBattle => (settings.map, field_map_tiles(players), settings.map_seed),
-        GameMode::Conquest => (settings.map, 0, 0),
+        GameMode::FieldBattle => MapPreviewKey::Field {
+            choice: settings.map,
+            tiles: field_map_tiles(players),
+            seed: settings.map_seed,
+        },
+        GameMode::Conquest => MapPreviewKey::Conquest(settings.map),
     }
 }
 
@@ -1474,6 +1488,21 @@ fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn field(choice: usize, tiles: u32, seed: u64) -> MapPreviewKey {
+        MapPreviewKey::Field {
+            choice,
+            tiles,
+            seed,
+        }
+    }
+
+    fn seed_of(key: MapPreviewKey) -> u64 {
+        match key {
+            MapPreviewKey::Field { seed, .. } => seed,
+            MapPreviewKey::Conquest(_) => panic!("a Conquest map has no seed"),
+        }
+    }
     use crate::draw::{DrawList, SOLID};
     use crate::lobby::{
         DiscoveredGame, LobbyState, MAPS, MatchStart, NetError, NetEvent, Profile, SlotEdit,
@@ -2098,20 +2127,20 @@ mod tests {
         assert!(h.has("New map") && h.has("Map code") && h.has("0000-0000-6772-7562"));
         // The lobby asks for the map it is on, sized for the players in it.
         let seed = crate::lobby::DEFAULT_MAP_SEED;
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         // Up to four players share a map, so a new one changes nothing.
         h.click("Add AI");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         // Until the game answers there is a grey box, not a picture.
         assert_eq!(picture_quads(&h.ui.draw), 0);
         assert_eq!(h.menu.shown_map_preview(), None);
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
-        assert_eq!(h.menu.shown_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.shown_map_preview(), Some(field(0, 256, seed)));
         assert!(picture_quads(&h.ui.draw) > 0);
         // A picture of some other map is not shown.
         h.menu
-            .set_map_preview((1, 256, seed), MinimapTerrain::default(), Vec::new());
+            .set_map_preview(field(1, 256, seed), MinimapTerrain::default(), Vec::new());
         h.frame(UiInput::default());
         assert_eq!(h.menu.shown_map_preview(), None);
         assert_eq!(picture_quads(&h.ui.draw), 0);
@@ -2123,12 +2152,19 @@ mod tests {
         h.click("Play");
         h.click_last("Host");
         h.click("Map: Pro");
+        let seed = |h: &Harness| match h.menu.wanted_map_preview() {
+            Some(MapPreviewKey::Field { seed, .. }) => seed,
+            other => panic!("{other:?}"),
+        };
         let wanted = h.menu.wanted_map_preview().unwrap();
-        assert_eq!(wanted.0, 1);
-        assert_eq!(MAPS[wanted.0], "Random: Pass");
+        let MapPreviewKey::Field { choice, .. } = wanted else {
+            panic!("{wanted:?}")
+        };
+        assert_eq!(MAPS[choice], "Random: Pass");
+        let before = seed(&h);
         h.click("New map");
-        assert_ne!(h.menu.wanted_map_preview().unwrap().2, wanted.2);
-        assert_eq!(h.menu.wanted_map_preview().unwrap().2, lobby_seed(&h));
+        assert_ne!(seed(&h), before);
+        assert_eq!(seed(&h), lobby_seed(&h));
         // Out of the lobby, nothing is wanted.
         h.click("Leave");
         h.click("Back");
@@ -2254,7 +2290,7 @@ mod tests {
         assert!(find_text(&ui.draw, "Use").is_none());
         assert_eq!(
             menu.wanted_map_preview(),
-            Some((2, 256, 0xABCD_EF01_2345_6789))
+            Some(field(2, 256, 0xABCD_EF01_2345_6789))
         );
     }
 
@@ -2264,12 +2300,12 @@ mod tests {
         h.click("Play");
         let seed = crate::lobby::DEFAULT_MAP_SEED;
         assert!(h.has("New map") && h.has(&map_code(seed)));
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, seed)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, seed)));
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
         assert!(picture_quads(&h.ui.draw) > 0);
         h.click("New map");
-        let fresh = h.menu.wanted_map_preview().unwrap().2;
+        let fresh = h.menu.wanted_map_preview().map(seed_of).unwrap();
         assert_ne!(fresh, seed);
         assert!(h.has(&map_code(fresh)));
         // The new map's picture isn't here yet.
@@ -2285,7 +2321,7 @@ mod tests {
         type_text(&mut h, "0123456789abcdef");
         h.click("Use");
         assert_eq!(
-            h.menu.wanted_map_preview().unwrap().2,
+            h.menu.wanted_map_preview().map(seed_of).unwrap(),
             0x0123_4567_89AB_CDEF
         );
         h.click("0123-4567-89AB-CDEF");
@@ -2296,7 +2332,7 @@ mod tests {
         h.click("Use");
         assert!(h.has("Not a map code"));
         assert_eq!(
-            h.menu.wanted_map_preview().unwrap().2,
+            h.menu.wanted_map_preview().map(seed_of).unwrap(),
             0x0123_4567_89AB_CDEF
         );
         // The hosted lobby is on the chosen map.
@@ -2309,7 +2345,7 @@ mod tests {
         let mut h = Harness::new();
         h.menu.set_host_map_seed(12345);
         h.click("Play");
-        assert_eq!(h.menu.wanted_map_preview(), Some((0, 256, 12345)));
+        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 256, 12345)));
         assert!(h.has(&map_code(12345)));
         h.click_last("Host");
         assert_eq!(lobby_seed(&h), 12345);
@@ -2337,7 +2373,10 @@ mod tests {
                 let wanted = h.menu.wanted_map_preview();
                 if round == 0 {
                     // Six players: a bigger map.
-                    assert!(wanted.is_none_or(|w| w.1 == 320), "{size:?}");
+                    assert!(
+                        wanted.is_none_or(|w| matches!(w, MapPreviewKey::Field { tiles: 320, .. })),
+                        "{size:?}"
+                    );
                     if wanted.is_some() {
                         send_picture(&mut h.menu);
                     }

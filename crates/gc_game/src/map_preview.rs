@@ -8,11 +8,11 @@
 
 use std::sync::mpsc;
 
-use gc_map::FieldMap;
 use gc_platform::logln;
 use gc_ui::hud::MinimapTerrain;
 use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, Network};
+use glam::Vec2;
 
 use crate::hud::minimap_terrain;
 use crate::{MapKey, make_map};
@@ -39,28 +39,18 @@ fn work(jobs: mpsc::Receiver<MapPreviewKey>, made: mpsc::Sender<Made>) {
         while let Ok(newer) = jobs.try_recv() {
             key = newer;
         }
-        // A Conquest map's key has no size (see `gc_ui::menu::preview_key`).
-        let (choice, tiles, seed) = key;
-        let map_key = if tiles == 0 {
-            MapKey::Conquest(choice)
-        } else {
-            MapKey::Field(FieldMap {
-                choice,
-                tiles,
-                seed,
-            })
-        };
         // The last map made is kept, so the match then started on it costs
         // only a copy.
-        let map = make_map(map_key);
-        let starts = if tiles == 0 {
-            let side = map.tiles as f32;
-            map.starts()
-                .iter()
-                .map(|&(x, y)| [(x as f32 + 0.5) / side, (y as f32 + 0.5) / side])
-                .collect()
-        } else {
-            starts_of(tiles)
+        let map = make_map(MapKey::from(key));
+        let starts = match key {
+            MapPreviewKey::Field { tiles, .. } => starts_of(tiles),
+            MapPreviewKey::Conquest(_) => {
+                let side = map.tiles as f32;
+                map.start_positions()
+                    .iter()
+                    .map(|p| ((*p + Vec2::splat(0.5)) / side).to_array())
+                    .collect()
+            }
         };
         let answer = Made {
             key,
@@ -167,7 +157,12 @@ mod tests {
         let mut previews = MapPreviews::new();
         menu.show(Screen::Play);
         step(&mut menu, &mut ui, &mut previews);
-        let first = (0, 256, DEFAULT_MAP_SEED);
+        let field = |seed| MapPreviewKey::Field {
+            choice: 0,
+            tiles: 256,
+            seed,
+        };
+        let first = field(DEFAULT_MAP_SEED);
         assert_eq!(menu.wanted_map_preview(), Some(first));
         // Not made yet, so not shown.
         assert_eq!(menu.shown_map_preview(), None);
@@ -176,9 +171,9 @@ mod tests {
         // the old one is not shown for it.
         menu.set_host_map_seed(7);
         step(&mut menu, &mut ui, &mut previews);
-        assert_eq!(menu.wanted_map_preview(), Some((0, 256, 7)));
+        assert_eq!(menu.wanted_map_preview(), Some(field(7)));
         assert_eq!(menu.shown_map_preview(), None);
-        wait_for(&mut menu, &mut ui, &mut previews, (0, 256, 7));
+        wait_for(&mut menu, &mut ui, &mut previews, field(7));
         // Leaving for the main menu wants nothing.
         menu.show(Screen::Main);
         step(&mut menu, &mut ui, &mut previews);
