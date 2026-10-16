@@ -31,6 +31,8 @@ static TICK: AtomicU64 = AtomicU64::new(0);
 struct State {
     dir: PathBuf,
     started: Instant,
+    /// Unbuffered on purpose: release builds abort on panic, so anything
+    /// held back in a buffer would be lost.
     log: Mutex<Option<File>>,
     context: Mutex<Vec<(&'static str, String)>>,
 }
