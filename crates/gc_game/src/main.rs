@@ -86,7 +86,11 @@
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
-//! every soldier at one level of detail, to inspect it.
+//! every soldier at one level of detail, to inspect it;
+//! `--showroom all|NAME[,NAME...]` stands the named soldier models (names as in
+//! `assets-src/models.ron`) in a row on an empty field under a fixed camera,
+//! cycling through idle, walk, attack and death, and `--showroom-clip
+//! idle|walk|attack|shoot|cheer|die` holds one clip instead.
 
 mod battle;
 mod camera;
@@ -103,6 +107,7 @@ mod puppets;
 mod replays;
 mod sandbox;
 mod scenery;
+mod showroom;
 mod sounds;
 mod terrain_view;
 
@@ -119,6 +124,7 @@ use gc_render::{
     BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
     UiQuad,
 };
+use gc_sim::events::Event;
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
@@ -272,6 +278,10 @@ struct Options {
     crash_test: bool,
     /// Draw every soldier at this level of detail (`--lod N`).
     lod: Option<usize>,
+    /// Stand these models in a row to look at (`--showroom`), doing this
+    /// (`--showroom-clip`).
+    showroom: Option<Vec<usize>>,
+    showroom_clip: Option<showroom::Clip>,
     render: RendererOptions,
 }
 
@@ -290,6 +300,8 @@ fn parse_args() -> Options {
         password: String::new(),
         crash_test: false,
         lod: None,
+        showroom: None,
+        showroom_clip: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -374,6 +386,13 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
+            "--showroom" if !value.trim().is_empty() => {
+                opts.showroom = Some(showroom_models(&value));
+                true
+            }
+            "--showroom-clip" => showroom::Clip::parse(&value)
+                .map(|c| opts.showroom_clip = Some(c))
+                .is_some(),
             "--draw" => {
                 let (terrain, blocks) = match value.as_str() {
                     "all" => (true, true),
@@ -392,13 +411,46 @@ fn parse_args() -> Options {
             usage();
         }
     }
+    if opts.showroom_clip.is_some() && opts.showroom.is_none() {
+        usage();
+    }
+    // The showroom is not a match: nothing to fight, host or join.
+    if opts.showroom.is_some()
+        && (opts.sandbox || opts.battle.is_some() || opts.host || opts.join.is_some())
+    {
+        usage();
+    }
+    if opts.showroom.is_some() {
+        // The showroom goes straight into the field.
+        opts.menu = Some(false);
+    }
     opts
+}
+
+/// The models `--showroom` names, or exit with the valid names listed.
+fn showroom_models(spec: &str) -> Vec<usize> {
+    let models = models::load().unwrap_or_else(|e| {
+        eprintln!("grubcraft: {e}");
+        std::process::exit(1);
+    });
+    showroom::choose(spec, &models).unwrap_or_else(|unknown| {
+        let names: Vec<&str> = models
+            .models
+            .iter()
+            .map(gc_assets::model::ModelRecord::name)
+            .collect();
+        eprintln!(
+            "grubcraft: --showroom: no model named {unknown:?}; the models are all, or any of: {}",
+            names.join(", ")
+        );
+        std::process::exit(2);
+    })
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
     );
     std::process::exit(2);
 }
@@ -483,6 +535,8 @@ struct Running {
     show_blocked: bool,
     /// The map's trees and tall grass.
     scenery: scenery::Scenery,
+    /// The models on show instead of a match, with `--showroom`.
+    showroom: Option<showroom::Showroom>,
     /// Sandbox: draw regiments hidden from the side you command too (V).
     reveal_all: bool,
     /// Data hash and size, for the overlay.
@@ -904,7 +958,13 @@ impl App {
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
         let scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&heightmap.cover, heightmap.tiles, opts.seed)
+            // The showroom stands on bare ground, with no trees in the way.
+            let cover = if opts.showroom.is_some() {
+                &[][..]
+            } else {
+                &heightmap.cover[..]
+            };
+            scenery::Scenery::new(cover, heightmap.tiles, opts.seed)
         });
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
             (
@@ -922,7 +982,8 @@ impl App {
                 Vec::with_capacity(1024),
             )
         });
-        let drill = (!opts.sandbox).then(|| make_drill(opts.seed, heightmap.tiles));
+        let drill = (!opts.sandbox && opts.showroom.is_none())
+            .then(|| make_drill(opts.seed, heightmap.tiles));
         let minds = tagged_alloc::scope(Tag::Ai, || {
             Minds::new(crate::terrain_view::ai_terrain(&heightmap, &nav)).live()
         });
@@ -932,6 +993,15 @@ impl App {
         let mut camera = RtsCamera::new(heightmap.tiles as f32, start + Vec2::new(10.0, 20.0));
         camera.focus_height = heightmap.height_at(camera.focus.x, camera.focus.y);
         camera.aspect = renderer.aspect_ratio();
+        let showroom = art.as_ref().and_then(|a| {
+            let models = opts.showroom.clone()?;
+            Some(showroom::Showroom::new(
+                models,
+                &a.heights,
+                Vec2::splat(heightmap.tiles as f32 / 2.0),
+                opts.showroom_clip,
+            ))
+        });
 
         self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
@@ -1025,7 +1095,11 @@ impl App {
             unit_names,
             unit_factions,
             unit_points,
-            sandbox: Sandbox::new(opts.sandbox),
+            // The showroom hides the panel (H shows it).
+            sandbox: Sandbox {
+                panel: opts.showroom.is_none(),
+                ..Sandbox::new(opts.sandbox)
+            },
             selected: Vec::with_capacity(64),
             formation_pick: None,
             shown_formation: None,
@@ -1059,6 +1133,7 @@ impl App {
             blocked_marks,
             show_blocked: false,
             scenery,
+            showroom,
             reveal_all: false,
             data_label: format!(
                 "{:016x}   {} unit types",
@@ -2127,12 +2202,7 @@ impl Running {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [
-                                (pose.blend * 255.0) as u8,
-                                highlight,
-                                u8::from(flat) * 255,
-                                0,
-                            ],
+                            flags: models::pose_flags(pose, highlight, flat),
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -2161,6 +2231,16 @@ impl Running {
         if !self.commander {
             self.push_corpses();
         }
+        if let (Some(room), Some(art)) = (&self.showroom, &mut self.art) {
+            let heightmap = &self.heightmap;
+            let ground = |p: Vec2| heightmap.height_at(p.x, p.y);
+            room.push(
+                art,
+                ground,
+                self.puppets.time(),
+                color_of(&self.parties, HUMAN),
+            );
+        }
         if let Some(art) = &mut self.art {
             art.finish();
         }
@@ -2185,7 +2265,7 @@ impl Running {
 
         if self.menu_open {
             self.run_menu();
-        } else if self.match_started {
+        } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
         } else {
             self.renderer.clear_ui();
@@ -2291,7 +2371,8 @@ impl Running {
     fn note_losses(&mut self) {
         let side = self.sandbox.side;
         let tick = self.world.tick_count();
-        for a in self.world.ambushes() {
+        for e in self.world.events() {
+            let Event::Ambush(a) = e else { continue };
             if let Some(on) = self
                 .world
                 .regiments
@@ -2305,7 +2386,7 @@ impl Running {
                 );
             }
         }
-        self.hud.watch(&self.world, side);
+        self.hud.watch(&self.world, side, self.world.events());
     }
 
     /// Tell the player about an ambush sprung on or by their side in the
@@ -2314,7 +2395,8 @@ impl Running {
         let side = self.sandbox.side;
         let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
         let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
-        let news = self.world.ambushes().iter().rev().find_map(|a| {
+        let news = self.world.events().iter().rev().find_map(|e| {
+            let Event::Ambush(a) = e else { return None };
             let by = self.world.regiments.get(a.ambusher)?;
             let on = self.world.regiments.get(a.victim)?;
             let text = if !self.world.hostile(side, on.owner) {
@@ -2454,20 +2536,8 @@ impl Running {
             if v.launch_tick + SHOOTING_TICKS < now {
                 continue;
             }
-            let from = from_fx_vec(v.from);
-            let shooter = self
-                .world
-                .regiments
-                .iter()
-                .filter(|r| r.owner == v.owner)
-                .min_by(|a, b| {
-                    let da = from_fx_vec(a.position).distance_squared(from);
-                    let db = from_fx_vec(b.position).distance_squared(from);
-                    da.total_cmp(&db)
-                });
-            if let Some(r) = shooter
-                && from_fx_vec(r.position).distance(from) < 2.0
-            {
+            // Gone, or its slot taken by another regiment, is not shooting.
+            if let Some(r) = self.world.regiments.get(v.shooter) {
                 self.shooting[r.handle.index as usize] = true;
             }
         }
@@ -2607,6 +2677,13 @@ impl Running {
     }
 
     fn restart_match(&mut self, kind: MatchKind) {
+        // A match started from the showroom's menu leaves it, and the field
+        // gets its trees back.
+        if self.showroom.take().is_some() {
+            self.scenery = tagged_alloc::scope(Tag::Render, || {
+                scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, self.seed)
+            });
+        }
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
@@ -3115,7 +3192,7 @@ impl Running {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, u8::from(flat) * 255, 0],
+                        flags: models::pose_flags(pose, 0, flat),
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,
@@ -3184,6 +3261,13 @@ impl Running {
     }
 
     fn update_camera(&mut self, dt: f32) {
+        // The showroom's camera stays on the models, whatever the window or
+        // the player does.
+        if let Some(room) = &self.showroom {
+            let heightmap = &self.heightmap;
+            room.aim(&mut self.camera, |p| heightmap.height_at(p.x, p.y));
+            return;
+        }
         if self.menu_open && !self.match_started {
             // A slow sway behind the main menu.
             self.camera.yaw = 0.3 * (self.started.elapsed().as_secs_f32() * 0.12).sin();
