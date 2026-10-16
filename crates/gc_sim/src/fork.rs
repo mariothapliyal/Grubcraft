@@ -87,6 +87,7 @@ impl World {
             // A rehearsal is all battle.
             deploy: crate::deploy::Deployment::default(),
             champions: None,
+            judge: crate::verdict::Judge::default(),
             regiments: Regiments::with_capacity(n),
         }
     }
