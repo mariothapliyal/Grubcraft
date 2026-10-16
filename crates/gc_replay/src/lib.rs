@@ -700,6 +700,7 @@ mod tests {
         // A map too big to hold is refused, not allocated.
         let mut big = record();
         big.map_tiles = u32::MAX;
+        (big.nav, big.heights, big.cover) = (Vec::new(), Vec::new(), Vec::new());
         assert!(Replay::decode(&big.encode()).is_err());
     }
 

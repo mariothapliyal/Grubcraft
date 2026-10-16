@@ -214,7 +214,7 @@ fn read_slot(r: &mut Reader) -> Option<Slot> {
         name: r.str()?,
         faction: read_faction(r)?,
         color: r.u8()?,
-        team: r.u8()?,
+        team: r.u8().filter(|&t| usize::from(t) < MAX_PLAYERS)?,
         ready: r.bool()?,
         version: r.str()?,
         ai_level: r.u8()?,
@@ -236,7 +236,7 @@ fn write_settings(w: &mut Writer, s: &LobbySettings) {
 
 fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
     Some(LobbySettings {
-        map: r.var_as().filter(|&m: &usize| m < MAPS.len())?,
+        map: r.var_as()?,
         mode: *GameMode::ALL.get(r.u8()? as usize)?,
         tempo: *Tempo::ALL.get(r.u8()? as usize)?,
         on_drop: *OnDrop::ALL.get(r.u8()? as usize)?,
@@ -438,7 +438,9 @@ impl Msg {
             5 => {
                 let seed = r.u64()?;
                 let map_hash = r.u64()?;
-                let settings = read_settings(&mut r)?;
+                // A lobby may list a map another build lacks (the version
+                // line stops it starting); a match must be on one we have.
+                let settings = read_settings(&mut r).filter(|s| s.map < MAPS.len())?;
                 let n = r.var_as::<usize>()?;
                 if n > MAX_PLAYERS {
                     return None;

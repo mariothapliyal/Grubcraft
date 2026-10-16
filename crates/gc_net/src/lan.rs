@@ -683,11 +683,11 @@ impl Lan {
                 }
             }
             k if k == Kind::WrongProtocol as u8 => {
-                // Plain and unsigned, so only heeded until the host lets us
-                // in: after that it has spoken our protocol.
+                // Plain and unsigned, so only heeded before the host has
+                // answered our key: after that it has spoken our protocol.
                 if let Role::Client(c) = &self.role
                     && c.host == from
-                    && c.slot.is_none()
+                    && !c.link.is_secure()
                 {
                     let theirs = r.str().unwrap_or_default();
                     let why = format!(
@@ -727,6 +727,13 @@ impl Lan {
             return;
         };
         let known = h.peers.iter().position(|p| p.addr == from);
+        // An address out of wrong-password guesses gets no key exchange to
+        // guess with, unless it holds a place in the match (a player whose
+        // game restarted, rejoining).
+        let has_place = known.is_some_and(|i| h.peers[i].player.is_some());
+        if !has_place && h.out_of_guesses(from.ip(), now) {
+            return;
+        }
         let reply_key = match known {
             Some(i) if h.peers[i].their_key == theirs => h.peers[i].host_key,
             // A new key from someone already in: a restarted game on the
@@ -745,7 +752,7 @@ impl Lan {
                     None => {}
                 }
                 let waiting = h.peers.iter().filter(|p| p.slot.is_none() && !p.gone);
-                if waiting.count() >= MAX_WAITING || h.out_of_guesses(from.ip(), now) {
+                if waiting.count() >= MAX_WAITING {
                     return;
                 }
                 let Some(mine) = KeyPair::new() else { return };
@@ -794,7 +801,10 @@ impl Lan {
                     if h.out_of_guesses(ip, now) {
                         return;
                     }
-                    h.guesses.push((ip, now));
+                    // Without a password there is nothing to guess.
+                    if !h.password.is_empty() {
+                        h.guesses.push((ip, now));
+                    }
                     let mut w = Writer::new();
                     header(&mut w, Kind::WrongPassword);
                     w.bool(!h.password.is_empty());
