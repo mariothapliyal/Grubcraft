@@ -130,6 +130,9 @@ pub struct Regiments {
     pub(crate) crowd: Vec<Fx>,
     /// Ticks left until it is back in order (0: in order).
     pub(crate) disorder: Vec<u8>,
+    /// Ticks left since it parted from a fight during which hitting home is
+    /// no charge (see [`crate::combat::RUN_UP_TICKS`]).
+    pub(crate) parted: Vec<u8>,
     /// Melee damage dealt and taken lately, in 1/256ths of a hit point
     /// weighted by the striker's mass: who is winning the exchange, for
     /// lines that push (see [`Combat::push_lines`]). Both fade by an
@@ -181,6 +184,7 @@ impl Regiments {
             clear: vec![0; n],
             crowd: vec![Fx::ZERO; n],
             disorder: vec![0; n],
+            parted: vec![0; n],
             pressing: vec![0; n],
             pressed: vec![0; n],
             giving: vec![0; n],
@@ -249,6 +253,7 @@ impl Regiments {
         self.clear[i] = 0;
         self.crowd[i] = Fx::ZERO;
         self.disorder[i] = 0;
+        self.parted[i] = 0;
         self.pressing[i] = 0;
         self.pressed[i] = 0;
         self.giving[i] = 0;
@@ -373,6 +378,7 @@ impl Regiments {
         self.clear[i] = from.clear[i];
         self.crowd[i] = from.crowd[i];
         self.disorder[i] = from.disorder[i];
+        self.parted[i] = from.parted[i];
         self.pressing[i] = from.pressing[i];
         self.pressed[i] = from.pressed[i];
         self.giving[i] = from.giving[i];
@@ -712,6 +718,11 @@ impl Regiments {
         if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
             h.i32(self.crowd[i].raw());
             h.u8(self.disorder[i]);
+        }
+        // Only just after parting from a fight, so worlds where lines
+        // never part hash as they did before.
+        if self.parted[i] != 0 {
+            h.u8(self.parted[i]);
         }
         // Only once it has fought, so worlds without melee hash as
         // they did before lines pushed.

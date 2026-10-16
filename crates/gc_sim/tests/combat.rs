@@ -102,10 +102,32 @@ fn engaged_regiments_ignore_move_orders() {
 }
 
 /// Casualties a defender takes from one spear block in `ticks`, when the
-/// attacker stands against the given side of it.
+/// attacker stands against the given side of it. The defenders are spearmen
+/// who can't turn, so a flank or rear stays one for the whole fight.
 fn losses_from(side_offset: (i32, i32), defender_facing: Angle, ticks: u32) -> u16 {
-    let mut w = world();
-    let d = spawn(&mut w, 1, SPEARS, 50, 50, defender_facing);
+    const ROOTED: u16 = 4;
+    let fearless = fearless();
+    let units = [
+        fearless[0],
+        fearless[1],
+        fearless[2],
+        fearless[3],
+        UnitStats {
+            turn_rate: 0,
+            ..fearless[SPEARS as usize]
+        },
+    ];
+    let mut w = World::new(&MatchSetup {
+        seed: 11,
+        capacities: Capacities::default(),
+        units: &units,
+        map_tiles: 256,
+        nav: &[],
+        teams: &[],
+        ground: gc_sim::Ground::FLAT,
+        champions: false,
+    });
+    let d = spawn(&mut w, 1, ROOTED, 50, 50, defender_facing);
     let facing = Angle::of_vec(FxVec2::from_ints(-side_offset.0, -side_offset.1));
     let _a = spawn(
         &mut w,
@@ -122,10 +144,9 @@ fn losses_from(side_offset: (i32, i32), defender_facing: Angle, ticks: u32) -> u
 #[test]
 fn flank_and_rear_hits_hurt_more() {
     // The defender faces north. Attackers stand in front, to its east, and behind.
-    // Short fights: a flanked block turns to face its attacker within seconds.
-    let front = losses_from((0, -3), NORTH, 20 * 4);
-    let flank = losses_from((4, 0), NORTH, 20 * 4);
-    let rear = losses_from((0, 3), NORTH, 20 * 4);
+    let front = losses_from((0, -3), NORTH, 20 * 6);
+    let flank = losses_from((4, 0), NORTH, 20 * 6);
+    let rear = losses_from((0, 3), NORTH, 20 * 6);
     assert!(
         front < flank && flank <= rear,
         "front {front}, flank {flank}, rear {rear}"
@@ -179,6 +200,59 @@ fn charges_hit_harder_than_standing_fights() {
         24 - models(&w, d)
     };
     assert!(charge > standing, "charge {charge}, standing {standing}");
+}
+
+/// Charge bonus the attacker carries when it hits a fresh block 2 tiles
+/// beyond where its first foe stood, sent in `wait` ticks after that foe
+/// was taken off the field mid-fight.
+fn charge_on_second_contact(wait: u32) -> u16 {
+    let mut w = world();
+    let first = spawn(&mut w, 1, SPEARS, 50, 50, SOUTH);
+    let a = spawn(&mut w, 0, SPEARS, 50, 64, NORTH);
+    let attack = |w: &mut World, target| {
+        w.tick(&[PlayerCommand {
+            player: 0,
+            command: Command::Attack {
+                regiment: a,
+                target,
+            },
+        }]);
+    };
+    attack(&mut w, first);
+    let mut ticks = 0;
+    while !w.regiments.get(a).unwrap().engaged {
+        w.tick(&[]);
+        ticks += 1;
+        assert!(ticks < 400, "never made contact");
+    }
+    assert!(
+        w.regiments.get(a).unwrap().charge > 0,
+        "the first contact was no charge"
+    );
+    // Fight until the charge has spent itself, then lose the foe.
+    run(&mut w, 80);
+    w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::RemoveRegiment { regiment: first },
+    }]);
+    assert!(!w.regiments.get(a).unwrap().engaged);
+    run(&mut w, wait);
+    let second = spawn(&mut w, 1, SPEARS, 50, 48, SOUTH);
+    attack(&mut w, second);
+    let mut ticks = 0;
+    while !w.regiments.get(a).unwrap().engaged {
+        w.tick(&[]);
+        ticks += 1;
+        assert!(ticks < 100, "never reached the second block");
+    }
+    w.regiments.get(a).unwrap().charge
+}
+
+#[test]
+fn lines_that_part_and_meet_again_at_once_do_not_charge_again() {
+    assert_eq!(charge_on_second_contact(0), 0);
+    // With a run-up of a few seconds apart, it is a charge again.
+    assert!(charge_on_second_contact(60) > 0);
 }
 
 #[test]
