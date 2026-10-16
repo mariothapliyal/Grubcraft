@@ -24,6 +24,7 @@ That is the entire economic HUD. Everything else is visible in the world (seep p
 
 ### Supply
 - Cap of **150**, raised by housing (Farmstead +10, Pustule +8, Resonator +4, Tenement +10; each main building tier +10). The Clans' Outpost Hall adds +6, and a Choir Siphon +4 like the Resonator it is.
+- A regiment takes its supply when it starts training, and counts toward the cap while it trains. A queue waits while there is no room under the cap.
 - Supply costs are listed in [03 · Factions](03-factions.md#faction-design-rules). Each building's supply, with its cost, build time and hit points, is in [21 · Buildings](21-buildings.md).
 
 ### Faction meter
@@ -41,6 +42,12 @@ All four economies are tuned so that a **fully developed seep produces about 200
 | Concord | n/a (trade-based) | ~200/min per 3-caravan route of average length | Caravans raided |
 
 A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow per minute**.
+
+*Built (2026-10-16, M3 step 2): workers are simulated. A worker regiment ordered to gather walks to a node, fills a load (10 Grub in 9 s, or 5 Marrow in 12 s), carries it to the nearest drop-off that takes that resource and banks it. A seep works five workers at once and a vein three; others wait beside it. A node that runs dry becomes dregs: it still gives whole loads, but each takes four times as long. In tests, five workers on a seep seven tiles from their hall bring in about 200 Grub a minute, and three on a vein about 50 Marrow a minute, so a drop-off near a seep pays. Nothing can be built on a seep or vein, and a worker that three times in a row gets no nearer to its node or drop-off gives up. A worker that routs goes back to work once it rallies. Every faction uses plain workers for now; Brood veins, Choir Resonators and Concord caravans come later.*
+
+*Built (2026-10-16, M3 step 3): construction, training and tiers are simulated. A foundation stands at 10% of its hit points and rises as it is built, with up to four builders (the first at full speed, each further one at half). It gives no supply, tier or drop-off until finished. A building's queue holds five regiments, paid for when queued, and each starts once supply has room. Calling off a building refunds 75%. Tier upgrades take their time with no builders, and the building keeps working. Tempo scales all of it. The lobby and HUD come in step 4.*
+
+*Built (2026-10-16, Conquest step 4a): until each faction's own economy arrives (Brood veins, Choir Resonators, Concord caravans), every faction's main building takes both Grub and Marrow from workers, so all four can gather in Conquest. The roster files say so for now (`data/rosters/*.ron`), each marked to come out when that faction's own economy is built.*
 
 ## Starting state (Conquest)
 
@@ -63,7 +70,7 @@ Big armies tax your income, which keeps the economy relevant late and rewards fi
 | 61 to 100 | 75% |
 | 101 to 150 | 55% |
 
-The current upkeep band is shown as a colour on the supply counter (white, amber, red), with a tooltip.
+Upkeep is built in the simulation (2026-10-16, M3 step 2), and it never cuts Marrow. The current upkeep band is shown as a colour on the supply counter (white, amber, red), with a tooltip.
 
 ## Tech tiers
 

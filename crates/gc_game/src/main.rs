@@ -6,8 +6,11 @@
 //! Sandbox: Tab switches which side you command (all four can be ordered).
 //! B turns placing on and off: left-click puts down a regiment of the chosen
 //! type for that side, facing away from the camera, and [ and ] choose the
-//! type. Delete (or Backspace) takes the selected regiments off the field;
-//! Shift + Delete clears it. P pauses; - and = slow the game down to a tenth
+//! type. K does the same for buildings (the sandbox only): click puts the
+//! chosen building down, centred on the cursor, and [ and ] choose which.
+//! Delete (or Backspace) takes the building under the cursor, else the
+//! selected regiments, off the field; Shift + Delete clears it. Right-click
+//! an enemy building to send the selected regiments against it. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. Shift+R reloads `data/units.ron`
@@ -76,6 +79,8 @@
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
+//! `--conquest ribcage_pass|four_teeth` starts Conquest on that map, every
+//! other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
@@ -96,7 +101,13 @@
 //! idle|walk|attack|shoot|cheer|die` holds one clip instead.
 
 mod battle;
+#[cfg(test)]
+mod battle_tables;
+mod buildings;
 mod camera;
+mod conquest;
+#[cfg(test)]
+mod conquest_golden;
 mod credits;
 mod data;
 #[cfg(test)]
@@ -132,10 +143,12 @@ use gc_sim::events::Event;
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::{
-    Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState, PlayerCommand, PlayerId,
-    RegimentHandle, TIGHT_DEFENCE, UnitId, UnitStats, World,
+    BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
+    PlayerCommand, PlayerId, RegimentHandle, StructureHandle, TIGHT_DEFENCE, UnitId, UnitStats,
+    World,
 };
-use gc_ui::lobby::MatchStart;
+use gc_ui::lobby::{GameMode, MatchStart};
+use gc_ui::menu::MapPreviewKey;
 use gc_ui::{Menu, MenuAction, Network, Screen, Settings, Ui, UiInput};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -270,6 +283,8 @@ struct Options {
     audio: bool,
     /// Start straight into a Field Battle against one AI of this level.
     battle: Option<u8>,
+    /// Start straight into Conquest on this lobby Conquest map.
+    conquest: Option<usize>,
     /// Open a LAN lobby at once (`--host`), or join one (`--join ADDRESS`
     /// or join code), with `--password` if it has one.
     host: bool,
@@ -297,6 +312,7 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        conquest: None,
         host: false,
         join: None,
         password: String::new(),
@@ -361,6 +377,10 @@ fn parse_args() -> Options {
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--conquest" => {
+                let choice = conquest::choice_of(&value);
+                choice.map(|c| opts.conquest = Some(c)).is_some()
+            }
             "--battle" => {
                 let level = gc_ui::lobby::AI_LEVELS
                     .iter()
@@ -418,7 +438,11 @@ fn parse_args() -> Options {
     }
     // The showroom is not a match: nothing to fight, host or join.
     if opts.showroom.is_some()
-        && (opts.sandbox || opts.battle.is_some() || opts.host || opts.join.is_some())
+        && (opts.sandbox
+            || opts.battle.is_some()
+            || opts.conquest.is_some()
+            || opts.host
+            || opts.join.is_some())
     {
         usage();
     }
@@ -451,7 +475,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
     );
     std::process::exit(2);
@@ -463,9 +487,8 @@ struct Running {
     renderer: Renderer,
     camera: RtsCamera,
     heightmap: Arc<Map>,
-    /// Which Field Battle map `heightmap` is; `None` for one opened with
-    /// `--map`.
-    map_key: Option<FieldMap>,
+    /// Which lobby map `heightmap` is; `None` for one opened with `--map`.
+    map_key: Option<MapKey>,
     world: World,
     /// Orders the other sides about; None in an empty-field sandbox or a
     /// lobby battle.
@@ -496,17 +519,24 @@ struct Running {
     commander: bool,
     /// Regiments that loosed a volley lately, by pool index.
     shooting: Vec<bool>,
-    /// The match's regiment types, as the simulation sees them, and their names.
-    unit_stats: Vec<UnitStats>,
-    /// The regiment types as built, before any sandbox tuning.
-    data_stats: Vec<UnitStats>,
-    unit_names: Vec<String>,
-    /// Each regiment type's faction, as the AI names them.
-    unit_factions: Vec<gc_ai::Faction>,
-    /// Each regiment type's cost in a Field Battle army.
-    unit_points: Vec<u32>,
+    /// The match's regiment types.
+    units: UnitTable,
+    /// The regiment types not in play: the Conquest ones in a Field Battle
+    /// or the sandbox, the Field Battle ones in Conquest. See
+    /// [`Running::use_units`].
+    other_units: UnitTable,
+    /// Whether the regiment types in play are the Conquest ones.
+    conquest_units: bool,
+    /// The building types, for Conquest worlds.
+    buildings: buildings::Table,
+    /// The game data as built, which Conquest matches are set up from.
+    data: gc_data::GameData<'static>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
+    /// The building selected, when no regiment is (Conquest).
+    selected_structure: Option<StructureHandle>,
+    /// The idle worker F1 last picked, to go on from there.
+    idle_from: Option<u32>,
     /// The formation F last ordered, for which selection and on which tick:
     /// pressing F again soon after cycles on from it, before the orders
     /// have landed.
@@ -575,11 +605,50 @@ struct Running {
     map_previews: map_preview::MapPreviews,
 }
 
+/// A table of regiment types as the game names, draws and prices them.
+/// Field Battles and the sandbox play with the Field Battle units, Conquest
+/// with its own (`GameData::conquest_units`), whose ids number another
+/// table.
+struct UnitTable {
+    /// As the simulation sees them (the sandbox may have tuned them).
+    stats: Vec<UnitStats>,
+    /// As built, before any sandbox tuning.
+    data_stats: Vec<UnitStats>,
+    names: Vec<String>,
+    /// Each type's faction, as the AI names them.
+    factions: Vec<gc_ai::Faction>,
+    /// Each type's cost in a Field Battle army.
+    points: Vec<u32>,
+    /// Each type's soldier model, if it has one (none without art).
+    models: Vec<Option<usize>>,
+}
+
+impl UnitTable {
+    fn of<'a>(
+        units: impl Iterator<Item = &'a gc_data::UnitRecord>,
+        models: Option<&gc_assets::model::Models<'_>>,
+    ) -> UnitTable {
+        let units: Vec<&gc_data::UnitRecord> = units.collect();
+        let stats: Vec<UnitStats> = units.iter().map(|u| sandbox::stats_of(u)).collect();
+        UnitTable {
+            data_stats: stats.clone(),
+            stats,
+            names: units.iter().map(|u| u.name().to_string()).collect(),
+            factions: units
+                .iter()
+                .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
+                .collect(),
+            points: units.iter().map(|u| u32::from(u.points)).collect(),
+            models: models.map_or_else(Vec::new, |m| {
+                units.iter().map(|u| m.by_name(u.name())).collect()
+            }),
+        }
+    }
+}
+
 /// Soldier models and the lists that draw them, rebuilt every frame.
 struct Art {
     clips: models::Clips,
-    /// The model of each unit type, if it has one.
-    unit_model: Vec<Option<usize>>,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
     /// This frame's camera, for choosing levels of detail.
@@ -669,6 +738,8 @@ impl Sandbox {
             side: HUMAN,
             placing,
             unit: 0,
+            building_tool: false,
+            building: 0,
             tuning: false,
             row: 0,
             panel: true,
@@ -744,6 +815,10 @@ struct Sandbox {
     placing: bool,
     /// The type placed and tuned ([ and ]).
     unit: UnitId,
+    /// Left-click places buildings of `building` instead of selecting (K);
+    /// [ and ] then choose the building.
+    building_tool: bool,
+    building: BuildingId,
     /// The stats panel is open (T), with this row chosen.
     tuning: bool,
     row: usize,
@@ -911,59 +986,38 @@ impl App {
         self.memory_timeline.mark("map generated + uploaded");
 
         let game_data = data::load();
-        let art = match models::load() {
-            Ok(models) => match renderer.set_models(&models) {
-                Ok(()) => Some(Art {
-                    clips: models::Clips::new(&models),
-                    unit_model: game_data
-                        .units
-                        .iter()
-                        .map(|u| models.by_name(u.name()))
-                        .collect(),
-                    heights: models.models.iter().map(|m| m.height).collect(),
-                    view: LodView {
-                        eye: glam::Vec3::ZERO,
-                        forward: glam::Vec3::NEG_Z,
-                        pixel_scale: 0.0,
-                        cull: gc_render::Cull::EVERYTHING,
-                        force: opts.lod,
-                    },
-                    buckets: vec![Vec::new(); models.models.len() * LODS],
-                    soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
-                    batches: Vec::with_capacity(models.models.len() * LODS),
-                }),
-                Err(e) => {
-                    logln!("grubcraft: soldier models off: {e}");
-                    None
-                }
-            },
+        let models = match models::load().and_then(|m| renderer.set_models(&m).map(|()| m)) {
+            Ok(m) => Some(m),
             Err(e) => {
                 logln!("grubcraft: soldier models off: {e}");
                 None
             }
         };
+        let units = UnitTable::of(game_data.units.iter(), models.as_ref());
+        let other_units = UnitTable::of(
+            game_data.conquest_units.iter().map(|u| &u.stats),
+            models.as_ref(),
+        );
+        let art = models.map(|models| Art {
+            clips: models::Clips::new(&models),
+            heights: models.models.iter().map(|m| m.height).collect(),
+            view: LodView {
+                eye: glam::Vec3::ZERO,
+                forward: glam::Vec3::NEG_Z,
+                pixel_scale: 0.0,
+                cull: gc_render::Cull::EVERYTHING,
+                force: opts.lod,
+            },
+            buckets: vec![Vec::new(); models.models.len() * LODS],
+            soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
+            batches: Vec::with_capacity(models.models.len() * LODS),
+        });
         self.memory_timeline.mark("models uploaded");
-        let unit_stats: Vec<UnitStats> = game_data.units.iter().map(sandbox::stats_of).collect();
-        let unit_names: Vec<String> = game_data
-            .units
-            .iter()
-            .map(|u| u.name().to_string())
-            .collect();
-        let unit_factions: Vec<gc_ai::Faction> = game_data
-            .units
-            .iter()
-            .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
-            .collect();
-        let unit_points: Vec<u32> = game_data
-            .units
-            .iter()
-            .map(|u| u32::from(u.points))
-            .collect();
         // gc_data and the lobby list the factions in the same order.
         let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
             .units
             .iter()
-            .zip(&unit_names)
+            .zip(&units.names)
             .map(|(u, name)| gc_ui::lobby::RosterUnit {
                 name: name.clone(),
                 faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
@@ -982,18 +1036,24 @@ impl App {
             };
             scenery::Scenery::new(cover, heightmap.tiles, opts.seed)
         });
+        let building_table = buildings::Table::new(&game_data);
         let (world, prev_positions, pending) = tagged_alloc::scope(Tag::Sim, || {
+            let mut world = World::new(&MatchSetup {
+                seed: opts.seed,
+                capacities,
+                units: &units.stats,
+                map_tiles: heightmap.tiles,
+                nav: &nav,
+                teams: &[],
+                ground: heightmap.ground(),
+                champions: false,
+            });
+            // The sandbox is where buildings can be tried so far.
+            if opts.sandbox {
+                building_table.conquer(&mut world);
+            }
             (
-                World::new(&MatchSetup {
-                    seed: opts.seed,
-                    capacities,
-                    units: &unit_stats,
-                    map_tiles: heightmap.tiles,
-                    nav: &nav,
-                    teams: &[],
-                    ground: heightmap.ground(),
-                    champions: false,
-                }),
+                world,
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
             )
@@ -1072,7 +1132,7 @@ impl App {
         menu.set_host_map_seed(opts.seed);
         let show_menu = opts
             .menu
-            .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
+            .unwrap_or(opts.frames.is_none() && opts.battle.is_none() && opts.conquest.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
                 sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
@@ -1103,17 +1163,18 @@ impl App {
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
-            data_stats: unit_stats.clone(),
-            unit_stats,
-            unit_names,
-            unit_factions,
-            unit_points,
+            units,
+            other_units,
+            conquest_units: false,
+            buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
                 panel: opts.showroom.is_none(),
                 ..Sandbox::new(opts.sandbox)
             },
             selected: Vec::with_capacity(64),
+            selected_structure: None,
+            idle_from: None,
             formation_pick: None,
             shown_formation: None,
             group: Vec::with_capacity(64),
@@ -1171,6 +1232,7 @@ impl App {
             sounds,
             replay_list: None,
             map_previews: map_preview::MapPreviews::new(),
+            data: game_data,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -1194,6 +1256,10 @@ impl App {
             }
             if let Some(level) = opts.battle {
                 let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                r.start_match(MatchKind::Battle(setup));
+            }
+            if let Some(choice) = opts.conquest {
+                let setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
                 r.start_match(MatchKind::Battle(setup));
             }
         }
@@ -1322,6 +1388,7 @@ impl ApplicationHandler for App {
                         code,
                         KeyCode::KeyI
                             | KeyCode::KeyB
+                            | KeyCode::KeyK
                             | KeyCode::Delete
                             | KeyCode::Backspace
                             | KeyCode::KeyT
@@ -1379,13 +1446,15 @@ impl ApplicationHandler for App {
                         KeyCode::KeyI if down && !event.repeat => r.cycle_mind(),
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
+                            r.sandbox.building_tool = false;
                             r.hud.armed = None;
                             r.sandbox.dirty = true;
                         }
-                        KeyCode::BracketLeft if down => r.choose_unit(-1),
-                        KeyCode::BracketRight if down => r.choose_unit(1),
+                        KeyCode::KeyK if down && !event.repeat => r.toggle_building_tool(),
+                        KeyCode::BracketLeft if down => r.choose_type(-1),
+                        KeyCode::BracketRight if down => r.choose_type(1),
                         KeyCode::Delete | KeyCode::Backspace if down && !event.repeat => {
-                            r.remove_regiments(r.input.shift);
+                            r.delete_key();
                         }
                         KeyCode::KeyT if down && !event.repeat => {
                             r.sandbox.tuning = !r.sandbox.tuning;
@@ -1406,6 +1475,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyZ if grid_key => r.grid_press(hud::SLOT_BRACE),
                         KeyCode::KeyV if grid_key => r.grid_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
+                        KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -1451,9 +1521,13 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
                         KeyCode::Escape
                             if down
-                                && (r.sandbox.placing || r.sandbox.tuning || r.sandbox.credits) =>
+                                && (r.sandbox.placing
+                                    || r.sandbox.building_tool
+                                    || r.sandbox.tuning
+                                    || r.sandbox.credits) =>
                         {
                             r.sandbox.placing = false;
+                            r.sandbox.building_tool = false;
                             r.sandbox.tuning = false;
                             r.sandbox.credits = false;
                             r.sandbox.dirty = true;
@@ -1545,10 +1619,15 @@ impl Running {
                 self.place_regiment();
                 self.input.left_down = None;
             }
+            (MouseButton::Left, ElementState::Released) if self.sandbox.building_tool => {
+                self.place_building();
+                self.input.left_down = None;
+            }
             (MouseButton::Left, ElementState::Released) => {
                 if !self.input.shift {
                     self.selected.clear();
                 }
+                self.selected_structure = None;
                 if let Some(rect) = self.selection_box() {
                     self.regiments_in_box(rect);
                     for i in 0..self.boxed.len() {
@@ -1557,13 +1636,26 @@ impl Running {
                             self.selected.push(h);
                         }
                     }
-                } else if let Some(h) = self
-                    .ground_under_cursor()
-                    .and_then(|p| self.nearest_own(p, 6.0))
-                {
-                    self.toggle_selected(h);
+                } else {
+                    // A click on one of your buildings picks it, unless one
+                    // of your regiments stands right there (workers crowd
+                    // round their hall); elsewhere the nearest regiment.
+                    let side = self.sandbox.side;
+                    let building = self
+                        .selected
+                        .is_empty()
+                        .then(|| self.building_under_cursor(|o| o == side))
+                        .flatten();
+                    let reach = if building.is_some() { 1.5 } else { 6.0 };
+                    match self
+                        .ground_under_cursor()
+                        .and_then(|p| self.nearest_own(p, reach))
+                    {
+                        Some(h) => self.toggle_selected(h),
+                        None => self.selected_structure = building,
+                    }
                 }
-                if !self.selected.is_empty() {
+                if !self.selected.is_empty() || self.selected_structure.is_some() {
                     self.ui_sound(sounds::UiSound::Select);
                 }
                 self.input.left_down = None;
@@ -1582,6 +1674,12 @@ impl Running {
                     .and_then(|p| self.enemy_at(p));
                 if let Some(target) = enemy {
                     self.issue_attack(target);
+                } else if let Some(building) = drag
+                    .is_none()
+                    .then(|| self.enemy_building_under_cursor())
+                    .flatten()
+                {
+                    self.issue_siege(building);
                 } else if let Some(order) =
                     drag.or_else(|| self.ground_under_cursor().map(hud::move_order))
                 {
@@ -1599,16 +1697,21 @@ impl Running {
         }
     }
 
-    /// The map point under the mouse, found by marching the camera ray over
-    /// the CPU copy of the heightmap.
-    fn ground_under_cursor(&self) -> Option<Vec2> {
+    /// The ray through the mouse: where it starts and which way it goes.
+    fn cursor_ray(&self) -> Option<(glam::Vec3, glam::Vec3)> {
         let cursor = self.input.cursor?;
         let size = self.window.inner_size();
         let ndc = Vec2::new(
             (cursor.x as f32 / size.width as f32) * 2.0 - 1.0,
             1.0 - (cursor.y as f32 / size.height as f32) * 2.0,
         );
-        let (origin, dir) = self.camera.ray(ndc);
+        Some(self.camera.ray(ndc))
+    }
+
+    /// The map point under the mouse, found by marching the camera ray over
+    /// the CPU copy of the heightmap.
+    fn ground_under_cursor(&self) -> Option<Vec2> {
+        let (origin, dir) = self.cursor_ray()?;
         let mut t = 0.0;
         let step = 0.5;
         let mut prev_t = 0.0;
@@ -1667,6 +1770,40 @@ impl Running {
             }));
     }
 
+    /// Send the selection to attack the building `structure`.
+    fn issue_siege(&mut self, structure: StructureHandle) {
+        if !self.selected.is_empty() {
+            self.ui_sound(sounds::UiSound::Attack);
+        }
+        self.human_orders
+            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::AttackStructure {
+                    regiment,
+                    structure,
+                },
+            }));
+    }
+
+    /// The building the mouse is over whose owner `accept` allows.
+    fn building_under_cursor(&self, accept: impl Fn(PlayerId) -> bool) -> Option<StructureHandle> {
+        let ray = self.cursor_ray()?;
+        let hm = &self.heightmap;
+        buildings::pick(
+            &self.world,
+            &self.buildings,
+            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            ray,
+            |s| accept(s.owner),
+        )
+    }
+
+    /// An enemy building of the side you command, under the mouse.
+    fn enemy_building_under_cursor(&self) -> Option<StructureHandle> {
+        let side = self.sandbox.side;
+        self.building_under_cursor(|o| self.world.hostile(side, o))
+    }
+
     /// Add `h` to the selection, or take it out if it is already in.
     fn toggle_selected(&mut self, h: RegimentHandle) {
         match self.selected.iter().position(|&s| s == h) {
@@ -1710,7 +1847,7 @@ impl Running {
             let Some(r) = self.world.regiments.get(regiment) else {
                 continue;
             };
-            let stats = &self.unit_stats[r.unit as usize];
+            let stats = &self.units.stats[r.unit as usize];
             let files = if files == 0 { r.files } else { files };
             let (width, depth) = stats.block_size_in(r.formation, files, r.models);
             self.instances.push(BoxInstance {
@@ -1827,7 +1964,7 @@ impl Running {
             // Orders can only name regiments your side can see.
             .filter(|r| self.world.sees(self.sandbox.side, r.handle))
             .filter_map(|r| {
-                let stats = &self.unit_stats[r.unit as usize];
+                let stats = &self.units.stats[r.unit as usize];
                 let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
                 let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
                 let to = p - at;
@@ -2057,7 +2194,7 @@ impl Running {
         self.sim_clock = self.sim_clock.min(TICK - Duration::from_nanos(1));
         if ticks_this_frame > 0 {
             // Tuned stats take effect in the tick after they are sent.
-            self.unit_stats.clone_from_slice(self.world.units());
+            self.units.stats.clone_from_slice(self.world.units());
             self.judge_battle();
             if self.recording.as_ref().is_some_and(|r| {
                 self.world.tick_count() >= r.saved_at.unwrap_or(0) + replays::SAVE_EVERY
@@ -2083,6 +2220,8 @@ impl Running {
             self.push_order_preview();
         }
         self.push_placement_ghost();
+        self.push_building_ghost();
+        self.push_buildings();
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
@@ -2126,7 +2265,7 @@ impl Running {
             let (pos, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
             let selected = self.selected.contains(&r.handle) || self.boxed.contains(&r.handle);
-            let stats = &self.unit_stats[r.unit as usize];
+            let stats = &self.units.stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
@@ -2247,10 +2386,7 @@ impl Running {
                     lift: BANNER_LIFT,
                 });
             }
-            let model = self
-                .art
-                .as_ref()
-                .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
+            let model = self.units.models.get(r.unit as usize).copied().flatten();
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 let (view, height) = (art.view, art.heights[model]);
                 let buckets = &mut art.buckets;
@@ -2478,7 +2614,7 @@ impl Running {
     /// last tick (the latest, if several), with a drum roll and a horn.
     fn alert_ambushes(&mut self) {
         let side = self.sandbox.side;
-        let name = |u: gc_sim::UnitId| self.unit_names[u as usize].as_str();
+        let name = |u: gc_sim::UnitId| self.units.names[u as usize].as_str();
         let whose = |p: PlayerId| party_name(&self.parties, p) + "'s";
         let news = self.world.events().iter().rev().find_map(|e| {
             let Event::Ambush(a) = e else { return None };
@@ -2714,29 +2850,27 @@ impl Running {
                 if self.replay_list.is_none() {
                     self.replay_list = Some(replays::list_in_background(
                         replays::folder(),
-                        self.data_stats.len(),
+                        self.unit_types(),
                         self.capacities,
                         self.data_hash,
                     ));
                 }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
-                Ok(r) => {
-                    match replays::unplayable(&r.info(), self.data_stats.len(), self.capacities) {
-                        None => {
-                            logln!("grubcraft: watching {}", path.display());
-                            self.start_match(MatchKind::Replay(Box::new(r)));
-                        }
-                        Some(why) => self.menu.tell(why),
+                Ok(r) => match replays::unplayable(&r.info(), self.unit_types(), self.capacities) {
+                    None => {
+                        logln!("grubcraft: watching {}", path.display());
+                        self.start_match(MatchKind::Replay(Box::new(r)));
                     }
-                }
+                    Some(why) => self.menu.tell(why),
+                },
                 Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
             },
             MenuAction::StartMatch(setup) => {
                 logln!(
                     "grubcraft: starting {} on {} with {} players",
                     setup.settings.mode.name(),
-                    gc_ui::lobby::MAPS[setup.settings.map],
+                    setup.settings.map_name(),
                     setup.players.len()
                 );
                 self.start_match(MatchKind::Battle(setup));
@@ -2776,8 +2910,15 @@ impl Running {
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
-            self.unit_stats = w.stats_before;
+            self.units.stats = w.stats_before;
         }
+        // Conquest plays with its own regiment types.
+        let conquest = match &kind {
+            MatchKind::Battle(setup) => setup.settings.mode == GameMode::Conquest,
+            MatchKind::Replay(r) => r.conquest.is_some(),
+            MatchKind::Sandbox => false,
+        };
+        self.use_units(conquest);
         let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
@@ -2787,32 +2928,43 @@ impl Running {
             self.menu.net().leave();
         }
         if networked {
-            self.unit_stats.clone_from(&self.data_stats);
+            self.units.stats.clone_from(&self.units.data_stats);
         }
-        // A Field Battle plays on the map the lobby picked, its world seeded
-        // with the map's seed (the same on every machine). A replay is shown
-        // on the map it was played on, made again from its choice and seed,
-        // and plays on the map it stored. A described map opened with
-        // `--map` is for looking round in the sandbox; the first battle or
-        // replay leaves it.
+        // A lobby match plays on the map the lobby picked, its world seeded
+        // with the lobby's map seed (the same on every machine). A replay is
+        // shown on the map it was played on, made again from its choice (and
+        // a Field Battle's size and seed), and plays on the map it stored. A
+        // described map opened with `--map` is for looking round in the
+        // sandbox; the first battle or replay leaves it.
         let key = match &kind {
-            MatchKind::Battle(setup) => Some(battle_map(&setup.settings, setup.players.len())),
-            MatchKind::Replay(r) => Some(FieldMap {
-                choice: r.header.map.map_or(0, usize::from),
-                tiles: r.map_tiles,
-                seed: r.seed,
-            }),
+            MatchKind::Battle(setup) => Some((
+                battle_map(&setup.settings, setup.players.len()),
+                setup.settings.map_seed,
+            )),
+            MatchKind::Replay(r) => {
+                let choice = r.header.map.map_or(0, usize::from);
+                let key = if conquest {
+                    MapKey::Conquest(choice)
+                } else {
+                    MapKey::Field(FieldMap {
+                        choice,
+                        tiles: r.map_tiles,
+                        seed: r.seed,
+                    })
+                };
+                Some((key, r.seed))
+            }
             MatchKind::Sandbox => None,
         };
-        if let Some(key) = key {
-            self.seed = key.seed;
+        if let Some((key, seed)) = key {
+            self.seed = seed;
             if self.map_key != Some(key) {
                 self.use_map(key);
             }
         }
         let mut map_note = None;
         if let MatchKind::Replay(r) = &kind {
-            stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
+            stats_before = std::mem::replace(&mut self.units.stats, r.units.clone());
         }
         self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
@@ -2839,23 +2991,45 @@ impl Running {
         let setup = MatchSetup {
             seed: self.seed,
             capacities: self.capacities,
-            units: &self.unit_stats,
+            units: &self.units.stats,
             map_tiles: self.heightmap.tiles,
             nav: &nav,
             teams: &teams,
             ground: self.heightmap.ground(),
             champions,
         };
+        // A lobby Conquest match: what every machine makes its world with,
+        // from the lobby's settings and the game data.
+        let plan = match &kind {
+            MatchKind::Battle(start) if conquest => Some(conquest::plan(
+                &self.buildings,
+                &self.data,
+                &self.heightmap,
+                &conquest::factions(start),
+                start.settings.tempo,
+            )),
+            _ => None,
+        };
         self.world = tagged_alloc::scope(Tag::Sim, || match &kind {
             MatchKind::Replay(r) => r.new_world(),
             _ => World::new(&setup),
         });
+        // Before the recorder, which hashes the world as it starts.
+        if let Some(plan) = &plan {
+            let done = self.world.conquest(&plan.setup());
+            debug_assert!(done, "conquest() on a world that has already begun");
+        }
+        // The sandbox has buildings to try. It is never recorded (only
+        // `Battle` below makes a recorder).
+        if matches!(kind, MatchKind::Sandbox) {
+            self.buildings.conquer(&mut self.world);
+        }
         // Every battle is recorded from its first tick.
         if let MatchKind::Battle(start) = &kind {
             let dir = replays::folder();
             replays::prune(&dir, replays::KEEP - 1);
             let mode = start.settings.mode.name();
-            let map = gc_ui::lobby::MAPS[start.settings.map];
+            let map = start.settings.map_name();
             let place = if networked {
                 "over the network"
             } else {
@@ -2866,6 +3040,10 @@ impl Running {
                 &self.world,
                 format!("{mode} on {map}, played {place}"),
             );
+            let recorder = match plan {
+                Some(plan) => recorder.conquest(plan),
+                None => recorder,
+            };
             self.recording = Some(Recording {
                 // A network match hashes as often as the machines compare,
                 // and keeps each system's hashes for a desync report.
@@ -2896,6 +3074,9 @@ impl Running {
         self.pending.clear();
         self.human_orders.clear();
         self.selected.clear();
+        self.selected_structure = None;
+        self.idle_from = None;
+        self.hud.forget_readout();
         self.boxed.clear();
         self.control_groups = Default::default();
         self.last_group_key = None;
@@ -2910,6 +3091,7 @@ impl Running {
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         match kind {
+            MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
             MatchKind::Replay(r) => self.watch(*r, stats_before),
             MatchKind::Sandbox => {}
@@ -2937,16 +3119,49 @@ impl Running {
         }
     }
 
-    /// Make the Field Battle map `key` names and put it on screen.
-    fn use_map(&mut self, key: FieldMap) {
-        logln!(
-            "grubcraft: switching to {} (seed {:x}, {} tiles)",
-            gc_map::FIELD_MAPS.get(key.choice).unwrap_or(&"?"),
-            key.seed,
-            key.tiles
+    /// What the panel calls a lobby match.
+    fn mode_name(&self) -> &'static str {
+        if self.conquest_units {
+            "CONQUEST"
+        } else {
+            "FIELD BATTLE"
+        }
+    }
+
+    /// Play with the Conquest regiment types (`conquest`) or the Field
+    /// Battle ones. The table put away keeps what the sandbox tuned.
+    fn use_units(&mut self, conquest: bool) {
+        if self.conquest_units == conquest {
+            return;
+        }
+        self.conquest_units = conquest;
+        std::mem::swap(&mut self.units, &mut self.other_units);
+    }
+
+    /// How many regiment types each table has, which a replay must match.
+    fn unit_types(&self) -> replays::UnitTypes {
+        let (here, other) = (
+            self.units.data_stats.len(),
+            self.other_units.data_stats.len(),
         );
+        let (field, conquest) = if self.conquest_units {
+            (other, here)
+        } else {
+            (here, other)
+        };
+        replays::UnitTypes { field, conquest }
+    }
+
+    /// Make the lobby map `key` names and put it on screen.
+    fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
         self.heightmap = make_map(key);
+        logln!(
+            "grubcraft: switching to {} (seed {:x}, {} tiles)",
+            key.name(),
+            self.seed,
+            self.heightmap.tiles
+        );
         let hm = &self.heightmap;
         tagged_alloc::scope(Tag::Render, || {
             self.renderer.set_terrain(&terrain_of(hm));
@@ -2955,8 +3170,14 @@ impl Running {
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
+        // A Conquest map's trees are the same in every match on it, and on
+        // every machine; a Field Battle map's follow its seed.
+        let trees = match key {
+            MapKey::Field(k) => k.seed,
+            MapKey::Conquest(choice) => choice as u64,
+        };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, key.seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, trees)
         });
     }
 
@@ -2967,9 +3188,9 @@ impl Running {
         let set = tagged_alloc::scope(Tag::Ai, || {
             battle::set_out(
                 setup,
-                &self.unit_stats,
-                &self.unit_factions,
-                &self.unit_points,
+                &self.units.stats,
+                &self.units.factions,
+                &self.units.points,
                 terrain_view::plateau_positions(self.heightmap.tiles),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
@@ -2984,17 +3205,7 @@ impl Running {
                 party_name(&set.parties, m.party())
             );
         }
-        self.parties = set.parties;
-        self.sandbox.side = set.me;
-        self.battle = Some(Battle::new(Some(set.me)));
-        if let Some(rec) = &mut self.recording {
-            let header = rec.recorder.header_mut();
-            header.build = online::version();
-            header.data_hash = self.data_hash;
-            header.players = replays::players(&self.parties);
-            header.recorded_by = Some(set.me);
-            header.map = Some(setup.settings.map as u8);
-        }
+        self.seat(set.parties, set.me, setup);
         // Look over your army towards the enemy.
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
@@ -3004,6 +3215,56 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+    }
+
+    /// Seat `parties` for a lobby match, this machine playing `me`, and
+    /// note them in the recording.
+    fn seat(&mut self, parties: Vec<Party>, me: PlayerId, setup: &MatchStart) {
+        self.parties = parties;
+        self.sandbox.side = me;
+        self.battle = Some(Battle::new(Some(me)));
+        if let Some(rec) = &mut self.recording {
+            let header = rec.recorder.header_mut();
+            header.build = online::version();
+            header.data_hash = self.data_hash;
+            header.players = replays::players(&self.parties);
+            header.recorded_by = Some(me);
+            header.map = Some(setup.settings.map as u8);
+        }
+    }
+
+    /// Seat every side of a lobby Conquest match and, on the host (or
+    /// alone), put each one's start buildings and workers on the field.
+    /// No computer player plays Conquest yet.
+    fn set_out_conquest(&mut self, setup: &MatchStart) {
+        let me = setup
+            .local_player
+            .min(setup.players.len().saturating_sub(1)) as PlayerId;
+        self.seat(
+            setup.players.iter().map(battle::party_of).collect(),
+            me,
+            setup,
+        );
+        if self.online.as_ref().is_none_or(|o| o.host) {
+            self.human_orders.extend(conquest::opening(
+                &self.data,
+                &self.buildings,
+                &self.heightmap,
+                &self.world,
+                &conquest::factions(setup),
+            ));
+        }
+        // Look over your start.
+        let focus = self
+            .heightmap
+            .starts()
+            .get(usize::from(me))
+            .map_or(Vec2::splat(self.heightmap.tiles as f32 / 2.0), |&(x, y)| {
+                Vec2::new(x as f32 + 0.5, y as f32 + 0.5)
+            });
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
+        self.camera.distance = 80.0;
     }
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
@@ -3151,7 +3412,7 @@ impl Running {
             }
             self.sandbox.dirty = true;
         }
-        if battle.herald(&self.world, &self.parties, &self.unit_names) {
+        if battle.herald(&self.world, &self.parties, &self.units.names) {
             if let Some(news) = &battle.champions {
                 logln!("grubcraft: {news}");
             }
@@ -3271,10 +3532,7 @@ impl Running {
     fn push_corpses(&mut self) {
         for c in self.puppets.corpses() {
             let [r, g, b] = color_of(&self.parties, c.owner);
-            let model = self
-                .art
-                .as_ref()
-                .and_then(|a| a.unit_model.get(c.unit as usize).copied().flatten());
+            let model = self.units.models.get(c.unit as usize).copied().flatten();
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
@@ -3531,8 +3789,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
+        // Below Conquest's top bar.
+        let top = if self.top_bar().is_some() {
+            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+        } else {
+            0.0
+        };
         self.renderer
-            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale);
+            .set_overlay((!text.is_empty()).then_some(text.as_str()), scale, top);
         self.sandbox.dirty = false;
     }
 
@@ -3542,6 +3806,7 @@ impl Running {
         let sides = self.parties.len().max(1) as PlayerId;
         self.sandbox.side = (self.sandbox.side + 1) % sides;
         self.selected.clear();
+        self.selected_structure = None;
         if let Some(drill) = &mut self.drill {
             drill.skip_player = Some(self.sandbox.side);
         }
@@ -3595,7 +3860,7 @@ impl Running {
         }
         let mut counts = [0u32; 4];
         for r in self.world.regiments.iter().filter(|r| r.owner == side) {
-            if let Some(f) = self.unit_factions.get(r.unit as usize) {
+            if let Some(f) = self.units.factions.get(r.unit as usize) {
                 counts[f.index() as usize] += 1;
             }
         }
@@ -3607,9 +3872,19 @@ impl Running {
         }
     }
 
+    /// [ and ]: the previous or next type of whatever is being placed.
+    fn choose_type(&mut self, step: i32) {
+        if self.sandbox.building_tool {
+            self.sandbox.building = self.buildings.step(self.sandbox.building, step);
+            self.sandbox.dirty = true;
+        } else {
+            self.choose_unit(step);
+        }
+    }
+
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
-        let types = self.unit_stats.len() as i32;
+        let types = self.units.stats.len() as i32;
         self.sandbox.unit =
             (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
         self.sandbox.dirty = true;
@@ -3643,6 +3918,90 @@ impl Running {
         self.ui_sound(sounds::UiSound::Move);
     }
 
+    /// K: place buildings instead of regiments, or stop.
+    fn toggle_building_tool(&mut self) {
+        if self.world.structures().is_none() {
+            self.say("Buildings can only be placed in the sandbox and Conquest.".into());
+            return;
+        }
+        self.sandbox.building_tool = !self.sandbox.building_tool;
+        self.sandbox.placing = false;
+        self.hud.armed = None;
+        self.sandbox.dirty = true;
+    }
+
+    /// Where the chosen building would stand with the footprint centred on
+    /// the cursor, and why it couldn't.
+    fn building_placement(&self) -> Option<(BuildingStats, (i32, i32), Option<&'static str>)> {
+        let at = self.ground_under_cursor()?;
+        let stats = *self
+            .buildings
+            .stats
+            .get(usize::from(self.sandbox.building))?;
+        let tile = buildings::tile_for(at, stats.width, stats.depth);
+        let why = buildings::refusal(&self.world, self.sandbox.building, tile);
+        Some((stats, tile, why))
+    }
+
+    fn place_building(&mut self) {
+        let Some((_, tile, why)) = self.building_placement() else {
+            return;
+        };
+        if let Some(why) = why {
+            self.say(why.into());
+            return;
+        }
+        self.human_orders.push(PlayerCommand {
+            player: self.sandbox.side,
+            command: gc_sim::Command::SpawnStructure {
+                building: self.sandbox.building,
+                tile: (tile.0 as i16, tile.1 as i16),
+            },
+        });
+        self.ui_sound(sounds::UiSound::Move);
+    }
+
+    /// The building K would place, ghosted under the cursor.
+    fn push_building_ghost(&mut self) {
+        if !self.sandbox.building_tool {
+            return;
+        }
+        let Some((stats, tile, why)) = self.building_placement() else {
+            return;
+        };
+        let colour = color_of(&self.parties, self.sandbox.side);
+        let hm = &self.heightmap;
+        buildings::push_ghost(
+            &stats,
+            tile,
+            why.is_none(),
+            colour,
+            |x, z| hm.height_at(x, z).max(hm.water_level()),
+            &mut self.instances,
+        );
+    }
+
+    /// Every standing building as a box, the selected one with a rim, and
+    /// every gathering spot.
+    fn push_buildings(&mut self) {
+        let look = self.camera.forward();
+        let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
+        let (hm, parties) = (&self.heightmap, &self.parties);
+        let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
+        buildings::push(
+            &self.world,
+            &self.buildings,
+            ground,
+            |p| color_of(parties, p),
+            across,
+            &mut self.instances,
+        );
+        if let Some(h) = self.picked_structure() {
+            buildings::push_rim(&self.world, h, ground, &mut self.instances);
+        }
+        buildings::push_nodes(&self.world, &mut self.instances);
+    }
+
     /// A plate under the cursor the size of the regiment B would place.
     fn push_placement_ghost(&mut self) {
         if !self.sandbox.placing {
@@ -3651,7 +4010,7 @@ impl Running {
         let Some((at, facing)) = self.placement() else {
             return;
         };
-        let stats = &self.unit_stats[self.sandbox.unit as usize];
+        let stats = &self.units.stats[self.sandbox.unit as usize];
         let (width, depth) = stats.block_size_in(Formation::Line, stats.files, stats.models);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let color = if self.world.nav().walkable(fx_vec(at)) {
@@ -3668,7 +4027,33 @@ impl Running {
         });
     }
 
-    /// Delete: take the selected regiments off the field, or with `all`
+    /// Delete: take away the building under the cursor, else the selected
+    /// regiments. Shift+Delete clears the field of both.
+    fn delete_key(&mut self) {
+        let side = self.sandbox.side;
+        if self.input.shift {
+            let all: Vec<StructureHandle> = self
+                .world
+                .structures()
+                .map(|s| s.iter().map(|v| v.handle).collect())
+                .unwrap_or_default();
+            self.human_orders
+                .extend(all.into_iter().map(|structure| PlayerCommand {
+                    player: side,
+                    command: gc_sim::Command::RemoveStructure { structure },
+                }));
+            self.remove_regiments(true);
+        } else if let Some(structure) = self.building_under_cursor(|_| true) {
+            self.human_orders.push(PlayerCommand {
+                player: side,
+                command: gc_sim::Command::RemoveStructure { structure },
+            });
+        } else {
+            self.remove_regiments(false);
+        }
+    }
+
+    /// Take the selected regiments off the field, or with `all`
     /// every regiment of every side.
     fn remove_regiments(&mut self, all: bool) {
         let side = self.sandbox.side;
@@ -3704,7 +4089,7 @@ impl Running {
         };
         if step != 0 {
             let unit = self.sandbox.unit;
-            let mut stats = self.unit_stats[unit as usize];
+            let mut stats = self.units.stats[unit as usize];
             let steps = if self.input.shift { step * 10 } else { step };
             (sandbox::TUNABLES[self.sandbox.row].nudge)(&mut stats, steps);
             self.tune(unit, stats.sanitized());
@@ -3715,7 +4100,7 @@ impl Running {
 
     /// Send new stats for a unit type, and show them straight away.
     fn tune(&mut self, unit: UnitId, stats: UnitStats) {
-        self.unit_stats[unit as usize] = stats;
+        self.units.stats[unit as usize] = stats;
         self.human_orders.push(PlayerCommand {
             player: self.sandbox.side,
             command: gc_sim::Command::TuneUnit { unit, stats },
@@ -3725,6 +4110,10 @@ impl Running {
     /// Shift+R: read `data/units.ron` again and tune every type that changed.
     #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
+        if self.conquest_units {
+            self.say("Shift+R reloads the Field Battle units, so not in Conquest.".into());
+            return;
+        }
         let Some(dir) = sandbox::disk::data_dir() else {
             self.say(
                 "Shift+R reloads data/units.ron, but there is none here (run from the repository)."
@@ -3742,7 +4131,7 @@ impl Running {
         };
         // By name, so a row added or removed above a type cannot hand it
         // another type's stats.
-        let plan = match sandbox::plan_reload(&self.unit_names, &names) {
+        let plan = match sandbox::plan_reload(&self.units.names, &names) {
             Ok(plan) => plan,
             Err(e) => {
                 self.say(format!("data/units.ron not reloaded: {e}."));
@@ -3752,7 +4141,7 @@ impl Running {
         let mut changed = 0;
         for &(fresh, running) in &plan.matched {
             let new = stats[fresh].sanitized();
-            if new != self.unit_stats[running] {
+            if new != self.units.stats[running] {
                 self.tune(running as UnitId, new);
                 changed += 1;
             }
@@ -3782,7 +4171,7 @@ impl Running {
     fn sandbox_panel(&self) -> String {
         let sb = &self.sandbox;
         let unit = sb.unit as usize;
-        let name = &self.unit_names[unit];
+        let name = &self.units.names[unit];
         let speed = if self.paused {
             "paused".to_string()
         } else if self.speed == NORMAL_SPEED {
@@ -3841,7 +4230,8 @@ impl Running {
         }
         if self.online.is_some() {
             lines.push(format!(
-                "FIELD BATTLE over the network   commanding {} (player {})   H: hide",
+                "{} over the network   commanding {} (player {})   H: hide",
+                self.mode_name(),
                 party_name(&self.parties, sb.side),
                 sb.side + 1
             ));
@@ -3867,7 +4257,7 @@ impl Running {
             return lines.join("\n");
         }
         let mode = if self.battle.is_some() {
-            "FIELD BATTLE"
+            self.mode_name()
         } else {
             "SANDBOX"
         };
@@ -3897,14 +4287,25 @@ impl Running {
                 format!("I: {next}   L: AI lens   the computer plays this side{thinking}")
             }
         });
+        lines.push(if sb.building_tool {
+            format!(
+                "placing  {}   [ ]: building   click: place   K: stop",
+                self.buildings.describe(sb.building)
+            )
+        } else if sb.placing {
+            format!("placing  {name}   [ ]: type   click: place   B: stop")
+        } else {
+            format!("B: place regiments   [ ]: type ({name})")
+        });
+        if let (Some(standing), false) = (self.world.structures(), sb.building_tool) {
+            lines.push(format!(
+                "K: place buildings ({} standing)   right-click an enemy one with regiments selected: attack it",
+                standing.len()
+            ));
+        }
         lines.extend([
-            if sb.placing {
-                format!("placing  {name}   [ ]: type   click: place   B: stop")
-            } else {
-                format!("B: place regiments   [ ]: type ({name})")
-            },
             format!("game     {speed}   P: pause   - =: slower, faster"),
-            "Delete: remove selected   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
+            "Delete: remove the building under the cursor or the selected regiments   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
                 .to_string(),
             "Shift+H: preview the hero panel (no heroes in the game yet)".to_string(),
             if self.commander {
@@ -3933,7 +4334,7 @@ impl Running {
             lines.push(format!(
                 "TUNE {name} ({on_field} on the field)   Up/Down: pick   Left/Right: change   T: close"
             ));
-            let stats = &self.unit_stats[unit];
+            let stats = &self.units.stats[unit];
             for (k, t) in sandbox::TUNABLES.iter().enumerate() {
                 let mark = if k == sb.row { '>' } else { ' ' };
                 lines.push(format!("{mark} {:<15} {}", t.label, (t.show)(stats)));
@@ -4004,24 +4405,64 @@ impl Running {
     }
 }
 
-/// The map a lobby battle of `players` is played on.
-fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> FieldMap {
-    FieldMap {
-        choice: settings.map,
-        tiles: gc_ui::lobby::field_map_tiles(players),
-        seed: settings.map_seed,
+/// A map the lobby can play on: a Field Battle map made from its choice,
+/// size and seed, or one of the shipped Conquest maps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MapKey {
+    Field(FieldMap),
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`.
+    Conquest(usize),
+}
+
+impl MapKey {
+    fn make(self) -> Map {
+        match self {
+            MapKey::Field(key) => key.make(),
+            MapKey::Conquest(choice) => conquest::make_map(choice),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            MapKey::Field(key) => gc_map::FIELD_MAPS.get(key.choice),
+            MapKey::Conquest(choice) => gc_ui::lobby::CONQUEST_MAPS.get(choice),
+        }
+        .copied()
+        .unwrap_or("?")
     }
 }
 
-/// The last Field Battle map made, so the lobby's preview, the host's
-/// fingerprint and the match itself make it once between them.
-static LAST_MAP: std::sync::Mutex<Option<(FieldMap, Arc<Map>)>> = std::sync::Mutex::new(None);
+impl From<MapPreviewKey> for MapKey {
+    fn from(key: MapPreviewKey) -> MapKey {
+        match key {
+            MapPreviewKey::Field {
+                choice,
+                tiles,
+                seed,
+            } => MapKey::Field(FieldMap {
+                choice,
+                tiles,
+                seed,
+            }),
+            MapPreviewKey::Conquest(choice) => MapKey::Conquest(choice),
+        }
+    }
+}
 
-/// Make the Field Battle map `key`, or share it if it was the last made.
+/// The map a lobby match of `players` is played on.
+fn battle_map(settings: &gc_ui::lobby::LobbySettings, players: usize) -> MapKey {
+    gc_ui::menu::preview_key(settings, players).into()
+}
+
+/// The last lobby map made, so the lobby's preview, the host's
+/// fingerprint and the match itself make it once between them.
+static LAST_MAP: std::sync::Mutex<Option<(MapKey, Arc<Map>)>> = std::sync::Mutex::new(None);
+
+/// Make the lobby map `key`, or share it if it was the last made.
 /// The lock is held while a map is made, so a second ask for the same map
 /// (the match starting while its picture is being made) waits for it
 /// instead of making it again.
-fn make_map(key: FieldMap) -> Arc<Map> {
+fn make_map(key: MapKey) -> Arc<Map> {
     let mut last = LAST_MAP
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4317,6 +4758,7 @@ mod tests {
     fn a_new_lobby_plays_on_the_old_map() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
         assert_eq!(key.make().hash(), Map::generate(0x6772_7562, 256).hash());
+        assert!(matches!(key, MapKey::Field(_)));
     }
 
     #[test]

@@ -9,7 +9,9 @@ use gc_fixed::Fx;
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{Challenge, Command, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
-use gc_ui::lobby::{COLORS, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
+use gc_ui::lobby::{
+    COLORS, GameMode, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind,
+};
 use glam::Vec2;
 
 use gc_map::START_PLATEAUS;
@@ -17,11 +19,13 @@ use gc_map::START_PLATEAUS;
 // A start plateau for every lobby slot.
 const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
 
-/// Whether champions may duel before this battle: the lobby allows it and
-/// a computer player takes part (docs/05-combat.md, "Champions before
-/// battle").
+/// Whether champions may duel before this battle: a Field Battle the lobby
+/// allows it in, with a computer player taking part (docs/05-combat.md,
+/// "Champions before battle").
 pub fn champions_allowed(setup: &MatchStart) -> bool {
-    setup.settings.champions && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
+    setup.settings.mode == GameMode::FieldBattle
+        && setup.settings.champions
+        && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
 }
 
 /// The champions' result stays on screen this long after the duel ends.
@@ -41,6 +45,16 @@ pub fn party_name(parties: &[Party], side: PlayerId) -> String {
     parties
         .get(side as usize)
         .map_or_else(|| format!("player {}", side + 1), |p| p.name.clone())
+}
+
+/// Who plays lobby slot `slot`: "Red (Mario)", in red, as their faction.
+pub fn party_of(slot: &Slot) -> Party {
+    let (colour, color) = PLAYER_COLORS[usize::from(slot.color % COLORS)];
+    Party {
+        name: format!("{colour} ({})", slot.name),
+        color,
+        faction: Some(Faction::from_index(slot.faction.index() as u8)),
+    }
 }
 
 /// A battle set out: who plays each side, and where this machine's player
@@ -100,12 +114,7 @@ pub fn set_out(
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
-        let (colour, color) = PLAYER_COLORS[usize::from(slot.color % COLORS)];
-        set.parties.push(Party {
-            name: format!("{colour} ({})", slot.name),
-            color,
-            faction: Some(faction),
-        });
+        set.parties.push(party_of(slot));
         let mind = (deploy && slot.kind == SlotKind::Ai).then(|| {
             let pick = gc_fixed::Pcg32::new(roll, i as u64).next_u32();
             Mind::new(MindConfig {
@@ -436,13 +445,13 @@ pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::terrain_view::plateau_positions;
     use gc_map::Map as Heightmap;
     use gc_sim::{Capacities, MatchSetup};
 
-    const MAP: u32 = 256;
+    pub(crate) const MAP: u32 = 256;
 
     #[test]
     fn you_and_your_allies_start_in_the_south_facing_the_rest() {
@@ -489,7 +498,7 @@ mod tests {
     }
 
     /// The AI level called `name`, or the Veteran for no name.
-    fn level(name: &str) -> Difficulty {
+    pub(crate) fn level(name: &str) -> Difficulty {
         if name.is_empty() {
             return Difficulty::Veteran;
         }
@@ -501,7 +510,7 @@ mod tests {
 
     /// The real game data's unit stats, factions and points, as `set_out`
     /// takes them.
-    fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
+    pub(crate) fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
         let units = data.units.iter().map(crate::sandbox::stats_of).collect();
         let factions = data
             .units
@@ -514,7 +523,7 @@ mod tests {
 
     /// A lobby setup: slot `k` is `who[k]` (None for you), on team
     /// `teams[k]`, everyone Ember Clans so the armies match.
-    fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
+    pub(crate) fn lobby(who: &[Option<Difficulty>], teams: &[u8]) -> MatchStart {
         let players = who
             .iter()
             .zip(teams)
@@ -545,9 +554,11 @@ mod tests {
         }
     }
 
-    struct Played {
+    pub(crate) struct Played {
         battle: Battle,
-        ticks: u32,
+        /// Who holds the field, once someone does.
+        pub(crate) holder: Option<PlayerId>,
+        pub(crate) ticks: u32,
         /// Regiments each party fielded.
         fielded: Vec<usize>,
         /// Time all the minds spent thinking, and the longest single tick.
@@ -756,9 +767,20 @@ mod tests {
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
+        play_on(setup, seed, minutes, Heightmap::generate(seed, MAP), |_| {})
+    }
+
+    /// [`play`] on `heightmap`, with `tune` free to change the minds once
+    /// they are seated.
+    pub(crate) fn play_on(
+        setup: &MatchStart,
+        seed: u64,
+        minutes: u32,
+        mut heightmap: Heightmap,
+        tune: impl FnOnce(&mut Minds),
+    ) -> Played {
         let data = crate::data::load();
         let (units, factions, points) = tables(&data);
-        let mut heightmap = Heightmap::generate(seed, MAP);
         // `AI_COVER=off` plays on bare maps, without woods or tall grass.
         if std::env::var("AI_COVER").as_deref() == Ok("off") {
             heightmap.cover.clear();
@@ -793,6 +815,7 @@ mod tests {
             &mut minds,
             &mut out,
         );
+        tune(&mut minds);
         world.tick(&out);
         // The people are happy with the standard deployment.
         let ready: Vec<PlayerCommand> = (0..setup.players.len())
@@ -859,6 +882,7 @@ mod tests {
         }
         Played {
             battle,
+            holder: world.verdict().map(|v| v.holder),
             ticks: world.tick_count(),
             fielded,
             ai_time,
