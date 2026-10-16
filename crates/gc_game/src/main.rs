@@ -1257,6 +1257,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 r.frame();
+                r.check_devices();
                 if r.quit {
                     event_loop.exit();
                 }
@@ -2696,6 +2697,23 @@ impl Running {
             replay,
             stats_before,
         });
+    }
+
+    /// Once a frame: reopen a lost sound output, log what the GPU driver
+    /// reported, and if the GPU is gone (nothing can be drawn any more) save
+    /// the battle and leave.
+    fn check_devices(&mut self) {
+        for message in self.renderer.take_gpu_messages() {
+            logln!("grubcraft: {message}");
+        }
+        if let Some(sounds) = &mut self.sounds {
+            sounds.reopen_if_lost();
+        }
+        if self.renderer.device_lost() {
+            logln!("grubcraft: the GPU is gone; saving the battle and quitting");
+            self.save_recording();
+            self.quit = true;
+        }
     }
 
     /// Save the battle's recording as it stands.

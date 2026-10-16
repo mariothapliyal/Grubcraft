@@ -14,6 +14,7 @@ use gc_audio::{Audio, Bank, SoundId};
 use gc_platform::logln;
 use gc_sim::{MoraleState, RegimentHandle, World};
 use glam::Vec2;
+use std::time::{Duration, Instant};
 
 /// The sound bank written by `cargo run -p gc_sfx`.
 static BANK: &[u8] = include_bytes!("../../../assets/audio/sounds.gcsnd");
@@ -37,6 +38,9 @@ const PRI_BLOWS: u8 = 100;
 const PRI_CHARGE: u8 = 170;
 const PRI_MORALE: u8 = 220;
 const PRI_UI: u8 = 255;
+
+/// How long to wait between tries to reopen a lost sound output.
+const REOPEN_EVERY: Duration = Duration::from_secs(3);
 
 /// Short clicks for the interface.
 #[derive(Clone, Copy, Debug)]
@@ -75,24 +79,29 @@ pub struct Sounds {
     last_intensity: u8,
     muted: bool,
     music_on: bool,
+    /// Set while the output is lost: when to try opening it again.
+    reopen_at: Option<Instant>,
+}
+
+/// Open the default output with the embedded sound bank.
+fn open_audio() -> Result<Audio, gc_audio::AudioError> {
+    Bank::parse(BANK)
+        .map_err(gc_audio::AudioError::from)
+        .and_then(Audio::start)
 }
 
 impl Sounds {
     /// Open the sound card and start the music. None (with a note on stderr)
     /// if there is no usable output; the game then runs silently.
     pub fn start(regiment_capacity: usize) -> Option<Sounds> {
-        let started = Bank::parse(BANK)
-            .map_err(gc_audio::AudioError::from)
-            .and_then(Audio::start);
-        match started {
+        match open_audio() {
             Ok(audio) => {
                 logln!(
                     "audio: {} at {} Hz",
                     audio.device_name(),
                     audio.sample_rate()
                 );
-                audio.set_music_volume(MUSIC_VOLUME);
-                Some(Sounds {
+                let sounds = Sounds {
                     audio,
                     seen: vec![None; regiment_capacity],
                     flights: Vec::with_capacity(256),
@@ -102,12 +111,55 @@ impl Sounds {
                     last_intensity: 0,
                     muted: false,
                     music_on: true,
-                })
+                    reopen_at: None,
+                };
+                sounds.apply_state();
+                Some(sounds)
             }
             Err(e) => {
                 logln!("audio off: {e}");
                 None
             }
+        }
+    }
+
+    /// Tell a freshly opened output what the player has set: mute, music
+    /// on or off, and how much of the battle layer is playing.
+    fn apply_state(&self) {
+        self.audio
+            .set_master_volume(if self.muted { 0.0 } else { 1.0 });
+        self.audio
+            .set_music_volume(if self.music_on { MUSIC_VOLUME } else { 0.0 });
+        self.audio
+            .set_music_intensity(f32::from(self.last_intensity) / 20.0);
+    }
+
+    /// If the sound card went away (headphones unplugged), open the default
+    /// one again, a few seconds apart until it works, keeping the player's
+    /// mute and music settings. Call once a frame.
+    pub fn reopen_if_lost(&mut self) {
+        if !self.audio.stream_lost() {
+            return;
+        }
+        let now = Instant::now();
+        if self.reopen_at.is_some_and(|t| now < t) {
+            return;
+        }
+        if self.reopen_at.is_none() {
+            logln!("audio: the output was lost, trying to reopen it");
+        }
+        match open_audio() {
+            Ok(audio) => {
+                logln!(
+                    "audio: reopened {} at {} Hz",
+                    audio.device_name(),
+                    audio.sample_rate()
+                );
+                self.audio = audio;
+                self.apply_state();
+                self.reopen_at = None;
+            }
+            Err(_) => self.reopen_at = Some(now + REOPEN_EVERY),
         }
     }
 
