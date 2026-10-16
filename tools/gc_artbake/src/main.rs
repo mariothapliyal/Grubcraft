@@ -186,6 +186,15 @@ fn run(opts: &Options) -> Result<(), String> {
     let mut pack = gc_assets::PackWriter::new();
     tables.write(&mut pack);
     let bytes = pack.finish();
+    // The game turns soldier models off for a pack its loader rejects, so
+    // load it here first.
+    let mut store = vec![0u128; bytes.len().div_ceil(16)];
+    bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
+    let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
+    let loaded = gc_assets::Pack::parse(view).map_err(|e| e.to_string());
+    loaded
+        .and_then(|p| gc_assets::model::Models::from_pack(&p).map_err(|e| e.to_string()))
+        .map_err(|e| format!("the baked pack does not load: {e}"))?;
     if let Some(dir) = opts.out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }

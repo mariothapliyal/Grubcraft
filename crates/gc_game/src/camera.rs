@@ -43,6 +43,11 @@ impl RtsCamera {
         Vec3::new(s * PITCH.cos(), PITCH.sin(), c * PITCH.cos())
     }
 
+    /// The direction the camera looks.
+    pub fn forward(&self) -> Vec3 {
+        -self.offset_dir()
+    }
+
     pub fn eye(&self) -> Vec3 {
         self.target() + self.offset_dir() * self.distance
     }

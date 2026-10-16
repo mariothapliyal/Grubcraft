@@ -496,24 +496,39 @@ struct Art {
     unit_model: Vec<Option<usize>>,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
-    /// Every soldier at this level of detail, from `--lod`.
-    force_lod: Option<usize>,
-    /// This frame's eye, the height of the ground under the camera's
-    /// focus, and `RtsCamera::pixel_scale`, for choosing levels of detail.
-    eye: glam::Vec3,
-    ground: f32,
-    pixel_scale: f32,
+    /// This frame's camera, for choosing levels of detail.
+    view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
     buckets: Vec<Vec<SoldierInstance>>,
     soldiers: Vec<SoldierInstance>,
     batches: Vec<SoldierBatch>,
 }
 
-/// The level of detail for a model `height` tiles tall, `distance` tiles
-/// from the eye (`pixel_scale` is from `RtsCamera::pixel_scale`).
-fn lod_for(height: f32, distance: f32, pixel_scale: f32) -> usize {
-    let pixels = height * pixel_scale / distance.max(1.0);
+/// The level of detail for a model `height` tiles tall, `depth` tiles in
+/// front of the eye (`pixel_scale` is from `RtsCamera::pixel_scale`).
+fn lod_for(height: f32, depth: f32, pixel_scale: f32) -> usize {
+    let pixels = height * pixel_scale / depth.max(1.0);
     LOD_PIXELS.iter().take_while(|&&p| pixels < p).count()
+}
+
+/// What choosing a level of detail needs from a frame's camera.
+#[derive(Clone, Copy)]
+struct LodView {
+    eye: glam::Vec3,
+    forward: glam::Vec3,
+    pixel_scale: f32,
+    /// Every soldier at this level, from `--lod`.
+    force: Option<usize>,
+}
+
+impl LodView {
+    /// The level for a model `height` tiles tall standing at `pos`: it
+    /// follows how tall the model shows on screen.
+    fn lod(&self, height: f32, pos: glam::Vec3) -> usize {
+        self.force.unwrap_or_else(|| {
+            lod_for(height, (pos - self.eye).dot(self.forward), self.pixel_scale)
+        })
+    }
 }
 
 impl Art {
@@ -523,21 +538,12 @@ impl Art {
         for b in &mut self.buckets {
             b.clear();
         }
-        self.eye = camera.eye();
-        self.ground = camera.focus_height;
-        self.pixel_scale = camera.pixel_scale(height);
-    }
-
-    /// The bucket for `model` standing at `pos`: its level of detail
-    /// follows how tall it shows on screen.
-    fn bucket(&self, model: usize, pos: Vec2) -> usize {
-        let lod = self.force_lod.unwrap_or_else(|| {
-            let distance = self
-                .eye
-                .distance(glam::Vec3::new(pos.x, self.ground, pos.y));
-            lod_for(self.heights[model], distance, self.pixel_scale)
-        });
-        model * LODS + lod
+        self.view = LodView {
+            eye: camera.eye(),
+            forward: camera.forward(),
+            pixel_scale: camera.pixel_scale(height),
+            force: self.view.force,
+        };
     }
 
     /// Gather the buckets into one instance list with a batch per bucket.
@@ -803,10 +809,12 @@ impl App {
                         .map(|u| models.by_name(u.name()))
                         .collect(),
                     heights: models.models.iter().map(|m| m.height).collect(),
-                    force_lod: opts.lod,
-                    eye: glam::Vec3::ZERO,
-                    ground: 0.0,
-                    pixel_scale: 0.0,
+                    view: LodView {
+                        eye: glam::Vec3::ZERO,
+                        forward: glam::Vec3::NEG_Z,
+                        pixel_scale: 0.0,
+                        force: opts.lod,
+                    },
                     buckets: vec![Vec::new(); models.models.len() * LODS],
                     soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
                     batches: Vec::with_capacity(models.models.len() * LODS),
@@ -2019,8 +2027,9 @@ impl Running {
                 .as_ref()
                 .and_then(|a| a.unit_model.get(r.unit as usize).copied().flatten());
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
-                let bucket = art.bucket(model, pos);
-                let bucket = &mut art.buckets[bucket];
+                let (view, height) = (art.view, art.heights[model]);
+                let buckets = &mut art.buckets;
+                let heightmap = &self.heightmap;
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
@@ -2044,7 +2053,9 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
-                        bucket.push(SoldierInstance {
+                        let ground = heightmap.height_at(s.pos.x, s.pos.y);
+                        let lod = view.lod(height, glam::Vec3::new(s.pos.x, ground, s.pos.y));
+                        buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
@@ -2937,8 +2948,10 @@ impl Running {
                 // The death clip, held on its last frame; models without
                 // one lie down in their idle pose once the blow lands.
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
-                    let bucket = art.bucket(model, c.pos);
-                    art.buckets[bucket].push(SoldierInstance {
+                    let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
+                    let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
+                    let lod = art.view.lod(art.heights[model], at);
+                    art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
@@ -3769,5 +3782,25 @@ mod lod_tests {
         assert_eq!(lod_for(50.0, 0.0, 1.0), lod_for(50.0, 1.0, 1.0));
         assert_eq!(lod_for(100.0, 0.25, 1.0), 0);
         assert_eq!(lod_for(39.0, 0.001, 1.0), lod_for(39.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn soldiers_at_one_depth_share_a_level_across_the_screen() {
+        // At depth 20 a 2-tile model is exactly 100 px: level 0 on the
+        // screen's centre line and off to the side alike.
+        let view = LodView {
+            eye: glam::Vec3::ZERO,
+            forward: glam::Vec3::NEG_Z,
+            pixel_scale: 1000.0,
+            force: None,
+        };
+        assert_eq!(view.lod(2.0, glam::Vec3::new(0.0, 0.0, -20.0)), 0);
+        assert_eq!(view.lod(2.0, glam::Vec3::new(12.0, -5.0, -20.0)), 0);
+        assert_eq!(view.lod(2.0, glam::Vec3::new(0.0, 0.0, -21.0)), 1);
+        let forced = LodView {
+            force: Some(3),
+            ..view
+        };
+        assert_eq!(forced.lod(2.0, glam::Vec3::new(0.0, 0.0, -1.0)), 3);
     }
 }

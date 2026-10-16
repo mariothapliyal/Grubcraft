@@ -166,19 +166,24 @@ pub fn bake(
     albedo_path: &Path,
     resolve: impl Fn(&str) -> Result<std::path::PathBuf, String>,
 ) -> Result<Vec<Block>, String> {
+    Ok(compress(&levels(cfg, albedo, albedo_path, resolve)?))
+}
+
+/// BC7-compress mips from [`levels`], back to back.
+fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
     let settings = intel_tex_2::bc7::alpha_slow_settings();
     let mut out = Vec::new();
-    for (side, rgba) in levels(cfg, albedo, albedo_path, resolve)? {
+    for (side, rgba) in levels {
         let surface = intel_tex_2::RgbaSurface {
-            data: &rgba,
-            width: side,
-            height: side,
+            data: rgba,
+            width: *side,
+            height: *side,
             stride: side * 4,
         };
         let blocks = intel_tex_2::bc7::compress_blocks(&settings, &surface);
         out.extend(blocks.as_chunks::<16>().0);
     }
-    Ok(out)
+    out
 }
 
 /// Every mip of the three layers, in order, as their side and RGBA8 texels.
@@ -327,7 +332,7 @@ mod tests {
         let albedo = load_png(&path).unwrap();
         let resolve = |s: &str| Ok(dir.join(s));
         let levels = levels(&cfg, &albedo, &path, resolve).unwrap();
-        let blocks = bake(&cfg, &albedo, &path, resolve).unwrap();
+        let blocks = compress(&levels);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(blocks.len(), BLOCKS_PER_MATERIAL);
         let mips = TEXTURE_MIPS as usize;
