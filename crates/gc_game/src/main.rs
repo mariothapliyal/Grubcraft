@@ -99,6 +99,7 @@ mod battle;
 #[cfg(test)]
 mod battle_tables;
 mod buildings;
+mod conquest;
 mod camera;
 mod credits;
 mod data;
