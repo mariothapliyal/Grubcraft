@@ -538,10 +538,13 @@ impl LodView {
         })
     }
 
-    /// Whether a model `height` tiles tall standing at `pos` is worth
-    /// drawing: it is on screen or casts a shadow where one is drawn.
-    fn sees(&self, height: f32, pos: glam::Vec3) -> bool {
-        self.cull.sees(pos + glam::Vec3::Y * (height * 0.5), height)
+    /// The level for a model `height` tiles tall standing at `pos`, or none
+    /// when it is worth no drawing: it is neither on screen nor casting a
+    /// shadow where one is drawn.
+    fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        self.cull
+            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .then(|| self.lod(height, pos))
     }
 }
 
@@ -2075,9 +2078,9 @@ impl Running {
                     .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
                         let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
-                        if !view.sees(height, at) {
+                        let Some(lod) = view.place(height, at) else {
                             return;
-                        }
+                        };
                         let seconds = time + s.phase * 4.0;
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
@@ -2095,7 +2098,6 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
-                        let lod = view.lod(height, at);
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
@@ -3042,10 +3044,9 @@ impl Running {
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
                     let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
-                    if !art.view.sees(art.heights[model], at) {
+                    let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;
-                    }
-                    let lod = art.view.lod(art.heights[model], at);
+                    };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),

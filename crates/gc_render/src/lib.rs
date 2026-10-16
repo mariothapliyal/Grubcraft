@@ -643,11 +643,22 @@ impl Renderer {
         let sun = self
             .terrain
             .as_ref()
-            .filter(|_| self.options.shadows)
-            .map(|t| {
-                shadows::sun_view_proj(view_proj, SUN.normalize(), t.tiles as f32, t.max_height).0
-            });
+            .and_then(|t| self.sun_view(view_proj, t))
+            .map(|(m, _)| m);
         Cull::new(view_proj, sun)
+    }
+
+    /// The sun's view and projection, and the size of one shadow texel in
+    /// tiles, for a camera seen through `view_proj`; none with shadows off.
+    fn sun_view(&self, view_proj: Mat4, terrain: &TerrainGpu) -> Option<(Mat4, f32)> {
+        self.options.shadows.then(|| {
+            shadows::sun_view_proj(
+                view_proj,
+                SUN.normalize(),
+                terrain.tiles as f32,
+                terrain.max_height,
+            )
+        })
     }
 
     /// GPU memory allocated by the renderer itself, in bytes: the sizes of the
@@ -866,16 +877,9 @@ impl Renderer {
         let fog_color = self.fog_color;
         let sun = SUN.normalize();
         let shadows = self.options.shadows;
-        let (sun_view_proj, texel) = if shadows {
-            shadows::sun_view_proj(
-                frame.view_proj,
-                sun,
-                terrain.tiles as f32,
-                terrain.max_height,
-            )
-        } else {
-            (Mat4::IDENTITY, 0.0)
-        };
+        let (sun_view_proj, texel) = self
+            .sun_view(frame.view_proj, terrain)
+            .unwrap_or((Mat4::IDENTITY, 0.0));
         let mut globals = Globals {
             view_proj: frame.view_proj.to_cols_array_2d(),
             camera_pos: frame.camera_pos.extend(1.0).to_array(),
