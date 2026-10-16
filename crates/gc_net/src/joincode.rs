@@ -65,9 +65,26 @@ pub fn decode(code: &str) -> Option<SocketAddr> {
 /// This machine's address on the local network: the one it would send
 /// from to reach beyond it (nothing is sent to find out).
 pub fn local_ip() -> Option<Ipv4Addr> {
+    ip_toward(Ipv4Addr::new(192, 0, 2, 1))
+}
+
+/// This machine's Tailscale address, when Tailscale is running: friends
+/// anywhere on the same tailnet reach the game there.
+pub fn tailscale_ip() -> Option<Ipv4Addr> {
+    // Tailscale's own service address; only Tailscale routes to it.
+    ip_toward(Ipv4Addr::new(100, 100, 100, 100)).filter(|&ip| is_tailscale(ip))
+}
+
+/// Tailscale gives out addresses in 100.64.0.0/10.
+fn is_tailscale(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 100 && (64..128).contains(&b)
+}
+
+/// The address this machine would send from to reach `target`.
+fn ip_toward(target: Ipv4Addr) -> Option<Ipv4Addr> {
     let s = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    s.connect(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 9))
-        .ok()?;
+    s.connect(SocketAddrV4::new(target, 9)).ok()?;
     match s.local_addr().ok()? {
         SocketAddr::V4(a) if !a.ip().is_unspecified() && !a.ip().is_loopback() => Some(*a.ip()),
         _ => None,
@@ -77,6 +94,14 @@ pub fn local_ip() -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tailscale_addresses_are_recognised() {
+        assert!(is_tailscale(Ipv4Addr::new(100, 101, 7, 3)));
+        assert!(is_tailscale(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(!is_tailscale(Ipv4Addr::new(100, 128, 0, 1)));
+        assert!(!is_tailscale(Ipv4Addr::new(192, 168, 1, 20)));
+    }
 
     #[test]
     fn codes_round_trip() {
