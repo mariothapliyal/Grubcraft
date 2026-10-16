@@ -4,8 +4,8 @@
 use glam::camera::rh::{proj::directx::perspective, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
-const PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
-const FOV_Y: f32 = 35.0 * std::f32::consts::PI / 180.0;
+pub const PITCH: f32 = 55.0 * std::f32::consts::PI / 180.0;
+pub const FOV_Y: f32 = 35.0 * std::f32::consts::PI / 180.0;
 const MAX_YAW: f32 = 45.0 * std::f32::consts::PI / 180.0;
 pub const MIN_DISTANCE: f32 = 14.0;
 pub const MAX_DISTANCE: f32 = 260.0;

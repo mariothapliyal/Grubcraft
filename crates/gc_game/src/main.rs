@@ -82,7 +82,11 @@
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
-//! every soldier at one level of detail, to inspect it.
+//! every soldier at one level of detail, to inspect it;
+//! `--showroom all|NAME[,NAME...]` stands the named soldier models (names as in
+//! `assets-src/models.ron`) in a row on an empty field under a fixed camera,
+//! cycling through idle, walk, attack and death, and `--showroom-clip
+//! idle|walk|attack|shoot|cheer|die` holds one clip instead.
 
 mod battle;
 mod camera;
@@ -99,6 +103,7 @@ mod puppets;
 mod replays;
 mod sandbox;
 mod scenery;
+mod showroom;
 mod sounds;
 mod terrain_gen;
 mod terrain_view;
@@ -266,6 +271,10 @@ struct Options {
     crash_test: bool,
     /// Draw every soldier at this level of detail (`--lod N`).
     lod: Option<usize>,
+    /// Stand these models in a row to look at (`--showroom`), doing this
+    /// (`--showroom-clip`).
+    showroom: Option<Vec<usize>>,
+    showroom_clip: Option<showroom::Clip>,
     render: RendererOptions,
 }
 
@@ -283,6 +292,8 @@ fn parse_args() -> Options {
         password: String::new(),
         crash_test: false,
         lod: None,
+        showroom: None,
+        showroom_clip: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -358,6 +369,13 @@ fn parse_args() -> Options {
                 }
                 _ => false,
             },
+            "--showroom" => {
+                opts.showroom = Some(showroom_models(&value));
+                true
+            }
+            "--showroom-clip" => showroom::Clip::parse(&value)
+                .map(|c| opts.showroom_clip = Some(c))
+                .is_some(),
             "--draw" => {
                 let (terrain, blocks) = match value.as_str() {
                     "all" => (true, true),
@@ -376,13 +394,41 @@ fn parse_args() -> Options {
             usage();
         }
     }
+    if opts.showroom_clip.is_some() && opts.showroom.is_none() {
+        usage();
+    }
+    if opts.showroom.is_some() {
+        // The showroom starts like the sandbox, straight into the field.
+        opts.sandbox = true;
+        opts.menu = Some(false);
+    }
     opts
+}
+
+/// The models `--showroom` names, or exit with the valid names listed.
+fn showroom_models(spec: &str) -> Vec<usize> {
+    let models = models::load().unwrap_or_else(|e| {
+        eprintln!("grubcraft: {e}");
+        std::process::exit(1);
+    });
+    let names: Vec<&str> = models
+        .models
+        .iter()
+        .map(gc_assets::model::ModelRecord::name)
+        .collect();
+    showroom::choose(spec, &names).unwrap_or_else(|unknown| {
+        eprintln!(
+            "grubcraft: --showroom: no model named {unknown:?}; the models are all, or any of: {}",
+            names.join(", ")
+        );
+        std::process::exit(2);
+    })
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--showroom all|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die]"
     );
     std::process::exit(2);
 }
@@ -467,6 +513,8 @@ struct Running {
     show_blocked: bool,
     /// The map's trees and tall grass.
     scenery: scenery::Scenery,
+    /// The models on show instead of a match, with `--showroom`.
+    showroom: Option<showroom::Showroom>,
     /// Sandbox: draw regiments hidden from the side you command too (V).
     reveal_all: bool,
     /// Data hash and size, for the overlay.
@@ -916,6 +964,17 @@ impl App {
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
         camera.focus_height = heightmap.height_at(camera.focus.x, camera.focus.y);
         camera.aspect = renderer.aspect_ratio();
+        let showroom = art.as_ref().and_then(|a| {
+            let models = opts.showroom.clone()?;
+            let show = opts
+                .showroom_clip
+                .map_or(showroom::Show::Cycle, showroom::Show::Hold);
+            Some(showroom::Showroom::new(models, &a.heights, show))
+        });
+        if let Some(room) = &showroom {
+            let at = room.layout.focus;
+            room.aim(&mut camera, heightmap.height_at(at.x, at.y));
+        }
 
         self.memory_timeline.mark("simulation world");
         let info = renderer.adapter_info();
@@ -1005,7 +1064,12 @@ impl App {
             unit_names,
             unit_factions,
             unit_points,
-            sandbox: Sandbox::new(opts.sandbox),
+            sandbox: {
+                let mut sandbox = Sandbox::new(opts.sandbox && opts.showroom.is_none());
+                // The showroom hides the panel (H shows it).
+                sandbox.panel = opts.showroom.is_none();
+                sandbox
+            },
             selected: Vec::with_capacity(64),
             formation_pick: None,
             shown_formation: None,
@@ -1039,6 +1103,7 @@ impl App {
             blocked_marks,
             show_blocked: false,
             scenery,
+            showroom,
             reveal_all: false,
             data_label: format!(
                 "{:016x}   {} unit types",
@@ -1918,12 +1983,15 @@ impl Running {
             art.begin(&self.camera, self.window.inner_size().height as f32, cull);
         }
         self.mark_shooting();
-        self.scenery.push(
-            self.camera.focus,
-            self.camera.distance,
-            !self.commander,
-            &mut self.instances,
-        );
+        // The showroom stands on bare ground, with no trees in the way.
+        if self.showroom.is_none() {
+            self.scenery.push(
+                self.camera.focus,
+                self.camera.distance,
+                !self.commander,
+                &mut self.instances,
+            );
+        }
         let viewer = self.sandbox.side;
         if let Some(zone) = self.world.deploy_zone(viewer) {
             Self::push_zone_ring(
@@ -2141,6 +2209,16 @@ impl Running {
         if !self.commander {
             self.push_corpses();
         }
+        if let (Some(room), Some(art)) = (&self.showroom, &mut self.art) {
+            let heightmap = &self.heightmap;
+            let ground = |p: Vec2| heightmap.height_at(p.x, p.y);
+            room.push(
+                art,
+                ground,
+                self.puppets.time(),
+                color_of(&self.parties, HUMAN),
+            );
+        }
         if let Some(art) = &mut self.art {
             art.finish();
         }
@@ -2165,7 +2243,7 @@ impl Running {
 
         if self.menu_open {
             self.run_menu();
-        } else if self.match_started {
+        } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
         } else {
             self.renderer.clear_ui();
@@ -3227,6 +3305,11 @@ impl Running {
             .height_at(self.camera.focus.x, self.camera.focus.y);
         let k = 1.0 - (-dt * 6.0).exp();
         self.camera.focus_height += (ground - self.camera.focus_height) * k;
+        // The showroom's camera stays on the models, whatever the window does.
+        if let Some(room) = &self.showroom {
+            let at = room.layout.focus;
+            room.aim(&mut self.camera, self.heightmap.height_at(at.x, at.y));
+        }
     }
 
     /// Rebuild the overlay: the sandbox panel, and the dev overlay's text
