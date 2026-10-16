@@ -72,6 +72,7 @@ impl Grid {
             }
         }
         let side = self.side;
+        let whole = x0 == 0 && y0 == 0 && x1 == side && y1 == side;
         let at = |clear: &[u8], x: i32, y: i32| -> u8 {
             if x < 0 || y < 0 || x >= side || y >= side {
                 0
@@ -86,16 +87,20 @@ impl Grid {
                     continue;
                 }
                 let c = &self.clear;
-                // Every neighbour, so the cells just outside the window on
-                // the far sides are read too.
-                let d = at(c, x - 1, y)
+                let mut d = at(c, x - 1, y)
                     .min(at(c, x - 1, y - 1))
                     .min(at(c, x, y - 1))
-                    .min(at(c, x + 1, y - 1))
-                    .min(at(c, x + 1, y))
-                    .min(at(c, x + 1, y + 1))
-                    .min(at(c, x, y + 1))
-                    .min(at(c, x - 1, y + 1));
+                    .min(at(c, x + 1, y - 1));
+                // In a window, every neighbour, so the cells just outside it
+                // on the far sides are read too (over the whole map there
+                // are none, and the cells ahead are still to be measured).
+                if !whole {
+                    d = d
+                        .min(at(c, x + 1, y))
+                        .min(at(c, x + 1, y + 1))
+                        .min(at(c, x, y + 1))
+                        .min(at(c, x - 1, y + 1));
+                }
                 self.clear[i] = self.clear[i].min(d.saturating_add(1).min(CLEAR_CAP));
             }
         }
