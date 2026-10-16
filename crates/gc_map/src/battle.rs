@@ -23,6 +23,7 @@ use crate::def::{
     Symmetry,
 };
 use crate::recipe::{DEEP, FORD, WATER, Writer};
+use crate::stamp::dist2;
 
 /// The areas of the Titan's body (doc 19); each has its own ground.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +143,25 @@ pub struct Region {
     pub fort: bool,
 }
 
+impl Region {
+    /// Every kind of region: each area, route and feature, with and
+    /// without a Fort.
+    pub fn all() -> impl Iterator<Item = Region> {
+        Area::ALL.into_iter().flat_map(|area| {
+            Route::ALL.into_iter().flat_map(move |route| {
+                Feature::ALL.into_iter().flat_map(move |feature| {
+                    [false, true].map(|fort| Region {
+                        area,
+                        route,
+                        feature,
+                        fort,
+                    })
+                })
+            })
+        })
+    }
+}
+
 /// The player numbers of the two sides' starts.
 pub const DEFENDER: u8 = 0;
 pub const ATTACKER: u8 = 1;
@@ -181,9 +201,23 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         w: Writer::new(&mut rng, tiles, base),
         n: tiles,
         defender: (tiles / 2, tiles / 4),
-        attacker: (tiles / 2, tiles * 3 / 4),
-        band: 0,
-        margin: 6,
+        // The Brood come up out of the ground close to the defender.
+        attacker: if region.route == Route::Burrow {
+            (tiles / 2, tiles * 5 / 8)
+        } else {
+            (tiles / 2, tiles * 3 / 4)
+        },
+        band: if matches!(region.route, Route::Pass | Route::Ford) {
+            ROUTE_BAND
+        } else {
+            0
+        },
+        // Clear of the cavern walls (see `Battle::dress`).
+        margin: if region.area == Area::Lungs {
+            tiles * 10 / 80 + 6
+        } else {
+            6
+        },
         keep: Vec::new(),
         objects: Vec::new(),
     };
@@ -201,14 +235,6 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         amplitude: b.w.range(lo, hi),
         scale: b.w.range(20, 36),
     };
-    if region.area == Area::Lungs {
-        // Clear of the cavern walls (see `Battle::dress`).
-        b.margin = b.scaled(10) + 6;
-    }
-    if region.route == Route::Burrow {
-        // The Brood come up out of the ground close to the defender.
-        b.attacker.1 = tiles * 5 / 8;
-    }
     for (at, owner) in [(b.defender, DEFENDER), (b.attacker, ATTACKER)] {
         let r = b.scaled(8);
         b.w.stamp(Shape::Disc { at, r }, Mode::Set, base, b.scaled(6));
@@ -217,9 +243,6 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
     }
     // The feature and the Fort first, so the rest keeps clear of them;
     // they keep clear of the route's wall or river.
-    if matches!(region.route, Route::Pass | Route::Ford) {
-        b.band = ROUTE_BAND;
-    }
     b.feature(region.feature, region.fort);
     if region.fort {
         b.fort();
@@ -272,11 +295,6 @@ struct Battle<'a> {
     /// centre and how far it reaches.
     keep: Vec<(Pos, i32)>,
     objects: Vec<Object>,
-}
-
-fn dist2(a: Pos, b: Pos) -> i32 {
-    let (dx, dy) = (a.0 - b.0, a.1 - b.1);
-    dx * dx + dy * dy
 }
 
 impl Battle<'_> {
@@ -472,11 +490,8 @@ impl Battle<'_> {
         let r = self.scaled(13);
         let at = |(x, y): Pos| (cx + x * r / 1000, cy + y * r / 1000);
         let height = self.w.base + 40;
-        for k in 0..8 {
-            // The run from the second corner to the third faces south.
-            if k == 1 {
-                continue;
-            }
+        // The run from the second corner to the third faces south.
+        for k in (0..8).filter(|&k| k != 1) {
             let (a, b) = (at(CORNERS[k]), at(CORNERS[(k + 1) % 8]));
             self.w.stamp(
                 Shape::Line {
@@ -515,19 +530,16 @@ impl Battle<'_> {
             Area::Crown => {
                 // A crater lake.
                 let r = self.w.range(4, 6);
-                if let Some(at) = self.spot(r + 3) {
-                    self.w.stamp(Shape::Disc { at, r }, Mode::Lower, DEEP, 3);
-                    self.keep.push((at, r + 3));
-                }
+                self.patch(r, 3, Mode::Lower, DEEP, 3);
             }
             Area::Ribs => {
-                for _ in 0..self.w.range(2, 3) {
-                    self.ridge("The ridge");
+                for k in 0..self.w.range(2, 3) {
+                    self.ridge((k == 0).then_some("The ridge"));
                 }
             }
             Area::Heart => {
-                for _ in 0..2 {
-                    self.ridge("The vein");
+                for k in 0..2 {
+                    self.ridge((k == 0).then_some("The vein"));
                 }
             }
             Area::Lungs => {
@@ -554,10 +566,7 @@ impl Battle<'_> {
             Area::Gut => {
                 for _ in 0..self.w.range(3, 5) {
                     let r = self.w.range(3, 5);
-                    if let Some(at) = self.spot(r + 2) {
-                        self.w.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
-                        self.keep.push((at, r + 2));
-                    }
+                    self.patch(r, 2, Mode::Set, FORD, 3);
                 }
             }
             Area::Spine => {
@@ -585,7 +594,7 @@ impl Battle<'_> {
     }
 
     /// A short wall of rock running north to south, its top named.
-    fn ridge(&mut self, label: &str) {
+    fn ridge(&mut self, label: Option<&str>) {
         let half = self.scaled(6);
         for _ in 0..32 {
             let Some(mid) = self.spot(4) else {
@@ -604,7 +613,7 @@ impl Battle<'_> {
                     height,
                     4,
                 );
-                if self.w.set_pieces.iter().all(|s| s.label != label) {
+                if let Some(label) = label {
                     self.w.set_piece(SetPieceKind::High, mid, label);
                 }
                 self.keep.extend([(a, 5), (mid, 5), (b, 5)]);
@@ -616,9 +625,15 @@ impl Battle<'_> {
     /// A steep rock no one climbs.
     fn rock(&mut self, height: i32) {
         let r = self.w.range(2, 3);
-        if let Some(at) = self.spot(r + 3) {
-            self.w.stamp(Shape::Disc { at, r }, Mode::Raise, height, 2);
-            self.keep.push((at, r + 3));
+        self.patch(r, 3, Mode::Raise, height, 2);
+    }
+
+    /// A disc of ground `r` tiles across shaped at a spot clear by `pad`
+    /// more, kept clear of what comes after.
+    fn patch(&mut self, r: i32, pad: i32, mode: Mode, height: i32, edge: i32) {
+        if let Some(at) = self.spot(r + pad) {
+            self.w.stamp(Shape::Disc { at, r }, mode, height, edge);
+            self.keep.push((at, r + pad));
         }
     }
 
@@ -667,31 +682,17 @@ impl Battle<'_> {
 mod tests {
     use super::*;
 
-    fn every_region() -> impl Iterator<Item = Region> {
-        Area::ALL.into_iter().flat_map(|area| {
-            Route::ALL.into_iter().flat_map(move |route| {
-                Feature::ALL.into_iter().flat_map(move |feature| {
-                    [false, true].map(|fort| Region {
-                        area,
-                        route,
-                        feature,
-                        fort,
-                    })
-                })
-            })
-        })
-    }
-
     /// The same region and seed always give the same land, and the seed
     /// changes it.
     #[test]
     fn the_same_region_and_seed_give_the_same_land() {
-        for region in every_region().step_by(7) {
+        for region in Region::all().step_by(7) {
             for seed in 1..=3 {
-                let a = battle_map(region, seed).to_ron();
+                let first = battle_map(region, seed);
+                let a = first.to_ron();
                 assert_eq!(a, battle_map(region, seed).to_ron());
                 let mut next = battle_map(region, seed + 1);
-                next.name = battle_map(region, seed).name;
+                next.name = first.name;
                 assert_ne!(a, next.to_ron(), "{region:?} seed {seed}");
             }
         }
@@ -701,7 +702,7 @@ mod tests {
     /// feature's object and at least two set pieces.
     #[test]
     fn every_map_has_both_starts_and_its_feature() {
-        for region in every_region() {
+        for region in Region::all() {
             let def = battle_map(region, 5);
             let what = format!("{region:?}");
             let SizeClass::Field(tiles) = def.size else {

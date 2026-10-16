@@ -20,20 +20,17 @@ fn png_cmd(src: &str, out: &str) -> Result<(), String> {
 
 fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String> {
     let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
-    let named = |name: &str| name.eq_ignore_ascii_case(recipe);
+    let is = |name: &str| name.eq_ignore_ascii_case(recipe);
     let def = if let Some(field) = gc_map::recipe::Recipe::ALL
         .into_iter()
-        .find(|r| named(r.name()))
+        .find(|r| is(r.name()))
     {
         let tiles = size
             .parse()
             .map_err(|_| format!("{size} isn't a size in tiles"))?;
         gc_map::recipe::describe(field, tiles, seed)
-    } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| named(r.name())) {
-        let size = CONQUEST_SIZES
-            .into_iter()
-            .find(|s| format!("{s:?}").eq_ignore_ascii_case(size))
-            .ok_or_else(|| format!("{size} isn't Duel, Skirmish or Warfield"))?;
+    } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {
+        let size = named(&CONQUEST_SIZES, size)?;
         let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;
         if used != seed {
             eprintln!("seed {seed} failed the checker; seed {used} passed");
@@ -105,6 +102,17 @@ fn files(args: &[String]) -> Vec<PathBuf> {
     out
 }
 
+/// A command's result as the exit code, its error printed.
+fn exit(result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -144,27 +152,9 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
-        Some("png") if args.len() == 3 => match png_cmd(&args[1], &args[2]) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("{e}");
-                ExitCode::FAILURE
-            }
-        },
-        Some("gen") if args.len() == 5 => match gen_cmd(&args[1], &args[2], &args[3], &args[4]) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("{e}");
-                ExitCode::FAILURE
-            }
-        },
-        Some("battle") => match battle_cmd(&args[1..]) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("{e}");
-                ExitCode::FAILURE
-            }
-        },
+        Some("png") if args.len() == 3 => exit(png_cmd(&args[1], &args[2])),
+        Some("gen") if args.len() == 5 => exit(gen_cmd(&args[1], &args[2], &args[3], &args[4])),
+        Some("battle") => exit(battle_cmd(&args[1..])),
         _ => {
             eprintln!(
                 "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE SIZE SEED OUT.ron\n       gc_mapcheck battle AREA ROUTE FEATURE fort|open SEED OUT.ron"

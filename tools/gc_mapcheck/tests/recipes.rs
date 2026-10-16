@@ -6,7 +6,7 @@
 //! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
 use gc_map::SizeClass;
-use gc_map::battle::{Area, Feature, Region, Route, battle_map};
+use gc_map::battle::{Region, battle_map};
 use gc_map::conquest::{self, CONQUEST_SIZES, ConquestRecipe};
 use gc_map::recipe::{Recipe, describe};
 use gc_mapcheck::{check, generate};
@@ -140,18 +140,7 @@ fn generate_rerolls_to_a_map_the_checker_passes() {
 /// a wider sweep of 40 seeds of each passed when the maps were made.
 #[test]
 fn every_campaign_battle_map_passes_the_checker() {
-    let jobs: Vec<(Region, u64)> = Area::ALL
-        .into_iter()
-        .flat_map(|area| Route::ALL.map(|route| (area, route)))
-        .flat_map(|(area, route)| Feature::ALL.map(|feature| (area, route, feature)))
-        .flat_map(|(area, route, feature)| {
-            [false, true].map(|fort| Region {
-                area,
-                route,
-                feature,
-                fort,
-            })
-        })
+    let jobs: Vec<(Region, u64)> = Region::all()
         .enumerate()
         // A different seed for each, so the sweep covers more of them.
         .map(|(k, region)| (region, k as u64))
