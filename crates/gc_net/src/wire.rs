@@ -266,6 +266,15 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.fx(radius);
         }
         Command::Ready => w.u8(7),
+        Command::FallBack { regiment } => {
+            w.u8(8);
+            w.handle(regiment);
+        }
+        Command::Brace { regiment, on } => {
+            w.u8(9);
+            w.handle(regiment);
+            w.bool(on);
+        }
     }
 }
 
@@ -306,6 +315,13 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             radius: r.fx()?,
         },
         7 => Command::Ready,
+        8 => Command::FallBack {
+            regiment: r.handle()?,
+        },
+        9 => Command::Brace {
+            regiment: r.handle()?,
+            on: r.bool()?,
+        },
         _ => return None,
     })
 }
@@ -425,6 +441,15 @@ mod tests {
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::FallBack { regiment: h(5, 9) },
+            Command::Brace {
+                regiment: h(6, 0),
+                on: true,
+            },
+            Command::Brace {
+                regiment: h(6, 1),
+                on: false,
+            },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

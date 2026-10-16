@@ -136,6 +136,15 @@ impl Writer {
                 self.fx(radius);
             }
             Command::Ready => self.u8(7),
+            Command::FallBack { regiment } => {
+                self.u8(8);
+                self.handle(regiment);
+            }
+            Command::Brace { regiment, on } => {
+                self.u8(9);
+                self.handle(regiment);
+                self.bool(on);
+            }
         }
     }
 }
@@ -286,6 +295,13 @@ impl<'a> Reader<'a> {
                 radius: self.fx()?,
             },
             7 => Command::Ready,
+            8 => Command::FallBack {
+                regiment: self.handle()?,
+            },
+            9 => Command::Brace {
+                regiment: self.handle()?,
+                on: self.bool()?,
+            },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
