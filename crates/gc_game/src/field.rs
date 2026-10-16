@@ -56,8 +56,14 @@ pub struct Flight {
 }
 
 impl Flight {
-    /// The flight of the volley loosed on `launch_tick`.
-    pub fn new(launch_tick: u32, from: FxVec2, aim: FxVec2, out_of: bool, into: bool) -> Flight {
+    /// The flight of the volley loosed on `launch_tick`; `in_wood` says
+    /// whether a point is in a wood.
+    pub fn new(
+        launch_tick: u32,
+        from: FxVec2,
+        aim: FxVec2,
+        in_wood: impl Fn(FxVec2) -> bool,
+    ) -> Flight {
         let (from_v, aim_v) = (crate::from_fx_vec(from), crate::from_fx_vec(aim));
         let travel = aim_v - from_v;
         Flight {
@@ -66,8 +72,8 @@ impl Flight {
             dir: travel.normalize_or(Vec2::X),
             length: travel.length(),
             seed: launch_tick.wrapping_mul(0x9E37_79B9) ^ from.x.raw() as u32,
-            out_of,
-            into,
+            out_of: in_wood(from),
+            into: in_wood(aim),
         }
     }
 
@@ -110,12 +116,7 @@ impl Flight {
 
     /// A stable value in [-1, 1) per volley, arrow and axis.
     fn hash(&self, k: usize, axis: u32) -> f32 {
-        let mut x =
-            self.seed ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ axis.wrapping_mul(0xC2B2_AE35);
-        x ^= x >> 15;
-        x = x.wrapping_mul(0x2C1B_3C6D);
-        x ^= x >> 12;
-        (x >> 8) as f32 / (1u32 << 23) as f32 - 1.0
+        crate::spread_hash(self.seed, k, axis)
     }
 }
 
@@ -189,7 +190,7 @@ impl Arrows {
             .copied()
             .flatten()
             .filter(|l| l.launch_tick == id.launch_tick)?;
-        let flight = Flight::new(l.launch_tick, l.from, at, in_wood(l.from), in_wood(at));
+        let flight = Flight::new(l.launch_tick, l.from, at, in_wood);
         for k in 0..ARROWS_PER_VOLLEY.min(usize::from(l.shots)) {
             if let Some((pos, ground)) = flight.lands(k).and_then(|p| Some((p, ground(p)?))) {
                 self.stick(pos, flight.dir, ground, 0.0);
@@ -279,7 +280,7 @@ mod tests {
 
     #[test]
     fn arrows_fly_where_they_land() {
-        let f = Flight::new(40, fx(10, 10), fx(30, 10), false, false);
+        let f = Flight::new(40, fx(10, 10), fx(30, 10), |_| false);
         assert!((f.dir - Vec2::X).length() < 1e-6 && (f.length - 20.0).abs() < 1e-3);
         for k in 0..ARROWS_PER_VOLLEY {
             // In the open nothing stops short, and the end of the flight is
@@ -293,14 +294,14 @@ mod tests {
         assert_ne!(f.spread(0), f.spread(1));
         assert_eq!(
             f.spread(3),
-            Flight::new(40, fx(10, 10), fx(30, 10), true, true).spread(3)
+            Flight::new(40, fx(10, 10), fx(30, 10), |_| true).spread(3)
         );
     }
 
     #[test]
     fn the_trees_catch_arrows_into_and_out_of_a_wood() {
-        let open = Flight::new(7, fx(0, 0), fx(30, 0), false, false);
-        let wood = Flight::new(7, fx(0, 0), fx(30, 0), true, true);
+        let open = Flight::new(7, fx(0, 0), fx(30, 0), |_| false);
+        let wood = Flight::new(7, fx(0, 0), fx(30, 0), |_| true);
         let caught = |f: &Flight| (0..400).filter(|&k| f.stop(k) < 1.0).count();
         assert_eq!(caught(&open), 0);
         // About half of them with a wood at each end (30% + 30% of the rest).

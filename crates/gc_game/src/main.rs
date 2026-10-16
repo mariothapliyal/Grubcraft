@@ -2789,7 +2789,7 @@ impl Running {
         }
         // Last, with what room is left: the field's oldest arrows are the
         // least missed.
-        if !self.commander {
+        if !self.commander && !viewing {
             self.arrows
                 .push(&cull, gc_render::MAX_BOX_INSTANCES, &mut self.instances);
         }
@@ -4007,7 +4007,12 @@ impl Running {
                         continue;
                     };
                     // Still standing, waiting for the blow, he is a man.
-                    let lod = lod + if c.age >= 0.0 { CORPSE_LOD_BIAS } else { 0 };
+                    let lod = lod
+                        + if c.age >= 0.0 && art.view.force.is_none() {
+                            CORPSE_LOD_BIAS
+                        } else {
+                            0
+                        };
                     if lod < LODS {
                         if room == 0 {
                             break;
@@ -4042,10 +4047,9 @@ impl Running {
 
     /// Arrows that killed soldiers who fell this frame stay in their bodies.
     fn keep_arrows_in_the_fallen(&mut self) {
-        let water = self.heightmap.water_level();
         for l in self.puppets.drain_lodged() {
-            // Bodies in the shallows lie on the water, not under it.
-            let ground = self.heightmap.height_at(l.pos.x, l.pos.y).max(water - 0.05);
+            // On the ground the body is drawn on (`push_corpses`).
+            let ground = self.heightmap.height_at(l.pos.x, l.pos.y);
             self.arrows.stick(l.pos, l.dir, ground, field::IN_BODY);
         }
     }
@@ -4061,30 +4065,19 @@ impl Running {
         let (heightmap, water) = (&self.heightmap, self.heightmap.water_level());
         // Arrows that come down in the water are lost, and so are those that
         // land on a building (the picture has no roof or wall to stick them
-        // in, and a shaft showing through a wall would look wrong). Only
-        // checked when a volley lands, and a Conquest match is the only one
-        // with buildings.
-        let buildings = self.world.structures();
-        let under_a_roof = |p: Vec2| {
-            buildings.is_some_and(|all| {
-                all.iter().any(|b| {
-                    let (x, y) = (b.tile.0 as f32, b.tile.1 as f32);
-                    (x..x + f32::from(b.width)).contains(&p.x)
-                        && (y..y + f32::from(b.depth)).contains(&p.y)
-                })
-            })
-        };
+        // in, and a shaft showing through a wall would look wrong).
+        let world = &self.world;
         let dry = |p: Vec2| {
             let ground = heightmap.height_at(p.x, p.y);
-            (ground >= water && !under_a_roof(p)).then_some(ground)
+            (ground >= water && !buildings::covers(world, p)).then_some(ground)
         };
         for e in self.world.events() {
             match *e {
-                Event::Loosed {
-                    volley, shooter, ..
-                } => {
-                    if let Some(r) = self.world.regiments.get(shooter) {
-                        self.arrows.loosed(volley, r.position, r.models);
+                // From the volley itself, as the arrows in the air are drawn,
+                // so they come down where they were seen to.
+                Event::Loosed { volley, .. } => {
+                    if let Some(v) = self.world.volleys().find(|v| v.id == volley) {
+                        self.arrows.loosed(volley, v.from, v.shots);
                     }
                 }
                 Event::Landed {
@@ -4115,9 +4108,9 @@ impl Running {
         for v in self.world.volleys() {
             let flight_ticks = (v.impact_tick - v.launch_tick).max(1) as f32;
             let flown = ((now - v.launch_tick as f32) / flight_ticks).clamp(0.0, 1.0);
-            let out_of = terrain.cover(v.from) == gc_sim::Cover::Wood;
-            let into = terrain.cover(v.aim) == gc_sim::Cover::Wood;
-            let flight = field::Flight::new(v.launch_tick, v.from, v.aim, out_of, into);
+            let flight = field::Flight::new(v.launch_tick, v.from, v.aim, |p| {
+                terrain.cover(p) == gc_sim::Cover::Wood
+            });
             for k in 0..field::ARROWS_PER_VOLLEY.min(v.shots as usize) {
                 // A caught arrow stops in the branches over the archers or
                 // over its target, and hangs there until the volley lands.
@@ -5120,7 +5113,7 @@ fn fx_vec(v: Vec2) -> gc_fixed::FxVec2 {
 
 /// The number on a digit key, for control groups.
 /// A stable value in [-1, 1) per volley, arrow and axis.
-fn spread_hash(seed: u32, k: usize, axis: u32) -> f32 {
+pub(crate) fn spread_hash(seed: u32, k: usize, axis: u32) -> f32 {
     let mut x = seed ^ (k as u32).wrapping_mul(0x85EB_CA6B) ^ axis.wrapping_mul(0xC2B2_AE35);
     x ^= x >> 15;
     x = x.wrapping_mul(0x2C1B_3C6D);
