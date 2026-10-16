@@ -7,8 +7,8 @@ use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
 use gc_sim::structures::{Armour, Role, TowerAttack};
 use gc_sim::{
-    BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, StructureHandle,
-    StructureView, World,
+    BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, Resource,
+    StructureHandle, StructureView, World,
 };
 use glam::{Vec2, Vec3};
 
@@ -40,6 +40,19 @@ const BAR_BACK: [u8; 4] = [18, 18, 18, 0];
 const REFUSED: [u8; 4] = [210, 40, 30, 110];
 /// The glow on a ghost that fits.
 const GHOST_GLOW: u8 = 110;
+/// A gathering spot is a low mound this tall and, while full, this wide
+/// (in tiles); it shrinks to `NODE_LEAST` percent as it runs down.
+const NODE_HEIGHT: f32 = 0.35;
+const NODE_WIDTH: f32 = 1.8;
+const NODE_LEAST: f32 = 40.0;
+/// Grub seeps glow gold, Marrow veins bone white; dry ones are dim.
+pub const SEEP: [u8; 3] = [230, 190, 60];
+pub const VEIN: [u8; 3] = [235, 225, 200];
+const NODE_GLOW: u8 = 90;
+/// The white rim round the selected building, beyond its footprint (tiles).
+const RIM: f32 = 0.6;
+const PLATE: f32 = 0.08;
+const RIM_COLOR: [u8; 4] = [240, 240, 240, 120];
 
 /// A building's stats as the simulation reads them.
 pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
@@ -123,6 +136,11 @@ impl Table {
     /// The building type `step` places on from `id`, wrapping round.
     pub fn step(&self, id: BuildingId, step: i32) -> BuildingId {
         (i32::from(id) + step).rem_euclid(self.len().max(1) as i32) as BuildingId
+    }
+
+    /// A type's name.
+    pub fn name(&self, id: BuildingId) -> &str {
+        self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
     /// The panel's description of a type: name, faction and size.
@@ -245,6 +263,56 @@ pub fn push(
             lift: lift - BAR_FRAME / 2.0,
         });
     }
+}
+
+/// Draw every gathering spot (Conquest): a glowing mound, smaller as it
+/// runs down and dim once only dregs are left.
+pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
+    let Some(economy) = world.economy() else {
+        return;
+    };
+    for n in economy.nodes() {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        let [r, g, b] = match n.resource {
+            Resource::Grub => SEEP,
+            Resource::Marrow => VEIN,
+        };
+        let left = n.left as f32 / n.full.max(1) as f32;
+        let width = NODE_WIDTH * (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0;
+        let color = if n.left == 0 {
+            [r / 2, g / 2, b / 2, 0]
+        } else {
+            [r, g, b, NODE_GLOW]
+        };
+        out.push(BoxInstance {
+            pos: crate::from_fx_vec(n.at).to_array(),
+            facing: [0.0, 1.0],
+            size: [width, NODE_HEIGHT, width],
+            color,
+            lift: 0.0,
+        });
+    }
+}
+
+/// A white rim round building `h`'s footprint, to show it is selected.
+pub fn push_rim(
+    world: &World,
+    h: StructureHandle,
+    ground: impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let Some(s) = world.structures().and_then(|s| s.get(h)) else {
+        return;
+    };
+    if out.len() >= MAX_BOX_INSTANCES {
+        return;
+    }
+    let mut plate = block(&s, PLATE, RIM_COLOR, &ground);
+    plate.size[0] += 2.0 * RIM;
+    plate.size[2] += 2.0 * RIM;
+    out.push(plate);
 }
 
 fn bar_colour(frac: f32) -> [u8; 4] {

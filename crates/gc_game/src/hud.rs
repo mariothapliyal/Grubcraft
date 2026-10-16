@@ -8,8 +8,9 @@ use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
-    Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
-    HudEvent, HudInput, MinimapData, MinimapTerrain, SlotState,
+    Block, Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
+    HudEvent, HudInput, MinimapData, MinimapTerrain, NodeDot, QueueItem, SlotState,
+    StructurePanel, TopBar,
 };
 use glam::{Vec2, Vec3};
 
@@ -88,6 +89,8 @@ pub struct HudState {
     picked: Vec<u32>,
     terrain: MinimapTerrain,
     dots: Vec<Dot>,
+    nodes: Vec<NodeDot>,
+    blocks: Vec<Block>,
     cards: Vec<Card>,
     view: Vec<[f32; 2]>,
     events: Vec<HudEvent>,
@@ -315,6 +318,14 @@ impl Running {
         let map = self.heightmap.tiles as f32;
         self.selected
             .retain(|&h| self.world.regiments.get(h).is_some());
+        // A building is selected only while no regiment is, and while it stands.
+        if !self.selected.is_empty()
+            || self
+                .selected_structure
+                .is_some_and(|h| self.world.structures().and_then(|s| s.owner(h)) != Some(side))
+        {
+            self.selected_structure = None;
+        }
 
         let now_ms = self.now_ms();
         // A replay shows what happened to nobody in particular.
@@ -356,6 +367,27 @@ impl Running {
                 color: crate::color_of(&self.parties, r.owner),
                 selected: picked(r.handle),
             });
+        }
+        hud.nodes.clear();
+        if let Some(economy) = self.world.economy() {
+            hud.nodes.extend(economy.nodes().map(|n| NodeDot {
+                pos: from_fx_vec(n.at).to_array(),
+                marrow: n.resource == gc_sim::Resource::Marrow,
+                dry: n.left == 0,
+            }));
+        }
+        hud.blocks.clear();
+        if let Some(structures) = self.world.structures() {
+            hud.blocks.extend(structures.iter().map(|s| Block {
+                rect: [
+                    s.tile.0 as f32,
+                    s.tile.1 as f32,
+                    f32::from(s.width),
+                    f32::from(s.depth),
+                ],
+                color: crate::color_of(&self.parties, s.owner),
+                selected: self.selected_structure == Some(s.handle),
+            }));
         }
         for &h in shown {
             let Some(r) = self.world.regiments.get(h) else {
@@ -433,6 +465,48 @@ impl Running {
             }));
         }
 
+        // Conquest's own: the stores, the idle workers and the selected building.
+        let top = self.world.bank(side).map(|b| TopBar {
+            grub: b.grub,
+            marrow: b.marrow,
+            supply_used: b.supply_used,
+            supply_cap: b.supply_cap,
+            upkeep_percent: b.upkeep_percent(),
+            clock_secs: tick / gc_sim::TICKS_PER_SECOND,
+        });
+        let idle_workers = self
+            .conquest_units
+            .then(|| crate::conquest::idle_workers(&self.world, &self.data, side).count() as u32);
+        let queue: Vec<QueueItem> = self
+            .selected_structure
+            .zip(self.world.production())
+            .map(|(h, p)| {
+                let front = self.world.training_percent(h).unwrap_or(0);
+                p.queue_of(h)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &u)| QueueItem {
+                        name: self.units.names.get(usize::from(u)).map_or("", String::as_str),
+                        progress: if i == 0 { front } else { 0 },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let structure = self
+            .selected_structure
+            .and_then(|h| self.world.structures()?.get(h))
+            .map(|s| StructurePanel {
+                name: self.buildings.name(s.building),
+                color: crate::color_of(&self.parties, s.owner),
+                hp: s.hp,
+                max_hp: s.max_hp,
+                building: (!s.finished()).then_some(s.built_percent),
+                upgrading: s
+                    .upgrading
+                    .map(|(to, percent)| (self.buildings.name(to), percent)),
+                queue: &queue,
+            });
+
         let mut input = std::mem::take(&mut hud.input);
         input.mouse = cursor;
         input.shift = self.input.shift;
@@ -446,9 +520,13 @@ impl Running {
                 map_tiles: map,
                 terrain: &hud.terrain,
                 dots: &hud.dots,
+                nodes: &hud.nodes,
+                blocks: &hud.blocks,
                 view: &hud.view,
             },
             cards: &hud.cards,
+            structure,
+            top,
             tray_title: &title,
             // Nobody deploys in a replay.
             deployment: self
@@ -464,8 +542,7 @@ impl Running {
                 }),
             alerts: AlertData {
                 alerts: &hud.alerts,
-                // Workers arrive with the Conquest economy.
-                idle_workers: None,
+                idle_workers,
             },
         };
         hud.hud
@@ -514,8 +591,9 @@ impl Running {
                     self.look_at(n.at);
                 }
             }
-            // Nothing sends this until there are workers to find.
-            HudEvent::IdleWorker => {}
+            HudEvent::IdleWorker => self.next_idle_worker(),
+            // Taking a regiment out of a queue is a control of step 4c.
+            HudEvent::Unqueue(_) => {}
             HudEvent::Ready => {
                 self.human_orders.push(gc_sim::PlayerCommand {
                     player: self.sandbox.side,
@@ -579,6 +657,30 @@ impl Running {
     /// Milliseconds since the game started, on the clock the HUD uses.
     pub fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis() as u64
+    }
+
+    /// F1: select the next idle worker and look at it.
+    pub fn next_idle_worker(&mut self) {
+        if !self.conquest_units || self.watching.is_some() {
+            return;
+        }
+        let idle: Vec<gc_sim::RegimentHandle> =
+            crate::conquest::idle_workers(&self.world, &self.data, self.sandbox.side).collect();
+        let Some(&h) = idle
+            .iter()
+            .find(|h| h.index > self.idle_from)
+            .or_else(|| idle.first())
+        else {
+            return;
+        };
+        self.idle_from = h.index;
+        self.selected.clear();
+        self.selected.push(h);
+        self.selected_structure = None;
+        if let Some(p) = self.world.regiments.position(h) {
+            self.look_at(from_fx_vec(p));
+        }
+        self.ui_sound(sounds::UiSound::Select);
     }
 
     /// Space: look at the latest alert.

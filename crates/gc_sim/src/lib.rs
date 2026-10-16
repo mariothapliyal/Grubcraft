@@ -716,6 +716,13 @@ impl World {
         Some(&self.conquest.as_ref()?.production)
     }
 
+    /// How far the regiment at the front of building `h`'s queue has
+    /// trained, in percent (Conquest only).
+    pub fn training_percent(&self, h: StructureHandle) -> Option<u8> {
+        let c = self.conquest.as_ref()?;
+        c.production.front_percent(h, &c.units)
+    }
+
     /// Whether `player` could have a worker lay a building of type
     /// `building` at `tile` now, and if not, why: the check
     /// [`Command::Build`] makes.
