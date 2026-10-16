@@ -43,9 +43,9 @@ impl Grid {
         let partner = self.place_portals();
         // A sector whose portals moved (a neighbour's edge changed) is
         // linked again too.
-        for s in 0..dirty.len() {
-            if !dirty[s] && !old.cells_of(s).eq(self.cells_of(s)) {
-                dirty[s] = true;
+        for (s, d) in dirty.iter_mut().enumerate() {
+            if !*d && !old.cells_of(s).eq(self.cells_of(s)) {
+                *d = true;
             }
         }
         self.relink(&partner, &old, &dirty);
@@ -59,7 +59,11 @@ impl Grid {
         for y in y0..y1 {
             for x in x0..x1 {
                 let i = self.idx(x, y) as usize;
-                self.clear[i] = if self.cost[i] == BLOCKED { 0 } else { CLEAR_CAP };
+                self.clear[i] = if self.cost[i] == BLOCKED {
+                    0
+                } else {
+                    CLEAR_CAP
+                };
             }
         }
         let side = self.side;
@@ -141,8 +145,8 @@ impl Grid {
             cost.push(self.step_cost(cell, self.node_cell[p as usize], false));
             let sec = self.sector_of(cell);
             let s = sec as usize;
-            let nodes_here =
-                &self.sector_nodes[self.sector_first[s] as usize..self.sector_first[s + 1] as usize];
+            let nodes_here = &self.sector_nodes
+                [self.sector_first[s] as usize..self.sector_first[s + 1] as usize];
             if dirty[s] {
                 search.sector(self, sec, cell, None);
                 for &v in nodes_here {

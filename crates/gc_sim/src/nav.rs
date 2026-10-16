@@ -633,7 +633,9 @@ impl Nav {
     }
 
     fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
-        let search = grid.as_deref().map_or(Search::new(0, 0, 0), Search::for_grid);
+        let search = grid
+            .as_deref()
+            .map_or(Search::new(0, 0, 0), Search::for_grid);
         Nav {
             grid,
             search,
@@ -720,7 +722,8 @@ impl Nav {
             let ahead = match self.route[i] {
                 Route::Direct => core::slice::from_ref(&self.goal[i]),
                 Route::Waypoints => {
-                    &self.way[i * MAX_WAYPOINTS..][self.way_next[i] as usize..self.way_len[i] as usize]
+                    &self.way[i * MAX_WAYPOINTS..]
+                        [self.way_next[i] as usize..self.way_len[i] as usize]
                 }
                 Route::Failed => {
                     self.route[i] = Route::Idle;

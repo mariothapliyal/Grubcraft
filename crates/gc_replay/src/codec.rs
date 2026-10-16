@@ -7,9 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{
-    Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats,
-};
+use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats};
 
 #[derive(Default)]
 pub struct Writer {

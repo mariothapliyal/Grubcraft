@@ -514,7 +514,10 @@ pub enum Command {
     /// Conquest setup and sandbox: put up a finished building of the
     /// issuing player's with its north-west tile at `tile` (see
     /// [`structures`]). Refused where it doesn't fit.
-    SpawnStructure { building: BuildingId, tile: (i16, i16) },
+    SpawnStructure {
+        building: BuildingId,
+        tile: (i16, i16),
+    },
     /// Close with an enemy building and knock it down.
     AttackStructure {
         regiment: RegimentHandle,

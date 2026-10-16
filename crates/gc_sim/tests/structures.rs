@@ -73,7 +73,9 @@ fn conquest(tiles: u32, breakers: &[Breaker]) -> World {
 }
 
 fn order(w: &mut World, player: u8, command: Command) -> bool {
-    w.tick(&[PlayerCommand { player, command }]).commands_applied == 1
+    w.tick(&[PlayerCommand { player, command }])
+        .commands_applied
+        == 1
 }
 
 fn put_up(w: &mut World, player: u8, building: u16, x: i16, y: i16) -> StructureHandle {
@@ -128,7 +130,10 @@ fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32) 
 }
 
 fn inside(p: FxVec2, (x, y): (i32, i32), w: i32, d: i32) -> bool {
-    p.x > Fx::from_int(x) && p.y > Fx::from_int(y) && p.x < Fx::from_int(x + w) && p.y < Fx::from_int(y + d)
+    p.x > Fx::from_int(x)
+        && p.y > Fx::from_int(y)
+        && p.x < Fx::from_int(x + w)
+        && p.y < Fx::from_int(y + d)
 }
 
 #[test]
@@ -253,7 +258,11 @@ fn a_fallen_building_frees_its_ground() {
     let mut w = conquest(64, &[]);
     let hall = put_up(&mut w, 1, HALL, 30, 30);
     assert!(!w.nav().walkable(FxVec2::from_ints(32, 32)));
-    assert!(order(&mut w, 1, Command::RemoveStructure { structure: hall }));
+    assert!(order(
+        &mut w,
+        1,
+        Command::RemoveStructure { structure: hall }
+    ));
     assert!(w.nav().walkable(FxVec2::from_ints(32, 32)));
     // And another fits there now.
     put_up(&mut w, 0, HALL, 30, 30);
@@ -263,9 +272,8 @@ fn a_fallen_building_frees_its_ground() {
 fn buildings_go_up_only_where_they_fit() {
     let mut w = conquest(64, &[]);
     put_up(&mut w, 0, HALL, 10, 10);
-    let refused = |w: &mut World, building, tile| {
-        !order(w, 0, Command::SpawnStructure { building, tile })
-    };
+    let refused =
+        |w: &mut World, building, tile| !order(w, 0, Command::SpawnStructure { building, tile });
     // On another, off the map, half off it, on a regiment.
     assert!(refused(&mut w, FARMSTEAD, (12, 12)));
     assert!(refused(&mut w, FARMSTEAD, (-1, 5)));
