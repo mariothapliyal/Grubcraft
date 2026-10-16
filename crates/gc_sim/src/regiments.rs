@@ -131,7 +131,7 @@ macro_rules! regiment_fields {
             }
 
             /// Slot `i`'s fields (its handle aside), for a snapshot.
-            #[cfg_attr(not(test), expect(dead_code, reason = "snapshots of a whole world come with step 6c"))]
+            #[cfg_attr(not(test), allow(dead_code, reason = "snapshots of a whole world come with step 6c"))]
             fn write_slot(&self, i: usize, out: &mut Vec<u8>) {
                 for hp in &self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize] {
                     hp.write(out);
@@ -140,7 +140,7 @@ macro_rules! regiment_fields {
             }
 
             /// What [`Self::write_slot`] wrote, into slot `i`.
-            #[cfg_attr(not(test), expect(dead_code, reason = "snapshots of a whole world come with step 6c"))]
+            #[cfg_attr(not(test), allow(dead_code, reason = "snapshots of a whole world come with step 6c"))]
             fn read_slot(&mut self, i: usize, input: &mut &[u8]) -> Option<()> {
                 for k in 0..MAX_MODELS as usize {
                     self.hp[i * MAX_MODELS as usize + k] = u16::read(input)?;
@@ -380,7 +380,7 @@ impl Regiments {
     /// free list and handles included.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "snapshots of a whole world come with step 6c")
+        allow(dead_code, reason = "snapshots of a whole world come with step 6c")
     )]
     pub(crate) fn write(&self, out: &mut Vec<u8>) {
         (self.alive.len() as u32).write(out);
@@ -404,7 +404,7 @@ impl Regiments {
     /// if it is cut short or doesn't hold a pool.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "snapshots of a whole world come with step 6c")
+        allow(dead_code, reason = "snapshots of a whole world come with step 6c")
     )]
     pub(crate) fn read(input: &mut &[u8]) -> Option<Regiments> {
         let capacity = u32::read(input)?;

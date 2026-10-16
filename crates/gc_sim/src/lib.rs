@@ -303,9 +303,10 @@ pub struct UnitStats {
 }
 
 impl UnitStats {
-    /// The same stats forced into the ranges the simulation relies on. The
-    /// data baker already rejects anything outside them; this keeps the sim
-    /// safe whatever it is handed.
+    /// The same stats forced into the ranges the simulation relies on, so
+    /// it is safe whatever it is handed. The unit data's own checks
+    /// (`gc_data`) are mostly stricter but not the same: a turn rate under
+    /// one step a tick passes them and is raised to one step a tick here.
     pub fn sanitized(self) -> UnitStats {
         let models = self.models.clamp(1, MAX_MODELS);
         UnitStats {

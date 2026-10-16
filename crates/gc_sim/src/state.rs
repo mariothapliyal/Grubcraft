@@ -20,14 +20,14 @@ use crate::regiments::{RegimentHandle, Strike};
 pub(crate) trait State: Copy + PartialEq {
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "snapshots of a whole world come with step 6c")
+        allow(dead_code, reason = "snapshots of a whole world come with step 6c")
     )]
     fn write(&self, out: &mut Vec<u8>);
     /// The value [`State::write`] wrote, taken off the front of `input`;
     /// `None` when `input` is short or holds no such value.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "snapshots of a whole world come with step 6c")
+        allow(dead_code, reason = "snapshots of a whole world come with step 6c")
     )]
     fn read(input: &mut &[u8]) -> Option<Self>;
     /// Feed the value to the state hash, as the bytes [`State::write`]
@@ -37,7 +37,7 @@ pub(crate) trait State: Copy + PartialEq {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "snapshots of a whole world come with step 6c")
+    allow(dead_code, reason = "snapshots of a whole world come with step 6c")
 )]
 fn take<const N: usize>(input: &mut &[u8]) -> Option<[u8; N]> {
     let (head, rest) = input.split_first_chunk::<N>()?;
