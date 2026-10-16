@@ -159,6 +159,11 @@ impl Cull {
     };
 
     fn new(camera: Mat4, sun: Option<Mat4>) -> Cull {
+        // A broken matrix (a window with no size yet) draws everything
+        // rather than nothing.
+        if !camera.is_finite() || sun.is_some_and(|m| !m.is_finite()) {
+            return Cull::EVERYTHING;
+        }
         Cull {
             camera: unit_planes(frustum_planes(camera)),
             sun: sun.map(|m| unit_planes(frustum_planes(m))),
@@ -1536,6 +1541,7 @@ mod tests {
         let cull = Cull::new(proj * view, Some(sun_proj * sun_view));
         assert!(cull.sees(behind, 1.0));
         assert!(Cull::EVERYTHING.sees(behind, 0.0));
+        assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
     #[test]
