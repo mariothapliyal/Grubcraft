@@ -266,7 +266,8 @@ pub fn holding_the_field(world: &World) -> Option<PlayerId> {
 /// A lobby Field Battle under way: whose side this machine plays, and how
 /// it ended.
 pub struct Battle {
-    pub me: PlayerId,
+    /// None while watching a replay: nobody here won or lost.
+    pub me: Option<PlayerId>,
     /// The side holding the field and the tick it took it, while one does.
     held: Option<(PlayerId, u32)>,
     /// "VICTORY" or "DEFEAT" and what happened, once it is over.
@@ -280,7 +281,7 @@ pub struct Battle {
 }
 
 impl Battle {
-    pub fn new(me: PlayerId) -> Battle {
+    pub fn new(me: Option<PlayerId>) -> Battle {
         Battle {
             me,
             held: None,
@@ -332,9 +333,15 @@ impl Battle {
         if now - since < HOLD_TICKS {
             return false;
         }
-        let secs = world.battle_ticks() / gc_sim::TICKS_PER_SECOND;
-        let time = format!("{}:{:02}", secs / 60, secs % 60);
-        let won = !world.hostile(self.me, p);
+        let time = gc_ai::lens::clock(world.battle_ticks());
+        let Some(me) = self.me else {
+            self.outcome = Some(format!(
+                "OVER  {} holds the field after {time}. Esc: menu",
+                party_name(parties, p)
+            ));
+            return true;
+        };
+        let won = !world.hostile(me, p);
         self.won = Some(won);
         self.outcome = Some(if won {
             format!("VICTORY  the field is yours after {time}. Esc: menu")
@@ -641,7 +648,11 @@ mod tests {
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
         let data = crate::data::load();
         let (units, factions, points) = tables(&data);
-        let heightmap = Heightmap::generate(seed, MAP);
+        let mut heightmap = Heightmap::generate(seed, MAP);
+        // `AI_COVER=off` plays on bare maps, without woods or tall grass.
+        if std::env::var("AI_COVER").as_deref() == Ok("off") {
+            heightmap.cover.clear();
+        }
         let nav = heightmap.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
@@ -692,7 +703,7 @@ mod tests {
                     .count()
             })
             .collect();
-        let mut battle = Battle::new(set.me);
+        let mut battle = Battle::new(Some(set.me));
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
         let (mut ai_time, mut ai_worst) = Default::default();
         while world.tick_count() < limit && battle.outcome.is_none() {
@@ -789,8 +800,9 @@ mod tests {
     /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
     /// factions, two Veterans, `AI_BATTLES` battles a pair (default 24),
     /// swapping ends every battle, with champions allowed unless
-    /// `AI_CHAMPIONS=off`. Prints the first faction's wins, losses and
-    /// battles nobody had won after ten minutes.
+    /// `AI_CHAMPIONS=off`, on maps with woods unless `AI_COVER=off`.
+    /// Prints the first faction's wins, losses and battles nobody had won
+    /// after ten minutes.
     /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
     #[test]
     #[ignore = "slow: the full faction balance table, run by hand"]

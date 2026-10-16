@@ -261,7 +261,8 @@ impl Running {
             hud.view.push(view_corner(&self.camera, ndc, map));
         }
 
-        let has_orders = !self.selected.is_empty();
+        // A replay plays its recorded orders and nobody else's.
+        let has_orders = !self.selected.is_empty() && self.watching.is_none();
         let ready = |on: bool| if on { SlotState::Ready } else { SlotState::Off };
         let mut grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
             label: LABELS[i],
@@ -295,13 +296,18 @@ impl Running {
             },
             cards: &hud.cards,
             tray_title: &title,
-            deployment: self.world.deploy_zone(side).map(|_| DeployStatus {
-                seconds_left: self
-                    .world
-                    .deploy_ticks_left()
-                    .div_ceil(gc_sim::TICKS_PER_SECOND),
-                ready: self.world.deploy_ready(side),
-            }),
+            // Nobody deploys in a replay.
+            deployment: self
+                .world
+                .deploy_zone(side)
+                .filter(|_| self.watching.is_none())
+                .map(|_| DeployStatus {
+                    seconds_left: self
+                        .world
+                        .deploy_ticks_left()
+                        .div_ceil(gc_sim::TICKS_PER_SECOND),
+                    ready: self.world.deploy_ready(side),
+                }),
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
@@ -362,7 +368,7 @@ impl Running {
     /// A grid button clicked or its key pressed. Slots whose orders the
     /// simulation doesn't have yet do nothing.
     pub fn grid_press(&mut self, slot: usize) {
-        if self.selected.is_empty() || self.sandbox.placing {
+        if self.selected.is_empty() || self.watching.is_some() || self.sandbox.placing {
             return;
         }
         match slot {
