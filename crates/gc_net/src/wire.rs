@@ -7,7 +7,9 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, UnitStats};
+use gc_sim::{
+    Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats,
+};
 
 #[derive(Default)]
 pub struct Writer {
@@ -266,6 +268,41 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.fx(radius);
         }
         Command::Ready => w.u8(7),
+        Command::SpawnStructure { building, tile } => {
+            w.u8(8);
+            w.var(u64::from(building));
+            // Two's complement, so tiles off the map's north-west edge
+            // still travel (and are refused by the sim).
+            w.var(u64::from(tile.0 as u16));
+            w.var(u64::from(tile.1 as u16));
+        }
+        Command::AttackStructure {
+            regiment,
+            structure,
+        } => {
+            w.u8(9);
+            w.handle(regiment);
+            w.handle(as_regiment(structure));
+        }
+        Command::RemoveStructure { structure } => {
+            w.u8(10);
+            w.handle(as_regiment(structure));
+        }
+    }
+}
+
+/// A building's handle has the same shape as a regiment's; it travels as one.
+fn as_regiment(h: StructureHandle) -> RegimentHandle {
+    RegimentHandle {
+        index: h.index,
+        generation: h.generation,
+    }
+}
+
+fn as_structure(h: RegimentHandle) -> StructureHandle {
+    StructureHandle {
+        index: h.index,
+        generation: h.generation,
     }
 }
 
@@ -306,6 +343,17 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             radius: r.fx()?,
         },
         7 => Command::Ready,
+        8 => Command::SpawnStructure {
+            building: r.var_as()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        9 => Command::AttackStructure {
+            regiment: r.handle()?,
+            structure: as_structure(r.handle()?),
+        },
+        10 => Command::RemoveStructure {
+            structure: as_structure(r.handle()?),
+        },
         _ => return None,
     })
 }
@@ -425,6 +473,17 @@ mod tests {
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::SpawnStructure {
+                building: 40,
+                tile: (-1, 4000),
+            },
+            Command::AttackStructure {
+                regiment: h(3, 1),
+                structure: as_structure(h(1023, 65_535)),
+            },
+            Command::RemoveStructure {
+                structure: as_structure(h(0, 0)),
+            },
         ];
         let pcs: Vec<PlayerCommand> = cmds
             .iter()

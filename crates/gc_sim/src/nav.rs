@@ -40,6 +40,10 @@ pub const SECTOR: i32 = 32;
 /// the nearest blocked cell is at least this many steps away. Three cells
 /// leaves 1.25 tiles from the centre to the edge of blocked ground.
 pub const CLEARANCE: u8 = 3;
+/// Clearances are measured up to this many cells (16 tiles) and no further:
+/// nothing asks about open ground wider than that, and it keeps a change of
+/// ground (a building going up) from reaching across the map.
+pub const CLEAR_CAP: u8 = 32;
 /// Cost of a cell no regiment can enter.
 pub const BLOCKED: u8 = 0;
 /// Waypoints stored per regiment. A longer route is followed in parts: when
@@ -80,13 +84,25 @@ const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// The walkable map and its portal graph. Built once when the match starts,
-/// and shared with any scratch world on the same map (see [`Nav::sharing`]).
+#[path = "nav_reblock.rs"]
+mod reblock;
+
+/// The walkable map and its portal graph. Built when the match starts, and
+/// shared with any scratch world on the same map (see [`Nav::sharing`]);
+/// brought up to date when buildings change the ground (see `reblock`).
+#[derive(Clone)]
 struct Grid {
     /// Cells per side.
     side: i32,
+    /// Each cell's cost: the ground's own ([`Grid::ground`]), or
+    /// [`BLOCKED`] under a building.
     cost: Vec<u8>,
-    /// Steps (8-way) to the nearest blocked cell or the map edge, capped at 255.
+    /// The ground's own cost of each cell, as the map gave it.
+    ground: Vec<u8>,
+    /// Buildings standing on each cell (see [`Nav::set_built`]).
+    built: Vec<u8>,
+    /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
+    /// [`CLEAR_CAP`].
     clear: Vec<u8>,
     /// Connected area of each open cell (1, 2, ...); 0 for cells not open.
     area: Vec<u32>,
@@ -286,6 +302,17 @@ struct Search {
 }
 
 impl Search {
+    /// Room for searches over `grid`'s portal graph.
+    fn for_grid(grid: &Grid) -> Search {
+        let max_sector_nodes = grid
+            .sector_first
+            .windows(2)
+            .map(|w| (w[1] - w[0]) as usize)
+            .max()
+            .unwrap_or(0);
+        Search::new(grid.node_cell.len(), grid.edge_to.len(), max_sector_nodes)
+    }
+
     fn new(nodes: usize, edges: usize, max_sector_nodes: usize) -> Search {
         let cells = (SECTOR * SECTOR) as usize;
         Search {
@@ -606,18 +633,7 @@ impl Nav {
     }
 
     fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
-        let search = match &grid {
-            Some(g) => {
-                let max_sector_nodes = g
-                    .sector_first
-                    .windows(2)
-                    .map(|w| (w[1] - w[0]) as usize)
-                    .max()
-                    .unwrap_or(0);
-                Search::new(g.node_cell.len(), g.edge_to.len(), max_sector_nodes)
-            }
-            None => Search::new(0, 0, 0),
-        };
+        let search = grid.as_deref().map_or(Search::new(0, 0, 0), Search::for_grid);
         Nav {
             grid,
             search,
@@ -643,7 +659,9 @@ impl Nav {
 
     /// Whether a regiment at `p` has open ground all round for at least
     /// `tiles` (always true with no map): nothing blocked that near.
+    /// `tiles` is at most half [`CLEAR_CAP`].
     pub fn open_around(&self, p: FxVec2, tiles: i32) -> bool {
+        debug_assert!(tiles * CELLS_PER_TILE <= i32::from(CLEAR_CAP));
         self.grid
             .as_ref()
             .is_none_or(|g| i32::from(g.clear[g.cell_at(p) as usize]) >= tiles * CELLS_PER_TILE)
@@ -655,6 +673,85 @@ impl Nav {
         self.grid
             .as_ref()
             .is_none_or(|g| g.line_open(g.cell_at(from), g.cell_at(to), &mut 0))
+    }
+
+    /// Put up (`on`) or pull down a building on the tiles `x..x + w` ×
+    /// `y..y + d`: while one stands there no regiment may walk on them.
+    /// Routes that might cross the changed ground are searched again. No
+    /// effect with no map.
+    pub(crate) fn set_built(&mut self, tiles: [i32; 4], on: bool, regs: &Regiments) {
+        let Some(grid) = &mut self.grid else {
+            return;
+        };
+        let g = Arc::make_mut(grid);
+        let [x, y, w, d] = tiles;
+        let cells = |v: i32| (v * CELLS_PER_TILE).clamp(0, g.side);
+        let (x0, y0, x1, y1) = (cells(x), cells(y), cells(x + w), cells(y + d));
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        for cy in y0..y1 {
+            for cx in x0..x1 {
+                let i = g.idx(cx, cy) as usize;
+                g.built[i] = if on {
+                    g.built[i].saturating_add(1)
+                } else {
+                    g.built[i].saturating_sub(1)
+                };
+                g.cost[i] = if g.built[i] > 0 { BLOCKED } else { g.ground[i] };
+            }
+        }
+        g.changed(x0, y0, x1, y1);
+        let work = self.search.work;
+        self.search = Search::for_grid(g);
+        self.search.work = work;
+        // Any route passing near the change is found again, and any that
+        // found no way may find one now.
+        let reach = i32::from(CLEAR_CAP);
+        let tile = |c: i32| Fx::from_raw((c << 16) / CELLS_PER_TILE);
+        let (lo, hi) = (
+            FxVec2::new(tile(x0 - reach), tile(y0 - reach)),
+            FxVec2::new(tile(x1 + reach), tile(y1 + reach)),
+        );
+        for i in 0..self.route.len() {
+            if !regs.alive[i] {
+                continue;
+            }
+            let ahead = match self.route[i] {
+                Route::Direct => core::slice::from_ref(&self.goal[i]),
+                Route::Waypoints => {
+                    &self.way[i * MAX_WAYPOINTS..][self.way_next[i] as usize..self.way_len[i] as usize]
+                }
+                Route::Failed => {
+                    self.route[i] = Route::Idle;
+                    continue;
+                }
+                Route::Idle | Route::Waiting => continue,
+            };
+            let (mut a, mut b) = (regs.position[i], regs.position[i]);
+            for p in ahead {
+                a = FxVec2::new(a.x.min(p.x), a.y.min(p.y));
+                b = FxVec2::new(b.x.max(p.x), b.y.max(p.y));
+            }
+            if a.x <= hi.x && a.y <= hi.y && b.x >= lo.x && b.y >= lo.y {
+                self.route[i] = Route::Idle;
+            }
+        }
+    }
+
+    /// Whether every cell of the tiles `x..x + w` × `y..y + d` is ground a
+    /// regiment could walk on and has no building on it (always true with
+    /// no map).
+    pub(crate) fn ground_free(&self, [x, y, w, d]: [i32; 4]) -> bool {
+        self.grid.as_ref().is_none_or(|g| {
+            let cells = |v: i32| (v * CELLS_PER_TILE).clamp(0, g.side);
+            (cells(y)..cells(y + d)).all(|cy| {
+                (cells(x)..cells(x + w)).all(|cx| {
+                    let i = g.idx(cx, cy) as usize;
+                    g.ground[i] != BLOCKED && g.built[i] == 0
+                })
+            })
+        })
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).
@@ -1066,6 +1163,8 @@ impl Grid {
         let mut grid = Grid {
             side,
             cost: costs.to_vec(),
+            ground: costs.to_vec(),
+            built: vec![0; n],
             clear: vec![0; n],
             area: vec![0; n],
             sectors: (side + SECTOR - 1) / SECTOR,
@@ -1084,7 +1183,8 @@ impl Grid {
     }
 
     /// Chessboard distance from every cell to the nearest blocked cell (the
-    /// ground beyond the map edge counts as blocked), in two sweeps.
+    /// ground beyond the map edge counts as blocked), up to [`CLEAR_CAP`],
+    /// in two sweeps.
     fn measure_clearance(&mut self) {
         let side = self.side;
         let at = |clear: &[u8], x: i32, y: i32| -> u16 {
@@ -1105,7 +1205,7 @@ impl Grid {
                     .min(at(c, x - 1, y - 1))
                     .min(at(c, x, y - 1))
                     .min(at(c, x + 1, y - 1));
-                self.clear[i] = (d + 1).min(255) as u8;
+                self.clear[i] = (d + 1).min(u16::from(CLEAR_CAP)) as u8;
             }
         }
         for y in (0..side).rev() {
@@ -1119,7 +1219,7 @@ impl Grid {
                     .min(at(c, x + 1, y + 1))
                     .min(at(c, x, y + 1))
                     .min(at(c, x - 1, y + 1));
-                self.clear[i] = self.clear[i].min((d + 1).min(255) as u8);
+                self.clear[i] = self.clear[i].min((d + 1).min(u16::from(CLEAR_CAP)) as u8);
             }
         }
     }

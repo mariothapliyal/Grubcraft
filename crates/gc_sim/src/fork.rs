@@ -91,6 +91,8 @@ impl World {
             // A rehearsal tells no one what happens in it.
             events: crate::events::Events::none(),
             scratch: true,
+            // Rehearsals are of battles; buildings come later.
+            structures: None,
             regiments: Regiments::with_capacity(n),
         }
     }

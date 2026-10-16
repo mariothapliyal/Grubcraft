@@ -7,7 +7,9 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::{Command, Formation, Mass, PlayerCommand, RegimentHandle, UnitStats};
+use gc_sim::{
+    Command, Formation, Mass, PlayerCommand, RegimentHandle, StructureHandle, UnitStats,
+};
 
 #[derive(Default)]
 pub struct Writer {
@@ -136,7 +138,41 @@ impl Writer {
                 self.fx(radius);
             }
             Command::Ready => self.u8(7),
+            Command::SpawnStructure { building, tile } => {
+                self.u8(8);
+                self.var(u64::from(building));
+                // Two's complement, as the network sends it.
+                self.var(u64::from(tile.0 as u16));
+                self.var(u64::from(tile.1 as u16));
+            }
+            Command::AttackStructure {
+                regiment,
+                structure,
+            } => {
+                self.u8(9);
+                self.handle(regiment);
+                self.handle(as_regiment(structure));
+            }
+            Command::RemoveStructure { structure } => {
+                self.u8(10);
+                self.handle(as_regiment(structure));
+            }
         }
+    }
+}
+
+/// A building's handle has the same shape as a regiment's; it is written as one.
+fn as_regiment(h: StructureHandle) -> RegimentHandle {
+    RegimentHandle {
+        index: h.index,
+        generation: h.generation,
+    }
+}
+
+fn as_structure(h: RegimentHandle) -> StructureHandle {
+    StructureHandle {
+        index: h.index,
+        generation: h.generation,
     }
 }
 
@@ -286,6 +322,17 @@ impl<'a> Reader<'a> {
                 radius: self.fx()?,
             },
             7 => Command::Ready,
+            8 => Command::SpawnStructure {
+                building: self.var_as()?,
+                tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
+            9 => Command::AttackStructure {
+                regiment: self.handle()?,
+                structure: as_structure(self.handle()?),
+            },
+            10 => Command::RemoveStructure {
+                structure: as_structure(self.handle()?),
+            },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -297,13 +344,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deployment_commands_round_trip() {
+    fn deployment_and_building_commands_round_trip() {
         let commands = [
             Command::DeployZone {
                 center: FxVec2::from_ints(40, -7),
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::SpawnStructure {
+                building: 3,
+                tile: (-2, 140),
+            },
+            Command::AttackStructure {
+                regiment: RegimentHandle {
+                    index: 5,
+                    generation: 2,
+                },
+                structure: StructureHandle {
+                    index: 900,
+                    generation: 7,
+                },
+            },
+            Command::RemoveStructure {
+                structure: StructureHandle {
+                    index: 1,
+                    generation: 0,
+                },
+            },
         ];
         let mut w = Writer::default();
         for command in commands {
