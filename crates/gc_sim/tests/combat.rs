@@ -185,10 +185,10 @@ fn charges_hit_harder_than_standing_fights() {
     assert!(charge > standing, "charge {charge}, standing {standing}");
 }
 
-/// Charge bonus the attacker carries when it hits a fresh block 2 tiles
+/// Charge bonus the attacker carries when it hits a fresh block `gap` tiles
 /// beyond where its first foe stood, sent in `wait` ticks after that foe
 /// was taken off the field mid-fight.
-fn charge_on_second_contact(wait: u32) -> u16 {
+fn charge_on_second_contact(wait: u32, gap: i32) -> u16 {
     let mut w = world();
     let first = spawn(&mut w, 1, SPEARS, 50, 50, SOUTH);
     let a = spawn(&mut w, 0, SPEARS, 50, 64, NORTH);
@@ -215,17 +215,20 @@ fn charge_on_second_contact(wait: u32) -> u16 {
     }]);
     assert!(!w.regiments.get(a).unwrap().engaged);
     run(&mut w, wait);
-    let second = spawn(&mut w, 1, SPEARS, 50, 48, SOUTH);
+    let second = spawn(&mut w, 1, SPEARS, 50, 50 - gap, SOUTH);
     attack(&mut w, second);
     until_engaged(&mut w, a);
     w.regiments.get(a).unwrap().charge
 }
 
 #[test]
-fn lines_that_part_and_meet_again_at_once_do_not_charge_again() {
-    assert_eq!(charge_on_second_contact(0), 0);
-    // With a run-up of a few seconds apart, it is a charge again.
-    assert!(charge_on_second_contact(u32::from(RUN_UP_TICKS)) > 0);
+fn only_a_run_up_makes_a_charge() {
+    // Closing a two-tile gap at once, or after standing a while, is no
+    // charge: 2 tiles is under a second's march.
+    assert_eq!(charge_on_second_contact(0, 2), 0);
+    assert_eq!(charge_on_second_contact(3 * u32::from(RUN_UP_TICKS), 2), 0);
+    // A 6-tile run-up is.
+    assert!(charge_on_second_contact(0, 6) > 0);
 }
 
 #[test]

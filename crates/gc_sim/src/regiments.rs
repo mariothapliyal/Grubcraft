@@ -130,9 +130,9 @@ pub struct Regiments {
     pub(crate) crowd: Vec<Fx>,
     /// Ticks left until it is back in order (0: in order).
     pub(crate) disorder: Vec<u8>,
-    /// Ticks left since it parted from a fight during which hitting home is
-    /// no charge (see [`crate::combat::RUN_UP_TICKS`]).
-    pub(crate) parted: Vec<u8>,
+    /// Ticks it has stepped forward since it last halted or fought, up to
+    /// [`crate::combat::RUN_UP_TICKS`]: only a run-up makes a charge.
+    pub(crate) run_up: Vec<u8>,
     /// Melee damage dealt and taken lately, in 1/256ths of a hit point
     /// weighted by the striker's mass: who is winning the exchange, for
     /// lines that push (see [`Combat::push_lines`]). Both fade by an
@@ -184,7 +184,7 @@ impl Regiments {
             clear: vec![0; n],
             crowd: vec![Fx::ZERO; n],
             disorder: vec![0; n],
-            parted: vec![0; n],
+            run_up: vec![0; n],
             pressing: vec![0; n],
             pressed: vec![0; n],
             giving: vec![0; n],
@@ -253,7 +253,7 @@ impl Regiments {
         self.clear[i] = 0;
         self.crowd[i] = Fx::ZERO;
         self.disorder[i] = 0;
-        self.parted[i] = 0;
+        self.run_up[i] = 0;
         self.pressing[i] = 0;
         self.pressed[i] = 0;
         self.giving[i] = 0;
@@ -378,7 +378,7 @@ impl Regiments {
         self.clear[i] = from.clear[i];
         self.crowd[i] = from.crowd[i];
         self.disorder[i] = from.disorder[i];
-        self.parted[i] = from.parted[i];
+        self.run_up[i] = from.run_up[i];
         self.pressing[i] = from.pressing[i];
         self.pressed[i] = from.pressed[i];
         self.giving[i] = from.giving[i];
@@ -557,6 +557,10 @@ impl Regiments {
             if !self.alive[i] {
                 continue;
             }
+            // Halting or fighting ends a run-up.
+            if self.target[i].is_none() || self.engaged[i].is_some() {
+                self.run_up[i] = 0;
+            }
             if self.target[i].is_none() {
                 self.held[i] = 0;
                 self.clear[i] = 0;
@@ -646,9 +650,11 @@ impl Regiments {
                     }
                 } else if nav.blocks(here, next) {
                     nav.lost(i);
+                    continue;
                 } else {
                     self.position[i] = next;
                 }
+                self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
             } else if let Some(want) = self.target_facing[i] {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
                 if self.facing[i] == want {
@@ -719,10 +725,10 @@ impl Regiments {
             h.i32(self.crowd[i].raw());
             h.u8(self.disorder[i]);
         }
-        // Only just after parting from a fight, so worlds where lines
-        // never part hash as they did before.
-        if self.parted[i] != 0 {
-            h.u8(self.parted[i]);
+        // Only while marching, so worlds where nobody marches hash as
+        // they did before.
+        if self.run_up[i] != 0 {
+            h.u8(self.run_up[i]);
         }
         // Only once it has fought, so worlds without melee hash as
         // they did before lines pushed.
