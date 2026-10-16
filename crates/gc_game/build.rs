@@ -20,7 +20,7 @@ fn main() {
         }
     };
     // The build's commit, so players can tell builds apart in the lobby
-    // (the version gate compares it).
+    // (the version gate compares the sim version instead).
     let commit = std::process::Command::new("git")
         .args(["rev-parse", "--short=7", "HEAD"])
         .current_dir(&manifest_dir)
@@ -30,6 +30,14 @@ fn main() {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .map(|s| {
+            let dirty = std::process::Command::new("git")
+                .args(["diff", "--quiet", "HEAD"])
+                .current_dir(&manifest_dir)
+                .status()
+                .is_ok_and(|st| st.code() == Some(1));
+            if dirty { format!("{s}-dirty") } else { s }
+        })
         .unwrap_or_else(|| "local".into());
     println!("cargo:rustc-env=GRUBCRAFT_COMMIT={commit}");
     let git_head = manifest_dir.join("../../.git/HEAD");
