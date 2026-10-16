@@ -49,7 +49,7 @@ Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [0
 | Rear | ×1.8 | heavy |
 
 - Regiments take time to turn. Big blocks turn slowly; cavalry and swarms turn fast.
-- **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles.
+- **Charges** add a bonus proportional to speed at impact, then fade over a few seconds. Charging braced spears into the front is suicide; charging archers in the rear wins battles. A charge needs a run-up: a regiment that has been out of contact for less than 2 seconds gets no charge bonus when it hits home, so blocks that brush apart and close again, or a regiment turned or pushed out of reach that presses straight back in, don't win a fresh charge each time.
 - A regiment engaged in melee is **locked**. It can only disengage with Retreat (taking free hits) or by routing, though a stronger foe can drive it back ([Lines that push](#lines-that-push)).
 
 ## Weapons and formations

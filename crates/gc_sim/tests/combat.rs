@@ -1,6 +1,7 @@
 //! Melee, charges, flanks and volleys.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::combat::{CHARGE_TICKS, RUN_UP_TICKS};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World};
 
@@ -18,10 +19,14 @@ fn fearless() -> [UnitStats; 4] {
 }
 
 fn world() -> World {
+    world_with(&fearless())
+}
+
+fn world_with(units: &[UnitStats]) -> World {
     World::new(&MatchSetup {
         seed: 11,
         capacities: Capacities::default(),
-        units: &fearless(),
+        units,
         map_tiles: 256,
         nav: &[],
         teams: &[],
@@ -56,6 +61,16 @@ fn run(w: &mut World, ticks: u32) {
     for _ in 0..ticks {
         w.tick(&[]);
     }
+}
+
+fn until_engaged(w: &mut World, h: RegimentHandle) {
+    for _ in 0..400 {
+        if w.regiments.get(h).unwrap().engaged {
+            return;
+        }
+        w.tick(&[]);
+    }
+    panic!("never made contact");
 }
 
 #[test]
@@ -105,29 +120,13 @@ fn engaged_regiments_ignore_move_orders() {
 /// attacker stands against the given side of it. The defenders are spearmen
 /// who can't turn, so a flank or rear stays one for the whole fight.
 fn losses_from(side_offset: (i32, i32), defender_facing: Angle, ticks: u32) -> u16 {
-    const ROOTED: u16 = 4;
-    let fearless = fearless();
-    let units = [
-        fearless[0],
-        fearless[1],
-        fearless[2],
-        fearless[3],
-        UnitStats {
-            turn_rate: 0,
-            ..fearless[SPEARS as usize]
-        },
-    ];
-    let mut w = World::new(&MatchSetup {
-        seed: 11,
-        capacities: Capacities::default(),
-        units: &units,
-        map_tiles: 256,
-        nav: &[],
-        teams: &[],
-        ground: gc_sim::Ground::FLAT,
-        champions: false,
+    let mut units = fearless().to_vec();
+    units.push(UnitStats {
+        turn_rate: 0,
+        ..units[SPEARS as usize]
     });
-    let d = spawn(&mut w, 1, ROOTED, 50, 50, defender_facing);
+    let mut w = world_with(&units);
+    let d = spawn(&mut w, 1, units.len() as u16 - 1, 50, 50, defender_facing);
     let facing = Angle::of_vec(FxVec2::from_ints(-side_offset.0, -side_offset.1));
     let _a = spawn(
         &mut w,
@@ -158,18 +157,7 @@ fn charges_hit_harder_than_standing_fights() {
     // Spearmen with a big charge bonus, so the effect stands out from the dice.
     let mut units = fearless();
     units[0].charge_bonus = 200;
-    let world = || {
-        World::new(&MatchSetup {
-            seed: 11,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: 256,
-            nav: &[],
-            teams: &[],
-            ground: gc_sim::Ground::FLAT,
-            champions: false,
-        })
-    };
+    let world = || world_with(&units);
     // Charge in from 14 tiles away, then fight for 3 s.
     let charge = {
         let mut w = world();
@@ -182,12 +170,7 @@ fn charges_hit_harder_than_standing_fights() {
                 target: d,
             },
         }]);
-        let mut ticks = 0;
-        while !w.regiments.get(a).unwrap().engaged {
-            w.tick(&[]);
-            ticks += 1;
-            assert!(ticks < 400, "never made contact");
-        }
+        until_engaged(&mut w, a);
         run(&mut w, 60);
         24 - models(&w, d)
     };
@@ -219,18 +202,13 @@ fn charge_on_second_contact(wait: u32) -> u16 {
         }]);
     };
     attack(&mut w, first);
-    let mut ticks = 0;
-    while !w.regiments.get(a).unwrap().engaged {
-        w.tick(&[]);
-        ticks += 1;
-        assert!(ticks < 400, "never made contact");
-    }
+    until_engaged(&mut w, a);
     assert!(
         w.regiments.get(a).unwrap().charge > 0,
         "the first contact was no charge"
     );
     // Fight until the charge has spent itself, then lose the foe.
-    run(&mut w, 80);
+    run(&mut w, u32::from(CHARGE_TICKS));
     w.tick(&[PlayerCommand {
         player: 1,
         command: Command::RemoveRegiment { regiment: first },
@@ -239,12 +217,7 @@ fn charge_on_second_contact(wait: u32) -> u16 {
     run(&mut w, wait);
     let second = spawn(&mut w, 1, SPEARS, 50, 48, SOUTH);
     attack(&mut w, second);
-    let mut ticks = 0;
-    while !w.regiments.get(a).unwrap().engaged {
-        w.tick(&[]);
-        ticks += 1;
-        assert!(ticks < 100, "never reached the second block");
-    }
+    until_engaged(&mut w, a);
     w.regiments.get(a).unwrap().charge
 }
 
@@ -252,7 +225,7 @@ fn charge_on_second_contact(wait: u32) -> u16 {
 fn lines_that_part_and_meet_again_at_once_do_not_charge_again() {
     assert_eq!(charge_on_second_contact(0), 0);
     // With a run-up of a few seconds apart, it is a charge again.
-    assert!(charge_on_second_contact(60) > 0);
+    assert!(charge_on_second_contact(u32::from(RUN_UP_TICKS)) > 0);
 }
 
 #[test]
