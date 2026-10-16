@@ -60,6 +60,12 @@ impl Writer {
         self.var(u64::from(h.generation));
     }
 
+    /// A building's handle, laid out as a regiment's.
+    pub fn structure(&mut self, h: StructureHandle) {
+        self.var(u64::from(h.index));
+        self.var(u64::from(h.generation));
+    }
+
     pub fn stats(&mut self, s: &UnitStats) {
         self.fx(s.speed);
         self.var(u64::from(s.turn_rate));
@@ -149,28 +155,13 @@ impl Writer {
             } => {
                 self.u8(9);
                 self.handle(regiment);
-                self.handle(as_regiment(structure));
+                self.structure(structure);
             }
             Command::RemoveStructure { structure } => {
                 self.u8(10);
-                self.handle(as_regiment(structure));
+                self.structure(structure);
             }
         }
-    }
-}
-
-/// A building's handle has the same shape as a regiment's; it is written as one.
-fn as_regiment(h: StructureHandle) -> RegimentHandle {
-    RegimentHandle {
-        index: h.index,
-        generation: h.generation,
-    }
-}
-
-fn as_structure(h: RegimentHandle) -> StructureHandle {
-    StructureHandle {
-        index: h.index,
-        generation: h.generation,
     }
 }
 
@@ -256,6 +247,13 @@ impl<'a> Reader<'a> {
         })
     }
 
+    pub fn structure(&mut self) -> Option<StructureHandle> {
+        Some(StructureHandle {
+            index: self.var_as()?,
+            generation: self.var_as()?,
+        })
+    }
+
     pub fn stats(&mut self) -> Option<UnitStats> {
         UnitStats {
             speed: self.fx()?,
@@ -326,10 +324,10 @@ impl<'a> Reader<'a> {
             },
             9 => Command::AttackStructure {
                 regiment: self.handle()?,
-                structure: as_structure(self.handle()?),
+                structure: self.structure()?,
             },
             10 => Command::RemoveStructure {
-                structure: as_structure(self.handle()?),
+                structure: self.structure()?,
             },
             _ => return None,
         };

@@ -24,8 +24,9 @@ use super::{BLOCKED, CLEAR_CAP, Grid, SECTOR, Search};
 
 impl Grid {
     /// Bring the grid up to date after the cells `x0..x1` × `y0..y1` (cell
-    /// coordinates, end exclusive) changed cost.
-    pub(super) fn changed(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+    /// coordinates, end exclusive) changed cost, searching in `search`'s
+    /// room and leaving it room for searches over the new graph.
+    pub(super) fn changed(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, search: &mut Search) {
         let reach = i32::from(CLEAR_CAP) + 1;
         let (wx0, wy0) = ((x0 - reach).max(0), (y0 - reach).max(0));
         let (wx1, wy1) = ((x1 + reach).min(self.side), (y1 + reach).min(self.side));
@@ -48,14 +49,18 @@ impl Grid {
                 *d = true;
             }
         }
-        self.relink(&partner, &old, &dirty);
+        self.relink(&partner, &old, &dirty, search);
+        search.fit(self);
     }
 
-    /// [`Grid::measure_clearance`] inside the window `x0..x1` × `y0..y1`,
-    /// reading the cells just outside it as they stand. Exact as long as
-    /// every cell outside the window is more than [`CLEAR_CAP`] from the
-    /// cells that changed.
-    fn measure_clearance_in(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+    /// Chessboard distance from each cell in the window `x0..x1` × `y0..y1`
+    /// to the nearest blocked cell (the ground beyond the map edge counts
+    /// as blocked), up to [`CLEAR_CAP`], in two sweeps, reading the cells
+    /// just outside the window as they stand. Over the whole map this is
+    /// the grid's clearance; over a window it is exact as long as every
+    /// cell outside it is more than [`CLEAR_CAP`] from the cells that
+    /// changed.
+    pub(super) fn measure_clearance_in(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         for y in y0..y1 {
             for x in x0..x1 {
                 let i = self.idx(x, y) as usize;
@@ -112,27 +117,14 @@ impl Grid {
 
     /// The node cells of sector `s`, in order.
     fn cells_of(&self, s: usize) -> impl Iterator<Item = u32> + '_ {
-        self.sector_nodes[self.sector_first[s] as usize..self.sector_first[s + 1] as usize]
-            .iter()
-            .map(|&n| self.node_cell[n as usize])
+        self.nodes_in(s).iter().map(|&n| self.node_cell[n as usize])
     }
 
     /// [`Grid::link_portals`], searching only in `dirty` sectors and copying
     /// the links of every other sector from `old`.
-    fn relink(&mut self, partner: &[u32], old: &OldGraph, dirty: &[bool]) {
+    fn relink(&mut self, partner: &[u32], old: &OldGraph, dirty: &[bool], search: &mut Search) {
         let nodes = self.node_cell.len();
-        // Each node's place in its sector's list.
-        let mut place = vec![0u32; nodes];
-        for s in 0..dirty.len() {
-            let first = self.sector_first[s] as usize;
-            for (k, &n) in self.sector_nodes[first..self.sector_first[s + 1] as usize]
-                .iter()
-                .enumerate()
-            {
-                place[n as usize] = k as u32;
-            }
-        }
-        let mut search = Search::new(nodes, 0, 0);
+        let place = places(&self.sector_first, &self.sector_nodes, nodes);
         let (mut first, mut to, mut cost) = (
             Vec::with_capacity(nodes + 1),
             Vec::with_capacity(old.edge_to.len()),
@@ -143,25 +135,14 @@ impl Grid {
             let cell = self.node_cell[u];
             to.push(p);
             cost.push(self.step_cost(cell, self.node_cell[p as usize], false));
-            let sec = self.sector_of(cell);
-            let s = sec as usize;
-            let nodes_here = &self.sector_nodes
-                [self.sector_first[s] as usize..self.sector_first[s + 1] as usize];
+            let s = self.sector_of(cell) as usize;
             if dirty[s] {
-                search.sector(self, sec, cell, None);
-                for &v in nodes_here {
-                    if v as usize == u {
-                        continue;
-                    }
-                    if let Some(c) = search.cost_to(self, sec, self.node_cell[v as usize]) {
-                        to.push(v);
-                        cost.push(c);
-                    }
-                }
+                self.link_in_sector(search, u, &mut to, &mut cost);
             } else {
                 // The same node, by its place in the sector, in the old
                 // graph; its first edge was to its partner.
                 let was = old.sector_nodes[old.sector_first[s] as usize + place[u] as usize];
+                let nodes_here = self.nodes_in(s);
                 for e in old.edge_first[was as usize] + 1..old.edge_first[was as usize + 1] {
                     let v = old.edge_to[e as usize];
                     to.push(nodes_here[old.place[v as usize] as usize]);
@@ -174,6 +155,20 @@ impl Grid {
         self.edge_to = to;
         self.edge_cost = cost;
     }
+}
+
+/// Each node's place in its sector's list, from a graph's sector lists.
+fn places(sector_first: &[u32], sector_nodes: &[u32], nodes: usize) -> Vec<u32> {
+    let mut place = vec![0; nodes];
+    for w in sector_first.windows(2) {
+        for (k, &n) in sector_nodes[w[0] as usize..w[1] as usize]
+            .iter()
+            .enumerate()
+        {
+            place[n as usize] = k as u32;
+        }
+    }
+    place
 }
 
 /// The portal graph as it stood before a change.
@@ -191,26 +186,18 @@ struct OldGraph {
 impl OldGraph {
     /// The grid's portal graph, leaving it empty for placing again.
     fn take(grid: &mut Grid) -> OldGraph {
-        let mut old = OldGraph {
-            node_cell: core::mem::take(&mut grid.node_cell),
-            sector_first: core::mem::take(&mut grid.sector_first),
-            sector_nodes: core::mem::take(&mut grid.sector_nodes),
+        let sector_first = core::mem::take(&mut grid.sector_first);
+        let sector_nodes = core::mem::take(&mut grid.sector_nodes);
+        let node_cell = core::mem::take(&mut grid.node_cell);
+        OldGraph {
+            place: places(&sector_first, &sector_nodes, node_cell.len()),
+            node_cell,
+            sector_first,
+            sector_nodes,
             edge_first: core::mem::take(&mut grid.edge_first),
             edge_to: core::mem::take(&mut grid.edge_to),
             edge_cost: core::mem::take(&mut grid.edge_cost),
-            place: Vec::new(),
-        };
-        old.place = vec![0; old.node_cell.len()];
-        for s in 0..old.sector_first.len() - 1 {
-            let first = old.sector_first[s] as usize;
-            for (k, &n) in old.sector_nodes[first..old.sector_first[s + 1] as usize]
-                .iter()
-                .enumerate()
-            {
-                old.place[n as usize] = k as u32;
-            }
         }
-        old
     }
 
     fn cells_of(&self, s: usize) -> impl Iterator<Item = u32> + '_ {
@@ -242,26 +229,16 @@ mod tests {
         assert_eq!(a.edge_cost, b.edge_cost, "link costs differ");
     }
 
-    /// Put up or pull down a building on whole tiles, as `Nav::set_built`.
-    fn build_on(g: &mut Grid, [x, y, w, d]: [i32; 4], on: bool) {
-        let (x0, y0) = (x * CELLS_PER_TILE, y * CELLS_PER_TILE);
-        let (x1, y1) = ((x + w) * CELLS_PER_TILE, (y + d) * CELLS_PER_TILE);
-        for cy in y0..y1 {
-            for cx in x0..x1 {
-                let i = g.idx(cx, cy) as usize;
-                g.built[i] = if on { g.built[i] + 1 } else { g.built[i] - 1 };
-                g.cost[i] = if g.built[i] > 0 { BLOCKED } else { g.ground[i] };
-            }
-        }
-        g.changed(x0, y0, x1, y1);
-    }
-
     #[test]
     fn a_changed_grid_is_the_grid_built_afresh() {
         let tiles: i32 = 96;
         let side = tiles * CELLS_PER_TILE;
         let ground = ribs_map(tiles as u32);
         let mut g = Grid::build(&ground, side);
+        let mut search = Search::for_grid(&g);
+        let mut build_on = |g: &mut Grid, b, on| {
+            assert!(g.set_built(b, on, &mut search).is_some());
+        };
         let mut rng = Pcg32::new(11, 1);
         let mut standing: Vec<[i32; 4]> = Vec::new();
         for step in 0..40 {

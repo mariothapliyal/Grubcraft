@@ -65,6 +65,12 @@ impl Writer {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));
     }
+
+    /// A building's handle, laid out as a regiment's.
+    pub fn structure(&mut self, h: StructureHandle) {
+        self.var(u64::from(h.index));
+        self.var(u64::from(h.generation));
+    }
 }
 
 pub struct Reader<'a> {
@@ -156,6 +162,13 @@ impl<'a> Reader<'a> {
 
     pub fn handle(&mut self) -> Option<RegimentHandle> {
         Some(RegimentHandle {
+            index: self.var_as()?,
+            generation: self.var_as()?,
+        })
+    }
+
+    pub fn structure(&mut self) -> Option<StructureHandle> {
+        Some(StructureHandle {
             index: self.var_as()?,
             generation: self.var_as()?,
         })
@@ -280,27 +293,12 @@ pub fn write_command(w: &mut Writer, c: &Command) {
         } => {
             w.u8(9);
             w.handle(regiment);
-            w.handle(as_regiment(structure));
+            w.structure(structure);
         }
         Command::RemoveStructure { structure } => {
             w.u8(10);
-            w.handle(as_regiment(structure));
+            w.structure(structure);
         }
-    }
-}
-
-/// A building's handle has the same shape as a regiment's; it travels as one.
-fn as_regiment(h: StructureHandle) -> RegimentHandle {
-    RegimentHandle {
-        index: h.index,
-        generation: h.generation,
-    }
-}
-
-fn as_structure(h: RegimentHandle) -> StructureHandle {
-    StructureHandle {
-        index: h.index,
-        generation: h.generation,
     }
 }
 
@@ -347,10 +345,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         },
         9 => Command::AttackStructure {
             regiment: r.handle()?,
-            structure: as_structure(r.handle()?),
+            structure: r.structure()?,
         },
         10 => Command::RemoveStructure {
-            structure: as_structure(r.handle()?),
+            structure: r.structure()?,
         },
         _ => return None,
     })
@@ -477,10 +475,16 @@ mod tests {
             },
             Command::AttackStructure {
                 regiment: h(3, 1),
-                structure: as_structure(h(1023, 65_535)),
+                structure: StructureHandle {
+                    index: 1023,
+                    generation: 65_535,
+                },
             },
             Command::RemoveStructure {
-                structure: as_structure(h(0, 0)),
+                structure: StructureHandle {
+                    index: 0,
+                    generation: 0,
+                },
             },
         ];
         let pcs: Vec<PlayerCommand> = cmds

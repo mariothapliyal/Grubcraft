@@ -628,10 +628,10 @@ impl World {
     }
 
     /// Make this a Conquest match: buildings, and later the economy. Only
-    /// on a match's own world before its first tick, once; returns whether
-    /// it was done.
+    /// on a match's own world with a map, before its first tick, once;
+    /// returns whether it was done.
     pub fn conquest(&mut self, setup: &ConquestSetup) -> bool {
-        if self.tick != 0 || self.scratch || self.structures.is_some() {
+        if self.tick != 0 || self.scratch || self.structures.is_some() || !self.nav.has_map() {
             return false;
         }
         self.structures = Some(Structures::new(
@@ -889,7 +889,7 @@ impl World {
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 usize::from(pc.player) < MAX_PARTIES
-                    && structures.fits(building, tile, self.map_tiles, &self.nav, &self.regiments)
+                    && structures.fits(building, tile, &self.nav, &self.regiments)
                     && structures
                         .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
                         .is_some()

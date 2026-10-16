@@ -37,7 +37,7 @@ use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 pub type BuildingId = u16;
 
 /// What a building is for (docs/21-buildings.md).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Role {
     /// The main building (a Hall, Hive, Spire or Counting House, at any
@@ -47,7 +47,6 @@ pub enum Role {
     Outpost = 1,
     Housing = 2,
     Economy = 3,
-    #[default]
     Production = 4,
     Tech = 5,
     Heroes = 6,
@@ -56,10 +55,9 @@ pub enum Role {
 }
 
 /// A building's armour type.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Armour {
-    #[default]
     Structure = 0,
     Fortified = 1,
     Living = 2,
@@ -79,13 +77,6 @@ pub enum Breaker {
 }
 
 impl Breaker {
-    pub const ALL: [Breaker; 4] = [
-        Breaker::Regiment,
-        Breaker::Hero,
-        Breaker::Siege,
-        Breaker::Artillery,
-    ];
-
     /// Percent of its damage a blow of this class does to `armour`.
     pub fn percent(self, armour: Armour) -> u32 {
         match (self, armour) {
@@ -210,14 +201,16 @@ pub struct StructureView {
 impl StructureView {
     /// Centre of the footprint.
     pub fn centre(&self) -> FxVec2 {
-        footprint_centre(self.tile, self.width, self.depth)
+        let (x, y) = self.tile;
+        footprint_centre([x, y, i32::from(self.width), i32::from(self.depth)])
     }
 }
 
-fn footprint_centre(tile: (i32, i32), width: u8, depth: u8) -> FxVec2 {
+/// Centre of the footprint `[x, y, width, depth]` (tiles).
+fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
     FxVec2::new(
-        Fx::from_int(tile.0) + Fx::from_ratio(i32::from(width), 2),
-        Fx::from_int(tile.1) + Fx::from_ratio(i32::from(depth), 2),
+        Fx::from_int(x) + Fx::from_ratio(w, 2),
+        Fx::from_int(y) + Fx::from_ratio(d, 2),
     )
 }
 
@@ -236,12 +229,11 @@ pub struct Structures {
     buildings: Vec<BuildingStats>,
     /// Each regiment type's class against buildings, by [`crate::UnitId`].
     breakers: Vec<Breaker>,
-    alive: Vec<bool>,
     generation: Vec<u16>,
     owner: Vec<PlayerId>,
     building: Vec<BuildingId>,
     tile: Vec<(i32, i32)>,
-    /// Hit points left, in hundredths.
+    /// Hit points left, in hundredths; 0 for a free slot.
     hp: Vec<u32>,
     free: Vec<u32>,
     /// By regiment slot: the building it is attacking, and the generation
@@ -267,7 +259,6 @@ impl Structures {
         Structures {
             buildings: buildings.iter().map(|b| b.sanitized()).collect(),
             breakers: breakers.to_vec(),
-            alive: vec![false; n],
             generation: vec![0; n],
             owner: vec![0; n],
             building: vec![0; n],
@@ -287,7 +278,7 @@ impl Structures {
     }
 
     pub fn len(&self) -> usize {
-        self.alive.len() - self.free.len()
+        self.hp.len() - self.free.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -296,7 +287,8 @@ impl Structures {
 
     pub(crate) fn resolve(&self, h: StructureHandle) -> Option<usize> {
         let i = h.index as usize;
-        (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
+        (self.hp.get(i).is_some_and(|&hp| hp > 0) && self.generation[i] == h.generation)
+            .then_some(i)
     }
 
     fn handle(&self, i: usize) -> StructureHandle {
@@ -330,8 +322,8 @@ impl Structures {
 
     /// Live buildings in index order.
     pub fn iter(&self) -> impl Iterator<Item = StructureView> + '_ {
-        (0..self.alive.len())
-            .filter(|&i| self.alive[i])
+        (0..self.hp.len())
+            .filter(|&i| self.hp[i] > 0)
             .map(|i| self.view(i))
     }
 
@@ -344,12 +336,12 @@ impl Structures {
 
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`: on the map, on ground regiments can walk, clear of
-    /// other buildings, and with no regiment standing on it.
+    /// other buildings (see `Nav::ground_free`), and with no regiment
+    /// standing on it.
     pub(crate) fn fits(
         &self,
         building: BuildingId,
         tile: (i32, i32),
-        map_tiles: u32,
         nav: &Nav,
         regs: &Regiments,
     ) -> bool {
@@ -357,17 +349,7 @@ impl Structures {
             return false;
         };
         let (w, d) = (i32::from(b.width), i32::from(b.depth));
-        let edge = map_tiles as i32;
-        if map_tiles > 0 && (tile.0 < 0 || tile.1 < 0 || tile.0 + w > edge || tile.1 + d > edge) {
-            return false;
-        }
         if !nav.ground_free([tile.0, tile.1, w, d]) {
-            return false;
-        }
-        let overlaps = |[x, y, w2, d2]: [i32; 4]| {
-            x < tile.0 + w && tile.0 < x + w2 && y < tile.1 + d && tile.1 < y + d2
-        };
-        if (0..self.alive.len()).any(|i| self.alive[i] && overlaps(self.footprint(i))) {
             return false;
         }
         // No regiment's centre within a tile of it.
@@ -393,7 +375,6 @@ impl Structures {
     ) -> Option<StructureHandle> {
         let index = self.free.pop()?;
         let i = index as usize;
-        self.alive[i] = true;
         self.owner[i] = owner;
         self.building[i] = building;
         self.tile[i] = tile;
@@ -408,7 +389,6 @@ impl Structures {
             return false;
         };
         nav.set_built(self.footprint(i), false, regs);
-        self.alive[i] = false;
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
         self.free.push(i as u32);
@@ -419,9 +399,7 @@ impl Structures {
     /// checked the regiment is the issuer's and the building an enemy's.
     pub(crate) fn besiege(&mut self, regs: &mut Regiments, r: usize, target: StructureHandle) {
         // Whatever it was doing, it stops to see to this.
-        regs.target[r] = None;
-        regs.target_facing[r] = None;
-        regs.attack_target[r] = None;
+        regs.halt(r);
         self.siege[r] = Some(target);
         self.siege_gen[r] = regs.generation[r];
         self.siege_clock[r] = 0;
@@ -445,11 +423,7 @@ impl Structures {
         self.fallen.clear();
         for r in 0..self.siege.len() {
             let Some(target) = self.siege_of(regs, r) else {
-                self.siege[r] = None;
-                continue;
-            };
-            let Some(s) = self.resolve(target) else {
-                // Gone: it stands where it is.
+                // No order, or the building or the regiment is gone.
                 self.siege[r] = None;
                 continue;
             };
@@ -462,15 +436,20 @@ impl Structures {
                 continue;
             }
             self.siege_clock[r] = self.siege_clock[r].saturating_sub(1);
+            // Standing (in reach or not) until its next blow or try.
+            if self.siege_clock[r] > 0 && regs.target[r].is_none() {
+                continue;
+            }
+            let s = target.index as usize;
             let unit = &units[regs.unit[r] as usize];
-            let [x, y, w, d] = self.footprint(s);
+            let foot = self.footprint(s);
+            let [x, y, w, d] = foot;
             let here = regs.position[r];
             // The nearest point of the footprint.
             let near = FxVec2::new(
                 here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
                 here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
             );
-            let gap = (near - here).length();
             let (_, depth) = unit.block_size_in(regs.formation[r], regs.files[r], regs.models[r]);
             let half = Fx::from_raw(depth.raw() / 2);
             let reach = if unit.range > Fx::ZERO {
@@ -478,29 +457,11 @@ impl Structures {
             } else {
                 half + MELEE_REACH
             };
-            let centre = footprint_centre((x, y), w as u8, d as u8);
-            if gap > reach {
-                // Close in, unless already on the way (or just failed to).
-                if regs.target[r].is_none() && self.siege_clock[r] == 0 {
-                    let toward = near - here;
-                    let out = if toward.length_sq_raw() == 0 {
-                        here - centre
-                    } else {
-                        here - near
-                    }
-                    .normalized();
-                    let stand = near + out * (half + Fx::ONE);
-                    let h = regs.handle(r);
-                    regs.order(
-                        h,
-                        Order {
-                            target: stand,
-                            facing: Some(Angle::of_vec(centre - stand)),
-                            files: 0,
-                            pace: Fx::ZERO,
-                        },
-                    );
-                    self.siege_clock[r] = RETRY_TICKS;
+            let centre = footprint_centre(foot);
+            if (near - here).length() > reach {
+                // Close in, unless already on the way.
+                if regs.target[r].is_none() {
+                    self.close_in(regs, r, near, centre, half);
                 }
                 continue;
             }
@@ -512,33 +473,66 @@ impl Structures {
             if self.siege_clock[r] > 0 {
                 continue;
             }
-            let (base, every) = if unit.range > Fx::ZERO {
-                (
-                    u32::from(regs.models[r]) * u32::from(unit.missile_damage) * HP_SCALE,
-                    unit.reload_ticks.max(1),
-                )
-            } else {
-                (
-                    (unit.front_fighters_percent(regs.files[r], regs.models[r])
-                        * u64::from(unit.melee_damage)) as u32,
-                    TICKS_PER_SECOND as u16,
-                )
-            };
-            self.siege_clock[r] = every;
-            let breaker = self
-                .breakers
-                .get(regs.unit[r] as usize)
-                .copied()
-                .unwrap_or_default();
-            let armour = self.buildings[self.building[s] as usize].armour;
-            let damage = base * breaker.percent(armour) / 100;
-            self.hp[s] = self.hp[s].saturating_sub(damage);
+            self.blow(regs, unit, r, s);
             if self.hp[s] == 0 {
-                self.fallen.push(self.handle(s));
+                self.fallen.push(target);
                 self.despawn(target, nav, regs);
                 self.siege[r] = None;
             }
         }
+    }
+
+    /// Send regiment slot `r` to stand just off the footprint point `near`,
+    /// facing the building's `centre`; `half` is half its block's depth.
+    fn close_in(&mut self, regs: &mut Regiments, r: usize, near: FxVec2, centre: FxVec2, half: Fx) {
+        let here = regs.position[r];
+        let out = if near == here {
+            here - centre
+        } else {
+            here - near
+        }
+        .normalized();
+        let stand = near + out * (half + Fx::ONE);
+        let h = regs.handle(r);
+        regs.order(
+            h,
+            Order {
+                target: stand,
+                facing: Some(Angle::of_vec(centre - stand)),
+                files: 0,
+                pace: Fx::ZERO,
+            },
+        );
+        self.siege_clock[r] = RETRY_TICKS;
+    }
+
+    /// Regiment slot `r` (of type `unit`) strikes building slot `s`: a
+    /// volley each reload, or its front rank's blows once a second.
+    fn blow(&mut self, regs: &Regiments, unit: &UnitStats, r: usize, s: usize) {
+        let (base, every) = if unit.range > Fx::ZERO {
+            (
+                u64::from(regs.models[r]) * u64::from(unit.missile_damage) * u64::from(HP_SCALE),
+                unit.reload_ticks.max(1),
+            )
+        } else {
+            // As against regiments: who can reach, and room to swing.
+            (
+                unit.front_fighters_percent(regs.files[r], regs.models[r])
+                    * u64::from(unit.melee_damage)
+                    * unit.weapon_room_percent(regs.formation[r])
+                    / 100,
+                TICKS_PER_SECOND as u16,
+            )
+        };
+        self.siege_clock[r] = every;
+        let breaker = self
+            .breakers
+            .get(regs.unit[r] as usize)
+            .copied()
+            .unwrap_or_default();
+        let armour = self.buildings[self.building[s] as usize].armour;
+        let damage = base * u64::from(breaker.percent(armour)) / 100;
+        self.hp[s] = self.hp[s].saturating_sub(u32::try_from(damage).unwrap_or(u32::MAX));
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
@@ -550,17 +544,16 @@ impl Structures {
         for b in &self.breakers {
             h.u8(*b as u8);
         }
-        for i in 0..self.alive.len() {
-            h.u8(u8::from(self.alive[i]));
+        for i in 0..self.hp.len() {
             h.u16(self.generation[i]);
-            if !self.alive[i] {
+            h.u32(self.hp[i]);
+            if self.hp[i] == 0 {
                 continue;
             }
             h.u8(self.owner[i]);
             h.u16(self.building[i]);
             h.i32(self.tile[i].0);
             h.i32(self.tile[i].1);
-            h.u32(self.hp[i]);
         }
         for r in 0..self.siege.len() {
             match self.siege_of(regs, r) {

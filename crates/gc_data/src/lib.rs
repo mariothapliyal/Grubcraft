@@ -122,8 +122,7 @@ pub struct UnitRecord {
 
 impl UnitRecord {
     pub fn name(&self) -> &str {
-        let len = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+        name_of(&self.name)
     }
 
     pub fn speed(&self) -> Fx {
@@ -271,19 +270,41 @@ fn table<'a, T: Pod>(
     read_table::<T>(schema, entry.bytes).map_err(|e| DataError::Table(path, e))
 }
 
-/// The rules every unit record must satisfy. Shared by the baker (which
-/// reports them against the RON source) and the loader.
-pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
-    let len = u.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
+/// A record's name: the bytes before its terminator.
+pub(crate) fn name_of(bytes: &[u8; NAME_BYTES]) -> &str {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
+    core::str::from_utf8(&bytes[..len]).unwrap_or("?")
+}
+
+/// A record's name is UTF-8, not empty, and zero after its terminator.
+pub(crate) fn validate_name(bytes: &[u8; NAME_BYTES]) -> Result<(), &'static str> {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
     if len == 0 {
         return Err("name is empty");
     }
-    if core::str::from_utf8(&u.name[..len]).is_err() {
+    if core::str::from_utf8(&bytes[..len]).is_err() {
         return Err("name is not UTF-8");
     }
-    if u.name[len..].iter().any(|&b| b != 0) {
+    if bytes[len..].iter().any(|&b| b != 0) {
         return Err("name has bytes after its terminator");
     }
+    Ok(())
+}
+
+/// The rules every unit record must satisfy. Shared by the baker (which
+/// reports them against the RON source) and the loader.
+pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
+    validate_stats(u)?;
+    if u.points == 0 {
+        return Err("points must be above 0");
+    }
+    Ok(())
+}
+
+/// [`validate_unit`] but for the Field Battle points, which a Conquest
+/// unit (`ConquestUnitRecord::stats`) need not have.
+pub fn validate_stats(u: &UnitRecord) -> Result<(), &'static str> {
+    validate_name(&u.name)?;
     if Faction::from_u8(u.faction).is_none() {
         return Err("unknown faction");
     }
@@ -326,9 +347,6 @@ pub fn validate_unit(u: &UnitRecord) -> Result<(), &'static str> {
     }
     if u.weapons & !(WEAPON_REACH | WEAPON_SWING_ROOM | WEAPON_SHIELD) != 0 {
         return Err("unknown weapon flags");
-    }
-    if u.points == 0 {
-        return Err("points must be above 0");
     }
     if u.reserved != 0 {
         return Err("reserved bytes must be zero");

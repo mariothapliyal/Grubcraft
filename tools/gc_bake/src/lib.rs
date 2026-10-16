@@ -138,7 +138,9 @@ fn bake_units(file: &Path) -> Result<Vec<UnitRecord>, BakeError> {
         {
             return Err(invalid(file, &def.name, "defined twice"));
         }
-        records.push(unit_record(file, def, def.points)?);
+        let record = unit_record(file, def, def.points)?;
+        gc_data::validate_unit(&record).map_err(|why| invalid(file, &def.name, why))?;
+        records.push(record);
     }
     if records.is_empty() {
         return Err(invalid(file, "(file)", "defines no units"));
@@ -160,7 +162,8 @@ fn name_bytes(name: &str) -> Result<[u8; NAME_BYTES], String> {
 }
 
 /// One stats block as the record the simulation reads: a `units.ron` entry,
-/// or the `stats` of a roster unit. `points` is its Field Battle cost.
+/// or the `stats` of a roster unit. `points` is its Field Battle cost (0 for
+/// a roster unit with none).
 fn unit_record(file: &Path, def: &Stats, points: u16) -> Result<UnitRecord, BakeError> {
     let bad = |why: String| invalid(file, &def.name, why);
     let record = UnitRecord {
@@ -203,7 +206,7 @@ fn unit_record(file: &Path, def: &Stats, points: u16) -> Result<UnitRecord, Bake
         points,
         reserved: 0,
     };
-    gc_data::validate_unit(&record).map_err(|why| bad(why.into()))?;
+    gc_data::validate_stats(&record).map_err(|why| bad(why.into()))?;
     Ok(record)
 }
 
@@ -330,7 +333,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "53d04ff2a6c244c0657d723fd923b718f5539eb352f84d5988c73a00a80bc097"
+            "4378277b5779a4ab8496f9a82fa41e463ccbc2d97c151aa992075354d4639344"
         );
     }
 
@@ -379,8 +382,8 @@ mod tests {
             assert_eq!(u.trained_at, u16::try_from(i).unwrap());
             assert_eq!((u.train_ticks, u.cost_grub, u.supply), (240, 50, 1));
             assert!(u.worker());
-            // The roster leaves points out; a unit units.ron doesn't list gets 400.
-            assert_eq!(u.stats.points, 400);
+            // The roster leaves points out; a unit units.ron doesn't list has none.
+            assert_eq!(u.stats.points, 0);
         }
     }
 

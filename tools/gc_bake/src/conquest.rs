@@ -20,10 +20,6 @@ pub(crate) const ROSTER_FILES: [(&str, FactionDef); 4] = [
     ("rosters/carrion_concord.ron", FactionDef::CarrionConcord),
 ];
 
-/// Field Battle points for a roster unit `units.ron` doesn't list (the
-/// rosters don't set them); any value bakes.
-const ROSTER_POINTS: u16 = 400;
-
 /// Where each name stands in a table, within one faction.
 type Index<'a> = BTreeMap<&'a str, u16>;
 
@@ -211,24 +207,26 @@ impl UnitContext<'_> {
             .units
             .iter()
             .find(|r| r.name() == name.as_str())
-            .map_or(ROSTER_POINTS, |r| r.points);
-        let trained_at = match &u.from {
-            rosters::From::Building(b) => *self
-                .building_at
-                .get(b.as_str())
-                .ok_or_else(|| bad(format!("trained at unknown building {b}")))?,
-            _ => cq::NONE,
-        };
-        let evolves_from = match &u.from {
-            rosters::From::Evolves(parent) => *self
-                .unit_at
-                .get(parent.as_str())
-                .ok_or_else(|| bad(format!("evolves from unknown unit {parent}")))?,
-            _ => cq::NONE,
-        };
-        let train_ticks = match &u.from {
-            rosters::From::Summoned(_) => 0,
-            _ => to_ticks(u.train_time).map_err(|why| bad(format!("train_time {why}")))?,
+            .map_or(0, |r| r.points);
+        let train_ticks = || to_ticks(u.train_time).map_err(|why| bad(format!("train_time {why}")));
+        let (trained_at, evolves_from, train_ticks) = match &u.from {
+            rosters::From::Building(b) => (
+                *self
+                    .building_at
+                    .get(b.as_str())
+                    .ok_or_else(|| bad(format!("trained at unknown building {b}")))?,
+                cq::NONE,
+                train_ticks()?,
+            ),
+            rosters::From::Evolves(parent) => (
+                cq::NONE,
+                *self
+                    .unit_at
+                    .get(parent.as_str())
+                    .ok_or_else(|| bad(format!("evolves from unknown unit {parent}")))?,
+                train_ticks()?,
+            ),
+            rosters::From::Summoned(_) => (cq::NONE, cq::NONE, 0),
         };
         Ok(ConquestUnitRecord {
             stats: unit_record(self.file, &u.stats, points)?,

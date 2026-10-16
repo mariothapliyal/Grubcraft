@@ -9,7 +9,7 @@
 use bytemuck::{Pod, Zeroable};
 use gc_fixed::Fx;
 
-use crate::{Faction, NAME_BYTES, UnitRecord, validate_unit};
+use crate::{Faction, NAME_BYTES, UnitRecord, name_of, validate_name, validate_stats};
 
 /// Pack path of the building table.
 pub const BUILDINGS_PATH: &str = "data/buildings";
@@ -254,25 +254,6 @@ impl ConquestUnitRecord {
     }
 }
 
-fn name_of(bytes: &[u8; NAME_BYTES]) -> &str {
-    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-    core::str::from_utf8(&bytes[..len]).unwrap_or("?")
-}
-
-fn validate_name(bytes: &[u8; NAME_BYTES]) -> Result<(), &'static str> {
-    let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-    if len == 0 {
-        return Err("name is empty");
-    }
-    if core::str::from_utf8(&bytes[..len]).is_err() {
-        return Err("name is not UTF-8");
-    }
-    if bytes[len..].iter().any(|&b| b != 0) {
-        return Err("name has bytes after its terminator");
-    }
-    Ok(())
-}
-
 /// The rules every building record satisfies on its own; `count` is the
 /// number of buildings, for the index fields. Shared by the baker and the
 /// loader.
@@ -322,7 +303,7 @@ pub fn validate_conquest_unit(
     buildings: usize,
     units: usize,
 ) -> Result<(), &'static str> {
-    validate_unit(&u.stats)?;
+    validate_stats(&u.stats)?;
     if Class::from_u8(u.class).is_none() {
         return Err("unknown class");
     }
