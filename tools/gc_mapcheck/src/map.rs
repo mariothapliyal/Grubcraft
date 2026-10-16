@@ -6,7 +6,7 @@
 //!
 //! The cliff, ford and clearance rules below repeat those of the game's
 //! walkable-ground grid (`Heightmap::nav_costs` in `gc_game`), which works on
-//! half-tile cells; sharing one implementation is the job of the baked-map step.
+//! half-tile cells; sharing one implementation is to be done when the game first loads these maps.
 
 use crate::def::*;
 use gc_sim::terrain::HEIGHT_UNITS;

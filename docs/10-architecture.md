@@ -290,7 +290,7 @@ grubcraft.pak  ── memory-mapped at runtime ──▶ GPU / mixer / sim table
 
 ## Maps
 - Heightmap (`u16`), tile types (`u8`), water depth layer (reserved for naval), object list, Bloodseep sites and a small event-script block.
-- **Built so far (2026-10-15):** the source form is a RON description under `data/maps/`, read and built by `tools/gc_mapcheck` (see [07](07-world-and-maps.md#map-format-and-tooling)). `gc_mapcheck::Map` hands out exactly what `gc_sim::Ground` takes (one `u16` height per tile, the water line, a cover byte per tile) plus the placed objects, built with integer arithmetic only so every machine gets the same bytes, and a map hash. Nothing in the game reads it yet; baking and loading is the netcode's map step.
+- **Built so far (2026-10-15):** the source form is a RON description under `data/maps/`, read and built by `tools/gc_mapcheck` (see [07](07-world-and-maps.md#map-format-and-tooling)). `gc_mapcheck::Map` hands out exactly what `gc_sim::Ground` takes (one `u16` height per tile, the water line, a cover byte per tile) plus the placed objects, built with integer arithmetic only so every machine gets the same bytes, and a map hash. Nothing in the game reads it yet; Conquest loading comes with M3. (M2 step 4 generates Field Battle maps from a seed with integer maths instead of shipping baked files.)
 - A Warfield map is under 2 MB on disk. The baked terrain lighting and nav sector graph are generated at load (in well under a second) rather than stored.
 
 ## UI framework
