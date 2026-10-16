@@ -493,9 +493,6 @@ struct Running {
     unit_points: Vec<u32>,
     /// The building types, for the sandbox's Conquest world.
     buildings: buildings::Table,
-    /// The map's ground as the simulation's pathfinding has it, for checking
-    /// where a building may stand.
-    nav_costs: Vec<u8>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -1099,7 +1096,6 @@ impl App {
             unit_factions,
             unit_points,
             buildings: building_table,
-            nav_costs: nav,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
                 panel: opts.showroom.is_none(),
@@ -2923,7 +2919,6 @@ impl Running {
         self.hud.set_terrain(&self.heightmap, MAP_TILES);
         let nav = self.heightmap.nav_costs();
         self.blocked_marks = blocked_marks(&nav, MAP_TILES);
-        self.nav_costs = nav;
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(&self.heightmap.cover, MAP_TILES, seed)
         });
@@ -3642,7 +3637,7 @@ impl Running {
             .stats
             .get(usize::from(self.sandbox.building))?;
         let tile = buildings::tile_for(at, stats.width, stats.depth);
-        let why = buildings::refusal(&self.world, &self.nav_costs, MAP_TILES, &stats, tile);
+        let why = buildings::refusal(&self.world, self.sandbox.building, tile);
         Some((stats, tile, why))
     }
 

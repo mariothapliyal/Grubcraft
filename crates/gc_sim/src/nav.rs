@@ -31,6 +31,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::StateHasher;
 use crate::regiments::Regiments;
+use crate::structures::Refusal;
 
 /// Grid cells along one tile.
 pub const CELLS_PER_TILE: i32 = 2;
@@ -758,20 +759,22 @@ impl Nav {
         }
     }
 
-    /// Whether the tiles `x..x + w` × `y..y + d` are all on the map, on
-    /// ground a regiment could walk on, with no building on them (always
-    /// true with no map).
-    pub(crate) fn ground_free(&self, tiles: [i32; 4]) -> bool {
-        self.grid.as_ref().is_none_or(|g| {
-            g.cells(tiles).is_some_and(|[x0, y0, x1, y1]| {
-                (y0..y1).all(|cy| {
-                    (x0..x1).all(|cx| {
-                        let i = g.idx(cx, cy) as usize;
-                        g.ground[i] != BLOCKED && g.built[i] == 0
-                    })
-                })
-            })
-        })
+    /// Whether a building could stand on the tiles `x..x + w` × `y..y + d`:
+    /// all on the map, on ground a regiment could walk on, with no building
+    /// on them (always, with no map).
+    pub(crate) fn footing(&self, tiles: [i32; 4]) -> Result<(), Refusal> {
+        let Some(g) = &self.grid else {
+            return Ok(());
+        };
+        let [x0, y0, x1, y1] = g.cells(tiles).ok_or(Refusal::OffMap)?;
+        let cells = || (y0..y1).flat_map(move |cy| (x0..x1).map(move |cx| g.idx(cx, cy) as usize));
+        if cells().any(|i| g.ground[i] == BLOCKED) {
+            return Err(Refusal::Rough);
+        }
+        if cells().any(|i| g.built[i] > 0) {
+            return Err(Refusal::Built);
+        }
+        Ok(())
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).

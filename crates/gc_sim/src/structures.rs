@@ -89,6 +89,23 @@ impl Breaker {
     }
 }
 
+/// Why a building can't go up where it was asked to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// Not a Conquest match.
+    NoBuildings,
+    /// No such building type.
+    Unknown,
+    /// Some of it would be off the map.
+    OffMap,
+    /// Ground no regiment can walk on.
+    Rough,
+    /// Another building is there.
+    Built,
+    /// A regiment is standing there.
+    Crowded,
+}
+
 /// Bits of [`BuildingStats::flags`].
 pub const DROP_OFF_GRUB: u8 = 1;
 pub const DROP_OFF_MARROW: u8 = 2;
@@ -344,22 +361,21 @@ impl Structures {
 
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`: on the map, on ground regiments can walk, clear of
-    /// other buildings (see `Nav::ground_free`), and with no regiment
-    /// standing on it.
-    pub(crate) fn fits(
+    /// other buildings (see `Nav::footing`), and with no regiment standing
+    /// on it.
+    pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
         nav: &Nav,
         regs: &Regiments,
-    ) -> bool {
-        let Some(b) = self.buildings.get(building as usize) else {
-            return false;
-        };
+    ) -> Result<(), Refusal> {
+        let b = self
+            .buildings
+            .get(building as usize)
+            .ok_or(Refusal::Unknown)?;
         let (w, d) = (i32::from(b.width), i32::from(b.depth));
-        if !nav.ground_free([tile.0, tile.1, w, d]) {
-            return false;
-        }
+        nav.footing([tile.0, tile.1, w, d])?;
         // No regiment's centre on ground it couldn't stand on once the
         // building is up.
         let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);
@@ -367,14 +383,19 @@ impl Structures {
             FxVec2::from_ints(tile.0, tile.1) - FxVec2::new(margin, margin),
             FxVec2::from_ints(tile.0 + w, tile.1 + d) + FxVec2::new(margin, margin),
         );
-        !(0..regs.alive.len()).any(|i| {
+        let crowded = (0..regs.alive.len()).any(|i| {
             let p = regs.position[i];
             regs.alive[i] && p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y
-        })
+        });
+        if crowded {
+            Err(Refusal::Crowded)
+        } else {
+            Ok(())
+        }
     }
 
     /// Put up a finished building for `owner`. `None` when the pool is
-    /// full; the caller has checked [`Structures::fits`].
+    /// full; the caller has checked [`Structures::check`].
     pub(crate) fn spawn(
         &mut self,
         owner: PlayerId,

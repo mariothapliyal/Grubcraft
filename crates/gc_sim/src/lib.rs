@@ -42,7 +42,7 @@ pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 pub use structures::{
-    BuildingId, BuildingStats, ConquestSetup, StructureHandle, StructureView, Structures,
+    BuildingId, BuildingStats, ConquestSetup, Refusal, StructureHandle, StructureView, Structures,
 };
 pub use terrain::{Cover, Ground, Terrain};
 pub use verdict::{HOLD_TICKS, Verdict};
@@ -649,6 +649,18 @@ impl World {
         self.structures.as_ref()
     }
 
+    /// Whether a building of type `building` could go up now with its
+    /// north-west tile at `tile`, and if not, why: the check
+    /// [`Command::SpawnStructure`] makes.
+    pub fn can_build(&self, building: BuildingId, tile: (i32, i32)) -> Result<(), Refusal> {
+        self.structures.as_ref().ok_or(Refusal::NoBuildings)?.check(
+            building,
+            tile,
+            &self.nav,
+            &self.regiments,
+        )
+    }
+
     /// The building regiment `h` is attacking, if any.
     pub fn siege_target(&self, h: RegimentHandle) -> Option<StructureHandle> {
         let i = self.regiments.resolve(h)?;
@@ -889,7 +901,9 @@ impl World {
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 usize::from(pc.player) < MAX_PARTIES
-                    && structures.fits(building, tile, &self.nav, &self.regiments)
+                    && structures
+                        .check(building, tile, &self.nav, &self.regiments)
+                        .is_ok()
                     && structures
                         .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
                         .is_some()

@@ -4,12 +4,11 @@
 
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
-use gc_fixed::FxVec2;
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::structures::{Armour, Breaker, Role, TowerAttack};
 use gc_sim::{
-    BuildingId, BuildingStats, ConquestSetup, PlayerId, StructureHandle, StructureView, World,
+    BuildingId, BuildingStats, ConquestSetup, PlayerId, Refusal, StructureHandle, StructureView,
+    World,
 };
 use glam::{Vec2, Vec3};
 
@@ -339,55 +338,16 @@ pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
     )
 }
 
-/// Why a building of `stats` can't stand with its north-west tile at
-/// `tile`, if it can't: the rules of the simulation's own check, so the
-/// panel can say so. `costs` is the map's ground, as the simulation's
-/// pathfinding was given it.
-pub fn refusal(
-    world: &World,
-    costs: &[u8],
-    map_tiles: u32,
-    stats: &BuildingStats,
-    tile: (i32, i32),
-) -> Option<&'static str> {
-    let (w, d) = (i32::from(stats.width), i32::from(stats.depth));
-    let edge = map_tiles as i32;
-    if tile.0 < 0 || tile.1 < 0 || tile.0 + w > edge || tile.1 + d > edge {
-        return Some("That would hang over the edge of the map.");
-    }
-    let side = (edge * CELLS_PER_TILE) as usize;
-    let cells = |v: i32| (v * CELLS_PER_TILE) as usize;
-    let blocked = (cells(tile.1)..cells(tile.1 + d)).any(|cy| {
-        (cells(tile.0)..cells(tile.0 + w))
-            .any(|cx| costs.get(cy * side + cx).is_some_and(|&c| c == BLOCKED))
-    });
-    if blocked {
-        return Some("The ground there is too rough to build on.");
-    }
-    let in_the_way = world.structures().is_some_and(|all| {
-        all.iter().any(|o| {
-            o.tile.0 < tile.0 + w
-                && tile.0 < o.tile.0 + i32::from(o.width)
-                && o.tile.1 < tile.1 + d
-                && tile.1 < o.tile.1 + i32::from(o.depth)
-        })
-    });
-    if in_the_way {
-        return Some("Another building is in the way.");
-    }
-    // No regiment's centre within a tile of it.
-    let (lo, hi) = (
-        FxVec2::from_ints(tile.0 - 1, tile.1 - 1),
-        FxVec2::from_ints(tile.0 + w + 1, tile.1 + d + 1),
-    );
-    let crowded = world.regiments.iter().any(|r| {
-        let p: FxVec2 = r.position;
-        p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y
-    });
-    if crowded {
-        return Some("A regiment is standing in the way.");
-    }
-    None
+/// Why building `id` can't stand with its north-west tile at `tile`, if it
+/// can't: the simulation's own check, in the panel's words.
+pub fn refusal(world: &World, id: BuildingId, tile: (i32, i32)) -> Option<&'static str> {
+    world.can_build(id, tile).err().map(|why| match why {
+        Refusal::NoBuildings | Refusal::Unknown => "There are no buildings here.",
+        Refusal::OffMap => "That would hang over the edge of the map.",
+        Refusal::Rough => "The ground there is too rough to build on.",
+        Refusal::Built => "Another building is in the way.",
+        Refusal::Crowded => "A regiment is standing in the way.",
+    })
 }
 
 #[cfg(test)]
@@ -470,10 +430,10 @@ mod tests {
         let units: Vec<gc_sim::UnitStats> =
             data.units.iter().map(crate::sandbox::stats_of).collect();
         let tiles = 32u32;
-        let side = tiles as usize * CELLS_PER_TILE as usize;
+        let side = tiles as usize * gc_sim::nav::CELLS_PER_TILE as usize;
         let mut costs = vec![1u8; side * side];
         // A cliff along the east edge of the map's top left corner tile.
-        costs[side * 6 + 20] = BLOCKED;
+        costs[side * 6 + 20] = gc_sim::nav::BLOCKED;
         let mut world = World::new(&gc_sim::MatchSetup {
             seed: 1,
             capacities: gc_sim::Capacities { regiments: 8 },
@@ -490,17 +450,17 @@ mod tests {
             .iter()
             .position(|s| s.role == Role::Housing)
             .unwrap();
-        let stats = table.stats[farm];
-        assert_eq!(refusal(&world, &costs, tiles, &stats, (8, 8)), None);
-        assert!(refusal(&world, &costs, tiles, &stats, (-1, 8)).is_some());
-        assert!(refusal(&world, &costs, tiles, &stats, (tiles as i32 - 1, 8)).is_some());
+        let farm = farm as BuildingId;
+        assert_eq!(refusal(&world, farm, (8, 8)), None);
+        assert!(refusal(&world, farm, (-1, 8)).is_some());
+        assert!(refusal(&world, farm, (tiles as i32 - 1, 8)).is_some());
         // Cell (20, 6) is tile (10, 3).
-        assert!(refusal(&world, &costs, tiles, &stats, (9, 2)).is_some());
+        assert!(refusal(&world, farm, (9, 2)).is_some());
         // What the check allows, the simulation accepts, and then the
         // spot is taken.
         let place = |world: &mut World, tile: (i32, i32)| {
             let command = gc_sim::Command::SpawnStructure {
-                building: farm as BuildingId,
+                building: farm,
                 tile: (tile.0 as i16, tile.1 as i16),
             };
             world
@@ -510,7 +470,7 @@ mod tests {
         };
         assert!(place(&mut world, (8, 8)));
         assert_eq!(world.structures().unwrap().len(), 1);
-        assert!(refusal(&world, &costs, tiles, &stats, (9, 9)).is_some());
+        assert!(refusal(&world, farm, (9, 9)).is_some());
         assert!(!place(&mut world, (9, 9)));
         let standing = world.structures().unwrap().iter().next().unwrap();
         assert_eq!(standing.tile, (8, 8));
