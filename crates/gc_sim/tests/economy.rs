@@ -191,7 +191,7 @@ fn base_with_workers(w: &mut World, n: i32) -> Vec<RegimentHandle> {
 /// settle into the round.
 fn income_per_minute(w: &mut World, of: Resource) -> u32 {
     let banked = |w: &World| {
-        let b = w.economy().unwrap().bank(0);
+        let b = w.bank(0).unwrap();
         match of {
             Resource::Grub => b.grub,
             Resource::Marrow => b.marrow,
@@ -207,12 +207,12 @@ fn income_per_minute(w: &mut World, of: Resource) -> u32 {
 fn a_conquest_match_starts_with_its_stores_and_nodes() {
     let w = conquest(&[grub(35, 22, 7500), marrow(35, 30, 3000)], 100);
     let e = w.economy().unwrap();
-    let b = e.bank(0);
+    let b = w.bank(0).unwrap();
     assert_eq!(
         (b.grub, b.marrow, b.supply_used, b.supply_cap),
         (500, 100, 0, 0)
     );
-    assert_eq!(e.bank(1).grub, 0);
+    assert_eq!(w.bank(1).unwrap().grub, 0);
     let nodes: Vec<_> = e.nodes().collect();
     assert_eq!(nodes.len(), 2);
     assert_eq!((nodes[1].resource, nodes[1].left), (Resource::Marrow, 3000));
@@ -290,7 +290,7 @@ fn buildings_raise_the_supply_cap_up_to_150() {
     spawn(&mut w, 0, WORKER, 30, 30);
     spawn(&mut w, 0, SPEARS, 30, 40);
     w.tick(&[]);
-    let b = w.economy().unwrap().bank(0);
+    let b = w.bank(0).unwrap();
     assert_eq!((b.supply_used, b.supply_cap), (3, 25));
     for i in 0..15 {
         put_up(
@@ -302,7 +302,7 @@ fn buildings_raise_the_supply_cap_up_to_150() {
         );
     }
     w.tick(&[]);
-    assert_eq!(w.economy().unwrap().bank(0).supply_cap, 150);
+    assert_eq!(w.bank(0).unwrap().supply_cap, 150);
 }
 
 #[test]
@@ -357,16 +357,16 @@ fn a_worker_given_another_order_keeps_its_load() {
     run(&mut w, 20 * TICKS_PER_SECOND);
     assert_eq!(w.gathers_at(r), None);
     assert_eq!(w.carries(r), Some((Resource::Marrow, 5)));
-    assert_eq!(w.economy().unwrap().bank(0).marrow, 100);
+    assert_eq!(w.bank(0).unwrap().marrow, 100);
     // Sent back, it drops off what it carries first.
     assert!(gather(&mut w, 0, r, 0));
     let mut ticks = 0;
-    while w.economy().unwrap().bank(0).marrow == 100 {
+    while w.bank(0).unwrap().marrow == 100 {
         w.tick(&[]);
         ticks += 1;
         assert!(ticks < MINUTE, "never dropped off");
     }
-    assert_eq!(w.economy().unwrap().bank(0).marrow, 105);
+    assert_eq!(w.bank(0).unwrap().marrow, 105);
     assert_eq!(w.economy().unwrap().nodes().next().unwrap().left, 3000 - 5);
 }
 
@@ -380,7 +380,7 @@ fn with_nowhere_to_take_it_a_worker_waits() {
     assert_eq!(w.economy().unwrap().nodes().next().unwrap().left, 3000 - 5);
     put_up(&mut w, 0, HALL, 20, 20);
     run(&mut w, MINUTE);
-    assert!(w.economy().unwrap().bank(0).marrow > 100);
+    assert!(w.bank(0).unwrap().marrow > 100);
 }
 
 #[test]

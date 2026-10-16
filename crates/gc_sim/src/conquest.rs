@@ -1,8 +1,8 @@
 //! What a Conquest match adds to a battle (see [`crate::World::conquest`]):
 //! buildings ([`crate::structures`]) and the economy ([`crate::economy`]).
 
-use crate::economy::NodeSetup;
-use crate::structures::{Breaker, BuildingStats};
+use crate::economy::{Economy, NodeSetup};
+use crate::structures::{Breaker, BuildingStats, Structures};
 use crate::{MAX_PARTIES, StateHasher};
 
 /// What a Conquest match knows about each regiment type beyond its battle
@@ -62,5 +62,29 @@ impl Default for ConquestSetup<'_> {
             start: [(0, 0); MAX_PARTIES],
             gather_percent: Self::STANDARD,
         }
+    }
+}
+
+/// A Conquest match's own systems, made together by
+/// [`crate::World::conquest`].
+pub(crate) struct Conquest {
+    pub(crate) structures: Structures,
+    pub(crate) economy: Economy,
+}
+
+impl Conquest {
+    pub(crate) fn new(setup: &ConquestSetup, regiments: usize) -> Conquest {
+        Conquest {
+            structures: Structures::new(setup.buildings, setup.units, setup.structures, regiments),
+            economy: Economy::new(setup, regiments),
+        }
+    }
+
+    /// Regiment slot `r` was given another order: it stops attacking any
+    /// building and stops gathering. Every order that sets a regiment to
+    /// work calls this first.
+    pub(crate) fn stop_work(&mut self, r: usize) {
+        self.structures.stop(r);
+        self.economy.stop(r);
     }
 }

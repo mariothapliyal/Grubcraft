@@ -32,7 +32,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::conquest::ConquestUnit;
 use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, Regiments};
-use crate::{MAX_PARTIES, PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
+use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
 /// Index of a building type in the match's building table.
 pub type BuildingId = u16;
@@ -232,6 +232,14 @@ fn footprint_centre([x, y, w, d]: [i32; 4]) -> FxVec2 {
     )
 }
 
+/// The point of a footprint nearest `here`.
+fn nearest_point([x, y, w, d]: [i32; 4], here: FxVec2) -> FxVec2 {
+    FxVec2::new(
+        here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
+        here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
+    )
+}
+
 /// A regiment and a building's footprint: how far apart they are, and
 /// where it would stand against it. Shared by sieges and by workers
 /// bringing in what they gathered ([`crate::economy`]).
@@ -247,12 +255,8 @@ pub(crate) struct Approach {
 
 impl Approach {
     pub(crate) fn of(regs: &Regiments, unit: &UnitStats, r: usize, foot: [i32; 4]) -> Approach {
-        let [x, y, w, d] = foot;
         let here = regs.position[r];
-        let near = FxVec2::new(
-            here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
-            here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
-        );
+        let near = nearest_point(foot, here);
         let (_, depth) = unit.block_size_in(regs.formation[r], regs.files[r], regs.models[r]);
         Approach {
             near,
@@ -415,9 +419,16 @@ impl Structures {
 
     /// Live buildings in index order.
     pub fn iter(&self) -> impl Iterator<Item = StructureView> + '_ {
-        (0..self.hp.len())
-            .filter(|&i| self.hp[i] > 0)
-            .map(|i| self.view(i))
+        self.standing().map(|i| self.view(i))
+    }
+
+    /// The slots of the buildings standing, in index order.
+    fn standing(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.hp.len()).filter(|&i| self.hp[i] > 0)
+    }
+
+    fn stats_of(&self, i: usize) -> &BuildingStats {
+        &self.buildings[self.building[i] as usize]
     }
 
     /// The footprint of building slot `i`: x, y, width, depth in tiles.
@@ -435,31 +446,18 @@ impl Structures {
         flag: u8,
         here: FxVec2,
     ) -> Option<[i32; 4]> {
-        (0..self.hp.len())
-            .filter(|&i| {
-                self.hp[i] > 0
-                    && self.owner[i] == owner
-                    && self.buildings[self.building[i] as usize].flags & flag != 0
-            })
+        self.standing()
+            .filter(|&i| self.owner[i] == owner && self.stats_of(i).flags & flag != 0)
             .map(|i| self.footprint(i))
-            .min_by_key(|&[x, y, w, d]| {
-                let near = FxVec2::new(
-                    here.x.clamp(Fx::from_int(x), Fx::from_int(x + w)),
-                    here.y.clamp(Fx::from_int(y), Fx::from_int(y + d)),
-                );
-                (near - here).length_sq_raw()
-            })
+            .min_by_key(|&foot| (nearest_point(foot, here) - here).length_sq_raw())
     }
 
-    /// Add what each player's standing buildings give to their supply cap.
-    pub(crate) fn add_supply(&self, cap: &mut [u32; MAX_PARTIES]) {
-        for i in 0..self.hp.len() {
-            if self.hp[i] > 0
-                && let Some(c) = cap.get_mut(usize::from(self.owner[i]))
-            {
-                *c += u32::from(self.buildings[self.building[i] as usize].supply);
-            }
-        }
+    /// What `owner`'s standing buildings add to their supply cap.
+    pub(crate) fn supply_of(&self, owner: PlayerId) -> u32 {
+        self.standing()
+            .filter(|&i| self.owner[i] == owner)
+            .map(|i| u32::from(self.stats_of(i).supply))
+            .sum()
     }
 
     /// Whether a building of type `building` may stand with its north-west
