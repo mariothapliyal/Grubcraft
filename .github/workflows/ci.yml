@@ -60,6 +60,19 @@ jobs:
         run: cargo test --release -p gc_ai --test versus warlord
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
+      # Counts instructions under valgrind, which a busy runner cannot skew,
+      # and compares them with tools/gc_bench/baseline.json.
+      - name: Benchmark instruction counts
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y valgrind
+          python3 scripts/bench-gate.py
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && !cancelled()
+        with:
+          name: bench-instructions
+          path: target/bench/instructions.json
+          retention-days: 14
 
   msrv:
     # `rust-version` in Cargo.toml is a promise that the game still builds
