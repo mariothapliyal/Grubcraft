@@ -162,6 +162,9 @@ pub enum SlotState {
     Ready,
     /// Waiting for the click that says where.
     Armed,
+    /// Shown dim like [`SlotState::Off`], but a click still comes through,
+    /// so the game can say why it can't (too poor, tier too low).
+    Blocked,
 }
 
 /// One button of the command grid.
@@ -336,7 +339,7 @@ impl Hud {
                 cell_h,
             );
             let on = slot.state != SlotState::Off;
-            let hot = on && cell.contains(input.mouse.0, input.mouse.1);
+            let hot = slot.state == SlotState::Ready && cell.contains(input.mouse.0, input.mouse.1);
             let (clicked, _) = self.press.widget(
                 WIDGET_SLOT + i as u32,
                 cell,
@@ -349,7 +352,9 @@ impl Hud {
                 events.push(HudEvent::Command(i));
             }
             let (back, edge, text) = match slot.state {
-                SlotState::Off => (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED),
+                SlotState::Off | SlotState::Blocked => {
+                    (theme::FIELD, theme::PANEL_EDGE, theme::DISABLED)
+                }
                 SlotState::Ready if hot => (theme::BUTTON_HOT, theme::PANEL_EDGE, theme::TEXT),
                 SlotState::Ready => (theme::BUTTON, theme::PANEL_EDGE, theme::TEXT),
                 SlotState::Armed => (theme::PRIMARY, theme::ACCENT, theme::TEXT),
@@ -760,10 +765,10 @@ mod tests {
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|i| GridSlot {
             label: "Move",
             detail: "",
-            state: if i == 0 {
-                SlotState::Ready
-            } else {
-                SlotState::Off
+            state: match i {
+                0 => SlotState::Ready,
+                2 => SlotState::Blocked,
+                _ => SlotState::Off,
             },
         });
         let data = HudData {
@@ -1094,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_ready_button_reports_a_click() {
+    fn only_a_ready_or_blocked_button_reports_a_click() {
         let mut hud = Hud::default();
         let l = HudLayout::new(SCREEN, false);
         let cell_w = (l.grid.w - 3 * GRID_GAP) / GRID_COLS as i32;
@@ -1115,6 +1120,9 @@ mod tests {
         assert!(ev.is_empty());
         let (ev, _) = run(&mut hud, at(3, 2), &[], &[]);
         assert!(ev.is_empty());
+        // A blocked one looks off but still reports, so the game can say why.
+        let (ev, _) = run(&mut hud, at(2, 0), &[], &[]);
+        assert_eq!(ev, vec![HudEvent::Command(2)]);
     }
 
     #[test]

@@ -1432,7 +1432,8 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
-                    // A building's card or the build menu owns the grid's keys.
+                    // A building's card or the build menu owns the grid's keys;
+                    // what it leaves goes to the battle grid below.
                     if grid_key
                         && let Some(slot) = GRID_CODES.iter().position(|&c| c == code)
                         && r.card_press(slot)
@@ -1490,13 +1491,13 @@ impl ApplicationHandler for App {
                         // Shift+R: the dev tool; plain R is the grid's Formation.
                         KeyCode::KeyR if down && !event.repeat && reload_key => r.reload_data(),
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
-                        KeyCode::KeyQ if grid_key => r.grid_press(hud::SLOT_MOVE),
-                        KeyCode::KeyW if grid_key => r.grid_press(hud::SLOT_ATTACK),
+                        KeyCode::KeyQ if grid_key => r.battle_press(hud::SLOT_MOVE),
+                        KeyCode::KeyW if grid_key => r.battle_press(hud::SLOT_ATTACK),
                         // The hero's fourth ability owns F while a hero is shown.
                         KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
                         KeyCode::KeyR | KeyCode::KeyF if grid_key => {
-                            r.grid_press(hud::SLOT_FORMATION);
+                            r.battle_press(hud::SLOT_FORMATION);
                         }
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),

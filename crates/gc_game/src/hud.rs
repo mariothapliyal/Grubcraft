@@ -678,7 +678,12 @@ impl Running {
         if self.watching.is_some() || self.sandbox.placing || self.card_press(slot) {
             return;
         }
-        if self.selected.is_empty() {
+        self.battle_press(slot);
+    }
+
+    /// A battle grid slot: Move, Attack or Formation.
+    pub fn battle_press(&mut self, slot: usize) {
+        if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
             return;
         }
         match slot {

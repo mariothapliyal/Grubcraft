@@ -7,6 +7,7 @@
 use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
+use gc_sim::structures::CANCEL_REFUND_PERCENT;
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
     UnitId,
@@ -19,6 +20,8 @@ use crate::{Running, buildings, from_fx_vec, fx_vec, sounds};
 
 /// A worker's Build button: F, the special slot.
 pub const SLOT_BUILD: usize = 7;
+/// A worker's Expand button (D): lay a new main building.
+const SLOT_EXPAND: usize = 6;
 /// A building's last slot (V): its tier upgrade, or calling it off.
 const SLOT_LAST: usize = GRID_SLOTS - 1;
 /// A right-click this close to a seep or vein (in tiles) sends workers there.
@@ -57,38 +60,48 @@ impl Running {
         let mut slots = [None; GRID_SLOTS];
         let structures = self.world.structures()?;
         if let Some(s) = self.picked_structure().and_then(|h| structures.get(h)) {
-            if !s.finished() || s.upgrading.is_some() {
+            if !s.finished() {
                 slots[SLOT_LAST] = Some(Action::CallOff);
             } else {
-                // What the simulation lets it train: what its upgrade chain does.
-                let trains = (self.data.conquest_units.iter().enumerate())
-                    .filter(|(_, u)| structures.grew_from(s.building, u.trained_at))
-                    .map(|(i, _)| Action::Train(i as UnitId));
-                for (slot, a) in slots[..SLOT_LAST].iter_mut().zip(trains) {
-                    *slot = Some(a);
+                // It still trains while it upgrades.
+                for (slot, u) in slots[..SLOT_LAST].iter_mut().zip(self.trains(s.building)) {
+                    *slot = Some(Action::Train(u));
                 }
-                slots[SLOT_LAST] = structures.upgrade_of(s.building).map(Action::Upgrade);
+                slots[SLOT_LAST] = match s.upgrading {
+                    Some(_) => Some(Action::CallOff),
+                    None => structures.upgrade_of(s.building).map(Action::Upgrade),
+                };
             }
             return Some(Card { slots, whole: true });
         }
         let worker = self.selected_workers().next()?;
-        if !self.hud.build_menu {
-            slots[SLOT_BUILD] = Some(Action::OpenBuild);
-            return Some(Card {
-                slots,
-                whole: false,
-            });
-        }
         let faction = self.world.regiments.get(worker).and_then(|r| {
             self.data
                 .conquest_units
                 .get(usize::from(r.unit))
                 .map(ConquestUnitRecord::faction)
         })?;
+        if !self.hud.build_menu {
+            slots[SLOT_BUILD] = Some(Action::OpenBuild);
+            slots[SLOT_EXPAND] = self.buildings.expansion(faction).map(Action::Lay);
+            return Some(Card {
+                slots,
+                whole: false,
+            });
+        }
         for (slot, b) in slots.iter_mut().zip(self.buildings.buildable(faction)) {
             *slot = Some(Action::Lay(b));
         }
         Some(Card { slots, whole: true })
+    }
+
+    /// What a building of type `building` trains: what the simulation lets
+    /// it, which is what its whole upgrade chain does.
+    fn trains(&self, building: BuildingId) -> impl Iterator<Item = UnitId> + '_ {
+        let structures = self.world.structures();
+        (self.data.conquest_units.iter().enumerate())
+            .filter(move |(_, u)| structures.is_some_and(|s| s.grew_from(building, u.trained_at)))
+            .map(|(i, _)| i as UnitId)
     }
 
     /// The selected regiments that are workers.
@@ -97,9 +110,13 @@ impl Running {
         (self.selected.iter().copied()).filter(|&h| is_worker(regiments, units, h))
     }
 
-    /// Open or close the workers' build menu. Opening it puts down an armed
-    /// order; closing it puts down a building chosen to lay.
+    /// Open or close the workers' build menu; it opens only for workers.
+    /// Opening it puts down an armed order; closing it puts down a building
+    /// chosen to lay.
     pub fn set_build_menu(&mut self, open: bool) {
+        if open && self.selected_workers().next().is_none() {
+            return;
+        }
         self.hud.build_menu = open;
         if open || matches!(self.hud.armed, Some(Armed::Lay(_))) {
             self.hud.armed = None;
@@ -166,14 +183,14 @@ impl Running {
                 }
                 Action::CallOff => {
                     label.push_str("Cancel");
-                    detail.push_str("75%");
+                    let _ = write!(detail, "{CANCEL_REFUND_PERCENT}%");
                 }
             }
             let armed = matches!(action, Action::Lay(b) if self.hud.armed == Some(Armed::Lay(b)));
             states[i] = if armed {
                 SlotState::Armed
             } else if self.blocked(action).is_some() {
-                SlotState::Off
+                SlotState::Blocked
             } else {
                 SlotState::Ready
             };
@@ -200,8 +217,13 @@ impl Running {
                 return true;
             }
             Action::Lay(b) => {
-                self.hud.armed = (self.hud.armed != Some(Armed::Lay(b))).then_some(Armed::Lay(b));
-                self.say(format!("Where should the {} go?", self.buildings.name(b)));
+                // Pressing it again puts it down.
+                if self.hud.armed == Some(Armed::Lay(b)) {
+                    self.hud.armed = None;
+                } else {
+                    self.hud.armed = Some(Armed::Lay(b));
+                    self.say(format!("Where should the {} go?", self.buildings.name(b)));
+                }
                 return true;
             }
             Action::Train(_) | Action::Upgrade(_) | Action::CallOff => {}
@@ -259,19 +281,31 @@ impl Running {
         }
     }
 
-    /// A right-click in Conquest that means more than a move: a selected
-    /// building's rally point, or workers sent to a seep, a vein or one of
-    /// your buildings. Returns whether it was one.
+    /// A right-click in Conquest that means more than a move: the rally
+    /// point of a selected building that trains, or workers (and only
+    /// workers) sent to a seep, a vein or one of your buildings. Returns
+    /// whether it was one.
     pub fn conquest_right_click(&mut self, at: Vec2) -> bool {
         if !self.conquest_units || self.watching.is_some() {
             return false;
         }
         if let Some(structure) = self.picked_structure() {
-            self.order(Command::Rally {
-                structure,
-                at: fx_vec(at),
-            });
+            let kind = self.world.structures().and_then(|s| s.get(structure));
+            if kind.is_some_and(|s| self.trains(s.building).next().is_some()) {
+                self.order(Command::Rally {
+                    structure,
+                    at: fx_vec(at),
+                });
+            }
             return true;
+        }
+        // A mixed selection moves together, and an enemy there is attacked.
+        let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
+        if self.selected.is_empty()
+            || !(self.selected.iter()).all(|&h| is_worker(regiments, units, h))
+            || self.enemy_at(at).is_some()
+        {
+            return false;
         }
         let side = self.sandbox.side;
         let mend = self.building_under_cursor(|o| o == side).filter(|&h| {
@@ -296,19 +330,11 @@ impl Running {
             },
             Job::Gather(node) => Command::Gather { regiment, node },
         };
-        let given = self.human_orders.len();
-        let (regiments, units) = (&self.world.regiments, &self.data.conquest_units);
-        self.human_orders.extend(
-            (self.selected.iter().copied())
-                .filter(|&h| is_worker(regiments, units, h))
-                .map(|regiment| PlayerCommand {
-                    player: side,
-                    command: work(regiment),
-                }),
-        );
-        if self.human_orders.len() == given {
-            return false;
-        }
+        self.human_orders
+            .extend(self.selected.iter().map(|&regiment| PlayerCommand {
+                player: side,
+                command: work(regiment),
+            }));
         self.ui_sound(sounds::UiSound::Move);
         true
     }

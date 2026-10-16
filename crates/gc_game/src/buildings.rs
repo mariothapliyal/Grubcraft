@@ -147,12 +147,20 @@ impl Table {
         self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
-    /// What a worker of `faction` can lay: every building of theirs but
-    /// the main building and its upgrades.
+    /// What a worker of `faction` lays from the build menu: every building
+    /// of theirs but the main building and its upgrades.
     pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + '_ {
         (self.stats.iter().zip(&self.factions).enumerate())
             .filter(move |(_, (s, f))| **f == faction && s.role != Role::Main)
             .map(|(i, _)| i as BuildingId)
+    }
+
+    /// The main building a worker of `faction` lays to expand: its first
+    /// tier, not an upgrade.
+    pub fn expansion(&self, faction: Faction) -> Option<BuildingId> {
+        (self.stats.iter().zip(&self.factions))
+            .position(|(s, &f)| f == faction && s.role == Role::Main && s.upgrades_from.is_none())
+            .map(|i| i as BuildingId)
     }
 
     /// The panel's description of a type: name, faction and size.
@@ -607,6 +615,7 @@ mod tests {
                 menu.iter()
                     .all(|&b| table.stats[usize::from(b)].role != Role::Main)
             );
+            assert!(table.expansion(f).is_some(), "{f:?} can't expand");
         }
         assert!(
             table
