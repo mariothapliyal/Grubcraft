@@ -10,6 +10,7 @@ use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, PlayerId, Refusal, Resource,
     StructureHandle, StructureView, World,
 };
+use gc_ui::conquest::{GRUB_NODE, MARROW_NODE};
 use glam::{Vec2, Vec3};
 
 // The baked flag bits mean the same to the simulation.
@@ -45,9 +46,7 @@ const GHOST_GLOW: u8 = 110;
 const NODE_HEIGHT: f32 = 0.35;
 const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
-/// Grub seeps glow gold, Marrow veins bone white; dry ones are dim.
-const SEEP: [u8; 3] = [230, 190, 60];
-const VEIN: [u8; 3] = [235, 225, 200];
+/// Seeps and veins glow in their minimap colours; dry ones are dim.
 const NODE_GLOW: u8 = 90;
 /// The white rim round the selected building, beyond its footprint (tiles).
 const RIM: f32 = 0.6;
@@ -276,8 +275,8 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             return;
         }
         let [r, g, b] = match n.resource {
-            Resource::Grub => SEEP,
-            Resource::Marrow => VEIN,
+            Resource::Grub => GRUB_NODE,
+            Resource::Marrow => MARROW_NODE,
         };
         let left = n.left as f32 / n.full.max(1) as f32;
         let width = NODE_WIDTH * (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0;

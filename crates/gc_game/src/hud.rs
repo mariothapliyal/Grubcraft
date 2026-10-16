@@ -360,6 +360,7 @@ impl Running {
         if self.watching.is_some() {
             self.hud.notes.clear();
         }
+        let picked_structure = self.picked_structure();
 
         let hud = &mut self.hud;
         if self.selected.is_empty() {
@@ -493,7 +494,6 @@ impl Running {
         }
 
         // Conquest's own: the stores, the idle workers and the selected building.
-        let picked_structure = self.picked_structure();
         let mut queue = [QueueItem {
             name: "",
             progress: 0,

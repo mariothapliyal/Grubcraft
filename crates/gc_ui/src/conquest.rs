@@ -8,26 +8,25 @@
 //! these to draw it.
 
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, text_width};
-use crate::hud::{HudEvent, HudInput, TOP_BAR_HEIGHT, WIDGET_QUEUE, luma, rgb};
+use crate::hud::{HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, rgb};
+use crate::lobby::thousands;
 use crate::ui::{Press, theme};
 
 const MARGIN: i32 = 8;
 /// Room between the items of the top bar.
 const TOP_GAP: i32 = 24;
-/// Amber, for a warning that is not yet a disaster.
-const AMBER: Color = [236, 190, 60, 255];
 /// A Grub gathering spot on the minimap: a warm gold.
-const GRUB_NODE: [u8; 3] = [230, 190, 60];
+pub const GRUB_NODE: [u8; 3] = [230, 190, 60];
 /// A Marrow gathering spot on the minimap: bone white.
-const MARROW_NODE: [u8; 3] = [235, 225, 200];
+pub const MARROW_NODE: [u8; 3] = [235, 225, 200];
 /// The least a building covers on the minimap, in pixels a side.
 const BLOCK_MIN: i32 = 2;
 /// How many queue slots the tray shows.
 pub const QUEUE_SLOTS: usize = 5;
-const QUEUE_SLOT_MAX_W: i32 = 64;
+pub(crate) const QUEUE_SLOT_MAX_W: i32 = 64;
 /// Width of the building's card in the tray.
-const STRUCT_CARD_W: i32 = 232;
-const CARD_GAP: i32 = 4;
+pub(crate) const STRUCT_CARD_W: i32 = 232;
+pub(crate) const CARD_GAP: i32 = 4;
 
 /// The economy and the clock, for the bar across the top of the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -84,19 +83,6 @@ pub struct StructurePanel<'a> {
     pub queue: &'a [QueueItem<'a>],
 }
 
-/// `1240` as "1,240".
-pub(crate) fn thousands(n: u32) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
-
 /// Match time as "14:32", or "1:02:05" from the first hour.
 pub(crate) fn clock(secs: u32) -> String {
     let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
@@ -115,9 +101,8 @@ fn top_item(draw: &mut DrawList, x: i32, y: i32, label: &str, value: &str, color
     vx + text_width(value, 1) + TOP_GAP
 }
 
-/// Draw the top bar across a screen `width` wide; returns the bar's rectangle.
-pub(crate) fn draw_top_bar(draw: &mut DrawList, width: i32, t: &TopBar) -> Rect {
-    let bar = Rect::new(0, 0, width, TOP_BAR_HEIGHT);
+/// Draw the top bar `bar` (see [`HudLayout::top`](crate::hud::HudLayout::top)).
+pub(crate) fn draw_top_bar(draw: &mut DrawList, bar: Rect, t: &TopBar) {
     draw.rect(
         bar,
         [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 255],
@@ -141,7 +126,7 @@ pub(crate) fn draw_top_bar(draw: &mut DrawList, width: i32, t: &TopBar) -> Rect 
             y,
             "Upkeep",
             &format!("{}%", t.upkeep_percent),
-            AMBER,
+            theme::WARN,
         );
     }
     let time = clock(t.clock_secs);
@@ -152,17 +137,6 @@ pub(crate) fn draw_top_bar(draw: &mut DrawList, width: i32, t: &TopBar) -> Rect 
         theme::TEXT,
         &time,
     );
-    bar
-}
-
-/// The part of `r` inside `bounds`, if any.
-fn clip(r: Rect, bounds: Rect) -> Option<Rect> {
-    let (x0, y0) = (r.x.max(bounds.x), r.y.max(bounds.y));
-    let (x1, y1) = (
-        r.right().min(bounds.right()),
-        r.bottom().min(bounds.bottom()),
-    );
-    (x1 > x0 && y1 > y0).then(|| Rect::new(x0, y0, x1 - x0, y1 - y0))
 }
 
 /// Buildings on the minimap `r`: filled footprints, a white rim when selected.
@@ -178,11 +152,11 @@ pub(crate) fn draw_blocks(
         let (x1, y1) = to_screen([b.rect[0] + b.rect[2], b.rect[1] + b.rect[3]]);
         let body = Rect::new(x0, y0, (x1 - x0).max(BLOCK_MIN), (y1 - y0).max(BLOCK_MIN));
         if b.selected
-            && let Some(rim) = clip(body.inset(-1), bounds)
+            && let Some(rim) = body.inset(-1).intersect(bounds)
         {
             draw.rect(rim, theme::TEXT);
         }
-        if let Some(fill) = clip(body, bounds) {
+        if let Some(fill) = body.intersect(bounds) {
             draw.rect(fill, rgb(b.color));
         }
     }
@@ -204,7 +178,7 @@ pub(crate) fn draw_nodes(
         } else {
             base
         };
-        if let Some(dot) = clip(Rect::new(x - 1, y - 1, 3, 3), bounds) {
+        if let Some(dot) = Rect::new(x - 1, y - 1, 3, 3).intersect(bounds) {
             draw.rect(dot, rgb(color));
         }
     }
@@ -282,24 +256,15 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
     let inner = r.inset(3);
     let side = inner.h.min(56);
     let portrait = Rect::new(inner.x, inner.y, side, side);
-    draw.rect(portrait, rgb(s.color));
-    if let Some(initial) = s.name.chars().next() {
-        let tint = if luma(s.color) > 140 {
-            [20, 22, 28, 255]
-        } else {
-            theme::TEXT
-        };
-        draw.text_centered(portrait, 2, tint, &initial.to_string());
-    }
+    draw_portrait(draw, portrait, s.color, s.name, 2);
     let x = portrait.right() + 6;
     let chars = ((inner.right() - x) / CELL_W).max(1) as usize;
     draw.text(x, inner.y, 1, theme::TEXT, &fit(s.name, chars));
     let hp = s.hp as f32 / s.max_hp.max(1) as f32;
-    let color = if hp < 0.35 { theme::BAD } else { theme::GOOD };
     draw.meter(
         Rect::new(x, inner.y + 20, (inner.right() - x).max(0), 8),
         hp,
-        color,
+        health_color(hp),
         theme::FIELD,
     );
     let numbers = format!("{}/{}", s.hp, s.max_hp);
@@ -326,16 +291,6 @@ fn draw_structure_card(draw: &mut DrawList, r: Rect, s: &StructurePanel) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn numbers_get_thousands_separators() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(185), "185");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(1_240), "1,240");
-        assert_eq!(thousands(12_345), "12,345");
-        assert_eq!(thousands(1_234_567), "1,234,567");
-    }
 
     #[test]
     fn the_clock_shows_hours_only_when_there_are_some() {

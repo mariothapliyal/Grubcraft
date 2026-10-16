@@ -43,6 +43,10 @@ const DOUBLE_CLICK_MS: u64 = 400;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HudLayout {
     pub bar: Rect,
+    /// The top bar (Conquest); None while it is hidden.
+    pub top: Option<Rect>,
+    /// The screen between the top bar, if any, and the bottom bar.
+    pub field: Rect,
     pub minimap: Rect,
     pub tray: Rect,
     /// Reserved for the command grid.
@@ -50,9 +54,12 @@ pub struct HudLayout {
 }
 
 impl HudLayout {
-    pub fn new(screen: (i32, i32)) -> HudLayout {
+    pub fn new(screen: (i32, i32), top_bar: bool) -> HudLayout {
         let (w, h) = screen;
         let bar = Rect::new(0, (h - BAR_HEIGHT).max(0), w, BAR_HEIGHT.min(h));
+        let top = top_bar.then(|| Rect::new(0, 0, w, TOP_BAR_HEIGHT));
+        let field_y = top.map_or(0, |r| r.bottom());
+        let field = Rect::new(0, field_y, w, (bar.y - field_y).max(0));
         let side = bar.h - 2 * MARGIN;
         let minimap = Rect::new(bar.x + MARGIN, bar.y + MARGIN, side, side);
         let grid_w = GRID_WIDTH.min((w - minimap.right()) / 2).max(0);
@@ -66,6 +73,8 @@ impl HudLayout {
         );
         HudLayout {
             bar,
+            top,
+            field,
             minimap,
             tray,
             grid,
@@ -242,10 +251,8 @@ pub struct Hud {
     /// Which button the mouse went down on. Buttons fire on release, as the
     /// menus' do; the minimap, like a slider, follows the press.
     press: Press,
-    /// Alert badges and buttons over the battlefield as last drawn.
+    /// The top bar, alert badges and buttons over the battlefield as last drawn.
     over: Vec<Rect>,
-    /// The top bar as last drawn (None while it is hidden).
-    top: Option<Rect>,
 }
 
 pub(crate) fn rgb(c: [u8; 3]) -> Color {
@@ -256,9 +263,8 @@ impl Hud {
     /// Whether a click at `mouse` belongs to the HUD rather than the world.
     pub fn wants(&self, screen: (i32, i32), mouse: (i32, i32)) -> bool {
         self.dragging
-            || HudLayout::new(screen).bar.contains(mouse.0, mouse.1)
+            || HudLayout::new(screen, false).bar.contains(mouse.0, mouse.1)
             || self.over.iter().any(|r| r.contains(mouse.0, mouse.1))
-            || self.top.is_some_and(|r| r.contains(mouse.0, mouse.1))
     }
 
     /// Lay out and draw the bar, and report what was clicked.
@@ -270,7 +276,7 @@ impl Hud {
         data: &HudData,
         events: &mut Vec<HudEvent>,
     ) {
-        let layout = HudLayout::new(screen);
+        let layout = HudLayout::new(screen, data.top.is_some());
         draw.rect(
             layout.bar,
             [theme::PANEL[0], theme::PANEL[1], theme::PANEL[2], 255],
@@ -287,18 +293,16 @@ impl Hud {
             self.grid(draw, &layout, input, data.grid, events);
         }
         self.over.clear();
-        self.top = data
-            .top
-            .as_ref()
-            .map(|t| conquest::draw_top_bar(draw, screen.0, t));
+        if let Some((bar, t)) = layout.top.zip(data.top.as_ref()) {
+            conquest::draw_top_bar(draw, bar, t);
+            self.over.push(bar);
+        }
         if let Some(h) = &data.hero {
             hero::draw(draw, layout.bar.y, h, &mut self.over);
         }
         alerts::draw(
             draw,
-            screen,
-            layout.bar.h,
-            self.top.map_or(0, |r| r.h),
+            layout.field,
             input,
             &mut self.press,
             data.alerts,
@@ -603,15 +607,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     // The portrait: a team-coloured square with the unit's initial, until
     // there is art for it.
     let portrait = Rect::new(inner.x, inner.y, inner.w, inner.w.min(inner.h / 2));
-    draw.rect(portrait, rgb(c.color));
-    if let Some(initial) = c.name.chars().next() {
-        let tint = if luma(c.color) > 140 {
-            [20, 22, 28, 255]
-        } else {
-            theme::TEXT
-        };
-        draw.text_centered(portrait, 2, tint, &initial.to_string());
-    }
+    draw_portrait(draw, portrait, c.color, &c.name, 2);
     if c.engaged {
         draw.border(portrait, 2, theme::BAD);
     }
@@ -625,16 +621,11 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         draw.meter(Rect::new(inner.x, y, inner.w, 6), frac, color, theme::FIELD);
     };
     let health = f32::from(c.models) / f32::from(c.max_models.max(1));
-    let health_color = if health < 0.35 {
-        theme::BAD
-    } else {
-        theme::GOOD
-    };
-    bar(draw, y, health, health_color);
+    bar(draw, y, health, health_color(health));
     y += 9;
     let morale_color = match c.state {
         CardState::Steady => [96, 156, 230, 255],
-        CardState::Wavering => [236, 190, 60, 255],
+        CardState::Wavering => theme::WARN,
         CardState::Routing => theme::BAD,
     };
     bar(draw, y, f32::from(c.morale) / 100.0, morale_color);
@@ -656,6 +647,25 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
 
 pub(crate) fn luma(c: [u8; 3]) -> u32 {
     (u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2])) / 10
+}
+
+/// A team-coloured square `r` with the first letter of `name` on it, until
+/// there is art. The letter is dark on a light colour.
+pub(crate) fn draw_portrait(draw: &mut DrawList, r: Rect, color: [u8; 3], name: &str, scale: i32) {
+    draw.rect(r, rgb(color));
+    if let Some(initial) = name.chars().next() {
+        let ink = if luma(color) > 140 {
+            [20, 22, 28, 255]
+        } else {
+            theme::TEXT
+        };
+        draw.text_centered(r, scale, ink, &initial.to_string());
+    }
+}
+
+/// Green for a healthy meter, red once `frac` drops under about a third.
+pub(crate) fn health_color(frac: f32) -> Color {
+    if frac < 0.35 { theme::BAD } else { theme::GOOD }
 }
 
 /// The ground picture filling `r` (a blank field when there is none). The
@@ -700,7 +710,7 @@ fn line(draw: &mut DrawList, clip: Rect, a: (i32, i32), b: (i32, i32), color: Co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conquest::QueueItem;
+    use crate::conquest::{GRUB_NODE, QUEUE_SLOT_MAX_W, QueueItem, STRUCT_CARD_W};
 
     const SCREEN: (i32, i32) = (1280, 760);
 
@@ -781,7 +791,7 @@ mod tests {
 
     #[test]
     fn the_ready_button_ends_your_deployment() {
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let button = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
         let t = terrain();
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
@@ -824,7 +834,7 @@ mod tests {
 
     #[test]
     fn hud_buttons_fire_on_release_over_the_same_button() {
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let ready = (l.grid.x + l.grid.w / 2, l.grid.bottom() - 20);
         let t = terrain();
         let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
@@ -877,7 +887,7 @@ mod tests {
     #[test]
     fn a_grid_button_fires_on_release_not_press() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let spot = (l.grid.x + 6, l.grid.y + 6);
         let at = |left_pressed, left_released| HudInput {
             mouse: spot,
@@ -925,7 +935,7 @@ mod tests {
             top: None,
             structure: None,
         };
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let over_panel = (30, l.bar.y - 40);
         let mut hud = Hud::default();
         assert!(!hud.wants(SCREEN, over_panel), "no panel drawn yet");
@@ -941,7 +951,7 @@ mod tests {
     #[test]
     fn layout_pieces_do_not_overlap_and_stay_on_screen() {
         for screen in [(1280, 760), (1920, 1080), (1024, 600)] {
-            let l = HudLayout::new(screen);
+            let l = HudLayout::new(screen, false);
             for r in [l.minimap, l.tray, l.grid] {
                 assert!(r.x >= 0 && r.bottom() <= screen.1 && r.right() <= screen.0);
                 assert!(l.bar.contains(r.x, r.y));
@@ -954,7 +964,7 @@ mod tests {
     #[test]
     fn minimap_click_jumps_to_that_spot() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let mid = (l.minimap.x + l.minimap.w / 2, l.minimap.y + l.minimap.h / 2);
         let (ev, _) = run(
             &mut hud,
@@ -977,7 +987,7 @@ mod tests {
     #[test]
     fn dragging_follows_the_mouse_off_the_minimap_until_release() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let at = |mouse| HudInput {
             mouse,
             ..HudInput::default()
@@ -1013,7 +1023,7 @@ mod tests {
     #[test]
     fn right_click_on_the_minimap_orders() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let (ev, _) = run(
             &mut hud,
             HudInput {
@@ -1037,7 +1047,7 @@ mod tests {
     #[test]
     fn clicking_a_card_selects_and_double_click_centres() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let cards = [card(7), card(9)];
         let click = |ms, shift| HudInput {
             mouse: (l.tray.x + 20, l.tray.y + 40),
@@ -1085,7 +1095,7 @@ mod tests {
     #[test]
     fn only_a_ready_button_reports_a_click() {
         let mut hud = Hud::default();
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let cell_w = (l.grid.w - 3 * GRID_GAP) / GRID_COLS as i32;
         let cell_h = (l.grid.h - 2 * GRID_GAP) / GRID_ROWS as i32;
         let at = |col: i32, row: i32| HudInput {
@@ -1167,12 +1177,11 @@ mod tests {
 
     #[test]
     fn supply_at_the_cap_turns_red_and_upkeep_shows_in_amber() {
-        const AMBER: Color = [236, 190, 60, 255];
         let mut hud = Hud::default();
         let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
         let roomy = bar(top_bar());
         assert_eq!(in_top_bar(&roomy, theme::BAD), 0);
-        assert_eq!(in_top_bar(&roomy, AMBER), 0);
+        assert_eq!(in_top_bar(&roomy, theme::WARN), 0);
         let full = bar(TopBar {
             supply_used: 90,
             ..top_bar()
@@ -1182,7 +1191,7 @@ mod tests {
             upkeep_percent: 80,
             ..top_bar()
         });
-        assert_eq!(in_top_bar(&taxed, AMBER), "80%".len());
+        assert_eq!(in_top_bar(&taxed, theme::WARN), "80%".len());
     }
 
     #[test]
@@ -1219,7 +1228,7 @@ mod tests {
         // A quad a node, and a fill and a rim for the selected block.
         assert_eq!(marked.quads.len(), plain.quads.len() + 2 + 2);
         let drawn = |colour: [u8; 3]| marked.quads.iter().any(|q| q.color == rgb(colour));
-        assert!(drawn([230, 190, 60]), "Grub");
+        assert!(drawn(GRUB_NODE), "Grub");
         assert!(drawn([105, 101, 90]), "dry Marrow, dimmed");
         assert!(drawn([30, 120, 200]), "the block");
         assert!(!plain.quads.iter().any(|q| q.color == rgb([30, 120, 200])));
@@ -1255,8 +1264,12 @@ mod tests {
 
     /// A point inside queue slot `i` of the tray.
     fn queue_slot(i: i32) -> (i32, i32) {
-        let row = HudLayout::new(SCREEN).tray.inset(6);
-        (row.x + 232 + 4 + 10 + i * (64 + 4), row.y + 20 + 10)
+        let row = HudLayout::new(SCREEN, false).tray.inset(6);
+        let step = QUEUE_SLOT_MAX_W + conquest::CARD_GAP;
+        (
+            row.x + STRUCT_CARD_W + conquest::CARD_GAP + 10 + i * step,
+            row.y + 20 + 10,
+        )
     }
 
     #[test]
@@ -1279,7 +1292,7 @@ mod tests {
         assert!(with_cards.quads.iter().any(|q| q.color == red));
         assert!(!with_panel.quads.iter().any(|q| q.color == red));
         // A click where the card was selects nothing now.
-        let l = HudLayout::new(SCREEN);
+        let l = HudLayout::new(SCREEN, false);
         let click = HudInput {
             mouse: (l.tray.x + 20, l.tray.y + 40),
             left_pressed: true,
