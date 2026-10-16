@@ -25,10 +25,13 @@ use glam::Vec2;
 use crate::buildings::{self, Table};
 
 /// The Conquest map the lobby's choice `choice` names: gc_map ships them
-/// in the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`).
+/// in the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`). A
+/// choice past the end (from another build's lobby or replay) gets the
+/// last; a replay still plays on the map it stored.
 pub fn make_map(choice: usize) -> Map {
+    let last = gc_map::SHIPPED.len() - 1;
     let def = gc_map::SHIPPED
-        .get(choice)
+        .get(choice.min(last))
         .and_then(|&(name, _)| gc_map::shipped(name))
         // The shipped maps parse: gc_map's tests check every one.
         .unwrap_or_else(|| panic!("no shipped Conquest map {choice}"));
@@ -380,6 +383,7 @@ mod tests {
     fn the_lobby_lists_the_shipped_maps() {
         use gc_ui::lobby::{CONQUEST_MAP_PLAYERS, CONQUEST_MAPS};
         assert_eq!(gc_map::SHIPPED.len(), CONQUEST_MAPS.len());
+        assert_eq!(make_map(99).hash(), make_map(1).hash(), "never panics");
         for (i, &(file, _)) in gc_map::SHIPPED.iter().enumerate() {
             assert_eq!(gc_map::shipped(file).unwrap().name, CONQUEST_MAPS[i]);
             assert_eq!(make_map(i).players as usize, CONQUEST_MAP_PLAYERS[i]);

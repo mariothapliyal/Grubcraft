@@ -3071,8 +3071,14 @@ impl Running {
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
+        // A Conquest map's trees are the same in every match on it, and on
+        // every machine; a Field Battle map's follow its seed.
+        let trees = match key {
+            MapKey::Field(k) => k.seed,
+            MapKey::Conquest(choice) => choice as u64,
+        };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
-            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, self.seed)
+            scenery::Scenery::new(&self.heightmap.cover, self.heightmap.tiles, trees)
         });
     }
 
@@ -3809,7 +3815,7 @@ impl Running {
     /// K: place buildings instead of regiments, or stop.
     fn toggle_building_tool(&mut self) {
         if self.world.structures().is_none() {
-            self.say("Buildings can only be placed in the sandbox.".into());
+            self.say("Buildings can only be placed in the sandbox and Conquest.".into());
             return;
         }
         self.sandbox.building_tool = !self.sandbox.building_tool;
@@ -3992,6 +3998,10 @@ impl Running {
     /// Shift+R: read `data/units.ron` again and tune every type that changed.
     #[cfg(feature = "dev")]
     fn reload_data(&mut self) {
+        if self.conquest_units {
+            self.say("Shift+R reloads the Field Battle units, so not in Conquest.".into());
+            return;
+        }
         let Some(dir) = sandbox::disk::data_dir() else {
             self.say(
                 "Shift+R reloads data/units.ron, but there is none here (run from the repository)."

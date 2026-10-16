@@ -133,7 +133,8 @@
             hp: 1200,
             armour: Structure,
             footprint: (4, 4),
-            flags: [DropOffMarrow],
+            // Grub too until caravans are built, like the Counting House.
+            flags: [DropOffGrub, DropOffMarrow],
             effect: "Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions.",
         ),
         (

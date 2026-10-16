@@ -122,7 +122,7 @@ fn fingerprint(replay: &Replay) -> u64 {
 const PINNED: (u32, &[(&str, u64)]) = (
     6,
     &[
-        ("conquest-ribcage-1v1", 0x04af6db67e0619bd),
+        ("conquest-ribcage-1v1", 0x6b50bb2f765e3562),
         ("field-1v1", 0x3e2854185069b943),
         ("field-2v2", 0xd36fe17d508faa63),
         ("field-8000pt-2v2", 0x1ca79287bbacab6b),

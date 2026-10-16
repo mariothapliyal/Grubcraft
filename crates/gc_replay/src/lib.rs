@@ -71,6 +71,9 @@ const MAX_BODY: usize = 256 << 20;
 const MAX_INFO: usize = 1 << 20;
 /// More buildings than a Conquest record may make room for.
 const MAX_STRUCTURES: u32 = 1 << 16;
+/// The most resource nodes a recorded Conquest match may have: orders
+/// name a node by a `u16`.
+const MAX_NODES: usize = 1 << 16;
 
 /// One side of a recorded match, as the game showed it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -207,7 +210,7 @@ impl ConquestRecord {
             .collect::<Option<Vec<_>>>()
             .filter(|u| u.len() == n)?;
         let structures = r.var_as().filter(|&s| s <= MAX_STRUCTURES)?;
-        let n: usize = r.var_as()?;
+        let n: usize = r.var_as().filter(|&n| n <= MAX_NODES)?;
         let nodes = (0..n.min(r.remaining()))
             .map(|_| r.node())
             .collect::<Option<Vec<_>>>()

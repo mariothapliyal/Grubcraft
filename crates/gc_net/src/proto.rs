@@ -439,7 +439,7 @@ impl Msg {
                 // line stops it starting); a match must be on one we have.
                 let settings = read_settings(&mut r).filter(|s| s.map < maps_for(s.mode).len())?;
                 let n = r.var_as::<usize>()?;
-                if n > MAX_PLAYERS {
+                if n > settings.max_players() {
                     return None;
                 }
                 let mut players = Vec::with_capacity(n);
@@ -620,6 +620,18 @@ mod tests {
                 you: 1,
                 input_delay: 2,
             },
+            // More players than Ribcage Pass has starts.
+            Msg::Start {
+                map_hash: 0,
+                settings: LobbySettings {
+                    mode: GameMode::Conquest,
+                    map: 0,
+                    ..grand.clone()
+                },
+                players: slots[..3].to_vec(),
+                you: 1,
+                input_delay: 2,
+            },
         ];
         for m in refused {
             assert_eq!(Msg::decode(&m.encode()), None, "{m:?}");
@@ -632,7 +644,7 @@ mod tests {
                 tempo: Tempo::Epic,
                 ..grand.clone()
             },
-            players: slots.to_vec(),
+            players: slots[..4].to_vec(),
             you: 1,
             input_delay: 2,
         });
