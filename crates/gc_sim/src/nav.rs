@@ -293,6 +293,10 @@ struct Search {
     to_goal: Vec<u32>,
     node_stamp: u32,
     node_heap: BinaryHeap<Reverse<(u32, u32)>>,
+    /// The most the portal search's heap may hold: what the graph needs,
+    /// whatever the heap's capacity grew to, so every world on the same
+    /// grid searches alike.
+    node_room: usize,
     links: Vec<(u32, u32)>,
     /// Cells of the portal route: start, portals, goal.
     coarse: Vec<u32>,
@@ -327,9 +331,9 @@ impl Search {
         self.node_parent.resize(nodes + 2, NONE);
         self.node_seen.resize(nodes + 2, 0);
         self.to_goal.resize(nodes + 2, 0);
-        // Between searches these are empty, so this gives each at least
-        // the room `Search::new` would.
-        self.node_heap.reserve(edges + 2 * most + 8);
+        // `reserve` makes room beyond what is there, so at least this much.
+        self.node_room = edges + 2 * most + 8;
+        self.node_heap.reserve(self.node_room);
         self.links.reserve(most);
         self.coarse.reserve(nodes + 2);
     }
@@ -348,6 +352,7 @@ impl Search {
             to_goal: vec![0; nodes + 2],
             node_stamp: 0,
             node_heap: BinaryHeap::with_capacity(edges + 2 * max_sector_nodes + 8),
+            node_room: edges + 2 * max_sector_nodes + 8,
             links: Vec::with_capacity(max_sector_nodes),
             coarse: Vec::with_capacity(nodes + 2),
             chain: Vec::with_capacity(CHAIN_CAPACITY),
@@ -523,7 +528,7 @@ impl Search {
             let relax = |m: u32, cost: u32, s: &mut Search| {
                 let ng = g + cost;
                 if (s.node_seen[m as usize] != stamp || ng < s.node_g[m as usize])
-                    && s.node_heap.len() < s.node_heap.capacity()
+                    && s.node_heap.len() < s.node_room
                 {
                     s.node_seen[m as usize] = stamp;
                     s.node_g[m as usize] = ng;

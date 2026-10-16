@@ -109,6 +109,12 @@ pub(crate) fn bake_rosters(
             unit_records.push(record);
         }
     }
+    for (i, b) in building_records.iter().enumerate() {
+        cq::validate_upgrade(&building_records, i).map_err(|why| {
+            let file = &loaded[usize::from(b.faction)].0;
+            invalid(file, b.name(), why)
+        })?;
+    }
     Ok((building_records, unit_records))
 }
 

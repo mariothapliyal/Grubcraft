@@ -296,6 +296,25 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     Ok(())
 }
 
+/// What building `i`'s upgrade must be: a Main building of the same
+/// faction, one tier below it (so a chain of upgrades can't loop). The
+/// table has passed [`validate_building`].
+pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'static str> {
+    let b = &table[i];
+    if b.upgrades_from == NONE {
+        return Ok(());
+    }
+    let from = &table[usize::from(b.upgrades_from)];
+    let main = Role::Main as u8;
+    if b.role != main || from.role != main {
+        return Err("only a Main building upgrades, and only from a Main building");
+    }
+    if from.faction != b.faction || from.tier + 1 != b.tier {
+        return Err("upgrades from a building of its own faction one tier below");
+    }
+    Ok(())
+}
+
 /// The rules every Conquest unit record satisfies on its own; `buildings`
 /// and `units` are the two tables' lengths, for the index fields.
 pub fn validate_conquest_unit(

@@ -221,6 +221,10 @@ impl<'a> GameData<'a> {
             conquest::validate_building(b, buildings.len())
                 .map_err(|why| DataError::BadBuilding(i, why))?;
         }
+        for i in 0..buildings.len() {
+            conquest::validate_upgrade(buildings, i)
+                .map_err(|why| DataError::BadBuilding(i, why))?;
+        }
         let conquest_units =
             table::<ConquestUnitRecord>(pack, CONQUEST_UNITS_PATH, conquest::CONQUEST_UNIT_SCHEMA)?;
         for (i, u) in conquest_units.iter().enumerate() {

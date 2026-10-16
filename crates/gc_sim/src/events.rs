@@ -106,7 +106,9 @@ impl Events {
 
     /// Room for one event per building too (Conquest).
     pub(crate) fn reserve(&mut self, structures: usize) {
-        self.list.reserve(structures);
+        // `reserve` counts from the length, not the capacity.
+        let room = self.list.capacity() - self.list.len() + structures;
+        self.list.reserve(room);
     }
 
     /// Tell of the buildings brought down in the tick just played.

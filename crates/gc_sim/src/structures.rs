@@ -29,7 +29,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::nav::Nav;
+use crate::nav::{CELLS_PER_TILE, CLEARANCE, Nav};
 use crate::regiments::{Order, Regiments};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
@@ -223,6 +223,8 @@ const MELEE_REACH: Fx = Fx::from_int(2);
 /// Ticks a regiment that can't get at its building waits before trying
 /// again.
 const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
+/// Tries in a row that bring a regiment no nearer before it gives up.
+const STALLS: u8 = 3;
 
 /// Every building on the field, and which regiments are attacking which.
 pub struct Structures {
@@ -244,6 +246,10 @@ pub struct Structures {
     /// By regiment slot: ticks until its next blow, or its next try to
     /// reach the building.
     siege_clock: Vec<u16>,
+    /// By regiment slot: how far it was from the building when it last set
+    /// off for it, and how many times in a row that brought it no nearer.
+    siege_gap: Vec<Fx>,
+    siege_stalls: Vec<u8>,
     /// Buildings brought down in the last tick, for the events.
     pub(crate) fallen: Vec<StructureHandle>,
 }
@@ -268,6 +274,8 @@ impl Structures {
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
             siege_clock: vec![0; regiments],
+            siege_gap: vec![Fx::ZERO; regiments],
+            siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
         }
     }
@@ -352,10 +360,12 @@ impl Structures {
         if !nav.ground_free([tile.0, tile.1, w, d]) {
             return false;
         }
-        // No regiment's centre within a tile of it.
+        // No regiment's centre on ground it couldn't stand on once the
+        // building is up.
+        let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);
         let (lo, hi) = (
-            FxVec2::from_ints(tile.0 - 1, tile.1 - 1),
-            FxVec2::from_ints(tile.0 + w + 1, tile.1 + d + 1),
+            FxVec2::from_ints(tile.0, tile.1) - FxVec2::new(margin, margin),
+            FxVec2::from_ints(tile.0 + w, tile.1 + d) + FxVec2::new(margin, margin),
         );
         !(0..regs.alive.len()).any(|i| {
             let p = regs.position[i];
@@ -388,11 +398,16 @@ impl Structures {
         let Some(i) = self.resolve(h) else {
             return false;
         };
+        self.remove(i, nav, regs);
+        true
+    }
+
+    /// Free building slot `i` (standing, or just brought to nothing).
+    fn remove(&mut self, i: usize, nav: &mut Nav, regs: &Regiments) {
         nav.set_built(self.footprint(i), false, regs);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.hp[i] = 0;
         self.free.push(i as u32);
-        true
     }
 
     /// Order regiment slot `r` to attack building `target`. The caller has
@@ -403,6 +418,8 @@ impl Structures {
         self.siege[r] = Some(target);
         self.siege_gen[r] = regs.generation[r];
         self.siege_clock[r] = 0;
+        self.siege_gap[r] = Fx::MAX;
+        self.siege_stalls[r] = 0;
     }
 
     /// Regiment slot `r` was given another order: it leaves off attacking.
@@ -458,10 +475,11 @@ impl Structures {
                 half + MELEE_REACH
             };
             let centre = footprint_centre(foot);
-            if (near - here).length() > reach {
+            let gap = (near - here).length();
+            if gap > reach {
                 // Close in, unless already on the way.
                 if regs.target[r].is_none() {
-                    self.close_in(regs, r, near, centre, half);
+                    self.close_in(regs, r, near, centre, half, gap);
                 }
                 continue;
             }
@@ -476,15 +494,35 @@ impl Structures {
             self.blow(regs, unit, r, s);
             if self.hp[s] == 0 {
                 self.fallen.push(target);
-                self.despawn(target, nav, regs);
+                self.remove(s, nav, regs);
                 self.siege[r] = None;
             }
         }
     }
 
-    /// Send regiment slot `r` to stand just off the footprint point `near`,
-    /// facing the building's `centre`; `half` is half its block's depth.
-    fn close_in(&mut self, regs: &mut Regiments, r: usize, near: FxVec2, centre: FxVec2, half: Fx) {
+    /// Send regiment slot `r`, `gap` from the footprint, to stand just off
+    /// its point `near`, facing the building's `centre`; `half` is half its
+    /// block's depth. After [`STALLS`] tries in a row that brought it no
+    /// nearer (no way there), it gives up.
+    fn close_in(
+        &mut self,
+        regs: &mut Regiments,
+        r: usize,
+        near: FxVec2,
+        centre: FxVec2,
+        half: Fx,
+        gap: Fx,
+    ) {
+        if gap >= self.siege_gap[r] {
+            self.siege_stalls[r] += 1;
+            if self.siege_stalls[r] >= STALLS {
+                self.siege[r] = None;
+                return;
+            }
+        } else {
+            self.siege_stalls[r] = 0;
+        }
+        self.siege_gap[r] = gap;
         let here = regs.position[r];
         let out = if near == here {
             here - centre
@@ -562,6 +600,8 @@ impl Structures {
                     h.u32(s.index);
                     h.u16(s.generation);
                     h.u16(self.siege_clock[r]);
+                    h.i32(self.siege_gap[r].raw());
+                    h.u8(self.siege_stalls[r]);
                 }
                 None => h.u8(0),
             }

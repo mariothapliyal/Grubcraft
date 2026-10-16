@@ -192,6 +192,50 @@ fn a_regiment_knocks_a_farmstead_down() {
     assert!((23..=26).contains(&seconds), "took {seconds} s of blows");
     assert!(w.structures().unwrap().get(farm).is_none());
     assert_eq!(w.siege_target(r), None);
+    // Gone from the field: its slot and its ground are free again.
+    assert!(w.structures().unwrap().is_empty());
+    assert!(w.nav().walkable(FxVec2::from_ints(31, 21)));
+    put_up(&mut w, 1, FARMSTEAD, 30, 20);
+}
+
+#[test]
+fn a_regiment_that_cannot_get_there_gives_up() {
+    let mut w = conquest(64, &[]);
+    // A Farmstead in a ring of walls with no way in.
+    for (x, y) in [
+        (25, 25),
+        (30, 25),
+        (35, 25),
+        (25, 30),
+        (35, 30),
+        (25, 35),
+        (30, 35),
+        (35, 35),
+    ] {
+        put_up(&mut w, 1, WALL, x, y);
+    }
+    let farm = put_up(&mut w, 1, FARMSTEAD, 31, 31);
+    let r = spawn(&mut w, 0, SPEARS, 32, 55, NORTH);
+    assert!(order(
+        &mut w,
+        0,
+        Command::AttackStructure {
+            regiment: r,
+            structure: farm
+        }
+    ));
+    let mut gave_up = None;
+    for t in 0..90 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        if w.siege_target(r).is_none() {
+            gave_up = Some(t);
+            break;
+        }
+    }
+    let gave_up = gave_up.expect("kept trying");
+    // After walking up to the ring and trying again.
+    assert!(gave_up > 5 * TICKS_PER_SECOND, "gave up at tick {gave_up}");
+    assert_eq!(w.structures().unwrap().get(farm).unwrap().hp, 600);
 }
 
 #[test]
