@@ -1,10 +1,12 @@
 //! Recipes must make maps the checker passes. This sweeps a few seeds of
-//! each Field Battle recipe, at both sizes, and of each Conquest recipe at
-//! each size, through the checker. When a recipe is tuned, the
-//! build also looks at a few by hand, with `gc_mapcheck gen RECIPE SIZE
-//! SEED OUT.ron`, `gc_mapcheck check` and `gc_mapcheck png`.
+//! each Field Battle recipe, at both sizes, of each Conquest recipe at
+//! each size, and of every kind of campaign battle map, through the
+//! checker. When a recipe is tuned, the build also looks at a few by hand,
+//! with `gc_mapcheck gen RECIPE SIZE SEED OUT.ron` (or `gc_mapcheck
+//! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
 use gc_map::SizeClass;
+use gc_map::battle::{Area, Feature, Region, Route, battle_map};
 use gc_map::conquest::{self, CONQUEST_SIZES, ConquestRecipe};
 use gc_map::recipe::{Recipe, describe};
 use gc_mapcheck::{check, generate};
@@ -46,32 +48,18 @@ fn seeds_at(size: SizeClass) -> u64 {
     }
 }
 
-/// Most seeds of every Conquest recipe make a map the checker passes, so
-/// a change that breaks a recipe's fairness fails the build. Every core
-/// takes the next map to check until none are left.
-#[test]
-fn conquest_recipes_pass_the_checker_for_most_seeds() {
-    let jobs: Vec<(ConquestRecipe, SizeClass, u64)> = ConquestRecipe::ALL
-        .into_iter()
-        .flat_map(|r| CONQUEST_SIZES.map(|s| (r, s)))
-        .flat_map(|(r, s)| (1..=seeds_at(s)).map(move |seed| (r, s, seed)))
-        .collect();
+/// `fail` for every job, on every core, each taking the next job until
+/// none are left: the failures it reports.
+fn failures<J: Sync, F: Fn(&J) -> Option<T> + Sync, T: Send>(jobs: &[J], fail: F) -> Vec<T> {
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
-    // Each failure as (recipe and size, its first error).
-    let failures: Vec<(String, String)> = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
         let running: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
                     let mut failed = Vec::new();
-                    while let Some(&(recipe, size, seed)) = jobs.get(next.fetch_add(1, Relaxed)) {
-                        let report = check(&conquest::describe(recipe, size, seed).unwrap());
-                        if let Some(e) = report.errors.first() {
-                            failed.push((
-                                format!("{} {size:?}", recipe.name()),
-                                format!("seed {seed}: {e}"),
-                            ));
-                        }
+                    while let Some(job) = jobs.get(next.fetch_add(1, Relaxed)) {
+                        failed.extend(fail(job));
                     }
                     failed
                 })
@@ -81,6 +69,26 @@ fn conquest_recipes_pass_the_checker_for_most_seeds() {
             .into_iter()
             .flat_map(|h| h.join().unwrap())
             .collect()
+    })
+}
+
+/// Most seeds of every Conquest recipe make a map the checker passes, so
+/// a change that breaks a recipe's fairness fails the build.
+#[test]
+fn conquest_recipes_pass_the_checker_for_most_seeds() {
+    let jobs: Vec<(ConquestRecipe, SizeClass, u64)> = ConquestRecipe::ALL
+        .into_iter()
+        .flat_map(|r| CONQUEST_SIZES.map(|s| (r, s)))
+        .flat_map(|(r, s)| (1..=seeds_at(s)).map(move |seed| (r, s, seed)))
+        .collect();
+    // Each failure as (recipe and size, its first error).
+    let failures: Vec<(String, String)> = failures(&jobs, |&(recipe, size, seed)| {
+        let report = check(&conquest::describe(recipe, size, seed).unwrap());
+        let e = report.errors.first()?;
+        Some((
+            format!("{} {size:?}", recipe.name()),
+            format!("seed {seed}: {e}"),
+        ))
     });
     let low: Vec<String> = ConquestRecipe::ALL
         .into_iter()
@@ -123,4 +131,40 @@ fn generate_rerolls_to_a_map_the_checker_passes() {
     }
     let err = generate(ConquestRecipe::Fen, SizeClass::Grand, 1).unwrap_err();
     assert!(err[0].contains("Grand"), "{err:?}");
+}
+
+/// Every kind of campaign battle map (each area, route and feature, with
+/// and without a Fort) makes maps the checker passes: the starts reach
+/// each other, nothing stands on a cliff or in the water, and the hills
+/// are hills. Campaign battles aren't rerolled, so every seed must pass;
+/// a wider sweep of 40 seeds of each passed when the maps were made.
+#[test]
+fn every_campaign_battle_map_passes_the_checker() {
+    let jobs: Vec<(Region, u64)> = Area::ALL
+        .into_iter()
+        .flat_map(|area| Route::ALL.map(|route| (area, route)))
+        .flat_map(|(area, route)| Feature::ALL.map(|feature| (area, route, feature)))
+        .flat_map(|(area, route, feature)| {
+            [false, true].map(|fort| Region {
+                area,
+                route,
+                feature,
+                fort,
+            })
+        })
+        .enumerate()
+        // A different seed for each, so the sweep covers more of them.
+        .map(|(k, region)| (region, k as u64))
+        .collect();
+    let failed = failures(&jobs, |&(region, seed)| {
+        let report = check(&battle_map(region, seed));
+        let e = report.errors.first()?;
+        Some(format!("{region:?} seed {seed}: {e}"))
+    });
+    assert!(
+        failed.is_empty(),
+        "{} battle maps failed the checker:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
 }

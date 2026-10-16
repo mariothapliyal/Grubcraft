@@ -4,7 +4,8 @@
 //! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
 //! Open) takes a size in tiles, a Conquest recipe (Teeth, Bowl or Fen)
 //! takes Duel, Skirmish or Warfield and rerolls the seed until the checker
-//! passes the map.
+//! passes the map; `gc_mapcheck battle AREA ROUTE FEATURE FORT SEED OUT.ron`
+//! writes a campaign battle map (FORT is `fort` or `open`).
 
 use gc_map::conquest::{CONQUEST_SIZES, ConquestRecipe};
 use gc_mapcheck::{Map, MapDef, check, generate, preview};
@@ -42,6 +43,36 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
         return Err(format!("no recipe called {recipe}"));
     };
     std::fs::write(out, def.to_ron()).map_err(|e| format!("{out}: {e}"))
+}
+
+/// The value of `T` whose `Debug` name is `name`, ignoring case.
+fn named<T: std::fmt::Debug + Copy>(all: &[T], name: &str) -> Result<T, String> {
+    all.iter()
+        .copied()
+        .find(|v| format!("{v:?}").eq_ignore_ascii_case(name))
+        .ok_or_else(|| {
+            let names: Vec<String> = all.iter().map(|v| format!("{v:?}")).collect();
+            format!("{name} isn't one of {}", names.join(", "))
+        })
+}
+
+fn battle_cmd(args: &[String]) -> Result<(), String> {
+    use gc_map::battle::{Area, Feature, Region, Route, battle_map};
+    let [area, route, feature, fort, seed, out] = args else {
+        return Err("battle takes AREA ROUTE FEATURE FORT SEED OUT.ron".into());
+    };
+    let region = Region {
+        area: named(&Area::ALL, area)?,
+        route: named(&Route::ALL, route)?,
+        feature: named(&Feature::ALL, feature)?,
+        fort: match fort.as_str() {
+            "fort" => true,
+            "open" => false,
+            _ => return Err(format!("{fort} isn't fort or open")),
+        },
+    };
+    let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
+    std::fs::write(out, battle_map(region, seed).to_ron()).map_err(|e| format!("{out}: {e}"))
 }
 
 fn files(args: &[String]) -> Vec<PathBuf> {
@@ -127,9 +158,16 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("battle") => match battle_cmd(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!(
-                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE SIZE SEED OUT.ron"
+                "usage: gc_mapcheck check [FILE|DIR]...\n       gc_mapcheck png FILE OUT.png\n       gc_mapcheck gen RECIPE SIZE SEED OUT.ron\n       gc_mapcheck battle AREA ROUTE FEATURE fort|open SEED OUT.ron"
             );
             ExitCode::FAILURE
         }
