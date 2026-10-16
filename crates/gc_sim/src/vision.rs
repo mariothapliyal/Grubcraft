@@ -204,7 +204,7 @@ impl Vision {
             if !regs.alive[i] {
                 continue;
             }
-            let engaged = regs.engaged[i].and_then(|h| regs.resolve(h));
+            let engaged = regs.foe(i);
             if let Some(j) = engaged
                 && !self.was_engaged[i]
                 && self.surprises(i, regs.owner[j])
@@ -295,6 +295,32 @@ impl Vision {
         }
     }
 
+    /// Let every party have seen the regiment in slot `i` for a while, so
+    /// it is no surprise to anyone (it stays seen while a reason holds).
+    pub(crate) fn show(&mut self, i: usize) {
+        if !self.active {
+            return;
+        }
+        let k = i * PARTIES;
+        self.sighting[k..k + PARTIES].fill(SURPRISE_TICKS);
+        self.linger[k..k + PARTIES].fill(LINGER_TICKS);
+    }
+
+    /// Give slot `i` what `from`, a world on the same map, knows about the
+    /// regiment in it: who has seen it and for how long.
+    pub(crate) fn copy_from(&mut self, from: &Vision, i: usize) {
+        if !self.active {
+            return;
+        }
+        self.tracked[i] = from.tracked[i];
+        let k = i * PARTIES;
+        self.sighting[k..k + PARTIES].copy_from_slice(&from.sighting[k..k + PARTIES]);
+        self.linger[k..k + PARTIES].copy_from_slice(&from.linger[k..k + PARTIES]);
+        self.revealed[i] = from.revealed[i];
+        self.off_guard[i] = from.off_guard[i];
+        self.was_engaged[i] = from.was_engaged[i];
+    }
+
     /// Whether the regiment in slot `i` takes `party` by surprise: that
     /// party first saw it less than [`SURPRISE_TICKS`] ago.
     fn surprises(&self, i: usize, party: PlayerId) -> bool {
@@ -312,16 +338,16 @@ impl Vision {
         volley: bool,
     ) {
         if volley {
-            morale::shake(regs, j, VOLLEY_SHOCK);
+            morale::shift(regs, j, -VOLLEY_SHOCK);
         } else {
-            morale::shake(regs, j, AMBUSH_SHOCK);
+            morale::shift(regs, j, -AMBUSH_SHOCK);
             self.off_guard[j] = OFF_GUARD_TICKS;
             morale::shake_friends(regs, combat, stances, j, RIPPLE_TILES, AMBUSH_RIPPLE);
         }
         if self.ambushes.len() < MAX_AMBUSHES {
             self.ambushes.push(Ambush {
-                ambusher: handle(regs, i),
-                victim: handle(regs, j),
+                ambusher: regs.handle(i),
+                victim: regs.handle(j),
                 volley,
             });
         }
@@ -424,14 +450,7 @@ impl Vision {
             }
             h.u8(self.revealed[i]);
             h.u8(self.off_guard[i]);
-            h.u8(self.was_engaged[i] as u8);
+            h.u8(u8::from(self.was_engaged[i]));
         }
-    }
-}
-
-fn handle(regs: &Regiments, i: usize) -> RegimentHandle {
-    RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
     }
 }

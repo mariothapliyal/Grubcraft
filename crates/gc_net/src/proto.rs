@@ -7,14 +7,15 @@
 
 use gc_sim::PlayerCommand;
 use gc_ui::lobby::{
-    Faction, GameMode, LobbySettings, MAX_PLAYERS, OnDrop, Slot, SlotEdit, SlotKind, Tempo,
+    Budget, Faction, GameMode, LobbySettings, MAX_ARMY, MAX_PLAYERS, OnDrop, Slot, SlotEdit,
+    SlotKind, Tempo,
 };
 
 use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
-pub const PROTOCOL: u8 = 4;
+pub const PROTOCOL: u8 = 7;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -167,7 +168,7 @@ pub enum Msg {
     Desync { tick: u32 },
 }
 
-pub(crate) fn write_slot(w: &mut Writer, s: &Slot) {
+fn write_slot(w: &mut Writer, s: &Slot) {
     w.u8(match s.kind {
         SlotKind::Open => 0,
         SlotKind::Human => 1,
@@ -180,13 +181,29 @@ pub(crate) fn write_slot(w: &mut Writer, s: &Slot) {
     w.bool(s.ready);
     w.str(&s.version);
     w.u8(s.ai_level);
+    write_army(w, &s.army);
+}
+
+fn write_army(w: &mut Writer, army: &[u16]) {
+    w.var(army.len() as u64);
+    for &u in army {
+        w.var(u64::from(u));
+    }
+}
+
+fn read_army(r: &mut Reader) -> Option<Vec<u16>> {
+    let n: usize = r.var_as()?;
+    if n > MAX_ARMY {
+        return None;
+    }
+    (0..n).map(|_| r.var_as()).collect()
 }
 
 fn read_faction(r: &mut Reader) -> Option<Faction> {
     Faction::ALL.get(r.u8()? as usize).copied()
 }
 
-pub(crate) fn read_slot(r: &mut Reader) -> Option<Slot> {
+fn read_slot(r: &mut Reader) -> Option<Slot> {
     Some(Slot {
         kind: match r.u8()? {
             0 => SlotKind::Open,
@@ -201,10 +218,11 @@ pub(crate) fn read_slot(r: &mut Reader) -> Option<Slot> {
         ready: r.bool()?,
         version: r.str()?,
         ai_level: r.u8()?,
+        army: read_army(r)?,
     })
 }
 
-pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
+fn write_settings(w: &mut Writer, s: &LobbySettings) {
     w.var(s.map as u64);
     w.u8(GameMode::ALL.iter().position(|&m| m == s.mode).unwrap_or(0) as u8);
     w.u8(Tempo::ALL.iter().position(|&t| t == s.tempo).unwrap_or(0) as u8);
@@ -212,14 +230,18 @@ pub(crate) fn write_settings(w: &mut Writer, s: &LobbySettings) {
         .iter()
         .position(|&d| d == s.on_drop)
         .unwrap_or(0) as u8);
+    w.u8(Budget::ALL.iter().position(|&b| b == s.budget).unwrap_or(0) as u8);
+    w.bool(s.champions);
 }
 
-pub(crate) fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
+fn read_settings(r: &mut Reader) -> Option<LobbySettings> {
     Some(LobbySettings {
         map: r.var_as()?,
         mode: *GameMode::ALL.get(r.u8()? as usize)?,
         tempo: *Tempo::ALL.get(r.u8()? as usize)?,
         on_drop: *OnDrop::ALL.get(r.u8()? as usize)?,
+        budget: *Budget::ALL.get(r.u8()? as usize)?,
+        champions: r.bool()?,
     })
 }
 
@@ -253,6 +275,10 @@ fn write_edit(w: &mut Writer, e: &SlotEdit) {
             w.u8(5);
             w.u8(l);
         }
+        SlotEdit::Army(ref army) => {
+            w.u8(6);
+            write_army(w, army);
+        }
     }
 }
 
@@ -269,6 +295,7 @@ fn read_edit(r: &mut Reader) -> Option<SlotEdit> {
             _ => return None,
         }),
         5 => SlotEdit::AiLevel(r.u8()?),
+        6 => SlotEdit::Army(read_army(r)?),
         _ => return None,
     })
 }
@@ -343,7 +370,7 @@ impl Msg {
             }
             Msg::Bundle { turn, commands } => {
                 w.u8(7);
-                w.var(*turn as u64);
+                w.var(u64::from(*turn));
                 write_player_commands(&mut w, commands);
             }
             Msg::Orders { commands } => {
@@ -352,7 +379,7 @@ impl Msg {
             }
             Msg::Hash { tick, hash } => {
                 w.u8(9);
-                w.var(*tick as u64);
+                w.var(u64::from(*tick));
                 w.u64(*hash);
             }
             Msg::Notice { text } => {
@@ -370,11 +397,11 @@ impl Msg {
             Msg::Wait { who, seconds } => {
                 w.u8(13);
                 w.str(who);
-                w.var(*seconds as u64);
+                w.var(u64::from(*seconds));
             }
             Msg::Desync { tick } => {
                 w.u8(14);
-                w.var(*tick as u64);
+                w.var(u64::from(*tick));
             }
         }
         w.buf
@@ -491,6 +518,14 @@ mod tests {
             ..Slot::open(0)
         };
         slots[2].kind = SlotKind::Ai;
+        // The biggest armies, every slot full: still one message.
+        for (i, s) in slots.iter_mut().enumerate() {
+            s.army = (0..MAX_ARMY as u16).map(|u| u * 300 + i as u16).collect();
+        }
+        let grand = LobbySettings {
+            budget: Budget::GrandBattle,
+            ..LobbySettings::default()
+        };
         round_trip(Msg::Hello {
             version: "0.1.0".into(),
             data_hash: 0xdead_beef_0123_4567,
@@ -504,7 +539,7 @@ mod tests {
         });
         round_trip(Msg::Lobby(Box::new(LobbyWire {
             slots: slots.clone(),
-            settings: LobbySettings::default(),
+            settings: grand.clone(),
             host_version: "0.1.0".into(),
         })));
         for edit in [
@@ -514,6 +549,7 @@ mod tests {
             SlotEdit::Ready(true),
             SlotEdit::Kind(SlotKind::Ai),
             SlotEdit::AiLevel(2),
+            SlotEdit::Army(vec![0, 4, 4, 1000]),
         ] {
             let bytes = Msg::Edit { slot: 1, edit }.encode();
             // SlotEdit has no PartialEq; compare the bytes.
@@ -522,8 +558,8 @@ mod tests {
         round_trip(Msg::Start {
             seed: 7,
             map_hash: u64::MAX,
-            settings: LobbySettings::default(),
-            players: slots[..2].to_vec(),
+            settings: grand,
+            players: slots.to_vec(),
             you: 1,
             input_delay: 2,
         });
@@ -562,6 +598,16 @@ mod tests {
         round_trip(Msg::Bye {
             reason: "bye".into(),
         });
+    }
+
+    #[test]
+    fn an_oversized_army_is_refused() {
+        let mut w = Writer::new();
+        w.var(MAX_ARMY as u64 + 1);
+        for _ in 0..=MAX_ARMY {
+            w.var(0);
+        }
+        assert_eq!(read_army(&mut Reader::new(&w.buf)), None);
     }
 
     #[test]

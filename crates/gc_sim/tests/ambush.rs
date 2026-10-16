@@ -49,6 +49,7 @@ fn world_on(map: u32, seed: u64, units: &[UnitStats], cover: &[u8], teams: &[u8]
             water_level: 0,
             cover,
         },
+        champions: false,
     })
 }
 
@@ -122,7 +123,7 @@ fn attack(w: &mut World, player: u8, regiment: RegimentHandle, target: RegimentH
 fn hp(w: &World, h: RegimentHandle) -> u32 {
     w.regiments
         .model_hp(h)
-        .map_or(0, |hp| hp.iter().map(|&v| v as u32).sum())
+        .map_or(0, |hp| hp.iter().copied().map(u32::from).sum())
 }
 
 fn morale(w: &World, h: RegimentHandle) -> u8 {
@@ -185,7 +186,7 @@ fn a_regiment_in_a_wood_is_hidden_until_an_enemy_comes_close() {
         }
     }
     let t = gone_after.expect("never hidden again");
-    assert!(t >= LINGER_TICKS as u32, "faded after {t} ticks");
+    assert!(t >= u32::from(LINGER_TICKS), "faded after {t} ticks");
 }
 
 #[test]
@@ -375,7 +376,7 @@ fn charge(wood: bool) -> (World, RegimentHandle, RegimentHandle, RegimentHandle)
 fn a_charge_from_hiding_springs_an_ambush() {
     let (mut w, cav, spears, friend) = charge(true);
     let (steady, friend_steady) = (morale(&w, spears), morale(&w, friend));
-    let a = first_ambush(&mut w, SURPRISE_TICKS as u32).expect("no ambush");
+    let a = first_ambush(&mut w, u32::from(SURPRISE_TICKS)).expect("no ambush");
     assert!(!a.volley);
     assert_eq!((a.ambusher, a.victim), (cav, spears));
     assert!(w.caught_off_guard(spears));
@@ -528,4 +529,75 @@ fn hiding_is_deterministic_and_changes_the_hash() {
     let a = drill_hashes(&cover);
     assert_eq!(a, drill_hashes(&cover));
     assert_ne!(a, drill_hashes(&[]));
+}
+
+/// Copies of the field (engine hooks 5 and 6, docs/18-ai.md) keep who has
+/// seen whom: a regiment hidden in a wood is hidden in a copy too and is
+/// spotted there just as in the original, and one set out in the wood in
+/// an empty copy of the map starts hidden.
+#[test]
+fn copies_of_the_field_keep_who_has_seen_whom() {
+    let mut w = world(&patch(Cover::Wood, 10, 30, 10, 30));
+    let hider = spawn(&mut w, 0, SPEARS, tile(20), tile(20), NORTH);
+    let seen = spawn(&mut w, 0, SPEARS, tile(45), tile(20), NORTH);
+    let watcher = spawn(&mut w, 1, SPEARS, tile(45), tile(50), NORTH);
+    w.tick(&[]);
+    assert!(w.hidden(hider) && !w.hidden(seen));
+
+    let mut copy = w.fork_region(FxVec2::new(tile(32), tile(32)), Fx::from_int(100));
+    assert!(copy.hidden(hider) && !copy.hidden(seen));
+    assert!(!copy.sees(1, hider) && copy.sees(1, seen));
+    let walk = [PlayerCommand {
+        player: 1,
+        command: Command::MoveTo {
+            regiment: watcher,
+            target: FxVec2::new(tile(20), tile(27)),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        },
+    }];
+    w.tick(&walk);
+    copy.tick(&walk);
+    // Everything about every regiment, and who sees it.
+    let field = |w: &World| -> Vec<_> {
+        w.regiments
+            .iter()
+            .map(|r| {
+                (
+                    r,
+                    w.hidden(r.handle),
+                    w.sees(1, r.handle),
+                    w.sees(0, r.handle),
+                )
+            })
+            .collect()
+    };
+    for t in 0..20 * SECOND {
+        w.tick(&[]);
+        copy.tick(&[]);
+        assert_eq!(field(&copy), field(&w), "after {t} ticks");
+    }
+    assert!(
+        !w.hidden(hider),
+        "the watcher never came close enough to spot it"
+    );
+
+    let view = w.regiments.iter().find(|r| r.handle == seen).unwrap();
+    let mut scratch = w.scratch(4, 1);
+    let into_wood = gc_sim::Standing {
+        position: FxVec2::new(tile(20), tile(20)),
+        ..gc_sim::Standing::of(&view, true)
+    };
+    let placed = scratch.spawn_standing(&into_wood, None).unwrap();
+    // One its enemies have already seen stays seen in the wood.
+    let spotted = gc_sim::Standing {
+        position: FxVec2::new(tile(15), tile(15)),
+        hidden: false,
+        ..into_wood
+    };
+    let shown = scratch.spawn_standing(&spotted, None).unwrap();
+    scratch.tick(&[]);
+    assert!(scratch.hidden(placed));
+    assert!(!scratch.hidden(shown));
 }

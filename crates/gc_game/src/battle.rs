@@ -3,16 +3,29 @@
 //! who holds the field at the end.
 
 use gc_ai::army::{self, Preset};
+use gc_ai::perception::{fx, to_fx_vec, v2};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
-use gc_sim::{PlayerCommand, PlayerId, UnitStats, World};
+use gc_fixed::Fx;
+use gc_sim::champions::{HEART, Outcome};
+use gc_sim::{Challenge, Command, PlayerCommand, PlayerId, UnitStats, World};
 use gc_ui::Settings;
-use gc_ui::lobby::{LobbySettings, MatchStart, PLAYER_COLORS, Slot, SlotKind};
+use gc_ui::lobby::{LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind};
 use glam::Vec2;
+
+/// Whether champions may duel before this battle: the lobby allows it and
+/// a computer player takes part (docs/05-combat.md, "Champions before
+/// battle").
+pub fn champions_allowed(setup: &MatchStart) -> bool {
+    setup.settings.champions && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
+}
 
 /// A Field Battle is won once one side alone has held the field (everyone
 /// still fighting is on its team) for this long, so a rout that might
 /// rally doesn't end it early.
 pub const HOLD_TICKS: u32 = 10 * gc_sim::TICKS_PER_SECOND;
+
+/// The champions' result stays on screen this long after the duel ends.
+const NEWS_TICKS: u32 = 8 * gc_sim::TICKS_PER_SECOND;
 
 /// One side of a match.
 pub struct Party {
@@ -41,9 +54,10 @@ pub struct SetOut {
 
 /// Raise and deploy every side's army for `setup`, appending the commands
 /// that put them on the field to `out`, and add a mind for each AI slot to
-/// `minds`. Until the army builder and its points budget arrive, every army
-/// is ten regiments in a preset mix from its faction's roster. `units` and
-/// `factions` describe the regiment types;
+/// `minds`. Each army is what its player built in the army builder, held to
+/// the lobby's points budget, or if they built none (and for every AI) the
+/// largest army in a preset mix from the faction's roster that the budget
+/// buys. `units`, `factions` and `points` describe the regiment types;
 /// `plateaus` are the map's start positions (see [`battle_starts`]);
 /// `roll` varies the AI personalities from match to match. `deploy` is
 /// false on a joiner in a network match: the host raises every army and
@@ -59,6 +73,7 @@ pub fn set_out(
     setup: &MatchStart,
     units: &[UnitStats],
     factions: &[Faction],
+    points: &[u32],
     plateaus: [Vec2; 4],
     roll: u64,
     deploy: bool,
@@ -71,12 +86,17 @@ pub fn set_out(
     let perspective = if setup.seed.is_some() { 0 } else { me };
     let starts = battle_starts(&teams, perspective, plateaus);
     let middle = plateaus.iter().copied().sum::<Vec2>() / 4.0;
+    // People get a deployment phase; computer players alone don't need one.
+    let deployment = players.iter().any(|s| s.kind == SlotKind::Human);
     let mut set = SetOut {
         parties: Vec::with_capacity(players.len()),
         me: me as PlayerId,
         my_start: starts.get(me).copied().unwrap_or(middle),
         my_forward: Vec2::NEG_Y,
     };
+    // Every zone goes out before any army or Ready, so the deployment can't
+    // end before a late zone arrives when the setup spans several turns.
+    let (mut spawns, mut ready) = (Vec::new(), Vec::new());
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = Faction::from_index(slot.faction.index() as u8);
@@ -98,7 +118,12 @@ pub fn set_out(
         let preset = mind
             .as_ref()
             .map_or(Preset::Balanced, |m| m.personality().army);
-        let raised = army::pick_army(units, factions, faction, preset, army::ARMY_REGIMENTS);
+        let budget = setup.settings.budget.points();
+        let raised = if slot.army.is_empty() {
+            army::pick_army_within(units, points, factions, faction, preset, budget, MAX_ARMY)
+        } else {
+            army::within_budget(&slot.army, points, factions, faction, budget, MAX_ARMY)
+        };
         // Face the nearest enemy start (the middle of the map if none).
         let foe = (0..players.len())
             .filter(|&j| teams[j] != teams[i])
@@ -111,13 +136,79 @@ pub fn set_out(
         }
         if deploy {
             let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
-            army::spawn_commands(party, &placed, out);
+            if deployment {
+                out.push(PlayerCommand {
+                    player: party,
+                    command: Command::DeployZone {
+                        center: to_fx_vec(starts[i]),
+                        radius: Fx::from_int(zone_radius(&placed, starts[i])),
+                    },
+                });
+            }
+            army::spawn_commands(party, &placed, &mut spawns);
+            // The computer keeps the standard deployment.
+            if deployment && slot.kind == SlotKind::Ai {
+                ready.push(PlayerCommand {
+                    player: party,
+                    command: Command::Ready,
+                });
+            }
         }
         if let Some(mind) = mind {
             minds.add(mind);
         }
     }
+    out.append(&mut spawns);
+    out.append(&mut ready);
     set
+}
+
+/// While `player` deploys, slide a planned group order (its `MoveTo`s, which
+/// place regiments while deploying) as a whole until every regiment's spot
+/// is inside their zone, so a line drawn past the edge keeps its shape
+/// instead of being refused.
+pub fn shift_into_zone(world: &World, player: PlayerId, commands: &mut [Command]) {
+    let Some(zone) = world.deploy_zone(player) else {
+        return;
+    };
+    let centre = v2(zone.center);
+    let room = (fx(zone.radius) - 1.0).max(0.0);
+    let mut shift = Vec2::ZERO;
+    // A few passes settle a line that sticks out on more than one side.
+    for _ in 0..4 {
+        for c in commands.iter() {
+            if let Command::MoveTo { target, .. } = *c {
+                let out = v2(target) + shift - centre;
+                let excess = out.length() - room;
+                if excess > 0.0 {
+                    shift -= out.normalize_or_zero() * excess;
+                }
+            }
+        }
+    }
+    if shift == Vec2::ZERO {
+        return;
+    }
+    for c in commands {
+        if let Command::MoveTo { target, .. } = c {
+            *target = to_fx_vec(v2(*target) + shift);
+        }
+    }
+}
+
+/// Smallest deployment zone, as a radius in tiles.
+const MIN_ZONE: i32 = 24;
+/// Room in a deployment zone around the standard deployment, tiles.
+const ZONE_MARGIN: f32 = 10.0;
+
+/// A deployment zone round `start` that holds the standard deployment
+/// `placed` with room to spare.
+fn zone_radius(placed: &[army::Placement], start: Vec2) -> i32 {
+    let reach = placed
+        .iter()
+        .map(|p| p.position.distance(start))
+        .fold(0.0, f32::max);
+    ((reach + ZONE_MARGIN).ceil() as i32).max(MIN_ZONE)
 }
 
 /// Where each party of a Field Battle starts, from the map's four start
@@ -175,29 +266,58 @@ pub fn holding_the_field(world: &World) -> Option<PlayerId> {
 /// A lobby Field Battle under way: whose side this machine plays, and how
 /// it ended.
 pub struct Battle {
-    pub me: PlayerId,
+    /// None while watching a replay: nobody here won or lost.
+    pub me: Option<PlayerId>,
     /// The side holding the field and the tick it took it, while one does.
     held: Option<(PlayerId, u32)>,
     /// "VICTORY" or "DEFEAT" and what happened, once it is over.
     pub outcome: Option<String>,
     /// Whether this machine's side won, once it is over.
     pub won: Option<bool>,
+    /// What the champions are doing, while there is news of them.
+    pub champions: Option<String>,
+    /// The state of the duel that news tells.
+    heard: Option<Outcome>,
 }
 
 impl Battle {
-    pub fn new(me: PlayerId) -> Battle {
+    pub fn new(me: Option<PlayerId>) -> Battle {
         Battle {
             me,
             held: None,
             outcome: None,
             won: None,
+            champions: None,
+            heard: None,
         }
+    }
+
+    /// Follow the champions' duel: who steps out, then how it ended, for a
+    /// few seconds. Returns true when the news changed.
+    pub fn herald(&mut self, world: &World, parties: &[Party], unit_names: &[String]) -> bool {
+        let now = world.tick_count();
+        let duel = world
+            .challenge()
+            .filter(|c| now <= c.decided() + NEWS_TICKS)
+            .map(|c| (c, c.outcome(now)));
+        let heard = duel.map(|(_, o)| o);
+        if heard == self.heard {
+            return false;
+        }
+        self.heard = heard;
+        self.champions = duel.map(|(c, o)| champion_news(c, o, world, parties, unit_names));
+        true
     }
 
     /// Look at the field after a tick; once one side alone has held it
     /// long enough, decide the battle. Returns true when it was just decided.
     pub fn judge(&mut self, world: &World, parties: &[Party]) -> bool {
         if self.outcome.is_some() {
+            return false;
+        }
+        // Nobody sees the enemy while the armies deploy.
+        if world.deploying() {
+            self.held = None;
             return false;
         }
         let now = world.tick_count();
@@ -213,9 +333,15 @@ impl Battle {
         if now - since < HOLD_TICKS {
             return false;
         }
-        let secs = now / gc_sim::TICKS_PER_SECOND;
-        let time = format!("{}:{:02}", secs / 60, secs % 60);
-        let won = !world.hostile(self.me, p);
+        let time = gc_ai::lens::clock(world.battle_ticks());
+        let Some(me) = self.me else {
+            self.outcome = Some(format!(
+                "OVER  {} holds the field after {time}. Esc: menu",
+                party_name(parties, p)
+            ));
+            return true;
+        };
+        let won = !world.hostile(me, p);
         self.won = Some(won);
         self.outcome = Some(if won {
             format!("VICTORY  the field is yours after {time}. Esc: menu")
@@ -229,12 +355,48 @@ impl Battle {
     }
 }
 
+/// The line about the champions' duel `c`, which stands at `outcome`.
+fn champion_news(
+    c: &Challenge,
+    outcome: Outcome,
+    world: &World,
+    parties: &[Party],
+    unit_names: &[String],
+) -> String {
+    let [a, b] = c.sides.map(|s| party_name(parties, s));
+    match outcome {
+        Outcome::Fighting => {
+            // The regiments they step out of are there while they fight.
+            let [x, y] = c.champions.map(|h| {
+                world
+                    .regiments
+                    .get(h)
+                    .and_then(|r| unit_names.get(r.unit as usize))
+                    .map_or("regiment", String::as_str)
+            });
+            format!(
+                "CHAMPIONS  {a}'s {x} and {b}'s {y} each send out a champion to fight between the lines"
+            )
+        }
+        Outcome::CutShort => "CHAMPIONS  The battle swallows the duel before it is decided".into(),
+        Outcome::Killed { winner } => {
+            let (w, l) = if winner == 0 { (a, b) } else { (b, a) };
+            format!(
+                "CHAMPIONS  {w}'s champion kills {l}'s. {w}'s side takes heart (+{HEART} morale), {l}'s loses it (-{HEART})"
+            )
+        }
+        Outcome::Parted => {
+            "CHAMPIONS  Neither champion can beat the other, and both go back to their lines".into()
+        }
+    }
+}
+
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
 /// The AI plays your faction.
 pub fn quick_battle(level: u8, settings: &Settings) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
-    me.name = settings.player_name.clone();
+    me.name.clone_from(&settings.player_name);
     me.faction = settings.faction;
     me.color = settings.player_color % 4;
     let mut ai = Slot::open(1);
@@ -277,6 +439,19 @@ mod tests {
                 assert_ne!(a, b);
             }
         }
+    }
+
+    /// The real game data's unit stats, factions and points, as `set_out`
+    /// takes them.
+    fn tables(data: &gc_data::GameData) -> (Vec<UnitStats>, Vec<Faction>, Vec<u32>) {
+        let units = data.units.iter().map(crate::sandbox::stats_of).collect();
+        let factions = data
+            .units
+            .iter()
+            .map(|u| Faction::from_index(u.faction() as u8))
+            .collect();
+        let points = data.units.iter().map(|u| u32::from(u.points)).collect();
+        (units, factions, points)
     }
 
     /// A lobby setup: slot `k` is `who[k]` (None for you), on team
@@ -322,17 +497,162 @@ mod tests {
         ai_worst: std::time::Duration,
     }
 
+    /// Who fields what: a built army as built (held to the budget), and
+    /// the budget's worth of the preset mix for an AI or a player who built
+    /// nothing.
+    #[test]
+    fn armies_are_what_was_built_within_the_budget() {
+        let data = crate::data::load();
+        let (units, factions, points) = tables(&data);
+        let (yari, _) = data.unit_by_name("Yari Ashigaru").unwrap();
+        let (yumi, _) = data.unit_by_name("Yumi Ashigaru").unwrap();
+        let (pikes, _) = data.unit_by_name("Bone Pikes").unwrap();
+        let heightmap = Heightmap::generate(1, MAP);
+        let nav = heightmap.nav_costs();
+        let fielded = |setup: &MatchStart| {
+            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut out = Vec::new();
+            set_out(
+                setup,
+                &units,
+                &factions,
+                &points,
+                start_positions(MAP),
+                1,
+                true,
+                &mut minds,
+                &mut out,
+            );
+            let mut per = vec![Vec::new(); setup.players.len()];
+            for c in &out {
+                if let gc_sim::Command::SpawnRegiment { unit, .. } = c.command {
+                    per[c.player as usize].push(unit);
+                }
+            }
+            per
+        };
+        let mut setup = lobby(&[None, Some(Difficulty::Veteran)], &[0, 1]);
+        let spent = |army: &[u16]| army.iter().map(|&u| points[u as usize]).sum::<u32>();
+        // Nothing built: both sides get the Battle budget's worth.
+        for army in fielded(&setup) {
+            assert!(
+                spent(&army) <= 4_000 && spent(&army) > 4_000 - 600,
+                "{army:?}"
+            );
+        }
+        // A built army, with another faction's regiment slipped in, and a
+        // Skirmish budget it overspends.
+        setup.players[0].army = vec![yari, yari, pikes, yumi, yumi, yari, yari, yari, yari];
+        setup.settings.budget = gc_ui::lobby::Budget::Skirmish;
+        let armies = fielded(&setup);
+        let mut mine = armies[0].clone();
+        mine.sort_unstable();
+        let mut want = vec![yari, yari, yumi, yumi, yari];
+        want.sort_unstable();
+        assert_eq!(mine, want, "five fit in 2,000");
+        assert!(spent(&armies[1]) <= 2_000);
+    }
+
+    /// People get a deployment zone round their army and place regiments
+    /// inside it; computer players are ready at once, and a battle of
+    /// computers alone has no deployment.
+    #[test]
+    fn people_deploy_and_computers_are_ready_at_once() {
+        let data = crate::data::load();
+        let (units, factions, points) = tables(&data);
+        let heightmap = Heightmap::generate(3, MAP);
+        let nav = heightmap.nav_costs();
+        let start = |setup: &MatchStart| {
+            let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
+            let mut world = World::new(&MatchSetup {
+                seed: 3,
+                capacities: Capacities::default(),
+                units: &units,
+                map_tiles: MAP,
+                nav: &nav,
+                teams: &teams,
+                ground: heightmap.ground(),
+                champions: false,
+            });
+            let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+            let mut out = Vec::new();
+            set_out(
+                setup,
+                &units,
+                &factions,
+                &points,
+                start_positions(MAP),
+                3,
+                true,
+                &mut minds,
+                &mut out,
+            );
+            let stats = world.tick(&out);
+            assert_eq!(stats.commands_rejected, 0);
+            world
+        };
+
+        let world = start(&lobby(
+            &[Some(Difficulty::Recruit), Some(Difficulty::Recruit)],
+            &[0, 1],
+        ));
+        assert!(!world.deploying(), "computers alone don't deploy");
+
+        let mut world = start(&lobby(&[None, Some(Difficulty::Veteran)], &[0, 1]));
+        assert!(world.deploying());
+        assert!(!world.deploy_ready(0) && world.deploy_ready(1));
+        for r in world.regiments.iter() {
+            let zone = world.deploy_zone(r.owner).unwrap();
+            assert!(zone.contains(r.position), "{r:?}");
+        }
+        // A line drawn past the zone's edge slides in whole.
+        let mine = world.regiments.iter().find(|r| r.owner == 0).unwrap();
+        let zone = world.deploy_zone(0).unwrap();
+        let edge = v2(zone.center) + Vec2::new(fx(zone.radius) + 5.0, 0.0);
+        let mut line = [0.0, 6.0].map(|dy| Command::MoveTo {
+            regiment: mine.handle,
+            target: to_fx_vec(edge + Vec2::new(0.0, dy)),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        });
+        shift_into_zone(&world, 0, &mut line);
+        let [a, b] = line.map(|c| match c {
+            Command::MoveTo { target, .. } => target,
+            _ => unreachable!(),
+        });
+        assert!(zone.contains(a) && zone.contains(b));
+        assert!(((v2(b) - v2(a)) - Vec2::new(0.0, 6.0)).length() < 0.01);
+        // While deploying, that order puts the regiment straight down there.
+        let (handle, facing) = (mine.handle, mine.facing);
+        let open = world.nav().walkable(a);
+        world.tick(&[
+            PlayerCommand {
+                player: 0,
+                command: line[0],
+            },
+            PlayerCommand {
+                player: 0,
+                command: Command::Ready,
+            },
+        ]);
+        assert!(!world.deploying());
+        if open {
+            let r = world.regiments.get(handle).unwrap();
+            assert_eq!((r.position, r.facing), (a, facing));
+        }
+    }
+
     /// Play `setup` on the generated map with the real game data, the human
     /// side standing still, for at most `minutes`.
     fn play(setup: &MatchStart, seed: u64, minutes: u32) -> Played {
         let data = crate::data::load();
-        let units: Vec<UnitStats> = data.units.iter().map(crate::sandbox::stats_of).collect();
-        let factions: Vec<Faction> = data
-            .units
-            .iter()
-            .map(|u| Faction::from_index(u.faction() as u8))
-            .collect();
-        let heightmap = Heightmap::generate(seed, MAP);
+        let (units, factions, points) = tables(&data);
+        let mut heightmap = Heightmap::generate(seed, MAP);
+        // `AI_COVER=off` plays on bare maps, without woods or tall grass.
+        if std::env::var("AI_COVER").as_deref() == Ok("off") {
+            heightmap.cover.clear();
+        }
         let nav = heightmap.nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
@@ -343,13 +663,20 @@ mod tests {
             nav: &nav,
             teams: &teams,
             ground: heightmap.ground(),
+            champions: champions_allowed(setup),
         });
         let mut minds = Minds::new(heightmap.ai_terrain(&nav));
+        // As in a real game (for measuring what the minds cost the game's
+        // thread): the battle may not play out the same way twice.
+        if std::env::var_os("AI_LIVE").is_some() {
+            minds = minds.live();
+        }
         let mut out = Vec::new();
         let set = set_out(
             setup,
             &units,
             &factions,
+            &points,
             start_positions(MAP),
             seed,
             true,
@@ -357,6 +684,16 @@ mod tests {
             &mut out,
         );
         world.tick(&out);
+        // The people are happy with the standard deployment.
+        let ready: Vec<PlayerCommand> = (0..setup.players.len())
+            .filter(|&p| setup.players[p].kind == SlotKind::Human)
+            .map(|p| PlayerCommand {
+                player: p as PlayerId,
+                command: Command::Ready,
+            })
+            .collect();
+        world.tick(&ready);
+        assert!(!world.deploying());
         let fielded = (0..setup.players.len())
             .map(|p| {
                 world
@@ -366,7 +703,7 @@ mod tests {
                     .count()
             })
             .collect();
-        let mut battle = Battle::new(set.me);
+        let mut battle = Battle::new(Some(set.me));
         let limit = minutes * 60 * gc_sim::TICKS_PER_SECOND;
         let (mut ai_time, mut ai_worst) = Default::default();
         while world.tick_count() < limit && battle.outcome.is_none() {
@@ -434,7 +771,7 @@ mod tests {
 
     /// Each faction's Veteran against each faction standing still.
     #[test]
-    #[ignore]
+    #[ignore = "slow: 64 full battles, run by hand"]
     fn matchups() {
         use gc_ui::lobby::Faction as F;
         for ai in F::ALL {
@@ -462,11 +799,13 @@ mod tests {
 
     /// The balance table (docs/17-unit-rosters.md, "Field Battle balance"): each pair of
     /// factions, two Veterans, `AI_BATTLES` battles a pair (default 24),
-    /// swapping ends every battle. Prints the first faction's wins, losses
-    /// and battles nobody had won after ten minutes.
+    /// swapping ends every battle, with champions allowed unless
+    /// `AI_CHAMPIONS=off`, on maps with woods unless `AI_COVER=off`.
+    /// Prints the first faction's wins, losses and battles nobody had won
+    /// after ten minutes.
     /// `cargo test -p gc_game --release faction_table -- --ignored --nocapture`
     #[test]
-    #[ignore]
+    #[ignore = "slow: the full faction balance table, run by hand"]
     fn faction_table() {
         use gc_ui::lobby::Faction as F;
         let n: u64 = std::env::var("AI_BATTLES").map_or(24, |v| v.parse().unwrap());
@@ -495,6 +834,9 @@ mod tests {
                             let a_first = seed % 2 == 0;
                             setup.players[0].faction = if a_first { a } else { b };
                             setup.players[1].faction = if a_first { b } else { a };
+                            // `AI_CHAMPIONS=off` plays them without champions.
+                            setup.settings.champions =
+                                std::env::var("AI_CHAMPIONS").as_deref() != Ok("off");
                             match play(&setup, seed, 10).battle.won {
                                 Some(w) if w == a_first => won += 1,
                                 Some(_) => lost += 1,
@@ -543,6 +885,7 @@ mod tests {
                 water_level: 0,
                 cover: &cover,
             },
+            champions: false,
         });
         let spawn = |player, x| PlayerCommand {
             player,
@@ -573,11 +916,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "opens a window to watch a battle"]
     fn watch() {
         let level = |v: &str| match v {
             "Recruit" => Difficulty::Recruit,
             "General" => Difficulty::General,
+            "Warlord" => Difficulty::Warlord,
             _ => Difficulty::Veteran,
         };
         let a = std::env::var("AI_A").map_or(None, |v| Some(level(&v)));
@@ -590,7 +934,7 @@ mod tests {
                 "seed {seed}: {:?} after {} s; minds {:.3} ms a tick on average, {:.2} ms at worst",
                 played.battle.outcome,
                 played.ticks / gc_sim::TICKS_PER_SECOND,
-                played.ai_time.as_secs_f64() * 1000.0 / played.ticks.max(1) as f64,
+                played.ai_time.as_secs_f64() * 1000.0 / f64::from(played.ticks.max(1)),
                 played.ai_worst.as_secs_f64() * 1000.0,
             );
         }

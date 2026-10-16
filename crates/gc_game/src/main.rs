@@ -21,6 +21,9 @@
 //! take the team colour. Zoom far out and the Commander View replaces them
 //! with one block and banner per regiment.
 //!
+//! The bottom bar has a minimap (click or drag to move the camera, right-click
+//! to send the selection there) and an army tray of regiment cards (click to
+//! select, Shift-click to toggle, double-click to centre).
 //! Orders: left-click one of your regiments to select it, or left-drag a box around
 //! several; Shift adds or removes. Right-click the ground to march the
 //! selection there side by side, facing the way they travel; right-drag to
@@ -64,13 +67,14 @@
 //! Esc leaves placing, the stats panel or the credits, and otherwise opens
 //! the menu.
 //!
-//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general`
+//! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the match seed; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
-//! the sound card; `--latency 1|2|3` sets
+//! the sound card; `--no-shadows` and `--no-glow` turn off the sun's
+//! shadows and the glow around bright light; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost.
@@ -81,11 +85,13 @@ mod credits;
 mod data;
 #[cfg(test)]
 mod goldens;
+mod hud;
 mod lens;
 mod models;
 mod online;
 mod profile;
 mod puppets;
+mod replays;
 mod sandbox;
 mod scenery;
 mod sounds;
@@ -158,6 +164,9 @@ const PLATE_HEIGHT: f32 = 0.05;
 const DISORDER_DASH: f32 = 0.55;
 const DISORDER_DASH_SPACING: f32 = 0.9;
 const DISORDER_GLOW: u8 = 110;
+/// The deployment zone's ring: dash length and spacing, tiles.
+const ZONE_DASH: f32 = 1.2;
+const ZONE_DASH_SPACING: f32 = 2.0;
 /// A right-drag shorter than this on the ground is a click.
 const MIN_LINE_TILES: f32 = 2.0;
 /// A left-drag shorter than this on screen is a click.
@@ -205,9 +214,14 @@ const MESSAGE_TIME: Duration = Duration::from_secs(5);
 /// Sides in the sandbox and the drill; Tab cycles through them.
 const PLAYERS: u8 = 4;
 const TEAM_NAMES: [&str; 4] = ["red", "violet", "cyan", "bone"];
+/// How much faster a replay plays the deployment phase.
+const DEPLOY_REPLAY_SPEED: u32 = 8;
 /// Most ticks run in one frame, so a slow frame can't snowball (4x speed at
 /// 30 fps needs about 3).
 const MAX_TICKS_PER_FRAME: u32 = 8;
+/// How long a frame may spend simulating when an online match is catching
+/// up after a rejoin.
+const CATCH_UP_BUDGET: Duration = Duration::from_millis(25);
 
 const _: () = assert!(gc_data::MAX_MODELS == gc_sim::formation::MAX_MODELS);
 // The baked weapon bits and masses mean the same to the simulation.
@@ -274,6 +288,14 @@ fn parse_args() -> Options {
             opts.audio = false;
             continue;
         }
+        if flag == "--no-shadows" {
+            opts.render.shadows = false;
+            continue;
+        }
+        if flag == "--no-glow" {
+            opts.render.glow = false;
+            continue;
+        }
         let value = args.next().unwrap_or_default();
         let ok = match flag.as_str() {
             "--seed" => value.parse().map(|v| opts.seed = v).is_ok(),
@@ -329,7 +351,7 @@ fn parse_args() -> Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--host] [--join ADDRESS] [--seed N] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none]"
     );
     std::process::exit(2);
@@ -375,6 +397,8 @@ struct Running {
     unit_names: Vec<String>,
     /// Each regiment type's faction, as the AI names them.
     unit_factions: Vec<gc_ai::Faction>,
+    /// Each regiment type's cost in a Field Battle army.
+    unit_points: Vec<u32>,
     sandbox: Sandbox,
     selected: Vec<RegimentHandle>,
     /// The formation F last ordered, for which selection and on which tick:
@@ -422,11 +446,18 @@ struct Running {
     ui: Ui,
     ui_input: UiInput,
     ui_quads: Vec<UiQuad>,
+    /// The in-battle bar: minimap and army tray.
+    hud: hud::HudState,
     menu_open: bool,
     /// Whether a match has started (the sim is frozen until then).
     match_started: bool,
     /// A match over the network, whose turns come from the host.
     online: Option<online::Online>,
+    /// The battle being recorded, or the replay being watched.
+    recording: Option<Recording>,
+    watching: Option<Watching>,
+    /// The game data's short hash, for replays.
+    data_hash: u64,
     quit: bool,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
@@ -506,7 +537,7 @@ fn formation_hint(f: Formation) -> String {
 /// screen: the simulation's numbers for its unit and state.
 fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
     Fighter {
-        attack: stats.melee_attack as i32,
+        attack: i32::from(stats.melee_attack),
         defence: stats.melee_defence_in(r.formation, true),
         flank_defence: stats.melee_defence_in(r.formation, false),
         sharpness: (gc_sim::combat::heart_percent(r.morale)
@@ -587,6 +618,24 @@ enum MatchKind {
     Sandbox,
     /// A Field Battle from the lobby.
     Battle(MatchStart),
+    /// Watching a saved replay.
+    Replay(Box<gc_replay::Replay>),
+}
+
+/// The battle being recorded, and where it is saved.
+struct Recording {
+    recorder: gc_replay::Recorder,
+    path: std::path::PathBuf,
+    /// The tick it was last saved at, if it has been.
+    saved_at: Option<u32>,
+}
+
+/// A replay being watched.
+struct Watching {
+    replay: gc_replay::Replay,
+    title: String,
+    /// The unit stats to go back to afterwards.
+    stats_before: Vec<UnitStats>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -677,10 +726,10 @@ impl App {
             renderer.set_terrain(&Terrain {
                 size: heightmap.size,
                 samples_per_tile: heightmap.samples_per_tile,
-                max_height: heightmap.max_height,
-                water_level: heightmap.water_level,
+                max_height: heightmap.max_height(),
+                water_level: heightmap.water_level(),
                 heights: &heightmap.heights,
-            })
+            });
         });
         self.memory_timeline.mark("map generated + uploaded");
 
@@ -720,6 +769,22 @@ impl App {
             .iter()
             .map(|u| gc_ai::Faction::from_index(u.faction() as u8))
             .collect();
+        let unit_points: Vec<u32> = game_data
+            .units
+            .iter()
+            .map(|u| u32::from(u.points))
+            .collect();
+        // gc_data and the lobby list the factions in the same order.
+        let roster: Vec<gc_ui::lobby::RosterUnit> = game_data
+            .units
+            .iter()
+            .zip(&unit_names)
+            .map(|(u, name)| gc_ui::lobby::RosterUnit {
+                name: name.clone(),
+                faction: gc_ui::lobby::Faction::ALL[u.faction() as usize],
+                points: u32::from(u.points),
+            })
+            .collect();
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, MAP_TILES);
@@ -736,13 +801,14 @@ impl App {
                     nav: &nav,
                     teams: &[],
                     ground: heightmap.ground(),
+                    champions: false,
                 }),
                 vec![None; capacities.regiments as usize],
                 Vec::with_capacity(1024),
             )
         });
         let drill = (!opts.sandbox).then(|| make_drill(opts.seed));
-        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)));
+        let minds = tagged_alloc::scope(Tag::Ai, || Minds::new(heightmap.ai_terrain(&nav)).live());
 
         let start = Vec2::splat(MAP_TILES as f32 * 0.25);
         let mut camera = RtsCamera::new(MAP_TILES as f32, start + Vec2::new(10.0, 20.0));
@@ -773,11 +839,13 @@ impl App {
             game_data
                 .units
                 .iter()
-                .map(|u| u.name())
+                .map(gc_data::UnitRecord::name)
                 .collect::<Vec<_>>()
                 .join(", ")
         );
 
+        let mut hud_state = hud::HudState::default();
+        hud_state.set_terrain(&heightmap, MAP_TILES);
         let settings_path = gc_ui::settings::settings_path();
         let settings = settings_path
             .as_deref()
@@ -788,7 +856,8 @@ impl App {
             seed: opts.seed,
             map_hash: online::map_hash(&nav, &heightmap.ground()),
         });
-        let menu = Menu::new(lan, settings, settings_path, &online::version());
+        let mut menu = Menu::new(lan, settings, settings_path, &online::version());
+        menu.set_roster(roster);
         let show_menu = opts
             .menu
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
@@ -824,6 +893,7 @@ impl App {
             unit_stats,
             unit_names,
             unit_factions,
+            unit_points,
             sandbox: Sandbox::new(opts.sandbox),
             selected: Vec::with_capacity(64),
             formation_pick: None,
@@ -871,9 +941,13 @@ impl App {
             ui: Ui::new(),
             ui_input: UiInput::default(),
             ui_quads: Vec::with_capacity(512),
+            hud: hud_state,
             menu_open: show_menu,
             match_started: !show_menu,
             online: None,
+            recording: None,
+            watching: None,
+            data_hash: game_data.short_hash(),
             quit: false,
             sounds,
         });
@@ -904,6 +978,13 @@ impl App {
 }
 
 impl ApplicationHandler for App {
+    /// However the game ends, the battle being recorded is saved.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(r) = self.running.as_mut() {
+            r.save_recording();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.running.is_some() {
             return;
@@ -945,13 +1026,20 @@ impl ApplicationHandler for App {
                 r.renderer.resize(size.width, size.height);
                 r.camera.aspect = r.renderer.aspect_ratio();
             }
-            WindowEvent::Focused(f) => r.input.focused = f,
+            WindowEvent::Focused(f) => {
+                r.input.focused = f;
+                // A button let go outside the window never reports it.
+                r.hud.reset();
+            }
             WindowEvent::ModifiersChanged(m) => {
                 r.input.alt = m.state().alt_key();
                 r.input.shift = m.state().shift_key();
                 r.input.command = m.state().control_key() || m.state().super_key();
             }
-            WindowEvent::CursorLeft { .. } => r.input.cursor = None,
+            WindowEvent::CursorLeft { .. } => {
+                r.input.cursor = None;
+                r.hud.reset();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 if let (Some(prev), Some(_)) = (r.input.cursor, r.input.middle_down) {
                     let size = r.window.inner_size();
@@ -966,6 +1054,8 @@ impl ApplicationHandler for App {
                 }
                 r.input.cursor = Some(position);
             }
+            // Over the bar the wheel is not the camera's.
+            WindowEvent::MouseWheel { .. } if r.hud_wants_mouse() => {}
             WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(_, y) => r.camera.zoom(0.88f32.powf(y)),
                 // Trackpads send pixel deltas: two-finger scroll pans, as in
@@ -987,9 +1077,10 @@ impl ApplicationHandler for App {
                     if r.sandbox.tuning && down && r.tune_key(code) {
                         return;
                     }
-                    // The sandbox tools would change this machine's game and
-                    // nobody else's.
-                    let sandbox_tool = matches!(
+                    // The sandbox's clock and side keys would change this
+                    // machine's game and nobody else's; its editing tools
+                    // also change what a replay plays.
+                    let clock_or_side = matches!(
                         code,
                         KeyCode::KeyP
                             | KeyCode::Pause
@@ -998,7 +1089,10 @@ impl ApplicationHandler for App {
                             | KeyCode::Equal
                             | KeyCode::NumpadAdd
                             | KeyCode::Tab
-                            | KeyCode::KeyI
+                    );
+                    let edit_tool = matches!(
+                        code,
+                        KeyCode::KeyI
                             | KeyCode::KeyB
                             | KeyCode::Delete
                             | KeyCode::Backspace
@@ -1015,9 +1109,16 @@ impl ApplicationHandler for App {
                         r.menu.net().carry_on();
                         return;
                     }
-                    if r.online.is_some() && sandbox_tool {
+                    let off = if r.online.is_some() && (clock_or_side || edit_tool) {
+                        Some("That sandbox tool is off in a network battle.")
+                    } else if r.watching.is_some() && (edit_tool || code == KeyCode::KeyF) {
+                        Some("That is off while you watch a replay.")
+                    } else {
+                        None
+                    };
+                    if let Some(why) = off {
                         if down && !event.repeat {
-                            r.say("That sandbox tool is off in a network battle.".into());
+                            r.say(why.into());
                         }
                         return;
                     }
@@ -1077,7 +1178,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyV
                             if down
                                 && !event.repeat
-                                && r.battle.is_none()
+                                && (r.battle.is_none() || r.watching.is_some())
                                 && r.online.is_none() =>
                         {
                             r.reveal_all = !r.reveal_all;
@@ -1160,6 +1261,20 @@ impl Running {
                 }
                 self.input.middle_down = None;
             }
+            // The bar at the bottom takes its own clicks.
+            // A click that starts on the bar stays the bar's until it ends.
+            (MouseButton::Left, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_left();
+            }
+            (MouseButton::Left, ElementState::Released) if self.hud.left_captured() => {
+                self.hud.release_left();
+            }
+            (MouseButton::Right, ElementState::Pressed) if self.hud_wants_mouse() => {
+                self.hud.press_right();
+            }
+            (MouseButton::Right, ElementState::Released) if self.hud.right_captured() => {
+                self.hud.release_right();
+            }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
             }
@@ -1183,12 +1298,7 @@ impl Running {
                     .ground_under_cursor()
                     .and_then(|p| self.nearest_own(p, 6.0))
                 {
-                    match self.selected.iter().position(|&s| s == h) {
-                        Some(i) => {
-                            self.selected.swap_remove(i);
-                        }
-                        None => self.selected.push(h),
-                    }
+                    self.toggle_selected(h);
                 }
                 if !self.selected.is_empty() {
                     self.ui_sound(sounds::UiSound::Select);
@@ -1222,15 +1332,7 @@ impl Running {
                         width: None,
                     })
                 }) {
-                    self.plan_order(order);
-                    if !self.group_commands.is_empty() {
-                        self.ui_sound(sounds::UiSound::Move);
-                    }
-                    self.human_orders
-                        .extend(self.group_commands.iter().map(|&command| PlayerCommand {
-                            player: self.sandbox.side,
-                            command,
-                        }));
+                    self.issue_group_order(order);
                 }
                 self.input.right_down = None;
             }
@@ -1262,7 +1364,7 @@ impl Running {
             let ground = self
                 .heightmap
                 .height_at(p.x, p.z)
-                .max(self.heightmap.water_level);
+                .max(self.heightmap.water_level());
             if p.y <= ground {
                 // Refine between the last point above ground and this one.
                 let (mut lo, mut hi) = (prev_t, t);
@@ -1272,7 +1374,7 @@ impl Running {
                     let g = self
                         .heightmap
                         .height_at(q.x, q.z)
-                        .max(self.heightmap.water_level);
+                        .max(self.heightmap.water_level());
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
                 let hit = origin + dir * hi;
@@ -1284,6 +1386,29 @@ impl Running {
             t += step;
         }
         None
+    }
+
+    /// Send the selection to carry out `order`.
+    fn issue_group_order(&mut self, order: GroupOrder) {
+        self.plan_order(order);
+        if !self.group_commands.is_empty() {
+            self.ui_sound(sounds::UiSound::Move);
+        }
+        self.human_orders
+            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+                player: self.sandbox.side,
+                command,
+            }));
+    }
+
+    /// Add `h` to the selection, or take it out if it is already in.
+    fn toggle_selected(&mut self, h: RegimentHandle) {
+        match self.selected.iter().position(|&s| s == h) {
+            Some(i) => {
+                self.selected.swap_remove(i);
+            }
+            None => self.selected.push(h),
+        }
     }
 
     /// Expand a group order for the current selection into
@@ -1299,6 +1424,7 @@ impl Running {
         }
         self.group_commands.clear();
         formation::group_move(&mut self.group, order, &mut self.group_commands);
+        battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
     /// Ghost plates where each regiment of a planned order will stand.
@@ -1422,8 +1548,7 @@ impl Running {
                 .map(from_fx_vec)
                 .sum();
             let centre = sum / self.control_groups[n].len() as f32;
-            self.camera.focus = centre;
-            self.camera.focus_height = self.heightmap.height_at(centre.x, centre.y);
+            self.look_at(centre);
         }
     }
 
@@ -1543,6 +1668,11 @@ impl Running {
         // which runs on the host's clock.
         if !self.menu_open && self.online.is_none() {
             self.sim_clock += game_dt;
+            // A replay hurries through the deployment, where time stood still.
+            if self.watching.is_some() && self.world.deploying() {
+                self.sim_clock += game_dt * (DEPLOY_REPLAY_SPEED - 1);
+                self.sim_clock = self.sim_clock.min(TICK * MAX_TICKS_PER_FRAME);
+            }
         }
         let mut ticks_this_frame = if self.online.is_some() {
             self.online_turns(now)
@@ -1551,8 +1681,26 @@ impl Running {
         };
         while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
-            ticks_this_frame += 1;
             self.pending.clear();
+            let tick = self.world.tick_count();
+            if self
+                .watching
+                .as_ref()
+                .is_some_and(|w| tick >= w.replay.ticks)
+            {
+                self.sim_clock = Duration::ZERO;
+                self.paused = true;
+                self.sandbox.dirty = true;
+                break;
+            }
+            ticks_this_frame += 1;
+            // A replay plays its recorded orders and nobody else's.
+            if let Some(w) = &self.watching {
+                self.pending.extend_from_slice(w.replay.commands_at(tick));
+                self.human_orders.clear();
+                self.step();
+                continue;
+            }
             if let Some(drill) = &mut self.drill {
                 drill.commands_for(&self.world, &mut self.pending);
                 // A side the computer plays takes its orders from its mind.
@@ -1572,6 +1720,11 @@ impl Running {
             // Tuned stats take effect in the tick after they are sent.
             self.unit_stats.clone_from_slice(self.world.units());
             self.judge_battle();
+            if self.recording.as_ref().is_some_and(|r| {
+                self.world.tick_count() >= r.saved_at.unwrap_or(0) + replays::SAVE_EVERY
+            }) {
+                self.save_recording();
+            }
         }
         let alpha = match &self.online {
             // Turns arrive on the host's clock: move smoothly towards the
@@ -1593,6 +1746,9 @@ impl Running {
         self.puppets.advance(game_dt.as_secs_f32());
         let world = &self.world;
         self.puppets.pair(|a, b| world.hostile(a, b));
+        // The simulation's time, in ticks, interpolated as the regiments are.
+        let now = world.tick_count() as f32 - 1.0 + alpha;
+        self.puppets.champions(world.challenge(), now);
         let marked = self
             .attack_mark
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
@@ -1608,6 +1764,13 @@ impl Running {
             &mut self.instances,
         );
         let viewer = self.sandbox.side;
+        if let Some(zone) = self.world.deploy_zone(viewer) {
+            Self::push_zone_ring(
+                &mut self.instances,
+                from_fx_vec(zone.center),
+                fx_to_f32(zone.radius),
+            );
+        }
         // Flags and banners grow as the Commander View pulls back, so they
         // stay readable.
         let zoom = if self.commander {
@@ -1661,7 +1824,7 @@ impl Running {
                 speed: fx_to_f32(stats.speed),
                 engaged: r.engaged,
                 routing: r.morale.broken(),
-                disorder: r.disorder as f32 / gc_sim::combat::DISORDER_TICKS as f32,
+                disorder: f32::from(r.disorder) / f32::from(gc_sim::combat::DISORDER_TICKS),
                 charge: r.charge,
                 fighter: fighter_of(stats, &r),
             };
@@ -1703,7 +1866,7 @@ impl Running {
                 // One block per regiment with a tall banner: the flag shows
                 // the team, or the morale colour when shaken.
                 let shade = if selected { 255 } else { 210 };
-                let tint = |c: u8| (c as u32 * shade / 255) as u8;
+                let tint = |c: u8| (u32::from(c) * shade / 255) as u8;
                 self.instances.push(BoxInstance {
                     pos: pos.to_array(),
                     facing: facing.to_array(),
@@ -1761,7 +1924,7 @@ impl Running {
                     self.camera.focus_height,
                     pos.y,
                 )) > LOD_DISTANCE;
-                let bucket = &mut art.buckets[model * 2 + far as usize];
+                let bucket = &mut art.buckets[model * 2 + usize::from(far)];
                 let clips = &art.clips;
                 let shooting = self.shooting[r.handle.index as usize];
                 let time = self.puppets.time();
@@ -1773,6 +1936,12 @@ impl Running {
                             Some(fight) => clips.fight(model, fight, seconds),
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
+                                // Giving ground: the walk played backwards.
+                                let seconds = if s.backing && action == Action::Walk {
+                                    -seconds
+                                } else {
+                                    seconds
+                                };
                                 clips.pose(model, action, seconds).map(|p| (p, false))
                             }
                         };
@@ -1783,7 +1952,12 @@ impl Running {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
                             frames: pose.rows,
-                            flags: [(pose.blend * 255.0) as u8, highlight, flat as u8 * 255, 0],
+                            flags: [
+                                (pose.blend * 255.0) as u8,
+                                highlight,
+                                u8::from(flat) * 255,
+                                0,
+                            ],
                             color: [cr, cg, cb, 255],
                             lift: 0.0,
                             scale: 1.0,
@@ -1815,7 +1989,7 @@ impl Running {
         if let Some(art) = &mut self.art {
             art.finish();
         }
-        self.push_arrows(alpha);
+        self.push_arrows(now);
         self.push_routes();
         if self.lens && !self.minds.is_empty() {
             let lenses = lens::lenses(&self.minds);
@@ -1836,6 +2010,8 @@ impl Running {
 
         if self.menu_open {
             self.run_menu();
+        } else if self.match_started {
+            self.run_hud();
         } else {
             self.renderer.clear_ui();
         }
@@ -1907,7 +2083,10 @@ impl Running {
         }
         let t0 = Instant::now();
         profile::zone!("sim tick");
-        tagged_alloc::scope(Tag::Sim, || self.world.tick(&self.pending));
+        tagged_alloc::scope(Tag::Sim, || match &mut self.recording {
+            Some(rec) => rec.recorder.tick(&mut self.world, &self.pending),
+            None => self.world.tick(&self.pending),
+        });
         if let Some(sounds) = &mut self.sounds {
             tagged_alloc::scope(Tag::Audio, || sounds.observe(&self.world, &self.camera));
         }
@@ -1979,13 +2158,14 @@ impl Running {
         let Some(o) = &mut self.online else {
             return 0;
         };
+        let mut new_desync = None;
         for e in events {
             match e {
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
                     if o.desync.is_none() {
                         o.desync = Some(tick);
-                        o.report = lan.desync_report().map(online::save_report);
+                        new_desync = Some(tick);
                     }
                 }
                 gc_net::MatchEvent::Ended(why) => {
@@ -1995,6 +2175,15 @@ impl Running {
             }
             self.sandbox.dirty = true;
         }
+        if let Some(tick) = new_desync {
+            let line = self.save_desync_report(tick);
+            if let Some(o) = &mut self.online {
+                o.report = Some(line);
+            }
+        }
+        let Some(o) = &mut self.online else {
+            return 0;
+        };
         if o.ended.is_none() && !in_match {
             o.ended = Some("you left it.".into());
             self.sandbox.dirty = true;
@@ -2007,7 +2196,12 @@ impl Running {
         let lan = self.menu.net();
         lan.submit(self.human_orders.drain(..));
         let mut turns = 0;
-        while turns < MAX_TICKS_PER_FRAME {
+        // A player who rejoined replays the match so far as fast as a
+        // frame's budget allows.
+        let started = Instant::now();
+        while turns < MAX_TICKS_PER_FRAME
+            || (self.menu.net().catching_up() && started.elapsed() < CATCH_UP_BUDGET)
+        {
             let Some(commands) = self.menu.net().next_turn(now) else {
                 break;
             };
@@ -2015,7 +2209,10 @@ impl Running {
             self.step();
             let tick = self.world.tick_count();
             if tick.is_multiple_of(gc_net::HASH_EVERY) {
-                let hash = self.world.state_hash();
+                // The recording hashes as often, so it pins a desync's tick.
+                let hash = (self.recording.as_ref())
+                    .and_then(|r| r.recorder.hash_now())
+                    .unwrap_or_else(|| self.world.state_hash());
                 self.menu.net().record_hash(tick, hash);
             }
             // The computer players think on the host only; their orders
@@ -2085,6 +2282,7 @@ impl Running {
         self.input.left_down = None;
         self.input.right_down = None;
         self.input.middle_down = None;
+        self.hud.reset();
     }
 
     fn menu_key(&mut self, key: &winit::event::KeyEvent) {
@@ -2108,33 +2306,39 @@ impl Running {
 
     /// Draw this frame's menu and carry out what it asks for.
     fn run_menu(&mut self) {
-        let scale = self.ui_scale();
-        let size = self.window.inner_size();
-        let screen = (
-            (size.width as f32 / scale) as i32,
-            (size.height as f32 / scale) as i32,
-        );
+        let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
-        input.mouse = self.input.cursor.map_or((-1, -1), |c| {
-            ((c.x as f32 / scale) as i32, (c.y as f32 / scale) as i32)
-        });
+        input.mouse = self.ui_cursor();
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
-        self.ui_quads.clear();
-        self.ui_quads
-            .extend(self.ui.draw.quads.iter().map(|q| UiQuad {
-                pos: q.pos,
-                size: q.size,
-                glyph: q.glyph,
-                color: q.color,
-            }));
-        self.renderer.set_ui(&self.ui_quads, scale);
+        hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
             MenuAction::None | MenuAction::SettingsChanged => {}
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
+            MenuAction::ListReplays => {
+                // A replay being saved now belongs in the list.
+                self.save_recording();
+                let list = replays::list(
+                    &replays::folder(),
+                    self.data_stats.len(),
+                    self.capacities,
+                    self.data_hash,
+                );
+                self.menu.set_replays(list);
+            }
+            MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
+                Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
+                    None => {
+                        eprintln!("grubcraft: watching {}", path.display());
+                        self.start_match(MatchKind::Replay(Box::new(r)));
+                    }
+                    Some(why) => self.menu.tell(why),
+                },
+                Err(e) => self.menu.tell(format!("Can't open that replay: {e}")),
+            },
             MenuAction::StartMatch(setup) => {
                 eprintln!(
                     "grubcraft: starting {} on {} with {} players",
@@ -2166,11 +2370,20 @@ impl Running {
     }
 
     fn restart_match(&mut self, kind: MatchKind) {
+        // The last battle's recording is done.
+        self.save_recording();
+        self.recording = None;
+        // A replay played with its own unit table; what was tuned before
+        // comes back.
+        if let Some(w) = self.watching.take() {
+            self.unit_stats = w.stats_before;
+        }
+        let mut stats_before = Vec::new();
         // A network match plays on the host's map, with the game data as
         // built (whatever the sandbox tuned stays in the sandbox).
         let net_seed = match &kind {
             MatchKind::Battle(setup) => setup.seed,
-            _ => None,
+            MatchKind::Sandbox | MatchKind::Replay(_) => None,
         };
         if net_seed.is_none() && self.menu.net().in_match() {
             // Starting something else leaves the network match.
@@ -2182,24 +2395,80 @@ impl Running {
             }
             self.unit_stats.clone_from(&self.data_stats);
         }
+        // A replay is shown on the map made from its seed, and plays on the
+        // map it stored.
+        let mut map_note = None;
+        if let MatchKind::Replay(r) = &kind {
+            if r.seed != self.seed {
+                self.use_map(r.seed);
+            }
+            stats_before = std::mem::replace(&mut self.unit_stats, r.units.clone());
+        }
         self.online = net_seed.map(|_| online::Online::new(self.menu.net().is_host()));
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.nav_costs());
-        let teams: Vec<u8> = match &kind {
-            MatchKind::Battle(setup) => setup.players.iter().map(|s| s.team).collect(),
-            _ => Vec::new(),
+        if let MatchKind::Replay(r) = &kind {
+            let (shown, stored) = (self.heightmap.ground(), r.setup().ground);
+            if r.map_tiles != MAP_TILES
+                || r.nav != nav
+                || stored.heights != shown.heights
+                || stored.water_level != shown.water_level
+                || stored.cover != shown.cover
+            {
+                map_note = Some(
+                    "This replay's map was made by another build: the ground may look different from where the soldiers walk.",
+                );
+            }
+        }
+        let (teams, champions): (Vec<u8>, bool) = match &kind {
+            MatchKind::Battle(setup) => (
+                setup.players.iter().map(|s| s.team).collect(),
+                battle::champions_allowed(setup),
+            ),
+            MatchKind::Sandbox | MatchKind::Replay(_) => (Vec::new(), false),
         };
-        self.world = tagged_alloc::scope(Tag::Sim, || {
-            World::new(&MatchSetup {
-                seed: self.seed,
-                capacities: self.capacities,
-                units: &self.unit_stats,
-                map_tiles: MAP_TILES,
-                nav: &nav,
-                teams: &teams,
-                ground: self.heightmap.ground(),
-            })
+        let setup = MatchSetup {
+            seed: self.seed,
+            capacities: self.capacities,
+            units: &self.unit_stats,
+            map_tiles: MAP_TILES,
+            nav: &nav,
+            teams: &teams,
+            ground: self.heightmap.ground(),
+            champions,
+        };
+        self.world = tagged_alloc::scope(Tag::Sim, || match &kind {
+            MatchKind::Replay(r) => r.new_world(),
+            _ => World::new(&setup),
         });
-        self.minds = tagged_alloc::scope(Tag::Ai, || Minds::new(self.heightmap.ai_terrain(&nav)));
+        // Every battle is recorded from its first tick.
+        if let MatchKind::Battle(start) = &kind {
+            let dir = replays::folder();
+            replays::prune(&dir, replays::KEEP - 1);
+            let mode = start.settings.mode.name();
+            let map = gc_ui::lobby::MAPS[start.settings.map];
+            let place = if net_seed.is_some() {
+                "over the network"
+            } else {
+                "on this machine"
+            };
+            self.recording = Some(Recording {
+                recorder: gc_replay::Recorder::new(
+                    &setup,
+                    &self.world,
+                    format!("{mode} on {map}, played {place}"),
+                )
+                .checkpoint_every(if net_seed.is_some() {
+                    gc_net::HASH_EVERY
+                } else {
+                    gc_replay::CHECKPOINT_EVERY
+                }),
+                path: replays::new_path(&dir, replays::now(), mode),
+                saved_at: None,
+            });
+        }
+        self.minds = tagged_alloc::scope(Tag::Ai, || {
+            Minds::new(self.heightmap.ai_terrain(&nav)).live()
+        });
         self.matches += 1;
         self.drill = None;
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
@@ -2219,8 +2488,13 @@ impl Running {
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
-        if let MatchKind::Battle(setup) = kind {
-            self.set_out_battle(&setup);
+        match kind {
+            MatchKind::Battle(setup) => self.set_out_battle(&setup),
+            MatchKind::Replay(r) => self.watch(*r, stats_before),
+            MatchKind::Sandbox => {}
+        }
+        if let Some(note) = map_note {
+            self.say(note.into());
         }
         if self.online.is_some() {
             // A joiner checks its map came out the same as the host's
@@ -2252,11 +2526,12 @@ impl Running {
             self.renderer.set_terrain(&Terrain {
                 size: hm.size,
                 samples_per_tile: hm.samples_per_tile,
-                max_height: hm.max_height,
-                water_level: hm.water_level,
+                max_height: hm.max_height(),
+                water_level: hm.water_level(),
                 heights: &hm.heights,
-            })
+            });
         });
+        self.hud.set_terrain(&self.heightmap, MAP_TILES);
         let nav = self.heightmap.nav_costs();
         self.blocked_marks = blocked_marks(&nav, MAP_TILES);
         self.scenery = tagged_alloc::scope(Tag::Render, || {
@@ -2273,6 +2548,7 @@ impl Running {
                 setup,
                 &self.unit_stats,
                 &self.unit_factions,
+                &self.unit_points,
                 terrain_gen::start_positions(MAP_TILES),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
@@ -2289,7 +2565,14 @@ impl Running {
         }
         self.parties = set.parties;
         self.sandbox.side = set.me;
-        self.battle = Some(Battle::new(set.me));
+        self.battle = Some(Battle::new(Some(set.me)));
+        if let Some(rec) = &mut self.recording {
+            let header = rec.recorder.header_mut();
+            header.build = online::version();
+            header.data_hash = self.data_hash;
+            header.players = replays::players(&self.parties);
+            header.recorded_by = Some(set.me);
+        }
         // Look over your army towards the enemy.
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
@@ -2301,9 +2584,95 @@ impl Running {
         }
     }
 
-    /// How the battle ended, once it has.
-    fn battle_outcome(&self) -> Option<&str> {
-        self.battle.as_ref()?.outcome.as_deref()
+    /// Set up watching `replay`: everyone's regiments in view, the sides
+    /// named as they were, the camera over the armies.
+    fn watch(&mut self, replay: gc_replay::Replay, stats_before: Vec<UnitStats>) {
+        let parties = replays::parties(&replay.header);
+        if !parties.is_empty() {
+            self.parties = parties;
+        }
+        self.sandbox.placing = false;
+        self.sandbox.side = replay.header.recorded_by.unwrap_or(0);
+        self.battle = Some(Battle::new(None));
+        self.reveal_all = true;
+        // Look over the army of the side followed, as when it was played.
+        let side = self.sandbox.side;
+        let spawns: Vec<Vec2> = replay
+            .turns
+            .iter()
+            .flat_map(|(_, c)| c)
+            .filter_map(|c| match c.command {
+                gc_sim::Command::SpawnRegiment { position, .. } if c.player == side => {
+                    Some(from_fx_vec(position))
+                }
+                _ => None,
+            })
+            .collect();
+        let focus = if spawns.is_empty() {
+            Vec2::splat(MAP_TILES as f32 / 2.0)
+        } else {
+            spawns.iter().sum::<Vec2>() / spawns.len() as f32
+        };
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
+        self.camera.distance = 120.0;
+        self.watching = Some(Watching {
+            title: replays::title(&replay),
+            replay,
+            stats_before,
+        });
+    }
+
+    /// Save the battle's recording as it stands.
+    fn save_recording(&mut self) {
+        let tick = self.world.tick_count();
+        let Some(rec) = self.recording.as_mut().filter(|r| r.saved_at != Some(tick)) else {
+            return;
+        };
+        rec.saved_at = Some(tick);
+        if let Err(e) = replays::save(rec.recorder.replay(), &rec.path) {
+            eprintln!(
+                "grubcraft: could not save the replay {}: {e}",
+                rec.path.display()
+            );
+        }
+    }
+
+    /// Save what this machine played of a network match as a desync
+    /// report, returning a line saying where.
+    fn save_desync_report(&mut self, tick: u32) -> String {
+        let Some(rec) = &mut self.recording else {
+            return "Nothing was recorded to report".into();
+        };
+        // The recording carries on as a replay once the report is out.
+        rec.recorder.header_mut().desync_tick = Some(tick);
+        let report = rec.recorder.replay();
+        let who = report.header.recorded_by.map_or(0, |p| u32::from(p) + 1);
+        let path = replays::new_path(
+            &replays::desync_folder(),
+            replays::now(),
+            &format!("desync player{who}"),
+        );
+        let saved = replays::save(report, &path);
+        rec.recorder.header_mut().desync_tick = None;
+        let line = match saved {
+            Ok(()) => format!(
+                "Saved a desync report for the developers: {}",
+                path.display()
+            ),
+            Err(e) => format!("Could not save the desync report ({e})"),
+        };
+        eprintln!("grubcraft: {line}");
+        line
+    }
+
+    /// How the battle ended, once it has, and news of the champions.
+    fn battle_news(&self) -> Option<String> {
+        let battle = self.battle.as_ref()?;
+        match (&battle.outcome, &battle.champions) {
+            (Some(o), Some(c)) => Some(format!("{o}\n{c}")),
+            (o, c) => o.clone().or_else(|| c.clone()),
+        }
     }
 
     /// Once one side alone has held the field long enough, say who won.
@@ -2311,11 +2680,37 @@ impl Running {
         let Some(battle) = &mut self.battle else {
             return;
         };
-        if battle.judge(&self.world, &self.parties) {
+        let decided = battle.judge(&self.world, &self.parties);
+        if decided {
             if let Some(outcome) = &battle.outcome {
                 eprintln!("grubcraft: {outcome}");
             }
             self.sandbox.dirty = true;
+        }
+        if battle.herald(&self.world, &self.parties, &self.unit_names) {
+            if let Some(news) = &battle.champions {
+                eprintln!("grubcraft: {news}");
+            }
+            self.sandbox.dirty = true;
+        }
+        if decided {
+            self.save_recording();
+        }
+    }
+
+    /// Where you may deploy: a dashed amber ring on the ground.
+    fn push_zone_ring(instances: &mut Vec<BoxInstance>, centre: Vec2, radius: f32) {
+        let dashes = ((std::f32::consts::TAU * radius / ZONE_DASH_SPACING) as usize).max(8);
+        for k in 0..dashes {
+            let along = Vec2::from_angle(std::f32::consts::TAU * k as f32 / dashes as f32);
+            instances.push(BoxInstance {
+                pos: (centre + along * radius).to_array(),
+                // Each dash lies along the ring.
+                facing: along.to_array(),
+                size: [ZONE_DASH, PLATE_HEIGHT, 0.25],
+                color: [235, 150, 40, 255],
+                lift: 0.01,
+            });
         }
     }
 
@@ -2425,11 +2820,11 @@ impl Running {
                         self.camera.focus_height,
                         c.pos.y,
                     )) > LOD_DISTANCE;
-                    art.buckets[model * 2 + far as usize].push(SoldierInstance {
+                    art.buckets[model * 2 + usize::from(far)].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
                         frames: pose.rows,
-                        flags: [(pose.blend * 255.0) as u8, 0, flat as u8 * 255, 0],
+                        flags: [(pose.blend * 255.0) as u8, 0, u8::from(flat) * 255, 0],
                         color: [r, g, b, 255],
                         lift: -0.5 * c.sink,
                         scale: 1.0,
@@ -2448,9 +2843,9 @@ impl Running {
     }
 
     /// Volleys in flight: a few arrows each, arcing from the archers to where
-    /// they aimed. Only a picture; the simulation decides what they hit.
-    fn push_arrows(&mut self, alpha: f32) {
-        let now = self.world.tick_count() as f32 - 1.0 + alpha;
+    /// they aimed, at `now` (the simulation's time in ticks, interpolated).
+    /// Only a picture; the simulation decides what they hit.
+    fn push_arrows(&mut self, now: f32) {
         for v in self.world.volleys() {
             let flight = (v.impact_tick - v.launch_tick).max(1) as f32;
             let t = ((now - v.launch_tick as f32) / flight).clamp(0.0, 1.0);
@@ -2487,30 +2882,31 @@ impl Running {
             self.input.arrows
         };
         if up {
-            dy += 1.0
+            dy += 1.0;
         }
         if down {
-            dy -= 1.0
+            dy -= 1.0;
         }
         if left {
-            dx -= 1.0
+            dx -= 1.0;
         }
         if right {
-            dx += 1.0
+            dx += 1.0;
         }
         if let (Some(c), true, false) = (self.input.cursor, self.input.focused, self.menu_open) {
             let size = self.window.inner_size();
             if c.x <= EDGE_SCROLL_PX {
-                dx -= 1.0
+                dx -= 1.0;
             }
-            if c.x >= size.width as f64 - EDGE_SCROLL_PX {
-                dx += 1.0
+            if c.x >= f64::from(size.width) - EDGE_SCROLL_PX {
+                dx += 1.0;
             }
             if c.y <= EDGE_SCROLL_PX {
-                dy += 1.0
+                dy += 1.0;
             }
-            if c.y >= size.height as f64 - EDGE_SCROLL_PX {
-                dy -= 1.0
+            // The bar fills the bottom edge during a match.
+            if c.y >= f64::from(size.height) - EDGE_SCROLL_PX && !self.match_started {
+                dy -= 1.0;
             }
         }
         if dx != 0.0 || dy != 0.0 {
@@ -2546,12 +2942,12 @@ impl Running {
         let frame_avg = secs * 1000.0 / frames as f32;
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         let tick_avg = if self.stats.ticks > 0 {
-            ms(self.stats.tick_time) / self.stats.ticks as f64
+            ms(self.stats.tick_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
         let ai_avg = if self.stats.ticks > 0 {
-            ms(self.stats.ai_time) / self.stats.ticks as f64
+            ms(self.stats.ai_time) / f64::from(self.stats.ticks)
         } else {
             0.0
         };
@@ -2595,7 +2991,7 @@ impl Running {
             self.data_label,
             self.sounds
                 .as_ref()
-                .map_or("off".to_string(), |s| s.overlay_line()),
+                .map_or("off".to_string(), sounds::Sounds::overlay_line),
             info.name,
             info.backend,
         );
@@ -2612,7 +3008,7 @@ impl Running {
         } else if self.sandbox.panel {
             self.sandbox_panel()
         } else {
-            self.battle_outcome().unwrap_or_default().to_string()
+            self.battle_news().unwrap_or_default()
         };
         if self.lens && !self.menu_open {
             let lenses = lens::lenses(&self.minds);
@@ -2646,7 +3042,7 @@ impl Running {
     }
 
     /// I: hand the side you command to the computer, raise its level
-    /// (Recruit, Veteran, General), or take the side back.
+    /// (Recruit, Veteran, General, Warlord), or take the side back.
     fn cycle_mind(&mut self) {
         let side = self.sandbox.side;
         let name = party_name(&self.parties, side);
@@ -2668,13 +3064,13 @@ impl Running {
         };
         let faction = self.faction_of(side);
         let personality = persona.unwrap_or_else(|| {
-            gc_ai::personality::pick(faction, self.world.tick_count() ^ side as u32)
+            gc_ai::personality::pick(faction, self.world.tick_count() ^ u32::from(side))
         });
         let mind = Mind::new(MindConfig {
             party: side,
             difficulty: level,
             personality,
-            seed: self.seed ^ (self.matches << 8) ^ side as u64,
+            seed: self.seed ^ (self.matches << 8) ^ u64::from(side),
         });
         let who = mind.personality().name.clone();
         tagged_alloc::scope(Tag::Ai, || self.minds.add(mind));
@@ -2707,7 +3103,8 @@ impl Running {
     /// [ and ]: the previous or next unit type, for placing and tuning.
     fn choose_unit(&mut self, step: i32) {
         let types = self.unit_stats.len() as i32;
-        self.sandbox.unit = (self.sandbox.unit as i32 + step).rem_euclid(types.max(1)) as UnitId;
+        self.sandbox.unit =
+            (i32::from(self.sandbox.unit) + step).rem_euclid(types.max(1)) as UnitId;
         self.sandbox.dirty = true;
     }
 
@@ -2881,9 +3278,42 @@ impl Running {
             lines.extend(o.lines(lan.status(), lan.waiting()));
             lines.push(String::new());
         }
-        if let Some(outcome) = self.battle_outcome() {
-            lines.push(outcome.to_string());
+        if let Some(news) = self.battle_news() {
+            lines.push(news);
             lines.push(String::new());
+        }
+        if let Some(w) = &self.watching {
+            let tick = self.world.tick_count();
+            lines.push(if tick >= w.replay.ticks {
+                format!(
+                    "REPLAY  {}   over at {}   Esc: menu",
+                    w.title,
+                    gc_ai::lens::clock(tick)
+                )
+            } else {
+                format!(
+                    "REPLAY  {}   {} of {}   {speed}",
+                    w.title,
+                    gc_ai::lens::clock(tick),
+                    gc_ai::lens::clock(w.replay.ticks)
+                )
+            });
+            lines.push(format!(
+                "following {} (player {})   Tab: next side   H: hide",
+                party_name(&self.parties, sb.side),
+                sb.side + 1
+            ));
+            lines.push("game     P: pause   - =: slower, faster   Esc: menu".to_string());
+            lines.push(if self.reveal_all {
+                "woods    V: see only what this side saw (now showing everything)".to_string()
+            } else {
+                "woods    V: show everything".to_string()
+            });
+            if let Some((message, _)) = &sb.message {
+                lines.push(String::new());
+                lines.push(message.clone());
+            }
+            return lines.join("\n");
         }
         if self.online.is_some() {
             lines.push(format!(
@@ -3151,7 +3581,7 @@ fn digit(code: KeyCode) -> Option<usize> {
 
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
 fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
-    Vec2::from_angle(a.0 as f32 / 65536.0 * std::f32::consts::TAU)
+    Vec2::from_angle(f32::from(a.0) / 65536.0 * std::f32::consts::TAU)
 }
 
 fn main() {

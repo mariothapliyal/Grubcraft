@@ -1,12 +1,13 @@
-//! The main menu, Play (host or join), lobby and settings screens.
+//! The main menu, Play (host or join), lobby, replays and settings screens.
 //! See docs/08-ui-ux.md#menus-and-lobby.
 
 use std::path::PathBuf;
 
 use crate::draw::{Rect, fit};
 use crate::lobby::{
-    AI_LEVELS, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MatchStart, NetEvent, Network,
-    OnDrop, PLAYER_COLORS, Profile, SlotEdit, SlotKind, Tempo,
+    AI_LEVELS, Budget, Faction, GameMode, LobbySettings, LocalNetwork, MAPS, MAX_ARMY, MatchStart,
+    NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, RosterUnit, SlotEdit, SlotKind, Tempo,
+    army_points, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -16,7 +17,23 @@ pub enum Screen {
     Main,
     Play,
     Lobby,
+    /// The army builder, from the lobby.
+    Army,
+    /// The saved replays, to watch.
+    Replays,
     Settings,
+}
+
+/// A saved replay, as the Replays screen lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayEntry {
+    /// "Field Battle: Red (Mario) v Blue (AI 2)".
+    pub title: String,
+    /// "2026-10-15 21:50 UTC, 4:12 long".
+    pub detail: String,
+    pub path: PathBuf,
+    /// Why this build can't play it, if it can't.
+    pub unplayable: Option<String>,
 }
 
 /// What the game should do after a frame of menu.
@@ -31,6 +48,11 @@ pub enum MenuAction {
     StartMatch(MatchStart),
     /// Settings changed; the game should re-read `Menu::settings`.
     SettingsChanged,
+    /// The Replays screen opened: the game should look for saved replays
+    /// and hand them over with [`Menu::set_replays`].
+    ListReplays,
+    /// Watch the replay saved at this path.
+    WatchReplay(PathBuf),
     Quit,
 }
 
@@ -49,6 +71,13 @@ pub struct Menu<N: Network = LocalNetwork> {
     selected_game: Option<usize>,
     message: Option<(String, bool)>,
     in_match: bool,
+    /// The regiment types the army builder offers.
+    roster: Vec<RosterUnit>,
+    /// The Army screen's copy of your army while it is open.
+    army_draft: Option<Vec<u16>>,
+    /// The saved replays, newest first, and the page of them on screen.
+    replays: Vec<ReplayEntry>,
+    replay_page: usize,
 }
 
 /// Vertical flow of equally wide rows.
@@ -97,7 +126,29 @@ impl<N: Network> Menu<N> {
             selected_game: None,
             message: None,
             in_match: false,
+            roster: Vec::new(),
+            army_draft: None,
+            replays: Vec::new(),
+            replay_page: 0,
         }
+    }
+
+    /// The regiment types the army builder offers: the game's unit table,
+    /// in its order (an army names them by index).
+    pub fn set_roster(&mut self, roster: Vec<RosterUnit>) {
+        self.roster = roster;
+    }
+
+    /// The saved replays for the Replays screen, newest first.
+    pub fn set_replays(&mut self, replays: Vec<ReplayEntry>) {
+        self.replays = replays;
+        self.replay_page = 0;
+    }
+
+    /// Show a problem on the current screen (the Replays screen shows why
+    /// a replay wouldn't open).
+    pub fn tell(&mut self, text: String) {
+        self.message = Some((text, true));
     }
 
     /// The network the menus talk to.
@@ -180,6 +231,8 @@ impl<N: Network> Menu<N> {
             Screen::Main => self.main_screen(ui, escape),
             Screen::Play => self.play_screen(ui, escape),
             Screen::Lobby => self.lobby_screen(ui, escape),
+            Screen::Army => self.army_screen(ui, escape),
+            Screen::Replays => self.replays_screen(ui, escape),
             Screen::Settings => self.settings_screen(ui, escape),
         }
     }
@@ -187,7 +240,7 @@ impl<N: Network> Menu<N> {
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
         let button_h = 52;
-        let count = if self.in_match { 5 } else { 4 };
+        let count = if self.in_match { 6 } else { 5 };
         let total = 120 + count * (button_h + 14);
         let area = centered(ui.screen, 360, total);
         let title = "GRUBCRAFT";
@@ -224,6 +277,10 @@ impl<N: Network> Menu<N> {
         };
         if ui.button(stack.next(button_h), sandbox, ButtonStyle::Normal, true) {
             action = MenuAction::StartSandbox;
+        }
+        if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
+            self.go(ui, Screen::Replays);
+            action = MenuAction::ListReplays;
         }
         if ui.button(stack.next(button_h), "Settings", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Settings);
@@ -350,11 +407,12 @@ impl<N: Network> Menu<N> {
                 self.selected_game = Some(i);
             }
             let text = format!(
-                "{}  {}  {}/{}{}",
+                "{}  {}  {}/{}{}{}",
                 g.host,
                 g.map,
                 g.players,
                 g.max_players,
+                if g.playing { "  (in progress)" } else { "" },
                 if g.locked { "  (password)" } else { "" }
             );
             let ty = row.y + (row.h - 16) / 2;
@@ -453,6 +511,10 @@ impl<N: Network> Menu<N> {
         let col_w = (panel.w - 48 - 36) / 4;
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
+        // Champions may duel before a battle with a computer player: in the
+        // footer, beside Leave.
+        let champions_r = Rect::new(panel.x + 24 + 140 + 24, panel.bottom() - 52, 320, 44);
+        const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
             let mut map = settings.map;
@@ -479,14 +541,28 @@ impl<N: Network> Menu<N> {
                 settings.mode = GameMode::ALL[mode];
                 changed = true;
             }
-            let tempo_names: Vec<&str> = Tempo::ALL.iter().map(|t| t.name()).collect();
-            let mut tempo = Tempo::ALL
-                .iter()
-                .position(|&t| t == settings.tempo)
-                .unwrap_or(0);
-            if ui.stepper(slot_rect(2), "Tempo", &mut tempo, &tempo_names) {
-                settings.tempo = Tempo::ALL[tempo];
-                changed = true;
+            // Tempo is for Conquest; a Field Battle has a points budget.
+            if settings.mode == GameMode::FieldBattle {
+                let names = Budget::ALL.map(|b| thousands(b.points()));
+                let names = names.each_ref().map(String::as_str);
+                let mut budget = Budget::ALL
+                    .iter()
+                    .position(|&b| b == settings.budget)
+                    .unwrap_or(0);
+                if ui.stepper(slot_rect(2), "Points", &mut budget, &names) {
+                    settings.budget = Budget::ALL[budget];
+                    changed = true;
+                }
+            } else {
+                let tempo_names: Vec<&str> = Tempo::ALL.iter().map(|t| t.name()).collect();
+                let mut tempo = Tempo::ALL
+                    .iter()
+                    .position(|&t| t == settings.tempo)
+                    .unwrap_or(0);
+                if ui.stepper(slot_rect(2), "Tempo", &mut tempo, &tempo_names) {
+                    settings.tempo = Tempo::ALL[tempo];
+                    changed = true;
+                }
             }
             let drop_names: Vec<&str> = OnDrop::ALL.iter().map(|d| d.name()).collect();
             let mut on_drop = OnDrop::ALL
@@ -497,12 +573,17 @@ impl<N: Network> Menu<N> {
                 settings.on_drop = OnDrop::ALL[on_drop];
                 changed = true;
             }
+            changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
         } else {
             let map = MAPS.get(settings.map).copied().unwrap_or("?");
             for (i, text) in [
                 format!("Map: {map}"),
                 format!("Mode: {}", settings.mode.name()),
-                format!("Tempo: {}", settings.tempo.name()),
+                if settings.mode == GameMode::FieldBattle {
+                    format!("Points: {}", thousands(settings.budget.points()))
+                } else {
+                    format!("Tempo: {}", settings.tempo.name())
+                },
                 format!("On drop: {}", settings.on_drop.name()),
             ]
             .iter()
@@ -510,6 +591,8 @@ impl<N: Network> Menu<N> {
             {
                 ui.label_centered(slot_rect(i as i32), 1, theme::TEXT, text);
             }
+            let on = if settings.champions { "on" } else { "off" };
+            ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
         }
         if changed {
             self.net.edit_settings(settings);
@@ -627,13 +710,30 @@ impl<N: Network> Menu<N> {
 
         // Footer: why we can't start, plus the faction hint for you.
         let me = &lobby.slots[lobby.local_slot];
-        let hint = format!(
+        let mut hint = format!(
             "{}: {} to play.",
             me.faction.name(),
             me.faction.difficulty()
         );
+        let field_battle = lobby.settings.mode == GameMode::FieldBattle;
+        let mut hint_color = theme::MUTED;
+        if field_battle {
+            let budget = lobby.settings.budget.points();
+            let spent = army_points(&self.roster, &me.army);
+            hint += &if me.army.is_empty() {
+                "   Army: picked for you (Army to build your own).".to_string()
+            } else if spent > budget {
+                hint_color = theme::BAD;
+                format!(
+                    "   Army over budget: {}.",
+                    army_summary(me.army.len(), spent, budget)
+                )
+            } else {
+                format!("   Army: {}.", army_summary(me.army.len(), spent, budget))
+            };
+        }
         let footer_y = rows_top + 4 * (row_h + sp(8)) + sp(4);
-        ui.label(panel.x + 24, footer_y, 1, theme::MUTED, &hint);
+        ui.label(panel.x + 24, footer_y, 1, hint_color, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
         if let Some(why) = &blocker {
@@ -665,6 +765,16 @@ impl<N: Network> Menu<N> {
             ButtonStyle::Normal,
             true,
         );
+        if field_battle
+            && ui.button(
+                Rect::new(panel.x + 24 + 148, btn_y, 140, 44),
+                "Army",
+                ButtonStyle::Normal,
+                true,
+            )
+        {
+            self.go(ui, Screen::Army);
+        }
         if lobby.is_host {
             let go = Rect::new(panel.right() - 24 - 200, btn_y - 4, 200, 48);
             if ui.button(go, "Start", ButtonStyle::Primary, blocker.is_none()) {
@@ -677,6 +787,253 @@ impl<N: Network> Menu<N> {
         if leave || escape {
             self.net.leave();
             self.go(ui, Screen::Play);
+        }
+        action
+    }
+
+    /// Spend the lobby's points budget on your faction's regiments
+    /// (docs/06-game-modes.md, "Field Battle"). The army lives in your lobby
+    /// slot, so the host raises exactly it when the battle starts.
+    fn army_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
+        let Some(lobby) = self.net.lobby().cloned() else {
+            self.go(ui, Screen::Play);
+            return MenuAction::None;
+        };
+        if lobby.settings.mode != GameMode::FieldBattle {
+            self.go(ui, Screen::Lobby);
+            return MenuAction::None;
+        }
+        let me = &lobby.slots[lobby.local_slot];
+        let budget = lobby.settings.budget.points();
+        // Edits go from the army as this screen last left it, not as the
+        // lobby shows it: a joiner's lobby only catches up when the host
+        // echoes the edit, and a second click before then would be lost.
+        let mut army = self.army_draft.take().unwrap_or_else(|| me.army.clone());
+        let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
+        let sp = |n: i32| (n as f32 * k).round() as i32;
+        let panel = centered(ui.screen, 640, sp(560));
+        ui.panel(panel);
+        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Army");
+        ui.label_right(
+            panel.right() - 24,
+            panel.y + 24,
+            1,
+            theme::MUTED,
+            &format!(
+                "{}   {} points",
+                me.faction.name(),
+                thousands(lobby.settings.budget.points())
+            ),
+        );
+
+        // One row per regiment type of your faction: cost, and how many.
+        let spent = army_points(&self.roster, &army);
+        let mut changed = false;
+        let row_h = sp(44);
+        let mut y = panel.y + sp(64);
+        for (u, unit) in self.roster.iter().enumerate() {
+            if unit.faction != me.faction {
+                continue;
+            }
+            let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
+            ui.draw.rect(row, [30, 35, 46, 255]);
+            let text_y = row.y + (row.h - 16) / 2;
+            ui.label(row.x + 12, text_y, 1, theme::TEXT, &fit(&unit.name, 24));
+            ui.label(
+                row.x + 260,
+                text_y,
+                1,
+                theme::MUTED,
+                &format!("{} points", thousands(unit.points)),
+            );
+            let count = army.iter().filter(|&&a| a as usize == u).count();
+            let btn = row_h - 12;
+            let plus = Rect::new(row.right() - 6 - btn, row.y + 6, btn, btn);
+            let count_r = Rect::new(plus.x - 56, row.y, 56, row.h);
+            let minus = Rect::new(count_r.x - btn, row.y + 6, btn, btn);
+            ui.label_centered(count_r, 1, theme::TEXT, &count.to_string());
+            if ui.button(minus, "-", ButtonStyle::Normal, count > 0) {
+                if let Some(at) = army.iter().rposition(|&a| a as usize == u) {
+                    army.remove(at);
+                }
+                changed = true;
+            }
+            let fits = spent + unit.points <= budget && army.len() < MAX_ARMY;
+            if ui.button(plus, "+", ButtonStyle::Normal, fits) {
+                // Kept grouped by type, in roster order.
+                let at = army
+                    .iter()
+                    .position(|&a| a as usize > u)
+                    .unwrap_or(army.len());
+                army.insert(at, u as u16);
+                changed = true;
+            }
+            y += row_h + sp(8);
+        }
+
+        let summary_y = y + sp(8);
+        if army.is_empty() {
+            ui.label(
+                panel.x + 24,
+                summary_y,
+                1,
+                theme::MUTED,
+                "No regiments chosen: the Balanced mix will be picked for you.",
+            );
+        } else {
+            let color = if spent > budget {
+                theme::BAD
+            } else {
+                theme::TEXT
+            };
+            ui.label(
+                panel.x + 24,
+                summary_y,
+                1,
+                color,
+                &army_summary(army.len(), spent, budget),
+            );
+            if spent > budget {
+                ui.label(
+                    panel.x + 24,
+                    summary_y + 22,
+                    1,
+                    theme::BAD,
+                    "Over budget: the regiments lowest on the list will stay at home.",
+                );
+            }
+        }
+
+        let btn_y = panel.bottom() - 52;
+        if ui.button(
+            Rect::new(panel.x + 24, btn_y, 180, 44),
+            "Pick for me",
+            ButtonStyle::Normal,
+            !army.is_empty(),
+        ) {
+            army.clear();
+            changed = true;
+        }
+        let done = ui.button(
+            Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
+            "Done",
+            ButtonStyle::Primary,
+            true,
+        );
+        if changed {
+            self.net
+                .edit_slot(lobby.local_slot, SlotEdit::Army(army.clone()));
+        }
+        if done || escape {
+            self.go(ui, Screen::Lobby);
+        } else {
+            self.army_draft = Some(army);
+        }
+        MenuAction::None
+    }
+
+    /// The saved replays, newest first, a page at a time, each with Watch.
+    fn replays_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
+        let k = (ui.screen.1 as f32 / 720.0).clamp(0.72, 1.0);
+        let sp = |n: i32| (n as f32 * k).round() as i32;
+        let panel = centered(ui.screen, 760, sp(560));
+        ui.panel(panel);
+        ui.label(panel.x + 24, panel.y + 16, 2, theme::TEXT, "Replays");
+        ui.label_right(
+            panel.right() - 24,
+            panel.y + 24,
+            1,
+            theme::MUTED,
+            "Every battle is saved here",
+        );
+        let row_h = sp(56);
+        let top = panel.y + sp(64);
+        let bottom = panel.bottom() - 64;
+        let per_page = (((bottom - top) / (row_h + sp(8))).max(1)) as usize;
+        let pages = self.replays.len().div_ceil(per_page).max(1);
+        self.replay_page = self.replay_page.min(pages - 1);
+        let mut action = MenuAction::None;
+        if self.replays.is_empty() {
+            ui.label(
+                panel.x + 24,
+                top,
+                1,
+                theme::MUTED,
+                "No replays yet. Play a battle and it will be here to watch.",
+            );
+        }
+        let first = self.replay_page * per_page;
+        let mut y = top;
+        for entry in self.replays.iter().skip(first).take(per_page) {
+            let row = Rect::new(panel.x + 24, y, panel.w - 48, row_h);
+            ui.draw.rect(row, [30, 35, 46, 255]);
+            let chars = ((row.w - 160) / 8).max(8) as usize;
+            ui.label(
+                row.x + 12,
+                row.y + 10,
+                1,
+                theme::TEXT,
+                &fit(&entry.title, chars),
+            );
+            let (color, detail) = match &entry.unplayable {
+                Some(why) => (theme::BAD, why.as_str()),
+                None => (theme::MUTED, entry.detail.as_str()),
+            };
+            ui.label(
+                row.x + 12,
+                row.y + row_h - 26,
+                1,
+                color,
+                &fit(detail, chars),
+            );
+            let watch = Rect::new(row.right() - 128, row.y + 8, 116, row_h - 16);
+            if ui.button(
+                watch,
+                "Watch",
+                ButtonStyle::Normal,
+                entry.unplayable.is_none(),
+            ) {
+                action = MenuAction::WatchReplay(entry.path.clone());
+            }
+            y += row_h + sp(8);
+        }
+        let btn_y = panel.bottom() - 52;
+        if let Some((text, _)) = &self.message {
+            let chars = ((panel.w - 48) / 8).max(8) as usize;
+            ui.label(panel.x + 24, btn_y - 26, 1, theme::BAD, &fit(text, chars));
+        }
+        if pages > 1 {
+            if ui.button(
+                Rect::new(panel.x + 24, btn_y, 120, 44),
+                "Newer",
+                ButtonStyle::Normal,
+                self.replay_page > 0,
+            ) {
+                self.replay_page -= 1;
+            }
+            ui.label_centered(
+                Rect::new(panel.x + 152, btn_y, 120, 44),
+                1,
+                theme::MUTED,
+                &format!("{} of {pages}", self.replay_page + 1),
+            );
+            if ui.button(
+                Rect::new(panel.x + 280, btn_y, 120, 44),
+                "Older",
+                ButtonStyle::Normal,
+                self.replay_page + 1 < pages,
+            ) {
+                self.replay_page += 1;
+            }
+        }
+        let back = ui.button(
+            Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
+            "Back",
+            ButtonStyle::Primary,
+            true,
+        );
+        if back || escape {
+            self.go(ui, Screen::Main);
         }
         action
     }
@@ -824,6 +1181,15 @@ impl<N: Network> Menu<N> {
     }
 }
 
+/// "3 regiments, 1,400 of 4,000 points".
+fn army_summary(army_len: usize, spent: u32, budget: u32) -> String {
+    format!(
+        "{army_len} regiments, {} of {} points",
+        thousands(spent),
+        thousands(budget)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,7 +1205,7 @@ mod tests {
     /// Where `needle` is drawn (centre of its glyphs), found in the quads.
     fn find_all(draw: &DrawList, needle: &str) -> Vec<(i32, i32)> {
         let mut found = Vec::new();
-        let want: Vec<u32> = needle.bytes().map(|b| (b - 32) as u32).collect();
+        let want: Vec<u32> = needle.bytes().map(|b| u32::from(b - 32)).collect();
         let q = &draw.quads;
         'start: for i in 0..q.len() {
             if q[i].glyph == SOLID {
@@ -864,8 +1230,8 @@ mod tests {
             }
             let (a, b) = (q[i], q[j - 1]);
             found.push((
-                (a.pos[0] as i32 + b.pos[0] as i32 + b.size[0] as i32) / 2,
-                a.pos[1] as i32 + a.size[1] as i32 / 2,
+                (i32::from(a.pos[0]) + i32::from(b.pos[0]) + i32::from(b.size[0])) / 2,
+                i32::from(a.pos[1]) + i32::from(a.size[1]) / 2,
             ));
         }
         found
@@ -946,6 +1312,50 @@ mod tests {
     }
 
     #[test]
+    fn the_replays_screen_lists_replays_to_watch() {
+        let mut h = Harness::new();
+        let (x, y) = h.text_pos("Replays");
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::ListReplays));
+        h.frame(UiInput::default());
+        assert!(h.has("No replays yet"));
+        let entry = |n: usize, unplayable: Option<&str>| ReplayEntry {
+            title: format!("Battle {n}"),
+            detail: format!("detail {n}"),
+            path: PathBuf::from(format!("{n}.gcr")),
+            unplayable: unplayable.map(str::to_string),
+        };
+        let mut list: Vec<ReplayEntry> = (1..=12).map(|n| entry(n, None)).collect();
+        list[1] = entry(2, Some("Made with other game data"));
+        h.menu.set_replays(list);
+        h.frame(UiInput::default());
+        assert!(h.has("Battle 1") && h.has("detail 1") && h.has("Made with other game data"));
+        // One page at a time.
+        assert!(!h.has("Battle 12"));
+        h.click("Older");
+        assert!(h.has("Battle 12") && !h.has("Battle 3"));
+        h.click("Newer");
+        let (x, y) = *find_all(&h.ui.draw, "Watch").first().unwrap();
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        assert!(matches!(&h.last, MenuAction::WatchReplay(p) if p == &PathBuf::from("1.gcr")));
+        h.menu.tell("Can't open that replay".into());
+        h.frame(UiInput::default());
+        assert!(h.has("Can't open that replay"));
+        h.key(|i| i.escape = true);
+        assert_eq!(h.menu.screen(), Screen::Main);
+    }
+
+    #[test]
     fn sandbox_and_quit_report_actions() {
         let mut h = Harness::new();
         let (x, y) = h.text_pos("Sandbox");
@@ -1010,6 +1420,11 @@ mod tests {
         assert!(h.has("Veteran"));
         h.click("Veteran");
         assert!(h.has("General"));
+        // Champions are allowed unless the host says otherwise.
+        let champions = |h: &Harness| h.menu.net.lobby().unwrap().settings.champions;
+        assert!(champions(&h));
+        h.click("Champions before AI battles");
+        assert!(!champions(&h));
         let (x, y) = h.text_pos("Start");
         h.frame(UiInput {
             mouse: (x, y),
@@ -1022,9 +1437,88 @@ mod tests {
                 assert_eq!(m.players.len(), 2);
                 assert_eq!(m.local_player, 0);
                 assert_eq!(AI_LEVELS[m.players[1].ai_level as usize], "General");
+                assert!(!m.settings.champions);
             }
             other => panic!("expected StartMatch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_army_builder_spends_the_points_budget() {
+        let mut h = Harness::new();
+        let unit = |name: &str, faction, points| RosterUnit {
+            name: name.into(),
+            faction,
+            points,
+        };
+        h.menu.set_roster(vec![
+            unit("Yari Ashigaru", Faction::EmberClans, 400),
+            unit("Bone Pikes", Faction::CarrionConcord, 400),
+            unit("Yumi Ashigaru", Faction::EmberClans, 600),
+        ]);
+        h.menu.settings.faction = Faction::EmberClans;
+        h.click("Play");
+        h.click_last("Host");
+        assert!(h.has("Points: 4,000"));
+        assert!(h.has("Army: picked for you"));
+        h.click_last("Army");
+        assert_eq!(h.menu.screen(), Screen::Army);
+        assert!(h.has("Yari Ashigaru") && h.has("Yumi Ashigaru"));
+        assert!(!h.has("Bone Pikes"), "only your faction's regiments");
+        assert!(h.has("the Balanced mix will be picked for you"));
+        let plus = |h: &Harness| find_all(&h.ui.draw, "+");
+        for _ in 0..3 {
+            let (x, y) = plus(&h)[0];
+            h.click_at(x, y);
+        }
+        let (x, y) = plus(&h)[1];
+        h.click_at(x, y);
+        assert!(h.has("4 regiments, 1,800 of 4,000 points"), "spent");
+        // One spearmen fewer.
+        let (x, y) = find_all(&h.ui.draw, "-")[0];
+        h.click_at(x, y);
+        assert!(h.has("3 regiments, 1,400 of 4,000 points"));
+        h.click("Done");
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        assert!(h.has("Army: 3 regiments, 1,400 of 4,000 points."));
+        h.click("Add AI");
+        let (x, y) = h.text_pos("Start");
+        h.frame(UiInput {
+            mouse: (x, y),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        match &h.last {
+            MenuAction::StartMatch(m) => {
+                assert_eq!(m.players[0].army, vec![0, 0, 2]);
+                assert!(m.players[1].army.is_empty(), "the AI picks its own");
+                assert_eq!(m.settings.budget, Budget::Battle);
+            }
+            other => panic!("expected StartMatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_budget_that_runs_out_stops_the_builder() {
+        let mut h = Harness::new();
+        h.menu.set_roster(vec![RosterUnit {
+            name: "Yari Ashigaru".into(),
+            faction: Faction::EmberClans,
+            points: 1_500,
+        }]);
+        h.menu.settings.faction = Faction::EmberClans;
+        h.click("Play");
+        h.click_last("Host");
+        h.click("Points: 4,000");
+        assert!(h.has("Points: 8,000"), "the host steps the budget");
+        h.click_last("Army");
+        for _ in 0..7 {
+            let (x, y) = find_all(&h.ui.draw, "+")[0];
+            h.click_at(x, y);
+        }
+        // 8,000 buys five at 1,500; the sixth doesn't fit.
+        assert!(h.has("5 regiments, 7,500 of 8,000 points"));
     }
 
     #[test]
@@ -1128,14 +1622,29 @@ mod tests {
     fn every_screen_draws_inside_the_window() {
         for size in [(1280, 760), (853, 506), (1024, 600)] {
             let mut h = Harness::new();
-            for screen in [Screen::Main, Screen::Play, Screen::Settings] {
+            h.menu.set_roster(vec![RosterUnit {
+                name: "Yari Ashigaru".into(),
+                faction: h.menu.settings.faction,
+                points: 400,
+            }]);
+            h.menu
+                .net
+                .host(&h.menu.profile(), LobbySettings::default(), "")
+                .unwrap();
+            for screen in [
+                Screen::Main,
+                Screen::Play,
+                Screen::Lobby,
+                Screen::Army,
+                Screen::Settings,
+            ] {
                 h.menu.show(screen);
                 h.ui.begin_frame(UiInput::default(), size);
                 h.menu.frame(&mut h.ui);
                 h.ui.end_frame();
                 for q in &h.ui.draw.quads {
-                    let right = q.pos[0] as i32 + q.size[0] as i32;
-                    let bottom = q.pos[1] as i32 + q.size[1] as i32;
+                    let right = i32::from(q.pos[0]) + i32::from(q.size[0]);
+                    let bottom = i32::from(q.pos[1]) + i32::from(q.size[1]);
                     assert!(
                         right <= size.0 && bottom <= size.1,
                         "{screen:?} {size:?} overflows: {q:?}"

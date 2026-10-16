@@ -153,6 +153,51 @@ impl Posture {
 /// Seconds a side expecting to lose waits for an enemy that doesn't come
 /// before going to fetch it.
 const TIRED_OF_WAITING: f32 = 30.0;
+
+/// Whether the army waits for the enemy or goes to meet it, when a plan
+/// says (see [`Plan`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Stance {
+    /// Left to the Captain's own judgement, as without a plan.
+    Own,
+    /// March on the enemy as soon as formed (still never into water it is
+    /// waiting behind, nor while its side's champion fights).
+    Advance,
+    /// Stand and receive them (but go to fetch an enemy that doesn't come).
+    Hold,
+}
+
+impl Stance {
+    pub const ALL: [Stance; 3] = [Stance::Own, Stance::Advance, Stance::Hold];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Stance::Own => "as it sees fit",
+            Stance::Advance => "advancing",
+            Stance::Hold => "holding",
+        }
+    }
+}
+
+/// A battle plan chosen ahead (by rehearsing it, see [`crate::rehearsal`]):
+/// the doctrine to fight with and whether to wait or go. The Captain follows
+/// it until given another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Plan {
+    pub doctrine: Doctrine,
+    pub stance: Stance,
+}
+
+impl Plan {
+    /// "Hammer and anvil, advancing".
+    pub fn describe(&self) -> String {
+        match self.stance {
+            Stance::Own => self.doctrine.name().to_string(),
+            s => format!("{}, {}", self.doctrine.name(), s.name()),
+        }
+    }
+}
+
 /// Space left between regiments side by side in the line, tiles.
 const LINE_GAP: f32 = 1.5;
 /// A regiment shouldn't meet an enemy where it would overlap a friend's
@@ -333,9 +378,13 @@ impl Ctx<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct Captain {
     pub doctrine: Doctrine,
     pub posture: Posture,
+    /// The plan it was told to follow, if any; without one it picks its own
+    /// doctrine and posture as it goes.
+    pub plan: Option<Plan>,
     /// The enemy is beaten and the regiments are finishing off the rest.
     pub finishing: bool,
     /// Expecting to lose, it waited for an enemy that never came, and has
@@ -356,6 +405,8 @@ pub struct Captain {
     withdrawn_at: Option<u32>,
     withdrawals: u32,
     standoff_since: u32,
+    /// Tick it began watching its side's champion fight, while it does.
+    watching_since: Option<u32>,
     /// Since when it has been waiting, expecting to lose, with the enemy
     /// not coming and nobody fighting.
     waiting_since: Option<u32>,
@@ -425,6 +476,7 @@ impl Captain {
         Captain {
             doctrine: Doctrine::HoldTheLine,
             posture: Posture::Form,
+            plan: None,
             finishing: false,
             fetching: false,
             estimate: None,
@@ -440,6 +492,7 @@ impl Captain {
             withdrawn_at: None,
             withdrawals: 0,
             standoff_since: 0,
+            watching_since: None,
             waiting_since: None,
             posture_since: 0,
             distance_then: None,
@@ -461,6 +514,21 @@ impl Captain {
             ambush: ambush::Plan::default(),
             taken: Vec::new(),
         }
+    }
+
+    /// Follow `plan` from the next look: switch to its doctrine (if this
+    /// army can fight that way) and wait or advance as it says.
+    pub fn follow(&mut self, plan: Plan) {
+        if self.plan != Some(plan) {
+            self.plan = Some(plan);
+            self.next_doctrine = 0;
+        }
+    }
+
+    /// Whether the battle has started for it: it has seen the enemy and laid
+    /// out its line.
+    pub fn started(&self) -> bool {
+        self.started
     }
 
     /// Where the line stands and which way it faces.
@@ -594,7 +662,7 @@ impl Captain {
                 Some(t) => t,
                 None => {
                     let score = |f: &Seen| {
-                        f.pos.distance(r.pos) + FINISH_SPREAD * count(&on, f.handle) as f32
+                        f.pos.distance(r.pos) + FINISH_SPREAD * f32::from(count(&on, f.handle))
                     };
                     let Some(t) = fighting
                         .iter()
@@ -760,6 +828,11 @@ impl Captain {
         });
         let mut best: Option<(f32, Doctrine)> = None;
         for &d in ctx.knobs.doctrines {
+            // An ambush has its own test, which keeps one already laid going
+            // whatever the army has lost since.
+            if d != Doctrine::Ambush && !fits(d, line, shock, ranged) {
+                continue;
+            }
             let fit = match d {
                 Doctrine::HoldTheLine => {
                     0.5 + if mine.ranged > theirs.ranged {
@@ -774,15 +847,9 @@ impl Captain {
                     None => continue,
                 },
                 Doctrine::RefusedFlank => {
-                    if line < 4 {
-                        continue;
-                    }
                     0.3 + if margin < -0.05 { 0.4 } else { 0.0 } + 0.3 * p.cunning()
                 }
                 Doctrine::SkirmishScreen => {
-                    if ranged < 2 || line == 0 {
-                        continue;
-                    }
                     0.3 + if mine.ranged > theirs.ranged * 1.3 {
                         0.5
                     } else {
@@ -803,7 +870,13 @@ impl Captain {
             } else {
                 COMMITMENT
             };
-            let score = fit + 0.6 * p.doctrines.of(d) + jitter + stick;
+            // A plan's doctrine wins, when this army can fight that way.
+            let planned = self.plan.is_some_and(|plan| plan.doctrine == d);
+            let score = if planned {
+                f32::INFINITY
+            } else {
+                fit + 0.6 * p.doctrines.of(d) + jitter + stick
+            };
             if best.is_none_or(|(s, _)| score > s) {
                 best = Some((score, d));
             }
@@ -832,7 +905,7 @@ impl Captain {
         let right = right_of(self.forward);
         let lean: f32 = fighting
             .iter()
-            .map(|f| (f.pos - self.anchor).dot(right).signum() * f.models as f32)
+            .map(|f| (f.pos - self.anchor).dot(right).signum() * f32::from(f.models))
             .sum();
         if lean > 0.0 { -1.0 } else { 1.0 }
     }
@@ -1335,6 +1408,19 @@ impl Captain {
                 } else {
                     0.0
                 };
+            // Its side's champion is fighting between the lines: stand and
+            // watch. The time spent watching doesn't use up its patience.
+            let watching = view
+                .champions
+                .is_some_and(|sides| sides.iter().any(|&s| !view.hostile(ctx.party, s)));
+            match (watching, self.watching_since) {
+                (true, None) => self.watching_since = Some(now),
+                (false, Some(since)) => {
+                    self.standoff_since = (self.standoff_since + (now - since)).min(now);
+                    self.watching_since = None;
+                }
+                _ => {}
+            }
             let waited = (now - self.standoff_since) as f32 / TICKS;
             // Water between the armies: whoever crosses comes out of it a
             // regiment at a time, so wait for them, unless clearly the
@@ -1351,7 +1437,10 @@ impl Captain {
                 );
             }
             let behind_water = self.river.is_some() && !self.crossing;
-            let advance = if behind_water {
+            // Behind water it waits for them; while its champion fights it
+            // watches; whatever the plan.
+            let halted = behind_water || watching;
+            let advance = if halted {
                 false
             } else if only_archers {
                 true
@@ -1377,6 +1466,26 @@ impl Captain {
                 // archers in range or not.
                 outshot || (out_of_range && !self.lying_in_wait()) || waited > patience.max(0.0)
             };
+            let advance = match self.plan.map(|plan| plan.stance) {
+                Some(Stance::Advance) => !halted,
+                Some(Stance::Hold) => {
+                    // Holding still gives up on an enemy that never comes,
+                    // or the battle never ends: once nobody has come on or
+                    // fought for longer than anyone waits before going to
+                    // fetch an enemy, so it never gives up a standoff first.
+                    let quiet = self.closing <= 1.0 && !ours.iter().any(|r| r.engaged);
+                    if !halted && !only_archers && quiet && !self.fetching {
+                        let since = *self.waiting_since.insert(was_waiting.unwrap_or(now));
+                        if (now - since) as f32 / TICKS > 2.0 * TIRED_OF_WAITING {
+                            self.fetching = true;
+                            ctx.journal
+                                .note(now, "Tired of waiting: going to fetch them".to_string());
+                        }
+                    }
+                    !halted && only_archers
+                }
+                _ => advance,
+            };
             let want = if advance {
                 Posture::Advance
             } else {
@@ -1385,7 +1494,7 @@ impl Captain {
             // Give each posture a moment before changing it again, so the
             // line doesn't stop and start with every look.
             let settled = now >= self.posture_since + POSTURE_TICKS;
-            if want != self.posture && settled {
+            if want != self.posture && (settled || watching) {
                 self.posture = want;
                 if want == Posture::Advance && self.covered != 0.0 {
                     // Leaving its cover behind: hammers on both wings again.
@@ -1393,8 +1502,14 @@ impl Captain {
                     self.relayout = true;
                 }
                 if want == Posture::Hold {
-                    // Halt where the line stands now.
-                    self.standoff_since = now;
+                    // Halt where the line stands now; one halting to watch
+                    // keeps the patience it had left.
+                    if watching {
+                        ctx.journal
+                            .note(now, "Halting to watch the champions".to_string());
+                    } else {
+                        self.standoff_since = now;
+                    }
                     let our_c = centroid(ours);
                     self.anchor = ctx
                         .terrain
@@ -1794,7 +1909,7 @@ impl Captain {
             .iter()
             .filter(|o| matches!(o.home, Role::Anchor | Role::Wing))
             .filter(|o| {
-                o.lost || o.role == Role::Recover || view.get(o.handle).is_none_or(|x| x.broken())
+                o.lost || o.role == Role::Recover || view.get(o.handle).is_none_or(Seen::broken)
             })
             .map(|o| self.place(ctx, o.slot))
             .find(|p| fighting.iter().any(|f| f.pos.distance(*p) < 22.0));
@@ -2124,9 +2239,9 @@ impl Captain {
                 s += 0.5;
             }
             // Denser blocks take more arrows.
-            s += 0.3 * (f.models as f32 / (f.width * f.depth).max(1.0)).min(2.0);
+            s += 0.3 * (f32::from(f.models) / (f.width * f.depth).max(1.0)).min(2.0);
             if ctx.knobs.focus_fire {
-                s += 0.2 * count(on, f.handle) as f32;
+                s += 0.2 * f32::from(count(on, f.handle));
             }
             s
         };
@@ -2264,7 +2379,7 @@ impl Captain {
                 let (ours, theirs) = local_soldiers(view, party, f.pos, r.handle);
                 let theirs = theirs.max(1.0);
                 let before = ours / theirs;
-                let after = (ours + r.models as f32) / theirs;
+                let after = (ours + f32::from(r.models)) / theirs;
                 s += if before >= 2.0 {
                     -0.5
                 } else if after >= 2.0 {
@@ -2280,7 +2395,7 @@ impl Captain {
                 };
             }
             // Two on one is the aim; a third is better spent elsewhere.
-            let n = count(on, f.handle) as i32 - i32::from(keep == Some(f.handle));
+            let n = i32::from(count(on, f.handle)) - i32::from(keep == Some(f.handle));
             s += if knobs.focus_fire {
                 match n {
                     0 => 0.0,
@@ -2294,8 +2409,9 @@ impl Captain {
             if knobs.focus_fire && !self.room_at(r, f) {
                 s -= NO_ROOM;
             }
-            let hit = (50.0 + me.stats.melee_attack as f32 - them.stats.melee_defence as f32)
-                .clamp(10.0, 90.0);
+            let hit = (50.0 + f32::from(me.stats.melee_attack)
+                - f32::from(them.stats.melee_defence))
+            .clamp(10.0, 90.0);
             s += (hit - 50.0) / 25.0;
             if them.class == Class::Ranged {
                 s += 0.8;
@@ -2331,6 +2447,21 @@ fn meeting(r: &Seen, f: &Seen) -> Seen {
     }
 }
 
+/// Whether an army with this many line, shock and ranged regiments can
+/// fight as `d` asks: a hammer needs fast troops and something to pin the
+/// enemy with, a refused flank a line long enough to bend, a screen archers
+/// and a line to fall back behind, an ambush regiments to hide (and, on
+/// the field, somewhere to hide them: see `Captain::may_ambush`).
+pub fn fits(d: Doctrine, line: usize, shock: usize, ranged: usize) -> bool {
+    match d {
+        Doctrine::HoldTheLine => true,
+        Doctrine::HammerAndAnvil => shock > 0 && line + ranged > 0,
+        Doctrine::RefusedFlank => line >= 4,
+        Doctrine::SkirmishScreen => ranged >= 2 && line > 0,
+        Doctrine::Ambush => ambush::ambusher_class(line, shock).is_some(),
+    }
+}
+
 /// Tiles between two blocks' edges, roughly (their circles).
 pub fn gap_between(a: &Seen, b: &Seen) -> f32 {
     a.pos.distance(b.pos) - a.depth * 0.5 - b.radius() * 0.8
@@ -2340,7 +2471,7 @@ fn centroid(rs: &[&Seen]) -> Vec2 {
     let mut sum = Vec2::ZERO;
     let mut n = 0.0;
     for r in rs {
-        let w = r.models.max(1) as f32;
+        let w = f32::from(r.models.max(1));
         sum += r.pos * w;
         n += w;
     }
@@ -2392,9 +2523,9 @@ fn local_soldiers(view: &Perception, party: PlayerId, p: Vec2, skip: RegimentHan
             continue;
         }
         if view.hostile(party, g.owner) {
-            theirs += g.models as f32;
+            theirs += f32::from(g.models);
         } else {
-            ours += g.models as f32;
+            ours += f32::from(g.models);
         }
     }
     (ours, theirs)
@@ -2441,7 +2572,7 @@ fn point_of_attack(view: &Perception, fighting: &[&Seen], anchor: Vec2) -> Optio
         .filter(|f| f.pos.distance(anchor) <= FOCUS_TILES)
         .map(|f| {
             let s = shaken_near_all(view, f) as f32 + (1.0 - f.strength())
-                - f.morale_points as f32 / 25.0
+                - f32::from(f.morale_points) / 25.0
                 - f.pos.distance(anchor) / FOCUS_TILES;
             (s, f.handle)
         })

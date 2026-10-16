@@ -65,7 +65,12 @@ const CLEAR_TICKS: u8 = 8;
 ///
 /// Every array is allocated to full capacity up front; spawning and freeing
 /// only flip flags and push/pop a free list that never grows past capacity.
+/// A new per-regiment field must also be copied in `copy_from`.
 pub struct Regiments {
+    /// Morale tenths added to (or taken from) the ceiling of every regiment
+    /// of each party for the rest of the battle, by its side's champion
+    /// winning or losing (see [`crate::champions`]). By party id.
+    pub(crate) party_morale: Vec<i16>,
     pub(crate) alive: Vec<bool>,
     pub(crate) generation: Vec<u16>,
     pub(crate) owner: Vec<PlayerId>,
@@ -125,6 +130,16 @@ pub struct Regiments {
     pub(crate) crowd: Vec<Fx>,
     /// Ticks left until it is back in order (0: in order).
     pub(crate) disorder: Vec<u8>,
+    /// Melee damage dealt and taken lately, in 1/256ths of a hit point
+    /// weighted by the striker's mass: who is winning the exchange, for
+    /// lines that push (see [`Combat::push_lines`]). Both fade by an
+    /// eighth each second.
+    pub(crate) pressing: Vec<u32>,
+    pub(crate) pressed: Vec<u32>,
+    /// How fast it is giving ground, in percent of
+    /// [`GIVE_GROUND`](crate::combat::GIVE_GROUND), from the exchange as it
+    /// stood at its last blow.
+    pub(crate) giving: Vec<u8>,
     /// Free slot indices, popped from the back. Initialised so slot 0 is used first.
     pub(crate) free: Vec<u32>,
 }
@@ -157,6 +172,7 @@ impl Regiments {
             full_models: vec![0; n],
             morale: vec![0; n],
             morale_state: vec![MoraleState::Steady; n],
+            party_morale: vec![0; PlayerId::MAX as usize + 1],
             losses: vec![0; n],
             shock: vec![0; n],
             rout_clock: vec![0; n],
@@ -165,6 +181,9 @@ impl Regiments {
             clear: vec![0; n],
             crowd: vec![Fx::ZERO; n],
             disorder: vec![0; n],
+            pressing: vec![0; n],
+            pressed: vec![0; n],
+            giving: vec![0; n],
             free: (0..capacity).rev().collect(),
         }
     }
@@ -205,7 +224,7 @@ impl Regiments {
         hp.fill(0);
         hp[..stats.models as usize].fill(stats.hp_per_model);
         self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
-        self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u16::MAX as u32) as u16;
+        self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u32::from(u16::MAX)) as u16;
         self.target[i] = None;
         self.target_facing[i] = None;
         self.pace[i] = self.speed[i];
@@ -226,6 +245,9 @@ impl Regiments {
         self.clear[i] = 0;
         self.crowd[i] = Fx::ZERO;
         self.disorder[i] = 0;
+        self.pressing[i] = 0;
+        self.pressed[i] = 0;
+        self.giving[i] = 0;
         Some(RegimentHandle {
             index,
             generation: self.generation[i],
@@ -241,7 +263,8 @@ impl Regiments {
             }
             let old_speed = self.speed[i];
             self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
-            self.turn[i] = (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u16::MAX as u32) as u16;
+            self.turn[i] =
+                (stats.turn_rate / TICKS_PER_SECOND).clamp(1, u32::from(u16::MAX)) as u16;
             // A regiment marching at full speed keeps doing so; a slower
             // ordered pace is kept, but never above the new top speed.
             self.pace[i] = if self.pace[i] == old_speed {
@@ -289,9 +312,82 @@ impl Regiments {
         true
     }
 
+    /// Make free slot `h.index` the next one [`Regiments::spawn`] fills, with
+    /// `h`'s generation, so a regiment copied from another world keeps its
+    /// handle. False if that slot is taken or out of range.
+    pub(crate) fn claim(&mut self, h: RegimentHandle) -> bool {
+        let i = h.index as usize;
+        if i >= self.alive.len() || self.alive[i] {
+            return false;
+        }
+        let Some(k) = self.free.iter().rposition(|&f| f == h.index) else {
+            return false;
+        };
+        let index = self.free.remove(k);
+        self.free.push(index);
+        self.generation[i] = h.generation;
+        true
+    }
+
+    /// Copy everything about regiment slot `i` of `from` into the same slot
+    /// here, which must be free. A field added to [`Regiments`] must be
+    /// copied here too.
+    pub(crate) fn copy_from(&mut self, from: &Regiments, i: usize) -> bool {
+        if !from.alive[i] || !self.claim(from.handle(i)) {
+            return false;
+        }
+        self.free.pop();
+        self.alive[i] = true;
+        self.owner[i] = from.owner[i];
+        self.unit[i] = from.unit[i];
+        self.position[i] = from.position[i];
+        self.facing[i] = from.facing[i];
+        self.files[i] = from.files[i];
+        self.formation[i] = from.formation[i];
+        self.models[i] = from.models[i];
+        let m = MAX_MODELS as usize;
+        self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
+        self.speed[i] = from.speed[i];
+        self.turn[i] = from.turn[i];
+        self.target[i] = from.target[i];
+        self.target_facing[i] = from.target_facing[i];
+        self.pace[i] = from.pace[i];
+        self.attack_target[i] = from.attack_target[i];
+        self.engaged[i] = from.engaged[i];
+        self.charge[i] = from.charge[i];
+        self.strike[i] = from.strike[i];
+        self.reload[i] = from.reload[i];
+        self.damage_carry[i] = from.damage_carry[i];
+        self.full_models[i] = from.full_models[i];
+        self.morale[i] = from.morale[i];
+        self.morale_state[i] = from.morale_state[i];
+        self.losses[i] = from.losses[i];
+        self.shock[i] = from.shock[i];
+        self.rout_clock[i] = from.rout_clock[i];
+        self.last_rout[i] = from.last_rout[i];
+        self.held[i] = from.held[i];
+        self.clear[i] = from.clear[i];
+        self.crowd[i] = from.crowd[i];
+        self.disorder[i] = from.disorder[i];
+        true
+    }
+
+    /// The handle of the regiment in slot `i`.
+    pub(crate) fn handle(&self, i: usize) -> RegimentHandle {
+        RegimentHandle {
+            index: i as u32,
+            generation: self.generation[i],
+        }
+    }
+
     pub(crate) fn resolve(&self, h: RegimentHandle) -> Option<usize> {
         let i = h.index as usize;
         (i < self.alive.len() && self.alive[i] && self.generation[i] == h.generation).then_some(i)
+    }
+
+    /// The live regiment `i` is locked in melee with, if any.
+    pub(crate) fn foe(&self, i: usize) -> Option<usize> {
+        self.engaged[i].and_then(|h| self.resolve(h))
     }
 
     pub fn owner(&self, h: RegimentHandle) -> Option<PlayerId> {
@@ -345,6 +441,27 @@ impl Regiments {
         true
     }
 
+    /// Put a regiment straight down at `position` (deployment): no march,
+    /// no order left over. `files` 0 keeps its frontage. Returns its slot.
+    pub fn place(
+        &mut self,
+        h: RegimentHandle,
+        position: FxVec2,
+        facing: Angle,
+        files: u16,
+    ) -> Option<usize> {
+        let i = self.resolve(h)?;
+        self.position[i] = position;
+        self.facing[i] = facing;
+        if files != 0 {
+            self.files[i] = files.clamp(1, self.models[i].max(1));
+        }
+        self.target[i] = None;
+        self.target_facing[i] = None;
+        self.attack_target[i] = None;
+        Some(i)
+    }
+
     /// Order a regiment to attack an enemy regiment: melee regiments close
     /// in and fight, ranged ones move into range and shoot.
     pub fn attack(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
@@ -370,11 +487,11 @@ impl Regiments {
         let hp = &mut self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize];
         while amount > 0 && self.models[i] > 0 {
             let k = self.models[i] as usize - 1;
-            if hp[k] as u32 > amount {
+            if u32::from(hp[k]) > amount {
                 hp[k] -= amount as u16;
                 amount = 0;
             } else {
-                amount -= hp[k] as u32;
+                amount -= u32::from(hp[k]);
                 hp[k] = 0;
                 self.models[i] -= 1;
             }
@@ -404,6 +521,7 @@ impl Regiments {
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             disorder: self.disorder[i],
+            giving_ground: self.giving[i] > 0 && self.engaged[i].is_some(),
         }
     }
 
@@ -458,7 +576,7 @@ impl Regiments {
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
-                    let off = self.facing[i].delta_to(travel) as i32;
+                    let off = i32::from(self.facing[i].delta_to(travel));
                     self.facing[i] = self.facing[i].turn_toward(travel, turn);
                     if off.abs() > TURN_BEFORE_MARCH {
                         continue;
@@ -467,6 +585,7 @@ impl Regiments {
                 };
                 let step = terrain.wading(step, self.position[i]);
                 let step = crate::combat::pushing(step, self.crowd[i]);
+                debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
                 let dir = if dist.raw() > 0 {
@@ -495,7 +614,7 @@ impl Regiments {
                         Ok(_) => {}
                         Err(gap) => {
                             let ticks = gap.raw() / step.raw().max(1);
-                            self.clear[i] = ticks.clamp(0, CLEAR_TICKS as i32) as u8;
+                            self.clear[i] = ticks.clamp(0, i32::from(CLEAR_TICKS)) as u8;
                         }
                     }
                 }
@@ -527,9 +646,17 @@ impl Regiments {
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
+        // Only the parties it is set for, so worlds without champions hash
+        // as they did before them.
+        for (party, &bonus) in self.party_morale.iter().enumerate() {
+            if bonus != 0 {
+                h.u8(party as u8);
+                h.u16(bonus as u16);
+            }
+        }
         h.u32(self.len() as u32);
         for i in 0..self.alive.len() {
-            h.u8(self.alive[i] as u8);
+            h.u8(u8::from(self.alive[i]));
             h.u16(self.generation[i]);
             if !self.alive[i] {
                 continue;
@@ -573,6 +700,13 @@ impl Regiments {
             if self.crowd[i] != Fx::ZERO || self.disorder[i] != 0 {
                 h.i32(self.crowd[i].raw());
                 h.u8(self.disorder[i]);
+            }
+            // Only once it has fought, so worlds without melee hash as
+            // they did before lines pushed.
+            if self.pressing[i] != 0 || self.pressed[i] != 0 {
+                h.u32(self.pressing[i]);
+                h.u32(self.pressed[i]);
+                h.u8(self.giving[i]);
             }
             // Only while waiting, so worlds where nobody ever queues hash
             // as they did before queuing existed.
@@ -639,6 +773,10 @@ pub struct RegimentView {
     /// re-formed, from [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS)
     /// (full disorder) down to 0 (in order).
     pub disorder: u8,
+    /// Losing its melee and being driven back (see
+    /// [`Combat::push_lines`](crate::combat::Combat::push_lines)), or
+    /// pinned where it can't give ground.
+    pub giving_ground: bool,
 }
 
 impl RegimentView {

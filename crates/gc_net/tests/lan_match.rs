@@ -2,10 +2,11 @@
 //! joining a lobby, starting a match, and playing it in lockstep with lost
 //! packets, every world ending identical.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, Report};
+use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent};
+use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, MatchSetup, PlayerCommand, World};
 use gc_ui::lobby::{
@@ -14,6 +15,12 @@ use gc_ui::lobby::{
 
 /// Hosts listen on a fixed few ports, so these tests take turns.
 static PORTS: Mutex<()> = Mutex::new(());
+
+/// Take the game ports for one test (a test that failed while holding them
+/// still lets the next one in).
+fn ports() -> MutexGuard<'static, ()> {
+    PORTS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 const SEED: u64 = 0x6772_7562;
 
@@ -87,16 +94,29 @@ fn settle(lans: &mut [&mut Lan]) {
     }
 }
 
+const SETUP: MatchSetup = MatchSetup {
+    seed: SEED,
+    capacities: Capacities { regiments: 1536 },
+    units: &DRILL_UNITS,
+    map_tiles: 256,
+    nav: &[],
+    teams: &[],
+    ground: gc_sim::Ground::FLAT,
+    champions: false,
+};
+
 fn world() -> World {
-    World::new(&MatchSetup {
-        seed: SEED,
-        capacities: Capacities::default(),
-        units: &DRILL_UNITS,
-        map_tiles: 256,
-        nav: &[],
-        teams: &[],
-        ground: gc_sim::Ground::FLAT,
-    })
+    World::new(&SETUP)
+}
+
+/// `n` machines' worlds, each recorded the way the game records a match.
+fn machines(n: usize) -> (Vec<World>, Vec<Recorder>) {
+    let worlds: Vec<World> = (0..n).map(|_| world()).collect();
+    let recorders = worlds
+        .iter()
+        .map(|w| Recorder::new(&SETUP, w, "LAN test").checkpoint_every(HASH_EVERY))
+        .collect();
+    (worlds, recorders)
 }
 
 /// A match under way between `lans`, each playing the drill for its own
@@ -104,6 +124,8 @@ fn world() -> World {
 struct Match {
     lans: Vec<Lan>,
     worlds: Vec<World>,
+    /// What each machine played, as it would save it for a desync report.
+    recorders: Vec<Recorder>,
     drills: Vec<Drill>,
     mine: Vec<Vec<u8>>,
     cmds: Vec<PlayerCommand>,
@@ -158,9 +180,11 @@ impl Match {
             l.loaded(Ok(()));
         }
         let n = lans.len();
+        let (worlds, recorders) = machines(n);
         let mut m = Match {
             lans,
-            worlds: (0..n).map(|_| world()).collect(),
+            worlds,
+            recorders,
             drills: (0..n)
                 .map(|_| {
                     let mut d = Drill::new(SEED);
@@ -198,10 +222,12 @@ impl Match {
                 while self.worlds[i].tick_count() < until
                     && let Some(turn) = self.lans[i].next_turn(now)
                 {
-                    self.worlds[i].tick(&turn);
+                    self.recorders[i].tick(&mut self.worlds[i], &turn);
                     let tick = self.worlds[i].tick_count();
-                    let hash = self.worlds[i].state_hash();
-                    self.lans[i].record_hash(tick, hash);
+                    // The recorder hashes as often as the host compares.
+                    if let Some(hash) = self.recorders[i].hash_now() {
+                        self.lans[i].record_hash(tick, hash);
+                    }
                     self.order(i);
                 }
             }
@@ -210,7 +236,7 @@ impl Match {
     }
 
     fn ticks(&self) -> Vec<u32> {
-        self.worlds.iter().map(|w| w.tick_count()).collect()
+        self.worlds.iter().map(gc_sim::World::tick_count).collect()
     }
 
     /// Let the last hashes reach the host.
@@ -224,7 +250,7 @@ impl Match {
     fn desyncs(&mut self) -> Vec<u32> {
         self.lans
             .iter_mut()
-            .flat_map(|l| l.match_events())
+            .flat_map(gc_net::Lan::match_events)
             .filter_map(|e| match e {
                 MatchEvent::Desync { tick } => Some(tick),
                 _ => None,
@@ -235,7 +261,7 @@ impl Match {
 
 #[test]
 fn three_machines_play_in_lockstep_through_lost_packets() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -291,9 +317,11 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     }
 
     // Host plays players 0 and 3 (the AI), Alex 1 and Sam 2.
+    let (worlds, recorders) = machines(3);
     let mut m = Match {
         lans: vec![host, alex, sam],
-        worlds: vec![world(), world(), world()],
+        worlds,
+        recorders,
         drills: (0..3)
             .map(|_| {
                 let mut d = Drill::new(SEED);
@@ -311,7 +339,7 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
     m.run(&[], TURNS, Duration::from_secs(60));
     assert_eq!(m.ticks(), [TURNS; 3], "match stalled");
     m.settle();
-    let hashes: Vec<u64> = m.worlds.iter().map(|w| w.state_hash()).collect();
+    let hashes: Vec<u64> = m.worlds.iter().map(gc_sim::World::state_hash).collect();
     assert_eq!(hashes[0], hashes[1]);
     assert_eq!(hashes[0], hashes[2]);
     // Every player's regiments made it into the match.
@@ -333,29 +361,18 @@ fn three_machines_play_in_lockstep_through_lost_packets() {
         assert_eq!(l.input_delay(), Some(delay));
     }
 
-    // Sam's desync report is a replay of the match: played back, it gives
-    // the same world.
-    let report = m.lans[2].desync_report().unwrap();
-    let report = Report::decode(&report.encode()).unwrap();
-    assert_eq!(report.me, 2);
-    assert_eq!(report.seed, SEED);
-    assert_eq!(report.players.len(), 4);
-    assert_eq!(report.turns.len(), TURNS as usize);
-    let mut replay = world();
-    for turn in &report.turns {
-        replay.tick(turn);
-        let tick = replay.tick_count();
-        if let Some(&(_, h)) = report.hashes.iter().find(|&&(t, _)| t == tick) {
-            assert_eq!(h, replay.state_hash(), "tick {tick}");
-        }
-    }
-    assert_eq!(replay.state_hash(), hashes[2]);
-    assert_eq!(report.hashes.len(), (TURNS / HASH_EVERY) as usize);
+    // Sam's recording of the network match, saved and loaded, plays back
+    // to the same world.
+    let replay = Replay::decode(&m.recorders[2].replay().encode()).unwrap();
+    assert_eq!(replay.ticks, TURNS);
+    let back = replay.verify().expect("the recording plays back");
+    assert_eq!(back.state_hash(), hashes[2]);
+    assert_eq!(m.recorders[0].replay().first_difference(&replay), None);
 }
 
 #[test]
 fn the_delay_drops_on_a_fast_network() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     // With 30 ms turns, a round trip on this machine plus the margin fits
     // in one turn.
     let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 30);
@@ -371,7 +388,7 @@ fn the_delay_drops_on_a_fast_network() {
 
 #[test]
 fn the_match_waits_for_a_player_who_drops() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
     m.run(&[], 100, Duration::from_secs(20));
     assert_eq!(m.ticks(), [100; 3]);
@@ -431,7 +448,7 @@ fn the_match_waits_for_a_player_who_drops() {
 
 #[test]
 fn carry_on_plays_through_a_drop() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut m = Match::start(&["Alex"], &[2], OnDrop::CarryOn, 5);
     m.run(&[], 50, Duration::from_secs(20));
     let before = m.ticks()[0];
@@ -453,26 +470,78 @@ fn carry_on_plays_through_a_drop() {
 
 #[test]
 fn a_desync_is_found_and_reported_everywhere() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut m = Match::start(&["Alex"], &[], OnDrop::Wait, 5);
     m.run(&[], 40, Duration::from_secs(20));
     // Something only Alex's machine does: an extra tick of its own.
-    m.worlds[1].tick(&[]);
+    m.recorders[1].tick(&mut m.worlds[1], &[]);
     m.run(&[], 100, Duration::from_secs(20));
     m.settle();
     let found = m.desyncs();
     // The host and Alex both hear, at the first hash after the split.
     assert_eq!(found, [50, 50], "{found:?}");
-    let host = m.lans[0].desync_report().unwrap().clone();
-    let alex = m.lans[1].desync_report().unwrap().clone();
-    assert_eq!(host.desync_tick, 50);
-    assert_eq!(alex.desync_tick, 50);
-    assert_eq!(host.first_difference(&alex), Some(50));
+    // Their recordings, the desync reports, show where they parted.
+    let (host, alex) = (m.recorders[0].replay(), m.recorders[1].replay());
+    assert_eq!(host.first_difference(alex), Some(50));
+}
+
+#[test]
+fn a_player_whose_game_restarts_rejoins_and_catches_up() {
+    let _turn = ports();
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait, 5);
+    m.run(&[], 300, Duration::from_secs(20));
+
+    // Alex's game closes without a goodbye: the host pauses for them.
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net_player_timeout() + Duration::from_millis(500),
+    );
+    assert!(m.lans[0].paused_for_player());
+
+    // A stranger still can't join the match.
+    let err = join(&mut lan(), "Kim", &mut m.lans[0]).unwrap_err();
+    assert_eq!(
+        err,
+        NetError::Refused("That game has already started.".into())
+    );
+
+    // Alex starts the game again and joins: they get the match's start and
+    // every turn so far, and the match carries on.
+    let mut again = lan();
+    join(&mut again, "Alex", &mut m.lans[0]).unwrap();
+    match again.poll().as_slice() {
+        [NetEvent::Started(s)] => assert_eq!(s.local_player, 1),
+        other => panic!("{other:?}"),
+    }
+    again.loaded(Ok(()));
+    std::mem::forget(std::mem::replace(&mut m.lans[1], again));
+    let (mut worlds, mut recorders) = machines(1);
+    m.worlds[1] = worlds.pop().unwrap();
+    m.recorders[1] = recorders.pop().unwrap();
+    m.drills[1] = Drill::new(SEED);
+    m.drills[1].regiments_per_player = 20;
+    assert!(!m.lans[0].paused_for_player());
+
+    let target = m.ticks()[0] + 200;
+    m.run(&[], target, Duration::from_secs(30));
+    assert_eq!(m.ticks(), [target; 3]);
+    m.settle();
+    let hash = m.worlds[0].state_hash();
+    assert!(m.worlds.iter().all(|w| w.state_hash() == hash));
+    let events = m.lans[2].match_events();
+    assert!(
+        events.iter().any(
+            |e| matches!(e, MatchEvent::Notice(t) if t == "Alex rejoined and is catching up.")
+        ),
+        "{events:?}"
+    );
+    assert_eq!(m.desyncs(), []);
 }
 
 #[test]
 fn joiners_are_refused_when_full_or_on_different_data() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -502,7 +571,7 @@ fn joiners_are_refused_when_full_or_on_different_data() {
 
 #[test]
 fn leaving_and_being_removed() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -538,7 +607,7 @@ fn leaving_and_being_removed() {
 
 #[test]
 fn the_join_screen_finds_a_hosted_game() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
@@ -562,7 +631,7 @@ fn the_join_screen_finds_a_hosted_game() {
 
 #[test]
 fn nobody_answering_is_a_clear_error() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut alex = lan();
     // A port nothing listens on.
     let err = alex.join(&profile("Alex"), "127.0.0.1:9", "").unwrap_err();
@@ -571,7 +640,7 @@ fn nobody_answering_is_a_clear_error() {
 
 #[test]
 fn a_password_keeps_strangers_out() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "moles")
         .unwrap();
@@ -610,14 +679,17 @@ fn a_password_keeps_strangers_out() {
 
 #[test]
 fn friends_join_with_a_code() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")
         .unwrap();
     // The lobby shows a code for this machine's network address (when it
     // has one); here, a code for this machine itself.
     if let Some(invite) = host.invite() {
-        assert!(invite.starts_with("Join code "), "{invite}");
+        assert!(
+            invite.starts_with("Join code ") || invite.starts_with("Tailscale code "),
+            "{invite}"
+        );
     }
     let code =
         gc_net::joincode::encode(std::net::Ipv4Addr::LOCALHOST, host.port().unwrap()).unwrap();
@@ -629,7 +701,7 @@ fn friends_join_with_a_code() {
 
 #[test]
 fn nothing_readable_crosses_the_network() {
-    let _turn = PORTS.lock().unwrap_or_else(|e| e.into_inner());
+    let _turn = ports();
     // A listener between the two sees every packet the joiner sends.
     let mut host = lan();
     host.host(&profile("Mario"), LobbySettings::default(), "")

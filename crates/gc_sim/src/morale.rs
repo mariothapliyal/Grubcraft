@@ -5,11 +5,15 @@
 //! `morale` stat. Once a second (staggered by pool index, like melee blows)
 //! it is checked:
 //! - it falls with casualties taken since the last check, while the regiment
-//!   is below half strength and fighting, when hit in the flank or rear, and
-//!   when fighting while badly outnumbered nearby;
+//!   is below half strength and fighting, when hit in the flank or rear,
+//!   while pinned with nowhere to give ground (see
+//!   [`crate::combat::Combat::push_lines`]), and when fighting while badly
+//!   outnumbered nearby;
 //! - it recovers when the regiment is out of the fight and losing nobody, up
 //!   to the unit's stat scaled by how much of the regiment is left (half the
-//!   stat for a regiment that has lost almost everyone).
+//!   stat for a regiment that has lost almost everyone), raised or lowered
+//!   for the rest of the battle when its side's champion wins or loses
+//!   (see [`crate::champions`]).
 //!
 //! Below [`WAVER_BELOW`] points a regiment is *wavering* and deals less
 //! damage. At zero it *routs*: it breaks off, ignores orders and runs from
@@ -25,7 +29,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, RegimentHandle, Stances, TICKS_PER_SECOND, UnitStats};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -41,9 +45,13 @@ const HALF_STRENGTH_DRAIN: i16 = 2;
 /// Points lost in a second with hits on the flank, or on the rear.
 const FLANK_SHOCK: i16 = 3;
 const REAR_SHOCK: i16 = 6;
+/// Points lost in a second spent pinned: driven back against a friend, an
+/// enemy, a river bank or a cliff with nowhere to give ground.
+const PINNED_SHOCK: i16 = 3;
 /// Bits in `Regiments::shock`.
 pub(crate) const SHOCK_FLANK: u8 = 1;
 pub(crate) const SHOCK_REAR: u8 = 2;
+pub(crate) const SHOCK_PINNED: u8 = 4;
 /// Enemies and friends within this many tiles count toward being outnumbered.
 const LOCAL_TILES: i32 = 12;
 /// Points lost each second in melee when nearby enemies outnumber nearby
@@ -92,7 +100,7 @@ impl MoraleState {
 
 /// Starting (and highest) morale for a regiment of this unit, in tenths.
 pub(crate) fn fresh(stats: &UnitStats) -> i16 {
-    stats.morale as i16 * SCALE
+    i16::from(stats.morale) * SCALE
 }
 
 /// Check every regiment whose turn it is this tick.
@@ -136,30 +144,35 @@ fn check(
     tick: u32,
     map_tiles: u32,
 ) {
-    let full = regs.full_models[i].max(1) as i32;
-    let mut tenths = -(regs.losses[i] as i32 * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
+    let full = i32::from(regs.full_models[i].max(1));
+    let mut tenths = -(i32::from(regs.losses[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT / full);
     if regs.shock[i] & SHOCK_REAR != 0 {
-        tenths -= (REAR_SHOCK * SCALE) as i32;
+        tenths -= i32::from(REAR_SHOCK * SCALE);
     } else if regs.shock[i] & SHOCK_FLANK != 0 {
-        tenths -= (FLANK_SHOCK * SCALE) as i32;
+        tenths -= i32::from(FLANK_SHOCK * SCALE);
+    }
+    if regs.shock[i] & SHOCK_PINNED != 0 {
+        tenths -= i32::from(PINNED_SHOCK * SCALE);
     }
     if regs.engaged[i].is_some() {
-        if (regs.models[i] as i32) * 2 < full {
-            tenths -= (HALF_STRENGTH_DRAIN * SCALE) as i32;
+        if i32::from(regs.models[i]) * 2 < full {
+            tenths -= i32::from(HALF_STRENGTH_DRAIN * SCALE);
         }
         let (friends, enemies) = local_strength(regs, combat, stances, vision, i);
         if enemies >= friends.max(1) * 3 {
-            tenths -= (OUTNUMBERED_3 * SCALE) as i32;
+            tenths -= i32::from(OUTNUMBERED_3 * SCALE);
         } else if enemies >= friends.max(1) * 2 {
-            tenths -= (OUTNUMBERED_2 * SCALE) as i32;
+            tenths -= i32::from(OUTNUMBERED_2 * SCALE);
         }
     } else if regs.losses[i] == 0 {
-        tenths += (RECOVERY * SCALE) as i32;
+        tenths += i32::from(RECOVERY * SCALE);
     }
     // A battered regiment never gets all its nerve back: the cap falls from
-    // the unit's stat at full strength to half of it with nobody left.
-    let cap = fresh(stats) as i32 * (full + regs.models[i] as i32) / (2 * full);
-    let morale = (regs.morale[i] as i32 + tenths).clamp(0, cap) as i16;
+    // the unit's stat at full strength to half of it with nobody left. A
+    // champion's win or loss raises or lowers it for the rest of the battle.
+    let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
+        + i32::from(regs.party_morale[regs.owner[i] as usize]);
+    let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
     regs.morale[i] = morale;
     if morale > 0 {
         regs.morale_state[i] = steady_or_wavering(morale);
@@ -190,29 +203,31 @@ fn local_strength(
     let (mut friends, mut enemies) = (0u32, 0u32);
     combat.each_near(&at, p, local, Whose::Friends(owner), |j| {
         if !regs.morale_state[j].broken() {
-            friends += regs.models[j] as u32;
+            friends += u32::from(regs.models[j]);
         }
     });
     combat.each_near(&at, p, local, Whose::Enemies(owner), |j| {
         if !regs.morale_state[j].broken() && vision.sees(owner, j, regs.owner[j]) {
-            enemies += regs.models[j] as u32;
+            enemies += u32::from(regs.models[j]);
         }
     });
     (friends, enemies)
 }
 
-/// Regiment `i` loses `points` of morale at once (an ambush), down to no
-/// less than a tenth of a point: its own next check decides whether it
-/// breaks. Routers and regiments that never rout are left alone.
-pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16) {
-    lose(&mut regs.morale[i], &mut regs.morale_state[i], points);
+/// Regiment `i` gains `points` of morale at once (a champion's win), or
+/// loses them if negative (an ambush), down to no less than a tenth of a
+/// point: its own next check decides whether it breaks, and a gain may go
+/// above its ceiling until that check caps it. Routers and regiments that
+/// never rout are left alone.
+pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
+    adjust(&mut regs.morale[i], &mut regs.morale_state[i], points);
 }
 
-fn lose(morale: &mut i16, state: &mut MoraleState, points: i16) {
+fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
     if state.broken() || *morale <= 0 {
         return;
     }
-    *morale = (*morale - points * SCALE).max(1);
+    *morale = morale.saturating_add(points * SCALE).max(1);
     *state = steady_or_wavering(*morale);
 }
 
@@ -232,7 +247,7 @@ pub(crate) fn shake_friends(
     let state = &mut regs.morale_state;
     combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
         if j != i {
-            lose(&mut morale[j], &mut state[j], points);
+            adjust(&mut morale[j], &mut state[j], -points);
         }
     });
 }
@@ -268,10 +283,7 @@ fn rout(
 
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.
-    let me = RegimentHandle {
-        index: i as u32,
-        generation: regs.generation[i],
-    };
+    let me = regs.handle(i);
     shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK);
     let (p, owner, near) = (
         regs.position[i],
@@ -283,10 +295,8 @@ fn rout(
     let state = &mut regs.morale_state;
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
-        if engaged[j] == Some(me) && !state[j].broken() && morale[j] > 0 {
-            // May go above the unit's stat until its next check caps it.
-            morale[j] = morale[j].saturating_add(VICTORY_BOOST * SCALE);
-            state[j] = steady_or_wavering(morale[j]);
+        if engaged[j] == Some(me) {
+            adjust(&mut morale[j], &mut state[j], VICTORY_BOOST);
         }
     });
     flee(regs, combat, stances, vision, i, map_tiles);
@@ -320,16 +330,16 @@ fn flee(
             near = true;
             let d = p - at.position[j];
             // Closer enemies push harder: weight by 1 / distance.
-            let len = d.length().raw().max(1) as i64;
-            away.0 += d.x.raw() as i64 * 65_536 / len;
-            away.1 += d.y.raw() as i64 * 65_536 / len;
+            let len = i64::from(d.length().raw().max(1));
+            away.0 += i64::from(d.x.raw()) * 65_536 / len;
+            away.1 += i64::from(d.y.raw()) * 65_536 / len;
         },
     );
     if near {
         regs.rout_clock[i] = 0;
     } else {
         regs.rout_clock[i] = regs.rout_clock[i].saturating_add(TICKS_PER_SECOND as u16);
-        if regs.rout_clock[i] as u32 >= RALLY_SECONDS * TICKS_PER_SECOND {
+        if u32::from(regs.rout_clock[i]) >= RALLY_SECONDS * TICKS_PER_SECOND {
             regs.target[i] = None;
             if regs.morale_state[i] == MoraleState::Routing {
                 // Rally: wavering, with a little heart back.
@@ -342,8 +352,8 @@ fn flee(
     }
     let dir = if away != (0, 0) {
         let v = FxVec2::new(
-            Fx::from_raw(away.0.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
-            Fx::from_raw(away.1.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
+            Fx::from_raw(away.0.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32),
+            Fx::from_raw(away.1.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32),
         );
         Angle::of_vec(v).to_vec()
     } else if let Some(t) = regs.target[i] {

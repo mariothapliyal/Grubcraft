@@ -22,6 +22,7 @@
 //! a tick), so a hundred regiments ordered at once can't stall a tick.
 
 use alloc::collections::BinaryHeap;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
@@ -79,7 +80,8 @@ const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// The walkable map and its portal graph. Built once when the match starts.
+/// The walkable map and its portal graph. Built once when the match starts,
+/// and shared with any scratch world on the same map (see [`Nav::sharing`]).
 struct Grid {
     /// Cells per side.
     side: i32,
@@ -142,7 +144,8 @@ impl Grid {
     /// The cell under a map position (clamped onto the map).
     fn cell_at(&self, p: FxVec2) -> u32 {
         let to_cell = |v: Fx| {
-            ((v.raw() as i64 * CELLS_PER_TILE as i64) >> 16).clamp(0, self.side as i64 - 1) as i32
+            ((i64::from(v.raw()) * i64::from(CELLS_PER_TILE)) >> 16)
+                .clamp(0, i64::from(self.side) - 1) as i32
         };
         self.idx(to_cell(p.x), to_cell(p.y))
     }
@@ -160,7 +163,7 @@ impl Grid {
     /// diagonal on open ground, scaled by the cells' costs.
     fn step_cost(&self, a: u32, b: u32, diagonal: bool) -> u32 {
         let base = if diagonal { 7 } else { 5 };
-        base * (self.cost[a as usize] as u32 + self.cost[b as usize] as u32)
+        base * (u32::from(self.cost[a as usize]) + u32::from(self.cost[b as usize]))
     }
 
     /// Steps between two cells, diagonals counting as one.
@@ -528,7 +531,7 @@ enum Route {
 /// The map's walkable ground and every regiment's route.
 pub struct Nav {
     /// `None` on an open plane with no map (tests): everyone walks straight.
-    grid: Option<Grid>,
+    grid: Option<Arc<Grid>>,
     search: Search,
     route: Vec<Route>,
     /// The target the route was found for.
@@ -590,8 +593,19 @@ impl Nav {
                 (side * side) as usize,
                 "the nav grid must have {side} x {side} cells"
             );
-            Grid::build(costs, side)
+            Arc::new(Grid::build(costs, side))
         });
+        Nav::on(grid, regiments)
+    }
+
+    /// Routes for `regiments` regiments on the same map as this one, sharing
+    /// its grid and portal graph rather than building them again (scratch
+    /// worlds, see `World::scratch`).
+    pub fn sharing(&self, regiments: usize) -> Nav {
+        Nav::on(self.grid.clone(), regiments)
+    }
+
+    fn on(grid: Option<Arc<Grid>>, regiments: usize) -> Nav {
         let search = match &grid {
             Some(g) => {
                 let max_sector_nodes = g
@@ -632,7 +646,7 @@ impl Nav {
     pub fn open_around(&self, p: FxVec2, tiles: i32) -> bool {
         self.grid
             .as_ref()
-            .is_none_or(|g| g.clear[g.cell_at(p) as usize] as i32 >= tiles * CELLS_PER_TILE)
+            .is_none_or(|g| i32::from(g.clear[g.cell_at(p) as usize]) >= tiles * CELLS_PER_TILE)
     }
 
     /// Whether a regiment's centre could walk the straight line from `from`
@@ -793,9 +807,40 @@ impl Nav {
         })
     }
 
+    /// Whether `p` is on blocked ground (never with no map).
+    pub(crate) fn blocked(&self, p: FxVec2) -> bool {
+        self.grid
+            .as_ref()
+            .is_some_and(|g| g.cost[g.cell_at(p) as usize] == BLOCKED)
+    }
+
     /// Regiment slot `i` was stopped by blocked ground: find a new route.
     pub(crate) fn lost(&mut self, i: usize) {
         self.route[i] = Route::Idle;
+    }
+
+    /// Give regiment slot `i` the route it has in `from`, a world on the same
+    /// map; if it is waiting for a search there, it waits here too (behind
+    /// any copied before it).
+    pub(crate) fn copy_route(&mut self, from: &Nav, i: usize) {
+        self.route[i] = from.route[i];
+        self.goal[i] = from.goal[i];
+        self.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS]
+            .copy_from_slice(&from.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS]);
+        self.way_len[i] = from.way_len[i];
+        self.way_next[i] = from.way_next[i];
+        self.partial[i] = from.partial[i];
+    }
+
+    /// Queue the searches waiting in `from` for the regiments `copied` says
+    /// were copied here, in the same order.
+    pub(crate) fn copy_queue(&mut self, from: &Nav, copied: impl Fn(usize) -> bool) {
+        for i in from.queue.iter() {
+            let i = i as usize;
+            if copied(i) {
+                self.queue.push(i);
+            }
+        }
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -811,7 +856,7 @@ impl Nav {
             h.i32(self.goal[i].y.raw());
             h.u8(self.way_len[i]);
             h.u8(self.way_next[i]);
-            h.u8(self.partial[i] as u8);
+            h.u8(u8::from(self.partial[i]));
             for p in &self.way[i * MAX_WAYPOINTS..][..self.way_len[i] as usize] {
                 h.i32(p.x.raw());
                 h.i32(p.y.raw());
@@ -888,7 +933,7 @@ fn find(
     }
     let (n, partial) = smooth(grid, s, lead, goal_point, truncated, out);
     if via_portals {
-        spread_through_portals(grid, s, if lead { 1 } else { 0 }, from, n, out);
+        spread_through_portals(grid, s, usize::from(lead), from, n, out);
     }
     Some((n, partial))
 }
@@ -938,14 +983,14 @@ fn spread_through_portals(
             ((prev.x, prev.y), (aim.x, aim.y), (out[i].x, cy))
         };
         // Where the line from `prev` to `aim` crosses the edge, if it does.
-        let (across, run) = ((e.0 - p.0).raw() as i64, (e.1 - p.1).raw() as i64);
-        let to_edge = (here.0 - p.0).raw() as i64;
+        let (across, run) = (i64::from((e.0 - p.0).raw()), i64::from((e.1 - p.1).raw()));
+        let to_edge = i64::from((here.0 - p.0).raw());
         if across == 0 || to_edge.signum() != across.signum() || to_edge.abs() > across.abs() {
             prev = out[i];
             continue;
         }
-        let cross = p.1.raw() as i64 + run * to_edge / across;
-        let target = ((cross * CELLS_PER_TILE as i64) >> 16) as i32;
+        let cross = i64::from(p.1.raw()) + run * to_edge / across;
+        let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
         let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
         for shift in [shift, shift / 2] {
@@ -1046,7 +1091,7 @@ impl Grid {
             if x < 0 || y < 0 || x >= side || y >= side {
                 0
             } else {
-                clear[(y * side + x) as usize] as u16
+                u16::from(clear[(y * side + x) as usize])
             }
         };
         for y in 0..side {
