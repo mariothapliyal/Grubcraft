@@ -53,7 +53,7 @@ use vision::Vision;
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 1;
+pub const SIM_VERSION: u32 = 2;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -610,6 +610,7 @@ impl World {
             &mut self.regiments,
             &self.stances,
             &self.terrain,
+            &self.units,
             &self.nav,
             self.map_tiles,
         );
