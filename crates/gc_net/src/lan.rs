@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use gc_sim::{PlayerCommand, PlayerId};
 use gc_ui::lobby::{
-    DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY, MAX_PLAYERS,
-    MatchStart, NetError, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile, Slot, SlotEdit,
+    COLORS, DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAPS, MAX_ARMY,
+    MAX_PLAYERS, MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit,
     SlotKind, apply_edit, plays_with,
 };
 
@@ -898,11 +898,10 @@ impl Lan {
                             .filter(|s| s.occupied())
                             .map(|s| s.color)
                             .collect();
-                        let colors = PLAYER_COLORS.len() as u8;
-                        let color = if taken.contains(&(color % colors)) {
-                            (0..colors).find(|c| !taken.contains(c)).unwrap_or(0)
+                        let color = if taken.contains(&(color % COLORS)) {
+                            (0..COLORS).find(|c| !taken.contains(c)).unwrap_or(0)
                         } else {
-                            color % colors
+                            color % COLORS
                         };
                         h.lobby.slots[slot] = Slot {
                             kind: SlotKind::Human,
@@ -1686,7 +1685,7 @@ impl Network for Lan {
             kind: SlotKind::Human,
             name: short_name(&me.name),
             faction: me.faction,
-            color: me.color % PLAYER_COLORS.len() as u8,
+            color: me.color % COLORS,
             team: 0,
             ready: true,
             version: self.id.version.clone(),

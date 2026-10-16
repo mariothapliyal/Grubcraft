@@ -22,8 +22,8 @@ pub const PLAYER_COLORS: [(&str, [u8; 3]); MAX_PLAYERS] = [
     ("Jade", [56, 150, 96]),
 ];
 
-/// Colour indices wrap round [`PLAYER_COLORS`].
-const COLORS: u8 = PLAYER_COLORS.len() as u8;
+/// How many colours there are; colour indices wrap round [`PLAYER_COLORS`].
+pub const COLORS: u8 = PLAYER_COLORS.len() as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Faction {

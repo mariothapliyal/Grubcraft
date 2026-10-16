@@ -12,6 +12,10 @@ use crate::lobby::{
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
 
+/// One team for each lobby slot.
+const TEAM_NAMES: [&str; MAX_PLAYERS] =
+    ["Team 1", "Team 2", "Team 3", "Team 4", "Team 5", "Team 6"];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Main,
@@ -665,11 +669,8 @@ impl<N: Network> Menu<N> {
                 if ui.stepper(faction_r, "", &mut fi, &names) {
                     self.net.edit_slot(i, SlotEdit::Faction(Faction::ALL[fi]));
                 }
-                let team_names: Vec<String> =
-                    (1..=MAX_PLAYERS).map(|t| format!("Team {t}")).collect();
-                let team_names: Vec<&str> = team_names.iter().map(String::as_str).collect();
                 let mut ti = slot.team as usize;
-                if ui.stepper(team_r, "", &mut ti, &team_names) {
+                if ui.stepper(team_r, "", &mut ti, &TEAM_NAMES) {
                     self.net.edit_slot(i, SlotEdit::Team(ti as u8));
                 }
             } else {

@@ -14,6 +14,9 @@ use glam::Vec2;
 
 use crate::terrain_gen::START_PLATEAUS;
 
+// A start plateau for every lobby slot.
+const _: () = assert!(START_PLATEAUS == gc_ui::lobby::MAX_PLAYERS);
+
 /// Whether champions may duel before this battle: the lobby allows it and
 /// a computer player takes part (docs/05-combat.md, "Champions before
 /// battle").
