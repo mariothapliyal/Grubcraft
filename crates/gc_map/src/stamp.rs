@@ -10,6 +10,7 @@
 
 use crate::def::{CoverKind, MapDef, Mode, Pos, Shape, Symmetry};
 use crate::map::{Map, Placed, SAMPLES_PER_TILE, sample_of_sim};
+use gc_fixed::isqrt_u64;
 use gc_sim::terrain::HEIGHT_UNITS;
 
 /// Simulation height units in one sixteenth of a tile.
@@ -72,7 +73,7 @@ fn distance(s: Shape, px: i64, py: i64) -> (i64, i64) {
             let (cx, cy) = scaled(at);
             let (dx, dy) = (px - cx, py - cy);
             (
-                ((dx * dx + dy * dy) as u64).isqrt() as i64,
+                isqrt_u64((dx * dx + dy * dy) as u64) as i64,
                 UNIT * i64::from(r),
             )
         }
@@ -91,7 +92,7 @@ fn distance(s: Shape, px: i64, py: i64) -> (i64, i64) {
                 let cross = dx * ey - dy * ex;
                 cross * cross / len2
             };
-            ((d2 as u64).isqrt() as i64, UNIT * i64::from(half_width))
+            (isqrt_u64(d2 as u64) as i64, UNIT * i64::from(half_width))
         }
     }
 }
@@ -224,8 +225,12 @@ fn place_objects(def: &MapDef, tiles: i32) -> Vec<Placed> {
                 continue;
             }
             spots.push(at);
-            // Each copy belongs to the next player round.
-            let owner = o.owner.map(|p| (p + k as u8) % def.players);
+            // Each copy belongs to the next player round. (A file with no
+            // players or a bad owner builds without panicking; the map
+            // checker reports it.)
+            let owner = o
+                .owner
+                .map(|p| ((u32::from(p) + k) % u32::from(def.players.max(1))) as u8);
             out.push(Placed {
                 kind: o.kind,
                 at,
@@ -295,6 +300,9 @@ mod tests {
         let at = |x: usize, y: usize| ground[y * n + x];
         assert_eq!(at(32, 32), crate::Ground::Open, "the hill top");
         assert_eq!(at(100, 100), crate::Ground::Open, "the plain");
-        assert!((36..42).any(|x| at(x, 32) == crate::Ground::Blocked), "a cliff on the hill's side");
+        assert!(
+            (36..42).any(|x| at(x, 32) == crate::Ground::Blocked),
+            "a cliff on the hill's side"
+        );
     }
 }

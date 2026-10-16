@@ -11,7 +11,7 @@
 
 use gc_fixed::{Angle, isqrt_u64};
 
-use crate::def::Kind;
+use crate::def::{Kind, Pos};
 use crate::map::{Map, Placed, SAMPLES_PER_TILE};
 
 /// How many start plateaus a generated map has: one for each lobby slot.
@@ -21,10 +21,15 @@ pub const START_PLATEAUS: usize = 6;
 /// north-east, south-west, south-east, then north and south in the middle
 /// of their edges. The first four keep their places; the last two were
 /// added for six-player battles.
-fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
-    let n = i64::from(tiles);
+pub fn plateaus(tiles: u32) -> [Pos; START_PLATEAUS] {
+    let n = tiles as i32;
     let (q1, q2, q3) = (n / 4, n / 2, n * 3 / 4);
     [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
+}
+
+/// [`plateaus`] for map making's wider integers.
+fn start_tiles(tiles: u32) -> [(i64, i64); START_PLATEAUS] {
+    plateaus(tiles).map(|(x, y)| (i64::from(x), i64::from(y)))
 }
 
 /// The water line as a sample: 0.17 of the highest ground.
@@ -93,13 +98,14 @@ impl Map {
         }
         let mut map = Map::from_samples(tiles, heights, WATER);
         map.name = format!("Seed {seed}");
+        map.seed = Some(seed);
         map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
         map.objects = (0..)
-            .zip(start_tiles(tiles))
-            .map(|(owner, (x, y))| Placed {
+            .zip(plateaus(tiles))
+            .map(|(owner, at)| Placed {
                 kind: Kind::Start,
-                at: (x as i32, y as i32),
+                at,
                 owner: Some(owner),
                 label: String::new(),
             })

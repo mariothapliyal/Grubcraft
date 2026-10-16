@@ -186,8 +186,7 @@ impl MapDef {
 
     /// Read and parse a map file; the error names the file.
     pub fn load(path: &std::path::Path) -> Result<MapDef, String> {
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         MapDef::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 }

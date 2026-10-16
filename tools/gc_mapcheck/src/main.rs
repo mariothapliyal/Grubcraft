@@ -5,12 +5,8 @@ use gc_mapcheck::{Map, MapDef, check, preview};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-fn load(path: &Path) -> Result<MapDef, String> {
-    MapDef::load(path)
-}
-
 fn png_cmd(src: &str, out: &str) -> Result<(), String> {
-    let map = Map::build(&load(Path::new(src))?);
+    let map = Map::build(&MapDef::load(Path::new(src))?);
     let (side, rgb) = preview::render(&map, if map.tiles > 192 { 3 } else { 4 });
     std::fs::write(out, preview::png(side, &rgb)).map_err(|e| format!("{out}: {e}"))
 }
@@ -56,7 +52,7 @@ fn main() -> ExitCode {
             }
             let mut failed = false;
             for path in paths {
-                match load(&path) {
+                match MapDef::load(&path) {
                     Err(e) => {
                         println!("{e}");
                         failed = true;

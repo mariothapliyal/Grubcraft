@@ -2,14 +2,16 @@
 //! worked out once from the walkable-ground grid the simulation uses, so
 //! the checker and the game agree on every cliff and ford.
 
-pub use gc_map::{Ground, Placed};
 use gc_map::def::{MapDef, Pos};
+pub use gc_map::{Ground, Placed};
 
 pub struct Map {
     pub map: gc_map::Map,
-    pub tiles: i32,
-    /// Each tile's ground ([`gc_map::Map::tile_ground`]); the outermost
-    /// ring of tiles counts as blocked, so nothing is placed on the edge.
+    /// Tiles per side, signed for the checks' arithmetic.
+    pub n: i32,
+    /// The walkable-ground grid, built once.
+    pub nav: Vec<u8>,
+    /// Each tile's ground ([`gc_map::Map::tile_ground`]).
     pub ground: Vec<Ground>,
 }
 
@@ -23,24 +25,23 @@ impl std::ops::Deref for Map {
 impl Map {
     pub fn build(def: &MapDef) -> Map {
         let map = gc_map::Map::from_def(def);
-        let tiles = map.tiles as i32;
-        let mut ground = map.tile_ground(&map.nav_costs());
-        for y in 0..tiles {
-            for x in 0..tiles {
-                if x == 0 || y == 0 || x == tiles - 1 || y == tiles - 1 {
-                    ground[(y * tiles + x) as usize] = Ground::Blocked;
-                }
-            }
+        let n = map.tiles as i32;
+        let nav = map.nav_costs();
+        let ground = map.tile_ground(&nav);
+        Map {
+            map,
+            n,
+            nav,
+            ground,
         }
-        Map { map, tiles, ground }
     }
 
     pub fn idx(&self, p: Pos) -> usize {
-        (p.1 * self.tiles + p.0) as usize
+        (p.1 * self.n + p.0) as usize
     }
 
     pub fn in_bounds(&self, p: Pos) -> bool {
-        (0..self.tiles).contains(&p.0) && (0..self.tiles).contains(&p.1)
+        (0..self.n).contains(&p.0) && (0..self.n).contains(&p.1)
     }
 
     pub fn ground_at(&self, p: Pos) -> Ground {
@@ -55,8 +56,8 @@ impl Map {
     /// blocked tile (the sim keeps blocks about a tile off cliffs).
     pub fn walkable(&self) -> Vec<bool> {
         let mut out = vec![false; self.ground.len()];
-        for y in 0..self.tiles {
-            for x in 0..self.tiles {
+        for y in 0..self.n {
+            for x in 0..self.n {
                 let clear = self.ground_at((x, y)) != Ground::Blocked
                     && (-1..=1).all(|dy| {
                         (-1..=1).all(|dx| self.ground_at((x + dx, y + dy)) != Ground::Blocked)
@@ -75,6 +76,6 @@ impl Map {
 
     /// The fingerprint the game compares between machines, in hex.
     pub fn hash(&self) -> String {
-        format!("{:016x}", self.map.hash())
+        format!("{:016x}", gc_map::map_hash(&self.nav, &self.map.ground()))
     }
 }

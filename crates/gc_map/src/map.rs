@@ -24,12 +24,12 @@ const FORD: u8 = 3;
 
 /// What a tile is like to walk on: the worst of its walkable-ground cells
 /// (see [`Map::tile_ground`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ground {
-    Blocked,
     Open,
     Steep,
     Ford,
+    Blocked,
 }
 
 impl Ground {
@@ -63,6 +63,8 @@ pub struct Placed {
 pub struct Map {
     /// The map's name, or "Seed N" for a generated one.
     pub name: String,
+    /// The seed a generated map was made from; None for a described one.
+    pub seed: Option<u64>,
     /// The description's size class; None for a generated map.
     pub size: Option<SizeClass>,
     /// Tiles per side.
@@ -120,6 +122,7 @@ impl Map {
             .collect();
         Map {
             name: String::new(),
+            seed: None,
             size: None,
             tiles,
             players: 0,
@@ -195,33 +198,33 @@ impl Map {
 
     /// Each tile's ground, row by row, from the walkable-ground grid
     /// (`nav`, from [`Map::nav_costs`]): the worst of its cells, blocked
-    /// over ford over steep over open. For tile-sized questions (can a
-    /// building or a seep go here, how far is it to walk) that agree with
-    /// where regiments can go.
+    /// over ford over steep over open, and the outermost ring of tiles
+    /// blocked so nothing is placed on the map's edge. For tile-sized
+    /// questions (can a building or a seep go here, how far is it to walk)
+    /// that agree with where regiments can go.
     pub fn tile_ground(&self, nav: &[u8]) -> Vec<Ground> {
         let per = gc_sim::nav::CELLS_PER_TILE as usize;
         let tiles = self.tiles as usize;
         let side = tiles * per;
         assert_eq!(nav.len(), side * side, "nav grid for this map");
-        let rank = |c: u8| match c {
-            gc_sim::nav::BLOCKED => 3,
-            FORD => 2,
-            STEEP => 1,
-            _ => 0,
+        let ground = |c: u8| match c {
+            gc_sim::nav::BLOCKED => Ground::Blocked,
+            FORD => Ground::Ford,
+            STEEP => Ground::Steep,
+            _ => Ground::Open,
         };
         let mut out = Vec::with_capacity(tiles * tiles);
         for y in 0..tiles {
             for x in 0..tiles {
                 let worst = (0..per)
                     .flat_map(|dy| (0..per).map(move |dx| (dx, dy)))
-                    .map(|(dx, dy)| rank(nav[(y * per + dy) * side + x * per + dx]))
-                    .max()
-                    .unwrap_or(0);
-                out.push(match worst {
-                    3 => Ground::Blocked,
-                    2 => Ground::Ford,
-                    1 => Ground::Steep,
-                    _ => Ground::Open,
+                    .map(|(dx, dy)| ground(nav[(y * per + dy) * side + x * per + dx]))
+                    .max();
+                let edge = x == 0 || y == 0 || x == tiles - 1 || y == tiles - 1;
+                out.push(if edge {
+                    Ground::Blocked
+                } else {
+                    worst.unwrap_or(Ground::Open)
                 });
             }
         }
