@@ -29,6 +29,7 @@ mod regiments;
 pub mod scenario;
 pub mod stances;
 pub mod terrain;
+pub mod verdict;
 pub mod vision;
 
 pub use champions::Challenge;
@@ -38,6 +39,7 @@ pub use morale::MoraleState;
 pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 pub use terrain::{Cover, Ground, Terrain};
+pub use verdict::{HOLD_TICKS, Verdict};
 pub use vision::Ambush;
 
 use champions::Champions;
@@ -48,12 +50,27 @@ use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 use nav::Nav;
 use vision::Vision;
 
+/// The parts of the simulation's state, in the order [`World::state_hash`]
+/// hashes them and [`World::system_hashes`] lists them.
+pub const SYSTEMS: [&str; 10] = [
+    "clock",
+    "random streams",
+    "unit stats",
+    "regiments",
+    "combat",
+    "pathfinding",
+    "vision",
+    "deployment",
+    "verdict",
+    "champions",
+];
+
 /// The simulation's rules version. Two builds with the same version play
 /// the same commands out the same way, whatever else differs, so the
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 3;
+pub const SIM_VERSION: u32 = 4;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -535,6 +552,8 @@ pub struct World {
     deploy: Deployment,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
+    /// Who holds the field, and who won (see [`verdict`]).
+    judge: verdict::Judge,
     pub regiments: Regiments,
 }
 
@@ -566,6 +585,7 @@ impl World {
                     Pcg32::new(setup.seed, streams::EVENTS),
                 )
             }),
+            judge: verdict::Judge::default(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
     }
@@ -596,6 +616,7 @@ impl World {
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
+            self.judge.deploying();
             self.tick += 1;
             return stats;
         }
@@ -658,6 +679,8 @@ impl World {
             &self.terrain,
         );
         self.tick += 1;
+        self.judge
+            .update(&self.regiments, &self.stances, &self.vision, self.tick);
         stats
     }
 
@@ -863,6 +886,20 @@ impl World {
         })
     }
 
+    /// How the battle was decided, once it has been: a side held the field
+    /// (see [`verdict`]).
+    pub fn verdict(&self) -> Option<Verdict> {
+        self.judge.verdict()
+    }
+
+    /// The party holding the field right now, if one is (see [`verdict`]).
+    pub fn holding_the_field(&self) -> Option<PlayerId> {
+        if self.deploying() {
+            return None;
+        }
+        verdict::holding_the_field(&self.regiments, &self.stances, &self.vision)
+    }
+
     /// Whether regiment `h` is hidden from every enemy of its owner.
     pub fn hidden(&self, h: RegimentHandle) -> bool {
         self.regiments
@@ -905,28 +942,57 @@ impl World {
     /// 64-bit hash of the complete simulation state, for desync detection.
     pub fn state_hash(&self) -> u64 {
         let mut h = StateHasher::new();
-        h.u32(self.tick);
-        let (state, inc) = self.rng.raw_state();
-        h.u64(state);
-        h.u64(inc);
-        let (state, inc) = self.combat_rng.raw_state();
-        h.u64(state);
-        h.u64(inc);
-        h.u32(self.units.len() as u32);
-        for u in &self.units {
-            u.hash_into(&mut h);
-        }
-        self.regiments.hash_into(&mut h);
-        self.combat.hash_into(&mut h);
-        self.nav.hash_into(&mut h);
-        self.vision.hash_into(&self.regiments, &mut h);
-        self.deploy.hash_into(&mut h);
-        // Only in matches that allow champions, so other worlds hash as
-        // they did before champions existed.
-        if let Some(champions) = &self.champions {
-            champions.hash_into(&mut h);
+        for system in 0..SYSTEMS.len() {
+            self.hash_system(system, &mut h);
         }
         h.finish()
+    }
+
+    /// Each part of [`World::state_hash`] hashed on its own, in the order
+    /// of [`SYSTEMS`]: when two machines' worlds part, comparing these
+    /// names the system that went first (review fix R12).
+    pub fn system_hashes(&self) -> [u64; SYSTEMS.len()] {
+        core::array::from_fn(|system| {
+            let mut h = StateHasher::new();
+            self.hash_system(system, &mut h);
+            h.finish()
+        })
+    }
+
+    /// Feed one of [`SYSTEMS`] into `h`. Matching on the name keeps each
+    /// arm tied to its entry: a name with no arm fails every test that
+    /// hashes a world.
+    fn hash_system(&self, system: usize, h: &mut StateHasher) {
+        match SYSTEMS[system] {
+            "clock" => h.u32(self.tick),
+            "random streams" => {
+                for rng in [&self.rng, &self.combat_rng] {
+                    let (state, inc) = rng.raw_state();
+                    h.u64(state);
+                    h.u64(inc);
+                }
+            }
+            "unit stats" => {
+                h.u32(self.units.len() as u32);
+                for u in &self.units {
+                    u.hash_into(h);
+                }
+            }
+            "regiments" => self.regiments.hash_into(h),
+            "combat" => self.combat.hash_into(h),
+            "pathfinding" => self.nav.hash_into(h),
+            "vision" => self.vision.hash_into(&self.regiments, h),
+            "deployment" => self.deploy.hash_into(h),
+            "verdict" => self.judge.hash_into(h),
+            // Only in matches that allow champions, so other worlds hash as
+            // they did before champions existed.
+            "champions" => {
+                if let Some(champions) = &self.champions {
+                    champions.hash_into(h);
+                }
+            }
+            other => unreachable!("no hash for system {other}"),
+        }
     }
 
     /// The champions' challenge, once one has been called (it stays after

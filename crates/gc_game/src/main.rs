@@ -102,7 +102,7 @@ mod scenery;
 mod sounds;
 mod terrain_gen;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use battle::{Battle, Party, party_name};
@@ -493,6 +493,8 @@ struct Running {
     quit: bool,
     /// None with `--no-audio` or when there is no sound output.
     sounds: Option<sounds::Sounds>,
+    /// The replay list being read on another thread, until it arrives.
+    replay_list: Option<replays::Listing>,
 }
 
 /// Soldier models and the lists that draw them, rebuilt every frame.
@@ -523,6 +525,8 @@ struct LodView {
     eye: glam::Vec3,
     forward: glam::Vec3,
     pixel_scale: f32,
+    /// What the frame draws, for skipping soldiers nobody would see.
+    cull: gc_render::Cull,
     /// Every soldier at this level, from `--lod`.
     force: Option<usize>,
 }
@@ -535,12 +539,21 @@ impl LodView {
             lod_for(height, (pos - self.eye).dot(self.forward), self.pixel_scale)
         })
     }
+
+    /// The level for a model `height` tiles tall standing at `pos`, or none
+    /// when it is worth no drawing: it is neither on screen nor casting a
+    /// shadow where one is drawn.
+    fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        self.cull
+            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .then(|| self.lod(height, pos))
+    }
 }
 
 impl Art {
     /// Empty the buckets for a frame seen from `camera` on a viewport
     /// `height` pixels tall.
-    fn begin(&mut self, camera: &RtsCamera, height: f32) {
+    fn begin(&mut self, camera: &RtsCamera, height: f32, cull: gc_render::Cull) {
         for b in &mut self.buckets {
             b.clear();
         }
@@ -548,6 +561,7 @@ impl Art {
             eye: camera.eye(),
             forward: camera.forward(),
             pixel_scale: camera.pixel_scale(height),
+            cull,
             force: self.view.force,
         };
     }
@@ -827,6 +841,7 @@ impl App {
                         eye: glam::Vec3::ZERO,
                         forward: glam::Vec3::NEG_Z,
                         pixel_scale: 0.0,
+                        cull: gc_render::Cull::EVERYTHING,
                         force: opts.lod,
                     },
                     buckets: vec![Vec::new(); models.models.len() * LODS],
@@ -943,6 +958,7 @@ impl App {
         let settings = settings_path
             .as_deref()
             .map_or_else(Settings::default, Settings::load);
+        let volumes = (settings.volume_master, settings.volume_music);
         let lan = Lan::new(gc_net::Identity {
             version: online::version(),
             data_hash: game_data.short_hash(),
@@ -956,7 +972,7 @@ impl App {
             .unwrap_or(opts.frames.is_none() && opts.battle.is_none());
         let sounds = if opts.audio {
             tagged_alloc::scope(Tag::Audio, || {
-                sounds::Sounds::start(capacities.regiments as usize)
+                sounds::Sounds::start(capacities.regiments as usize, volumes.0, volumes.1)
             })
         } else {
             None
@@ -1044,6 +1060,7 @@ impl App {
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
+            replay_list: None,
         });
         if let Some(r) = self.running.as_mut() {
             r.menu.set_in_match(r.match_started);
@@ -1896,7 +1913,8 @@ impl Running {
             .filter(|(_, at)| at.elapsed() < ATTACK_MARK)
             .map(|(h, _)| h);
         if let Some(art) = &mut self.art {
-            art.begin(&self.camera, self.window.inner_size().height as f32);
+            let cull = self.renderer.cull(self.camera.view_proj());
+            art.begin(&self.camera, self.window.inner_size().height as f32, cull);
         }
         self.mark_shooting();
         self.scenery.push(
@@ -2062,6 +2080,11 @@ impl Running {
                 let highlight = if selected { 70 } else { 0 };
                 self.puppets
                     .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                        let ground = heightmap.height_at(s.pos.x, s.pos.y);
+                        let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
+                        let Some(lod) = view.place(height, at) else {
+                            return;
+                        };
                         let seconds = time + s.phase * 4.0;
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
@@ -2079,8 +2102,6 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
-                        let ground = heightmap.height_at(s.pos.x, s.pos.y);
-                        let lod = view.lod(height, glam::Vec3::new(s.pos.x, ground, s.pos.y));
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: s.facing.to_array(),
@@ -2468,25 +2489,49 @@ impl Running {
         let (screen, scale) = self.ui_screen();
         let mut input = std::mem::take(&mut self.ui_input);
         input.mouse = self.ui_cursor();
+        if let Some(listing) = &self.replay_list {
+            let arrived = match listing.try_recv() {
+                Ok(list) => Some(list),
+                // The thread never started or died (the log says which).
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    logln!("grubcraft: the replay list did not arrive");
+                    Some(Vec::new())
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(list) = arrived {
+                self.menu.set_replays(list);
+                self.replay_list = None;
+            }
+        }
         self.ui.begin_frame(input, screen);
         let action = self.menu.frame(&mut self.ui);
         self.ui.end_frame();
         hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
         match action {
-            MenuAction::None | MenuAction::SettingsChanged => {}
+            MenuAction::None => {}
+            MenuAction::SettingsChanged => {
+                let s = self.menu.settings();
+                if let Some(sounds) = &mut self.sounds {
+                    sounds.set_volumes(s.volume_master, s.volume_music);
+                }
+            }
             MenuAction::Resume => self.close_menu(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
-                let list = replays::list(
-                    &replays::folder(),
-                    self.data_stats.len(),
-                    self.capacities,
-                    self.data_hash,
-                );
-                self.menu.set_replays(list);
+                self.menu.replays_loading();
+                // One read at a time: asking again waits for the one under way.
+                if self.replay_list.is_none() {
+                    self.replay_list = Some(replays::list_in_background(
+                        replays::folder(),
+                        self.data_stats.len(),
+                        self.capacities,
+                        self.data_hash,
+                    ));
+                }
             }
             MenuAction::WatchReplay(path) => match gc_replay::Replay::load(&path) {
                 Ok(r) => match replays::unplayable(&r, self.data_stats.len(), self.capacities) {
@@ -2610,17 +2655,20 @@ impl Running {
             } else {
                 "on this machine"
             };
+            let recorder = gc_replay::Recorder::new(
+                &setup,
+                &self.world,
+                format!("{mode} on {map}, played {place}"),
+            );
             self.recording = Some(Recording {
-                recorder: gc_replay::Recorder::new(
-                    &setup,
-                    &self.world,
-                    format!("{mode} on {map}, played {place}"),
-                )
-                .checkpoint_every(if net_seed.is_some() {
-                    gc_net::HASH_EVERY
-                } else {
-                    gc_replay::CHECKPOINT_EVERY
-                }),
+                // A network match hashes as often as the machines compare,
+                // and keeps each system's hashes for a desync report.
+                recorder: match net_seed {
+                    Some(_) => recorder
+                        .checkpoint_every(gc_net::HASH_EVERY)
+                        .with_system_trail(),
+                    None => recorder,
+                },
                 path: replays::new_path(&dir, replays::now(), mode),
                 saved_at: None,
             });
@@ -2855,8 +2903,7 @@ impl Running {
             return "Nothing was recorded to report".into();
         };
         // The recording carries on as a replay once the report is out.
-        rec.recorder.header_mut().desync_tick = Some(tick);
-        let report = rec.recorder.replay();
+        let report = &rec.recorder.desync_report(tick);
         let who = report.header.recorded_by.map_or(0, |p| u32::from(p) + 1);
         let path = replays::new_path(
             &replays::desync_folder(),
@@ -2864,7 +2911,6 @@ impl Running {
             &format!("desync player{who}"),
         );
         let saved = replays::save(report, &path);
-        rec.recorder.header_mut().desync_tick = None;
         let line = match saved {
             Ok(()) => format!(
                 "Saved a desync report for the developers: {}",
@@ -3027,7 +3073,9 @@ impl Running {
                 if let Some((pose, flat)) = art.clips.death(model, c.age) {
                     let ground = self.heightmap.height_at(c.pos.x, c.pos.y);
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
-                    let lod = art.view.lod(art.heights[model], at);
+                    let Some(lod) = art.view.place(art.heights[model], at) else {
+                        continue;
+                    };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: c.pos.to_array(),
                         facing: c.facing.to_array(),
@@ -3199,6 +3247,11 @@ impl Running {
             .filter(|&&t| tagged_alloc::live_bytes(t) > 0)
             .map(|&t| format!("{} {:.2}", t.name(), mb(tagged_alloc::live_bytes(t))))
             .collect();
+        let dropped = if rs.dropped > 0 {
+            format!("   {} NOT DRAWN: over capacity", rs.dropped)
+        } else {
+            String::new()
+        };
         let info = self.renderer.adapter_info();
         let text = format!(
             "GRUBCRAFT DEV OVERLAY                          ` or F11 hides\n\
@@ -3206,7 +3259,7 @@ impl Running {
              sim     tick {:<7} {tick_avg:6.3} ms avg   {:6.3} ms worst\n\
              routes  {} portals   {} waiting\n\
              ai      {} computer players   {ai_avg:6.3} ms a tick\n\
-             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles\n\
+             render  {} draw calls   {}/{} chunks   {} boxes   {} soldiers   {}k triangles{dropped}\n\
              memory  process {process}   heap {:.1} MB   gpu {:.1} MB\n\
              heap    {}\n\
              data    {}\n\
@@ -3964,6 +4017,7 @@ mod lod_tests {
             eye: glam::Vec3::ZERO,
             forward: glam::Vec3::NEG_Z,
             pixel_scale: 1000.0,
+            cull: gc_render::Cull::EVERYTHING,
             force: None,
         };
         assert_eq!(view.lod(2.0, glam::Vec3::new(0.0, 0.0, -20.0)), 0);
