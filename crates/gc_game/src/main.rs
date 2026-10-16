@@ -1742,17 +1742,17 @@ impl Running {
                 self.hud.armed = None;
                 let drag = self.drag_order();
                 let plain = drag.is_none().then(|| self.ground_under_cursor()).flatten();
-                if plain.is_some_and(|p| self.conquest_right_click(p)) {
+                // Riding, the ground point lies far behind a soldier clicked
+                // on, so a body the ray passes through comes first.
+                let body = drag
+                    .is_none()
+                    .then(|| self.body_under_cursor(false))
+                    .flatten();
+                if body.is_none() && plain.is_some_and(|p| self.conquest_right_click(p)) {
                     self.input.right_down = None;
                     return;
                 }
-                let target = drag
-                    .is_none()
-                    .then(|| {
-                        self.body_under_cursor(false)
-                            .or_else(|| plain.and_then(|p| self.enemy_at(p)))
-                    })
-                    .flatten();
+                let target = body.or_else(|| plain.and_then(|p| self.enemy_at(p)));
                 if let Some(target) = target {
                     self.issue_attack(target);
                 } else if let Some(building) = drag
@@ -1807,6 +1807,16 @@ impl Running {
     /// the CPU copy of the heightmap.
     fn ground_under_cursor(&self) -> Option<Vec2> {
         let (origin, dir) = self.cursor_ray()?;
+        let hit = origin + dir * self.ground_along(origin, dir)?;
+        let n = self.heightmap.tiles as f32;
+        let inside = (0.0..=n).contains(&hit.x) && (0.0..=n).contains(&hit.z);
+        inside.then(|| Vec2::new(hit.x, hit.z))
+    }
+
+    /// How far along the ray from `origin` (along `dir`) it meets the
+    /// ground or the water, found by marching over the CPU copy of the
+    /// heightmap; None if it never comes down within 2,000 tiles.
+    fn ground_along(&self, origin: Vec3, dir: Vec3) -> Option<f32> {
         let mut t = 0.0;
         let step = 0.5;
         let mut prev_t = 0.0;
@@ -1828,10 +1838,7 @@ impl Running {
                         .max(self.heightmap.water_level());
                     if q.y <= g { hi = mid } else { lo = mid }
                 }
-                let hit = origin + dir * hi;
-                let n = self.heightmap.tiles as f32;
-                let inside = (0.0..=n).contains(&hit.x) && (0.0..=n).contains(&hit.z);
-                return inside.then(|| Vec2::new(hit.x, hit.z));
+                return Some(hi);
             }
             prev_t = t;
             t += step;
@@ -2095,7 +2102,8 @@ impl Running {
             .regiments
             .position(ride.regiment)
             .map_or(ride.camera.anchor(), from_fx_vec);
-        let ground = self.ground_at(focus);
+        // The bird's-eye camera follows the land, not the water's surface.
+        let ground = self.heightmap.height_at(focus.x, focus.y);
         self.camera
             .resume_from_ride(focus, ground, ride.camera.forward_xz());
     }
@@ -2140,13 +2148,16 @@ impl Running {
     /// riding: from the low camera a click on a soldier lands on ground far
     /// behind it, so the ground point is a poor guide.
     fn body_under_cursor(&self, own: bool) -> Option<RegimentHandle> {
-        self.ride.as_ref()?;
+        let ridden = self.ride.as_ref()?.regiment;
         let (origin, dir) = self.cursor_ray()?;
+        // A block hidden behind a ridge is not under the mouse.
+        let reach = self.ground_along(origin, dir).unwrap_or(f32::INFINITY);
         let side = self.sandbox.side;
         self.world
             .regiments
             .iter()
-            .filter(|r| (r.owner == side) == own)
+            // The eye is inside the ridden block's box: it would take every click.
+            .filter(|r| r.handle != ridden && (r.owner == side) == own)
             // Orders can only name regiments your side can see.
             .filter(|r| own || self.world.sees(side, r.handle))
             .filter_map(|r| {
@@ -2164,6 +2175,7 @@ impl Running {
                     half,
                     (ground - 0.2, ground + RIDE_PICK_HEIGHT),
                 )
+                .filter(|&t| t <= reach + RIDE_PICK_MARGIN)
                 .map(|t| (r.handle, t))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -4051,6 +4063,8 @@ impl Running {
     fn switch_side(&mut self) {
         let sides = self.parties.len().max(1) as PlayerId;
         self.sandbox.side = (self.sandbox.side + 1) % sides;
+        // The ridden regiment may be one the new side can't see.
+        self.leave_ride();
         self.selected.clear();
         self.selected_structure = None;
         if let Some(drill) = &mut self.drill {

@@ -890,6 +890,10 @@ fn project(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> [f32; 2] {
 /// Where the four screen corners look at the ground, in tiles, clamped to
 /// the map, through the camera with this `view_proj`. The ground is taken as
 /// flat at height `plane`.
+/// How far out the minimap outline puts a screen corner that looks at the
+/// sky, in tiles: about what a low camera shows clearly.
+const SKY_OUTLINE_TILES: f32 = 120.0;
+
 fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
     let inv = view_proj.inverse();
     [(-1.0, 1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)].map(|(x, y)| {
@@ -897,8 +901,9 @@ fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
         let hit: Vec3 = if dir.y < -1e-4 {
             origin + dir * ((plane - origin.y) / dir.y)
         } else {
-            // Looking at the sky: far along the ray's heading instead.
-            origin + dir * 1000.0
+            // Looking at the sky (riding, the top corners do): a little way
+            // out along the ray's heading instead.
+            origin + Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero() * SKY_OUTLINE_TILES
         };
         [hit.x.clamp(0.0, map), hit.z.clamp(0.0, map)]
     })

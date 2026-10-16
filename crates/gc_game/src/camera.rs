@@ -159,11 +159,12 @@ impl RtsCamera {
         // The eye sits at `+(sin yaw, cos yaw)` from the focus, so it looks
         // along `-(sin yaw, cos yaw)`.
         self.yaw = if looking.length_squared() > 1e-6 {
-            (-looking.x).atan2(-looking.y)
+            // Measured from home, so the clamp never takes the long way round.
+            let from_home = wrap_angle((-looking.x).atan2(-looking.y) - self.home_yaw);
+            self.home_yaw + from_home.clamp(-MAX_YAW, MAX_YAW)
         } else {
             self.home_yaw
-        }
-        .clamp(self.home_yaw - MAX_YAW, self.home_yaw + MAX_YAW);
+        };
     }
 }
 
@@ -217,7 +218,10 @@ impl ActiveCamera<'_> {
     /// How wide the view is, for sizing marks that must stay readable: the
     /// zoom distance (a ride is as close as the bird's-eye camera gets).
     pub fn zoom_distance(self) -> f32 {
-        self.listener().distance
+        match self {
+            Self::Rts(c) => c.distance,
+            Self::Ride(..) => MIN_DISTANCE,
+        }
     }
 
     pub fn pixel_scale(self, height: f32) -> f32 {
@@ -273,7 +277,7 @@ const RIDE_PITCH: f32 = 12.0 * std::f32::consts::PI / 180.0;
 const RIDE_FOV_Y: f32 = 55.0 * std::f32::consts::PI / 180.0;
 /// Near and far planes. The far plane reaches across the whole map (its
 /// diagonal is about 360 tiles) because there is a horizon to see.
-const RIDE_NEAR: f32 = 0.2;
+const RIDE_NEAR: f32 = 0.5;
 const RIDE_FAR: f32 = 420.0;
 /// How far from the eye the sun's shadow map reaches while riding, in
 /// tiles. The bird's-eye camera spreads the map's texels over what it sees
