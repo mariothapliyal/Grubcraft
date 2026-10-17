@@ -5,7 +5,7 @@
 //! start.
 
 use gc_data::conquest::{
-    Class, ConquestUnitRecord, NONE, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
+    Class, ConquestUnitRecord, NONE, UNIT_BUILDS_ONLY, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
 };
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
@@ -101,6 +101,7 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         hatches: u.flags & UNIT_HATCHES != 0,
         consumed: u.flags & UNIT_CONSUMED != 0,
         burrows: u.worker() && u.flags & UNIT_BURROWS != 0,
+        builds_only: u.worker() && u.flags & UNIT_BUILDS_ONLY != 0,
     }
 }
 
@@ -250,7 +251,9 @@ fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 
 /// The commands that put every side's starting buildings and workers on
 /// the field: each faction's buildings and units with a start count, round
-/// its start on `map` (player `p` at its start from [`player_starts`]). The host sends
+/// its start on `map` (player `p` at its start from [`player_starts`]). A
+/// building that tunes nodes (the Choir's Resonators) goes where it
+/// reaches the nearest node of its kind no other starting one tunes. The host sends
 /// them in the match's first turn, as it does a Field Battle's armies;
 /// `world` is the match's fresh world, to check the ground with. Works in
 /// floats, which is safe because only the host does it.
@@ -264,6 +267,7 @@ pub fn opening(
     let starts = player_starts(map, factions.len());
     let mut out = Vec::new();
     let mut taken: Vec<Foot> = Vec::new();
+    let mut tuned: Vec<(i32, i32)> = Vec::new();
     for (p, (&faction, &(sx, sy))) in factions.iter().zip(&starts).enumerate() {
         let player = p as PlayerId;
         let centre = (sx as f32 + 0.5, sy as f32 + 0.5);
@@ -289,9 +293,16 @@ pub fn opening(
                     !taken.iter().any(|&f| overlaps(f, foot, 1))
                         && world.can_build(i as u16, t).is_ok()
                 };
-                let tile = match first {
-                    None => Some(at(centre)).filter(|&t| fits(t)),
-                    Some(main) => ring(main, 2).find(|&t| fits(t)),
+                let tuning = s.tunes.zip(first).and_then(|((resource, tiles), main)| {
+                    tuning_spot(map, main, resource, tiles, w, d, &tuned, &fits)
+                });
+                let tile = match (tuning, first) {
+                    (Some((tile, node)), _) => {
+                        tuned.push(node);
+                        Some(tile)
+                    }
+                    (None, None) => Some(at(centre)).filter(|&t| fits(t)),
+                    (None, Some(main)) => ring(main, 2).find(|&t| fits(t)),
                 }
                 .or_else(|| ring([sx, sy, 1, 1], 2).find(|&t| fits(t)));
                 let Some(tile) = tile else {
@@ -359,6 +370,70 @@ pub fn opening(
         }
     }
     out
+}
+
+/// How far from its main building a starting building looks for a node to
+/// tune, in tiles.
+const TUNE_SEARCH_TILES: f32 = 24.0;
+
+/// For a starting building `w` by `d` tiles that tunes `resource` nodes
+/// within `tiles` of its edge: where it goes to tune the node of that kind
+/// nearest main building `main` that `tuned` doesn't hold and that is
+/// within [`TUNE_SEARCH_TILES`], and that node's tile; the spot nearest the
+/// main building of those that `fits`.
+fn tuning_spot(
+    map: &Map,
+    main: Foot,
+    resource: Resource,
+    tiles: u8,
+    w: i32,
+    d: i32,
+    tuned: &[(i32, i32)],
+    fits: &impl Fn((i32, i32)) -> bool,
+) -> Option<((i32, i32), (i32, i32))> {
+    let kind = match resource {
+        Resource::Grub => Kind::GrubSeep,
+        Resource::Marrow => Kind::MarrowVein,
+    };
+    let mid = (
+        main[0] as f32 + main[2] as f32 / 2.0,
+        main[1] as f32 + main[3] as f32 / 2.0,
+    );
+    let from_main = |(x, y): (f32, f32)| (x - mid.0).hypot(y - mid.1);
+    let mut nodes: Vec<(i32, i32)> = map
+        .objects
+        .iter()
+        .filter(|o| o.kind == kind && !tuned.contains(&o.at))
+        .map(|o| o.at)
+        .filter(|&(x, y)| from_main((x as f32 + 0.5, y as f32 + 0.5)) <= TUNE_SEARCH_TILES)
+        .collect();
+    nodes.sort_by(|a, b| {
+        let d = |&(x, y): &(i32, i32)| from_main((x as f32 + 0.5, y as f32 + 0.5));
+        d(a).total_cmp(&d(b))
+    });
+    let reach = i32::from(tiles);
+    nodes.into_iter().find_map(|(nx, ny)| {
+        let point = (nx as f32 + 0.5, ny as f32 + 0.5);
+        // Every corner whose footprint comes within reach of the node.
+        let mut spots: Vec<(i32, i32)> = (nx - reach - w..=nx + reach + 1)
+            .flat_map(|x| (ny - reach - d..=ny + reach + 1).map(move |y| (x, y)))
+            .filter(|&(x, y)| {
+                let near = (
+                    point.0.clamp(x as f32, (x + w) as f32),
+                    point.1.clamp(y as f32, (y + d) as f32),
+                );
+                (near.0 - point.0).hypot(near.1 - point.1) <= reach as f32
+            })
+            .filter(|&t| fits(t))
+            .collect();
+        spots.sort_by(|a, b| {
+            let c = |&(x, y): &(i32, i32)| {
+                from_main((x as f32 + w as f32 / 2.0, y as f32 + d as f32 / 2.0))
+            };
+            c(a).total_cmp(&c(b)).then(a.cmp(b))
+        });
+        spots.first().map(|&t| (t, (nx, ny)))
+    })
 }
 
 /// Tiles round footprint `f` for a building's north-west corner, a ring

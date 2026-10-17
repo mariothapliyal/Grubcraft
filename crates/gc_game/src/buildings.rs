@@ -23,6 +23,8 @@ const _: () = assert!(
         && record::BUILDING_ANTI_AIR == gc_sim::structures::ANTI_AIR
         && record::BUILDING_LARVAE == gc_sim::structures::LARVAE
         && record::BUILDING_VEINS == gc_sim::structures::VEINS
+        && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
+        && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
@@ -103,6 +105,12 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             reload_ticks: b.attack_reload_ticks,
             shots: b.attack_shots,
         }),
+        field: b.field_tiles,
+        tunes: match b.tunes {
+            record::TUNES_SEEPS => Some((Resource::Grub, b.tune_tiles)),
+            record::TUNES_VEINS => Some((Resource::Marrow, b.tune_tiles)),
+            _ => None,
+        },
     }
 }
 
@@ -750,6 +758,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Price => "You can't afford that.",
         Refusal::Busy => "That building is busy.",
         Refusal::Larva => "No larvae are ready.",
+        Refusal::Unpowered => "It must stand inside a field of power.",
     }
 }
 
