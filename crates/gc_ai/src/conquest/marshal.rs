@@ -47,10 +47,10 @@ const ODDS_STRIKE: f32 = 0.5;
 /// Tiles of distance that cost as much as 1 of odds, when choosing whom to
 /// attack.
 const ODDS_PER_DISTANCE: f32 = 400.0;
-/// How far from a base an opportunist counts its defenders.
-const DEFENDERS_REACH: f32 = 50.0;
 /// Supply short of the limit that still counts as a full army.
 const FULL_SLACK: u32 = 12;
+/// Supply short of its current cap that counts as capped.
+const CAP_SLACK: u32 = 8;
 /// Enemies within this many tiles of its buildings are a threat to home.
 const THREAT: f32 = 30.0;
 /// Enemies at an outlying building call the whole army home once they are
@@ -377,7 +377,7 @@ impl Marshal {
                 // Beaten back, it gathers a while before going again; and it
                 // goes to stop an enemy on the Heart only with an army.
                 let regrouped = s.now >= self.regroup_until;
-                let enough = army_supply(s, army) >= FIRST_WAVE;
+                let enough = s.kit.supply_of(army.iter().copied()) >= FIRST_WAVE;
                 let heart = heart_to_take(s)
                     .filter(|_| regrouped && (ready || enemy_holds_heart(s) && enough));
                 let ready = ready && regrouped;
@@ -512,9 +512,9 @@ impl Marshal {
         let seen = enemy_buildings(s);
         if let Some(b) = seen
             .iter()
-            .min_by(|a, b| a.1.distance(from).total_cmp(&b.1.distance(from)))
+            .min_by(|a, b| a.at.distance(from).total_cmp(&b.at.distance(from)))
         {
-            return Some(b.1);
+            return Some(b.at);
         }
         let home = s.view.regiments.iter().filter(|r| r.owner == s.party);
         // Look at starts as regiments pass them.
@@ -554,20 +554,25 @@ impl Marshal {
         ready: bool,
     ) -> Option<(Vec2, String)> {
         let from = centroid(army);
-        let plain = |t: Vec2| (t, format!("Attacking with {} regiments", army.len()));
-        if !s.plan.weighs_odds {
-            return ready.then(|| self.target(s, from)).flatten().map(plain);
+        let full = capped(s);
+        let enough = s.kit.supply_of(army.iter().copied()) >= FIRST_WAVE;
+        if !ready && !enough {
+            return None;
         }
-        let Some((t, margin)) = self.best_odds(s, army, from) else {
-            // Nothing of theirs known: look for them.
-            return ready.then(|| self.target(s, from)).flatten().map(plain);
+        let odds = if s.plan.weighs_odds {
+            self.best_odds(s, army, from)
+        } else {
+            None
+        };
+        let Some((t, margin)) = odds else {
+            // It doesn't weigh odds, or knows nothing of theirs to weigh:
+            // the nearest building it knows of, or look for them.
+            return ready
+                .then(|| self.target(s, from))
+                .flatten()
+                .map(|t| (t, format!("Attacking with {} regiments", army.len())));
         };
         let needed = ODDS_NEEDED + ODDS_CAUTION * persona.caution();
-        let full = s
-            .world
-            .bank(s.party)
-            .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
-        let enough = army_supply(s, army) >= FIRST_WAVE;
         let go = ready && (margin >= needed || full) || enough && margin >= ODDS_STRIKE;
         go.then(|| {
             (
@@ -579,34 +584,22 @@ impl Marshal {
 
     /// The enemy building to attack with the best odds: for each enemy it
     /// knows a building of, the nearest such building, scored by how a
-    /// fight against that enemy's army would go (for an opportunist, only
-    /// the part of it near the building), less a little for distance.
+    /// fight against the army defending it would go, less a little for
+    /// distance.
     fn best_odds(&self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
-        let buildings = enemy_buildings(s);
-        let structures = s.world.structures()?;
-        let owner_of =
-            |h: StructureHandle| structures.iter().find(|v| v.handle == h).map(|v| v.owner);
-        let mut owners: Vec<(u8, Vec2)> = Vec::new();
-        for &(h, at, _) in &buildings {
-            let Some(o) = owner_of(h) else { continue };
-            match owners.iter_mut().find(|(p, _)| *p == o) {
-                Some((_, best)) if best.distance(from) > at.distance(from) => *best = at,
+        let mut nearest: Vec<(u8, Vec2)> = Vec::new();
+        for b in enemy_buildings(s) {
+            match nearest.iter_mut().find(|(o, _)| *o == b.owner) {
+                Some((_, at)) if at.distance(from) > b.at.distance(from) => *at = b.at,
                 Some(_) => {}
-                None => owners.push((o, at)),
+                None => nearest.push((b.owner, b.at)),
             }
         }
-        owners
+        nearest
             .into_iter()
             .map(|(o, at)| {
-                let margin = if s.plan.opportunist {
-                    spymaster::odds(
-                        s,
-                        army.iter().copied(),
-                        spymaster::army_near(s, o, at, DEFENDERS_REACH),
-                    )
-                } else {
-                    spymaster::odds(s, army.iter().copied(), spymaster::army_of(s, o))
-                };
+                let margin =
+                    spymaster::odds(s, army.iter().copied(), spymaster::defenders(s, o, at));
                 (at, margin, margin - at.distance(from) / ODDS_PER_DISTANCE)
             })
             .max_by(|a, b| a.2.total_cmp(&b.2))
@@ -618,16 +611,16 @@ impl Marshal {
     /// On a raid, main buildings next.
     fn knock_down(&mut self, s: &Sense, going: &[&Seen], at: Vec2, raiding: bool) {
         let mut targets = enemy_buildings(s);
-        targets.retain(|t| t.1.distance(at) <= AT_TARGET * 2.0);
+        targets.retain(|t| t.at.distance(at) <= AT_TARGET * 2.0);
         if targets.is_empty() {
             return;
         }
         targets.sort_by(|a, b| {
-            let key = |t: &(StructureHandle, Vec2, Role)| {
+            let key = |t: &Sighted| {
                 (
-                    t.2 != Role::Defence,
-                    raiding && t.2 != Role::Main,
-                    t.1.distance(at) as i32,
+                    t.role != Role::Defence,
+                    raiding && t.role != Role::Main,
+                    t.at.distance(at) as i32,
                 )
             };
             key(a).cmp(&key(b))
@@ -643,9 +636,9 @@ impl Marshal {
             if current.is_none() {
                 self.orders.forget_landed(r.handle, s.now);
             }
-            let t = match current.filter(|h| targets.iter().any(|t| t.0 == *h)) {
+            let t = match current.filter(|h| targets.iter().any(|t| t.handle == *h)) {
                 Some(h) => h,
-                None => targets[k % targets.len()].0,
+                None => targets[k % targets.len()].handle,
             };
             self.wants.push(Want {
                 regiment: r.handle,
@@ -704,23 +697,19 @@ impl Marshal {
 /// wave that grows with the game and shrinks with aggression, or a full
 /// supply cap.
 fn wave_ready(s: &Sense, persona: &Personality, army: &[&Seen]) -> bool {
-    let supply = army_supply(s, army);
+    let supply = s.kit.supply_of(army.iter().copied());
     let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
     let boldness = 1.3 - 0.6 * persona.aggression();
     let wave = ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE);
-    let capped = s
-        .world
-        .bank(s.party)
-        .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
-    supply >= wave || (capped && supply >= FIRST_WAVE)
+    supply >= wave || (capped(s) && supply >= FIRST_WAVE)
 }
 
-/// The supply `army` takes up: how big it is.
-fn army_supply(s: &Sense, army: &[&Seen]) -> f32 {
-    army.iter()
-        .filter_map(|r| s.kit.unit(r.unit))
-        .map(|u| f32::from(u.unit.supply))
-        .sum()
+/// Whether its supply is used up to within a regiment or so of its cap:
+/// waiting for a bigger army gains nothing.
+fn capped(s: &Sense) -> bool {
+    s.world
+        .bank(s.party)
+        .is_some_and(|b| b.supply_used + CAP_SLACK >= b.supply_cap.clamp(1, SUPPLY_LIMIT))
 }
 
 /// Where to raid: the nearest enemy main building it has seen, as
@@ -728,8 +717,8 @@ fn army_supply(s: &Sense, army: &[&Seen]) -> f32 {
 fn raid_target(s: &Sense, from: Vec2) -> Option<Vec2> {
     enemy_buildings(s)
         .into_iter()
-        .filter(|b| b.2 == Role::Main)
-        .map(|b| b.1)
+        .filter(|b| b.role == Role::Main)
+        .map(|b| b.at)
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
@@ -773,8 +762,16 @@ fn rally_point(s: &Sense, home: Vec2) -> Vec2 {
     s.terrain.clamp(p, 4.0)
 }
 
-/// Every enemy building its side has seen and still stands, with its role.
-fn enemy_buildings(s: &Sense) -> Vec<(StructureHandle, Vec2, Role)> {
+/// An enemy building its side has seen and still stands.
+struct Sighted {
+    handle: StructureHandle,
+    at: Vec2,
+    role: Role,
+    owner: u8,
+}
+
+/// Every enemy building its side has seen and still stands.
+fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
     let Some(st) = s.world.structures() else {
         return Vec::new();
     };
@@ -783,7 +780,12 @@ fn enemy_buildings(s: &Sense) -> Vec<(StructureHandle, Vec2, Role)> {
         .filter(|v| s.view.hostile(s.party, v.owner) && v.seen_by(s.party))
         .filter_map(|v| {
             let role = table.get(usize::from(v.building))?.role;
-            Some((v.handle, v2(v.centre()), role))
+            Some(Sighted {
+                handle: v.handle,
+                at: v2(v.centre()),
+                role,
+                owner: v.owner,
+            })
         })
         .collect()
 }

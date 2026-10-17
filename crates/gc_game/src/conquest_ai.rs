@@ -79,6 +79,12 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
     }
 }
 
+/// The temper (personality roll) of player `i`'s mind in a game rolled
+/// `roll`.
+fn temper(roll: u64, i: usize) -> u32 {
+    Pcg32::new(roll, i as u64).next_u32()
+}
+
 /// Put a Conquest mind in charge of every AI slot of `setup` (player `i`
 /// is slot `i`), picking each one's temper and seed from `roll` as Field
 /// Battle does. The caller does this on the host or alone only.
@@ -96,7 +102,7 @@ pub fn seat(
             continue;
         }
         let level = Difficulty::from_index(usize::from(slot.ai_level));
-        let temper = Pcg32::new(roll, i as u64).next_u32();
+        let temper = temper(roll, i);
         minds.add(mind_for(
             data,
             table,
@@ -290,7 +296,7 @@ mod tests {
         let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
         for (i, &faction) in factions.iter().enumerate() {
             let level = levels[i.min(levels.len() - 1)];
-            let temper = temper.unwrap_or_else(|| Pcg32::new(seed, i as u64).next_u32());
+            let temper = temper.unwrap_or_else(|| super::temper(seed, i));
             minds.add(mind_for(
                 &data, &table, &map, i, faction, level, temper, seed,
             ));
@@ -353,14 +359,17 @@ mod tests {
     fn levels_from_env() -> Vec<Difficulty> {
         let var = std::env::var("AI_LEVEL").unwrap_or_default();
         var.split(',')
-            .map(|v| {
-                Difficulty::ALL
-                    .into_iter()
-                    .find(|d| d.name().eq_ignore_ascii_case(v.trim()))
-                    .or_else(|| v.trim().parse().ok().map(Difficulty::from_index))
-                    .unwrap_or(Difficulty::Veteran)
-            })
+            .map(|v| level_named(v).unwrap_or(Difficulty::Veteran))
             .collect()
+    }
+
+    /// A level by its name or its number.
+    fn level_named(v: &str) -> Option<Difficulty> {
+        let v = v.trim();
+        Difficulty::ALL
+            .into_iter()
+            .find(|d| d.name().eq_ignore_ascii_case(v))
+            .or_else(|| v.parse().ok().map(Difficulty::from_index))
     }
 
     fn env_number(name: &str, default: u64) -> u64 {
@@ -426,7 +435,7 @@ mod tests {
         let started = std::time::Instant::now();
         // AI_SAME=1 gives every side the same personality, as the arena does.
         let same = std::env::var("AI_SAME").is_ok_and(|v| v == "1");
-        let temper = same.then(|| Pcg32::new(seed, 0).next_u32());
+        let temper = same.then(|| super::temper(seed, 0));
         let played = play_with(choice, &factions, &levels, seed, minutes, temper);
         println!("{}", played.report());
         println!(
@@ -446,11 +455,7 @@ mod tests {
     #[ignore = "an arena run, not a check: run it by hand with --release"]
     fn conquest_arena() {
         let find = |var: &str, or: Difficulty| {
-            let v = std::env::var(var).unwrap_or_default();
-            Difficulty::ALL
-                .into_iter()
-                .find(|d| d.name().eq_ignore_ascii_case(&v))
-                .unwrap_or(or)
+            level_named(&std::env::var(var).unwrap_or_default()).unwrap_or(or)
         };
         let a = find("AI_A", Difficulty::General);
         let b = find("AI_B", Difficulty::Veteran);
@@ -462,8 +467,8 @@ mod tests {
                 for a_side in 0..2u8 {
                     let levels = if a_side == 0 { [a, b] } else { [b, a] };
                     let roll = seed * 31 + u64::from(a_side);
-                    let temper = Pcg32::new(roll, 0).next_u32();
-                    let played = play_with(0, &[f, f], &levels, roll, 45, Some(temper));
+                    let temper = Some(super::temper(roll, 0));
+                    let played = play_with(0, &[f, f], &levels, roll, 45, temper);
                     match played.winner() {
                         Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),
                         Some(_) => (lost, fl) = (lost + 1, fl + 1),

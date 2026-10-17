@@ -106,7 +106,7 @@ pub struct Steward {
     untunable: Vec<u16>,
     /// It is short of an army: it trains soldiers first, and doesn't
     /// expand, add production or tier up meanwhile.
-    pub arming: bool,
+    arming: bool,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -215,8 +215,8 @@ impl Steward {
         }
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
+        self.tier_up(s, clicks, &look);
         if !self.arming {
-            self.tier_up(s, clicks, &look);
             self.train_army(s, clicks, &look);
         }
         if let Some(rally) = rally {
@@ -879,7 +879,7 @@ impl Steward {
 
     /// Tier up when the economy and army can stand the wait.
     fn tier_up(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
-        if look.tier >= 3 || look.mine.iter().any(|m| m.view.upgrading.is_some()) {
+        if self.arming || look.tier >= 3 || look.mine.iter().any(|m| m.view.upgrading.is_some()) {
             return;
         }
         let production = look
@@ -887,15 +887,10 @@ impl Steward {
             .iter()
             .any(|m| m.finished() && trains_fighters(s, m.view.building));
         let workers = working(s, look);
-        let army: u32 = look
-            .army
-            .iter()
-            .filter_map(|r| s.kit.unit(r.unit))
-            .map(|u| u32::from(u.unit.supply))
-            .sum();
+        let army = s.kit.supply_of(look.army.iter().copied());
         let ready = production
             && workers >= 12 + 6 * usize::from(look.tier.saturating_sub(1))
-            && army >= 8 * u32::from(look.tier);
+            && army >= 8.0 * f32::from(look.tier);
         if !ready {
             return;
         }
@@ -1040,12 +1035,7 @@ impl Steward {
             return false;
         }
         let minutes = s.now as f32 / (60 * TICKS_PER_SECOND) as f32;
-        let supply: f32 = look
-            .army
-            .iter()
-            .filter_map(|r| s.kit.unit(r.unit))
-            .map(|u| f32::from(u.unit.supply))
-            .sum();
+        let supply = s.kit.supply_of(look.army.iter().copied());
         if supply < (ARMY_PER_MINUTE * minutes).min(ARMY_FLOOR) {
             return true;
         }
@@ -1142,7 +1132,7 @@ fn is_breaker(u: &KitUnit) -> bool {
     )
 }
 
-fn class_slot(c: Class) -> usize {
+pub(super) fn class_slot(c: Class) -> usize {
     match c {
         Class::Line => 0,
         Class::Shock => 1,

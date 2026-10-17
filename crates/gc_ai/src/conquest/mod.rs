@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use gc_sim::{PlayerCommand, PlayerId, World};
 
-use crate::difficulty::{Difficulty, Knobs};
+use crate::difficulty::Knobs;
 use crate::orders::Hands;
 use crate::perception::Perception;
 use crate::terrain::Terrain;
@@ -66,7 +66,7 @@ impl Realm {
     pub fn new(
         kit: Arc<Kit>,
         party: PlayerId,
-        level: Difficulty,
+        plan: Strategy,
         knobs: &Knobs,
         expand_after: u32,
     ) -> Realm {
@@ -80,7 +80,7 @@ impl Realm {
             marshal: Marshal::new(party, knobs.reaction_ticks, opm - economy),
             clicks: Hands::new(party, knobs.reaction_ticks, economy, 3.0),
             expand_after,
-            plan: Strategy::of(level),
+            plan,
         }
     }
 

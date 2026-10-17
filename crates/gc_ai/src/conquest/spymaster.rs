@@ -6,9 +6,9 @@
 
 use glam::Vec2;
 
-use super::Sense;
+use super::{Sense, steward};
 use crate::estimator::{Approach, Force, estimate};
-use crate::perception::{Class, Seen};
+use crate::perception::Seen;
 
 /// How a fight is taken to start, for weighing armies before one: the
 /// fronts a little apart, closing at a walk.
@@ -28,6 +28,9 @@ fn known<'a>(s: &'a Sense) -> impl Iterator<Item = &'a Seen> + 'a {
         .filter(|r| !r.broken() && !s.kit.all_workers.contains(&r.unit))
 }
 
+/// How far from a base an opportunist counts its defenders, tiles.
+const DEFENDERS_REACH: f32 = 50.0;
+
 /// The fighting regiments of `owner` it knows of.
 pub fn army_of<'a>(s: &'a Sense, owner: u8) -> impl Iterator<Item = &'a Seen> + 'a {
     known(s).filter(move |r| r.owner == owner)
@@ -46,14 +49,16 @@ pub fn enemies(s: &Sense) -> Vec<u8> {
     owners
 }
 
-/// Of `owner`'s army as it believes it, the regiments within `reach`
-/// tiles of `at` (where it last saw them).
-pub fn army_near<'a>(
-    s: &'a Sense,
-    owner: u8,
-    at: Vec2,
-    reach: f32,
-) -> impl Iterator<Item = &'a Seen> + 'a {
+/// The part of `owner`'s army it expects to meet attacking its building
+/// at `at`: all of it, or for an opportunist only the regiments within
+/// [`DEFENDERS_REACH`] of it (where it last saw them), so it strikes a
+/// base whose army is away.
+pub fn defenders<'a>(s: &'a Sense, owner: u8, at: Vec2) -> impl Iterator<Item = &'a Seen> + 'a {
+    let reach = if s.plan.opportunist {
+        DEFENDERS_REACH
+    } else {
+        f32::INFINITY
+    };
     army_of(s, owner).filter(move |r| r.pos.distance(at) <= reach)
 }
 
@@ -75,12 +80,7 @@ pub fn classes<'a>(s: &Sense, regiments: impl IntoIterator<Item = &'a Seen>) -> 
     let mut hp = [0.0f32; 3];
     for r in regiments {
         let u = s.view.unit(r);
-        let k = match u.class {
-            Class::Line => 0,
-            Class::Shock => 1,
-            Class::Ranged => 2,
-        };
-        hp[k] += f32::from(r.models) * f32::from(u.stats.hp_per_model);
+        hp[steward::class_slot(u.class)] += f32::from(r.models) * f32::from(u.stats.hp_per_model);
     }
     let all: f32 = hp.iter().sum();
     if all > 0.0 { hp.map(|h| h / all) } else { hp }
