@@ -147,7 +147,7 @@ fn power_record(
         if seconds == 0.0 {
             Ok(0)
         } else {
-            to_ticks(seconds).map(u32::from).map_err(|why| bad(why))
+            to_ticks(seconds).map(u32::from).map_err(bad)
         }
     };
     let to_building = match &a.shift_to {

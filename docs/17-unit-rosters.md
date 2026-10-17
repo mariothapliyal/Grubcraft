@@ -319,6 +319,8 @@ The Choir has no summoned units.
 | Phase Shift | 60 | 2 | 90 s | Teleport selected regiments to any of your Resonators. [Teleport] |
 | Silence the Chord | 80 | 3 | 150 s | Enemy abilities and faction meters within 12 tiles of a point freeze for 15 s. [ApplyStatus] |
 
+*Built (2026-10-17, faction depth stage 4b):* Overclock and Phase Shift. The meter abilities are baked into a powers table (`data/powers`, from each roster's `meter.abilities`); one the game has built says what the simulation does with `haste` (percent faster for its duration) or `shift_to` (the building regiments step to), and the rest are listed but not offered. **Overclock** (20 Resonance, tier 1, 20 s cooldown): one of your buildings trains, upgrades, is built and tunes 50% faster for 20 s, or one of your regiments reloads, strikes and builds 50% faster; using it again on the same target restarts it. **Phase Shift** (60 Resonance, tier 2, 90 s cooldown): your chosen regiments (not routing ones) step straight to one of your finished Resonators, round it in rings of eight; every regiment ordered in the same tick rides on one payment. Cooldowns and hastes last as long at every tempo. Silence the Chord is not built yet.
+
 ### Heroes
 
 | Hero | Role | HP (+/lvl) | Speed | Turn | Spacing | Atk / Def / Dmg (+/lvl) | Chg | Ranged (dmg +/lvl) |

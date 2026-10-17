@@ -254,11 +254,7 @@ fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32) -> RegimentHandle
 }
 
 fn position(w: &World, h: RegimentHandle) -> FxVec2 {
-    w.regiments
-        .iter()
-        .find(|r| r.handle == h)
-        .unwrap()
-        .position
+    w.regiments.iter().find(|r| r.handle == h).unwrap().position
 }
 
 /// Player 0's regiments of type `unit`.
@@ -425,7 +421,11 @@ fn a_hasted_building_trains_a_regiment_about_a_third_sooner() {
     run(&mut hasted, 25 * 60);
     run(&mut plain, 25 * 60);
     let hall = at(&hasted, 18, 56).unwrap();
-    assert_eq!(hasted.powered(hall), Some(true), "the Choir Hall is powered");
+    assert_eq!(
+        hasted.powered(hall),
+        Some(true),
+        "the Choir Hall is powered"
+    );
     let train = PlayerCommand {
         player: 0,
         command: Command::Train {
@@ -451,7 +451,11 @@ fn a_hasted_tuning_resonator_yields_more_grub_over_the_haste() {
     fn gained(hasted: bool) -> u32 {
         let mut w = chorded(&[seep(34, 25)]);
         let r1 = at(&w, 30, 22).unwrap();
-        assert_eq!(tuner_of_node(&w, 0), Some(r1), "the first Resonator tunes it");
+        assert_eq!(
+            tuner_of_node(&w, 0),
+            Some(r1),
+            "the first Resonator tunes it"
+        );
         run(&mut w, 25 * 60);
         let start = grub(&w);
         let first = if hasted {
@@ -577,7 +581,10 @@ fn phase_shift_moves_two_regiments_in_one_tick_for_one_payment_and_starts_its_co
     for (h, from) in [(a, a0), (b, b0)] {
         let now = position(&w, h);
         assert!(now != from, "it moved");
-        assert!((now - centre).length() < Fx::from_int(12), "{now:?} is near");
+        assert!(
+            (now - centre).length() < Fx::from_int(12),
+            "{now:?} is near"
+        );
     }
     assert!(position(&w, a) != position(&w, b), "they stand apart");
 }
@@ -608,7 +615,10 @@ fn phase_shift_refuses_an_enemy_or_non_resonator_target_and_spends_nothing() {
     assert_eq!(position(&w, mine), start, "it did not move");
 
     let own = at(&w, 37, 34).unwrap();
-    assert!(order(&mut w, 0, shift(mine, own)), "your own Resonator works");
+    assert!(
+        order(&mut w, 0, shift(mine, own)),
+        "your own Resonator works"
+    );
     assert_eq!(resonance_of(&w, 0), before - 60);
 }
 
@@ -618,7 +628,10 @@ fn phase_shift_refuses_an_enemy_or_non_resonator_target_and_spends_nothing() {
 fn the_same_commands_give_the_same_state_hash_every_tick() {
     fn go(w: &mut World, hashes: &mut Vec<u64>, commands: &[PlayerCommand]) {
         let stats = w.tick(commands);
-        assert_eq!(stats.commands_rejected, 0, "the script's commands all apply");
+        assert_eq!(
+            stats.commands_rejected, 0,
+            "the script's commands all apply"
+        );
         hashes.push(w.state_hash());
     }
     fn build(building: u16, x: i16, y: i16) -> PlayerCommand {
