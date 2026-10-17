@@ -29,7 +29,8 @@ The soldier and unit models baked into `assets/models.pak` (see `assets-src/mode
 | Wizard's casting clips (LowPoly RPG Characters), on The Onmyoji | Quaternius | CC0 | The Onmyoji |
 | Horse and Horse_White with their clips (Ultimate Animated Animals), under the Ember riders | Quaternius | CC0 | Mounted Samurai, Yabusame Riders, The Daimyo |
 | Alien (Ultimate Monsters) | Quaternius | CC0 | Shardlings (stand-in) |
-| Alien Bug | CDmir | CC0 | Skitterlings |
+| Alien Bug | CDmir | CC0 | Baker test model only (no longer a unit's model) |
+| Brood models (Gnawer, Skitterlings, Chitin Guard, Reclaimer, Spitters, Burrowers, Mantid Reapers, Shellbacks, Drone-Moths, Broodmother Bulk, Colossus Maw, Spawnlings, The Queen-in-Waiting, The Devourer, The Whisperer), made for Grubcraft in Blender (fully custom bodies, rigs and clips) | Grubcraft | CC0 | Those units |
 
 The stand-ins are simplified and recoloured by the baker (team colours, fewer triangles).
 
