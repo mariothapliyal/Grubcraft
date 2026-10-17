@@ -140,7 +140,8 @@ fn generate_rerolls_to_a_map_the_checker_passes() {
 /// and without a Fort) makes maps the checker passes: the starts reach
 /// each other, nothing stands on a cliff or in the water, and the hills
 /// are hills. Campaign battles aren't rerolled, so every seed must pass;
-/// a wider sweep of 40 seeds of each passed when the maps were made.
+/// a wider sweep of 20 seeds of each passed when the maps were made
+/// Field Battle size.
 #[test]
 fn every_campaign_battle_map_passes_the_checker() {
     let jobs: Vec<(Region, u64)> = Region::all()
@@ -180,7 +181,7 @@ fn a_forts_palisade_is_shut_but_for_its_gate() {
             .iter()
             .find(|o| o.kind == Kind::Start && o.owner == Some(DEFENDER))?
             .at;
-        let r = FORT_RADIUS * n / 80;
+        let r = FORT_RADIUS * n / 256;
         // The gate's opening faces south, about 0.38 of the radius either
         // side of the middle.
         let gate = |(x, y): (i32, i32)| y >= cy + r * 4 / 5 && (x - cx).abs() <= r / 2;

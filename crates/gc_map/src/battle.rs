@@ -4,8 +4,8 @@
 //! A region has a ground (from the area of the Titan's body it lies in),
 //! the route the attacker came along, at most one feature, and maybe a
 //! Fort. [`battle_map`] turns those and a seed into a map description
-//! ([`MapDef`]) 64 to 96 tiles on a side, so the same region and seed
-//! always give the same land. The route shapes the middle (a road, a
+//! ([`MapDef`]) 192 to 320 tiles on a side, near the size of a Field
+//! Battle map, so the same region and seed always give the same land. The route shapes the middle (a road, a
 //! cliff wall with gaps, a river with fords, or a Brood burrow), the area
 //! dresses the ground (crater lakes, ridges, cavern walls, bogs, rock,
 //! forest, waste), and the feature stands on the defender's side: the
@@ -22,7 +22,7 @@ use crate::def::{
     CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape, SizeClass,
     Symmetry,
 };
-use crate::recipe::{DEEP, FORD, WATER, Writer};
+use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::dist2;
 
 /// The areas of the Titan's body (doc 19); each has its own ground.
@@ -166,23 +166,21 @@ impl Region {
 pub const DEFENDER: u8 = 0;
 pub const ATTACKER: u8 = 1;
 /// The sizes a battle map comes in, tiles on a side.
-pub const BATTLE_TILES: std::ops::RangeInclusive<i32> = 64..=96;
+pub const BATTLE_TILES: std::ops::RangeInclusive<i32> = 192..=320;
 
 /// Ground level, as on the Field Battle maps; the highlands sit higher
 /// and a bog barely above the water.
 const BASE: i32 = 48;
 const HIGHLAND_BASE: i32 = BASE + 16;
 const BOG_BASE: i32 = WATER + 10;
-/// A knoll's flat top and the slope round it, in tiles (see
-/// [`Battle::knoll`]), and so how far it reaches from its centre.
-const KNOLL_TOP: (i32, i32) = (2, 3);
-const KNOLL_EDGE: (i32, i32) = (6, 8);
-const KNOLL_REACH: i32 = KNOLL_TOP.1 + KNOLL_EDGE.1;
 /// How far the route's wall or river (with its banks) reaches either side
 /// of the middle line.
-const ROUTE_BAND: i32 = 7;
-/// The Fort's palisade, tiles from the defender's start on an 80-tile map.
-pub const FORT_RADIUS: i32 = 13;
+const ROUTE_BAND: i32 = 10;
+/// The Fort's palisade, tiles from the defender's start on a 256-tile map.
+pub const FORT_RADIUS: i32 = 24;
+/// How far the cavern walls' slopes reach into the map: steep enough over
+/// this that no one climbs them.
+const CAVERN_EDGE: i32 = 6;
 
 /// The battle map for a region and a seed.
 pub fn battle_map(region: Region, seed: u64) -> MapDef {
@@ -192,14 +190,15 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         Area::Gut => BOG_BASE,
         _ => BASE,
     };
-    // A wall or river needs room either side; a Seat or a Fort, room
+    // Field Battle sizes, so hosts of twenty regiments have room to move:
+    // a wall or river needs room either side; a Seat or a Fort, room
     // round the defender; a cavern, room inside its walls.
     let mut tiles = match region.route {
-        Route::Road | Route::Burrow => 64,
-        Route::Pass | Route::Ford => 80,
-    } + 16 * (rng.below(2) as i32);
+        Route::Road | Route::Burrow => 192,
+        Route::Pass | Route::Ford => 224,
+    } + 32 * (rng.below(2) as i32);
     if region.fort || region.feature == Feature::Seat || region.area == Area::Lungs {
-        tiles = (tiles + 16).min(*BATTLE_TILES.end());
+        tiles = (tiles + 64).min(*BATTLE_TILES.end());
     }
     let mut b = Battle {
         w: Writer::new(&mut rng, tiles, base),
@@ -216,15 +215,17 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
         } else {
             0
         },
-        margin: 6,
+        margin: 8,
         keep: Vec::new(),
         no_cover: Vec::new(),
         road: Vec::new(),
         objects: Vec::new(),
     };
     if region.area == Area::Lungs {
-        // Clear of the cavern walls (see `Battle::dress`).
-        b.margin = b.scaled(10) + 6;
+        // Hills' middles clear of the cavern walls' slopes (see
+        // `Battle::dress`); a hill's own slope may run into a wall's,
+        // which stays a cliff.
+        b.margin = CAVERN_EDGE + 14;
     }
     let (lo, hi) = match region.area {
         Area::Crown | Area::Heart | Area::Hands => (16, 32),
@@ -238,14 +239,13 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
     let noise = Noise {
         seed: b.w.rng.next_u32(),
         amplitude: b.w.range(lo, hi),
-        scale: b.w.range(20, 36),
+        scale: b.w.range(36, 64),
     };
     for (at, owner) in [(b.defender, DEFENDER), (b.attacker, ATTACKER)] {
-        let r = b.scaled(8);
-        b.w.stamp(Shape::Disc { at, r }, Mode::Set, base, b.scaled(6));
-        let clear = b.scaled(10);
-        b.keep.push((at, clear));
-        b.no_cover.push((at, clear));
+        let r = b.scaled(16);
+        b.w.stamp(Shape::Disc { at, r }, Mode::Set, base, b.scaled(12));
+        b.keep.push((at, b.scaled(24)));
+        b.no_cover.push((at, b.scaled(34)));
         b.put(Kind::Start, at, Some(owner), "");
     }
     if region.route == Route::Road {
@@ -268,7 +268,7 @@ pub fn battle_map(region: Region, seed: u64) -> MapDef {
     }
     // A knoll on the attacker's side too, so both sides have high ground.
     let far = b.mid() + 4..tiles;
-    if let Some(at) = b.place(far, KNOLL_REACH) {
+    if let Some(at) = b.place(far, RISE_REACH) {
         b.knoll(at, "The far knoll");
     }
     b.dress(region.area);
@@ -318,9 +318,17 @@ struct Battle<'a> {
 }
 
 impl Battle<'_> {
-    /// `t` tiles on an 80-tile map, scaled to this one.
+    /// `t` tiles on a 256-tile map, scaled to this one.
     fn scaled(&self, t: i32) -> i32 {
-        t * self.n / 80
+        t * self.n / 256
+    }
+
+    /// How many of a thing to dress the ground with: `lo` to `hi` on a
+    /// 256-tile map, more or fewer with the map's area, so a big map is
+    /// as wooded or as rocky as a small one.
+    fn many(&mut self, lo: i32, hi: i32) -> i32 {
+        let k = self.w.range(lo, hi);
+        (k * self.n * self.n + 128 * 256) / (256 * 256)
     }
 
     fn mid(&self) -> i32 {
@@ -367,14 +375,14 @@ impl Battle<'_> {
         None
     }
 
-    /// A random spot among every one clear by `r` (on a two-tile grid)
+    /// A random spot among every one clear by `r` (on a four-tile grid)
     /// with `y` in the range, so a crowded map still finds one if there
     /// is one.
     fn place(&mut self, ys: std::ops::Range<i32>, r: i32) -> Option<Pos> {
         let n = self.n;
         let spots: Vec<Pos> = ys
-            .step_by(2)
-            .flat_map(|y| (0..n).step_by(2).map(move |x| (x, y)))
+            .step_by(4)
+            .flat_map(|y| (0..n).step_by(4).map(move |x| (x, y)))
             .filter(|&at| self.clear(at, r))
             .collect();
         if spots.is_empty() {
@@ -384,17 +392,11 @@ impl Battle<'_> {
         Some(spots[k as usize])
     }
 
-    /// A small hill a line can hold, named as a set piece. Its slope
-    /// reaches [`KNOLL_REACH`] tiles.
-    fn knoll(&mut self, at: Pos, label: &str) -> i32 {
-        let r = self.w.range(KNOLL_TOP.0, KNOLL_TOP.1);
-        let height = self.w.base + self.w.range(28, 36);
-        let edge = self.w.range(KNOLL_EDGE.0, KNOLL_EDGE.1);
-        self.w
-            .stamp(Shape::Disc { at, r }, Mode::Raise, height, edge);
-        self.w.set_piece(SetPieceKind::High, at, label);
-        self.keep.push((at, r + edge));
-        r + edge
+    /// A hill a line can hold, as on the Field Battle maps, named as a set
+    /// piece and kept clear of what comes after.
+    fn knoll(&mut self, at: Pos, label: &str) {
+        self.w.rise(at, label);
+        self.keep.push((at, RISE_REACH));
     }
 
     /// Where the ways through the middle line go: one or two, apart.
@@ -414,7 +416,7 @@ impl Battle<'_> {
     fn pass(&mut self) -> Vec<i32> {
         let mid = self.mid();
         let gaps = self.crossings();
-        let width = self.w.range(6, 8);
+        let width = self.w.range(7, 10);
         let height = self.w.base + self.w.range(80, 112);
         let mut cuts: Vec<(i32, i32)> = gaps.iter().map(|&x| (x - width, x + width)).collect();
         cuts.sort_unstable();
@@ -442,8 +444,8 @@ impl Battle<'_> {
     /// A hill behind a gap at `x` on the defender's side, to hold it
     /// from, if the feature and the start leave room.
     fn gap_hill(&mut self, x: i32) {
-        let at = (x, self.mid() - self.band - KNOLL_REACH - 1);
-        if self.clear(at, KNOLL_REACH) {
+        let at = (x, self.mid() - self.band - RISE_REACH - 1);
+        if self.clear(at, RISE_REACH) {
             self.knoll(at, "The gap hill");
         }
     }
@@ -452,8 +454,8 @@ impl Battle<'_> {
     fn river(&mut self) -> Vec<i32> {
         let mid = self.mid();
         let fords = self.crossings();
-        let half_width = self.w.range(2, 3);
-        let r = half_width + self.w.range(2, 3);
+        let half_width = self.w.range(3, 5);
+        let r = half_width + self.w.range(3, 5);
         // The ford's banks slope down over this many tiles, gently enough
         // to walk however high the ground stands.
         let slope = (self.w.base - FORD) / 8 + 2;
@@ -488,23 +490,25 @@ impl Battle<'_> {
     /// Great Place on the top). With a Fort the hill is the defender's
     /// own, inside the palisade, and the feature stands on its north slope.
     fn feature(&mut self, feature: Feature, fort: bool) {
-        let north = self.n / 8..self.mid() - self.band - KNOLL_REACH;
+        let north = self.n / 8..self.mid() - self.band - RISE_REACH;
         let (x, y) = if fort {
             self.defender
-        } else if let Some(at) = self.place(north, KNOLL_REACH) {
+        } else if let Some(at) = self.place(north, RISE_REACH) {
             at
         } else {
             // Not seen on any map: off to the defender's east.
             (self.n * 3 / 4, self.defender.1)
         };
-        let reach = self.knoll((x, y), feature.hill());
+        self.knoll((x, y), feature.hill());
         if let Some((kind, label)) = feature.object() {
+            // Half way down the slope.
+            let down = RISE_REACH / 2 + 1;
             let at = if fort {
-                (x, y - reach / 2 - 1)
+                (x, y - down)
             } else if feature == Feature::GreatPlace {
                 (x, y)
             } else {
-                (x, y + reach / 2 + 1)
+                (x, y + down)
             };
             let owner = (feature == Feature::Seat).then_some(DEFENDER);
             self.put(kind, at, owner, label);
@@ -555,23 +559,24 @@ impl Battle<'_> {
         match area {
             Area::Crown => {
                 // A crater lake.
-                let r = self.w.range(4, 6);
-                self.patch(r, 3, Mode::Lower, DEEP, 3);
+                let r = self.w.range(10, 18);
+                let r = self.scaled(r);
+                self.patch(r, 4, Mode::Lower, DEEP, 4);
             }
             Area::Ribs => {
-                for k in 0..self.w.range(2, 3) {
+                for k in 0..self.many(5, 8) {
                     self.ridge((k == 0).then_some("The ridge"));
                 }
             }
             Area::Heart => {
-                for k in 0..2 {
+                for k in 0..self.many(3, 4) {
                     self.ridge((k == 0).then_some("The vein"));
                 }
             }
             Area::Lungs => {
-                // The cavern walls, east and west, their tops off the map,
-                // and a pillar or two.
-                let (hw, edge) = (self.scaled(4), self.scaled(6));
+                // The cavern walls, east and west, their tops off the map
+                // and their slopes too steep to climb, and a few pillars.
+                let (hw, edge) = (self.scaled(12), CAVERN_EDGE);
                 for x in [-hw, self.n + hw] {
                     let (a, b) = ((x, -4), (x, self.n + 4));
                     self.w.stamp(
@@ -585,32 +590,34 @@ impl Battle<'_> {
                         edge,
                     );
                 }
-                for _ in 0..self.w.range(1, 2) {
+                for _ in 0..self.many(4, 8) {
                     self.rock(base + 128);
                 }
             }
             Area::Gut => {
-                for _ in 0..self.w.range(3, 5) {
-                    let r = self.w.range(3, 5);
-                    self.patch(r, 2, Mode::Set, FORD, 3);
+                for _ in 0..self.many(12, 16) {
+                    let r = self.w.range(5, 9);
+                    self.patch(r, 3, Mode::Set, FORD, 3);
                 }
             }
             Area::Spine => {
-                for _ in 0..self.w.range(2, 4) {
+                for _ in 0..self.many(16, 24) {
                     let height = base + self.w.range(64, 96);
                     self.rock(height);
                 }
             }
             Area::Hands | Area::Tail => {}
         }
+        // Clumps of woods and tall grass on a 256-tile map.
         let (woods, meadows) = match area {
-            Area::Crown => (1, 2),
-            Area::Ribs | Area::Heart => (2, 2),
-            Area::Lungs | Area::Tail => (0, 2),
-            Area::Gut => (1, 5),
-            Area::Spine => (1, 1),
-            Area::Hands => (self.w.range(8, 11), 1),
+            Area::Crown => (5, 10),
+            Area::Ribs | Area::Heart => (10, 10),
+            Area::Lungs | Area::Tail => (0, 10),
+            Area::Gut => (5, 20),
+            Area::Spine => (5, 5),
+            Area::Hands => (self.w.range(32, 40), 5),
         };
+        let (woods, meadows) = (self.many(woods, woods), self.many(meadows, meadows));
         for _ in 0..woods {
             self.clump(CoverKind::Wood);
         }
@@ -619,15 +626,18 @@ impl Battle<'_> {
         }
     }
 
-    /// A short wall of rock running north to south, its top named.
+    /// A wall of rock running north to south, its top named.
     fn ridge(&mut self, label: Option<&str>) {
-        let half = self.scaled(6);
+        let half = self.scaled(20);
         for _ in 0..32 {
             let Some(mid) = self.spot(4) else {
                 return;
             };
             let (a, b) = ((mid.0, mid.1 - half), (mid.0, mid.1 + half));
-            if [a, mid, b].iter().all(|&p| self.clear(p, 4)) {
+            let along: Vec<Pos> = (0..=4)
+                .map(|k| (mid.0, a.1 + (b.1 - a.1) * k / 4))
+                .collect();
+            if along.iter().all(|&p| self.clear(p, 4)) {
                 let height = self.w.base + self.w.range(40, 56);
                 self.w.stamp(
                     Shape::Line {
@@ -642,7 +652,8 @@ impl Battle<'_> {
                 if let Some(label) = label {
                     self.w.set_piece(SetPieceKind::High, mid, label);
                 }
-                self.keep.extend([(a, 5), (mid, 5), (b, 5)]);
+                self.keep
+                    .extend(along.into_iter().map(|p| (p, half / 4 + 5)));
                 return;
             }
         }
@@ -650,7 +661,7 @@ impl Battle<'_> {
 
     /// A steep rock no one climbs.
     fn rock(&mut self, height: i32) {
-        let r = self.w.range(2, 3);
+        let r = self.w.range(2, 4);
         self.patch(r, 3, Mode::Raise, height, 2);
     }
 
@@ -666,7 +677,8 @@ impl Battle<'_> {
     /// A clump of woods or grass, off the starts, the feature, the Fort
     /// and the route's wall or river.
     fn clump(&mut self, kind: CoverKind) {
-        let r = self.w.range(self.scaled(4), self.scaled(7));
+        let r = self.w.range(8, 14);
+        let r = self.scaled(r);
         for _ in 0..16 {
             let at = (self.w.range(4, self.n - 4), self.w.range(4, self.n - 4));
             let route = self.band == 0 || (at.1 - self.mid()).abs() >= self.band + r;
@@ -686,26 +698,27 @@ impl Battle<'_> {
     /// shaped after.
     fn lay_road(&mut self, fort: bool) {
         let n = self.n;
+        let wander = self.scaled(16);
         self.road = vec![
-            (self.attacker.0 + self.w.range(-6, 6), n + 4),
+            (self.attacker.0 + self.w.range(-wander, wander), n + 4),
             self.attacker,
-            (n / 2 + self.w.range(-6, 6), self.mid()),
+            (n / 2 + self.w.range(-wander, wander), self.mid()),
         ];
         let (x, y) = self.defender;
         if fort {
             // Straight in through the gate.
-            self.road
-                .extend([(x, y + FORT_RADIUS * n / 80 + 4), self.defender]);
+            let gate = (x, y + self.scaled(FORT_RADIUS) + 6);
+            self.road.extend([gate, self.defender]);
         } else {
-            self.road
-                .extend([self.defender, (x + self.w.range(-6, 6), -4)]);
+            let north = (x + self.w.range(-wander, wander), -4);
+            self.road.extend([self.defender, north]);
         }
         for k in 1..self.road.len() {
             let (a, b) = (self.road[k - 1], self.road[k]);
-            let steps = (a.0 - b.0).abs().max((a.1 - b.1).abs()) / 4 + 1;
+            let steps = (a.0 - b.0).abs().max((a.1 - b.1).abs()) / 6 + 1;
             for i in 0..=steps {
                 let p = (a.0 + (b.0 - a.0) * i / steps, a.1 + (b.1 - a.1) * i / steps);
-                self.keep.push((p, 3));
+                self.keep.push((p, 5));
             }
         }
     }
@@ -717,7 +730,7 @@ impl Battle<'_> {
                 shape: Shape::Line {
                     a: pair[0],
                     b: pair[1],
-                    half_width: 1,
+                    half_width: 2,
                 },
                 kind: CoverKind::Open,
             });
@@ -745,7 +758,7 @@ mod tests {
         }
     }
 
-    /// Every map is 64 to 96 tiles, has the two sides' starts, the
+    /// Every map is 192 to 320 tiles, has the two sides' starts, the
     /// feature's object and at least two set pieces.
     #[test]
     fn every_map_has_both_starts_and_its_feature() {
