@@ -14,6 +14,7 @@
 
 use std::collections::VecDeque;
 
+use gc_sim::structures::StructureHandle;
 use gc_sim::{Command, PlayerCommand, PlayerId, RegimentHandle};
 use glam::Vec2;
 
@@ -31,6 +32,8 @@ pub enum Act {
     },
     /// Close with an enemy and fight it, or shoot it from range.
     Attack(RegimentHandle),
+    /// Close with an enemy building and knock it down (Conquest).
+    Siege(StructureHandle),
 }
 
 /// A decision about one regiment.
@@ -219,6 +222,9 @@ impl Orders {
                 Some(t) => r.pos.distance(t.pos),
                 None => return false,
             },
+            // Buildings aren't in the look; the Marshal re-sends a siege
+            // that has stopped.
+            Act::Siege(_) => return false,
         };
         let last = s.last_distance;
         if let Some(sent) = self.sent[i].as_mut() {
@@ -231,6 +237,7 @@ impl Orders {
                 let reach = view.get(t).map_or(0.0, |t| r.radius() + t.radius());
                 !r.moving && distance > range.max(reach) + 2.0
             }
+            Act::Siege(_) => false,
         };
         let walking_away = last.is_some_and(|d| distance > d + 1.0);
         (stopped_short && s.retries < RETRIES) || walking_away
@@ -286,13 +293,14 @@ fn already_there(r: &crate::perception::Seen, act: &Act) -> bool {
                 && r.pos.distance(to) < ARRIVED
                 && facing.is_none_or(|f| f.dot(r.facing) > FACING_SLACK)
         }
-        Act::Attack(_) => false,
+        Act::Attack(_) | Act::Siege(_) => false,
     }
 }
 
 fn same(a: &Act, b: &Act) -> bool {
     match (a, b) {
         (Act::Attack(x), Act::Attack(y)) => x == y,
+        (Act::Siege(x), Act::Siege(y)) => x == y,
         (
             Act::Move {
                 to: a,
@@ -327,6 +335,10 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
             pace: to_fx(pace),
         },
         Act::Attack(target) => Command::Attack { regiment, target },
+        Act::Siege(structure) => Command::AttackStructure {
+            regiment,
+            structure,
+        },
     }
 }
 
