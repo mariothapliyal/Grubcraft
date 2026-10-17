@@ -762,6 +762,110 @@ pub fn push_tuning(world: &World, side: PlayerId, reveal_all: bool, out: &mut Ve
     }
 }
 
+/// A chord's edge: a glowing Choir cyan-violet ribbon, a little wider and
+/// brighter than a tuning beam, brighter still for a stronger chord. A link
+/// that is no chord's edge is a thin, faint line.
+const CHORD_WIDTH: f32 = 0.34;
+const CHORD_COLOR: [u8; 3] = [150, 150, 255];
+const CHORD_GLOW: u8 = 170;
+const CHORD_LIFT: f32 = BEAM_LIFT + 0.02;
+const LINK_WIDTH: f32 = 0.08;
+const LINK_COLOR: [u8; 3] = [120, 170, 235];
+const LINK_GLOW: u8 = 55;
+const LINK_LIFT: f32 = BEAM_LIFT - 0.01;
+
+/// Draw the Choir's chords (Conquest): the three edges of each chord of
+/// `side`'s as glowing ribbons between its corners' centres. `reveal_all`
+/// shows every side's. (An enemy's are never drawn from what was once
+/// seen: they change in the fog.) An edge two chords share is drawn once,
+/// as bright as the stronger of them.
+pub fn push_chords(world: &World, side: PlayerId, reveal_all: bool, out: &mut Vec<BoxInstance>) {
+    let mut edges: Vec<(u32, u32, [Vec2; 2], u8)> = Vec::new();
+    for c in world.chords() {
+        if c.owner != side && !reveal_all {
+            continue;
+        }
+        for l in 0..3 {
+            let r = (l + 1) % 3;
+            let (a, b) = (c.corners[l].index, c.corners[r].index);
+            let key = (a.min(b), a.max(b));
+            match edges.iter_mut().find(|e| (e.0, e.1) == key) {
+                Some(e) => e.3 = e.3.max(c.harmony),
+                None => edges.push((
+                    key.0,
+                    key.1,
+                    [c.at[l], c.at[r]].map(crate::from_fx_vec),
+                    c.harmony,
+                )),
+            }
+        }
+    }
+    for (_, _, [from, to], harmony) in edges {
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        push_ribbon(
+            from,
+            to,
+            (CHORD_WIDTH, CHORD_WIDTH),
+            CHORD_COLOR,
+            CHORD_LIFT,
+            |_| CHORD_GLOW.saturating_add(harmony),
+            out,
+        );
+    }
+}
+
+/// Draw `side`'s links (Conquest): a thin faint line between every two of
+/// its finished buildings that link (centres within the shorter of their
+/// `links` tiles, as in the simulation) and are not an edge of a chord,
+/// which `push_chords` draws. Only `side`'s own buildings are looked at.
+pub fn push_links(world: &World, table: &Table, side: PlayerId, out: &mut Vec<BoxInstance>) {
+    let Some(structures) = world.structures() else {
+        return;
+    };
+    let linking: Vec<(u32, Vec2, f32)> = structures
+        .iter()
+        .filter(|s| s.owner == side && s.finished())
+        .filter_map(|s| {
+            let links = table.stats.get(usize::from(s.building))?.links;
+            (links > 0).then(|| {
+                (
+                    s.handle.index,
+                    centre_of(s.tile, s.width, s.depth),
+                    f32::from(links),
+                )
+            })
+        })
+        .collect();
+    let chords: Vec<_> = world.chords().iter().filter(|c| c.owner == side).collect();
+    let in_chord = |a: u32, b: u32| {
+        chords.iter().any(|c| {
+            let has = |i: u32| c.corners.iter().any(|h| h.index == i);
+            has(a) && has(b)
+        })
+    };
+    for (n, &(a, at_a, reach_a)) in linking.iter().enumerate() {
+        for &(b, at_b, reach_b) in &linking[n + 1..] {
+            if out.len() >= MAX_BOX_INSTANCES {
+                return;
+            }
+            if (at_a - at_b).length() > reach_a.min(reach_b) || in_chord(a, b) {
+                continue;
+            }
+            push_ribbon(
+                at_a,
+                at_b,
+                (LINK_WIDTH, LINK_WIDTH),
+                LINK_COLOR,
+                LINK_LIFT,
+                |_| LINK_GLOW,
+                out,
+            );
+        }
+    }
+}
+
 /// Draw the edge of each field of power (Conquest) as a ring on the ground
 /// round its building's footprint: `side`'s own, or every side's with
 /// `reveal_all`. Faint, unless `lit` (a building that needs power is being

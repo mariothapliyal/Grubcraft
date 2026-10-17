@@ -348,20 +348,20 @@ pub fn upload_ui(
 }
 
 /// What building `s` tunes now, if it is a tuning building.
-fn tuning_of(
+pub(crate) fn tuning_of(
     world: &gc_sim::World,
     table: &crate::buildings::Table,
     s: &gc_sim::StructureView,
 ) -> Option<Tuning> {
     let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
     let economy = world.economy()?;
-    let nodes = (economy.nodes())
-        .filter(|n| n.tuner == Some(s.handle))
-        .count();
+    let mine = || (economy.nodes()).filter(|n| n.tuner == Some(s.handle));
+    let nodes = mine().count();
     Some(Tuning {
         vein: resource == gc_sim::Resource::Marrow,
         nodes: nodes.min(usize::from(u8::MAX)) as u8,
         per_minute: economy.tuned_per_minute(s.handle),
+        harmony: mine().map(|n| n.harmony).max().unwrap_or(0),
     })
 }
 
@@ -877,6 +877,8 @@ impl Running {
             upkeep_percent: b.upkeep_percent(),
             larvae: b.larvae,
             larva_room: b.larva_room,
+            resonance: b.resonance,
+            chords: b.chords,
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }
