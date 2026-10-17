@@ -454,11 +454,6 @@ pub struct Puppets {
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
-    /// Where a soldier may stand: one flag per half-tile cell of the
-    /// simulation's walking grid, row by row (false: deep water, cliffs),
-    /// `ground_cells` per side. Empty: anywhere.
-    ground: Vec<bool>,
-    ground_cells: i32,
 }
 
 impl Puppets {
@@ -496,50 +491,7 @@ impl Puppets {
             dt: 0.0,
             duel: None,
             duel_over: None,
-            ground: Vec::new(),
-            ground_cells: 0,
         }
-    }
-
-    /// Keep soldiers off ground no regiment may walk on: `nav` is the
-    /// simulation's walking grid (`MatchSetup::nav`) for a map `tiles`
-    /// across. A soldier whose place in the block falls on deep water or a
-    /// cliff stands at the nearest firm ground on the way in toward the
-    /// middle of his block instead, so a block brushing the bank crowds
-    /// along it rather than wading off the edge.
-    pub fn on_ground(mut self, nav: &[u8], tiles: u32) -> Puppets {
-        let cells = tiles as i32 * gc_sim::nav::CELLS_PER_TILE;
-        if nav.len() == (cells * cells) as usize {
-            self.ground = nav.iter().map(|&c| c != gc_sim::nav::BLOCKED).collect();
-            self.ground_cells = cells;
-        }
-        self
-    }
-
-    /// Whether a soldier may stand at `p` (anywhere without a grid).
-    fn firm(&self, p: Vec2) -> bool {
-        if self.ground.is_empty() {
-            return true;
-        }
-        let per = gc_sim::nav::CELLS_PER_TILE as f32;
-        let (x, y) = ((p.x * per).floor() as i32, (p.y * per).floor() as i32);
-        let n = self.ground_cells;
-        x >= 0 && y >= 0 && x < n && y < n && self.ground[(y * n + x) as usize]
-    }
-
-    /// `slot`, or if that is off firm ground, the first firm ground on the
-    /// way from it to `centre` (in quarter tiles); `slot` itself if there
-    /// is none (the whole block is in the water).
-    fn onto_ground(&self, slot: Vec2, centre: Vec2) -> Vec2 {
-        if self.firm(slot) {
-            return slot;
-        }
-        let to = centre - slot;
-        let steps = (to.length() / GROUND_STEP).ceil() as i32;
-        (1..=steps)
-            .map(|k| slot + to * (k as f32 / steps as f32))
-            .find(|&p| self.firm(p))
-            .unwrap_or(slot)
     }
 
     /// Game seconds since the puppets started (stops while paused).
@@ -896,7 +848,24 @@ impl Puppets {
 
     /// Advance one regiment's soldiers and hand each to `out`. `owner` is the
     /// regiment's player, to colour anyone who falls.
-    pub fn update(&mut self, block: &Block, owner: u8, dt: f32, mut out: impl FnMut(Soldier)) {
+    #[cfg(test)]
+    pub fn update(&mut self, block: &Block, owner: u8, dt: f32, out: impl FnMut(Soldier)) {
+        self.update_on(block, owner, dt, |_| true, out);
+    }
+
+    /// [`Puppets::update`] on a map where soldiers may stand only where
+    /// `firm` says (off deep water and cliffs): a soldier whose place in
+    /// the block falls off firm ground stands at the nearest firm ground on
+    /// the way in toward the middle of his block instead, so a block
+    /// brushing the bank crowds along it rather than wading off the edge.
+    pub fn update_on(
+        &mut self,
+        block: &Block,
+        owner: u8,
+        dt: f32,
+        firm: impl Fn(Vec2) -> bool,
+        mut out: impl FnMut(Soldier),
+    ) {
         let r = block.handle.index as usize;
         let models = block.models.min(MAX_MODELS) as usize;
         let fresh = self.owner[r] != Some(block.handle);
@@ -962,7 +931,7 @@ impl Puppets {
                 let wander = Vec2::from_angle(self.time * DISORDER_RATE * tau + p);
                 slot += wander * (DISORDER_DRIFT * mess * (0.5 + unit_hash(block.handle, k, 8)));
             }
-            let slot = self.onto_ground(slot, block.centre);
+            let slot = onto_ground(slot, block.centre, &firm);
             // A champion out between the lines faces the other; a dueling
             // soldier closes on his man, on a leash from his slot; one
             // knocked down lies where he fell.
@@ -1297,6 +1266,21 @@ fn turn_toward(from: Vec2, to: Vec2, max_angle: f32) -> Vec2 {
     } else {
         Vec2::from_angle(max_angle.copysign(angle)).rotate(from)
     }
+}
+
+/// `slot`, or if that is off `firm` ground, the first firm ground on the
+/// way from it to `centre` (in quarter tiles); `slot` itself if there is
+/// none (the whole block is in the water).
+fn onto_ground(slot: Vec2, centre: Vec2, firm: &impl Fn(Vec2) -> bool) -> Vec2 {
+    if firm(slot) {
+        return slot;
+    }
+    let to = centre - slot;
+    let steps = (to.length() / GROUND_STEP).ceil() as i32;
+    (1..=steps)
+        .map(|k| slot + to * (k as f32 / steps as f32))
+        .find(|&p| firm(p))
+        .unwrap_or(slot)
 }
 
 #[cfg(test)]

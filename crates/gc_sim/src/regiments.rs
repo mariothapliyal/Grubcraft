@@ -593,7 +593,7 @@ impl Regiments {
         let (w, d) = stats.block_size_in(self.formation[i], files, self.models[i]);
         // Half the side in cells is the side in tiles (2 cells a tile),
         // rounded up, plus one cell.
-        let cells = (w.max(d) + Fx::from_raw(0xFFFF)).floor_int() + 1;
+        let cells = w.max(d).ceil_int() + 1;
         cells.clamp(i32::from(nav::CLEARANCE), i32::from(nav::MAX_BERTH)) as u8
     }
 
@@ -621,8 +621,8 @@ impl Regiments {
         // measure.
         let (w, d) = formation::block_size(frontage, models, fs, rs);
         let reach = (w + d) / 2 + look + SQUEEZE_MARGIN + WIDEN_SPARE;
-        let reach_tiles = (reach + Fx::from_raw(0xFFFF))
-            .floor_int()
+        let reach_tiles = reach
+            .ceil_int()
             .min(i32::from(nav::CLEAR_CAP) / nav::CELLS_PER_TILE);
         let files = self.files[i];
         let room = if nav.open_around(self.position[i], reach_tiles) {

@@ -1404,7 +1404,8 @@ mod tests {
                             p,
                             Command::Rally {
                                 structure: h,
-                                at: FxVec2::from_ints(32, 32),
+                                // Each in front of its own hall, apart.
+                                at: FxVec2::from_ints(32, if p == 0 { 16 } else { 44 }),
                             },
                         ));
                     }
@@ -1447,10 +1448,7 @@ mod tests {
         let s = world.structures().unwrap();
         assert_eq!(s.len(), 4, "a hall and a house each");
         assert!(s.iter().all(|v| v.finished()));
-        // Two workers and two trained regiments, which meet at the rally
-        // point and fight: at least one of those lives.
-        assert!(world.regiments.iter().count() >= 3);
-        assert!(world.regiments.iter().any(|r| r.unit == 1));
+        assert_eq!(world.regiments.iter().count(), 4);
         let bytes = replay.encode();
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, replay);

@@ -54,6 +54,12 @@ impl Fx {
         self.0 >> FRAC_BITS
     }
 
+    /// Rounded up to a whole number.
+    #[inline]
+    pub const fn ceil_int(self) -> i32 {
+        (self.0 + (1 << FRAC_BITS) - 1) >> FRAC_BITS
+    }
+
     #[inline]
     pub const fn abs(self) -> Fx {
         Fx(self.0.wrapping_abs())

@@ -1108,7 +1108,6 @@ impl App {
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
-        let map_tiles = heightmap.tiles;
         let scenery = tagged_alloc::scope(Tag::Render, || {
             // The showroom stands on bare ground, with no trees in the way.
             let cover = if opts.showroom.is_some() {
@@ -1242,8 +1241,7 @@ impl App {
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
-            puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES)
-                .on_ground(&nav, map_tiles),
+            puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             arrows: field::Arrows::new(field::MAX_STUCK),
             art,
             commander: false,
@@ -2561,6 +2559,9 @@ impl Running {
             1.0
         };
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
+        // Soldiers stand only where a regiment could walk.
+        let nav = self.world.nav();
+        let firm = |p: Vec2| nav.standable(fx_vec(p));
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2607,7 +2608,7 @@ impl Running {
             };
             if !seen {
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
                 continue;
             }
             if block.disorder > 0.0 {
@@ -2679,7 +2680,7 @@ impl Running {
                 });
                 // Keep the puppets marching (and falling) out of sight.
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |_| {});
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
                 continue;
             }
             if let Some(color) = banner {
@@ -2701,7 +2702,7 @@ impl Running {
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
                 self.puppets
-                    .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
                         let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
@@ -2744,7 +2745,7 @@ impl Running {
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
             self.puppets
-                .update(&block, r.owner, game_dt.as_secs_f32(), |s| {
+                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -3567,8 +3568,7 @@ impl Running {
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
-        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES)
-            .on_ground(&nav, self.heightmap.tiles);
+        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),

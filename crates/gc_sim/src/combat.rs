@@ -799,6 +799,14 @@ impl Combat {
                 if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
                     return;
                 }
+                // Cheap circle test before the rectangles (radii from the
+                // start of the tick, with a tile of slack).
+                let touch = reach + self.radius[j] + Fx::ONE;
+                let r = (touch + LOOK_AHEAD).raw() as u64;
+                let d = (regs.position[j] - next).length_sq_raw();
+                if d > r * r {
+                    return;
+                }
                 let ahead = || {
                     regs.target[j].is_some()
                         && (regs.position[j] - regs.position[i]).dot(dir) > Fx::ZERO
@@ -810,14 +818,6 @@ impl Combat {
                             || (regs.target[j].is_none() && regs.attack_target[j].is_none())
                             || ahead()));
                 if !holding {
-                    return;
-                }
-                // Cheap circle test before the rectangles (radii from the
-                // start of the tick, with a tile of slack).
-                let touch = reach + self.radius[j] + Fx::ONE;
-                let r = (touch + LOOK_AHEAD).raw() as u64;
-                let d = (regs.position[j] - next).length_sq_raw();
-                if d > r * r {
                     return;
                 }
                 let r = touch.raw() as u64;

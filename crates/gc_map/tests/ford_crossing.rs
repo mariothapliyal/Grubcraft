@@ -2,14 +2,12 @@
 //! soldier stays on walkable ground, nobody gets stuck, and the blocks
 //! don't pile up shoving through each other in the water.
 
-use gc_fixed::{Angle, Fx, FxVec2};
+use gc_fixed::{Fx, FxVec2};
 use gc_map::{FieldMap, Map};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
-use gc_sim::scenario::DRILL_UNITS;
+use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World};
-
-const NORTH: Angle = Angle(0xC000);
 
 /// A mixed army: drill infantry, archers, cavalry and two monster blocks.
 const ARMY: [u16; 10] = [0, 0, 4, 0, 2, 3, 0, 4, 2, 0];

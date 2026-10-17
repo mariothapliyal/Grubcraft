@@ -185,6 +185,18 @@ impl Grid {
             .max(CLEARANCE)
     }
 
+    /// The berth a turn at `c` between `a` and `b` can keep: [`Grid::need`]
+    /// at all three cells.
+    fn need3(&self, a: u32, c: u32, b: u32, berth: u8) -> u8 {
+        self.need(a, b, berth).min(self.need(c, c, berth))
+    }
+
+    /// Whether a route can go from `a` to `b` by way of `m` keeping `need`
+    /// from blocked ground on ground costing no more than `max_cost`.
+    fn legs_keep(&self, a: u32, m: u32, b: u32, need: u8, max_cost: u8, work: &mut u32) -> bool {
+        self.line_within(a, m, need, max_cost, work) && self.line_within(m, b, need, max_cost, work)
+    }
+
     /// What crossing cell `c` costs a regiment wanting `berth`: the
     /// ground's cost, plus up to [`WALL_COST`] the closer it is to
     /// blocked ground than the berth.
@@ -336,20 +348,19 @@ impl Grid {
         best.map(|(_, cell)| cell)
     }
 
-    /// The cell with the most room (clearance, up to `berth`) within as
-    /// many cells of `c` as `c` falls short of `berth`, nearest on a tie,
-    /// in `c`'s area and in plain sight of it: `c` itself if it has the
-    /// berth already.
-    fn roomiest(&self, c: u32, berth: u8, work: &mut u32) -> u32 {
+    /// The nearest cell at least `berth` from blocked ground within as
+    /// many cells of `c` as `c` falls short of that, in `c`'s area and in
+    /// plain sight of it: `c` itself if it has the berth already.
+    fn fitting(&self, c: u32, berth: u8, work: &mut u32) -> Option<u32> {
         let have = self.clear[c as usize];
         if have >= berth {
-            return c;
+            return Some(c);
         }
         let r = i32::from(berth - have);
         let (cx, cy) = self.xy(c);
         let area = self.area[c as usize];
-        // (room, -distance squared) of the best so far.
-        let mut best = (have, 0, c);
+        // (distance squared, cell) of the nearest so far.
+        let mut best: Option<(i32, u32)> = None;
         for y in cy - r..=cy + r {
             for x in cx - r..=cx + r {
                 *work += 1;
@@ -357,17 +368,17 @@ impl Grid {
                     continue;
                 }
                 let m = self.idx(x, y);
-                let room = self.clear[m as usize].min(berth);
-                let d = -((x - cx) * (x - cx) + (y - cy) * (y - cy));
-                if (room, d) > (best.0, best.1)
+                let d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+                if self.clear[m as usize] >= berth
+                    && best.is_none_or(|(near, _)| d < near)
                     && self.area[m as usize] == area
                     && self.line_open(c, m, work)
                 {
-                    best = (room, d, m);
+                    best = Some((d, m));
                 }
             }
         }
-        best.2
+        best.map(|(_, m)| m)
     }
 }
 
@@ -786,6 +797,16 @@ impl Nav {
         self.grid.as_ref().is_none_or(|g| g.open_cell(g.cell_at(p)))
     }
 
+    /// Whether a soldier may stand at `p`: on the map, off deep water and
+    /// cliffs (always true with no map).
+    pub fn standable(&self, p: FxVec2) -> bool {
+        self.grid.as_ref().is_none_or(|g| {
+            let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
+            let on_map = p.x >= Fx::ZERO && p.y >= Fx::ZERO && p.x < side && p.y < side;
+            on_map && g.cost[g.cell_at(p) as usize] != BLOCKED
+        })
+    }
+
     /// Whether a regiment at `p` has open ground all round for at least
     /// `tiles` (always true with no map): nothing blocked that near.
     /// `tiles` is at most half [`CLEAR_CAP`].
@@ -808,8 +829,8 @@ impl Nav {
         };
         // Steps to blocked ground from the cell under `p` (0 on it or off
         // the map).
+        let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
         let clear_at = |p: FxVec2| {
-            let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
             if p.x < Fx::ZERO || p.y < Fx::ZERO || p.x >= side || p.y >= side {
                 0
             } else {
@@ -848,9 +869,14 @@ impl Nav {
     /// stand at `p` should stand: `p` if the block fits there, else the
     /// nearest ground within the shortfall of it, in plain sight, where it
     /// does fit, so a block sent to the water's edge stands back from it
-    /// instead of hanging over it (and `p` if there is no such ground). `p` on ground too close to blocked ground for a
-    /// regiment's centre first becomes the nearest that isn't (as a route
-    /// would take it). Always `p` with no map.
+    /// instead of hanging over it (and `p` if there is no such ground). `p`
+    /// on ground too close to blocked ground for a regiment's centre first
+    /// becomes the nearest that isn't (as a route would take it). Always
+    /// `p` with no map.
+    ///
+    /// Only to ground where the block fits: in a narrows the roomiest spot
+    /// is one spot for everyone sent near it, and blocks ordered apart
+    /// would end up on top of each other.
     pub(crate) fn settle(&self, p: FxVec2, berth: u8) -> FxVec2 {
         let Some(g) = &self.grid else {
             return p;
@@ -863,14 +889,9 @@ impl Nav {
                 None => return p,
             }
         }
-        let roomy = g.roomiest(c, berth, work);
-        // Only to ground where the block fits: in a narrows the roomiest
-        // spot is one spot for everyone sent near it, and blocks ordered
-        // apart would end up on top of each other.
-        if roomy == g.cell_at(p) || g.clear[roomy as usize] < berth {
-            p
-        } else {
-            g.centre(roomy)
+        match g.fitting(c, berth, work) {
+            Some(fit) if fit != g.cell_at(p) => g.centre(fit),
+            _ => p,
         }
     }
 
@@ -1046,12 +1067,8 @@ impl Nav {
             }
             served += 1;
             let way = &mut self.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS];
-            let ask = Ask {
-                from: regs.position[i],
-                to: t,
-                berth: regs.berth(units, i),
-            };
-            match find(grid, &mut self.search, ask, way) {
+            let berth = regs.berth(units, i);
+            match find(grid, &mut self.search, regs.position[i], t, berth, way) {
                 Some((len, partial)) => {
                     self.route[i] = Route::Waypoints;
                     self.way_len[i] = len as u8;
@@ -1173,21 +1190,19 @@ impl Nav {
     }
 }
 
-/// A route request.
-#[derive(Clone, Copy)]
-struct Ask {
+/// Find a route from `from` to `to` for a regiment wanting `berth` (cells
+/// kept between its centre and blocked ground, where there is room),
+/// writing waypoints into `out`. Returns how many, and whether they stop
+/// short of the goal (more to search for later); `None` when there is no
+/// way there.
+fn find(
+    grid: &Grid,
+    s: &mut Search,
     from: FxVec2,
     to: FxVec2,
-    /// Cells to keep between the regiment's centre and blocked ground,
-    /// where there is room.
     berth: u8,
-}
-
-/// Find a route for `ask`, writing waypoints into `out`. Returns how many,
-/// and whether they stop short of the goal (more to search for later);
-/// `None` when there is no way there.
-fn find(grid: &Grid, s: &mut Search, ask: Ask, out: &mut [FxVec2]) -> Option<(usize, bool)> {
-    let Ask { from, to, berth } = ask;
+    out: &mut [FxVec2],
+) -> Option<(usize, bool)> {
     // Too close to blocked ground to start: first step out to open ground.
     let mut start = grid.cell_at(from);
     let mut lead = false;
@@ -1309,9 +1324,7 @@ fn spread_through_portals(
         let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
         let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
-        let need = grid
-            .need(from_cell, to_cell, berth)
-            .min(grid.need(c, c, berth));
+        let need = grid.need3(from_cell, c, to_cell, berth);
         // Across plain ground only, unless the portal itself is in a ford
         // or on a slope: then across ground no worse than it, so blocks
         // wade a ford side by side instead of in one file.
@@ -1326,9 +1339,7 @@ fn spread_through_portals(
                 break;
             }
             let moved = grid.idx(x, y);
-            if grid.line_within(from_cell, moved, need, max_cost, &mut s.work)
-                && grid.line_within(moved, to_cell, need, max_cost, &mut s.work)
-            {
+            if grid.legs_keep(from_cell, moved, to_cell, need, max_cost, &mut s.work) {
                 out[i] = grid.centre(moved);
                 break;
             }
@@ -1361,7 +1372,7 @@ fn tighten(
         let (a, c, b) = (grid.cell_at(prev), grid.cell_at(here), grid.cell_at(next));
         // The nearest point to the turn on the line from `prev` to `next`.
         let ab = next - prev;
-        let len2 = i64::from(ab.x.raw()).pow(2) + i64::from(ab.y.raw()).pow(2);
+        let len2 = ab.length_sq_raw() as i64;
         let along = i64::from((here - prev).x.raw()) * i64::from(ab.x.raw())
             + i64::from((here - prev).y.raw()) * i64::from(ab.y.raw());
         if len2 == 0 {
@@ -1371,7 +1382,7 @@ fn tighten(
         let t = i128::from(along.clamp(0, len2));
         let part = |v: Fx| Fx::from_raw((i128::from(v.raw()) * t / i128::from(len2)) as i32);
         let on_line = FxVec2::new(prev.x + part(ab.x), prev.y + part(ab.y));
-        let need = grid.need(a, b, berth).min(grid.need(c, c, berth));
+        let need = grid.need3(a, c, b, berth);
         let max_cost = grid.cost[a as usize]
             .max(grid.cost[b as usize])
             .max(grid.cost[c as usize]);
@@ -1386,9 +1397,7 @@ fn tighten(
             if m == c {
                 break;
             }
-            if grid.line_within(a, m, need, max_cost, &mut s.work)
-                && grid.line_within(m, b, need, max_cost, &mut s.work)
-            {
+            if grid.legs_keep(a, m, b, need, max_cost, &mut s.work) {
                 out[i] = to;
                 break;
             }
@@ -1422,7 +1431,7 @@ fn smooth(
     let mut partial = truncated;
     let (mut anchor, mut k) = (0, 1);
     // The least room along the chain from the anchor to `k`, up to `berth`.
-    let room = |c: u32| berth.min(grid.clear[c as usize]).max(CLEARANCE);
+    let room = |c: u32| grid.need(c, c, berth);
     let mut least = room(s.chain[0]).min(room(s.chain[1]));
     while k < len {
         if k + 1 < len {
