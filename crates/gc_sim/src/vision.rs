@@ -71,8 +71,16 @@ pub const LINGER_TICKS: u8 = 3 * TICKS_PER_SECOND as u8;
 
 /// In fog of war, each regiment and building looks round it once in this
 /// many ticks (each on its own tick), not every tick: sight is the
-/// costliest search in a big match, and a sighting lingers anyway.
+/// costliest search in a big match, and a sighting lingers anyway. A
+/// stopgap until sight is kept on per-player tile grids, stamped only as
+/// things cross tiles (docs/10-architecture.md, "Fog of war").
 pub const SIGHT_EVERY: u32 = 4;
+
+/// Whether the thing in `slot` looks round it on `tick` (see
+/// [`SIGHT_EVERY`]).
+fn looks_now(slot: u32, tick: u32) -> bool {
+    slot.wrapping_add(tick).is_multiple_of(SIGHT_EVERY)
+}
 /// How long loosing a volley keeps a regiment seen by everyone.
 pub const VOLLEY_REVEAL_TICKS: u8 = 5 * TICKS_PER_SECOND as u8;
 /// Contact made less than this long after the victim's side first saw the
@@ -302,8 +310,6 @@ impl Vision {
         if !self.active {
             return;
         }
-        // Whether the thing in slot `i` looks round it this tick.
-        let looks_now = |i: usize| (i as u32).wrapping_add(tick).is_multiple_of(SIGHT_EVERY);
         self.ambushes.clear();
         self.posts.clear();
         if self.fog
@@ -367,7 +373,7 @@ impl Vision {
                 .copied()
                 .unwrap_or(u8::MAX);
             let cover = self.spotting(regs, units, terrain, i);
-            let fog_now = self.fog && looks_now(i);
+            let fog_now = self.fog && looks_now(i as u32, tick);
             let (near, far) = match owner as usize {
                 o if o < PARTIES => {
                     let far = fog_now.then_some(SIGHT);
@@ -634,11 +640,6 @@ impl Vision {
         (seen_near | posts(near), seen_far | posts(far))
     }
 
-    /// The cell (column, row) a point is sorted into.
-    fn cell_of(&self, p: FxVec2) -> (usize, usize) {
-        post_cell(self.cells, p)
-    }
-
     /// Sort this tick's posts into their cells (a counting sort into room
     /// reserved at the start).
     fn sort_posts(&mut self) {
@@ -647,10 +648,12 @@ impl Vision {
             let (x, y) = post_cell(cells, p.block.centre);
             y * cells + x
         };
+        // Count each cell's posts, sum them so each cell holds where its
+        // posts end, then fill backwards, leaving where each one starts.
         self.cell_start.fill(0);
         (self.post_sight, self.post_radius) = (Fx::ZERO, Fx::ZERO);
         for p in &self.posts {
-            self.cell_start[cell(p) + 1] += 1;
+            self.cell_start[cell(p)] += 1;
             self.post_sight = self.post_sight.max(p.sight);
             self.post_radius = self.post_radius.max(p.block.radius());
         }
@@ -659,17 +662,11 @@ impl Vision {
         }
         self.by_cell.clear();
         self.by_cell.extend_from_slice(&self.posts);
-        // Fill each cell from its start, then shift the starts back.
-        for i in 0..self.posts.len() {
-            let p = self.posts[i];
-            let k = cell(&p);
-            self.by_cell[self.cell_start[k] as usize] = p;
-            self.cell_start[k] += 1;
+        for p in self.posts.iter().rev() {
+            let k = cell(p);
+            self.cell_start[k] -= 1;
+            self.by_cell[self.cell_start[k] as usize] = *p;
         }
-        for k in (1..self.cell_start.len()).rev() {
-            self.cell_start[k] = self.cell_start[k - 1];
-        }
-        self.cell_start[0] = 0;
     }
 
     /// The parties hostile to `owner` with a building within `distance` of
@@ -681,8 +678,8 @@ impl Vision {
         let mut seen = 0u8;
         // Only cells a post seeing `me` could stand in.
         let reach = distance.min(self.post_sight) + me.radius() + self.post_radius;
-        let (x0, y0) = self.cell_of(me.centre - FxVec2::new(reach, reach));
-        let (x1, y1) = self.cell_of(me.centre + FxVec2::new(reach, reach));
+        let (x0, y0) = post_cell(self.cells, me.centre - FxVec2::new(reach, reach));
+        let (x1, y1) = post_cell(self.cells, me.centre + FxVec2::new(reach, reach));
         for y in y0..=y1 {
             let row = y * self.cells;
             let (from, to) = (self.cell_start[row + x0], self.cell_start[row + x1 + 1]);
@@ -731,11 +728,8 @@ impl Vision {
             .fold(0u8, |m, p| m | 1 << p);
         for post in &self.posts {
             let o = post.owner as usize;
-            // Each building looks once in SIGHT_EVERY ticks, on its own.
             if o >= PARTIES
-                || !(post.slot as u32)
-                    .wrapping_add(tick)
-                    .is_multiple_of(SIGHT_EVERY)
+                || !looks_now(post.slot as u32, tick)
                 || structures.seen(post.slot) & present == present
             {
                 continue;

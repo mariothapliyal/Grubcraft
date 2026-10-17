@@ -63,13 +63,13 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 
 | | Before | After |
 |---|---|---|
-| A building going up (typical tick, few regiments) | 21 ms | 3.9 ms |
-| A building going up (worst tick) | 220 ms | about 25 ms |
-| Tick p50 in fog of war | 2.5 ms | 0.97 ms |
-| Tick p50 without fog | 0.42 ms | 0.41 ms |
+| A building going up (typical tick) | 21 ms | about 5.5 ms |
+| A building going up (worst tick) | 220 ms | 10 to 17 ms |
+| Tick p50 in fog of war | 2.5 ms | 0.87 ms |
+| Tick p50 without fog | 0.42 ms | 0.44 ms |
 
-- **Laying a building** renumbered the walking grid's areas with a flood fill over the whole map (about 650 M instructions on a 768-tile map). Areas are now renumbered near the building when that can be told from a box round it, and in two quick passes over the map when it can't; links are made again only in sectors where a cell may have opened or shut. The worst ticks left are the whole-map renumbering (two areas joined, or a wall cutting the map) and the sector searches, about 25 ms on a 768-tile map.
+- **Laying a building** renumbered the walking grid's areas with a flood fill over the whole map (about 650 M instructions on a 768-tile map). Areas are now renumbered near the building when that can be told from a box a sector round it (comparing the box's pieces before and after, so an area that only meets itself beyond the box is no reason to look further), and in two quick passes over the map when it can't (two areas joined, or a wall cutting a piece in two that both run on out of the box); links are made again only in sectors where a cell may have opened or shut. What a building costs now is mostly the searches in the sectors round it, and placing portals across the whole map (about a tenth).
 - **Fog of war** had every regiment test every building each tick (600 × 230), and search 32 tiles round it every tick. Buildings are now sorted into 32-tile cells each tick and only nearby cells are tested, and each regiment and building looks round it once in four ticks (five times a second, each on its own tick; a sighting lingers 3 seconds anyway).
 
-**Left for later:** the sim heap is 20.5 MB on a 768-tile map (the walking grid and its copies), over the 8 MB budget set for 256-tile maps; budgets for big maps come with the six-player soak.
+**Left for later:** the sim heap is 22.4 MB on a 768-tile map with room for 1,536 regiments (the walking grid and its copies), over the 8 MB budget set for 256-tile maps; budgets for big maps, and a CI run of this bench, come with the six-player soak. Placing portals only near the change, and keeping the next free area number instead of finding the highest when a pocket is cut off, are both in `nav.rs` and left for its owner.
 

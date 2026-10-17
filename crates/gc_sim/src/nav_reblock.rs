@@ -6,23 +6,27 @@
 //!
 //! - **Clearance** is measured again only within [`CLEAR_CAP`] cells of the
 //!   change: past that, clearances are capped and can't have moved.
-//! - **Areas** are numbered again across the map, as a wall can cut one
-//!   area in two anywhere along it: one pass joining each open cell to its
-//!   neighbours behind and above, and one numbering what it joined, about
-//!   ten times faster than [`Grid::label_areas`]'s flood fill (on a
-//!   768-tile map that took most of the 200 ms a building cost).
+//! - **Areas** are numbered again only in a box a sector wider than the
+//!   change, when that box can tell (a new piece of ground, or an area cut
+//!   in two where at most one side runs on out of the box). Otherwise
+//!   (two areas joined, or a wall cut an area right across) they are
+//!   numbered again across the map, in two passes that are about ten
+//!   times faster than [`Grid::label_areas`]'s flood fill (on a 768-tile
+//!   map that flood fill took most of the 200 ms a building cost).
 //! - **Portals** are placed again everywhere (cheap), but linked again only
 //!   in the sectors where a cell may have opened or shut (within
 //!   [`CLEARANCE`] of the change), or whose portals moved because a
 //!   neighbour's did: every other sector's links are copied across.
 //!
-//! The result is exactly what building the grid from scratch would give
-//! (a test checks), so a match's grid never depends on the order its
-//! buildings went up in. This runs inside a tick but only when the ground
-//! changes, and it may allocate (the portal graph can grow).
+//! The result has the same areas, portals and links as building the grid
+//! from scratch (tests check), though an area's number may differ, as
+//! areas are only ever compared. So a match's paths never depend on the
+//! order its buildings went up in. This runs inside a tick but only when
+//! the ground changes, and it may allocate (the portal graph can grow).
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::Range;
 
 use super::{BLOCKED, CLEAR_CAP, CLEARANCE, Grid, SECTOR, Search};
 
@@ -31,23 +35,20 @@ impl Grid {
     /// coordinates, end exclusive) changed cost, searching in `search`'s
     /// room and leaving it room for searches over the new graph.
     pub(super) fn changed(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, search: &mut Search) {
-        let reach = i32::from(CLEAR_CAP) + 1;
-        let (wx0, wy0) = ((x0 - reach).max(0), (y0 - reach).max(0));
-        let (wx1, wy1) = ((x1 + reach).min(self.side), (y1 + reach).min(self.side));
+        let change = [x0, y0, x1, y1];
+        let [wx0, wy0, wx1, wy1] = self.grow(change, i32::from(CLEAR_CAP) + 1);
         // Cells that may open or shut: links, portals and areas read only
         // whether a cell is open (clearance of at least CLEARANCE) and its
         // cost, so a cell further than that from the change can't have
         // moved them, whatever its clearance did.
-        let margin = i32::from(CLEARANCE);
-        let (dx0, dy0) = ((x0 - margin).max(0), (y0 - margin).max(0));
-        let (dx1, dy1) = ((x1 + margin).min(self.side), (y1 + margin).min(self.side));
-        let near = [dx0, dy0, dx1, dy1];
+        let near = self.grow(change, i32::from(CLEARANCE));
         let was_open: Vec<bool> = self.cells_in(near).map(|c| self.open_cell(c)).collect();
         self.measure_clearance_in(wx0, wy0, wx1, wy1);
         if !self.renumber_near(near, &was_open) {
             self.number_areas();
         }
         // Sectors a cell that may have opened or shut lies in.
+        let [dx0, dy0, dx1, dy1] = near;
         let mut dirty = vec![false; (self.sectors * self.sectors) as usize];
         for sy in dy0 / SECTOR..=(dy1 - 1) / SECTOR {
             for sx in dx0 / SECTOR..=(dx1 - 1) / SECTOR {
@@ -65,6 +66,17 @@ impl Grid {
         }
         self.relink(&partner, &old, &dirty, search);
         search.fit(self);
+    }
+
+    /// The box `[x0, y0, x1, y1]` (cells, end exclusive) grown by `by` on
+    /// every side, kept within the map.
+    fn grow(&self, [x0, y0, x1, y1]: [i32; 4], by: i32) -> [i32; 4] {
+        [
+            (x0 - by).max(0),
+            (y0 - by).max(0),
+            (x1 + by).min(self.side),
+            (y1 + by).min(self.side),
+        ]
     }
 
     /// Chessboard distance from each cell in the window `x0..x1` × `y0..y1`
@@ -141,122 +153,101 @@ impl Grid {
 
     /// Bring the areas up to date after only cells in `near` (a box) may
     /// have opened or shut, `was_open` saying which were open before, by
-    /// looking only in a box [`SECTOR`] cells wider: the open cells there
-    /// are joined into pieces, and each piece takes the area its cells
-    /// had. A piece of new ground takes a new number; an area cut in two
-    /// inside the box gives the piece cut off a new number. Returns false,
-    /// changing nothing, when that can't be told from the box alone (two
-    /// areas joined, or an area cut where both sides reach out of the box);
-    /// then the whole map must be numbered again. Areas are only ever
-    /// compared, so their numbers may differ from a fresh numbering's.
+    /// looking only in a box [`SECTOR`] cells wider. The box's open cells
+    /// are joined into pieces, as they stand now and as they stood before,
+    /// and each piece now takes the area its cells had. Pieces that reach
+    /// out of the box keep their area; so does the first of an area's
+    /// pieces when none of them do. The rest (pockets cut off inside the
+    /// box, and new ground) take new numbers. Returns false, changing
+    /// nothing, when that can't be told from the box alone: two areas
+    /// joined, or a piece from before cut into two that both reach out
+    /// (they may or may not meet again beyond). Then the whole map must be
+    /// numbered again. Areas are only ever compared, so their numbers may
+    /// differ from a fresh numbering's.
     pub(super) fn renumber_near(&mut self, near: [i32; 4], was_open: &[bool]) -> bool {
-        let r = SECTOR;
-        let [nx0, ny0, nx1, ny1] = near;
-        let (bx0, by0) = ((nx0 - r).max(0), (ny0 - r).max(0));
-        let (bx1, by1) = ((nx1 + r).min(self.side), (ny1 + r).min(self.side));
+        let b @ [bx0, by0, bx1, by1] = self.grow(near, SECTOR);
         let (w, h) = ((bx1 - bx0) as usize, (by1 - by0) as usize);
-        let in_box = |x: i32, y: i32| x >= bx0 && y >= by0 && x < bx1 && y < by1;
-        // Cells that shut have no area; cells that opened have none yet.
         let side = self.side;
-        let near_cells = (ny0..ny1).flat_map(|y| (nx0..nx1).map(move |x| (y * side + x) as usize));
-        for (c, &was) in near_cells.zip(was_open) {
-            if was != (self.clear[c] >= CLEARANCE) {
-                self.area[c] = 0;
+        // The map's index of the box's `l`th cell.
+        let cell = |l: u32| {
+            let l = l as usize;
+            ((by0 + (l / w) as i32) * side + bx0 + (l % w) as i32) as usize
+        };
+        // Which of the box's cells are open now, and were before (only
+        // cells in `near` can differ).
+        let now: Vec<bool> = self.cells_in(b).map(|c| self.open_cell(c)).collect();
+        let mut before = now.clone();
+        let [nx0, ny0, nx1, ny1] = near;
+        let near_local = (ny0..ny1).flat_map(|y| (nx0..nx1).map(move |x| (x, y)));
+        for ((x, y), &was) in near_local.zip(was_open) {
+            let l = (y - by0) as usize * w + (x - bx0) as usize;
+            before[l] = was;
+            // Cells that shut have no area; cells that opened have none yet.
+            if was != now[l] {
+                self.area[(y * side + x) as usize] = 0;
             }
         }
-        // Join the box's open cells into pieces (along rows and columns, as
-        // areas join). For each piece: its cells, the areas they had, and
-        // whether it reaches the edge of the box (and so may go on beyond).
-        let mut piece = vec![u32::MAX; w * h];
-        let mut cells: Vec<u32> = Vec::new();
-        // Per piece: the range of `cells` it holds, and whether it reaches
-        // out of the box. Then (area, piece) for each piece's old area.
-        let mut pieces: Vec<(usize, usize, bool)> = Vec::new();
+        let (_, pieces, cells) = pieces_of(&now, w, h);
+        let (piece_before, pieces_before, _) = pieces_of(&before, w, h);
+        // Whether a cell is on a side of the box that isn't the map's edge,
+        // and so may lead on beyond. Such cells never change.
+        let edge = |l: u32| {
+            let (x, y) = (bx0 + (l as usize % w) as i32, by0 + (l as usize / w) as i32);
+            (x == bx0 && bx0 > 0)
+                || (y == by0 && by0 > 0)
+                || (x == bx1 - 1 && bx1 < side)
+                || (y == by1 - 1 && by1 < side)
+        };
+        // Per piece now: whether it reaches out of the box; (area, piece)
+        // for each piece's one old area; and which piece now holds each
+        // piece from before's way out of the box.
+        let mut reaches = vec![false; pieces.len()];
         let mut had: Vec<(u32, usize)> = Vec::new();
-        for y in by0..by1 {
-            for x in bx0..bx1 {
-                let local = (y - by0) as usize * w + (x - bx0) as usize;
-                if piece[local] != u32::MAX || !self.open(x, y) {
-                    continue;
+        let mut holder = vec![u32::MAX; pieces_before.len()];
+        for (p, range) in pieces.iter().enumerate() {
+            let mut area = 0;
+            for &l in &cells[range.clone()] {
+                match (area, self.area[cell(l)]) {
+                    (_, 0) => {}
+                    (0, a) => area = a,
+                    (a, b) if a != b => return false, // two areas joined
+                    _ => {}
                 }
-                let p = pieces.len();
-                let start = cells.len();
-                piece[local] = p as u32;
-                cells.push(self.idx(x, y));
-                let mut head = start;
-                // Whether it reaches a side of the box that isn't the map's
-                // edge, and so may go on beyond.
-                let mut edge = false;
-                while head < cells.len() {
-                    let (cx, cy) = self.xy(cells[head]);
-                    head += 1;
-                    edge |= (cx == bx0 && bx0 > 0)
-                        || (cy == by0 && by0 > 0)
-                        || (cx == bx1 - 1 && bx1 < self.side)
-                        || (cy == by1 - 1 && by1 < self.side);
-                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                        let (mx, my) = (cx + dx, cy + dy);
-                        if !in_box(mx, my) || !self.open(mx, my) {
-                            continue;
-                        }
-                        let m = (my - by0) as usize * w + (mx - bx0) as usize;
-                        if piece[m] == u32::MAX {
-                            piece[m] = p as u32;
-                            cells.push(self.idx(mx, my));
-                        }
+                if edge(l) {
+                    reaches[p] = true;
+                    let o = &mut holder[piece_before[l as usize] as usize];
+                    if *o == u32::MAX {
+                        *o = p as u32;
+                    } else if *o != p as u32 {
+                        return false; // cut in two, both reaching out
                     }
                 }
-                let mut areas: Vec<u32> = cells[start..]
-                    .iter()
-                    .map(|&c| self.area[c as usize])
-                    .filter(|&a| a != 0)
-                    .collect();
-                areas.sort_unstable();
-                areas.dedup();
-                if areas.len() > 1 {
-                    return false; // two areas joined
-                }
-                had.extend(areas.first().map(|&a| (a, p)));
-                pieces.push((start, cells.len(), edge));
+            }
+            if area != 0 {
+                had.push((area, p));
             }
         }
-        // Each piece's area: the one its cells had, unless that area is
-        // split between pieces, when all but one take new numbers (the one
-        // reaching out of the box keeps it; two reaching out can't be told
-        // apart here).
         let mut number: Vec<u32> = vec![0; pieces.len()];
-        let mut fresh: Vec<usize> = Vec::new();
         had.sort_unstable();
         for run in had.chunk_by(|a, b| a.0 == b.0) {
-            let reaching = run.iter().filter(|&&(_, p)| pieces[p].2).count();
-            if reaching > 1 {
-                return false;
+            let mut kept = false;
+            for &(a, p) in run.iter().filter(|&&(_, p)| reaches[p]) {
+                number[p] = a;
+                kept = true;
             }
-            let keeper = run.iter().find(|&&(_, p)| pieces[p].2).unwrap_or(&run[0]).1;
-            for &(a, p) in run {
-                if p == keeper {
-                    number[p] = a;
-                } else {
-                    fresh.push(p);
-                }
+            if !kept {
+                number[run[0].1] = run[0].0;
             }
         }
-        // Pieces of new ground, with no area yet, take new numbers too.
-        let new_ground: Vec<usize> = (0..pieces.len())
-            .filter(|&p| number[p] == 0 && !fresh.contains(&p))
-            .collect();
-        fresh.extend(new_ground);
-        if !fresh.is_empty() {
-            let mut next = self.area.iter().copied().max().unwrap_or(0);
-            fresh.sort_unstable();
-            for p in fresh {
-                next += 1;
-                number[p] = next;
-            }
+        let mut next = None;
+        for n in number.iter_mut().filter(|n| **n == 0) {
+            let last = next.get_or_insert_with(|| self.area.iter().copied().max().unwrap_or(0));
+            *last += 1;
+            *n = *last;
         }
-        for (p, &(start, end, _)) in pieces.iter().enumerate() {
-            for &c in &cells[start..end] {
-                self.area[c as usize] = number[p];
+        for (range, &n) in pieces.iter().zip(&number) {
+            for &l in &cells[range.clone()] {
+                self.area[cell(l)] = n;
             }
         }
         true
@@ -297,12 +288,13 @@ impl Grid {
                         parent.len() as u32 - 1
                     }
                     (l, 0) | (0, l) => l,
+                    (a, b) if a == b => a,
                     (a, b) => {
-                        if a != b {
-                            let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
-                            parent[ra.max(rb) as usize] = ra.min(rb);
-                        }
-                        a
+                        // Labels the root, so the cells after it in the run
+                        // meet the same label above them and skip this.
+                        let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                        parent[ra.max(rb) as usize] = ra.min(rb);
+                        ra.min(rb)
                     }
                 };
             }
@@ -367,6 +359,45 @@ impl Grid {
         self.edge_to = to;
         self.edge_cost = cost;
     }
+}
+
+/// The pieces the open cells of a `w` × `h` box (`open`, row by row) form,
+/// joined along rows and columns as areas are: each cell's piece
+/// (`u32::MAX` if shut), each piece's range of the list of cells, and that
+/// list, piece by piece, each piece from the first cell met in it.
+fn pieces_of(open: &[bool], w: usize, h: usize) -> (Vec<u32>, Vec<Range<usize>>, Vec<u32>) {
+    let mut piece = vec![u32::MAX; w * h];
+    let mut ranges = Vec::new();
+    let mut cells: Vec<u32> = Vec::with_capacity(w * h);
+    for first in 0..w * h {
+        if piece[first] != u32::MAX || !open[first] {
+            continue;
+        }
+        let p = ranges.len() as u32;
+        let start = cells.len();
+        piece[first] = p;
+        cells.push(first as u32);
+        let mut head = start;
+        while head < cells.len() {
+            let l = cells[head] as usize;
+            head += 1;
+            let (x, y) = (l % w, l / w);
+            let next = [
+                (x + 1 < w).then(|| l + 1),
+                (x > 0).then(|| l - 1),
+                (y + 1 < h).then(|| l + w),
+                (y > 0).then(|| l - w),
+            ];
+            for m in next.into_iter().flatten() {
+                if open[m] && piece[m] == u32::MAX {
+                    piece[m] = p;
+                    cells.push(m as u32);
+                }
+            }
+        }
+        ranges.push(start..cells.len());
+    }
+    (piece, ranges, cells)
 }
 
 /// Each node's place in its sector's list, from a graph's sector lists.
@@ -519,13 +550,7 @@ mod tests {
     /// could be told from near the building alone.
     fn renumbered_near(g: &mut Grid, tiles: [i32; 4], on: bool) -> bool {
         let [x0, y0, x1, y1] = g.cells(tiles).unwrap();
-        let margin = i32::from(CLEARANCE);
-        let near = [
-            (x0 - margin).max(0),
-            (y0 - margin).max(0),
-            (x1 + margin).min(g.side),
-            (y1 + margin).min(g.side),
-        ];
+        let near = g.grow([x0, y0, x1, y1], i32::from(CLEARANCE));
         let was_open: Vec<bool> = g.cells_in(near).map(|c| g.open_cell(c)).collect();
         for c in g.cells_in([x0, y0, x1, y1]).collect::<Vec<_>>() {
             let c = c as usize;
@@ -566,6 +591,10 @@ mod tests {
         for x in (0..tiles - 8).step_by(8) {
             assert!(renumbered_near(&mut g, [x, 50, 8, 1], true));
         }
+        // Beside the wall, an area is two pieces in the box, joined round
+        // the wall's end out of it; a building there cuts neither.
+        assert!(renumbered_near(&mut g, [8, 47, 2, 2], true));
+        assert!(renumbered_near(&mut g, [8, 47, 2, 2], false));
         assert!(
             !renumbered_near(&mut g, [tiles - 8, 50, 8, 1], true),
             "map cut in two"
@@ -573,6 +602,43 @@ mod tests {
         assert!(
             !renumbered_near(&mut g, [0, 50, 8, 1], false),
             "halves joined"
+        );
+    }
+
+    #[test]
+    fn areas_stay_right_as_walls_come_and_go() {
+        // Walls a tile thick put up and pulled down at random in one corner
+        // of the ridged map, cutting pockets off and joining them again,
+        // the areas checked against a fresh build after each.
+        let tiles = 64;
+        let mut g = Grid::build(&ribs_map(tiles as u32), tiles * CELLS_PER_TILE);
+        let mut rng = Pcg32::new(9, 1);
+        let mut up: Vec<[i32; 4]> = Vec::new();
+        let (mut near_only, mut whole_map) = (0, 0);
+        for _ in 0..200 {
+            let done = if !up.is_empty() && rng.below(3) == 0 {
+                let k = rng.below(up.len() as u32) as usize;
+                renumbered_near(&mut g, up.swap_remove(k), false)
+            } else {
+                let long = 2 + rng.below(8) as i32;
+                let [w, d] = if rng.below(2) == 0 {
+                    [long, 1]
+                } else {
+                    [1, long]
+                };
+                let b = [rng.below(24) as i32, rng.below(24) as i32, w, d];
+                up.push(b);
+                renumbered_near(&mut g, b, true)
+            };
+            if done {
+                near_only += 1;
+            } else {
+                whole_map += 1;
+            }
+        }
+        assert!(
+            near_only > 0 && whole_map > 0,
+            "{near_only} near, {whole_map} not"
         );
     }
 }
