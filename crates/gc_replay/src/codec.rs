@@ -264,6 +264,10 @@ impl Writer {
                 self.handle(regiment);
                 self.bool(on);
             }
+            Command::HandOver { to } => {
+                self.u8(21);
+                self.u8(to);
+            }
         }
     }
 }
@@ -429,7 +433,7 @@ impl<'a> Reader<'a> {
             tier: self.u8()?,
             ..ConquestUnit::default()
         };
-        if format >= 15 {
+        if format >= 17 {
             u.hatches = self.bool()?;
             u.consumed = self.bool()?;
         }
@@ -530,6 +534,7 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 on: self.bool()?,
             },
+            21 => Command::HandOver { to: self.u8()? },
             _ => return None,
         };
         Some(PlayerCommand { player, command })
@@ -625,6 +630,7 @@ mod tests {
                 },
                 at: FxVec2::from_ints(-8, 120),
             },
+            Command::HandOver { to: 3 },
         ];
         let mut w = Writer::default();
         for command in commands {
