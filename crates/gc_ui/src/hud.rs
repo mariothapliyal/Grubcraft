@@ -1024,7 +1024,7 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     draw.text(x, y - 4, 1, muted_ink(), &fit(&count, chars));
     y += 20;
 
-    let label_w = 8 * CELL_W;
+    let label_w = 9 * CELL_W;
     let pct_w = 5 * CELL_W;
     let bar_x = x + label_w;
     let bar_w = (w - label_w - pct_w).max(20);
@@ -1109,7 +1109,8 @@ fn draw_scroll(draw: &mut DrawList, field: Rect, top: i32, scroll: &HelpScroll) 
     if w < 120 {
         return None;
     }
-    let room = field.h - top - 8;
+    // Leave the idle-worker button's corner clear.
+    let room = field.h - top - 8 - 44;
     let r = Rect::new(field.right() - 8 - w, field.y + top, w, room.max(0));
     // The tallest column decides the height: its groups stacked.
     let heights: Vec<i32> = (0..columns)
@@ -1122,11 +1123,14 @@ fn draw_scroll(draw: &mut DrawList, field: Rect, top: i32, scroll: &HelpScroll) 
         .collect();
     let keys_h = heights.iter().copied().max().unwrap_or(0);
     let chars = ((inner_w) / CELL_W).max(1) as usize;
+    // The keys come first; the notes get what room is left.
+    let spare = room - (2 * PAD + 26 + keys_h + 4) - 24;
+    let fits = (spare / 16).clamp(0, 8) as usize;
     let notes: Vec<String> = scroll
         .notes
         .iter()
         .flat_map(|n| wrap(n, chars))
-        .take(8)
+        .take(fits)
         .collect();
     let notes_h = if notes.is_empty() {
         0
