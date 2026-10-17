@@ -31,7 +31,8 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, Land, LandOp, MapDef, Mode, Noise, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, Land, LandOp, MapDef, Mode, Noise, Pos, SetPieceKind, Shape,
+    SizeClass, Symmetry,
 };
 use crate::generate::plateaus;
 use crate::recipe::{BASE, DEEP, RISE_REACH, WATER, Writer, start_objects};
@@ -200,7 +201,7 @@ impl Wilds<'_> {
         // A band along the middle line too, on a wild map and often on a
         // mixed one: the west half, which meets its turned copy at the
         // centre. A small map has no room for it.
-        if self.often() && n >= 512 {
+        if self.often() && n >= BIG_MAP_TILES {
             let mut line = vec![(-8, mid + self.w.range(-wave, wave))];
             let mut x = 0;
             while x < mid - n / 8 {
@@ -229,7 +230,7 @@ impl Wilds<'_> {
         // band's ways, stopping short of them: neighbours go round the end
         // (or, on a mixed map, through a pass). A small map has no room.
         for x in betweens {
-            if !self.often() || n < 512 {
+            if !self.often() || n < BIG_MAP_TILES {
                 continue;
             }
             let end_y = height_at(&band_points, x) - self.scaled(48);

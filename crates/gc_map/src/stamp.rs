@@ -265,20 +265,32 @@ fn roll(field: &mut [i32], noise: Noise, symmetry: Symmetry, side: i64) {
     let per_swell = UNIT * i64::from(noise.scale.max(1));
     let copies = symmetry.copies() as i64;
     let turns = step_turns(symmetry);
-    // The noise at every tile, worked out once; a tile then averages it
-    // over its turned copies, so they all rise alike.
-    let mut swells = Vec::with_capacity((side * side) as usize);
-    for y in 0..side {
-        for x in 0..side {
-            swells.push(fbm.fbm(x * one / per_swell, y * one / per_swell, NOISE_OCTAVES));
+    // The noise at every sample, worked out once (0 to `one`); a sample
+    // then averages it over its turned copies, so they all rise alike.
+    // Most of a big map's making is here, so bands of rows are worked out
+    // side by side: each sample's noise depends only on where it is, so
+    // the heights are the same however many threads there are.
+    let mut swells = vec![0i32; (side * side) as usize];
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let band = (side as usize).div_ceil(threads.clamp(1, 16)) * side as usize;
+    std::thread::scope(|scope| {
+        for (k, out) in swells.chunks_mut(band).enumerate() {
+            let fbm = &fbm;
+            scope.spawn(move || {
+                let first = (k * band) as i64;
+                for (i, v) in (first..).zip(out) {
+                    let (x, y) = (i % side, i / side);
+                    *v = fbm.fbm(x * one / per_swell, y * one / per_swell, NOISE_OCTAVES) as i32;
+                }
+            });
         }
-    }
+    });
     for y in 0..side {
         for x in 0..side {
             let mut sum = 0;
             let mut p = (x, y);
             for _ in 0..copies {
-                sum += swells[(p.1 * side + p.0) as usize];
+                sum += i64::from(swells[(p.1 * side + p.0) as usize]);
                 for _ in 0..turns {
                     p = (last - p.1, p.0);
                 }

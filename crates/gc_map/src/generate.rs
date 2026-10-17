@@ -11,7 +11,7 @@
 
 use gc_fixed::{Angle, isqrt_u64};
 
-use crate::def::{Kind, Pos};
+use crate::def::{BIG_MAP_TILES, Kind, Pos};
 use crate::map::{Map, Placed, SAMPLES_PER_TILE};
 
 /// How many start plateaus a generated map has: one for each lobby slot.
@@ -25,7 +25,7 @@ pub const START_PLATEAUS: usize = 6;
 /// sixth, so the armies start far apart and not only the edges.
 pub fn plateaus(tiles: u32) -> [Pos; START_PLATEAUS] {
     let n = tiles as i32;
-    let inset = if n >= 512 { n / 6 } else { n / 4 };
+    let inset = if n >= BIG_MAP_TILES { n / 6 } else { n / 4 };
     let (near, mid, far) = (inset, n / 2, n - inset);
     [
         (near, near),

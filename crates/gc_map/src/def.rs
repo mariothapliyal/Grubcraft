@@ -41,6 +41,11 @@ pub const FRONTIER_SLOTS: std::ops::RangeInclusive<usize> = 4..=8;
 /// The sides a Field map may have, in tiles.
 pub const FIELD_TILES: std::ops::RangeInclusive<i32> = 64..=1024;
 
+/// Field Battle maps this many tiles a side and more are the big ones:
+/// their starts stand further in (see [`crate::plateaus`]) and the Wilds
+/// have room for a middle band and spurs on them.
+pub const BIG_MAP_TILES: i32 = 512;
+
 impl SizeClass {
     pub fn tiles(self) -> i32 {
         match self {

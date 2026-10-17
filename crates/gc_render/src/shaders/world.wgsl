@@ -256,11 +256,14 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let soil = srgb_to_linear(vec3<f32>(0.42, 0.31, 0.2));
     var grass = srgb_to_linear(vec3<f32>(0.4, 0.5, 0.22));
     // The land's own grass, its borders wobbled so they show neither the
-    // tint's texels nor the discs the map was painted with.
-    let tiles = f32(textureDimensions(heightmap).x - 1u) / g.map.x;
-    let wobble = vec2<f32>(vnoise(xz * 0.07), vnoise(xz * 0.07 + vec2<f32>(37.0, 11.0))) - 0.5;
-    let tint = textureSampleLevel(ground_tint, soft_sampler, (xz + wobble * 10.0) / tiles, 0.0);
-    grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
+    // tint's texels nor the discs the map was painted with. A map without
+    // lands has a single clear texel, and nothing to look up.
+    if textureDimensions(ground_tint).x > 1u {
+        let tiles = f32(textureDimensions(heightmap).x - 1u) / g.map.x;
+        let wobble = vec2<f32>(vnoise(xz * 0.07), vnoise(xz * 0.07 + vec2<f32>(37.0, 11.0))) - 0.5;
+        let tint = textureSampleLevel(ground_tint, soft_sampler, (xz + wobble * 10.0) / tiles, 0.0);
+        grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     var albedo = mix(soil, grass, smoothstep(0.16, 0.26, h));
