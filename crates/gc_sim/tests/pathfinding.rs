@@ -438,7 +438,10 @@ fn blocks_narrow_into_a_column_through_a_gap_and_widen_after() {
         }
     }
     let end = w.regiments.get(r).unwrap();
-    assert!(distance(end.position, FxVec2::from_ints(55, 12)) < Fx::ONE, "{end:?}");
+    assert!(
+        distance(end.position, FxVec2::from_ints(55, 12)) < Fx::ONE,
+        "{end:?}"
+    );
     assert!(narrowest < 8, "never narrowed: {narrowest}");
     assert_eq!((end.files, end.frontage), (8, 8));
     assert_eq!(worst, 0, "soldiers walked onto the wall");

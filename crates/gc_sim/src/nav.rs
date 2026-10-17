@@ -38,9 +38,9 @@ use core::cmp::Reverse;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::{StateHasher, UnitStats};
 use crate::regiments::Regiments;
 use crate::structures::Refusal;
+use crate::{StateHasher, UnitStats};
 
 /// Grid cells along one tile.
 pub const CELLS_PER_TILE: i32 = 2;
@@ -846,9 +846,9 @@ impl Nav {
 
     /// Where a block wanting `berth` (see [`Regiments::berth`]) ordered to
     /// stand at `p` should stand: `p` if the block fits there, else the
-    /// roomiest ground within the shortfall of it in plain sight, so a
-    /// block sent to the water's edge stands back from it instead of
-    /// hanging over it. `p` on ground too close to blocked ground for a
+    /// nearest ground within the shortfall of it, in plain sight, where it
+    /// does fit, so a block sent to the water's edge stands back from it
+    /// instead of hanging over it (and `p` if there is no such ground). `p` on ground too close to blocked ground for a
     /// regiment's centre first becomes the nearest that isn't (as a route
     /// would take it). Always `p` with no map.
     pub(crate) fn settle(&self, p: FxVec2, berth: u8) -> FxVec2 {
@@ -864,7 +864,10 @@ impl Nav {
             }
         }
         let roomy = g.roomiest(c, berth, work);
-        if roomy == g.cell_at(p) {
+        // Only to ground where the block fits: in a narrows the roomiest
+        // spot is one spot for everyone sent near it, and blocks ordered
+        // apart would end up on top of each other.
+        if roomy == g.cell_at(p) || g.clear[roomy as usize] < berth {
             p
         } else {
             g.centre(roomy)
@@ -1211,8 +1214,7 @@ fn find(grid: &Grid, s: &mut Search, ask: Ask, out: &mut [FxVec2]) -> Option<(us
     };
     if straight(s, start, goal) {
         s.chain.push(goal);
-    } else if start_sector == goal_sector
-        && s.sector(grid, start_sector, start, Some(goal), berth)
+    } else if start_sector == goal_sector && s.sector(grid, start_sector, start, Some(goal), berth)
     {
         truncated = !s.append_sector_route(grid, start_sector, goal);
     } else {
@@ -1307,7 +1309,9 @@ fn spread_through_portals(
         let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
         let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
-        let need = grid.need(from_cell, to_cell, berth).min(grid.need(c, c, berth));
+        let need = grid
+            .need(from_cell, to_cell, berth)
+            .min(grid.need(c, c, berth));
         // Across plain ground only, unless the portal itself is in a ford
         // or on a slope: then across ground no worse than it, so blocks
         // wade a ford side by side instead of in one file.

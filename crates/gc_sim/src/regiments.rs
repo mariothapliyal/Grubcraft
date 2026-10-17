@@ -52,7 +52,6 @@ const TURN_BEFORE_MARCH: i32 = 0x2000;
 /// pace instead of wheeling round to face the way it walks.
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
 
-
 /// Ticks between looks at whether the way ahead has cleared, while queuing.
 const RECHECK: u16 = 4;
 /// The most ticks a regiment marches without looking for friends in its
@@ -63,9 +62,6 @@ const CLEAR_TICKS: u8 = 8;
 /// between widening by a file once there is room again.
 const SQUEEZE_TICKS: u8 = 2;
 const WIDEN_TICKS: u8 = 6;
-/// Ticks between measuring the ground while the block's width holds (its
-/// look ahead covers the ground it marches meanwhile).
-const MEASURE_TICKS: u8 = 3;
 /// Room kept between a squeezed block's outermost soldiers and blocked
 /// ground, in tiles.
 const SQUEEZE_MARGIN: Fx = Fx::from_ratio(1, 2);
@@ -195,8 +191,7 @@ regiment_fields! {
     /// while it squeezes through ground too tight for its block (see
     /// [`Regiments::squeeze`]).
     frontage: u16 = 0,
-    /// Ticks until it next measures the ground to re-form by a file,
-    /// squeezing or widening.
+    /// Ticks until it re-forms by another file, squeezing or widening.
     reform: u8 = 0,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
@@ -644,7 +639,10 @@ impl Regiments {
         // The outermost soldiers stand half a spacing in from the block's
         // edge.
         let outer = |f: u16| Fx::from_raw(fs.raw() * i32::from(f - 1) / 2) + SQUEEZE_MARGIN;
-        let fit = (1..=frontage).rev().find(|&f| outer(f) <= room).unwrap_or(1);
+        let fit = (1..=frontage)
+            .rev()
+            .find(|&f| outer(f) <= room)
+            .unwrap_or(1);
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
             self.files[i] = files - (files - fit).div_ceil(2);
@@ -652,8 +650,6 @@ impl Regiments {
         } else if fit > files && outer(files + 1) + WIDEN_SPARE <= room {
             self.files[i] = files + 1;
             self.reform[i] = WIDEN_TICKS;
-        } else {
-            self.reform[i] = MEASURE_TICKS;
         }
     }
 
@@ -896,8 +892,7 @@ impl Regiments {
                     let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
                     // Following a friend marching on ahead (its route goes
                     // where this one's does, room beside it or not) uses
-                    // up no patience: the queue is moving. It looks again
-                    // every few ticks, like any regiment waiting.
+                    // up no patience: the queue is moving.
                     let following = |j: usize| {
                         self.target[j].is_some()
                             && self.engaged[j].is_none()
@@ -905,7 +900,7 @@ impl Regiments {
                     };
                     match found {
                         Ok(j) if following(j) => {
-                            self.held[i] = 1;
+                            self.held[i] = self.held[i].max(1);
                             continue;
                         }
                         Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {
