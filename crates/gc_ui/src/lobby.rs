@@ -161,24 +161,75 @@ pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
-/// How many tiles a side a Field Battle map is for `players`: 256, or 320
-/// for five or six, whose Grand Battle armies don't fit on 256. The same
-/// map choice and code make a different map at each size.
-pub fn field_map_tiles(players: usize) -> u32 {
-    if players > 4 { 320 } else { 256 }
+/// How big a Field Battle map is, for its player count
+/// ([`field_map_tiles`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MapSize {
+    /// The old battle maps: a minute and a half's march across.
+    Small,
+    /// Several minutes' march across, room to manoeuvre and explore.
+    Standard,
+    /// A step bigger again.
+    Large,
+}
+
+impl MapSize {
+    pub const ALL: [MapSize; 3] = [MapSize::Small, MapSize::Standard, MapSize::Large];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MapSize::Small => "Small",
+            MapSize::Standard => "Standard",
+            MapSize::Large => "Large",
+        }
+    }
+}
+
+/// How many tiles a side a Field Battle map of `size` is for `players`.
+/// Foot marches about 3 tiles a second, so a Standard map is about three
+/// minutes across for two players and over four for six. Small is the
+/// old 256, or 320 for five or six, whose Grand Battle armies don't fit
+/// on 256. The same map choice and code make a different map at each
+/// size.
+pub fn field_map_tiles(size: MapSize, players: usize) -> u32 {
+    let step = match players {
+        0..=2 => 0,
+        3..=4 => 1,
+        _ => 2,
+    };
+    match size {
+        MapSize::Small => {
+            if players > 4 {
+                320
+            } else {
+                256
+            }
+        }
+        MapSize::Standard => 512 + 128 * step,
+        MapSize::Large => 640 + 128 * step,
+    }
 }
 
 /// Maps the lobby offers: the seeded map, a random map from each recipe,
-/// and a random recipe. The same names in the same order as
+/// a random recipe, and the big Wilds maps as wild as the seed picks or
+/// as plains, mixed or wild land. The same names in the same order as
 /// `gc_map::FIELD_MAPS` (the game checks).
-pub const MAPS: [&str; 6] = [
+pub const MAPS: [&str; 10] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
     "Random: Hill",
     "Random: Open",
     "Random: Any",
+    "Land: Random",
+    "Land: Plains",
+    "Land: Mixed",
+    "Land: Wild",
 ];
+
+/// The map a new lobby starts on: Wilds, as wild as the seed picks
+/// (`gc_map::WILDS`).
+pub const DEFAULT_MAP: usize = 6;
 
 /// The Conquest maps the lobby offers, and how many players each is for.
 /// The game makes them from the shipped maps of the same names.
@@ -318,6 +369,8 @@ pub struct LobbySettings {
     pub on_drop: OnDrop,
     /// Field Battle: points each side raises its army with.
     pub budget: Budget,
+    /// Field Battle: how big the map is.
+    pub map_size: MapSize,
     /// Whether champions may duel between the lines before a battle with a
     /// computer player (a chance, not every time).
     pub champions: bool,
@@ -326,13 +379,14 @@ pub struct LobbySettings {
 impl Default for LobbySettings {
     fn default() -> Self {
         LobbySettings {
-            map: 0,
+            map: DEFAULT_MAP,
             map_seed: DEFAULT_MAP_SEED,
             mode: GameMode::FieldBattle,
             tempo: Tempo::Standard,
             victory: Victory::Both,
             on_drop: OnDrop::Wait,
             budget: Budget::Battle,
+            map_size: MapSize::Standard,
             champions: true,
         }
     }
@@ -828,6 +882,15 @@ mod tests {
         ] {
             assert_eq!(parse_map_code(junk), None, "{junk:?}");
         }
+    }
+
+    #[test]
+    fn standard_maps_grow_with_the_players_and_small_keeps_the_old_sizes() {
+        let sizes = |size| [2, 3, 4, 5, 6].map(|p| field_map_tiles(size, p));
+        assert_eq!(sizes(MapSize::Small), [256, 256, 256, 320, 320]);
+        assert_eq!(sizes(MapSize::Standard), [512, 640, 640, 768, 768]);
+        assert_eq!(sizes(MapSize::Large), [640, 768, 768, 896, 896]);
+        assert_eq!(LobbySettings::default().map_size, MapSize::Standard);
     }
 
     #[test]

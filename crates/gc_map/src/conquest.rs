@@ -116,6 +116,7 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         noise: Some(noise),
         terrain: w.terrain,
         cover: w.cover,
+        land: Vec::new(),
         objects,
         set_pieces: w.set_pieces,
     })

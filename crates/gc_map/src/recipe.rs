@@ -79,9 +79,9 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         Recipe::Open => w.open(),
     }
     let (woods, meadows) = match recipe {
-        Recipe::Open => (w.range(4, 7), w.range(3, 5)),
-        Recipe::Hill => (w.range(3, 5), w.range(2, 4)),
-        Recipe::Pass | Recipe::Ford => (w.range(2, 4), w.range(2, 4)),
+        Recipe::Open => (w.many(4, 7), w.many(3, 5)),
+        Recipe::Hill => (w.many(3, 5), w.many(2, 4)),
+        Recipe::Pass | Recipe::Ford => (w.many(2, 4), w.many(2, 4)),
     };
     for _ in 0..woods {
         w.clump(CoverKind::Wood, &starts);
@@ -110,6 +110,7 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         noise: Some(noise),
         terrain: w.terrain,
         cover: w.cover,
+        land: Vec::new(),
         objects,
         set_pieces: w.set_pieces,
     }
@@ -119,9 +120,9 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
 /// Battle map (the Conquest recipes use it too).
 pub(crate) struct Writer<'a> {
     pub(crate) rng: &'a mut Pcg32,
-    tiles: i32,
+    pub(crate) tiles: i32,
     /// The middle line, where the halves meet.
-    mid: i32,
+    pub(crate) mid: i32,
     /// Ground level before the stamps.
     pub(crate) base: i32,
     pub(crate) terrain: Vec<TerrainOp>,
@@ -147,6 +148,14 @@ impl<'a> Writer<'a> {
         lo + self.rng.below((hi - lo + 1) as u32) as i32
     }
 
+    /// How many of a thing to dress the ground with: `lo` to `hi` on a
+    /// 256-tile map, more or fewer with the map's area, so a big map is
+    /// as wooded or as rocky as a small one.
+    pub(crate) fn many(&mut self, lo: i32, hi: i32) -> i32 {
+        let k = self.range(lo, hi);
+        (k * self.tiles * self.tiles + 128 * 256) / (256 * 256)
+    }
+
     pub(crate) fn stamp(&mut self, shape: Shape, mode: Mode, height: i32, edge: i32) {
         self.terrain.push(TerrainOp {
             shape,
@@ -157,7 +166,7 @@ impl<'a> Writer<'a> {
     }
 
     /// A flat, open place round a start.
-    fn flat(&mut self, at: Pos, r: i32, edge: i32) {
+    pub(crate) fn flat(&mut self, at: Pos, r: i32, edge: i32) {
         self.stamp(Shape::Disc { at, r }, Mode::Set, BASE, edge);
     }
 

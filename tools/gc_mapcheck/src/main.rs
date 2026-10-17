@@ -2,12 +2,14 @@
 //! `gc_mapcheck png FILE OUT.png` draws one; `gc_mapcheck gen RECIPE SIZE
 //! SEED OUT.ron` writes the map a recipe makes from a seed, so a good one
 //! can become a hand-tuned map: a Field Battle recipe (Pass, Ford, Hill or
-//! Open) takes a size in tiles, a Conquest recipe (Teeth, Bowl or Fen)
+//! Open, or the Wilds as Plains, Mixed or Wild) takes a size in tiles, a
+//! Conquest recipe (Teeth, Bowl or Fen)
 //! takes Duel, Skirmish or Warfield and rerolls the seed until the checker
 //! passes the map; `gc_mapcheck battle AREA ROUTE FEATURE FORT SEED OUT.ron`
 //! writes a campaign battle map (FORT is `fort` or `open`).
 
 use gc_map::conquest::{CONQUEST_SIZES, ConquestRecipe};
+use gc_map::wilds::Wildness;
 use gc_mapcheck::{Map, MapDef, check, generate, preview};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -29,6 +31,11 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
             .parse()
             .map_err(|_| format!("{size} isn't a size in tiles"))?;
         gc_map::recipe::describe(field, tiles, seed)
+    } else if let Some(wild) = Wildness::ALL.into_iter().find(|w| is(&format!("{w:?}"))) {
+        let tiles = size
+            .parse()
+            .map_err(|_| format!("{size} isn't a size in tiles"))?;
+        gc_map::wilds::describe(tiles, seed, wild)
     } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {
         let size = named(&CONQUEST_SIZES, size)?;
         let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;

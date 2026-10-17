@@ -20,10 +20,13 @@ pub const START_PLATEAUS: usize = 6;
 /// Centres of the six start plateaus in whole tiles: north-west,
 /// north-east, south-west, south-east, then north and south in the middle
 /// of their edges. The first four keep their places; the last two were
-/// added for six-player battles.
+/// added for six-player battles. On maps up to 320 tiles they stand a
+/// quarter of the map in from the edges; on the big maps (512 and more) a
+/// sixth, so the armies start far apart and not only the edges.
 pub fn plateaus(tiles: u32) -> [Pos; START_PLATEAUS] {
     let n = tiles as i32;
-    let (q1, q2, q3) = (n / 4, n / 2, n * 3 / 4);
+    let inset = if n >= 512 { n / 6 } else { n / 4 };
+    let (q1, q2, q3) = (inset, n / 2, n - inset);
     [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
 }
 

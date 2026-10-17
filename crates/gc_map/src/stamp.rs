@@ -195,29 +195,42 @@ impl Map {
         let water = sample_of_sim(i64::from(def.water * SIXTEENTH));
         let mut map = Map::from_samples(tiles as u32, samples, water);
 
-        // Cover per tile, from the shape at the tile's centre.
+        // Cover per tile, from the shape at the tile's centre; thicket is
+        // woods that also blocks.
         let n = tiles as usize;
         let mut cover = vec![0u8; n * n];
+        let mut thicket = vec![
+            false;
+            if def.cover.iter().any(|c| c.kind == CoverKind::Thicket) {
+                n * n
+            } else {
+                0
+            }
+        ];
         for op in &def.cover {
             let byte = match op.kind {
                 CoverKind::Open => gc_sim::Cover::Open as u8,
                 CoverKind::Grass => gc_sim::Cover::Grass as u8,
-                CoverKind::Wood => gc_sim::Cover::Wood as u8,
+                CoverKind::Wood | CoverKind::Thicket => gc_sim::Cover::Wood as u8,
             };
-            for s in images(op.shape, def.symmetry, tiles) {
-                let (x0, x1, y0, y1) = reach(s, 0, last);
-                let tile_range = |a: i64, b: i64| (a / UNIT).max(0)..(b / UNIT + 1).min(n as i64);
-                for y in tile_range(y0, y1) {
-                    for x in tile_range(x0, x1) {
-                        let (px, py) = (x * UNIT + UNIT / 2, y * UNIT + UNIT / 2);
-                        if weight(s, 0, px, py) > 0 {
-                            cover[y as usize * n + x as usize] = byte;
-                        }
-                    }
+            let dense = op.kind == CoverKind::Thicket;
+            for i in tiles_in(op.shape, def.symmetry, tiles) {
+                cover[i] = byte;
+                if let Some(t) = thicket.get_mut(i) {
+                    *t = dense;
                 }
             }
         }
+        // The land, painted in order.
+        let mut land = vec![0u8; if def.land.is_empty() { 0 } else { n * n }];
+        for op in &def.land {
+            for i in tiles_in(op.shape, def.symmetry, tiles) {
+                land[i] = op.land as u8;
+            }
+        }
         map.cover = cover;
+        map.thicket = thicket;
+        map.land = land;
         map.name.clone_from(&def.name);
         map.size = Some(def.size);
         map.players = def.players;
@@ -225,6 +238,27 @@ impl Map {
         map.set_pieces.clone_from(&def.set_pieces);
         map
     }
+}
+
+/// The tiles (as indices, row by row) whose centres lie in a shape or any
+/// of its turned copies.
+fn tiles_in(shape: Shape, symmetry: Symmetry, tiles: i32) -> Vec<usize> {
+    let n = i64::from(tiles);
+    let last = n * UNIT;
+    let mut out = Vec::new();
+    for s in images(shape, symmetry, tiles) {
+        let (x0, x1, y0, y1) = reach(s, 0, last);
+        let tile_range = |a: i64, b: i64| (a / UNIT).max(0)..(b / UNIT + 1).min(n);
+        for y in tile_range(y0, y1) {
+            for x in tile_range(x0, x1) {
+                let (px, py) = (x * UNIT + UNIT / 2, y * UNIT + UNIT / 2);
+                if weight(s, 0, px, py) > 0 {
+                    out.push((y * n + x) as usize);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Octaves of rolling ground: each finer and half as strong.

@@ -82,6 +82,13 @@ pub struct Map {
     pub(crate) sample_water: u16,
     /// Woods and tall grass, one `gc_sim::Cover` byte per tile, row by row.
     pub cover: Vec<u8>,
+    /// Tiles of thicket, woods no one marches through, row by row (empty
+    /// if the map has none). Their cover is woods; [`Map::nav_costs`]
+    /// blocks them.
+    pub thicket: Vec<bool>,
+    /// The look of the ground, one [`crate::def::Land`] per tile as a byte,
+    /// row by row (empty: meadow everywhere).
+    pub land: Vec<u8>,
     /// Starts, seeps, veins, hamlets and the rest. A generated map has its
     /// four starts and nothing else.
     pub objects: Vec<Placed>,
@@ -128,6 +135,8 @@ impl Map {
             water: sim_of_sample(sample_water),
             sample_water,
             cover: Vec::new(),
+            thicket: Vec::new(),
+            land: Vec::new(),
             objects: Vec::new(),
             set_pieces: Vec::new(),
         }
@@ -149,8 +158,8 @@ impl Map {
     }
 
     /// The ground cost of each half-tile cell, row by row, for the
-    /// simulation's pathfinding: cliffs and deep water are blocked, steep
-    /// slopes and fords cost more. Integer rules over the samples, so the
+    /// simulation's pathfinding: cliffs, deep water and thicket are
+    /// blocked, steep slopes and fords cost more. Integer rules over the samples, so the
     /// same samples give the same grid everywhere.
     pub fn nav_costs(&self) -> Vec<u8> {
         let cells_per_tile = gc_sim::nav::CELLS_PER_TILE as u32;
@@ -179,7 +188,9 @@ impl Map {
                 }
                 let mean = sum / n;
                 let rise = hi - lo;
-                cells.push(if mean < deep || rise > cliff {
+                let tile = (cy / cells_per_tile) * self.tiles + cx / cells_per_tile;
+                let thicket = self.thicket.get(tile as usize) == Some(&true);
+                cells.push(if mean < deep || rise > cliff || thicket {
                     gc_sim::nav::BLOCKED
                 } else if mean < water {
                     FORD

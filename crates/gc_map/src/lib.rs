@@ -39,21 +39,32 @@ mod map;
 pub mod recipe;
 mod stamp;
 pub mod view;
+pub mod wilds;
 
 pub use def::{Kind, MapDef, Pos, SizeClass, Symmetry};
 pub use generate::{START_PLATEAUS, plateaus};
 pub use map::{Ground, MAX_HEIGHT, Map, Placed, SAMPLES_PER_TILE, fnv1a, map_hash};
 
 /// The maps a Field Battle can be played on, in the lobby's order: the
-/// seeded map, a random map from each recipe, and a random recipe.
-pub const FIELD_MAPS: [&str; 6] = [
+/// seeded map, a random map from each recipe, a random recipe, then the
+/// Wilds as wild as the seed picks and at each [`wilds::Wildness`] (added
+/// last, so older replays keep their choices).
+pub const FIELD_MAPS: [&str; 10] = [
     "Proving Ground",
     "Random: Pass",
     "Random: Ford",
     "Random: Hill",
     "Random: Open",
     "Random: Any",
+    "Land: Random",
+    "Land: Plains",
+    "Land: Mixed",
+    "Land: Wild",
 ];
+
+/// The first Wilds choice in [`FIELD_MAPS`], as wild as the seed picks:
+/// the one a new lobby starts on. Each [`wilds::Wildness`] follows it.
+pub const WILDS: usize = 6;
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
 /// its size and its seed. The same three make the same map on every
@@ -75,17 +86,20 @@ impl FieldMap {
             tiles,
             seed,
         } = self;
+        use wilds::Wildness;
         let recipe = match choice {
-            1..=4 => recipe::Recipe::ALL[choice - 1],
-            5 => recipe::Recipe::ALL[(seed % 4) as usize],
+            1..=4 => Ok(recipe::Recipe::ALL[choice - 1]),
+            5 => Ok(recipe::Recipe::ALL[(seed % 4) as usize]),
+            WILDS => Err(Wildness::ALL[(seed % 3) as usize]),
+            7..=9 => Err(Wildness::ALL[choice - 7]),
             _ => return Map::generate(seed, tiles),
         };
         let make = |k| {
-            Map::from_def(&recipe::describe(
-                recipe,
-                tiles as i32,
-                seed.wrapping_add(k),
-            ))
+            let seed = seed.wrapping_add(k);
+            Map::from_def(&match recipe {
+                Ok(recipe) => recipe::describe(recipe, tiles as i32, seed),
+                Err(wild) => wilds::describe(tiles as i32, seed, wild),
+            })
         };
         let first = make(0);
         if first.starts_joined() {

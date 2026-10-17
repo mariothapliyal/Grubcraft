@@ -643,8 +643,8 @@ pub(crate) mod tests {
         /// Regiments each party fielded.
         fielded: Vec<usize>,
         /// Time all the minds spent thinking, and the longest single tick.
-        ai_time: std::time::Duration,
-        ai_worst: std::time::Duration,
+        pub(crate) ai_time: std::time::Duration,
+        pub(crate) ai_worst: std::time::Duration,
     }
 
     /// Who fields what: a built army as built (held to the budget), and
@@ -867,12 +867,13 @@ pub(crate) mod tests {
             heightmap.cover.clear();
         }
         let nav = heightmap.nav_costs();
+        let tiles = heightmap.tiles;
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
         let mut world = World::new(&MatchSetup {
             seed,
             capacities: Capacities::default(),
             units: &units,
-            map_tiles: MAP,
+            map_tiles: tiles,
             nav: &nav,
             teams: &teams,
             ground: heightmap.ground(),
@@ -890,7 +891,7 @@ pub(crate) mod tests {
             &units,
             &factions,
             &points,
-            plateau_positions(MAP),
+            plateau_positions(tiles),
             seed,
             true,
             &mut minds,

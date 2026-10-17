@@ -5,7 +5,8 @@
 // Neither pipeline uses a vertex buffer for geometry: terrain vertices are
 // generated from the vertex index over a shared chunk grid, and heights come
 // from an R16Uint heightmap; regiment boxes are generated from the vertex index.
-// Only per-instance data (chunk coords, regiment transforms) is uploaded.
+// Only per-instance data (chunk coords and level of detail, regiment
+// transforms) is uploaded.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -13,7 +14,7 @@ struct Globals {
     // xyz: direction toward the sun (normalised)
     sun_dir: vec4<f32>,
     // x: heightmap samples per tile, y: height of the max u16 value in tiles,
-    // z: tiles per chunk side, w: quads per chunk side
+    // z: tiles per chunk side, w: quads per chunk side at level 0
     map: vec4<f32>,
     // rgb: fog colour, a: fog density
     fog: vec4<f32>,
@@ -35,6 +36,10 @@ const HIGHLIGHT: f32 = 1.6;
 @group(0) @binding(1) var heightmap: texture_2d<u32>;
 @group(0) @binding(2) var shadow_map: texture_depth_2d;
 @group(0) @binding(3) var shadow_sampler: sampler_comparison;
+// The grass colour by the land it grows in (sRGB, alpha 1 where the map has
+// lands), a texel per few tiles over the whole map; one clear texel if not.
+@group(0) @binding(4) var ground_tint: texture_2d<f32>;
+@group(0) @binding(5) var tint_sampler: sampler;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -170,13 +175,50 @@ struct TerrainOut {
     @location(0) world: vec3<f32>,
 };
 
+// Snap `i`, a position along a chunk edge counted in level 0 quads, down to
+// the nearest vertex of a neighbour at level `level`.
+fn snap_to_level(i: u32, level: u32) -> u32 {
+    return (i >> level) << level;
+}
+
+// `levels` packs the chunk's level of detail (bits 0-1) and its west, east,
+// north and south neighbours' levels (bits 2-3, 4-5, 6-7, 8-9). Level n has
+// half the quads per side of level n-1, so its vertices are every second
+// vertex of the finer grid. Where a neighbour is coarser, this chunk's edge
+// vertices snap onto the neighbour's vertices, so the two edges are the same
+// line and leave no crack; the triangles that collapse draw nothing.
 @vertex
-fn vs_terrain(@builtin(vertex_index) vi: u32, @location(0) chunk: vec2<u32>) -> TerrainOut {
-    let quads = u32(g.map.w);
+fn vs_terrain(
+    @builtin(vertex_index) vi: u32,
+    @location(0) chunk: vec2<u32>,
+    @location(1) levels: u32,
+) -> TerrainOut {
+    let level = levels & 3u;
+    let full = u32(g.map.w);
+    let quads = full >> level;
     let side = quads + 1u;
-    let local = vec2<f32>(f32(vi % side), f32(vi / side));
+    let ix = vi % side;
+    let iz = vi / side;
+    // Position in level 0 quads from the chunk's corner.
+    var p = vec2<u32>(ix << level, iz << level);
+    let west = (levels >> 2u) & 3u;
+    let east = (levels >> 4u) & 3u;
+    let north = (levels >> 6u) & 3u;
+    let south = (levels >> 8u) & 3u;
+    if ix == 0u && west > level {
+        p.y = snap_to_level(p.y, west);
+    }
+    if ix == quads && east > level {
+        p.y = snap_to_level(p.y, east);
+    }
+    if iz == 0u && north > level {
+        p.x = snap_to_level(p.x, north);
+    }
+    if iz == quads && south > level {
+        p.x = snap_to_level(p.x, south);
+    }
     let chunk_tiles = g.map.z;
-    let xz = vec2<f32>(chunk) * chunk_tiles + local * (chunk_tiles / f32(quads));
+    let xz = vec2<f32>(chunk) * chunk_tiles + vec2<f32>(p) * (chunk_tiles / f32(full));
     let world = vec3<f32>(xz.x, height_at(xz), xz.y);
     var out: TerrainOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
@@ -188,13 +230,23 @@ fn vs_terrain(@builtin(vertex_index) vi: u32, @location(0) chunk: vec2<u32>) -> 
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let xz = in.world.xz;
     let n = terrain_normal(xz);
-    let h = in.world.y / g.map.y;
+    // The ground's true height, not the mesh's: a coarse chunk's triangles sit
+    // a little off it, and colour and shoreline must not change when a chunk
+    // changes level.
+    let ground = height_at(xz);
+    let h = ground / g.map.y;
     let slope = 1.0 - n.y;
 
     // Painted palette: Grub-soaked soil low, grass mid, bone-white ridges high.
     // Albedos are authored in sRGB and converted to linear for lighting.
     let soil = srgb_to_linear(vec3<f32>(0.42, 0.31, 0.2));
-    let grass = srgb_to_linear(vec3<f32>(0.4, 0.5, 0.22));
+    var grass = srgb_to_linear(vec3<f32>(0.4, 0.5, 0.22));
+    // The land's own grass, its borders wobbled so they show neither the
+    // tint's texels nor the discs the map was painted with.
+    let tiles = f32(textureDimensions(heightmap).x - 1u) / g.map.x;
+    let wobble = vec2<f32>(vnoise(xz * 0.07), vnoise(xz * 0.07 + vec2<f32>(37.0, 11.0))) - 0.5;
+    let tint = textureSampleLevel(ground_tint, tint_sampler, (xz + wobble * 10.0) / tiles, 0.0);
+    grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     var albedo = mix(soil, grass, smoothstep(0.16, 0.26, h));
@@ -208,7 +260,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     var c = shade(albedo, n, in.world);
 
     // Water below the water level: deep teal with a soft shoreline.
-    let depth = g.misc.x - in.world.y;
+    let depth = g.misc.x - ground;
     if depth > 0.0 {
         let water = srgb_to_linear(vec3<f32>(0.16, 0.36, 0.4));
         let wn = vec3<f32>(0.0, 1.0, 0.0);
