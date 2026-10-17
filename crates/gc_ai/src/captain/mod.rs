@@ -33,7 +33,7 @@
 
 mod ambush;
 mod doctrine;
-mod helpers;
+pub(crate) mod helpers;
 mod hunt;
 mod posture;
 mod roles;
@@ -421,9 +421,8 @@ pub struct Captain {
     /// gone to fetch it: every regiment after the nearest enemy.
     pub fetching: bool,
     /// It is the one attacking (a Conquest army on the march): it goes on
-    /// to the enemy rather than wait for them, and crosses water as if it
-    /// had decided to.
-    pub pressing: bool,
+    /// to the enemy rather than wait for them. Set with [`Captain::press`].
+    pressing: bool,
     pub estimate: Option<Estimate>,
     /// What it expected when it first weighed the fight up.
     pub first_estimate: Option<Estimate>,
@@ -589,6 +588,15 @@ impl Captain {
         }
     }
 
+    /// Whether it is the one attacking: pressing on crosses water as if it
+    /// had decided to, and stopping waits behind it again.
+    pub fn press(&mut self, on: bool) {
+        if on != self.pressing {
+            self.pressing = on;
+            self.crossing = on;
+        }
+    }
+
     /// Follow `plan` from the next look: switch to its doctrine (if this
     /// army can fight that way) and wait or advance as it says.
     pub fn follow(&mut self, plan: Plan) {
@@ -633,7 +641,6 @@ impl Captain {
     pub fn think(&mut self, ctx: &mut Ctx, wants: &mut Vec<Want>) {
         let view = ctx.view;
         self.sync_members(ctx);
-        self.crossing |= self.pressing;
         // Once anyone has come to blows it is too late to slip into hiding.
         self.ambush.joined |= view.regiments.iter().any(|r| r.engaged);
         let ours: Vec<&Seen> = self

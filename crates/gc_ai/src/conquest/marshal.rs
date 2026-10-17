@@ -183,8 +183,9 @@ impl Marshal {
             self.next_think = s.now + THINK_TICKS;
             self.wants.clear();
             self.decide(c, s, &army, home);
-            // The Captain has those in the battle.
-            if let Some(b) = &self.battle {
+            // The Captain has those in the battle (in a lull too: the army
+            // waits a moment to see if the enemy comes back).
+            if let Some(b) = self.battle.as_ref() {
                 self.wants.retain(|w| b.view.get(w.regiment).is_none());
             }
             self.orders.decide(view, &mut self.wants);
@@ -197,11 +198,20 @@ impl Marshal {
         let view = s.view;
         let party = s.party;
         let near = |p: Vec2| army.iter().any(|r| r.pos.distance(p) <= ENGAGE);
-        let foes: Vec<&Seen> = view
+        let mut foes: Vec<&Seen> = view
             .regiments
             .iter()
             .filter(|r| is_foe(s, r) && !r.broken() && near(r.pos))
             .collect();
+        // One battle at a time: the enemies about the one nearest the army.
+        let mid = centroid(army);
+        if let Some(first) = foes
+            .iter()
+            .min_by(|a, b| a.pos.distance(mid).total_cmp(&b.pos.distance(mid)))
+            .map(|r| r.pos)
+        {
+            foes.retain(|r| r.pos.distance(first) <= BATTLE_REACH);
+        }
         if self.battle.is_none() {
             if foes.is_empty() {
                 return;
@@ -219,7 +229,7 @@ impl Marshal {
         let Some(b) = self.battle.as_mut() else {
             return;
         };
-        b.captain.pressing = !matches!(self.goal, Goal::Gather);
+        b.captain.press(!matches!(self.goal, Goal::Gather));
         if foes.is_empty() {
             b.quiet_since.get_or_insert(s.now);
         } else {
@@ -471,8 +481,12 @@ impl Marshal {
             if r.engaged {
                 continue;
             }
-            // Keep at one it has already been sent to while it stands.
+            // Keep at one it has already been sent to while it stands; one
+            // that has stopped may be sent again.
             let current = s.world.siege_target(r.handle);
+            if current.is_none() {
+                self.orders.forget_landed(r.handle, s.now);
+            }
             let t = match current.filter(|h| targets.iter().any(|t| t.0 == *h)) {
                 Some(h) => h,
                 None => targets[k % targets.len()].0,
@@ -627,11 +641,14 @@ fn threat_to_home(s: &Sense, army: &[&Seen], home: Option<Vec2>) -> Option<(Vec2
         .iter()
         .filter(|r| is_foe(s, r) && !r.broken())
         .filter(|r| {
-            mine.iter().any(|&(b, home)| {
-                let close = b.distance(r.pos) <= THREAT;
-                at_home |= close && home;
-                close
-            })
+            let mut close = false;
+            for &(b, home) in &mine {
+                if b.distance(r.pos) <= THREAT {
+                    close = true;
+                    at_home |= home;
+                }
+            }
+            close
         })
         .collect();
     let theirs: u32 = near.iter().map(|r| u32::from(r.models)).sum();
@@ -672,10 +689,7 @@ fn march(s: &Sense, regiments: &[&Seen], to: Vec2, face: Vec2, wants: &mut Vec<W
 }
 
 fn centroid(rs: &[&Seen]) -> Vec2 {
-    if rs.is_empty() {
-        return Vec2::ZERO;
-    }
-    rs.iter().map(|r| r.pos).sum::<Vec2>() / rs.len() as f32
+    crate::captain::helpers::centroid(rs)
 }
 
 fn centroid_of(view: &Perception, hs: &[RegimentHandle]) -> Option<Vec2> {

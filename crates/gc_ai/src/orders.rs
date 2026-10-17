@@ -198,8 +198,8 @@ impl Orders {
                 Some(t) => r.pos.distance(t.pos),
                 None => return false,
             },
-            // Buildings aren't in the look; the Marshal re-sends a siege
-            // that has stopped.
+            // Buildings aren't in the look: the Marshal, which can tell, has
+            // a stopped siege forgotten so it can be sent again.
             Act::Siege(_) => return false,
         };
         let last = s.last_distance;
@@ -227,6 +227,17 @@ impl Orders {
     /// Orders sent so far, for the journal and tests.
     pub fn count(&self) -> u32 {
         self.hands.count
+    }
+
+    /// Forget the order last sent to `h` once it has landed, so the same
+    /// order can be sent again: for one the caller can tell has stopped
+    /// that this can't (a siege; buildings aren't in the look).
+    pub fn forget_landed(&mut self, h: RegimentHandle, now: u32) {
+        if let Some(slot) = self.sent.get_mut(h.index as usize)
+            && slot.is_some_and(|s| s.regiment == h && now >= s.lands + GRACE_TICKS)
+        {
+            *slot = None;
+        }
     }
 
     /// The order last decided for a regiment, if any.
