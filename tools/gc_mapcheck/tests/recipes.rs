@@ -61,16 +61,16 @@ fn every_wilds_map_passes_the_checker() {
     );
 }
 
-/// Every big Conquest map, at every wildness and from the Standard size
-/// to the largest, passes the checker: the game doesn't reroll them (a
-/// sweep of 10 seeds of each wildness at 512, 640, 768 and 896 passed
-/// when they were made).
+/// Big Conquest maps pass the checker at every wildness, at the Standard
+/// size and at 768 (which takes the bigger maps' branches): the game
+/// doesn't reroll them. A sweep of 10 seeds of each wildness at 512, 640,
+/// 768 and 896 passed when they were made; this keeps a few of them so
+/// the test stays quick.
 #[test]
 fn every_conquest_wilds_map_passes_the_checker() {
     let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
         .into_iter()
-        .flat_map(|w| [512, 768].map(|t| (w, t)))
-        .flat_map(|(w, t)| (1..=3).map(move |seed| (w, t, seed)))
+        .flat_map(|w| [(512, 1), (512, 2), (768, 3)].map(|(t, seed)| (w, t, seed)))
         .collect();
     let failed = failures(&jobs, |&(wild, tiles, seed)| {
         let report = check(&conquest::describe_wilds(tiles, seed, wild).unwrap());

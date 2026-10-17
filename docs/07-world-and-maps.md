@@ -195,7 +195,7 @@ How fair it is:
 
 The game doesn't reroll these maps: every seed passes the checker. A sweep of 10 seeds of each wildness at 512, 640, 768 and 896 tiles (120 maps) passed, building and checking a 768 map in about 4 seconds. The Conquest mode thread wires these maps into the Conquest lobby.
 
-**Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed; `gen Conquest-Wild 768 SEED OUT.ron` (or `Conquest-Plains`, `Conquest-Mixed`) writes a big one. `every_conquest_wilds_map_passes_the_checker` checks three seeds of each wildness at 512 and 768. `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at Duel, 25 at Skirmish and 12 at Warfield, and needs 80% of them to pass at each size. The `gc_map` tests check that a seed always writes the same description.
+**Tools and tests.** `cargo run -p gc_mapcheck -- gen RECIPE SIZE SEED OUT.ron` writes a Conquest map (Teeth, Bowl or Fen, at Duel, Skirmish or Warfield), and says so if it rerolled the seed; `gen Conquest-Wild 768 SEED OUT.ron` (or `Conquest-Plains`, `Conquest-Mixed`) writes a big one. `every_conquest_wilds_map_passes_the_checker` checks each wildness at 512 (two seeds) and 768 (one). `tools/gc_mapcheck/tests/recipes.rs` checks 50 seeds of each recipe at Duel, 25 at Skirmish and 12 at Warfield, and needs 80% of them to pass at each size. The `gc_map` tests check that a seed always writes the same description.
 
 ## Campaign battle maps
 
