@@ -3,16 +3,14 @@
 //! between its halls and their seeps and veins, so a base never walls in
 //! its own workers or armies.
 //!
-//! Every spot is checked with [`World::can_lay`], the same check the
-//! simulation makes when the order lands; the ground may still change in
+//! Every spot is checked with [`World::may_lay`] and [`World::can_build`],
+//! the checks the simulation makes when the order lands; the ground may still change in
 //! the reaction time between (someone stands there), and then the Steward
 //! simply tries again.
 
 use gc_sim::structures::{BuildingStats, Role};
 use gc_sim::{BuildingId, PlayerId, World};
 use glam::Vec2;
-
-use crate::perception::v2;
 
 /// Tiles kept free between two small buildings (houses, towers, walls)
 /// set side by side.
@@ -30,32 +28,25 @@ pub const REACH: i32 = 18;
 /// Footprint `[x, y, width, depth]` in tiles.
 pub type Foot = [i32; 4];
 
-/// What the spot must keep clear of.
-#[derive(Clone, Debug, Default)]
-pub struct Keep {
-    /// Lanes `(from, to)` in tiles: a hall's middle to a node it serves.
-    pub lanes: Vec<(Vec2, Vec2)>,
-    /// Footprints already taken or about to be (laid but not yet seen).
-    pub taken: Vec<Foot>,
-}
-
 /// The north-west tile for a building of type `building` (`stats`) that
 /// `party` could lay now, as near `near` as can be found within [`REACH`]
-/// tiles, keeping [`GAP`] tiles between two small buildings and
-/// [`WIDE_GAP`] round any other of its own and everything in `keep`.
-/// `None` when nothing fits.
+/// tiles, keeping [`GAP`] tiles between two small buildings,
+/// [`WIDE_GAP`] round any other of its own, and [`LANE`] from each of
+/// `lanes` (a hall's middle to a node it serves). `None` when nothing fits.
 pub fn spot_for(
     world: &World,
     party: PlayerId,
     building: BuildingId,
     stats: &BuildingStats,
     near: Vec2,
-    keep: &Keep,
+    lanes: &[(Vec2, Vec2)],
 ) -> Option<(i32, i32)> {
+    // Its tier and price don't change from tile to tile.
+    world.may_lay(party, building).ok()?;
     let (w, d) = (i32::from(stats.width), i32::from(stats.depth));
     let small = is_small(stats.role);
     // Each footprint with the gap to keep from it.
-    let mut taken: Vec<(Foot, i32)> = keep.taken.iter().map(|&f| (f, WIDE_GAP)).collect();
+    let mut taken: Vec<(Foot, i32)> = Vec::new();
     if let Some(s) = world.structures() {
         let table = s.buildings();
         taken.extend(s.iter().filter(|v| v.owner == party).map(|v| {
@@ -71,26 +62,24 @@ pub fn spot_for(
     }
     let cx = (near.x - w as f32 / 2.0).round() as i32;
     let cy = (near.y - d as f32 / 2.0).round() as i32;
+    let mid = |t: (i32, i32)| Vec2::new(t.0 as f32 + w as f32 / 2.0, t.1 as f32 + d as f32 / 2.0);
     for r in 0..=REACH {
-        let mut best: Option<((i32, i32), f32)> = None;
-        for t in ring(cx, cy, r) {
-            let foot = [t.0, t.1, w, d];
-            if taken.iter().any(|&(f, gap)| overlaps(f, foot, gap)) {
-                continue;
-            }
-            if keep.lanes.iter().any(|&(a, b)| crosses(foot, a, b)) {
-                continue;
-            }
-            if world.can_lay(party, building, t).is_err() {
-                continue;
-            }
-            let mid = Vec2::new(t.0 as f32 + w as f32 / 2.0, t.1 as f32 + d as f32 / 2.0);
-            let score = mid.distance(near);
-            if best.is_none_or(|(_, s)| score < s) {
-                best = Some((t, score));
-            }
-        }
-        if let Some((t, _)) = best {
+        // The cheap checks first, then the ground (which looks at every
+        // regiment) only until the nearest spot that passes.
+        let mut open: Vec<((i32, i32), f32)> = ring(cx, cy, r)
+            .into_iter()
+            .filter(|&t| {
+                let foot = [t.0, t.1, w, d];
+                !taken.iter().any(|&(f, gap)| overlaps(f, foot, gap))
+                    && !lanes.iter().any(|&(a, b)| crosses(foot, a, b))
+            })
+            .map(|t| (t, mid(t).distance(near)))
+            .collect();
+        open.sort_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some(&(t, _)) = open
+            .iter()
+            .find(|(t, _)| world.can_build(building, *t).is_ok())
+        {
             return Some(t);
         }
     }
@@ -127,6 +116,10 @@ pub fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 fn crosses(f: Foot, a: Vec2, b: Vec2) -> bool {
     let min = Vec2::new(f[0] as f32, f[1] as f32);
     let max = min + Vec2::new(f[2] as f32, f[3] as f32);
+    // Nowhere near the lane's box: no need to walk it.
+    if a.min(b).cmpgt(max + LANE).any() || a.max(b).cmplt(min - LANE).any() {
+        return false;
+    }
     // Sample along the lane, close enough to be within a tenth of a tile;
     // lanes are short (a hall to its seeps).
     let steps = (a.distance(b) / 0.2).ceil().max(1.0) as i32;
@@ -135,11 +128,6 @@ fn crosses(f: Foot, a: Vec2, b: Vec2) -> bool {
         let q = p.clamp(min, max);
         q.distance(p) < LANE
     })
-}
-
-/// The middle of a structure's footprint, in tiles.
-pub fn centre_of(v: &gc_sim::structures::StructureView) -> Vec2 {
-    v2(v.centre())
 }
 
 #[cfg(test)]

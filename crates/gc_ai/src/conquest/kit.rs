@@ -5,7 +5,7 @@
 //! nothing of factions.
 
 use gc_sim::structures::{BuildingStats, DROP_OFF_GRUB, Role};
-use gc_sim::{BuildingId, ConquestUnit, UnitId};
+use gc_sim::{BuildingId, ConquestUnit, UnitId, World};
 use glam::Vec2;
 
 use crate::personality::Faction;
@@ -53,10 +53,6 @@ pub struct Kit {
 }
 
 impl Kit {
-    pub fn building(&self, id: BuildingId) -> Option<&KitBuilding> {
-        self.buildings.iter().find(|b| b.id == id)
-    }
-
     pub fn unit(&self, id: UnitId) -> Option<&KitUnit> {
         self.units.iter().find(|u| u.id == id)
     }
@@ -120,18 +116,17 @@ impl Kit {
             .or_else(|| self.main().filter(takes_grub))
     }
 
-    /// The fighting units building type `b` (or anything it grew from)
-    /// trains, given `grew_from(building, of)` from the simulation's
-    /// building table.
+    /// The units building type `b` (or anything it grew from) trains.
     pub fn trained_at<'a>(
         &'a self,
+        world: &'a World,
         b: BuildingId,
-        grew_from: impl Fn(BuildingId, BuildingId) -> bool + 'a,
     ) -> impl Iterator<Item = &'a KitUnit> + 'a {
+        let table = world.structures();
         self.units.iter().filter(move |u| {
             u.unit
                 .trained_at
-                .is_some_and(|at| at == b || grew_from(b, at))
+                .is_some_and(|at| at == b || table.is_some_and(|t| t.grew_from(b, at)))
         })
     }
 }

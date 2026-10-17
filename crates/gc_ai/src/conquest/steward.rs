@@ -10,22 +10,20 @@
 //! [`EconomyStyle`](super::kit::EconomyStyle) as they reach the simulation.
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
-use gc_sim::structures::{
-    BuildingStats, DROP_OFF_GRUB, DROP_OFF_MARROW, Role, StructureHandle, StructureView,
-};
+use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView};
 use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, UnitId};
 use glam::Vec2;
 
 use super::Sense;
-use super::clicks::Clicks;
-use super::kit::{Kit, KitBuilding, KitUnit};
-use super::placing::{self, Keep};
+use super::kit::{KitBuilding, KitUnit};
+use super::placing;
+use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx_vec, v2};
 
 /// Ticks between looks.
 const THINK_TICKS: u32 = TICKS_PER_SECOND / 2;
 /// A node is served by a drop-off within this many tiles of it.
-pub const SERVE: f32 = 22.0;
+const SERVE: f32 = 22.0;
 /// Ticks a lay may take to show on the field before it is tried again.
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
@@ -65,7 +63,6 @@ pub struct Ledger {
     pub workers: u16,
     pub want_workers: u16,
     pub producers: u8,
-    pub halls: u8,
     pub tier: u8,
     /// Grub and Marrow set aside for what it wants to build next.
     pub saving: (u32, u32),
@@ -84,6 +81,8 @@ pub struct Steward {
     pub home: Option<Vec2>,
     /// When a Marrow gatherer may next move to Grub.
     next_rebalance: u32,
+    /// When it may next look for a spot, after finding none.
+    next_lay: u32,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -101,11 +100,7 @@ impl Mine {
         v2(self.view.centre())
     }
     fn takes(&self, r: Resource) -> bool {
-        let bit = match r {
-            Resource::Grub => DROP_OFF_GRUB,
-            Resource::Marrow => DROP_OFF_MARROW,
-        };
-        self.stats.flags & bit != 0
+        self.stats.flags & r.drop_off() != 0
     }
 }
 
@@ -155,7 +150,6 @@ impl Steward {
             .retain(|&(_, t)| s.now < t + reaction + SENT_TICKS);
         self.ledger.saving = (0, 0);
         self.ledger.tier = look.tier;
-        self.ledger.halls = look.mine.iter().filter(|m| m.takes(Resource::Grub)).count() as u8;
 
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
@@ -231,7 +225,7 @@ impl Steward {
             || look
                 .mine
                 .iter()
-                .any(|m| m.finished() && trains_fighters(s.kit, s, m.view.building));
+                .any(|m| m.finished() && trains_fighters(s, m.view.building));
         started && banked < MARROW_ENOUGH
     }
 
@@ -293,7 +287,7 @@ impl Steward {
                 if k == 0 {
                     clicks.give(s.now, order);
                 } else {
-                    clicks.give_with(s.now, order);
+                    clicks.push(s.now, order);
                 }
                 self.sent.push((regiment, s.now));
             }
@@ -462,7 +456,7 @@ impl Steward {
     /// supply runs out, a first production building, an expansion, more
     /// production.
     fn build(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
-        if !self.laying.is_empty() {
+        if !self.laying.is_empty() || s.now < self.next_lay {
             return;
         }
         let Some(bank) = s.world.bank(s.party) else {
@@ -477,7 +471,7 @@ impl Steward {
         let producers: Vec<&Mine> = look
             .mine
             .iter()
-            .filter(|m| trains_fighters(s.kit, s, m.view.building))
+            .filter(|m| trains_fighters(s, m.view.building))
             .collect();
         let production = producers
             .iter()
@@ -500,8 +494,15 @@ impl Steward {
                 .map(|b| (b, self.inner_spot(look)))
         };
         let expand = || {
-            let site = self.wants_expansion(s, look)?;
-            s.kit.expansion().map(|b| (b, site))
+            let b = s.kit.expansion()?;
+            if !self.time_to_expand(s, look) {
+                return None;
+            }
+            // Saving up for it: where can wait until it can pay.
+            if s.world.may_lay(s.party, b.id).is_err() {
+                return Some((b, Vec2::ZERO));
+            }
+            Some((b, self.expansion_site(s, look, self.home?)?))
         };
         let more = || {
             (production < PRODUCERS_PER_TIER * usize::from(look.tier.max(1))
@@ -517,11 +518,11 @@ impl Steward {
             self.ledger.saving = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
             return;
         }
-        let keep = Keep {
-            lanes: self.lanes(look),
-            taken: Vec::new(),
-        };
-        let Some(tile) = placing::spot_for(s.world, s.party, b.id, &b.stats, near, &keep) else {
+        let Some(tile) =
+            placing::spot_for(s.world, s.party, b.id, &b.stats, near, &self.lanes(look))
+        else {
+            // Nowhere fits: look again in a while, not every think.
+            self.next_lay = s.now + LAY_TICKS;
             return;
         };
         let foot_mid = Vec2::new(
@@ -584,7 +585,7 @@ impl Steward {
         let have = |id: BuildingId| look.mine.iter().any(|m| m.view.building == id);
         let fighters = |b: &KitBuilding| {
             s.kit
-                .trained_at(b.id, |x, y| grew_from(s, x, y))
+                .trained_at(s.world, b.id)
                 .filter(|u| u.fighter && u.unit.tier <= look.tier.max(1))
                 .count()
         };
@@ -601,10 +602,9 @@ impl Steward {
             .or_else(|| options.max_by_key(|b| (fighters(b), std::cmp::Reverse(b.stats.cost_grub))))
     }
 
-    /// Where to expand to, once it is time: the nearest free cluster of
-    /// Grub seeps.
-    fn wants_expansion(&self, s: &Sense, look: &Look) -> Option<Vec2> {
-        s.kit.expansion()?;
+    /// Whether it is time to expand: its seeps are running out, or the
+    /// time has come and they are full.
+    fn time_to_expand(&self, s: &Sense, look: &Look) -> bool {
         let grub: Vec<_> = look
             .served
             .iter()
@@ -620,11 +620,7 @@ impl Steward {
             .mine
             .iter()
             .any(|m| !m.finished() && m.takes(Resource::Grub));
-        if rising || !(running_out || (time && full)) {
-            return None;
-        }
-        let home = self.home?;
-        self.expansion_site(s, look, home)
+        !rising && (running_out || (time && full))
     }
 
     /// The middle of the nearest cluster of Grub seeps no hall of its own
@@ -676,7 +672,7 @@ impl Steward {
         let production = look
             .mine
             .iter()
-            .any(|m| m.finished() && trains_fighters(s.kit, s, m.view.building));
+            .any(|m| m.finished() && trains_fighters(s, m.view.building));
         let workers = look.workers.len();
         let army: u32 = look
             .army
@@ -753,7 +749,7 @@ impl Steward {
             }
             let options: Vec<&KitUnit> = s
                 .kit
-                .trained_at(m.view.building, |x, y| grew_from(s, x, y))
+                .trained_at(s.world, m.view.building)
                 .filter(|u| u.fighter && u.unit.tier <= look.tier)
                 .collect();
             if options.is_empty() {
@@ -821,7 +817,7 @@ impl Steward {
         self.rallied
             .retain(|(h, _)| look.mine.iter().any(|m| m.view.handle == *h));
         for m in look.mine.iter().filter(|m| m.finished()) {
-            if !trains_fighters(s.kit, s, m.view.building) {
+            if !trains_fighters(s, m.view.building) {
                 continue;
             }
             let k = self.rallied.iter().position(|(h, _)| *h == m.view.handle);
@@ -852,9 +848,8 @@ fn grew_from(s: &Sense, building: BuildingId, of: BuildingId) -> bool {
 }
 
 /// Whether building type `b` trains any fighters.
-fn trains_fighters(kit: &Kit, s: &Sense, b: BuildingId) -> bool {
-    kit.trained_at(b, |x, y| grew_from(s, x, y))
-        .any(|u| u.fighter)
+fn trains_fighters(s: &Sense, b: BuildingId) -> bool {
+    s.kit.trained_at(s.world, b).any(|u| u.fighter)
 }
 
 /// A siege engine or artillery: what knocks buildings down.

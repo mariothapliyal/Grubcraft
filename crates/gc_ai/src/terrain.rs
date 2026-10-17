@@ -44,11 +44,6 @@ impl Terrain {
         }
     }
 
-    /// The map's size in tiles (zero: unbounded).
-    pub fn tiles(&self) -> u32 {
-        self.map_tiles
-    }
-
     /// From the match's nav costs (`MatchSetup::nav`); empty means open.
     pub fn new(nav: &[u8], map_tiles: u32) -> Terrain {
         let side = map_tiles as i32 * CELLS_PER_TILE;

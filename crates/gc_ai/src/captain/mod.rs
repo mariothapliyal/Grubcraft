@@ -421,7 +421,8 @@ pub struct Captain {
     /// gone to fetch it: every regiment after the nearest enemy.
     pub fetching: bool,
     /// It is the one attacking (a Conquest army on the march): it goes on
-    /// to the enemy rather than wait for them, across water too.
+    /// to the enemy rather than wait for them, and crosses water as if it
+    /// had decided to.
     pub pressing: bool,
     pub estimate: Option<Estimate>,
     /// What it expected when it first weighed the fight up.
@@ -632,6 +633,7 @@ impl Captain {
     pub fn think(&mut self, ctx: &mut Ctx, wants: &mut Vec<Want>) {
         let view = ctx.view;
         self.sync_members(ctx);
+        self.crossing |= self.pressing;
         // Once anyone has come to blows it is too late to slip into hiding.
         self.ambush.joined |= view.regiments.iter().any(|r| r.engaged);
         let ours: Vec<&Seen> = self

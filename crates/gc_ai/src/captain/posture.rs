@@ -176,7 +176,7 @@ impl Captain {
                     None => {}
                 }
             }
-            let behind_water = self.river.is_some() && !self.crossing && !self.pressing;
+            let behind_water = self.river.is_some() && !self.crossing;
             // Behind water it waits for them; while its champion fights it
             // watches; whatever the plan.
             let halted = behind_water || watching;

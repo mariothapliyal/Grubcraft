@@ -85,22 +85,12 @@ struct Sent {
 
 #[derive(Clone)]
 pub struct Orders {
-    party: PlayerId,
-    reaction: u32,
-    /// Attention per tick and the most that can be saved up.
-    refill: f32,
-    cap: f32,
-    attention: f32,
-    last_tick: Option<u32>,
+    hands: Hands,
     /// The order last decided for each regiment, by pool index.
     sent: Vec<Option<Sent>>,
-    /// Orders decided but not yet sent, in the order they were decided.
-    queue: VecDeque<(u32, Command)>,
     /// Groups already paid for in this look (a handful at most), kept to
     /// reuse its room.
     paid_groups: Vec<u32>,
-    /// Orders sent so far, for the journal and tests.
-    pub count: u32,
     /// Orders decided so far, by priority, and how many were repeats of
     /// one not being carried out.
     pub decided: [u32; 8],
@@ -113,19 +103,10 @@ pub struct Orders {
 
 impl Orders {
     pub fn new(party: PlayerId, reaction_ticks: u32, orders_per_minute: u32) -> Orders {
-        let per_minute = orders_per_minute.max(1) as f32;
-        let cap = (per_minute / 4.0).max(3.0);
         Orders {
-            party,
-            reaction: reaction_ticks,
-            refill: per_minute / (60.0 * crate::perception::TICKS),
-            cap,
-            attention: cap,
-            last_tick: None,
+            hands: Hands::new(party, reaction_ticks, orders_per_minute, 3.0),
             sent: Vec::new(),
-            queue: VecDeque::new(),
             paid_groups: Vec::new(),
-            count: 0,
             decided: [0; 8],
             waited: [0; 8],
             repeats: 0,
@@ -137,11 +118,7 @@ impl Orders {
     /// are ignored. Reorders `wants` by priority.
     pub fn decide(&mut self, view: &Perception, wants: &mut [Want]) {
         let now = view.tick;
-        if let Some(last) = self.last_tick {
-            let dt = now.saturating_sub(last) as f32;
-            self.attention = (self.attention + dt * self.refill).min(self.cap);
-        }
-        self.last_tick = Some(now);
+        self.hands.refresh(now);
         // Most urgent first; among equals, the order they were decided.
         wants.sort_by_key(|w| std::cmp::Reverse(w.priority));
         let mut paid_groups = std::mem::take(&mut self.paid_groups);
@@ -171,15 +148,15 @@ impl Orders {
             if !free {
                 // Routine orders leave some attention in hand for urgent ones.
                 let keep = if w.priority <= ROUTINE {
-                    self.cap * 0.5
+                    self.hands.cap * 0.5
                 } else {
                     0.0
                 };
-                if self.attention < 1.0 + keep {
+                if self.hands.attention < 1.0 + keep {
                     self.waited[(w.priority as usize).min(7)] += 1;
                     continue;
                 }
-                self.attention -= 1.0;
+                self.hands.attention -= 1.0;
                 self.spent += 1;
                 if w.group != 0 {
                     paid_groups.push(w.group);
@@ -198,12 +175,11 @@ impl Orders {
             self.sent[i] = Some(Sent {
                 regiment: w.regiment,
                 act: w.act,
-                lands: now + self.reaction,
+                lands: now + self.hands.reaction,
                 last_distance: None,
                 retries,
             });
-            self.queue
-                .push_back((now + self.reaction, command(w.regiment, &w.act)));
+            self.hands.push(now, command(w.regiment, &w.act));
         }
         self.paid_groups = paid_groups;
     }
@@ -245,17 +221,12 @@ impl Orders {
 
     /// Send the orders whose reaction time is up.
     pub fn release(&mut self, tick: u32, out: &mut Vec<PlayerCommand>) {
-        while let Some(&(at, command)) = self.queue.front() {
-            if at > tick {
-                break;
-            }
-            self.queue.pop_front();
-            self.count += 1;
-            out.push(PlayerCommand {
-                player: self.party,
-                command,
-            });
-        }
+        self.hands.release(tick, out);
+    }
+
+    /// Orders sent so far, for the journal and tests.
+    pub fn count(&self) -> u32 {
+        self.hands.count
     }
 
     /// The order last decided for a regiment, if any.
@@ -270,7 +241,97 @@ impl Orders {
 
     /// Orders waiting out their reaction time.
     pub fn pending(&self) -> usize {
-        self.queue.len()
+        self.hands.queue.len()
+    }
+}
+
+/// A mind's hands: attention, refilled at its level's orders per minute
+/// up to a few seconds' worth, and the orders it has given waiting out its
+/// reaction time. The army's [`Orders`] and a Conquest mind's economy
+/// clicks each have their own, as a player splits theirs between base and
+/// battle.
+#[derive(Clone, Debug)]
+pub struct Hands {
+    party: PlayerId,
+    reaction: u32,
+    /// Attention per tick and the most that can be saved up.
+    refill: f32,
+    cap: f32,
+    attention: f32,
+    last_tick: Option<u32>,
+    /// Orders given but not yet sent, in the order they were given.
+    queue: VecDeque<(u32, Command)>,
+    /// Orders sent so far.
+    pub count: u32,
+}
+
+impl Hands {
+    /// Hands for `party` at `orders_per_minute`, saving up a quarter of a
+    /// minute's attention but never less than `least_cap` orders.
+    pub fn new(
+        party: PlayerId,
+        reaction_ticks: u32,
+        orders_per_minute: u32,
+        least_cap: f32,
+    ) -> Hands {
+        let per_minute = orders_per_minute.max(1) as f32;
+        let cap = (per_minute / 4.0).max(least_cap);
+        Hands {
+            party,
+            reaction: reaction_ticks,
+            refill: per_minute / (60.0 * crate::perception::TICKS),
+            cap,
+            attention: cap,
+            last_tick: None,
+            queue: VecDeque::new(),
+            count: 0,
+        }
+    }
+
+    /// Top attention up for the time since the last look.
+    pub fn refresh(&mut self, now: u32) {
+        if let Some(last) = self.last_tick {
+            let dt = now.saturating_sub(last) as f32;
+            self.attention = (self.attention + dt * self.refill).min(self.cap);
+        }
+        self.last_tick = Some(now);
+    }
+
+    /// Whether there is attention for another order now.
+    pub fn free(&self) -> bool {
+        self.attention >= 1.0
+    }
+
+    /// Spend attention on `command` if there is some; it leaves after the
+    /// reaction time. Returns whether it was given.
+    pub fn give(&mut self, now: u32, command: Command) -> bool {
+        if !self.free() {
+            return false;
+        }
+        self.attention -= 1.0;
+        self.push(now, command);
+        true
+    }
+
+    /// Queue `command` to leave after the reaction time, without spending
+    /// attention: one of several orders given in the same click.
+    pub fn push(&mut self, now: u32, command: Command) {
+        self.queue.push_back((now + self.reaction, command));
+    }
+
+    /// Send the orders whose reaction time is up.
+    pub fn release(&mut self, tick: u32, out: &mut Vec<PlayerCommand>) {
+        while let Some(&(at, command)) = self.queue.front() {
+            if at > tick {
+                break;
+            }
+            self.queue.pop_front();
+            self.count += 1;
+            out.push(PlayerCommand {
+                player: self.party,
+                command,
+            });
+        }
     }
 }
 

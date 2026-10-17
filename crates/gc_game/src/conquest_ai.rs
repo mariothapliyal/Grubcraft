@@ -92,22 +92,32 @@ pub fn seat(
         if slot.kind != SlotKind::Ai {
             continue;
         }
-        let faction = factions[i];
-        let personality = gc_ai::personality::pick(
+        let level = Difficulty::from_index(usize::from(slot.ai_level));
+        minds.add(mind_for(data, table, map, i, factions[i], level, roll));
+    }
+}
+
+/// The Conquest mind for player `i`, playing `faction` at `level`, its
+/// temper and seed picked from `roll`.
+fn mind_for(
+    data: &GameData,
+    table: &Table,
+    map: &Map,
+    i: usize,
+    faction: Faction,
+    level: Difficulty,
+    roll: u64,
+) -> Mind {
+    let config = MindConfig {
+        party: i as u8,
+        difficulty: level,
+        personality: gc_ai::personality::pick(
             gc_ai::Faction::from_index(faction as u8),
             Pcg32::new(roll, i as u64).next_u32(),
-        );
-        let config = MindConfig {
-            party: i as u8,
-            difficulty: Difficulty::from_index(usize::from(slot.ai_level)),
-            personality,
-            seed: roll ^ i as u64,
-        };
-        minds.add(Mind::conquest(
-            config,
-            Arc::new(kit(data, table, map, faction)),
-        ));
-    }
+        ),
+        seed: roll ^ i as u64,
+    };
+    Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
 }
 
 #[cfg(test)]
@@ -163,22 +173,31 @@ mod tests {
                 None => format!("undecided after {}", clock(self.ticks)),
             };
             for (p, s) in self.sides.iter().enumerate() {
-                out += &format!(
-                    "\n  side {p} {:?}: {}/{} grub/marrow, supply {}/{}, {} buildings, \
-                     {} regiments, {} orders ({} economy)\n    {}",
-                    s.faction,
-                    s.bank.grub,
-                    s.bank.marrow,
-                    s.bank.supply_used,
-                    s.bank.supply_cap,
-                    s.buildings,
-                    s.regiments,
-                    s.orders,
-                    s.clicks,
-                    s.summary
-                );
+                out += &format!("\n  {}", s.line(p));
             }
             out
+        }
+    }
+
+    impl Standing {
+        /// "side 0 EmberClans: bank 300/0, supply 8/10, ..." and, below,
+        /// the mind's summary.
+        pub fn line(&self, p: usize) -> String {
+            let b = &self.bank;
+            format!(
+                "side {p} {:?}: bank {}/{}, supply {}/{}, {} buildings, {} regiments, \
+                 {} orders ({} economy)\n    {}",
+                self.faction,
+                b.grub,
+                b.marrow,
+                b.supply_used,
+                b.supply_cap,
+                self.buildings,
+                self.regiments,
+                self.orders,
+                self.clicks,
+                self.summary
+            )
         }
     }
 
@@ -211,7 +230,10 @@ mod tests {
         seed: u64,
         max_minutes: u32,
     ) -> Played {
-        let trace = std::env::var("AI_TRACE").is_ok_and(|v| v == "1");
+        let trace = std::env::var("AI_TRACE").unwrap_or_default();
+        // AI_TRACE=2 also prints every journal entry as it is written.
+        let journal = trace == "2";
+        let trace = journal || trace == "1";
         let data = crate::data::load();
         let table = Table::new(&data);
         let map = conquest::make_map(choice);
@@ -242,17 +264,8 @@ mod tests {
         assert!(world.conquest(&plan.setup()));
         let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
         for (i, &faction) in factions.iter().enumerate() {
-            let config = MindConfig {
-                party: i as u8,
-                difficulty: levels[i.min(levels.len() - 1)],
-                personality: gc_ai::personality::pick(
-                    gc_ai::Faction::from_index(faction as u8),
-                    Pcg32::new(seed, i as u64).next_u32(),
-                ),
-                seed: seed ^ i as u64,
-            };
-            let kit = Arc::new(kit(&data, &table, &map, faction));
-            minds.add(Mind::conquest(config, kit));
+            let level = levels[i.min(levels.len() - 1)];
+            minds.add(mind_for(&data, &table, &map, i, faction, level, seed));
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
         let stats = world.tick(&opening);
@@ -260,8 +273,6 @@ mod tests {
         let end = max_minutes * 60 * TICKS_PER_SECOND;
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
-        // AI_TRACE=2 also prints every journal entry as it is written.
-        let journal = std::env::var("AI_TRACE").is_ok_and(|v| v == "2");
         let mut noted = vec![0u32; factions.len()];
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
@@ -285,7 +296,6 @@ mod tests {
                     }
                 }
             }
-            let trace = trace || journal;
             if trace && t.is_multiple_of(every) {
                 println!("-- {}:00", t / 60 / TICKS_PER_SECOND);
                 for (p, &f) in factions.iter().enumerate() {
@@ -294,19 +304,7 @@ mod tests {
                         .get(p as PlayerId)
                         .and_then(|m| m.journal().latest())
                         .map_or(String::new(), |e| format!("[{}] {}", e.tick, e.text));
-                    println!(
-                        "side {p} {f:?}: bank {}/{} supply {}/{}, {} buildings, {} regiments, \
-                         {} orders ({} economy)\n    {}\n    last: {last}",
-                        s.bank.grub,
-                        s.bank.marrow,
-                        s.bank.supply_used,
-                        s.bank.supply_cap,
-                        s.buildings,
-                        s.regiments,
-                        s.orders,
-                        s.clicks,
-                        s.summary
-                    );
+                    println!("{}\n    last: {last}", s.line(p));
                 }
             }
         }

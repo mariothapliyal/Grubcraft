@@ -10,7 +10,6 @@
 //! side sees (fog of war), and acts only through the commands a player's
 //! clicks would send, with its level's reaction time and attention.
 
-pub mod clicks;
 pub mod kit;
 pub mod marshal;
 pub mod placing;
@@ -21,8 +20,9 @@ use std::sync::Arc;
 use gc_sim::{PlayerCommand, PlayerId, World};
 
 use crate::difficulty::Knobs;
+use crate::orders::Hands;
 use crate::perception::Perception;
-use clicks::Clicks;
+use crate::terrain::Terrain;
 use kit::Kit;
 use marshal::Marshal;
 use steward::Steward;
@@ -37,8 +37,7 @@ pub struct Sense<'a> {
     pub now: u32,
     /// Its level's reaction time, in ticks.
     pub reaction: u32,
-    /// The map's size, in tiles.
-    pub tiles: f32,
+    pub terrain: &'a Terrain,
     /// The tick from which it expands once its seeps are full.
     pub expand_after: u32,
 }
@@ -48,25 +47,24 @@ pub struct Realm {
     kit: Arc<Kit>,
     pub steward: Steward,
     pub marshal: Marshal,
-    clicks: Clicks,
+    clicks: Hands,
+    /// The tick from which it expands once its seeps are full.
+    expand_after: u32,
 }
 
 impl Realm {
-    pub fn new(kit: Arc<Kit>, party: PlayerId, knobs: &Knobs) -> Realm {
+    pub fn new(kit: Arc<Kit>, party: PlayerId, knobs: &Knobs, expand_after: u32) -> Realm {
         Realm {
             kit,
             steward: Steward::new(),
             marshal: Marshal::new(party, knobs.reaction_ticks, knobs.orders_per_minute),
-            clicks: Clicks::new(party, knobs.reaction_ticks, knobs.orders_per_minute),
+            clicks: Hands::new(party, knobs.reaction_ticks, knobs.orders_per_minute, 4.0),
+            expand_after,
         }
     }
 
-    pub fn kit(&self) -> &Kit {
-        &self.kit
-    }
-
     /// Economy orders sent so far.
-    pub fn clicks(&self) -> &Clicks {
+    pub fn clicks(&self) -> &Hands {
         &self.clicks
     }
 
@@ -74,8 +72,7 @@ impl Realm {
     pub fn tick(
         &mut self,
         world: &World,
-        captain: crate::captain::Ctx,
-        expand_after: u32,
+        mut captain: crate::captain::Ctx,
         out: &mut Vec<PlayerCommand>,
     ) {
         let kit = Arc::clone(&self.kit);
@@ -86,19 +83,15 @@ impl Realm {
             party: captain.party,
             now: captain.view.tick,
             reaction: captain.knobs.reaction_ticks,
-            tiles: captain.terrain.tiles() as f32,
-            expand_after,
+            terrain: captain.terrain,
+            expand_after: self.expand_after,
         };
         self.clicks.refresh(sense.now);
         self.steward
             .think(&sense, &mut self.clicks, self.marshal.rally);
         self.clicks.release(sense.now, out);
         let home = self.steward.home;
-        let mut c = marshal::Command {
-            captain,
-            sense: &sense,
-        };
-        self.marshal.tick(&mut c, home, out);
+        self.marshal.tick(&mut captain, &sense, home, out);
     }
 
     /// One line on what it is doing.

@@ -95,8 +95,6 @@ pub struct Mind {
     live: bool,
     /// Its economy and army, in Conquest.
     realm: Option<conquest::Realm>,
-    /// The tick from which it expands once its seeps are full (Conquest).
-    expand_after: u32,
 }
 
 impl Mind {
@@ -156,7 +154,6 @@ impl Mind {
             readings: Vec::new(),
             live: false,
             realm: None,
-            expand_after: u32::MAX,
         }
     }
 
@@ -164,14 +161,19 @@ impl Mind {
     /// as well as its battles.
     pub fn conquest(config: MindConfig, kit: Arc<conquest::kit::Kit>) -> Mind {
         let mut mind = Mind::new(config);
-        mind.realm = Some(conquest::Realm::new(kit, config.party, &mind.knobs));
         // Greedy minds expand sooner; a Recruit forgets to until its seeps
         // run low.
         let seconds = 300.0 - 150.0 * f32::from(mind.persona.greed) / 100.0;
-        mind.expand_after = match config.difficulty {
+        let expand_after = match config.difficulty {
             Difficulty::Recruit => u32::MAX,
             _ => (seconds * perception::TICKS) as u32,
         };
+        mind.realm = Some(conquest::Realm::new(
+            kit,
+            config.party,
+            &mind.knobs,
+            expand_after,
+        ));
         mind.journal.note(0, "Takes up the Conquest".to_string());
         mind
     }
@@ -213,11 +215,11 @@ impl Mind {
 
     /// Orders sent so far.
     pub fn orders_sent(&self) -> u32 {
-        self.orders.count
+        self.orders.count()
             + self
                 .realm
                 .as_ref()
-                .map_or(0, |r| r.marshal.orders().count + r.clicks().count)
+                .map_or(0, |r| r.marshal.orders().count() + r.clicks().count)
     }
 
     /// The order layer, for its counters.
@@ -256,7 +258,7 @@ impl Mind {
                 journal: &mut self.journal,
                 next_slip: &mut self.next_slip,
             };
-            realm.tick(world, ctx, self.expand_after, out);
+            realm.tick(world, ctx, out);
             return;
         }
         if self.knobs.rehearse {

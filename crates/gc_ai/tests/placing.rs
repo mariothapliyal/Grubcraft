@@ -7,7 +7,7 @@
 //! do: player 0 has a 5x5 hall (a main building that takes Grub and Marrow),
 //! a 3x3 house type to place, a worker, and a couple of Grub seeps nearby.
 
-use gc_ai::conquest::placing::{Foot, GAP, Keep, LANE, REACH, WIDE_GAP, overlaps, spot_for};
+use gc_ai::conquest::placing::{Foot, GAP, LANE, REACH, WIDE_GAP, overlaps, spot_for};
 use gc_ai::perception::v2;
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::economy::Resource;
@@ -181,14 +181,11 @@ fn node_centres(w: &World) -> Vec<Vec2> {
 }
 
 /// Lanes from the hall's middle to each seep, as the Steward builds them.
-fn lanes_to_nodes(w: &World) -> Keep {
-    Keep {
-        lanes: node_centres(w)
-            .into_iter()
-            .map(|n| (hall_centre(), n))
-            .collect(),
-        taken: Vec::new(),
-    }
+fn lanes_to_nodes(w: &World) -> Vec<(Vec2, Vec2)> {
+    node_centres(w)
+        .into_iter()
+        .map(|n| (hall_centre(), n))
+        .collect()
 }
 
 /// Footprints of player 0's buildings.
@@ -379,15 +376,7 @@ fn spots_never_overlap_an_enemy_building() {
     };
     assert_eq!(w.tick(&[enemy]).commands_applied, 1);
     let stats = house_stats();
-    let tile = spot_for(
-        &w,
-        ME,
-        HOUSE,
-        &stats,
-        Vec2::new(34.5, 25.5),
-        &Keep::default(),
-    )
-    .unwrap();
+    let tile = spot_for(&w, ME, HOUSE, &stats, Vec2::new(34.5, 25.5), &[]).unwrap();
     assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
     assert!(!overlaps(foot_at(tile, &stats), [33, 24, 3, 3], 0));
 }
@@ -403,7 +392,7 @@ fn spots_stay_off_the_lanes() {
         let tile = spot_for(&w, ME, HOUSE, &stats, hall_centre(), &keep)
             .unwrap_or_else(|| panic!("no room for house {n}"));
         let foot = foot_at(tile, &stats);
-        for &(a, b) in &keep.lanes {
+        for &(a, b) in &keep {
             let d = distance_to_lane(foot, a, b);
             assert!(
                 d >= LANE,
@@ -424,29 +413,12 @@ fn asking_for_a_spot_on_a_lane_gives_one_beside_it() {
     let on_lane = Vec2::new(35.0, 31.0);
     let tile = spot_for(&w, ME, HOUSE, &stats, on_lane, &keep).expect("room beside the lane");
     let foot = foot_at(tile, &stats);
-    for &(a, b) in &keep.lanes {
+    for &(a, b) in &keep {
         assert!(
             distance_to_lane(foot, a, b) >= LANE,
             "{foot:?} is on a lane"
         );
     }
-}
-
-/// Footprints in `Keep::taken` (laid, not yet seen) are kept clear of, with
-/// the gap too.
-#[test]
-fn spots_keep_clear_of_taken_footprints() {
-    let (w, _) = base_world();
-    let stats = house_stats();
-    let want = Vec2::new(24.0, 24.0);
-    let first = spot_for(&w, ME, HOUSE, &stats, want, &Keep::default()).unwrap();
-    let taken = vec![foot_at(first, &stats)];
-    let keep = Keep {
-        lanes: Vec::new(),
-        taken: taken.clone(),
-    };
-    let second = spot_for(&w, ME, HOUSE, &stats, want, &keep).unwrap();
-    assert!(!overlaps(foot_at(second, &stats), taken[0], GAP));
 }
 
 /// The search is deterministic: the same world gives the same spot.
@@ -572,7 +544,7 @@ fn near_the_map_edge_is_none_or_valid() {
         Vec2::new(500.0, 500.0),
         Vec2::new(-1.0e6, 1.0e6),
     ] {
-        if let Some(tile) = spot_for(&w, ME, HOUSE, &stats, near, &Keep::default()) {
+        if let Some(tile) = spot_for(&w, ME, HOUSE, &stats, near, &[]) {
             assert_eq!(
                 w.can_lay(ME, HOUSE, tile),
                 Ok(()),
@@ -589,15 +561,8 @@ fn near_the_map_edge_is_none_or_valid() {
 #[test]
 fn a_corner_spot_is_pulled_onto_the_map() {
     let (w, _) = base_world();
-    let tile = spot_for(
-        &w,
-        ME,
-        HOUSE,
-        &house_stats(),
-        Vec2::new(0.0, 0.0),
-        &Keep::default(),
-    )
-    .expect("the corner is open ground");
+    let tile = spot_for(&w, ME, HOUSE, &house_stats(), Vec2::new(0.0, 0.0), &[])
+        .expect("the corner is open ground");
     assert!(tile.0 >= 0 && tile.1 >= 0);
     assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
 }
@@ -610,15 +575,8 @@ fn blocked_ground_is_never_built_on() {
     let mut w = empty_world(lake, &[], 2000);
     put_up(&mut w, HALL, (40, 40));
     let stats = house_stats();
-    let tile = spot_for(
-        &w,
-        ME,
-        HOUSE,
-        &stats,
-        Vec2::new(22.0, 22.0),
-        &Keep::default(),
-    )
-    .expect("dry ground within reach");
+    let tile = spot_for(&w, ME, HOUSE, &stats, Vec2::new(22.0, 22.0), &[])
+        .expect("dry ground within reach");
     assert_eq!(w.can_lay(ME, HOUSE, tile), Ok(()));
     let f = foot_at(tile, &stats);
     let wet = (f[0]..f[0] + f[2]).any(|x| (f[1]..f[1] + f[3]).any(|y| lake(x, y)));
@@ -635,10 +593,7 @@ fn nothing_within_reach_is_none() {
     put_up(&mut w, HALL, (1, 1));
     let near = Vec2::new(50.0, 50.0);
     assert!(near.distance(Vec2::new(14.0, 14.0)) > REACH as f32 * 1.5);
-    assert_eq!(
-        spot_for(&w, ME, HOUSE, &house_stats(), near, &Keep::default()),
-        None
-    );
+    assert_eq!(spot_for(&w, ME, HOUSE, &house_stats(), near, &[]), None);
 }
 
 /// A cramped map has one place for a house: it is found, and then the next
@@ -652,14 +607,11 @@ fn a_full_map_gives_none() {
     put_up(&mut w, HALL, (20, 20));
     let stats = house_stats();
     let near = Vec2::new(28.0, 22.0);
-    let t = spot_for(&w, ME, HOUSE, &stats, near, &Keep::default()).expect("room for one house");
+    let t = spot_for(&w, ME, HOUSE, &stats, near, &[]).expect("room for one house");
     assert_eq!(w.can_lay(ME, HOUSE, t), Ok(()));
     put_up(&mut w, HOUSE, t);
     // The only room is used; a second house has none.
-    assert_eq!(
-        spot_for(&w, ME, HOUSE, &stats, near, &Keep::default()),
-        None
-    );
+    assert_eq!(spot_for(&w, ME, HOUSE, &stats, near, &[]), None);
 }
 
 /// Short of Grub, the answer is `None`: the simulation's `may_lay` refuses
@@ -670,14 +622,7 @@ fn nothing_when_the_player_cannot_afford_it() {
     put_up(&mut w, HALL, (i32::from(HALL_AT.0), i32::from(HALL_AT.1)));
     assert_eq!(w.may_lay(ME, HOUSE), Err(Refusal::Price));
     assert_eq!(
-        spot_for(
-            &w,
-            ME,
-            HOUSE,
-            &house_stats(),
-            hall_centre(),
-            &Keep::default()
-        ),
+        spot_for(&w, ME, HOUSE, &house_stats(), hall_centre(), &[]),
         None
     );
 }
@@ -709,14 +654,7 @@ fn nothing_for_a_player_with_no_hall() {
     let w = empty_world(|_, _| false, &two_seeps(), 2000);
     assert_eq!(w.may_lay(ME, HOUSE), Err(Refusal::Tier));
     assert_eq!(
-        spot_for(
-            &w,
-            ME,
-            HOUSE,
-            &house_stats(),
-            hall_centre(),
-            &Keep::default()
-        ),
+        spot_for(&w, ME, HOUSE, &house_stats(), hall_centre(), &[]),
         None
     );
 }
@@ -727,7 +665,7 @@ fn nothing_for_a_player_with_no_hall() {
 fn an_unknown_building_is_none() {
     let (w, _) = base_world();
     assert_eq!(
-        spot_for(&w, ME, 99, &house_stats(), hall_centre(), &Keep::default()),
+        spot_for(&w, ME, 99, &house_stats(), hall_centre(), &[]),
         None
     );
 }
@@ -746,14 +684,7 @@ fn a_world_without_conquest_is_none() {
         champions: false,
     });
     assert_eq!(
-        spot_for(
-            &w,
-            ME,
-            HOUSE,
-            &house_stats(),
-            Vec2::new(10.0, 10.0),
-            &Keep::default()
-        ),
+        spot_for(&w, ME, HOUSE, &house_stats(), Vec2::new(10.0, 10.0), &[]),
         None
     );
 }
@@ -794,7 +725,7 @@ fn even_without_lanes_the_hall_stays_open() {
     let (mut w, _) = base_world();
     let stats = house_stats();
     for n in 0..8 {
-        let tile = spot_for(&w, ME, HOUSE, &stats, hall_centre(), &Keep::default())
+        let tile = spot_for(&w, ME, HOUSE, &stats, hall_centre(), &[])
             .unwrap_or_else(|| panic!("no room for house {n}"));
         put_up(&mut w, HOUSE, tile);
     }
@@ -814,15 +745,7 @@ fn even_without_lanes_the_hall_stays_open() {
 fn a_gap_round_a_production_building_can_be_walked() {
     let (mut w, _) = base_world();
     let stats = house_stats();
-    let first = spot_for(
-        &w,
-        ME,
-        HOUSE,
-        &stats,
-        Vec2::new(20.0, 20.0),
-        &Keep::default(),
-    )
-    .unwrap();
+    let first = spot_for(&w, ME, HOUSE, &stats, Vec2::new(20.0, 20.0), &[]).unwrap();
     put_up(&mut w, HOUSE, first);
     // Ask for a spot just beside it for a building that trains regiments.
     let barracks = BuildingStats {
@@ -833,7 +756,7 @@ fn a_gap_round_a_production_building_can_be_walked() {
         first.0 as f32 + 3.0 + GAP as f32 + 1.5,
         first.1 as f32 + 1.5,
     );
-    let second = spot_for(&w, ME, HOUSE, &barracks, near, &Keep::default()).unwrap();
+    let second = spot_for(&w, ME, HOUSE, &barracks, near, &[]).unwrap();
     let (a, b) = (foot_at(first, &stats), foot_at(second, &stats));
     assert!(!overlaps(a, b, WIDE_GAP - 1));
     put_up(&mut w, HOUSE, second);
