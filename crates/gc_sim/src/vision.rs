@@ -30,6 +30,15 @@
 //! On a map with no cover all of this is switched off: everyone sees
 //! everything, nothing is a surprise, nothing is stored or hashed.
 //!
+//! **Fog of war** (a Conquest match played for a victory, see
+//! [`crate::World::conquest`]) adds sight on top. A party sees a regiment
+//! only while one of its side's regiments is within [`SIGHT`] of it, or one
+//! of its side's buildings within that building's
+//! [`sight`](crate::structures::Role::sight), edge to edge; cover still
+//! hides it within that, and buildings spot into cover as regiments do.
+//! Coming into sight is no surprise: only cover springs ambushes. A
+//! building is known to a party once seen, and stays known.
+//!
 //! Sightings are kept for [`MAX_PARTIES`](crate::MAX_PARTIES) parties,
 //! the combat grid's owner slots; the sim refuses regiments for parties
 //! past that.
@@ -42,6 +51,7 @@ use gc_fixed::Fx;
 use crate::combat::{Block, Combat, Whose, placement};
 use crate::morale;
 use crate::regiments::{RegimentHandle, Regiments};
+use crate::structures::Structures;
 use crate::terrain::{Cover, Terrain};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 
@@ -49,6 +59,9 @@ use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats};
 pub const PARTIES: usize = crate::MAX_PARTIES;
 // Ally masks are a byte per party: widen them before raising the limit.
 const _: () = assert!(PARTIES <= 8);
+/// How far a regiment sees in fog of war, edge to edge, in tiles: an
+/// archer's reach and a little more.
+pub const SIGHT: Fx = Fx::from_int(32);
 /// Spotting distances, edge to edge, in tiles.
 pub const GRASS_STILL: Fx = Fx::from_int(3);
 pub const WOOD_STILL: Fx = Fx::from_int(4);
@@ -83,6 +96,15 @@ pub struct Ambush {
     pub volley: bool,
 }
 
+/// A building as a watcher in fog of war.
+#[derive(Clone, Copy)]
+struct Post {
+    slot: usize,
+    owner: PlayerId,
+    block: Block,
+    sight: Fx,
+}
+
 /// Who sees whom. All storage is reserved when the match starts.
 pub(crate) struct Vision {
     /// The map has cover; otherwise none of this runs.
@@ -105,6 +127,13 @@ pub(crate) struct Vision {
     was_engaged: Vec<bool>,
     /// Ambushes sprung this tick.
     ambushes: Vec<Ambush>,
+    /// Fog of war: sight decides who can look at all.
+    fog: bool,
+    /// Per slot, in fog of war: the parties with it in sight.
+    in_sight: Vec<u8>,
+    /// In fog of war, this tick: each building's owner, footprint and
+    /// sight.
+    posts: Vec<Post>,
 }
 
 impl Vision {
@@ -129,7 +158,32 @@ impl Vision {
             off_guard: vec![0; n],
             was_engaged: vec![false; n],
             ambushes: Vec::with_capacity(if active { MAX_AMBUSHES } else { 0 }),
+            fog: false,
+            in_sight: Vec::new(),
+            posts: Vec::new(),
         }
+    }
+
+    /// Play in fog of war from now on, with room for `capacity` regiments
+    /// and `buildings` buildings. Only before the first tick.
+    pub(crate) fn fog(&mut self, capacity: usize, buildings: usize) {
+        if !self.active {
+            self.active = true;
+            self.tracked = vec![None; capacity];
+            self.sighting = vec![0; capacity * PARTIES];
+            self.linger = vec![0; capacity * PARTIES];
+            self.revealed = vec![0; capacity];
+            self.off_guard = vec![0; capacity];
+            self.was_engaged = vec![false; capacity];
+            self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
+        }
+        self.fog = true;
+        self.in_sight = vec![0; capacity];
+        self.posts = Vec::with_capacity(buildings);
+    }
+
+    pub(crate) fn fogged(&self) -> bool {
+        self.fog
     }
 
     /// Whether `party` sees the regiment in slot `i`, owned by `owner`.
@@ -140,7 +194,13 @@ impl Vision {
         if self.allies[owner as usize] & (1 << party) != 0 {
             return true;
         }
-        self.sighting[i * PARTIES + party as usize] > 0
+        self.looks(i, party as usize)
+    }
+
+    /// Whether `party` (not a friend of its owner) sees slot `i`: in sight,
+    /// and not hidden by cover.
+    fn looks(&self, i: usize, party: usize) -> bool {
+        self.sighting[i * PARTIES + party] > 0 && (!self.fog || self.in_sight[i] & (1 << party) != 0)
     }
 
     /// Whether no party hostile to its owner sees the regiment in slot `i`.
@@ -149,7 +209,7 @@ impl Vision {
             return false;
         }
         let friends = self.allies[owner as usize];
-        (0..PARTIES).all(|p| friends & (1 << p) != 0 || self.sighting[i * PARTIES + p] == 0)
+        (0..PARTIES).all(|p| friends & (1 << p) != 0 || !self.looks(i, p))
     }
 
     /// Whether the regiment in slot `i` is caught off guard by an ambush.
@@ -171,11 +231,23 @@ impl Vision {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
+        mut structures: Option<&mut Structures>,
     ) {
         if !self.active {
             return;
         }
         self.ambushes.clear();
+        self.posts.clear();
+        if self.fog
+            && let Some(s) = &structures
+        {
+            self.posts.extend(s.standing().map(|slot| Post {
+                slot,
+                owner: s.owner_of(slot),
+                block: s.block(slot),
+                sight: s.sight(slot),
+            }));
+        }
         // Timers, and regiments new to their slots.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -230,6 +302,14 @@ impl Vision {
                         | self.spotters(regs, combat, units, stances, i, distance)
                 }
             };
+            if self.fog {
+                self.in_sight[i] = match owner as usize {
+                    o if o < PARTIES => {
+                        self.allies[o] | self.spotters(regs, combat, units, stances, i, SIGHT)
+                    }
+                    _ => u8::MAX,
+                };
+            }
             for p in 0..PARTIES {
                 let k = i * PARTIES + p;
                 if direct & (1 << p) != 0 {
@@ -242,6 +322,10 @@ impl Vision {
                 }
                 self.sighting[k] = (self.sighting[k] + 1).min(SURPRISE_TICKS);
             }
+        }
+
+        if let Some(s) = structures.as_deref_mut() {
+            self.look_at_buildings(regs, combat, units, stances, s);
         }
 
         // A chase after a target its side no longer sees ends where the
@@ -277,6 +361,11 @@ impl Vision {
             return;
         }
         self.tracked[i] = Some(regs.generation[i]);
+        if self.fog {
+            self.in_sight[i] = (self.allies.get(regs.owner[i] as usize))
+                .copied()
+                .unwrap_or(u8::MAX);
+        }
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
         self.was_engaged[i] = false;
@@ -321,6 +410,9 @@ impl Vision {
         self.revealed[i] = from.revealed[i];
         self.off_guard[i] = from.off_guard[i];
         self.was_engaged[i] = from.was_engaged[i];
+        if self.fog && from.fog {
+            self.in_sight[i] = from.in_sight[i];
+        }
     }
 
     /// Whether the regiment in slot `i` takes `party` by surprise: that
@@ -406,8 +498,9 @@ impl Vision {
         }
     }
 
-    /// The parties with a regiment (theirs or an ally's) within `distance`
-    /// of regiment `i`, edge to edge, as a bit set.
+    /// The parties with a regiment (theirs or an ally's), or in fog of war
+    /// a building, within `distance` of regiment `i`, edge to edge, as a bit
+    /// set. A building looks no further than its own sight.
     fn spotters(
         &self,
         regs: &Regiments,
@@ -435,7 +528,63 @@ impl Vision {
                 }
             },
         );
+        seen | self.posts_near(&me, regs.owner[i], distance)
+    }
+
+    /// The parties hostile to `owner` with a building within `distance` of
+    /// `me` (and within its own sight), edge to edge.
+    fn posts_near(&self, me: &Block, owner: PlayerId, distance: Fx) -> u8 {
+        let mut seen = 0u8;
+        for post in &self.posts {
+            let p = post.owner as usize;
+            if p < PARTIES
+                && seen & (1 << p) == 0
+                && self.allies[p] & (1 << owner) == 0
+                && me.touches(&post.block, distance.min(post.sight))
+            {
+                seen |= self.allies[p];
+            }
+        }
         seen
+    }
+
+    /// Mark who has now seen each building: its side, and any party with a
+    /// regiment within [`SIGHT`] of it or a building within its sight.
+    fn look_at_buildings(
+        &self,
+        regs: &Regiments,
+        combat: &Combat,
+        units: &[UnitStats],
+        stances: &Stances,
+        structures: &mut Structures,
+    ) {
+        let at = placement!(regs, stances);
+        for post in &self.posts {
+            let o = post.owner as usize;
+            if o >= PARTIES || structures.seen(post.slot) == u8::MAX {
+                continue;
+            }
+            let block = post.block;
+            let mut seen = self.allies[o] | structures.seen(post.slot);
+            combat.each_near(
+                &at,
+                block.centre,
+                SIGHT + block.radius() + combat.max_radius(),
+                Whose::Enemies(post.owner),
+                |j| {
+                    let party = regs.owner[j] as usize;
+                    if party < PARTIES
+                        && seen & (1 << party) == 0
+                        && block.touches(&Block::of(regs, units, j), SIGHT)
+                    {
+                        seen |= self.allies[party];
+                    }
+                },
+            );
+            // Each building looks as far as its own sight.
+            seen |= self.posts_near(&block, post.owner, Fx::MAX);
+            structures.mark_seen(post.slot, seen);
+        }
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
@@ -453,6 +602,9 @@ impl Vision {
             h.u8(self.revealed[i]);
             h.u8(self.off_guard[i]);
             h.u8(u8::from(self.was_engaged[i]));
+            if self.fog {
+                h.u8(self.in_sight[i]);
+            }
         }
     }
 }
