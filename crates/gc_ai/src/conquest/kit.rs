@@ -67,6 +67,10 @@ pub struct Kit {
     /// The worker types of every faction: anyone can tell a worker when
     /// they see one, and an army doesn't stop to fight them.
     pub all_workers: Vec<UnitId>,
+    /// Every unit type of every faction, by id: whose it is and what it
+    /// takes of supply. A player knows these by sight, and the Spymaster
+    /// sizes an enemy army by them.
+    pub all_units: Vec<(Faction, u8)>,
     /// Every start on the map, in tiles (centre of the start tile), in the
     /// map's order. Public knowledge: the map shows them.
     pub starts: Vec<Vec2>,
@@ -76,13 +80,13 @@ pub struct Kit {
 }
 
 impl Kit {
-    /// The supply `regiments` of this faction take up: how big an army
-    /// they are. Units not in its kit count for nothing.
+    /// The supply `regiments` take up, whoever's they are: how big an
+    /// army they are.
     pub fn supply_of<'a>(&self, regiments: impl IntoIterator<Item = &'a Seen>) -> f32 {
         regiments
             .into_iter()
-            .filter_map(|r| self.unit(r.unit))
-            .map(|u| f32::from(u.unit.supply))
+            .filter_map(|r| self.all_units.get(usize::from(r.unit)))
+            .map(|&(_, supply)| f32::from(supply))
             .sum()
     }
 

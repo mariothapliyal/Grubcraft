@@ -71,6 +71,11 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             .filter(|(_, rec)| rec.worker())
             .map(|(u, _)| u as u16)
             .collect(),
+        all_units: data
+            .conquest_units
+            .iter()
+            .map(|rec| (rec.faction(), conquest::unit_of(rec).supply))
+            .collect(),
         starts: map
             .starts()
             .into_iter()
@@ -153,6 +158,8 @@ mod tests {
         pub faction: Faction,
         /// The mind's one-line summary of what it is doing.
         pub summary: String,
+        /// The AI lens's panel for the mind, after the summary line.
+        pub lens: Vec<String>,
         pub bank: Bank,
         pub buildings: usize,
         pub regiments: usize,
@@ -200,12 +207,13 @@ mod tests {
 
     impl Standing {
         /// "side 0 EmberClans: bank 300/0, supply 8/10, ..." and, below,
-        /// the mind's summary.
+        /// the mind's summary and what its lens panel says.
         pub fn line(&self, p: usize) -> String {
             let b = &self.bank;
+            let lens: String = self.lens.iter().map(|l| format!("\n  {l}")).collect();
             format!(
                 "side {p} {:?}: bank {}/{}, supply {}/{}, {} buildings, {} regiments, \
-                 {} orders ({} economy)\n    {}",
+                 {} orders ({} economy)\n    {}{lens}",
                 self.faction,
                 b.grub,
                 b.marrow,
@@ -226,6 +234,7 @@ mod tests {
         Standing {
             faction,
             summary: mind.summary(),
+            lens: mind.lens(minds.view()).text.split_off(1),
             bank: world.bank(p).unwrap_or_default(),
             buildings: world
                 .structures()
@@ -515,6 +524,41 @@ mod tests {
             b.name(),
             won * 100 / all
         );
+    }
+
+    /// The lens panel of a Conquest mind has its economy and belief lines
+    /// after the battle lines, and what the army waits for once it is
+    /// gathering.
+    #[test]
+    fn a_conquest_minds_lens_panel_shows_its_economy_belief_and_plan() {
+        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let played = play(0, &factions, &[Difficulty::Veteran], 7, 8);
+        let mut weighed = false;
+        for (p, side) in played.sides.iter().enumerate() {
+            let find = |label: &str| {
+                let start = format!("  {label:<7} ");
+                side.lens.iter().position(|l| l.starts_with(&start))
+            };
+            let roles = find("roles").expect("battle lines come first");
+            let economy = find("economy").unwrap_or_else(|| panic!("side {p}: {:?}", side.lens));
+            assert!(economy > roles, "{:?}", side.lens);
+            assert!(
+                side.lens[economy].contains("keeps 70% workers, 2 producers a tier"),
+                "{}",
+                side.lens[economy]
+            );
+            assert!(side.lens[economy].contains("saving: "));
+            assert!(side.lens[economy].contains("arming: "));
+            assert_eq!(find("belief"), Some(economy + 1), "{:?}", side.lens);
+            weighed |= side.lens[economy + 1].contains(", odds ");
+            if let Some(plan) = find("plan") {
+                assert_eq!(plan, economy + 2, "{:?}", side.lens);
+            }
+            assert!(side.lens.iter().all(|l| l.starts_with("  ")));
+        }
+        // By eight minutes the armies have met, and somebody weighed up
+        // the other's.
+        assert!(weighed, "{:#?}", played.sides[0].lens);
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

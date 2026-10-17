@@ -161,4 +161,69 @@ impl Realm {
             self.marshal.goal.name()
         )
     }
+
+    /// The panel lines for the AI lens, from what it has already decided
+    /// (nothing here reads the field or changes a decision): its economy,
+    /// what it believes of each enemy's army, and what the army waits for.
+    pub fn lens_lines(&self, now: u32) -> Vec<String> {
+        let line = |label: &str, text: String| format!("  {label:<7} {text}");
+        let saving = match self.steward.ledger.saving {
+            (0, 0) => "nothing".to_string(),
+            (g, 0) => format!("{g} Grub"),
+            (0, m) => format!("{m} Marrow"),
+            (g, m) => format!("{g} Grub, {m} Marrow"),
+        };
+        let producers = self.plan.producers_per_tier;
+        let arming = if self.steward.arming() {
+            "short of an army"
+        } else {
+            "army is enough for now"
+        };
+        let opening = if now < self.opening.ends() {
+            format!(
+                "opens with {} until {}",
+                self.opening.name,
+                crate::lens::clock(self.opening.ends())
+            )
+        } else {
+            format!("opened with {}", self.opening.name)
+        };
+        let mut lines = vec![line(
+            "economy",
+            format!(
+                "{opening}; keeps {}% workers, {producers} producer{} a tier   saving: {saving}   arming: {arming}",
+                self.plan.workers_percent,
+                if producers == 1 { "" } else { "s" }
+            ),
+        )];
+        let beliefs = &self.marshal.belief;
+        // The faction's name, or with its player's number when two
+        // enemies share a faction.
+        let named = |b: &spymaster::Belief| match b.faction {
+            Some(f) if beliefs.iter().filter(|o| o.faction == b.faction).count() == 1 => {
+                f.name().to_string()
+            }
+            Some(f) => format!("{} (player {})", f.name(), b.owner + 1),
+            None => format!("player {}", b.owner + 1),
+        };
+        let known: Vec<String> = beliefs
+            .iter()
+            .map(|b| {
+                let odds = b.odds.map_or(String::new(), |o| format!(", odds {o:+.2}"));
+                format!("{} {} supply{odds}", named(b), b.supply)
+            })
+            .collect();
+        lines.push(line(
+            "belief",
+            if known.is_empty() {
+                "no enemy army seen yet".to_string()
+            } else {
+                known.join("; ")
+            },
+        ));
+        if let Some(note) = self.marshal.plan_note(now) {
+            lines.push(line("plan", note));
+        }
+        lines
+    }
 }

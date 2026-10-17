@@ -175,6 +175,11 @@ struct Look<'a> {
 }
 
 impl Steward {
+    /// Whether it is short of an army and training soldiers first.
+    pub fn arming(&self) -> bool {
+        self.arming
+    }
+
     pub fn new() -> Steward {
         Steward::default()
     }
