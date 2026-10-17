@@ -401,7 +401,8 @@ fn a_bigger_chord_has_more_harmony_and_both_stay_within_the_bounds() {
 }
 
 /// Each chord charges Resonance a point per RESONANCE_TICKS chord-ticks, but
-/// a player's chords past three charge no faster.
+/// a player's chords past three, or past two fewer than their linking
+/// buildings, charge no faster.
 #[test]
 fn resonance_charges_with_each_chord_but_no_faster_past_three() {
     // Ten points at one chord's rate: 30 seconds.
@@ -427,6 +428,24 @@ fn resonance_charges_with_each_chord_but_no_faster_past_three() {
     put_up(&mut w, 0, RESONATOR, 37, 28);
     assert_eq!(chords_of(&w, 0), 5);
     assert_eq!(gained(&mut w, window), 30, "five chords charge as three");
+}
+
+/// Four buildings in a square make four overlapping chords, which charge as
+/// the two that don't overlap.
+#[test]
+fn overlapping_chords_charge_as_the_triangles_that_do_not_overlap() {
+    let window = 10 * RESONANCE_TICKS;
+    let mut w = conquest(&[]);
+    for (x, y) in [(30, 14), (39, 14), (30, 23), (39, 23)] {
+        put_up(&mut w, 0, RESONATOR, x, y);
+    }
+    run(&mut w, 1);
+    assert_eq!(chords_of(&w, 0), 4);
+    assert_eq!(
+        gained(&mut w, window),
+        20,
+        "four buildings charge as two chords"
+    );
 }
 
 /// Resonance rises 20 points a minute from one chord, and stops at its

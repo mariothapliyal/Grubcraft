@@ -498,17 +498,21 @@ pub struct Structures {
     pub(crate) tuners_was: Vec<StructureHandle>,
     /// The Choir's chords (see [`crate::chords`]): this tick's standing
     /// finished buildings that link, by owner (and last tick's), the
-    /// chords and links they make, how many chords each player has, and
-    /// each player's Resonance.
+    /// chords and links they make, how many chords each player has and
+    /// how many of them charge, and each player's Resonance.
     pub(crate) linkers: Vec<StructureHandle>,
     pub(crate) linkers_was: Vec<StructureHandle>,
     pub(crate) chords: Vec<crate::chords::Chord>,
     pub(crate) links: Vec<crate::chords::Link>,
     pub(crate) chord_count: [u8; crate::MAX_PARTIES],
+    pub(crate) charging: [u8; crate::MAX_PARTIES],
     pub(crate) resonance: [u32; crate::MAX_PARTIES],
     /// Bumped whenever the tuners or the chords change, so the economy
     /// only works out again which tuner and chord each node has then.
     pub(crate) power_stamp: u32,
+    /// Set when a building upgrades into another, whose tuning or links
+    /// may differ, so they are worked out again next tick.
+    pub(crate) restats: bool,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -589,8 +593,10 @@ impl Structures {
             chords: Vec::with_capacity(crate::chords::MAX_CHORDS_EACH * crate::MAX_PARTIES),
             links: Vec::with_capacity(crate::chords::MAX_LINKS_EACH * crate::MAX_PARTIES),
             chord_count: [0; crate::MAX_PARTIES],
+            charging: [0; crate::MAX_PARTIES],
             resonance: [0; crate::MAX_PARTIES],
             power_stamp: 0,
+            restats: false,
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -1243,6 +1249,7 @@ impl Structures {
             self.hp[i] += gain * HP_SCALE;
             self.building[i] = to;
             self.upgrade_to[i] = None;
+            self.restats = true;
         }
     }
 

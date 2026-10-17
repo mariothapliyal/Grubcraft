@@ -12,8 +12,10 @@
 //!   for the largest the links allow (equilateral). A seep takes only its
 //!   best chord; chords don't stack.
 //! - Each tick a player's Resonance charges by their chords, up to
-//!   [`MAX_CHARGING_CHORDS`] of them: [`RESONANCE_TICKS`] chord-ticks a
-//!   point, to [`MAX_RESONANCE`].
+//!   [`MAX_CHARGING_CHORDS`] of them and two fewer than their linking
+//!   buildings (as many as triangles that don't overlap, so nested ones
+//!   charge no faster): [`RESONANCE_TICKS`] chord-ticks a point, to
+//!   [`MAX_RESONANCE`].
 //!
 //! Which buildings link and the chords they make are worked out again only
 //! when the linking buildings change; neither is stored or hashed (each
@@ -27,7 +29,7 @@ use crate::{MAX_PARTIES, PlayerId, TICKS_PER_SECOND};
 
 /// At most this many chords are kept for each player, the first found
 /// (in slot order).
-pub const MAX_CHORDS_EACH: usize = 32;
+pub const MAX_CHORDS_EACH: usize = 128;
 /// At most this many links are kept for each player (they are only
 /// drawn), the first found.
 pub const MAX_LINKS_EACH: usize = 256;
@@ -73,6 +75,7 @@ impl Structures {
         self.chords.clear();
         self.links.clear();
         self.chord_count = [0; MAX_PARTIES];
+        self.charging = [0; MAX_PARTIES];
         let n = self.linkers.len();
         let mut start = 0;
         while start < n {
@@ -80,50 +83,56 @@ impl Structures {
             let end = (start..n)
                 .find(|&k| self.owner_of(self.linker(k)) != owner)
                 .unwrap_or(n);
-            self.chords_among(start, end);
+            self.chords_among(owner, start, end);
             start = end;
-        }
-        for l in 0..self.links.len() {
-            let link = self.links[l];
-            self.links[l].harmony = (self.chords.iter())
-                .filter(|c| {
-                    c.owner == link.owner && link.ends.iter().all(|e| c.corners.contains(e))
-                })
-                .map(|c| c.harmony)
-                .max()
-                .unwrap_or(0);
         }
     }
 
-    /// The links and chords among one owner's linkers `start..end`.
-    fn chords_among(&mut self, start: usize, end: usize) {
-        let (mut chords, mut links) = (0, 0);
+    /// The links and chords among `owner`'s linkers `start..end`.
+    fn chords_among(&mut self, owner: PlayerId, start: usize, end: usize) {
+        let (first_chord, first_link) = (self.chords.len(), self.links.len());
         for a in start..end {
             for b in a + 1..end {
                 if !self.links_with(a, b) {
                     continue;
                 }
-                if links < MAX_LINKS_EACH {
-                    links += 1;
-                    let ends = [self.linkers[a], self.linkers[b]];
+                if self.links.len() - first_link < MAX_LINKS_EACH {
                     self.links.push(Link {
-                        owner: self.owner_of(self.linker(a)),
-                        ends,
+                        owner,
+                        ends: [self.linkers[a], self.linkers[b]],
                         at: [a, b].map(|k| self.centre(self.linker(k))),
                         harmony: 0,
                     });
                 }
                 for c in b + 1..end {
-                    if chords < MAX_CHORDS_EACH
+                    if self.chords.len() - first_chord < MAX_CHORDS_EACH
                         && self.links_with(a, c)
                         && self.links_with(b, c)
-                        && self.add_chord([a, b, c])
                     {
-                        chords += 1;
+                        self.add_chord(owner, [a, b, c]);
                     }
                 }
             }
         }
+        let (chords, links) = (&self.chords[first_chord..], &mut self.links[first_link..]);
+        for link in links {
+            link.harmony = (chords.iter())
+                .filter(|c| link.ends.iter().all(|e| c.corners.contains(e)))
+                .map(|c| c.harmony)
+                .max()
+                .unwrap_or(0);
+        }
+        let p = usize::from(owner);
+        if p >= MAX_PARTIES {
+            return;
+        }
+        let count = u32::try_from(self.chords.len() - first_chord).unwrap_or(u32::MAX);
+        // Chords that share edges each charge, but no more than two fewer
+        // than the buildings (as many as triangles that don't overlap), so
+        // a building added to a cluster charges for one chord at most.
+        let most = u32::try_from((end - start).saturating_sub(2)).unwrap_or(u32::MAX);
+        self.chord_count[p] = count.min(u32::from(u8::MAX)) as u8;
+        self.charging[p] = count.min(most).min(MAX_CHARGING_CHORDS) as u8;
     }
 
     /// The building slot of this tick's linker `k`.
@@ -140,30 +149,25 @@ impl Structures {
         (self.centre(i) - self.centre(j)).length_sq_raw() <= reach * reach
     }
 
-    /// Keep the chord linkers `k` make, unless its corners lie in a line.
-    /// Whether it was kept.
-    fn add_chord(&mut self, k: [usize; 3]) -> bool {
+    /// Keep the chord `owner`'s linkers `k` make, unless its corners lie in
+    /// a line.
+    fn add_chord(&mut self, owner: PlayerId, k: [usize; 3]) {
         let slots = k.map(|k| self.linker(k));
         let at = slots.map(|i| self.centre(i));
         let twice_area = cross(at[0], at[1], at[2]).unsigned_abs();
         if twice_area == 0 {
-            return false;
+            return;
         }
         let reach = (slots.iter())
             .map(|&i| self.stats_of(i).links)
             .min()
             .unwrap_or(0);
-        let owner = self.owner_of(slots[0]);
         self.chords.push(Chord {
             owner,
             corners: k.map(|k| self.linkers[k]),
             at,
             harmony: harmony_of(twice_area, reach),
         });
-        if let Some(count) = self.chord_count.get_mut(usize::from(owner)) {
-            *count = count.saturating_add(1);
-        }
-        true
     }
 
     /// How many percent more a seep at `point` that `owner` tunes yields:
@@ -180,7 +184,7 @@ impl Structures {
     pub(crate) fn charge_resonance(&mut self) {
         let full = MAX_RESONANCE * RESONANCE_TICKS;
         for p in 0..MAX_PARTIES {
-            let chords = u32::from(self.chord_count[p]).min(MAX_CHARGING_CHORDS);
+            let chords = u32::from(self.charging[p]);
             self.resonance[p] = (self.resonance[p] + chords).min(full);
         }
     }

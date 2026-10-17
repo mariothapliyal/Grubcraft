@@ -62,7 +62,7 @@ impl Structures {
         let mut linkers = core::mem::take(&mut self.linkers);
         linkers.sort_unstable_by_key(|h| (self.owner_of(h.index as usize), h.index));
         self.linkers = linkers;
-        let relink = self.linkers != self.linkers_was;
+        let relink = core::mem::take(&mut self.restats) || self.linkers != self.linkers_was;
         if relink {
             self.find_chords();
         }
