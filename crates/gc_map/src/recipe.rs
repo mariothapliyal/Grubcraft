@@ -11,8 +11,8 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece, SetPieceKind, Shape,
-    SizeClass, Symmetry, TerrainOp,
+    BIG_MAP_TILES, CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPiece,
+    SetPieceKind, Shape, SizeClass, Symmetry, TerrainOp,
 };
 use crate::generate::{COVER_CLEAR_OF_STARTS, plateaus};
 
@@ -78,10 +78,19 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         Recipe::Hill => w.hill(),
         Recipe::Open => w.open(),
     }
+    // A big map gets as many clumps for its area as a small one; the
+    // small sizes keep the counts their maps have always had.
+    let mut count = |lo, hi| {
+        if tiles < BIG_MAP_TILES {
+            w.range(lo, hi)
+        } else {
+            w.many(lo, hi)
+        }
+    };
     let (woods, meadows) = match recipe {
-        Recipe::Open => (w.many(4, 7), w.many(3, 5)),
-        Recipe::Hill => (w.many(3, 5), w.many(2, 4)),
-        Recipe::Pass | Recipe::Ford => (w.many(2, 4), w.many(2, 4)),
+        Recipe::Open => (count(4, 7), count(3, 5)),
+        Recipe::Hill => (count(3, 5), count(2, 4)),
+        Recipe::Pass | Recipe::Ford => (count(2, 4), count(2, 4)),
     };
     for _ in 0..woods {
         w.clump(CoverKind::Wood, &starts);

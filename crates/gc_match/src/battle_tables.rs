@@ -272,14 +272,15 @@ fn terrain_table() {
 /// Computer against computer on the big maps (Standard and Large map
 /// sizes): does the battle still happen and finish, how long the march
 /// takes, and what the simulation and the minds cost a tick there.
-/// `AI_TILES` (default 512, 640 and 768), `AI_MODE` (1v1, 2v2 or 3v3,
+/// They play on the Wilds, as wild as the seed picks, as a new lobby does.
+/// `AI_TILES` (default 512, 640, 768 and 896), `AI_MODE` (1v1, 2v2 or 3v3,
 /// default all three), `AI_LEVEL`, `AI_BATTLES` (default 2 a size and
 /// mode) and `AI_FROM`.
 #[test]
 #[ignore = "slow: battles on big maps, run by hand"]
 fn big_map_table() {
     let table = Table::from_env(2);
-    let sizes: Vec<u32> = std::env::var("AI_TILES").map_or(vec![512, 640, 768], |v| {
+    let sizes: Vec<u32> = std::env::var("AI_TILES").map_or(vec![512, 640, 768, 896], |v| {
         v.split(',').map(|t| t.parse().unwrap()).collect()
     });
     let modes: Vec<String> = std::env::var("AI_MODE")
@@ -296,7 +297,12 @@ fn big_map_table() {
             let who = vec![Some(table.level); teams.len()];
             for seed in table.from..table.from + table.battles {
                 let t0 = std::time::Instant::now();
-                let map = Heightmap::generate(seed, tiles);
+                let map = gc_map::FieldMap {
+                    choice: gc_map::WILDS,
+                    tiles,
+                    seed,
+                }
+                .make();
                 let made = t0.elapsed();
                 let setup = lobby(&who, teams);
                 let t1 = std::time::Instant::now();

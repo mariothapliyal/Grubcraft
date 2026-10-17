@@ -399,9 +399,17 @@ impl LobbySettings {
     }
 
     /// Change the mode, keeping the map choice in its range.
+    /// Switch modes, starting on the new mode's first choice of map: a
+    /// Field Battle on [`DEFAULT_MAP`], Conquest on its first map (a map's
+    /// place in one mode's list means nothing in the other's).
     pub fn set_mode(&mut self, mode: GameMode) {
-        self.mode = mode;
-        self.map = self.map.min(maps_for(mode).len() - 1);
+        if mode != self.mode {
+            self.mode = mode;
+            self.map = match mode {
+                GameMode::FieldBattle => DEFAULT_MAP,
+                GameMode::Conquest => 0,
+            };
+        }
     }
 
     /// The most players the picked map has room for.
@@ -987,15 +995,22 @@ mod tests {
     }
 
     #[test]
-    fn a_mode_change_keeps_the_map_in_range() {
+    fn a_mode_change_starts_on_the_modes_first_map() {
         let mut s = LobbySettings {
             map: MAPS.len() - 1,
             ..Default::default()
         };
         s.set_mode(GameMode::Conquest);
-        assert_eq!(s.map_name(), "The Four Teeth");
+        assert_eq!(s.map_name(), "Ribcage Pass");
+        s.map = 1;
+        s.set_mode(GameMode::Conquest);
+        assert_eq!(
+            s.map_name(),
+            "The Four Teeth",
+            "the same mode keeps its map"
+        );
         s.set_mode(GameMode::FieldBattle);
-        assert_eq!(s.map_name(), "Random: Pass");
+        assert_eq!(s.map_name(), MAPS[DEFAULT_MAP]);
         assert_eq!(
             (Tempo::Swift.gather_percent(), Tempo::Swift.build_percent()),
             (150, 75)

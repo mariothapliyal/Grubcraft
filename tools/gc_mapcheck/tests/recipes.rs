@@ -60,6 +60,27 @@ fn every_wilds_map_passes_the_checker() {
     );
 }
 
+/// Every lobby map at the big sizes (Standard and Large, for two to six
+/// players) is the size asked for, and its starts can all walk to each
+/// other (`gc_map`'s own tests do the Small sizes).
+#[test]
+fn every_lobby_map_joins_its_starts_at_the_big_sizes() {
+    let jobs: Vec<(usize, u32)> = (0..gc_map::FIELD_MAPS.len())
+        .flat_map(|choice| [512, 640, 768, 896].map(|tiles| (choice, tiles)))
+        .collect();
+    let failed = failures(&jobs, |&(choice, tiles)| {
+        let map = gc_map::FieldMap {
+            choice,
+            tiles,
+            seed: 1,
+        }
+        .make();
+        (!map.starts_joined() || map.tiles != tiles)
+            .then(|| format!("{} at {tiles}", gc_map::FIELD_MAPS[choice]))
+    });
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
 /// On a wild map nobody marches straight at anybody: the way from a
 /// corner start to the opposite corner, to the corner straight across and
 /// to the neighbouring start winds round the barriers, at least a fifth

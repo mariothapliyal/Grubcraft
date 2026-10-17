@@ -201,11 +201,12 @@ mod tests {
         assert_eq!(FIELD_MAPS.len(), WILDS + 1 + wilds::Wildness::ALL.len());
     }
 
-    /// Every lobby choice, at both Field Battle sizes, makes a map whose
-    /// starts can all walk to each other and that is the size asked for.
+    /// Every lobby choice, at both Small sizes, makes a map whose starts
+    /// can all walk to each other and that is the size asked for (the big
+    /// sizes are in `gc_mapcheck`'s tests, which run them side by side).
     #[test]
     fn every_field_map_joins_its_starts() {
-        for choice in 0..6 {
+        for choice in 0..FIELD_MAPS.len() {
             for tiles in [256, 320] {
                 for seed in 1..=4 {
                     let map = FieldMap {
@@ -241,5 +242,17 @@ mod tests {
         assert_eq!(hash(2), 0x9e0b_d1c1_1491_b054);
         assert_eq!(hash(3), 0xafeb_ffb7_aa74_4896);
         assert_eq!(hash(4), 0x5e4b_ce70_42e9_fb7a);
+        // The Small size for five or six players too.
+        let at_320 = |choice| {
+            FieldMap {
+                choice,
+                tiles: 320,
+                seed: 1,
+            }
+            .make()
+            .hash()
+        };
+        assert_eq!(at_320(1), 0x7a27_e6ff_5bcb_e01e);
+        assert_eq!(at_320(4), 0x4806_0190_c4df_7720);
     }
 }

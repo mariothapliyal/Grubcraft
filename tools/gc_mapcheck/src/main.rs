@@ -33,7 +33,14 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
     {
         gc_map::recipe::describe(field, tiles()?, seed)
     } else if let Some(wild) = Wildness::ALL.into_iter().find(|w| is(w.name())) {
-        gc_map::wilds::describe(tiles()?, seed, wild)
+        let tiles = tiles()?;
+        if tiles < gc_map::wilds::MIN_TILES {
+            return Err(format!(
+                "the Wilds are {} tiles or more",
+                gc_map::wilds::MIN_TILES
+            ));
+        }
+        gc_map::wilds::describe(tiles, seed, wild)
     } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {
         let size = named(&CONQUEST_SIZES, size)?;
         let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;

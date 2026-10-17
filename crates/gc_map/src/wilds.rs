@@ -38,6 +38,9 @@ use crate::generate::plateaus;
 use crate::recipe::{BASE, DEEP, RISE_REACH, WATER, Writer, start_objects};
 use crate::stamp::dist2;
 
+/// The smallest Wilds map, in tiles a side.
+pub const MIN_TILES: i32 = 256;
+
 /// How wild a Wilds map is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wildness {
@@ -82,7 +85,9 @@ struct Course {
 /// Tiles between a barrier's points.
 const STEP: i32 = 8;
 
-/// The map a seed makes, `tiles` on a side, as wild as `wildness`.
+/// The map a seed makes, `tiles` on a side, as wild as `wildness`. The
+/// Wilds are for the lobby's sizes, 256 tiles and up ([`MIN_TILES`]): a
+/// smaller map has no room for a band between its starts.
 pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
     let mut rng = Pcg32::new(seed, 0x0077_696c);
     let mut w = Writer::new(&mut rng, tiles, BASE);

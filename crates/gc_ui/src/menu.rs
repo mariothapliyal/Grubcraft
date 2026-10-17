@@ -766,8 +766,8 @@ impl<N: Network> Menu<N> {
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
         // Champions may duel before a battle with a computer player: in the
-        // footer, beside Leave.
-        let champions_r = Rect::new(panel.x + 24 + 140 + 24, panel.bottom() - 52, 320, 44);
+        // footer, after Leave and Army.
+        let champions_r = Rect::new(panel.x + 24 + 148 + 140 + 12, panel.bottom() - 52, 320, 44);
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
         // between the title and the host's name, clear of them.
@@ -776,7 +776,9 @@ impl<N: Network> Menu<N> {
         let mut changed = false;
         if lobby.is_host {
             let mut map = settings.map;
-            if ui.stepper(slot_rect(0), "Map", &mut map, maps_for(settings.mode)) {
+            // Only the map's name: its column is too narrow for "Map: " and
+            // the longer names too.
+            if ui.stepper(slot_rect(0), "", &mut map, maps_for(settings.mode)) {
                 settings.map = map;
                 changed = true;
             }
@@ -1559,7 +1561,8 @@ mod tests {
     }
     use crate::draw::{DrawList, SOLID};
     use crate::lobby::{
-        DiscoveredGame, LobbyState, MAPS, MatchStart, NetError, NetEvent, Profile, SlotEdit,
+        DEFAULT_MAP, DiscoveredGame, LobbyState, MAPS, MatchStart, NetError, NetEvent, Profile,
+        SlotEdit,
     };
     use crate::ui::UiInput;
 
@@ -2019,10 +2022,12 @@ mod tests {
         assert!(h.has("Map: Ribcage Pass"));
         h.click("Map: Ribcage Pass");
         assert!(h.has("Map: The Four Teeth"));
-        // Back to Field Battle: the map stays in range.
+        // Back to Field Battle, on its own first map, and back again.
         h.click("Mode: Conquest");
-        assert!(h.has("Map: Random: Pass"));
+        assert!(h.has("Map: Land: Random"));
         h.click("Mode:");
+        assert!(h.has("Map: Ribcage Pass"));
+        h.click("Map: Ribcage Pass");
         h.click_last("Host");
         assert_eq!(h.menu.screen(), Screen::Lobby);
         let lobby = h.menu.net.lobby().unwrap();
@@ -2259,16 +2264,25 @@ mod tests {
         assert!(h.has("New map") && h.has("Map code") && h.has("0000-0000-6772-7562"));
         // The lobby asks for the map it is on, sized for the players in it.
         let seed = crate::lobby::DEFAULT_MAP_SEED;
-        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 512, seed)));
+        assert_eq!(
+            h.menu.wanted_map_preview(),
+            Some(field(DEFAULT_MAP, 512, seed))
+        );
         // Up to four players share a map, so a new one changes nothing.
         h.click("Add AI");
-        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 512, seed)));
+        assert_eq!(
+            h.menu.wanted_map_preview(),
+            Some(field(DEFAULT_MAP, 512, seed))
+        );
         // Until the game answers there is a grey box, not a picture.
         assert_eq!(picture_quads(&h.ui.draw), 0);
         assert_eq!(h.menu.shown_map_preview(), None);
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
-        assert_eq!(h.menu.shown_map_preview(), Some(field(0, 512, seed)));
+        assert_eq!(
+            h.menu.shown_map_preview(),
+            Some(field(DEFAULT_MAP, 512, seed))
+        );
         assert!(picture_quads(&h.ui.draw) > 0);
         // A picture of some other map is not shown.
         h.menu
@@ -2283,7 +2297,7 @@ mod tests {
         let mut h = Harness::new();
         h.click("Play");
         h.click_last("Host");
-        h.click("Map: Pro");
+        h.click("Land: Random");
         let seed = |h: &Harness| match h.menu.wanted_map_preview() {
             Some(MapPreviewKey::Field { seed, .. }) => seed,
             other => panic!("{other:?}"),
@@ -2292,7 +2306,7 @@ mod tests {
         let MapPreviewKey::Field { choice, .. } = wanted else {
             panic!("{wanted:?}")
         };
-        assert_eq!(MAPS[choice], "Random: Pass");
+        assert_eq!(MAPS[choice], "Land: Plains");
         let before = seed(&h);
         h.click("New map");
         assert_ne!(seed(&h), before);
@@ -2432,7 +2446,10 @@ mod tests {
         h.click("Play");
         let seed = crate::lobby::DEFAULT_MAP_SEED;
         assert!(h.has("New map") && h.has(&map_code(seed)));
-        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 512, seed)));
+        assert_eq!(
+            h.menu.wanted_map_preview(),
+            Some(field(DEFAULT_MAP, 512, seed))
+        );
         send_picture(&mut h.menu);
         h.frame(UiInput::default());
         assert!(picture_quads(&h.ui.draw) > 0);
@@ -2477,7 +2494,10 @@ mod tests {
         let mut h = Harness::new();
         h.menu.set_host_map_seed(12345);
         h.click("Play");
-        assert_eq!(h.menu.wanted_map_preview(), Some(field(0, 512, 12345)));
+        assert_eq!(
+            h.menu.wanted_map_preview(),
+            Some(field(DEFAULT_MAP, 512, 12345))
+        );
         assert!(h.has(&map_code(12345)));
         h.click_last("Host");
         assert_eq!(lobby_seed(&h), 12345);

@@ -497,7 +497,8 @@ fn champion_news(
 }
 
 /// `--battle`: you against one AI of `level`, as the lobby would set it up.
-/// The AI plays your faction, on the Proving Ground made from `map_seed`.
+/// The AI plays your faction, on the map a new lobby starts on, made from
+/// `map_seed`.
 pub fn quick_battle(level: u8, settings: &Settings, map_seed: u64) -> MatchStart {
     let mut me = Slot::open(0);
     me.kind = SlotKind::Human;
@@ -858,6 +859,7 @@ pub(crate) mod tests {
         // `AI_COVER=off` plays on bare maps, without woods or tall grass.
         if std::env::var("AI_COVER").as_deref() == Ok("off") {
             map.cover.clear();
+            map.thicket.clear();
         }
         // `AI_LIVE` thinks as in a real game (for measuring what the minds
         // cost the game's thread): the battle may not play out the same way
