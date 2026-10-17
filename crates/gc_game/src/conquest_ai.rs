@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use gc_ai::conquest::kit::{EconomyStyle, Kit, KitBuilding, KitUnit};
+use gc_ai::conquest::opening::Opening;
 use gc_ai::{Difficulty, Mind, MindConfig, Minds};
 use gc_data::conquest::Class;
 use gc_data::{Faction, GameData};
@@ -81,7 +82,6 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             .into_iter()
             .map(|(x, y)| Vec2::new(x as f32 + 0.5, y as f32 + 0.5))
             .collect(),
-        rivals: Vec::new(),
     }
 }
 
@@ -110,13 +110,14 @@ pub fn seat(
         let level = Difficulty::from_index(usize::from(slot.ai_level));
         let temper = temper(roll, i);
         minds.add(mind_for(
-            data, table, map, i, &factions, level, temper, roll,
+            data, table, map, i, &factions, level, temper, roll, None,
         ));
     }
 }
 
 /// The Conquest mind for player `i`, playing `faction` at `level`, its
-/// personality picked by `temper` and its seed from `roll`.
+/// personality picked by `temper` and its seed from `roll`; it picks its
+/// own opening unless given one.
 #[allow(clippy::too_many_arguments)]
 fn mind_for(
     data: &GameData,
@@ -127,6 +128,7 @@ fn mind_for(
     level: Difficulty,
     temper: u32,
     roll: u64,
+    opening: Option<&'static Opening>,
 ) -> Mind {
     let faction = factions[i];
     let config = MindConfig {
@@ -135,18 +137,18 @@ fn mind_for(
         personality: gc_ai::personality::pick(faction, temper),
         seed: roll ^ i as u64,
     };
-    let mut kit = kit(data, table, map, faction);
-    kit.rivals = (0..factions.len())
+    let rivals: Vec<Faction> = (0..factions.len())
         .filter(|&j| j != i)
         .map(|j| factions[j])
         .collect();
-    Mind::conquest(config, Arc::new(kit))
+    let kit = Arc::new(kit(data, table, map, faction));
+    Mind::conquest(config, kit, &rivals, opening)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gc_ai::conquest::opening::{self, Opening};
+    use gc_ai::conquest::opening;
     use gc_sim::economy::Bank;
     use gc_sim::{
         Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
@@ -270,7 +272,7 @@ mod tests {
         seed: u64,
         max_minutes: u32,
         temper: Option<u32>,
-        openings: &[&'static Opening],
+        openings: &[Option<&'static Opening>],
     ) -> Played {
         let trace = std::env::var("AI_TRACE").unwrap_or_default();
         // AI_TRACE=2 also prints every journal entry as it is written.
@@ -308,13 +310,10 @@ mod tests {
         for i in 0..factions.len() {
             let level = levels[i.min(levels.len() - 1)];
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
-            let mut mind = mind_for(&data, &table, &map, i, factions, level, temper, seed);
-            if let Some(&o) = openings.get(i)
-                && let Some(r) = mind.realm_mut()
-            {
-                r.set_opening(o);
-            }
-            minds.add(mind);
+            let opening = openings.get(i).copied().flatten();
+            minds.add(mind_for(
+                &data, &table, &map, i, factions, level, temper, seed, opening,
+            ));
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
         let stats = world.tick(&opening);
@@ -378,16 +377,11 @@ mod tests {
             .collect()
     }
 
-    /// Openings named in `var`, a comma list (none if unset or unknown).
-    fn openings_from_env(var: &str) -> Vec<&'static Opening> {
+    /// Openings named in `var`, a comma list, one a side (unset or
+    /// unknown: the side picks its own).
+    fn openings_from_env(var: &str) -> Vec<Option<&'static Opening>> {
         let v = std::env::var(var).unwrap_or_default();
-        v.split(',')
-            .filter_map(|n| {
-                opening::all()
-                    .iter()
-                    .find(|o| o.name.eq_ignore_ascii_case(n.trim()))
-            })
-            .collect()
+        v.split(',').map(opening::find).collect()
     }
 
     /// A level by its name or its number.
@@ -502,11 +496,8 @@ mod tests {
                     // The same game with the sides swapped.
                     let roll = seed * 31;
                     let temper = Some(super::temper(roll, 0));
-                    let openings: Vec<_> = match (&open_a[..], &open_b[..]) {
-                        ([oa], [ob]) if a_side == 0 => vec![*oa, *ob],
-                        ([oa], [ob]) => vec![*ob, *oa],
-                        _ => Vec::new(),
-                    };
+                    let (oa, ob) = (open_a[0], open_b[0]);
+                    let openings = if a_side == 0 { [oa, ob] } else { [ob, oa] };
                     let played = play_with(0, &[f, f], &levels, roll, 45, temper, &openings);
                     match played.winner() {
                         Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),

@@ -48,10 +48,9 @@ pub struct Sense<'a> {
     pub terrain: &'a Terrain,
     /// The tick from which it expands once its seeps are full.
     pub expand_after: u32,
-    /// How its level plays the long game.
-    pub plan: &'a Strategy,
-    /// The opening it is playing, while it lasts.
-    pub opening: Option<&'static Opening>,
+    /// How its level plays the long game, with its opening's early rules
+    /// while that lasts.
+    pub plan: Strategy,
 }
 
 /// A Conquest mind's economy and army.
@@ -90,15 +89,9 @@ impl Realm {
         }
     }
 
-    /// The opening it plays.
-    pub fn opening(&self) -> &'static Opening {
-        self.opening
-    }
-
-    /// Play `opening` instead, before the match starts: for tests and
-    /// tuning.
-    pub fn set_opening(&mut self, opening: &'static Opening) {
-        self.opening = opening;
+    /// The opening it plays, while it lasts at tick `now`.
+    fn opening_at(&self, now: u32) -> Option<&'static Opening> {
+        (now < self.opening.ends()).then_some(self.opening)
     }
 
     /// Economy orders sent so far.
@@ -123,8 +116,7 @@ impl Realm {
             reaction: captain.knobs.reaction_ticks,
             terrain: captain.terrain,
             expand_after: self.expand_after,
-            plan: &self.plan,
-            opening: (captain.view.tick < self.opening.ends()).then_some(self.opening),
+            plan: self.plan.opening(self.opening_at(captain.view.tick)),
         };
         self.clicks.refresh(sense.now);
         self.steward
@@ -209,7 +201,12 @@ impl Realm {
         let known: Vec<String> = beliefs
             .iter()
             .map(|b| {
-                let odds = b.odds.map_or(String::new(), |o| format!(", odds {o:+.2}"));
+                let odds = self
+                    .marshal
+                    .odds
+                    .iter()
+                    .find(|(o, _)| *o == b.owner)
+                    .map_or(String::new(), |(_, o)| format!(", odds {o:+.2}"));
                 format!("{} {} supply{odds}", named(b), b.supply)
             })
             .collect();

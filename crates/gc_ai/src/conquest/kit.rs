@@ -18,6 +18,14 @@ pub struct KitBuilding {
     pub stats: BuildingStats,
 }
 
+impl KitBuilding {
+    /// What it costs, Marrow counted at twice Grub as the rarer of the
+    /// two: for choosing the cheapest of several.
+    pub fn price(&self) -> u32 {
+        u32::from(self.stats.cost_grub) + 2 * u32::from(self.stats.cost_marrow)
+    }
+}
+
 /// One of the faction's unit types.
 #[derive(Clone, Copy, Debug)]
 pub struct KitUnit {
@@ -74,9 +82,6 @@ pub struct Kit {
     /// Every start on the map, in tiles (centre of the start tile), in the
     /// map's order. Public knowledge: the map shows them.
     pub starts: Vec<Vec2>,
-    /// The factions of the other players in the match, as the lobby shows
-    /// them.
-    pub rivals: Vec<Faction>,
 }
 
 impl Kit {
@@ -135,10 +140,7 @@ impl Kit {
                     && b.stats.upgrades_from.is_none()
                     && !matches!(b.stats.role, Role::Main | Role::Outpost)
             })
-            .min_by_key(|b| {
-                (u32::from(b.stats.cost_grub) + 2 * u32::from(b.stats.cost_marrow)) * 100
-                    / u32::from(b.stats.supply)
-            })
+            .min_by_key(|b| b.price() * 100 / u32::from(b.stats.supply))
     }
 
     /// What to put up by a far seep: an outpost hall if the faction has
@@ -170,7 +172,7 @@ impl Kit {
             .iter()
             .filter(|b| b.stats.role == Role::Defence && b.stats.tier <= tier.max(1))
             .filter(|b| b.stats.upgrades_from.is_none())
-            .min_by_key(|b| u32::from(b.stats.cost_grub) + 2 * u32::from(b.stats.cost_marrow))
+            .min_by_key(|b| b.price())
     }
 
     /// The building that adds larvae, main buildings aside: the Brood's

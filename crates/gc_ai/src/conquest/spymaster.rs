@@ -96,14 +96,10 @@ pub struct Belief {
     pub faction: Option<Faction>,
     /// The supply of the regiments it knows of.
     pub supply: u32,
-    /// How it last weighed its army against this one (-1 to +1), if it
-    /// has weighed them at all.
-    pub odds: Option<f32>,
 }
 
-/// What it believes now of every enemy whose army it knows any of. The
-/// odds last weighed against each carry over from `before`.
-pub fn beliefs(s: &Sense, before: &[Belief]) -> Vec<Belief> {
+/// What it believes now of every enemy whose army it knows any of.
+pub fn beliefs(s: &Sense) -> Vec<Belief> {
     enemies(s)
         .into_iter()
         .map(|owner| Belief {
@@ -112,10 +108,6 @@ pub fn beliefs(s: &Sense, before: &[Belief]) -> Vec<Belief> {
                 .find_map(|r| s.kit.all_units.get(usize::from(r.unit)))
                 .map(|&(f, _)| f),
             supply: s.kit.supply_of(army_of(s, owner)).round() as u32,
-            odds: before
-                .iter()
-                .find(|b| b.owner == owner)
-                .and_then(|b| b.odds),
         })
         .collect()
 }

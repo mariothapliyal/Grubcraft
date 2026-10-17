@@ -141,12 +141,15 @@ pub struct Marshal {
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
-    /// What it believes of each enemy's army, and how it last weighed
-    /// them, as of its last think. Only for the AI lens to show.
+    /// What it believes of each enemy's army, as of its last think. Only
+    /// for the AI lens to show.
     pub belief: Vec<spymaster::Belief>,
+    /// How it last weighed its army against each enemy's (-1 to +1), by
+    /// owner. Only for the AI lens to show.
+    pub odds: Vec<(u8, f32)>,
     /// The supply it has gathered and the wave it waits for, as of its
     /// last think. Only for the AI lens to show.
-    pub wave: (u32, u32),
+    pub wave: Option<(u32, u32)>,
 }
 
 impl Marshal {
@@ -169,7 +172,8 @@ impl Marshal {
             wants: Vec::new(),
             battle_wants: Vec::new(),
             belief: Vec::new(),
-            wave: (0, 0),
+            odds: Vec::new(),
+            wave: None,
         }
     }
 
@@ -323,18 +327,14 @@ impl Marshal {
     /// Choose the army's goal and march it there.
     fn decide(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen], home: Option<Vec2>) {
         let Some(rally) = self.rally else { return };
-        // An opening may send a smaller first wave sooner.
-        let first_wave = s
-            .opening
-            .and_then(|o| o.first_wave)
-            .filter(|_| !self.attacked)
-            .is_some_and(|w| s.kit.supply_of(army.iter().copied()) >= f32::from(w));
-        let ready = first_wave || wave_ready(s, c.persona, army);
-        self.belief = spymaster::beliefs(s, &self.belief);
-        self.wave = (
-            s.kit.supply_of(army.iter().copied()).round() as u32,
-            wave_size(s, c.persona).ceil() as u32,
-        );
+        // It sets out once its wave is gathered, or with what it has when
+        // its supply is full and waiting gains nothing.
+        let have = s.kit.supply_of(army.iter().copied());
+        let want = self.wave_size(s, c.persona);
+        let ready = have >= want || (capped(s) && have >= FIRST_WAVE);
+        let enough = have >= FIRST_WAVE;
+        self.belief = spymaster::beliefs(s);
+        self.wave = Some((have.round() as u32, want.ceil() as u32));
         // Armies brawling on the Heart and nobody holding it long is a
         // stalemate (games of four or more): an army that has fought for it
         // a long while goes to break a base instead, or to find one on a
@@ -346,13 +346,15 @@ impl Marshal {
         if self
             .contesting_since
             .is_some_and(|t| s.now >= t + HEART_PATIENCE)
-            && let Some(t) =
-                raid_target(s, centroid(army)).or_else(|| self.target(s, centroid(army)))
+            && let Some((t, note)) = raid_target(s, centroid(army))
+                .map(|t| (t, "going to break a base"))
+                .or_else(|| {
+                    self.target(s, centroid(army))
+                        .map(|t| (t, "going to find a base"))
+                })
         {
-            c.journal.note(
-                s.now,
-                "The Heart is a stalemate: going to break a base".to_string(),
-            );
+            c.journal
+                .note(s.now, format!("The Heart is a stalemate: {note}"));
             self.contesting_since = None;
             self.raid_until = s.now + RAID_TICKS;
             self.goal = Goal::Attack(t);
@@ -394,7 +396,6 @@ impl Marshal {
                 // Beaten back, it gathers a while before going again; and it
                 // goes to stop an enemy on the Heart only with an army.
                 let regrouped = s.now >= self.regroup_until;
-                let enough = s.kit.supply_of(army.iter().copied()) >= FIRST_WAVE;
                 let heart = heart_to_take(s)
                     .filter(|_| regrouped && (ready || enemy_holds_heart(s) && enough));
                 let ready = ready && regrouped;
@@ -406,20 +407,20 @@ impl Marshal {
                             army.len()
                         ),
                     )),
-                    None if regrouped => {
-                        self.attack_plan(s, c.persona, army, ready, enough)
-                            .map(|(t, note)| {
-                                self.attacked = true;
-                                (Goal::Attack(t), note)
-                            })
-                    }
+                    None if regrouped => self
+                        .attack_plan(s, c.persona, army, ready, enough)
+                        .map(|(t, note)| (Goal::Attack(t), note)),
                     None => None,
                 };
                 if let Some((goal, note)) = set_out {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
-                    if matches!(goal, Goal::Heart(_)) {
-                        self.contesting_since.get_or_insert(s.now);
+                    match goal {
+                        Goal::Heart(_) => {
+                            self.contesting_since.get_or_insert(s.now);
+                        }
+                        Goal::Attack(_) => self.attacked = true,
+                        _ => {}
                     }
                     self.goal = goal;
                     c.journal.note(s.now, note);
@@ -636,8 +637,9 @@ impl Marshal {
             .collect();
         // Keep the odds for the lens.
         for &(o, _, margin) in &weighed {
-            if let Some(b) = self.belief.iter_mut().find(|b| b.owner == o) {
-                b.odds = Some(margin);
+            match self.odds.iter_mut().find(|(owner, _)| *owner == o) {
+                Some((_, m)) => *m = margin,
+                None => self.odds.push((o, margin)),
             }
         }
         weighed
@@ -647,21 +649,32 @@ impl Marshal {
             .map(|(at, margin, _)| (at, margin))
     }
 
+    /// The supply it waits for before setting out: the usual wave, or its
+    /// opening's smaller first wave until it has attacked once.
+    fn wave_size(&self, s: &Sense, persona: &Personality) -> f32 {
+        let usual = usual_wave(s, persona);
+        match s.plan.early.first_wave.filter(|_| !self.attacked) {
+            Some(w) => usual.min(f32::from(w)),
+            None => usual,
+        }
+    }
+
     /// What the army is waiting for or doing beyond what its goal says, in
     /// a few words, for the AI lens.
     pub fn plan_note(&self, now: u32) -> Option<String> {
-        let (have, want) = self.wave;
+        let wave = self.wave;
         match self.goal {
             Goal::Gather if now < self.regroup_until => Some(format!(
                 "regrouping after a costly attack, {}s more",
                 (self.regroup_until - now).div_ceil(TICKS_PER_SECOND)
             )),
-            Goal::Gather if want > 0 && have >= want => Some(format!(
-                "wave of {want} supply is ready: waiting for a target or better odds"
-            )),
-            Goal::Gather if want > 0 => Some(format!(
-                "gathering until its wave is ready: {have} of {want} supply"
-            )),
+            Goal::Gather => wave.map(|(have, want)| {
+                if have >= want {
+                    format!("wave of {want} supply is ready: waiting for a target or better odds")
+                } else {
+                    format!("gathering until its wave is ready: {have} of {want} supply")
+                }
+            }),
             Goal::Attack(_) if now < self.raid_until => {
                 Some("raiding enemy main buildings, leaving the Heart alone".to_string())
             }
@@ -762,16 +775,9 @@ impl Marshal {
     }
 }
 
-/// Whether the army gathered at the rally is big enough to set out: a
-/// wave that grows with the game and shrinks with aggression, or a full
-/// supply cap.
-fn wave_ready(s: &Sense, persona: &Personality, army: &[&Seen]) -> bool {
-    let supply = s.kit.supply_of(army.iter().copied());
-    supply >= wave_size(s, persona) || (capped(s) && supply >= FIRST_WAVE)
-}
-
-/// The supply in fighters it waits for before setting out.
-fn wave_size(s: &Sense, persona: &Personality) -> f32 {
+/// The supply in fighters it waits for before setting out: a wave that
+/// grows with the game and shrinks with aggression.
+fn usual_wave(s: &Sense, persona: &Personality) -> f32 {
     let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
     let boldness = 1.3 - 0.6 * persona.aggression();
     ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE)

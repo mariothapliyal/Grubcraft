@@ -56,6 +56,13 @@ pub fn all() -> &'static [Opening] {
     ALL.get_or_init(|| parse(SOURCE).expect("data/ai/openings.ron"))
 }
 
+/// The opening called `name`, whatever its case.
+pub fn find(name: &str) -> Option<&'static Opening> {
+    all()
+        .iter()
+        .find(|o| o.name.eq_ignore_ascii_case(name.trim()))
+}
+
 /// Parse an openings file, checking every personality it names exists and
 /// the first opening is for everyone.
 pub fn parse(source: &str) -> Result<Vec<Opening>, String> {

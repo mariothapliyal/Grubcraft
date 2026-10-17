@@ -34,9 +34,6 @@ const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
 const QUEUE: usize = 2;
 /// Most workers it keeps.
 const MAX_WORKERS: usize = 48;
-/// Workers it has before its first production building, unless its
-/// opening says otherwise.
-const FIRST_PRODUCTION: usize = 6;
 /// Workers it keeps beyond those its nodes take: builders.
 const SPARE_WORKERS: usize = 2;
 /// Army make-up it aims for, by class: line, shock, ranged.
@@ -536,7 +533,7 @@ impl Steward {
             _ => {
                 let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
                 let want = want * usize::from(s.plan.workers_percent) / 100;
-                match s.opening.and_then(|o| o.worker_cap) {
+                match s.plan.early.worker_cap {
                     Some(cap) => want.min(usize::from(cap)),
                     None => want,
                 }
@@ -640,24 +637,22 @@ impl Steward {
             .then(|| (b, self.inner_spot(look)))
         };
         let first = || {
-            let at = s
-                .opening
-                .map_or(FIRST_PRODUCTION, |o| usize::from(o.workers_first));
-            (production == 0 && workers >= at)
+            (production == 0 && workers >= usize::from(s.plan.early.workers_first))
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
         };
         // The opening's towers by the hall.
         let tower = || {
-            let o = s.opening.filter(|o| o.towers > 0)?;
-            let b = s.kit.tower(look.tier)?;
             let towers = look
                 .mine
                 .iter()
                 .filter(|m| m.stats.role == Role::Defence)
                 .count();
-            (towers < usize::from(o.towers)).then(|| (b, self.inner_spot(look)))
+            if towers >= usize::from(s.plan.early.towers) {
+                return None;
+            }
+            Some((s.kit.tower(look.tier)?, self.inner_spot(look)))
         };
         let expand = || {
             let b = match s.kit.economy {
@@ -675,15 +670,12 @@ impl Steward {
         };
         // The opening's production buildings go up whatever the workers,
         // and while it is arming.
-        let opening_more = s
-            .opening
-            .is_some_and(|o| production < usize::from(o.producers));
+        let opening_more = production < usize::from(s.plan.early.producers);
+        let grown = !self.arming
+            && production < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
+            && workers >= 8 + 6 * production;
         let more = || {
-            (opening_more
-                || !self.arming
-                    && production
-                        < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
-                    && workers >= 8 + 6 * production)
+            (opening_more || grown)
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
@@ -859,10 +851,7 @@ impl Steward {
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
         // An opening that expands early does, seeps full or not.
-        let early = s
-            .opening
-            .and_then(|o| o.expand_at)
-            .is_some_and(|m| s.now >= u32::from(m) * 60 * TICKS_PER_SECOND);
+        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t);
         let rising = look
             .mine
             .iter()

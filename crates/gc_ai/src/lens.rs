@@ -86,7 +86,7 @@ impl Mind {
             party: self.party(),
             front,
             focus: c.focus.filter(|&f| standing(f)),
-            text: self.lens_text(&marks, view.tick),
+            text: self.lens_text(c, &marks, view.tick),
             marks,
         }
     }
@@ -99,8 +99,7 @@ impl Mind {
             .unwrap_or_else(|| self.captain())
     }
 
-    fn lens_text(&self, marks: &[Mark], tick: u32) -> Vec<String> {
-        let c = self.fighting_captain();
+    fn lens_text(&self, c: &Captain, marks: &[Mark], tick: u32) -> Vec<String> {
         let mut text = vec![self.summary()];
         let odds = match (c.estimate, c.first_estimate) {
             (Some(now), Some(start)) => format!(
