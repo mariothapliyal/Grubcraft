@@ -14,6 +14,7 @@ use gc_sim::{
 };
 
 use crate::Party;
+use crate::scenery::NodeLook;
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
@@ -57,6 +58,16 @@ const NODE_WIDTH: f32 = 1.8;
 const NODE_LEAST: f32 = 40.0;
 /// Seeps and veins glow in their minimap colours; dry ones don't.
 const NODE_GLOW: u8 = 90;
+/// As models, a full or part-used spot is drawn this bright (128 as
+/// baked) and a dry one this dark.
+const NODE_SHADE: u8 = 140;
+const NODE_DRY_SHADE: u8 = 62;
+/// A full spot's model is this much bigger than baked (about 2.5 tiles
+/// across), so it reads from the RTS camera; workers gather within 2.
+const NODE_MODEL_SCALE: f32 = 1.2;
+/// The red cross on a spot the veins do not reach floats this high, above
+/// the seep's pool and through the vein's bones.
+const CUT_MARK_LIFT: f32 = 0.6;
 /// The Titan's Heart: its stone and the plinth under it, in tiles.
 const HEART_WIDTH: f32 = 1.6;
 const HEART_HEIGHT: f32 = 3.2;
@@ -479,8 +490,7 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             return;
         }
         let [r, g, b] = node_color(n.resource == Resource::Marrow, n.left == 0);
-        let left = n.left as f32 / n.full.max(1) as f32;
-        let width = NODE_WIDTH * (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0;
+        let width = NODE_WIDTH * node_fill(&n);
         let glow = if n.left == 0 { 0 } else { NODE_GLOW };
         out.push(BoxInstance {
             pos: crate::from_fx_vec(n.at).to_array(),
@@ -489,6 +499,30 @@ pub fn push_nodes(world: &World, out: &mut Vec<BoxInstance>) {
             color: [r, g, b, glow],
             lift: 0.0,
         });
+    }
+}
+
+/// A gathering spot's size as a share of full: 1 while full, down to
+/// `NODE_LEAST` percent as it runs down.
+fn node_fill(n: &gc_sim::NodeView) -> f32 {
+    let left = n.left as f32 / n.full.max(1) as f32;
+    (NODE_LEAST + (100.0 - NODE_LEAST) * left) / 100.0
+}
+
+/// How a gathering spot looks as a scenery model ([`crate::scenery`]):
+/// shrunk from `NODE_MODEL_SCALE` to `NODE_LEAST` percent of it as it runs down, a touch
+/// bright while it holds (so it stands out on any land), dim when dry.
+pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> NodeLook {
+    let at = crate::from_fx_vec(n.at);
+    NodeLook {
+        marrow: n.resource == Resource::Marrow,
+        at: Vec3::new(at.x, ground(at), at.y),
+        scale: NODE_MODEL_SCALE * node_fill(n),
+        shade: if n.left == 0 {
+            NODE_DRY_SHADE
+        } else {
+            NODE_SHADE
+        },
     }
 }
 
@@ -709,7 +743,7 @@ pub fn push_veins(
                 facing: facing.normalize().to_array(),
                 size: [0.25, 0.1, 1.5],
                 color: [r, g, b, CUT_GLOW],
-                lift: NODE_HEIGHT + 0.1,
+                lift: CUT_MARK_LIFT,
             });
         }
     }
@@ -862,8 +896,10 @@ pub enum Aura {
     Haste,
     /// Forced march: amber, a little further out.
     March,
-    /// Steadfast: pale gold, furthest out, so all three show at once.
+    /// Steadfast: pale gold, further out still, so they show at once.
     Steadfast,
+    /// A summoned regiment: spectral violet, furthest out.
+    Spectral,
 }
 
 impl Aura {
@@ -873,6 +909,16 @@ impl Aura {
             Aura::Haste => (HASTE_COLOR, AURA_REACH),
             Aura::March => (MARCH_COLOR, AURA_REACH + AURA_STEP),
             Aura::Steadfast => (STEADFAST_COLOR, AURA_REACH + 2.0 * AURA_STEP),
+            Aura::Spectral => (SPECTRAL_COLOR, AURA_REACH + 3.0 * AURA_STEP),
+        }
+    }
+
+    /// Its ribbon's brightness for a `base` glow: a summoned regiment's
+    /// aura is the faintest, since it shows the whole time.
+    fn glow(self, base: u8) -> u8 {
+        match self {
+            Aura::Spectral => base / 2,
+            _ => base,
         }
     }
 }
@@ -881,6 +927,7 @@ impl Aura {
 /// stands than the one before.
 const MARCH_COLOR: [u8; 3] = [255, 165, 50];
 const STEADFAST_COLOR: [u8; 3] = [255, 225, 130];
+const SPECTRAL_COLOR: [u8; 3] = [170, 140, 255];
 const AURA_STEP: f32 = 0.35;
 
 /// Outline a regiment's block (`width` across its `facing`, `depth` along
@@ -894,6 +941,7 @@ pub fn push_regiment_aura(
     out: &mut Vec<BoxInstance>,
 ) {
     let (colour, reach) = aura.look();
+    let glow = aura.glow(glow);
     let half = (width / 2.0 + reach, depth / 2.0 + reach);
     let corners = block_corners(centre, facing, half);
     for (i, &from) in corners.iter().enumerate() {
@@ -1498,16 +1546,21 @@ mod tests {
             out
         };
         let reach = |out: &[BoxInstance]| out.iter().map(|b| b.pos[0].abs()).fold(0.0f32, f32::max);
-        let (haste, march, steady) = (
+        let (haste, march, steady, ghost) = (
             outline(Aura::Haste),
             outline(Aura::March),
             outline(Aura::Steadfast),
+            outline(Aura::Spectral),
         );
         assert!(reach(&haste) < reach(&march) && reach(&march) < reach(&steady));
+        assert!(reach(&steady) < reach(&ghost));
         let colour = |out: &[BoxInstance]| out[0].color;
-        assert_ne!(colour(&haste), colour(&march));
-        assert_ne!(colour(&march), colour(&steady));
-        assert_ne!(colour(&haste), colour(&steady));
+        let colours = [&haste, &march, &steady, &ghost].map(|o| colour(o));
+        for (i, a) in colours.iter().enumerate() {
+            for b in &colours[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 
     #[test]
