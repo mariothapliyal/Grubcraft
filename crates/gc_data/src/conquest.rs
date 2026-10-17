@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(align_of::<BuildingRecord>(), 4);
         assert_eq!(size_of::<ConquestUnitRecord>(), 92);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
-        assert_eq!(size_of::<PowerRecord>(), 52);
+        assert_eq!(size_of::<PowerRecord>(), 48);
         assert_eq!(align_of::<PowerRecord>(), 4);
     }
 }
