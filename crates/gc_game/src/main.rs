@@ -122,6 +122,7 @@ mod conquest_golden;
 mod credits;
 mod data;
 mod field;
+mod fog;
 #[cfg(test)]
 mod goldens;
 mod hud;
@@ -648,6 +649,8 @@ struct Running {
     viewer_scroll: f32,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
+    /// The fog of war on the ground, when the match has it.
+    fog: fog::FogView,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -1294,6 +1297,7 @@ impl App {
             viewer: None,
             viewer_scroll: 0.0,
             reveal_all: false,
+            fog: Default::default(),
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -2806,6 +2810,14 @@ impl Running {
             self.renderer.clear_ui();
         }
 
+        self.fog.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.sandbox.side,
+            self.heightmap.tiles,
+            !self.reveal_all,
+        );
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
@@ -3532,6 +3544,7 @@ impl Running {
         self.sandbox = Sandbox::new(matches!(kind, MatchKind::Sandbox));
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= matches!(kind, MatchKind::Sandbox);
+        self.fog.reset();
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
