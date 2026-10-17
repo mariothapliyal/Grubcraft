@@ -174,6 +174,19 @@ fn a_regiment_sees_so_far_and_no_further() {
 }
 
 #[test]
+fn a_regiment_placed_in_sight_is_seen_at_once() {
+    // Each regiment is looked round on its own tick, but a new one on
+    // the tick it is placed (placing takes a tick here), so it is never
+    // unseen by a side with it in sight.
+    let mut w = fogged();
+    let ours = spawn(&mut w, 0, 20, 64);
+    let theirs = spawn(&mut w, 1, 30, 64);
+    assert!(w.sees(0, theirs));
+    run(&mut w, SIGHT_EVERY);
+    assert!(w.sees(1, ours));
+}
+
+#[test]
 fn the_sandbox_sees_everything() {
     let mut w = conquest(Victories::default());
     assert!(!w.fog());

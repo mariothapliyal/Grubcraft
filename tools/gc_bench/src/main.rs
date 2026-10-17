@@ -99,9 +99,17 @@ fn main() {
         }
     }
 
-    let nav = opts.nav(MAP_TILES);
-    let mut failed = false;
     let run_all = opts.scenario.is_none();
+    let scripted = matches!(
+        opts.scenario.as_deref(),
+        None | Some("drill" | "pathing-storm")
+    );
+    let nav = if scripted {
+        opts.nav(MAP_TILES)
+    } else {
+        Vec::new()
+    };
+    let mut failed = false;
     if run_all || opts.scenario.as_deref() == Some("drill") {
         failed |= drill(&opts, &nav);
     }
@@ -475,16 +483,17 @@ fn conquest_six(opts: &Options) -> bool {
     let mut setup = setup.into_iter();
     let mut timings = Timings::new(ticks);
     let mut laid_us = Vec::new();
+    let standing = |w: &World| w.structures().map_or(0, |s| s.iter().count());
     for _ in 0..ticks {
         drill.commands_for(&world, &mut commands);
-        let laying = setup.next();
-        commands.extend(laying);
+        commands.extend(setup.next());
+        let before = standing(&world);
         timings.tick(&mut world, &commands);
-        if laying.is_some() {
+        if standing(&world) > before {
             laid_us.extend(timings.times_us.last());
         }
     }
-    let standing = world.structures().map_or(0, |s| s.iter().count());
+    let standing = standing(&world);
     let map = opts.map_name();
     println!(
         "scenario     conquest-6p, {PLAYERS} players x {per_player} regiments, {standing} buildings, \

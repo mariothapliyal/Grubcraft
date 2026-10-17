@@ -158,11 +158,11 @@ impl Grid {
     /// and each piece now takes the area its cells had. Pieces that reach
     /// out of the box keep their area; so does the first of an area's
     /// pieces when none of them do. The rest (pockets cut off inside the
-    /// box, and new ground) take new numbers. Returns false, changing
-    /// nothing, when that can't be told from the box alone: two areas
-    /// joined, or a piece from before cut into two that both reach out
-    /// (they may or may not meet again beyond). Then the whole map must be
-    /// numbered again. Areas are only ever compared, so their numbers may
+    /// box, and new ground) take new numbers. Returns false when that
+    /// can't be told from the box alone: two areas joined, or a piece from
+    /// before cut into two that both reach out (they may or may not meet
+    /// again beyond). Then the whole map must be numbered again: cells in
+    /// `near` that opened or shut have already lost their areas. Areas are only ever compared, so their numbers may
     /// differ from a fresh numbering's.
     pub(super) fn renumber_near(&mut self, near: [i32; 4], was_open: &[bool]) -> bool {
         let b @ [bx0, by0, bx1, by1] = self.grow(near, SECTOR);

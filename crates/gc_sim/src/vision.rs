@@ -150,6 +150,9 @@ pub(crate) struct Vision {
     /// the party's last watcher loses it, so sight does not flicker at the
     /// edge.
     sight_linger: Vec<u8>,
+    /// Per slot, in fog of war: placed and not yet looked round, so it
+    /// looks on its first tick whatever its turn (see [`SIGHT_EVERY`]).
+    unlooked: Vec<bool>,
     /// In fog of war, this tick: each building's owner, footprint and
     /// sight.
     posts: Vec<Post>,
@@ -200,6 +203,7 @@ impl Vision {
             fog: false,
             in_sight: Vec::new(),
             sight_linger: Vec::new(),
+            unlooked: Vec::new(),
             posts: Vec::new(),
             by_cell: Vec::new(),
             cell_start: Vec::new(),
@@ -235,6 +239,7 @@ impl Vision {
         self.fog = true;
         self.in_sight = vec![0; capacity];
         self.sight_linger = vec![0; capacity * PARTIES];
+        self.unlooked = vec![false; capacity];
         self.posts = Vec::with_capacity(buildings);
         self.by_cell = Vec::with_capacity(buildings);
         self.cells = (map_tiles as usize).div_ceil(POST_CELL as usize).max(1);
@@ -373,7 +378,7 @@ impl Vision {
                 .copied()
                 .unwrap_or(u8::MAX);
             let cover = self.spotting(regs, units, terrain, i);
-            let fog_now = self.fog && looks_now(i as u32, tick);
+            let fog_now = self.fog && (looks_now(i as u32, tick) || self.unlooked[i]);
             let (near, far) = match owner as usize {
                 o if o < PARTIES => {
                     let far = fog_now.then_some(SIGHT);
@@ -402,6 +407,7 @@ impl Vision {
                     }
                 }
                 self.in_sight[i] = in_sight;
+                self.unlooked[i] = false;
             }
             for p in 0..PARTIES {
                 let k = i * PARTIES + p;
@@ -459,6 +465,7 @@ impl Vision {
                 .copied()
                 .unwrap_or(u8::MAX);
             self.sight_linger[i * PARTIES..(i + 1) * PARTIES].fill(0);
+            self.unlooked[i] = true;
         }
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
@@ -507,6 +514,7 @@ impl Vision {
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
             self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
+            self.unlooked[i] = from.unlooked[i];
         }
     }
 
@@ -777,6 +785,7 @@ impl Vision {
                 for k in i * PARTIES..(i + 1) * PARTIES {
                     h.u8(self.sight_linger[k]);
                 }
+                h.u8(u8::from(self.unlooked[i]));
             }
         }
     }
