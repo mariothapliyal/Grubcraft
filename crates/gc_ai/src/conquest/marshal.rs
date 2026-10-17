@@ -14,7 +14,7 @@ use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
-use super::Sense;
+use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
 use crate::orders::{Act, Orders, ROUTINE, Want};
@@ -38,6 +38,17 @@ const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
 const HEART_PATIENCE: u32 = 10 * 60 * TICKS_PER_SECOND;
 /// Ticks such a raid lasts, Heart or no Heart.
 const RAID_TICKS: u32 = 8 * 60 * TICKS_PER_SECOND;
+/// Odds (from the estimator, -1 to +1) a level that weighs them wants
+/// before it attacks, and how much more a fully cautious one wants.
+const ODDS_NEEDED: f32 = 0.05;
+const ODDS_CAUTION: f32 = 0.3;
+/// Odds so good it attacks before its wave is full.
+const ODDS_STRIKE: f32 = 0.5;
+/// Tiles of distance that cost as much as 1 of odds, when choosing whom to
+/// attack.
+const ODDS_PER_DISTANCE: f32 = 400.0;
+/// How far from a base an opportunist counts its defenders.
+const DEFENDERS_REACH: f32 = 50.0;
 /// Supply short of the limit that still counts as a full army.
 const FULL_SLACK: u32 = 12;
 /// Enemies within this many tiles of its buildings are a threat to home.
@@ -378,15 +389,10 @@ impl Marshal {
                             army.len()
                         ),
                     )),
-                    None => ready
-                        .then(|| self.target(s, centroid(army)))
-                        .flatten()
-                        .map(|t| {
-                            (
-                                Goal::Attack(t),
-                                format!("Attacking with {} regiments", army.len()),
-                            )
-                        }),
+                    None if regrouped => self
+                        .attack_plan(s, c.persona, army, ready)
+                        .map(|(t, note)| (Goal::Attack(t), note)),
+                    None => None,
                 };
                 if let Some((goal, note)) = set_out {
                     self.out = army.iter().map(|r| r.handle).collect();
@@ -532,6 +538,79 @@ impl Marshal {
             .map(|(_, &p)| p)
             .filter(|p| friendly.iter().all(|f| f.distance(*p) > SCOUTED * 2.0))
             .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+    }
+
+    /// Where to attack now, if anywhere, and the journal line saying why.
+    /// A level that weighs the odds goes for the enemy it has the best odds
+    /// against, and sets out only when the odds are good enough for its
+    /// caution (or its supply is full, and waiting gains nothing); with
+    /// odds that good it goes before its wave is full. The others go when
+    /// the wave is `ready`, at the nearest enemy building.
+    fn attack_plan(
+        &mut self,
+        s: &Sense,
+        persona: &Personality,
+        army: &[&Seen],
+        ready: bool,
+    ) -> Option<(Vec2, String)> {
+        let from = centroid(army);
+        let plain = |t: Vec2| (t, format!("Attacking with {} regiments", army.len()));
+        if !s.plan.weighs_odds {
+            return ready.then(|| self.target(s, from)).flatten().map(plain);
+        }
+        let Some((t, margin)) = self.best_odds(s, army, from) else {
+            // Nothing of theirs known: look for them.
+            return ready.then(|| self.target(s, from)).flatten().map(plain);
+        };
+        let needed = ODDS_NEEDED + ODDS_CAUTION * persona.caution();
+        let full = s
+            .world
+            .bank(s.party)
+            .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
+        let enough = army_supply(s, army) >= FIRST_WAVE;
+        let go = ready && (margin >= needed || full) || enough && margin >= ODDS_STRIKE;
+        go.then(|| {
+            (
+                t,
+                format!("Attacking with {} regiments: odds {margin:+.2}", army.len()),
+            )
+        })
+    }
+
+    /// The enemy building to attack with the best odds: for each enemy it
+    /// knows a building of, the nearest such building, scored by how a
+    /// fight against that enemy's army would go (for an opportunist, only
+    /// the part of it near the building), less a little for distance.
+    fn best_odds(&self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
+        let buildings = enemy_buildings(s);
+        let structures = s.world.structures()?;
+        let owner_of =
+            |h: StructureHandle| structures.iter().find(|v| v.handle == h).map(|v| v.owner);
+        let mut owners: Vec<(u8, Vec2)> = Vec::new();
+        for &(h, at, _) in &buildings {
+            let Some(o) = owner_of(h) else { continue };
+            match owners.iter_mut().find(|(p, _)| *p == o) {
+                Some((_, best)) if best.distance(from) > at.distance(from) => *best = at,
+                Some(_) => {}
+                None => owners.push((o, at)),
+            }
+        }
+        owners
+            .into_iter()
+            .map(|(o, at)| {
+                let margin = if s.plan.opportunist {
+                    spymaster::odds(
+                        s,
+                        army.iter().copied(),
+                        spymaster::army_near(s, o, at, DEFENDERS_REACH),
+                    )
+                } else {
+                    spymaster::odds(s, army.iter().copied(), spymaster::army_of(s, o))
+                };
+                (at, margin, margin - at.distance(from) / ODDS_PER_DISTANCE)
+            })
+            .max_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(at, margin, _)| (at, margin))
     }
 
     /// At the target: every regiment goes for one of the nearest enemy

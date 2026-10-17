@@ -163,7 +163,10 @@ impl Mind {
         let mut mind = Mind::new(config);
         // Greedy minds expand sooner; a Recruit forgets to until its seeps
         // run low.
-        let seconds = 300.0 - 150.0 * f32::from(mind.persona.greed) / 100.0;
+        let plan = conquest::strategy::Strategy::of(config.difficulty);
+        let seconds = (300.0 - 150.0 * f32::from(mind.persona.greed) / 100.0)
+            * f32::from(plan.expand_percent)
+            / 100.0;
         let expand_after = match config.difficulty {
             Difficulty::Recruit => u32::MAX,
             _ => (seconds * perception::TICKS) as u32,
@@ -171,6 +174,7 @@ impl Mind {
         mind.realm = Some(conquest::Realm::new(
             kit,
             config.party,
+            config.difficulty,
             &mind.knobs,
             expand_after,
         ));
