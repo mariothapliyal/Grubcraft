@@ -1407,7 +1407,7 @@ impl<N: Network> Menu<N> {
         let col_w = (panel.w - 72) / 2;
         let row = sp(34);
         let gap = sp(6);
-        let top = panel.y + sp(60).max(46);
+        let top = panel.y + sp(60).max(52);
         let before = self.settings.clone();
         let s = &mut self.settings;
 

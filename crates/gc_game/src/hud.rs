@@ -5,10 +5,10 @@ use gc_sim::events::Event;
 use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
+use gc_ui::Icon;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
 use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar, Tuning};
 use gc_ui::hero::{HeroAbility, HeroPanel};
-use gc_ui::Icon;
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HelpScroll, Hud,
     HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection, SlotState, StatusStrip,
@@ -18,8 +18,8 @@ use glam::{Vec2, Vec3};
 
 use crate::conquest_card::Action;
 use crate::{Running, from_fx_vec, fx_vec, sounds};
-use gc_match::battle::party_name;
 use gc_map::{Kind, Map};
+use gc_match::battle::party_name;
 
 /// Cells per side of the minimap's ground picture: 48 up to a 384-tile
 /// map, then one for every 8 tiles, up to 80 (a 768 map's cells are
@@ -495,8 +495,9 @@ impl Running {
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
             state = match (state, r.morale) {
-                (_, MoraleState::Routing | MoraleState::Shattered)
-                | (CardState::Routing, _) => CardState::Routing,
+                (_, MoraleState::Routing | MoraleState::Shattered) | (CardState::Routing, _) => {
+                    CardState::Routing
+                }
                 (_, MoraleState::Wavering) | (CardState::Wavering, _) => CardState::Wavering,
                 _ => CardState::Steady,
             };
@@ -1147,7 +1148,10 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         ),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
-        Some(Action::CallOff) => (Icon::FallBack, "Call it off and get a part of the cost back."),
+        Some(Action::CallOff) => (
+            Icon::FallBack,
+            "Call it off and get a part of the cost back.",
+        ),
         None => (Icon::None, ""),
     }
 }

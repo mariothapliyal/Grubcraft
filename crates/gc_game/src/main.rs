@@ -5090,7 +5090,10 @@ impl Running {
             return lines;
         }
         if self.online.is_some() {
-            lines.push(format!("{} over the network, {commanding}", self.mode_name()));
+            lines.push(format!(
+                "{} over the network, {commanding}",
+                self.mode_name()
+            ));
             minds(&mut lines);
             lines.push(self.formation_line());
             return lines;
@@ -5134,8 +5137,7 @@ impl Running {
         lines.push(self.formation_line());
         if self.battle.is_none() {
             lines.push(if self.reveal_all {
-                "Woods: Shift+V hides what this side can't see (now showing everything)"
-                    .to_string()
+                "Woods: Shift+V hides what this side can't see (now showing everything)".to_string()
             } else {
                 "Woods: Shift+V shows regiments hidden from this side".to_string()
             });
@@ -5158,9 +5160,7 @@ impl Running {
 
     fn formation_line(&self) -> String {
         match self.selection_formation() {
-            None => {
-                "R: formation (Line, Tight, Loose, Shield wall) for the selection".into()
-            }
+            None => "R: formation (Line, Tight, Loose, Shield wall) for the selection".into(),
             Some(Some(f)) => format!("Selection stands in {}. R: next formation", f.name()),
             Some(None) => "Selection stands in mixed formations. R: next formation".into(),
         }

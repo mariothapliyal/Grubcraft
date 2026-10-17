@@ -301,7 +301,7 @@ impl Ui {
     /// the panel's top edge and, beside it, a one-line hint saying what to
     /// do here. Returns the banner's body.
     pub fn header(&mut self, panel: Rect, title: &str, hint: &str) -> Rect {
-        let banner = self.banner(panel.x + 24, panel.y - 12, 2, title);
+        let banner = self.banner(panel.x + 24, panel.y - 8, 2, title);
         if !hint.is_empty() {
             let x = banner.right() + 20;
             let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
