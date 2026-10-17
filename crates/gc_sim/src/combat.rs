@@ -316,6 +316,8 @@ pub struct Combat {
     /// for friends in their way. `big_holder`: one too big for the grid is.
     holder: Vec<bool>,
     big_holder: bool,
+    /// Per regiment: whether it is listed in `holder` this tick.
+    marked: Vec<bool>,
     /// Marks for visiting each regiment once per search (see `each_near`).
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
@@ -424,6 +426,7 @@ impl Combat {
             max_step: GIVE_GROUND,
             holder: vec![false; BUCKETS * OWNER_SLOTS],
             big_holder: false,
+            marked: vec![false; regiment_capacity],
             seen: vec![Cell::new(0); regiment_capacity],
             search: Cell::new(0),
             give: vec![FxVec2::ZERO; regiment_capacity],
@@ -706,6 +709,7 @@ impl Combat {
     pub(crate) fn mark_holders(&mut self, regs: &Regiments, nav: &Nav) {
         self.holder.fill(false);
         self.big_holder = false;
+        self.marked.fill(false);
         for i in 0..regs.alive.len() {
             if !regs.alive[i]
                 || regs.morale_state[i].broken()
@@ -716,6 +720,7 @@ impl Combat {
             {
                 continue;
             }
+            self.marked[i] = true;
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i]);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big_holder = true;
@@ -807,8 +812,12 @@ impl Combat {
                 if d > r * r {
                     return;
                 }
+                // A friend marching on ahead only counts in tight ground
+                // too (as `mark_holders` lists it): in the open, friends
+                // on the march pass through each other.
                 let ahead = || {
-                    regs.target[j].is_some()
+                    self.marked[j]
+                        && regs.target[j].is_some()
                         && (regs.position[j] - regs.position[i]).dot(dir) > Fx::ZERO
                         && regs.facing[j].to_vec().dot(dir) > Fx::ZERO
                 };

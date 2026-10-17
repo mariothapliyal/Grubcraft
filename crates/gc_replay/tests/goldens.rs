@@ -126,15 +126,15 @@ fn fingerprint(replay: &Replay) -> u64 {
 const PINNED: (u32, &[(&str, u64)]) = (
     10,
     &[
-        ("conquest-ribcage-1v1", 0xa40246b2f292ae14),
-        ("field-1v1", 0xd355a191a555853c),
-        ("field-2v2", 0x25a5a1f11610e26c),
-        ("field-8000pt-2v2", 0x962e01f48f3e4008),
-        ("field-brace-1v1", 0xd54dd336ce7cd062),
-        ("field-champions-1v1", 0x57d76be733ca1946),
-        ("field-deploy-1v1", 0x9bfb4d6b4727bfbc),
-        ("field-woods-1v1", 0xa4c8517ae4bcfc7a),
-        ("sandbox-tuning", 0x250ed077f54d01ab),
+        ("conquest-ribcage-1v1", 0xcb91b446d98c2258),
+        ("field-1v1", 0x79f7e6df90b45aa4),
+        ("field-2v2", 0xdb9063bd8234dff1),
+        ("field-8000pt-2v2", 0x42088eb11685c86b),
+        ("field-brace-1v1", 0x215dbdab13d4cd02),
+        ("field-champions-1v1", 0x44a67bdfb431743f),
+        ("field-deploy-1v1", 0x53348099fb95fec4),
+        ("field-woods-1v1", 0x051a74045ad802de),
+        ("sandbox-tuning", 0x38363ebd9af11066),
     ],
 );
 

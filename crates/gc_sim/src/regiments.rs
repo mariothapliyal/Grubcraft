@@ -625,9 +625,13 @@ impl Regiments {
             .ceil_int()
             .min(i32::from(nav::CLEAR_CAP) / nav::CELLS_PER_TILE);
         let files = self.files[i];
-        let room = if nav.open_around(self.position[i], reach_tiles) {
-            Fx::from_int(reach_tiles)
-        } else {
+        // The outermost soldiers stand half a spacing in from the block's
+        // edge.
+        let outer = |f: u16| Fx::from_raw(fs.raw() * i32::from(f - 1) / 2) + SQUEEZE_MARGIN;
+        // Room either side of the centre, unless open all round (then the
+        // whole frontage fits, however wide: the measure stops at
+        // `CLEAR_CAP`).
+        let room = (!nav.open_around(self.position[i], reach_tiles)).then(|| {
             let half = formation::block_size(files, models, fs, rs).1 / 2;
             nav.room_across(
                 self.position[i],
@@ -635,19 +639,17 @@ impl Regiments {
                 Fx::from_int(reach_tiles),
                 &[half + look, half, Fx::ZERO, -half],
             )
-        };
-        // The outermost soldiers stand half a spacing in from the block's
-        // edge.
-        let outer = |f: u16| Fx::from_raw(fs.raw() * i32::from(f - 1) / 2) + SQUEEZE_MARGIN;
+        });
+        let fits = |f: u16, spare: Fx| room.is_none_or(|room| outer(f) + spare <= room);
         let fit = (1..=frontage)
             .rev()
-            .find(|&f| outer(f) <= room)
+            .find(|&f| fits(f, Fx::ZERO))
             .unwrap_or(1);
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
             self.files[i] = files - (files - fit).div_ceil(2);
             self.reform[i] = SQUEEZE_TICKS;
-        } else if fit > files && outer(files + 1) + WIDEN_SPARE <= room {
+        } else if fit > files && fits(files + 1, WIDEN_SPARE) {
             self.files[i] = files + 1;
             self.reform[i] = WIDEN_TICKS;
         }

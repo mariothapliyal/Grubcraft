@@ -1997,7 +1997,7 @@ impl Running {
                 continue;
             };
             let stats = &self.units.stats[r.unit as usize];
-            let files = if files == 0 { r.files } else { files };
+            let files = if files == 0 { r.frontage } else { files };
             let (width, depth) = stats.block_size_in(r.formation, files, r.models);
             self.instances.push(BoxInstance {
                 pos: from_fx_vec(target).to_array(),
