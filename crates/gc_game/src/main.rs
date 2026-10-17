@@ -15,16 +15,19 @@
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
 //! and regiments on the field change at once. Shift+R reloads `data/units.ron`
 //! when the game runs from the repository and was built with `--features dev`.
-//! H hides the sandbox panel; C shows the credits for the art. I hands the side you command to the
-//! battle AI (Recruit, then Veteran, then General, then back to you); the
-//! panel shows what each computer player is doing and expects.
+//! H, F1 or the ? Help button in the top bar opens the Marshal's Scroll: the keys
+//! in groups, and what each computer player is doing and expects (F1 finds an
+//! idle worker instead while a Conquest match has one). C shows the credits for
+//! the art. I hands the side you command to the battle AI (Recruit, then
+//! Veteran, then General, then back to you).
 //!
 //! Soldiers are low-poly models (baked from free packs by `gc_artbake`) that
 //! walk, run, fight, shoot and fall with their own animations; parts of each
 //! take the team colour. Zoom far out and the Commander View replaces them
 //! with one block and banner per regiment.
 //!
-//! The bottom bar has a minimap (click or drag to move the camera, right-click
+//! The top bar says what you are playing (mode, side, speed, clock) and, in
+//! Conquest, your stores. The bottom bar has a minimap (click or drag to move the camera, right-click
 //! to send the selection there) and an army tray of regiment cards (click to
 //! select, Shift-click to toggle, double-click to centre). The command grid
 //! has Q (move) and W (attack), each followed by a left-click, and R (formation).
@@ -127,6 +130,9 @@ mod field;
 mod fog;
 #[cfg(test)]
 mod goldens;
+// Not wired in yet: the Guide's data (docs/08-ui-ux.md#guide).
+#[allow(dead_code)]
+mod guide_data;
 mod hud;
 mod lens;
 mod map_preview;
@@ -829,7 +835,6 @@ impl Sandbox {
             building: 0,
             tuning: false,
             row: 0,
-            panel: true,
             credits: false,
             message: None,
             dirty: true,
@@ -914,9 +919,7 @@ struct Sandbox {
     /// The stats panel is open (T), with this row chosen.
     tuning: bool,
     row: usize,
-    /// The sandbox panel is showing (H).
-    panel: bool,
-    /// The credits are showing (C), in place of the panel.
+    /// The credits are showing (C), in place of the overlay text.
     credits: bool,
     message: Option<(String, Instant)>,
     /// The panel needs redrawing.
@@ -1267,7 +1270,6 @@ impl App {
             buildings: building_table,
             // The showroom hides the panel (H shows it).
             sandbox: Sandbox {
-                panel: opts.showroom.is_none(),
                 ..Sandbox::new(opts.sandbox)
             },
             selected: Vec::with_capacity(64),
@@ -1610,7 +1612,9 @@ impl ApplicationHandler for App {
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
-                        KeyCode::F1 if down && !event.repeat => r.next_idle_worker(),
+                        // F1 finds an idle worker while there is one to find,
+                        // and otherwise opens the Marshal's Scroll (like H).
+                        KeyCode::F1 if down && !event.repeat => r.f1_key(),
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
                             r.sandbox.dirty = true;
@@ -1620,10 +1624,7 @@ impl ApplicationHandler for App {
                         {
                             r.hud.toggle_hero_preview();
                         }
-                        KeyCode::KeyH if down && !event.repeat => {
-                            r.sandbox.panel = !r.sandbox.panel;
-                            r.sandbox.dirty = true;
-                        }
+                        KeyCode::KeyH if down && !event.repeat => r.toggle_help(),
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
@@ -1654,6 +1655,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
+                        KeyCode::Escape if down && r.hud.help_open() => r.toggle_help(),
                         KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         // Esc first gets you out of a ride.
                         KeyCode::Escape if down && r.ride.is_some() => r.leave_ride(),
@@ -4447,10 +4449,10 @@ impl Running {
             String::new()
         } else if self.sandbox.credits {
             credits::lines().join("\n")
-        } else if self.sandbox.panel {
-            self.sandbox_panel()
+        } else if self.showroom.is_some() {
+            String::new()
         } else {
-            self.battle_news().unwrap_or_default()
+            self.sandbox_panel()
         };
         if self.lens && !self.menu_open {
             let lenses = lens::lenses(&self.minds);
@@ -4467,7 +4469,7 @@ impl Running {
         }
         let scale = self.window.scale_factor() as f32;
         // Below Conquest's top bar.
-        let top = if self.top_bar().is_some() {
+        let top = if self.match_started && self.showroom.is_none() {
             gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
         } else {
             0.0
@@ -4990,18 +4992,14 @@ impl Running {
         self.sandbox.dirty = true;
     }
 
-    /// The sandbox panel's text.
+    /// The overlay box's text: only what needs saying now (the network,
+    /// who won, the replay's end, the stats tuner and the last message).
+    /// The keys and the standing information are in the Marshal's Scroll
+    /// (`help_notes`).
     fn sandbox_panel(&self) -> String {
         let sb = &self.sandbox;
         let unit = sb.unit as usize;
         let name = &self.units.names[unit];
-        let speed = if self.paused {
-            "paused".to_string()
-        } else if self.speed == NORMAL_SPEED {
-            "normal speed".to_string()
-        } else {
-            format!("{}x speed", SPEEDS[self.speed])
-        };
         let mut lines = Vec::new();
         if let Some(o) = &self.online {
             let lan = self.menu.network();
@@ -5022,7 +5020,7 @@ impl Running {
                 )
             } else {
                 format!(
-                    "REPLAY  {}   {} of {}   {speed}",
+                    "REPLAY  {}   {} of {}",
                     w.title,
                     gc_ai::lens::clock(tick),
                     gc_ai::lens::clock(w.replay.ticks)
@@ -5034,126 +5032,14 @@ impl Running {
                     gc_ai::lens::clock(at)
                 ));
             }
-            lines.push(format!(
-                "following {} (player {})   Tab: next side   H: hide",
-                party_name(&self.parties, sb.side),
-                sb.side + 1
-            ));
-            lines.push("game     P: pause   - =: slower, faster   Esc: menu".to_string());
-            lines.push(if self.reveal_all {
-                "woods    V: see only what this side saw (now showing everything)".to_string()
-            } else {
-                "woods    V: show everything".to_string()
-            });
-            if let Some((message, _)) = &sb.message {
-                lines.push(String::new());
-                lines.push(message.clone());
-            }
-            return lines.join("\n");
         }
-        if self.online.is_some() {
-            lines.push(format!(
-                "{} over the network   commanding {} (player {})   H: hide",
-                self.mode_name(),
-                party_name(&self.parties, sb.side),
-                sb.side + 1
-            ));
-            for m in self.minds.iter() {
-                lines.push(format!(
-                    "  {}: {}",
-                    party_name(&self.parties, m.party()),
-                    m.summary()
-                ));
-            }
-            lines.push(if self.commander {
-                "view     Commander View   L: AI lens   C: credits   Esc: menu (the battle goes on)"
-                    .to_string()
-            } else {
-                "view     soldiers   L: AI lens   C: credits   Esc: menu (the battle goes on)"
-                    .to_string()
-            });
-            lines.push(self.formation_line());
-            if let Some((message, _)) = &sb.message {
-                lines.push(String::new());
-                lines.push(message.clone());
-            }
-            return lines.join("\n");
-        }
-        let mode = if self.battle.is_some() {
-            self.mode_name()
-        } else {
-            "SANDBOX"
-        };
-        lines.push(format!(
-            "{mode}  commanding {} (player {})   Tab: next side   H: hide",
-            party_name(&self.parties, sb.side),
-            sb.side + 1
-        ));
-        // The computer players, and what the one on this side has in mind.
-        for m in self.minds.iter() {
-            lines.push(format!(
-                "  {}: {}",
-                party_name(&self.parties, m.party()),
-                m.summary()
-            ));
-        }
-        lines.push(match self.minds.get(sb.side) {
-            None => "I: hand this side to the computer   L: AI lens".to_string(),
-            Some(m) => {
-                let next = Difficulty::ALL
-                    .get(m.difficulty().index() + 1)
-                    .map_or("take it back", |d| d.name());
-                let thinking = m
-                    .journal()
-                    .latest()
-                    .map_or(String::new(), |e| format!(": {}", e.text));
-                format!("I: {next}   L: AI lens   the computer plays this side{thinking}")
-            }
-        });
-        lines.push(if sb.building_tool {
-            format!(
-                "placing  {}   [ ]: building   click: place   K: stop",
-                self.buildings.describe(sb.building)
-            )
-        } else if sb.placing {
-            format!("placing  {name}   [ ]: type   click: place   B: stop")
-        } else {
-            format!("B: place regiments   [ ]: type ({name})")
-        });
-        if let (Some(standing), false) = (self.world.structures(), sb.building_tool) {
-            lines.push(format!(
-                "K: place buildings ({} standing)   right-click an enemy one with regiments selected: attack it",
-                standing.len()
-            ));
-        }
-        lines.extend([
-            format!("game     {speed}   P: pause   - =: slower, faster"),
-            "Delete: remove the building under the cursor or the selected regiments   Shift+Delete: clear field   T: tune stats   Shift+R: reload data"
-                .to_string(),
-            "Shift+H: preview the hero panel (no heroes in the game yet)".to_string(),
-            if self.commander {
-                "view     Commander View: one banner per regiment (zoom in for soldiers)   C: credits"
-                    .to_string()
-            } else {
-                "view     soldiers (zoom far out for the Commander View)   C: credits".to_string()
-            },
-            self.formation_line(),
-        ]);
-        if self.battle.is_none() {
-            lines.push(if self.reveal_all {
-                "woods    V: hide what this side can't see (now showing everything)".to_string()
-            } else {
-                "woods    V: show regiments hidden from this side".to_string()
-            });
-        }
-        if sb.tuning {
+        if sb.tuning && self.watching.is_none() {
             let on_field = self
                 .world
                 .regiments
                 .iter()
                 .filter(|r| r.unit == sb.unit)
                 .count();
-            lines.push(String::new());
             lines.push(format!(
                 "TUNE {name} ({on_field} on the field)   Up/Down: pick   Left/Right: change   T: close"
             ));
@@ -5162,12 +5048,99 @@ impl Running {
                 let mark = if k == sb.row { '>' } else { ' ' };
                 lines.push(format!("{mark} {:<15} {}", t.label, (t.show)(stats)));
             }
+            lines.push(String::new());
         }
         if let Some((message, _)) = &sb.message {
-            lines.push(String::new());
             lines.push(message.clone());
         }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
         lines.join("\n")
+    }
+
+    /// The live lines at the foot of the Marshal's Scroll: what the
+    /// computer players are doing, what is being placed, the formation.
+    /// The keys themselves are `gc_ui::hud::HELP_GROUPS`.
+    fn help_notes(&self) -> Vec<String> {
+        let sb = &self.sandbox;
+        let name = &self.units.names[sb.unit as usize];
+        let mut lines = Vec::new();
+        let commanding = format!(
+            "commanding {} (player {})",
+            party_name(&self.parties, sb.side),
+            sb.side + 1
+        );
+        let minds = |lines: &mut Vec<String>| {
+            for m in self.minds.iter() {
+                lines.push(format!(
+                    "{}: {}",
+                    party_name(&self.parties, m.party()),
+                    m.summary()
+                ));
+            }
+        };
+        if let Some(w) = &self.watching {
+            lines.push(format!("Replay of {}, following {}", w.title, commanding));
+            lines.push(if self.reveal_all {
+                "Woods: showing everything (Shift+V: only what this side saw)".to_string()
+            } else {
+                "Woods: Shift+V shows everything".to_string()
+            });
+            return lines;
+        }
+        if self.online.is_some() {
+            lines.push(format!("{} over the network, {commanding}", self.mode_name()));
+            minds(&mut lines);
+            lines.push(self.formation_line());
+            return lines;
+        }
+        let mode = if self.battle.is_some() {
+            self.mode_name()
+        } else {
+            "SANDBOX"
+        };
+        lines.push(format!("{mode}, {commanding}"));
+        minds(&mut lines);
+        lines.push(match self.minds.get(sb.side) {
+            None => "I: hand this side to the computer".to_string(),
+            Some(m) => {
+                let next = Difficulty::ALL
+                    .get(m.difficulty().index() + 1)
+                    .map_or("take it back", |d| d.name());
+                let thinking = m
+                    .journal()
+                    .latest()
+                    .map_or(String::new(), |e| format!(": {}", e.text));
+                format!("I: {next}. The computer plays this side{thinking}")
+            }
+        });
+        lines.push(if sb.building_tool {
+            format!(
+                "Placing {}: [ ] choose, click to place, K stops",
+                self.buildings.describe(sb.building)
+            )
+        } else if sb.placing {
+            format!("Placing {name}: [ ] type, click to place, B stops")
+        } else {
+            format!("B: place regiments ([ ] type: {name})")
+        });
+        if let (Some(standing), false) = (self.world.structures(), sb.building_tool) {
+            lines.push(format!(
+                "K: place buildings ({} standing). Right-click an enemy one with regiments selected to attack it",
+                standing.len()
+            ));
+        }
+        lines.push(self.formation_line());
+        if self.battle.is_none() {
+            lines.push(if self.reveal_all {
+                "Woods: Shift+V hides what this side can't see (now showing everything)"
+                    .to_string()
+            } else {
+                "Woods: Shift+V shows regiments hidden from this side".to_string()
+            });
+        }
+        lines
     }
 
     /// The selection's formation, for the panel.
@@ -5186,10 +5159,10 @@ impl Running {
     fn formation_line(&self) -> String {
         match self.selection_formation() {
             None => {
-                "order    R: formation (Line, Tight, Loose, Shield wall) for the selection".into()
+                "R: formation (Line, Tight, Loose, Shield wall) for the selection".into()
             }
-            Some(Some(f)) => format!("order    {}   R: next formation", f.name()),
-            Some(None) => "order    mixed formations   R: next formation".into(),
+            Some(Some(f)) => format!("Selection stands in {}. R: next formation", f.name()),
+            Some(None) => "Selection stands in mixed formations. R: next formation".into(),
         }
     }
 

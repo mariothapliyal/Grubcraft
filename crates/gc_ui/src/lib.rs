@@ -13,6 +13,7 @@
 pub mod alerts;
 pub mod conquest;
 pub mod draw;
+pub mod guide;
 pub mod hero;
 pub mod hud;
 pub mod icons;
