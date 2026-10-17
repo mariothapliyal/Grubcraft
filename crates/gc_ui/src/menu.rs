@@ -438,23 +438,30 @@ impl<N: Network> Menu<N> {
         let (w, h) = ui.screen;
         let count = if self.in_match { 7 } else { 6 };
         // Up to 66 pixels for each button and its gap, less in a short window.
-        let step = ((h - 120 - 24) / count).clamp(40, 66);
+        let step = ((h - 104 - 12 - 48) / count).clamp(40, 66);
         let (button_h, gap) = (step - step / 5, step / 5);
-        let total = 120 + count * step;
-        let area = centered(ui.screen, 360, total);
+        let total = 104 + count * step + 12;
+        let panel = centered(ui.screen, 460, total);
+        ui.panel(panel);
+        // The game's name, hung from the top of the cloth.
         let title = "GRUBCRAFT";
-        let tw = crate::draw::text_width(title, 4);
-        ui.label(area.x + (area.w - tw) / 2, area.y, 4, theme::MADDER, title);
+        let banner_w = crate::draw::text_width(title, 3) + 40;
+        ui.banner(
+            panel.x + (panel.w - banner_w) / 2,
+            panel.y - 14,
+            3,
+            title,
+        );
         ui.label_centered(
-            Rect::new(area.x, area.y + 76, area.w, 16),
+            Rect::new(panel.x, panel.y + 72, panel.w, 16),
             1,
             theme::INK_MUTED,
             "Command regiments across the body of a fallen Titan",
         );
         let mut stack = Stack {
-            x: area.x + 30,
-            y: area.y + 120,
-            w: area.w - 60,
+            x: panel.x + 50,
+            y: panel.y + 104,
+            w: panel.w - 100,
             gap,
         };
         let mut action = MenuAction::None;
@@ -504,11 +511,11 @@ impl<N: Network> Menu<N> {
             12,
             h - 24,
             1,
-            theme::INK_MUTED,
+            theme::MUTED,
             &format!("Grubcraft {}", self.version),
         );
         let hint = "Esc closes menus";
-        ui.label_right(w - 12, h - 24, 1, theme::INK_MUTED, hint);
+        ui.label_right(w - 12, h - 24, 1, theme::MUTED, hint);
         if escape && self.in_match {
             action = MenuAction::Resume;
         }
@@ -522,7 +529,11 @@ impl<N: Network> Menu<N> {
         // then the Host and Back buttons, which keep a fixed pixel size.
         let panel = centered(ui.screen, 880, sp(64 + 74 + 6 * 48 + 8) + 124);
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::INK, "Play");
+        ui.header(
+            panel,
+            "Play",
+            "Host a game for friends, or join one on your network.",
+        );
         let card_w = (panel.w - 72) / 2;
         let top = panel.y + sp(64);
 
@@ -698,6 +709,15 @@ impl<N: Network> Menu<N> {
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
+        if target.is_empty() {
+            ui.label(
+                join_btn.x,
+                join_btn.bottom() + 8,
+                1,
+                theme::INK_MUTED,
+                "Pick a game above, or type its address.",
+            );
+        }
         if ui.button(join_btn, "Join", ButtonStyle::Normal, !target.is_empty()) {
             let me = self.profile();
             match self.net.join(&me, &target, password) {
@@ -751,7 +771,7 @@ impl<N: Network> Menu<N> {
             sp(64 + 36 + 20 + 4) + strip_h + rows_h + 124,
         );
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::INK, "Lobby");
+        ui.header(panel, "Lobby", "");
         let host_name = lobby
             .slots
             .iter()
@@ -776,7 +796,7 @@ impl<N: Network> Menu<N> {
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
         // between the title and the host's name, clear of them.
-        let option_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
+        let option_r = Rect::new(panel.x + 164, panel.y + 4, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -1063,24 +1083,21 @@ impl<N: Network> Menu<N> {
         ui.label(panel.x + 24, footer_y, 1, hint_color, &hint);
         let blocker = lobby.start_blocker();
         let mismatch = !lobby.version_mismatches().is_empty();
-        if let Some(why) = &blocker {
-            let color = if mismatch { theme::BAD_INK } else { theme::INK_MUTED };
-            ui.label(
-                panel.x + 24,
-                footer_y + 22,
-                1,
-                color,
-                &fit(why, ((panel.w - 48) / 8) as usize),
-            );
+        let todo = if lobby.is_host {
+            "Pick the map and rules, add computer players, then press Start."
         } else {
-            ui.label(
-                panel.x + 24,
-                footer_y + 22,
-                1,
-                theme::GOOD_INK,
-                "Everyone is ready.",
-            );
-        }
+            "Pick your faction and colour, then tick Ready."
+        };
+        ui.label(panel.x + 24, footer_y + 22, 1, theme::INK, todo);
+        // Why Start is greyed out, right beside it.
+        let (why, color) = match &blocker {
+            Some(why) if mismatch => (why.as_str(), theme::BAD_INK),
+            Some(why) => (why.as_str(), theme::INK_MUTED),
+            None => ("Everyone is ready.", theme::GOOD_INK),
+        };
+        let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
+        let why = fit(why, room);
+        ui.label_right(panel.right() - 24, footer_y + 22, 1, color, &why);
         if let Some(invite) = self.net.invite() {
             ui.label(panel.x + 24, footer_y + 44, 1, theme::INK_MUTED, invite);
         }
@@ -1140,16 +1157,16 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 640, sp(560));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::INK, "Army");
-        ui.label_right(
-            panel.right() - 24,
-            panel.y + 24,
-            1,
-            theme::INK_MUTED,
-            &format!(
-                "{}   {} points",
-                me.faction.name(),
-                thousands(lobby.settings.budget.points())
+        ui.header(
+            panel,
+            "Army",
+            &fit(
+                &format!(
+                    "{}, {} points: add regiments, then press Done.",
+                    me.faction.name(),
+                    thousands(lobby.settings.budget.points())
+                ),
+                60,
             ),
         );
 
@@ -1233,7 +1250,7 @@ impl<N: Network> Menu<N> {
 
         let btn_y = panel.bottom() - 52;
         if ui.button(
-            Rect::new(panel.x + 24, btn_y, 180, 44),
+            Rect::new(panel.x + 24 + 148, btn_y, 180, 44),
             "Pick for me",
             ButtonStyle::Normal,
             !army.is_empty(),
@@ -1241,12 +1258,18 @@ impl<N: Network> Menu<N> {
             army.clear();
             changed = true;
         }
+        let back = ui.button(
+            Rect::new(panel.x + 24, btn_y, 140, 44),
+            "Back",
+            ButtonStyle::Normal,
+            true,
+        );
         let done = ui.button(
             Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
             "Done",
             ButtonStyle::Primary,
             true,
-        );
+        ) || back;
         if changed {
             self.net
                 .edit_slot(lobby.local_slot, SlotEdit::Army(army.clone()));
@@ -1265,13 +1288,10 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 760, sp(560));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 16, 2, theme::INK, "Replays");
-        ui.label_right(
-            panel.right() - 24,
-            panel.y + 24,
-            1,
-            theme::INK_MUTED,
-            "Every battle is saved here",
+        ui.header(
+            panel,
+            "Replays",
+            "Every battle is saved. Pick one and press Watch.",
         );
         let row_h = sp(56);
         let top = panel.y + sp(64);
@@ -1330,7 +1350,7 @@ impl<N: Network> Menu<N> {
         }
         if pages > 1 {
             if ui.button(
-                Rect::new(panel.x + 24, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148, btn_y, 120, 44),
                 "Newer",
                 ButtonStyle::Normal,
                 self.replay_page > 0,
@@ -1338,13 +1358,13 @@ impl<N: Network> Menu<N> {
                 self.replay_page -= 1;
             }
             ui.label_centered(
-                Rect::new(panel.x + 152, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148 + 128, btn_y, 120, 44),
                 1,
                 theme::INK_MUTED,
                 &format!("{} of {pages}", self.replay_page + 1),
             );
             if ui.button(
-                Rect::new(panel.x + 280, btn_y, 120, 44),
+                Rect::new(panel.x + 24 + 148 + 256, btn_y, 120, 44),
                 "Older",
                 ButtonStyle::Normal,
                 self.replay_page + 1 < pages,
@@ -1353,9 +1373,9 @@ impl<N: Network> Menu<N> {
             }
         }
         let back = ui.button(
-            Rect::new(panel.right() - 24 - 160, btn_y - 4, 160, 48),
+            Rect::new(panel.x + 24, btn_y, 140, 44),
             "Back",
-            ButtonStyle::Primary,
+            ButtonStyle::Normal,
             true,
         );
         if back || escape {
@@ -1369,7 +1389,11 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 880, sp(640));
         ui.panel(panel);
-        ui.label(panel.x + 24, panel.y + 14, 2, theme::INK, "Settings");
+        ui.header(
+            panel,
+            "Settings",
+            "Changes are saved when you go back.",
+        );
         let col_w = (panel.w - 72) / 2;
         let row = sp(34);
         let gap = sp(6);
