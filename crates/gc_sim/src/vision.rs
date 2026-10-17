@@ -200,16 +200,19 @@ impl Vision {
     /// Whether `party` (not a friend of its owner) sees slot `i`: in sight,
     /// and not hidden by cover.
     fn looks(&self, i: usize, party: usize) -> bool {
-        self.sighting[i * PARTIES + party] > 0 && (!self.fog || self.in_sight[i] & (1 << party) != 0)
+        self.sighting[i * PARTIES + party] > 0
+            && (!self.fog || self.in_sight[i] & (1 << party) != 0)
     }
 
-    /// Whether no party hostile to its owner sees the regiment in slot `i`.
+    /// Whether cover hides the regiment in slot `i` from every party hostile
+    /// to its owner (out of sight in fog of war is not hidden).
     pub(crate) fn hidden(&self, i: usize, owner: PlayerId) -> bool {
         if !self.active || owner as usize >= PARTIES {
             return false;
         }
+        // Cover hides; being out of sight in fog of war is not hiding.
         let friends = self.allies[owner as usize];
-        (0..PARTIES).all(|p| friends & (1 << p) != 0 || !self.looks(i, p))
+        (0..PARTIES).all(|p| friends & (1 << p) != 0 || self.sighting[i * PARTIES + p] == 0)
     }
 
     /// Whether the regiment in slot `i` is caught off guard by an ambush.
@@ -231,7 +234,7 @@ impl Vision {
         units: &[UnitStats],
         stances: &Stances,
         terrain: &Terrain,
-        mut structures: Option<&mut Structures>,
+        structures: Option<&mut Structures>,
     ) {
         if !self.active {
             return;
@@ -324,7 +327,7 @@ impl Vision {
             }
         }
 
-        if let Some(s) = structures.as_deref_mut() {
+        if let Some(s) = structures {
             self.look_at_buildings(regs, combat, units, stances, s);
         }
 

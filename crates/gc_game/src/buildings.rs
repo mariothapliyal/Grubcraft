@@ -255,14 +255,16 @@ fn block(
     }
 }
 
-/// Draw every standing building: a box in its owner's colour, dimmer as
-/// its hit points fall, and a bar over it once it is damaged. `across`
-/// is the way the camera looks along the ground, so the bars face it.
+/// Draw every standing building that `shown` allows: a box in its owner's
+/// colour, dimmer as its hit points fall, and a bar over it once it is
+/// damaged. `across` is the way the camera looks along the ground, so the
+/// bars face it.
 pub fn push(
     world: &World,
     table: &Table,
     ground: impl Fn(f32, f32) -> f32,
     team: impl Fn(PlayerId) -> [u8; 3],
+    shown: impl Fn(&StructureView) -> bool,
     across: Vec2,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -270,7 +272,7 @@ pub fn push(
         return;
     };
     let right = Vec2::new(-across.y, across.x);
-    for s in structures.iter() {
+    for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 3 > MAX_BOX_INSTANCES {
             return;
         }
@@ -444,6 +446,7 @@ pub fn push_ghost(
         max_hp: 1,
         built_percent: 100,
         upgrading: None,
+        seen: u8::MAX,
     };
     let [r, g, b] = colour;
     let colour = if fits { [r, g, b, GHOST_GLOW] } else { REFUSED };
