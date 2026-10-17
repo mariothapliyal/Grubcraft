@@ -27,6 +27,10 @@ use kit::Kit;
 use marshal::Marshal;
 use steward::Steward;
 
+/// The share of its orders a minute (percent) that goes on the economy;
+/// the army has the rest.
+const ECONOMY_SHARE: u32 = 40;
+
 /// What the Conquest layers read at each look.
 pub struct Sense<'a> {
     pub world: &'a World,
@@ -54,11 +58,15 @@ pub struct Realm {
 
 impl Realm {
     pub fn new(kit: Arc<Kit>, party: PlayerId, knobs: &Knobs, expand_after: u32) -> Realm {
+        // One budget of orders a minute, split between the army and the
+        // economy as a player splits their attention.
+        let opm = knobs.orders_per_minute;
+        let economy = opm * ECONOMY_SHARE / 100;
         Realm {
             kit,
             steward: Steward::new(),
-            marshal: Marshal::new(party, knobs.reaction_ticks, knobs.orders_per_minute),
-            clicks: Hands::new(party, knobs.reaction_ticks, knobs.orders_per_minute, 4.0),
+            marshal: Marshal::new(party, knobs.reaction_ticks, opm - economy),
+            clicks: Hands::new(party, knobs.reaction_ticks, economy, 3.0),
             expand_after,
         }
     }
