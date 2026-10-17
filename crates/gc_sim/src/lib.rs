@@ -1411,24 +1411,26 @@ impl World {
 
     /// Where `party`'s side can see in fog of war, as circles (centre and
     /// radius, in tiles) into `out`, which is cleared first: a circle round
-    /// each of the side's regiments and buildings, each holding what it
-    /// sees in the open. For the game's drawing of the fog; the
-    /// simulation's own sight is edge to edge.
+    /// each of the side's regiments and buildings, reaching as far as it
+    /// sees straight out from its longer sides. For the game's drawing of
+    /// the fog; the simulation's own sight is edge to edge, so it reaches a
+    /// little further at the corners and less off the short sides.
     pub fn sight(&self, party: PlayerId, out: &mut Vec<(FxVec2, Fx)>) {
         out.clear();
         let friend = |owner| !self.stances.hostile(party, owner);
+        // Round a block: as far as its sight reaches straight out from its
+        // longer sides.
+        let round =
+            |b: combat::Block, sight: Fx| (b.centre, sight + b.half_width.max(b.half_depth));
         let regs = &self.regiments;
         for i in (0..regs.alive.len()).filter(|&i| regs.alive[i] && friend(regs.owner[i])) {
-            let block = combat::Block::of(regs, &self.units, i);
-            out.push((block.centre, vision::SIGHT + block.radius()));
+            out.push(round(
+                combat::Block::of(regs, &self.units, i),
+                vision::SIGHT,
+            ));
         }
-        if let Some(c) = &self.conquest {
-            let s = &c.structures;
-            for b in s.standing().filter(|&b| friend(s.owner_of(b))) {
-                let block = s.block(b);
-                out.push((block.centre, s.sight(b) + block.radius()));
-            }
-        }
+        let posts = self.vision.posts().filter(|&(owner, ..)| friend(owner));
+        out.extend(posts.map(|(_, block, sight)| round(block, sight)));
     }
 
     /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always

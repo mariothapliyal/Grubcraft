@@ -4104,10 +4104,13 @@ impl Running {
         // Arrows that come down in the water are lost, and so are those that
         // land on a building (the picture has no roof or wall to stick them
         // in, and a shaft showing through a wall would look wrong).
+        // Only buildings the viewer is shown, so arrows don't trace hidden
+        // ones.
         let world = &self.world;
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let dry = |p: Vec2| {
             let ground = heightmap.height_at(p.x, p.y);
-            (ground >= water && !buildings::covers(world, p)).then_some(ground)
+            (ground >= water && !buildings::covers(world, shown, p)).then_some(ground)
         };
         // Where each volley came from, as the arrows in the air are drawn, so
         // they come down where they were seen to. One pass over the volleys

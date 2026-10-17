@@ -293,7 +293,9 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
     // color.a is the selection highlight strength.
     let albedo = srgb_to_linear(in.color.rgb);
     let c = shade(albedo, in.normal, in.world);
-    return vec4<f32>(veil(c, in.world.xz) + albedo * in.color.a * 0.8, 1.0);
+    // Not veiled: boxes are what the side is shown (remembered buildings,
+    // the building ghost, bars and marks), so they stay readable in fog.
+    return vec4<f32>(c + albedo * in.color.a * 0.8, 1.0);
 }
 
 // ---------------------------------------------------------------- soldiers

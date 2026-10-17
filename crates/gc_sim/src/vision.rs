@@ -130,8 +130,13 @@ pub(crate) struct Vision {
     ambushes: Vec<Ambush>,
     /// Fog of war: sight decides who can look at all.
     fog: bool,
-    /// Per slot, in fog of war: the parties with it in sight.
+    /// Per slot, in fog of war: the parties with it in sight, or lately
+    /// so.
     in_sight: Vec<u8>,
+    /// Per slot and party, in fog of war: ticks it stays in sight after
+    /// the party's last watcher loses it, so sight does not flicker at the
+    /// edge.
+    sight_linger: Vec<u8>,
     /// In fog of war, this tick: each building's owner, footprint and
     /// sight.
     posts: Vec<Post>,
@@ -161,6 +166,7 @@ impl Vision {
             ambushes: Vec::new(),
             fog: false,
             in_sight: Vec::new(),
+            sight_linger: Vec::new(),
             posts: Vec::new(),
         };
         if active {
@@ -189,6 +195,7 @@ impl Vision {
         }
         self.fog = true;
         self.in_sight = vec![0; capacity];
+        self.sight_linger = vec![0; capacity * PARTIES];
         self.posts = Vec::with_capacity(buildings);
     }
 
@@ -196,22 +203,32 @@ impl Vision {
         self.fog
     }
 
-    /// Whether `party` sees the regiment in slot `i`, owned by `owner`.
-    pub(crate) fn sees(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
-        if !self.active || party as usize >= PARTIES || owner as usize >= PARTIES {
-            return true;
-        }
-        if self.allies[owner as usize] & (1 << party) != 0 {
-            return true;
-        }
-        self.looks(i, party as usize)
+    /// In fog of war, as of the last tick: each standing building's owner,
+    /// footprint and sight.
+    pub(crate) fn posts(&self) -> impl Iterator<Item = (PlayerId, Block, Fx)> + '_ {
+        self.posts.iter().map(|p| (p.owner, p.block, p.sight))
     }
 
-    /// Whether `party` (not a friend of its owner) sees slot `i`: in sight,
-    /// and not hidden by cover.
-    fn looks(&self, i: usize, party: usize) -> bool {
-        self.sighting[i * PARTIES + party] > 0
-            && (!self.fog || self.in_sight[i] & (1 << party) != 0)
+    /// Whether `party` sees the regiment in slot `i`, owned by `owner`: in
+    /// sight, and not hidden by cover.
+    pub(crate) fn sees(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
+        self.uncovered(party, i, owner)
+            && (!self.fog || self.in_sight[i] & (1 << party) != 0 || self.friends(party, owner))
+    }
+
+    /// Whether cover leaves the regiment in slot `i`, owned by `owner`, open
+    /// to `party` (who may still not have it in sight in fog of war).
+    pub(crate) fn uncovered(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
+        self.friends(party, owner) || self.sighting[i * PARTIES + party as usize] > 0
+    }
+
+    /// Whether `party` sees all of `owner`'s regiments, being a friend (or
+    /// there being nothing to hide them).
+    fn friends(&self, party: PlayerId, owner: PlayerId) -> bool {
+        !self.active
+            || party as usize >= PARTIES
+            || owner as usize >= PARTIES
+            || self.allies[owner as usize] & (1 << party) != 0
     }
 
     /// Whether cover hides the regiment in slot `i` from every party hostile
@@ -307,21 +324,37 @@ impl Vision {
                 continue;
             }
             let owner = regs.owner[i];
-            let direct = match self.spotting(regs, units, terrain, i) {
-                None => u8::MAX,
-                Some(_) if owner as usize >= PARTIES => u8::MAX,
-                Some(distance) => {
-                    self.allies[owner as usize]
-                        | self.spotters(regs, combat, units, stances, i, distance)
+            let friends = (self.allies.get(owner as usize))
+                .copied()
+                .unwrap_or(u8::MAX);
+            let cover = self.spotting(regs, units, terrain, i);
+            let (near, far) = match owner as usize {
+                o if o < PARTIES => {
+                    let far = self.fog.then_some(SIGHT);
+                    self.spotters(regs, combat, units, stances, i, cover, far)
                 }
+                _ => (u8::MAX, u8::MAX),
+            };
+            let direct = if cover.is_some() {
+                friends | near
+            } else {
+                u8::MAX
             };
             if self.fog {
-                self.in_sight[i] = match owner as usize {
-                    o if o < PARTIES => {
-                        self.allies[o] | self.spotters(regs, combat, units, stances, i, SIGHT)
+                let now = friends | far;
+                let mut in_sight = 0;
+                for p in 0..PARTIES {
+                    let k = i * PARTIES + p;
+                    if now & (1 << p) != 0 {
+                        self.sight_linger[k] = LINGER_TICKS;
+                    } else {
+                        self.sight_linger[k] = self.sight_linger[k].saturating_sub(1);
                     }
-                    _ => u8::MAX,
-                };
+                    if self.sight_linger[k] > 0 {
+                        in_sight |= 1 << p;
+                    }
+                }
+                self.in_sight[i] = in_sight;
             }
             for p in 0..PARTIES {
                 let k = i * PARTIES + p;
@@ -378,6 +411,7 @@ impl Vision {
             self.in_sight[i] = (self.allies.get(regs.owner[i] as usize))
                 .copied()
                 .unwrap_or(u8::MAX);
+            self.sight_linger[i * PARTIES..(i + 1) * PARTIES].fill(0);
         }
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
@@ -425,6 +459,7 @@ impl Vision {
         self.was_engaged[i] = from.was_engaged[i];
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
+            self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
         }
     }
 
@@ -512,8 +547,10 @@ impl Vision {
     }
 
     /// The parties with a regiment (theirs or an ally's), or in fog of war
-    /// a building, within `distance` of regiment `i`, edge to edge, as a bit
-    /// set. A building looks no further than its own sight.
+    /// a building, within `near` of regiment `i`, edge to edge, as a bit
+    /// set; and the same within `far`, both in one search (none for a
+    /// distance not given). A building looks no further than its own sight.
+    #[allow(clippy::too_many_arguments)]
     fn spotters(
         &self,
         regs: &Regiments,
@@ -521,27 +558,39 @@ impl Vision {
         units: &[UnitStats],
         stances: &Stances,
         i: usize,
-        distance: Fx,
-    ) -> u8 {
+        near: Option<Fx>,
+        far: Option<Fx>,
+    ) -> (u8, u8) {
+        let (mut seen_near, mut seen_far) = (0u8, 0u8);
+        let Some(reach) = near.max(far) else {
+            return (0, 0);
+        };
         let at = placement!(regs, stances);
         let me = Block::of(regs, units, i);
-        let mut seen = 0u8;
+        let looks = |seen: u8, party: usize, them: &Block, d: Option<Fx>| {
+            seen & (1 << party) == 0 && d.is_some_and(|d| me.touches(them, d))
+        };
         combat.each_near(
             &at,
             me.centre,
-            distance + me.radius() + combat.max_radius(),
+            reach + me.radius() + combat.max_radius(),
             Whose::Enemies(regs.owner[i]),
             |j| {
                 let party = regs.owner[j] as usize;
-                if party < PARTIES
-                    && seen & (1 << party) == 0
-                    && me.touches(&Block::of(regs, units, j), distance)
-                {
-                    seen |= self.allies[party];
+                if party >= PARTIES || seen_near & seen_far & (1 << party) != 0 {
+                    return;
+                }
+                let them = Block::of(regs, units, j);
+                if looks(seen_near, party, &them, near) {
+                    seen_near |= self.allies[party];
+                }
+                if looks(seen_far, party, &them, far) {
+                    seen_far |= self.allies[party];
                 }
             },
         );
-        seen | self.posts_near(&me, regs.owner[i], distance)
+        let posts = |d: Option<Fx>| d.map_or(0, |d| self.posts_near(&me, regs.owner[i], d));
+        (seen_near | posts(near), seen_far | posts(far))
     }
 
     /// The parties hostile to `owner` with a building within `distance` of
@@ -633,6 +682,9 @@ impl Vision {
             h.u8(u8::from(self.was_engaged[i]));
             if self.fog {
                 h.u8(self.in_sight[i]);
+                for k in i * PARTIES..(i + 1) * PARTIES {
+                    h.u8(self.sight_linger[k]);
+                }
             }
         }
     }

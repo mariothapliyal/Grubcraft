@@ -1525,8 +1525,10 @@ impl Combat {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
                 || !vision.sees(owner, j, regs.owner[j])
-                // A hidden archer holds its fire at enemies who can't see it.
-                || !vision.sees(regs.owner[j], i, owner)
+                // A hidden archer holds its fire at enemies who can't see it
+                // for cover (being out of their sight in fog of war is not
+                // hiding).
+                || !vision.uncovered(regs.owner[j], i, owner)
             {
                 return;
             }

@@ -215,11 +215,11 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
 }
 
-/// Whether a building of `world` stands over `p` (always false outside
-/// Conquest, the only mode with buildings).
-pub fn covers(world: &World, p: Vec2) -> bool {
+/// Whether a building of `world` that `shown` allows stands over `p`
+/// (always false outside Conquest, the only mode with buildings).
+pub fn covers(world: &World, shown: impl Fn(&StructureView) -> bool, p: Vec2) -> bool {
     world.structures().is_some_and(|all| {
-        all.iter().any(|b| {
+        all.iter().filter(|b| shown(b)).any(|b| {
             let (x, y) = (b.tile.0 as f32, b.tile.1 as f32);
             (x..x + f32::from(b.width)).contains(&p.x) && (y..y + f32::from(b.depth)).contains(&p.y)
         })

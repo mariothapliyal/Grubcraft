@@ -26,7 +26,8 @@ pub struct FogView {
     canvas: Canvas,
     /// `World::sight`'s circles, kept to save allocating.
     sight: Vec<(gc_fixed::FxVec2, gc_fixed::Fx)>,
-    last: Option<Instant>,
+    /// When the grid was last drawn, and for which side.
+    last: Option<(Instant, PlayerId)>,
 }
 
 /// The grid and what has been seen on it.
@@ -34,8 +35,9 @@ pub struct FogView {
 struct Canvas {
     /// Tiles a side; 0 before the first update.
     tiles: usize,
-    /// Tiles the side has seen at some point this match.
-    explored: Vec<bool>,
+    /// Per tile, the sides that have seen it at some point this match, a
+    /// bit each (so taking command of another side shows what it has seen).
+    explored: Vec<u8>,
     /// What the renderer is given.
     grid: Vec<u8>,
 }
@@ -43,7 +45,7 @@ struct Canvas {
 impl FogView {
     /// Forget what has been seen, for a new match.
     pub fn reset(&mut self) {
-        self.canvas.explored.fill(false);
+        self.canvas.explored.fill(0);
         self.last = None;
     }
 
@@ -64,26 +66,34 @@ impl FogView {
             self.last = None;
             return;
         }
-        if self.last.is_some_and(|t| now.duration_since(t) < EVERY) {
+        if self
+            .last
+            .is_some_and(|(t, s)| s == side && now.duration_since(t) < EVERY)
+        {
             return;
         }
-        self.last = Some(now);
+        self.last = Some((now, side));
         world.sight(side, &mut self.sight);
         let circles =
             (self.sight.iter()).map(|&(c, r)| (crate::from_fx_vec(c), crate::fx_to_f32(r)));
-        self.canvas.paint(tiles as usize, circles);
+        self.canvas.paint(tiles as usize, side, circles);
         renderer.set_fog(Some(&self.canvas.grid));
     }
 }
 
 impl Canvas {
-    /// Fill `grid` for a map `tiles` across and the circles in sight
-    /// (centre and radius, in tiles), and remember what they cover.
-    fn paint(&mut self, tiles: usize, circles: impl IntoIterator<Item = (Vec2, f32)>) {
+    /// Fill `grid` for a map `tiles` across and the circles `side` has in
+    /// sight (centre and radius, in tiles), and remember what they cover.
+    fn paint(
+        &mut self,
+        tiles: usize,
+        side: PlayerId,
+        circles: impl IntoIterator<Item = (Vec2, f32)>,
+    ) {
         if self.tiles != tiles {
             self.tiles = tiles;
             self.explored.clear();
-            self.explored.resize(tiles * tiles, false);
+            self.explored.resize(tiles * tiles, 0);
             self.grid.clear();
             self.grid.resize(tiles * tiles, 0);
         }
@@ -99,11 +109,16 @@ impl Canvas {
                 self.grid[row + xs.start..row + xs.end].fill(255);
             }
         }
+        let bit = 1u8 << side.min(7);
         for (cell, seen) in self.grid.iter_mut().zip(&mut self.explored) {
             if *cell == 255 {
-                *seen = true;
+                *seen |= bit;
             } else {
-                *cell = if *seen { EXPLORED } else { UNEXPLORED };
+                *cell = if *seen & bit != 0 {
+                    EXPLORED
+                } else {
+                    UNEXPLORED
+                };
             }
         }
     }
@@ -128,7 +143,7 @@ mod tests {
     #[test]
     fn a_circle_lights_the_tiles_whose_centres_it_holds() {
         let mut f = Canvas::default();
-        f.paint(8, [(Vec2::new(4.0, 4.0), 1.0)]);
+        f.paint(8, 0, [(Vec2::new(4.0, 4.0), 1.0)]);
         // Centres (3.5, 3.5) and the like are 0.71 away; (2.5, 3.5) is 1.58.
         let lit: Vec<usize> = (0..64).filter(|&i| f.grid[i] == 255).collect();
         assert_eq!(lit, vec![27, 28, 35, 36]);
@@ -138,13 +153,13 @@ mod tests {
     #[test]
     fn what_was_seen_is_remembered() {
         let mut f = Canvas::default();
-        f.paint(8, [(Vec2::new(4.0, 4.0), 1.0)]);
-        f.paint(8, [(Vec2::new(1.0, 1.0), 1.0)]);
+        f.paint(8, 0, [(Vec2::new(4.0, 4.0), 1.0)]);
+        f.paint(8, 0, [(Vec2::new(1.0, 1.0), 1.0)]);
         assert_eq!(f.grid[0], 255);
         assert_eq!(f.grid[27], EXPLORED);
         assert_eq!(f.grid[63], UNEXPLORED);
-        f.explored.fill(false);
-        f.paint(8, []);
+        f.explored.fill(0);
+        f.paint(8, 0, []);
         assert!(f.grid.iter().all(|&v| v == UNEXPLORED));
     }
 
@@ -153,6 +168,7 @@ mod tests {
         let mut f = Canvas::default();
         f.paint(
             8,
+            0,
             [
                 (Vec2::new(-10.0, 4.0), 3.0),
                 (Vec2::new(20.0, 4.0), 3.0),
@@ -160,5 +176,15 @@ mod tests {
             ],
         );
         assert!(f.grid.iter().all(|&v| v == 255));
+    }
+
+    #[test]
+    fn each_side_remembers_its_own() {
+        let mut f = Canvas::default();
+        f.paint(8, 0, [(Vec2::new(4.0, 4.0), 1.0)]);
+        f.paint(8, 1, []);
+        assert_eq!(f.grid[27], UNEXPLORED, "side 1 never saw it");
+        f.paint(8, 0, []);
+        assert_eq!(f.grid[27], EXPLORED);
     }
 }
