@@ -414,7 +414,7 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_four_teeth_ends_in_a_win() {
         for seed in [7, 8] {
-            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 60);
+            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 90);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }

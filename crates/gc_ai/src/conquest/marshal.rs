@@ -31,6 +31,8 @@ const BATTLE_REACH: f32 = 60.0;
 const QUIET_TICKS: u32 = 8 * TICKS_PER_SECOND;
 /// Ticks between looks for enemies near the army.
 const LOOK_TICKS: u32 = 4;
+/// How long it gathers after falling back before setting out again.
+const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
 /// Enemies within this many tiles of its buildings are a threat to home.
 const THREAT: f32 = 30.0;
 /// Enemies at an outlying building call the whole army home once they are
@@ -112,6 +114,8 @@ pub struct Marshal {
     /// The regiments standing on the Titan's Heart: the Marshal keeps them
     /// there, out of the Captain's battle, which would draw them off it.
     holders: Vec<RegimentHandle>,
+    /// After falling back, it gathers until this tick before setting out.
+    regroup_until: u32,
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
@@ -129,6 +133,7 @@ impl Marshal {
             scouted: Vec::new(),
             battle: None,
             holders: Vec::new(),
+            regroup_until: 0,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
@@ -315,7 +320,13 @@ impl Marshal {
         };
         match self.goal {
             Goal::Gather => {
-                let heart = heart_to_take(s).filter(|_| ready || enemy_holds_heart(s));
+                // Beaten back, it gathers a while before going again; and it
+                // goes to stop an enemy on the Heart only with an army.
+                let regrouped = s.now >= self.regroup_until;
+                let enough = army_supply(s, army) >= FIRST_WAVE;
+                let heart = heart_to_take(s)
+                    .filter(|_| regrouped && (ready || enemy_holds_heart(s) && enough));
+                let ready = ready && regrouped;
                 let set_out = match heart {
                     Some(h) => Some((
                         Goal::Heart(h),
@@ -350,6 +361,7 @@ impl Marshal {
                     );
                     self.goal = Goal::Gather;
                     self.out.clear();
+                    self.regroup_until = s.now + REGROUP_TICKS;
                 } else if let Some(heart) = heart_to_take(s).filter(|_| {
                     // An enemy holding the Heart wins unless it is stopped;
                     // otherwise an attack under way goes on.
@@ -454,12 +466,20 @@ impl Marshal {
                 self.scouted.push(i);
             }
         }
+        // Its own and its friends' starts have their buildings on them.
+        let friendly: Vec<Vec2> = s.world.structures().map_or(Vec::new(), |st| {
+            st.iter()
+                .filter(|v| !s.view.hostile(s.party, v.owner))
+                .map(|v| v2(v.centre()))
+                .collect()
+        });
         s.kit
             .starts
             .iter()
             .enumerate()
             .filter(|(i, _)| !self.scouted.contains(i))
             .map(|(_, &p)| p)
+            .filter(|p| friendly.iter().all(|f| f.distance(*p) > SCOUTED * 2.0))
             .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
     }
 
@@ -548,11 +568,7 @@ impl Marshal {
 /// wave that grows with the game and shrinks with aggression, or a full
 /// supply cap.
 fn wave_ready(s: &Sense, persona: &Personality, army: &[&Seen]) -> bool {
-    let supply: f32 = army
-        .iter()
-        .filter_map(|r| s.kit.unit(r.unit))
-        .map(|u| f32::from(u.unit.supply))
-        .sum();
+    let supply = army_supply(s, army);
     let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
     let boldness = 1.3 - 0.6 * persona.aggression();
     let wave = ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE);
@@ -561,6 +577,14 @@ fn wave_ready(s: &Sense, persona: &Personality, army: &[&Seen]) -> bool {
         .bank(s.party)
         .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
     supply >= wave || (capped && supply >= FIRST_WAVE)
+}
+
+/// The supply `army` takes up: how big it is.
+fn army_supply(s: &Sense, army: &[&Seen]) -> f32 {
+    army.iter()
+        .filter_map(|r| s.kit.unit(r.unit))
+        .map(|u| f32::from(u.unit.supply))
+        .sum()
 }
 
 /// The Titan's Heart, if it is open and not held by its own side.

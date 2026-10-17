@@ -83,6 +83,10 @@ pub struct Steward {
     next_rebalance: u32,
     /// When it may next look for a spot, after finding none.
     next_lay: u32,
+    /// Orders given to its buildings that haven't landed yet (so it can't
+    /// see them in the world): the building, the unit if one is to be
+    /// trained, and when.
+    busy: Vec<(StructureHandle, Option<UnitId>, u32)>,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -148,6 +152,7 @@ impl Steward {
         });
         self.sent
             .retain(|&(_, t)| s.now < t + reaction + SENT_TICKS);
+        self.busy.retain(|&(_, _, t)| s.now <= t + reaction);
         self.ledger.saving = (0, 0);
         self.ledger.tier = look.tier;
 
@@ -337,6 +342,9 @@ impl Steward {
     /// worker.
     fn finish_buildings(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         for m in look.mine.iter().filter(|m| !m.finished()) {
+            if self.is_busy(m.view.handle) {
+                continue;
+            }
             let building = look
                 .workers
                 .iter()
@@ -355,8 +363,25 @@ impl Steward {
                 },
             ) {
                 self.sent.push((w, s.now));
+                self.busy.push((m.view.handle, None, s.now));
             }
         }
+    }
+
+    /// Whether an order to building `h` is still on its way.
+    fn is_busy(&self, h: StructureHandle) -> bool {
+        self.busy.iter().any(|b| b.0 == h)
+    }
+
+    /// Regiments queued at building `h`, counting those ordered but not
+    /// yet landed.
+    fn queued(&self, p: &gc_sim::production::Production, h: StructureHandle) -> usize {
+        p.queue_of(h).len()
+            + self
+                .busy
+                .iter()
+                .filter(|b| b.0 == h && b.1.is_some())
+                .count()
     }
 
     /// The worker to send to build at `at`: the nearest one gathering
@@ -384,16 +409,22 @@ impl Steward {
             .map(|w| w.handle)
     }
 
-    /// Workers in training, across its buildings.
-    fn workers_queued(s: &Sense, look: &Look) -> usize {
+    /// Workers in training or ordered, across its buildings.
+    fn workers_queued(&self, s: &Sense, look: &Look) -> usize {
         let Some(p) = s.world.production() else {
             return 0;
         };
+        let ordered = self
+            .busy
+            .iter()
+            .filter(|b| b.1.is_some_and(|u| s.kit.is_worker(u)))
+            .count();
         look.mine
             .iter()
             .flat_map(|m| p.queue_of(m.view.handle))
             .filter(|&&u| s.kit.is_worker(u))
             .count()
+            + ordered
     }
 
     fn train_workers(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
@@ -416,7 +447,7 @@ impl Steward {
         let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
         self.ledger.workers = look.workers.len() as u16;
         self.ledger.want_workers = want as u16;
-        let mut have = look.workers.len() + Self::workers_queued(s, look);
+        let mut have = look.workers.len() + self.workers_queued(s, look);
         let Some(p) = s.world.production() else {
             return;
         };
@@ -431,7 +462,7 @@ impl Steward {
                 .unit
                 .trained_at
                 .is_some_and(|at| grew_from(s, m.view.building, at));
-            if !trains || p.queue_of(m.view.handle).len() >= QUEUE {
+            if !trains || self.queued(p, m.view.handle) >= QUEUE {
                 continue;
             }
             if bank.supply_used + u32::from(worker.unit.supply) > bank.supply_cap {
@@ -448,6 +479,7 @@ impl Steward {
             {
                 have += 1;
                 bank.supply_used += u32::from(worker.unit.supply);
+                self.busy.push((m.view.handle, Some(worker.id), s.now));
             }
         }
     }
@@ -705,12 +737,17 @@ impl Steward {
             }
             return;
         }
-        clicks.give(
+        if self.is_busy(main.view.handle) {
+            return;
+        }
+        if clicks.give(
             s.now,
             Command::Upgrade {
                 structure: main.view.handle,
             },
-        );
+        ) {
+            self.busy.push((main.view.handle, None, s.now));
+        }
     }
 
     /// Keep every production building training, towards [`MIX`].
@@ -744,7 +781,7 @@ impl Steward {
         }
         let (save_grub, save_marrow) = self.ledger.saving;
         for m in look.mine.iter().filter(|m| m.finished()) {
-            if p.queue_of(m.view.handle).len() >= QUEUE {
+            if self.queued(p, m.view.handle) >= QUEUE {
                 continue;
             }
             let options: Vec<&KitUnit> = s
@@ -809,6 +846,7 @@ impl Steward {
             bank.marrow -= mr;
             bank.supply_used += u32::from(unit.unit.supply);
             count(unit.id, &mut by_class, &mut breakers);
+            self.busy.push((m.view.handle, Some(unit.id), s.now));
         }
     }
 
