@@ -1304,4 +1304,46 @@ mod tests {
         assert_eq!(best, Some(after.harmony));
         assert!(after.per_minute > before.per_minute);
     }
+
+    /// A building a power has hasted glows cyan for the side that may see
+    /// it, and only while it is hasted.
+    #[test]
+    fn hasted_buildings_are_ringed_for_those_who_can_see_them() {
+        let (mut world, table, _) = chord_world(&[0]);
+        let overclock = data().powers.iter().position(|p| p.name() == "Overclock");
+        let power = overclock.expect("the Choir's Overclock") as u8;
+        let ring = |world: &World, shown: bool| {
+            let mut out = Vec::new();
+            buildings::push_haste(world, |_| shown, 200, &mut out);
+            out
+        };
+        assert!(ring(&world, true).is_empty(), "nothing hasted yet");
+        // Chords charge the Resonance it costs.
+        let mut ticks = 0;
+        while world.bank(0).unwrap().resonance < 20 {
+            world.tick(&[]);
+            ticks += 1;
+            assert!(ticks < 5 * 60 * gc_sim::TICKS_PER_SECOND, "never charged");
+        }
+        let all = world.structures().unwrap();
+        let resonator = all
+            .iter()
+            .find(|s| s.owner == 0 && s.finished() && table.name(s.building) == "Resonator");
+        let target = resonator.expect("an opening Resonator").handle;
+        world.tick(&[PlayerCommand {
+            player: 0,
+            command: Command::UsePower {
+                power,
+                target: gc_sim::PowerTarget::Structure(target),
+            },
+        }]);
+        assert!(world.structure_haste(target) > 0);
+        let lit = ring(&world, true);
+        assert!(!lit.is_empty());
+        // Thin, flat, glowing and cyan; a building the viewer can't see
+        // isn't ringed.
+        assert!(lit.iter().all(|b| b.size[1] < 0.2 && b.color[3] == 200));
+        assert!(lit.iter().all(|b| b.color[2] > b.color[0]));
+        assert!(ring(&world, false).is_empty());
+    }
 }
