@@ -1940,13 +1940,13 @@ impl Running {
     fn building_under_cursor(&self, accept: impl Fn(PlayerId) -> bool) -> Option<StructureHandle> {
         let ray = self.cursor_ray()?;
         let hm = &self.heightmap;
-        let side = self.sandbox.side;
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         buildings::pick(
             &self.world,
             &self.buildings,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             ray,
-            |s| (self.reveal_all || s.seen_by(side)) && accept(s.owner),
+            |s| shown(s) && accept(s.owner),
         )
     }
 
@@ -4571,14 +4571,12 @@ impl Running {
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
         let (hm, parties) = (&self.heightmap, &self.parties);
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
-        // In fog of war, enemy buildings show once seen.
-        let (side, reveal) = (self.sandbox.side, self.reveal_all);
         buildings::push(
             &self.world,
             &self.buildings,
             ground,
             |p| color_of(parties, p),
-            |s| reveal || s.seen_by(side),
+            buildings::shown_to(self.sandbox.side, self.reveal_all),
             across,
             &mut self.instances,
         );

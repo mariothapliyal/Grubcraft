@@ -684,7 +684,6 @@ impl Structures {
         &self.buildings[self.building[i] as usize]
     }
 
-    /// The footprint of building slot `i`: x, y, width, depth in tiles.
     /// Building slot `i`'s footprint as a block, for sight.
     pub(crate) fn block(&self, i: usize) -> Block {
         let [x, y, w, d] = self.footprint(i);
@@ -712,7 +711,7 @@ impl Structures {
     /// The parties that have seen building slot `i`: all of them outside
     /// fog of war.
     pub(crate) fn seen(&self, i: usize) -> u8 {
-        if self.fog { self.seen[i] } else { u8::MAX }
+        self.seen[i]
     }
 
     /// Parties in `mask` have now seen building slot `i`.
@@ -720,6 +719,7 @@ impl Structures {
         self.seen[i] |= mask;
     }
 
+    /// The footprint of building slot `i`: x, y, width, depth in tiles.
     fn footprint(&self, i: usize) -> [i32; 4] {
         let b = &self.buildings[self.building[i] as usize];
         let (x, y) = self.tile[i];
@@ -818,7 +818,7 @@ impl Structures {
         self.hp[i] = u32::from(self.buildings[building as usize].hp) * HP_SCALE;
         self.work_left[i] = 0;
         self.upgrade_to[i] = None;
-        self.seen[i] = 1 << owner;
+        self.seen[i] = if self.fog { 1 << owner } else { u8::MAX };
         nav.set_built(self.footprint(i), true, regs);
         Some(self.handle(i))
     }
@@ -1118,9 +1118,7 @@ impl Structures {
             if self.work_left[i] > 0 {
                 h.u32(self.work_full[i]);
             }
-            if self.fog {
-                h.u8(self.seen[i]);
-            }
+            h.u8(self.seen[i]);
             if let Some(to) = self.upgrade_to[i] {
                 h.u16(to);
                 h.u32(self.upgrade_left[i]);

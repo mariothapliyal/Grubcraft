@@ -436,8 +436,7 @@ impl Running {
         }
         hud.blocks.clear();
         if let Some(structures) = self.world.structures() {
-            // In fog of war, enemy buildings show once seen.
-            let shown = |s: &gc_sim::StructureView| self.reveal_all || s.seen_by(side);
+            let shown = crate::buildings::shown_to(side, self.reveal_all);
             hud.blocks
                 .extend(structures.iter().filter(|s| shown(s)).map(|s| Block {
                     rect: [

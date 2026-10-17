@@ -255,6 +255,12 @@ fn block(
     }
 }
 
+/// Whether `side` is shown a building: in fog of war, enemy buildings show
+/// once seen; with `reveal_all`, everything shows.
+pub fn shown_to(side: PlayerId, reveal_all: bool) -> impl Fn(&StructureView) -> bool + Copy {
+    move |s| reveal_all || s.seen_by(side)
+}
+
 /// Draw every standing building that `shown` allows: a box in its owner's
 /// colour, dimmer as its hit points fall, and a bar over it once it is
 /// damaged. `across` is the way the camera looks along the ground, so the

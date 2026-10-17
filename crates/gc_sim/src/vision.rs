@@ -107,7 +107,8 @@ struct Post {
 
 /// Who sees whom. All storage is reserved when the match starts.
 pub(crate) struct Vision {
-    /// The map has cover; otherwise none of this runs.
+    /// The map has cover or the match is in fog of war; otherwise none of
+    /// this runs.
     active: bool,
     /// Per party: the parties that share its sight (itself and its allies).
     allies: [u8; PARTIES],
@@ -148,20 +149,35 @@ impl Vision {
                 }
             }
         }
-        Vision {
+        let mut v = Vision {
             active,
             allies,
-            tracked: vec![None; n],
-            sighting: vec![0; n * PARTIES],
-            linger: vec![0; n * PARTIES],
-            revealed: vec![0; n],
-            off_guard: vec![0; n],
-            was_engaged: vec![false; n],
-            ambushes: Vec::with_capacity(if active { MAX_AMBUSHES } else { 0 }),
+            tracked: Vec::new(),
+            sighting: Vec::new(),
+            linger: Vec::new(),
+            revealed: Vec::new(),
+            off_guard: Vec::new(),
+            was_engaged: Vec::new(),
+            ambushes: Vec::new(),
             fog: false,
             in_sight: Vec::new(),
             posts: Vec::new(),
+        };
+        if active {
+            v.reserve(n);
         }
+        v
+    }
+
+    /// Room for `capacity` regiments' sightings.
+    fn reserve(&mut self, capacity: usize) {
+        self.tracked = vec![None; capacity];
+        self.sighting = vec![0; capacity * PARTIES];
+        self.linger = vec![0; capacity * PARTIES];
+        self.revealed = vec![0; capacity];
+        self.off_guard = vec![0; capacity];
+        self.was_engaged = vec![false; capacity];
+        self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
     }
 
     /// Play in fog of war from now on, with room for `capacity` regiments
@@ -169,13 +185,7 @@ impl Vision {
     pub(crate) fn fog(&mut self, capacity: usize, buildings: usize) {
         if !self.active {
             self.active = true;
-            self.tracked = vec![None; capacity];
-            self.sighting = vec![0; capacity * PARTIES];
-            self.linger = vec![0; capacity * PARTIES];
-            self.revealed = vec![0; capacity];
-            self.off_guard = vec![0; capacity];
-            self.was_engaged = vec![false; capacity];
-            self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
+            self.reserve(capacity);
         }
         self.fog = true;
         self.in_sight = vec![0; capacity];
@@ -540,10 +550,18 @@ impl Vision {
         let mut seen = 0u8;
         for post in &self.posts {
             let p = post.owner as usize;
-            if p < PARTIES
-                && seen & (1 << p) == 0
-                && self.allies[p] & (1 << owner) == 0
-                && me.touches(&post.block, distance.min(post.sight))
+            if p >= PARTIES || seen & (1 << p) != 0 || self.allies[p] & (1 << owner) != 0 {
+                continue;
+            }
+            // Far off by the centres: no need for the block test.
+            let gap = distance.min(post.sight);
+            let reach = u64::from(
+                (gap + me.radius() + post.block.radius())
+                    .raw()
+                    .unsigned_abs(),
+            );
+            if (post.block.centre - me.centre).length_sq_raw() <= reach * reach
+                && me.touches(&post.block, gap)
             {
                 seen |= self.allies[p];
             }
@@ -562,9 +580,17 @@ impl Vision {
         structures: &mut Structures,
     ) {
         let at = placement!(regs, stances);
+        // The parties in play: once all of them have seen a building there
+        // is nothing more to look for.
+        let present = (0..regs.alive.len())
+            .filter(|&i| regs.alive[i])
+            .map(|i| regs.owner[i])
+            .chain(self.posts.iter().map(|p| p.owner))
+            .filter(|&p| (p as usize) < PARTIES)
+            .fold(0u8, |m, p| m | 1 << p);
         for post in &self.posts {
             let o = post.owner as usize;
-            if o >= PARTIES || structures.seen(post.slot) == u8::MAX {
+            if o >= PARTIES || structures.seen(post.slot) & present == present {
                 continue;
             }
             let block = post.block;
