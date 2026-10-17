@@ -210,10 +210,12 @@ pub struct Economy {
     node_full: Vec<u32>,
     /// Workers filling a load at each node; counted afresh each tick.
     node_busy: Vec<u8>,
-    /// The building tuning each node, worked out afresh each tick, and
+    /// The building tuning each node, worked out again whenever the
+    /// tuners change (the [`Structures::tuner_stamp`] last seen), and
     /// ticks it has worked towards its next load (back to 0 when another
     /// takes over).
     node_tuner: Vec<Option<StructureHandle>>,
+    tuners_seen: Option<u32>,
     tune_clock: Vec<u32>,
     /// Grub in hundredths, and Marrow, by player.
     grub: [u32; MAX_PARTIES],
@@ -247,6 +249,7 @@ impl Economy {
             node_full: setup.nodes.iter().map(|n| n.amount).collect(),
             node_busy: vec![0; setup.nodes.len()],
             node_tuner: vec![None; setup.nodes.len()],
+            tuners_seen: None,
             tune_clock: vec![0; setup.nodes.len()],
             grub: setup.start.map(|(g, _)| g.saturating_mul(GRUB_SCALE)),
             marrow: setup.start.map(|(_, m)| m),
@@ -607,15 +610,21 @@ impl Economy {
         structures: &Structures,
         used: &mut Option<[u32; MAX_PARTIES]>,
     ) {
+        if self.tuners_seen != Some(structures.tuner_stamp) {
+            self.tuners_seen = Some(structures.tuner_stamp);
+            for n in 0..self.node_at.len() {
+                let tuner = structures.tuner_of(self.node_resource[n], self.node_at[n]);
+                let handle = tuner.map(|s| structures.handle(s));
+                if handle != self.node_tuner[n] {
+                    self.node_tuner[n] = handle;
+                    self.tune_clock[n] = 0;
+                }
+            }
+        }
         for n in 0..self.node_at.len() {
             let kind = self.node_resource[n];
-            let tuner = structures.tuner_of(kind, self.node_at[n]);
-            let handle = tuner.map(|s| structures.handle(s));
-            if handle != self.node_tuner[n] {
-                self.node_tuner[n] = handle;
-                self.tune_clock[n] = 0;
-            }
-            let Some(s) = tuner else {
+            // A tuner fallen since this tick's links works nothing.
+            let Some(s) = self.node_tuner[n].and_then(|h| structures.resolve(h)) else {
                 continue;
             };
             let left = self.node_left[n];
@@ -646,7 +655,7 @@ impl Economy {
     }
 
     /// How much the nodes tuned by building `h` yield a minute, as things
-    /// stand (dry nodes and tempo counted).
+    /// stand: dry nodes and tempo counted, before any upkeep cut to Grub.
     pub fn tuned_per_minute(&self, h: StructureHandle) -> u32 {
         (0..self.node_at.len())
             .filter(|&n| self.node_tuner[n] == Some(h))

@@ -294,13 +294,18 @@ pub fn opening(
                         && world.can_build(i as u16, t).is_ok()
                 };
                 let tuning = s.tunes.zip(first).and_then(|((resource, tiles), main)| {
-                    tuning_spot(map, main, (resource, tiles), (w, d), &tuned, &fits)
+                    let tile = tuning_spot(map, main, (resource, tiles), (w, d), &tuned, &fits)?;
+                    // Every node it reaches is taken, not just the one it
+                    // was sent for.
+                    let kind = node_kind(resource);
+                    tuned.extend((map.objects.iter()).filter_map(|o| {
+                        (o.kind == kind && tunes_node([tile.0, tile.1, w, d], tiles, o.at))
+                            .then_some(o.at)
+                    }));
+                    Some(tile)
                 });
                 let tile = match (tuning, first) {
-                    (Some((tile, node)), _) => {
-                        tuned.push(node);
-                        Some(tile)
-                    }
+                    (Some(tile), _) => Some(tile),
                     (None, None) => Some(at(centre)).filter(|&t| fits(t)),
                     (None, Some(main)) => ring(main, 2).find(|&t| fits(t)),
                 }
@@ -379,11 +384,8 @@ const TUNE_SEARCH_TILES: i32 = 24;
 /// For a starting building `w` by `d` tiles that tunes `resource` nodes
 /// within `tiles` of its edge: where it goes to tune the node of that kind
 /// nearest main building `main` that `tuned` doesn't hold and that is
-/// within [`TUNE_SEARCH_TILES`], and that node's tile; the spot nearest the
-/// main building of those that `fits`.
-///
-/// Worked in half tiles, in whole numbers, so "within reach" is exactly
-/// the sim's test (a node sits at its tile's centre).
+/// within [`TUNE_SEARCH_TILES`]: the spot nearest the main building of
+/// those that `fits`. Worked in half tiles, in whole numbers.
 fn tuning_spot(
     map: &Map,
     main: Foot,
@@ -391,11 +393,8 @@ fn tuning_spot(
     (w, d): (i32, i32),
     tuned: &[(i32, i32)],
     fits: &impl Fn((i32, i32)) -> bool,
-) -> Option<((i32, i32), (i32, i32))> {
-    let kind = match resource {
-        Resource::Grub => Kind::GrubSeep,
-        Resource::Marrow => Kind::MarrowVein,
-    };
+) -> Option<(i32, i32)> {
+    let kind = node_kind(resource);
     let sq = |x: i32, y: i32| i64::from(x) * i64::from(x) + i64::from(y) * i64::from(y);
     // Main building's centre, and distances from it, in half tiles.
     let mid = (2 * main[0] + main[2], 2 * main[1] + main[3]);
@@ -408,20 +407,32 @@ fn tuning_spot(
     nodes.sort_by_key(|&(x, y)| (from_main((2 * x + 1, 2 * y + 1)), (x, y)));
     let reach = i32::from(tiles);
     nodes.into_iter().find_map(|(nx, ny)| {
-        let point = (2 * nx + 1, 2 * ny + 1);
         // Every corner whose footprint comes within reach of the node,
         // nearest the main building first.
-        let near = |(x, y): (i32, i32)| {
-            let gap_x = point.0.clamp(2 * x, 2 * (x + w)) - point.0;
-            let gap_y = point.1.clamp(2 * y, 2 * (y + d)) - point.1;
-            sq(gap_x, gap_y) <= sq(2 * reach, 0)
-        };
         (nx - reach - w..=nx + reach + 1)
             .flat_map(|x| (ny - reach - d..=ny + reach + 1).map(move |y| (x, y)))
-            .filter(|&t| near(t) && fits(t))
+            .filter(|&(x, y)| tunes_node([x, y, w, d], tiles, (nx, ny)) && fits((x, y)))
             .min_by_key(|&(x, y)| (from_main((2 * x + w, 2 * y + d)), (x, y)))
-            .map(|t| (t, (nx, ny)))
     })
+}
+
+/// The map object for nodes of `resource`.
+fn node_kind(resource: Resource) -> Kind {
+    match resource {
+        Resource::Grub => Kind::GrubSeep,
+        Resource::Marrow => Kind::MarrowVein,
+    }
+}
+
+/// Whether a building on footprint `foot` that tunes nodes within `tiles`
+/// of its edge reaches the node on tile `node`: the sim's test, worked in
+/// half tiles (a node sits at its tile's centre).
+fn tunes_node([x, y, w, d]: Foot, tiles: u8, (nx, ny): (i32, i32)) -> bool {
+    let point = (2 * nx + 1, 2 * ny + 1);
+    let gap_x = i64::from(point.0.clamp(2 * x, 2 * (x + w)) - point.0);
+    let gap_y = i64::from(point.1.clamp(2 * y, 2 * (y + d)) - point.1);
+    let reach = 2 * i64::from(tiles);
+    gap_x * gap_x + gap_y * gap_y <= reach * reach
 }
 
 /// Tiles round footprint `f` for a building's north-west corner, a ring
@@ -881,14 +892,15 @@ mod tests {
             assert_eq!(mine, 2, "player {p}'s two Resonators tune two seeps");
         }
 
-        // A beam ends on each node whose tuner is shown; none in the fog.
+        // A beam ends on each node you tune; the enemy's only with
+        // reveal_all.
         let plain = draw(0, false);
         let all = draw(0, true);
         // The first piece of a beam's last segment ends at the node.
         let beam = |out: &[gc_render::BoxInstance], at| near(out, at, 1.6);
-        for &(at, owner, seen) in &tuned {
+        for &(at, owner, _) in &tuned {
             assert!(beam(&all, at) >= 1, "a beam to every node with reveal_all");
-            assert_eq!(beam(&plain, at) >= 1, seen, "player {owner}'s beam");
+            assert_eq!(beam(&plain, at) >= 1, owner == 0, "player {owner}'s beam");
         }
         assert!(
             tuned.iter().any(|t| t.1 == 0 && t.2),
@@ -903,7 +915,7 @@ mod tests {
             tuned.iter().any(|t| t.1 == 1 && !t.2),
             "the enemy's Resonators start in the fog"
         );
-        assert!(all.len() > plain.len(), "an unseen Resonator's beams hide");
+        assert!(all.len() > plain.len(), "the enemy's beams hide");
     }
 
     /// Fields of power show as rings for your own buildings (everyone's

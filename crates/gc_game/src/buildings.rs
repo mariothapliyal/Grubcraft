@@ -731,16 +731,18 @@ const RING_LIFT: f32 = 0.04;
 /// Ring pieces round a corner are about this long (tiles).
 const RING_STEP: f32 = 1.2;
 
-/// Draw the Choir's tuning (Conquest): a beam from each tuning building
-/// that `side` is shown to every node it tunes. `reveal_all` shows every
-/// beam.
+/// Draw the Choir's tuning (Conquest): a beam from each of `side`'s tuning
+/// buildings to every node it tunes. `reveal_all` shows every side's. (An
+/// enemy's are never drawn from what was once seen: which nodes it tunes
+/// changes in the fog.)
 pub fn push_tuning(world: &World, side: PlayerId, reveal_all: bool, out: &mut Vec<BoxInstance>) {
     let (Some(structures), Some(economy)) = (world.structures(), world.economy()) else {
         return;
     };
-    let shown = shown_to(side, reveal_all);
     for n in economy.nodes() {
-        let Some(s) = n.tuner.and_then(|h| structures.get(h)).filter(&shown) else {
+        let Some(s) =
+            (n.tuner.and_then(|h| structures.get(h))).filter(|s| reveal_all || s.owner == side)
+        else {
             continue;
         };
         if out.len() >= MAX_BOX_INSTANCES {

@@ -107,7 +107,8 @@ pub struct Tuning {
     pub vein: bool,
     /// How many nodes it tunes now.
     pub nodes: u8,
-    /// What they yield together, a minute (at Standard tempo).
+    /// What they yield together, a minute, at the match tempo (before any
+    /// upkeep cut to Grub).
     pub per_minute: u32,
 }
 

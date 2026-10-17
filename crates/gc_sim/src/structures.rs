@@ -275,9 +275,12 @@ impl BuildingStats {
             h.u8(a.shots);
         }
         h.u8(self.field);
-        if let Some((r, tiles)) = self.tunes {
-            h.u8(r as u8);
-            h.u8(tiles);
+        match self.tunes {
+            Some((r, tiles)) => {
+                h.u8(1 + r as u8);
+                h.u8(tiles);
+            }
+            None => h.u8(0),
         }
     }
 }
@@ -481,9 +484,12 @@ pub struct Structures {
     pub(crate) vein_cands: Vec<u32>,
     /// Power and tuning, worked out each tick (see [`crate::power`]): the
     /// standing finished buildings that power a field, those that tune
-    /// nodes.
-    pub(crate) powerers: Vec<u32>,
-    pub(crate) tuners: Vec<u32>,
+    /// nodes (and last tick's), and a count bumped whenever the tuners
+    /// change, so the economy only reassigns nodes then.
+    pub(crate) powerers: Vec<StructureHandle>,
+    pub(crate) tuners: Vec<StructureHandle>,
+    pub(crate) tuners_was: Vec<StructureHandle>,
+    pub(crate) tuner_stamp: u32,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -558,6 +564,8 @@ impl Structures {
             vein_cands: Vec::with_capacity(n),
             powerers: Vec::with_capacity(n),
             tuners: Vec::with_capacity(n),
+            tuners_was: Vec::with_capacity(n),
+            tuner_stamp: 0,
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -765,6 +773,11 @@ impl Structures {
             }
         }
         m
+    }
+
+    /// How many building slots there are, standing or free.
+    pub(crate) fn slots(&self) -> usize {
+        self.hp.len()
     }
 
     /// The slots of the buildings standing, in index order.

@@ -329,8 +329,8 @@ impl Running {
             Gather(u16),
         }
         // Workers that only build (the Choir's) don't gather: sent to a
-        // node, they just walk there.
-        let gathers = !(self.selected.iter()).any(|&h| self.world.builds_only(h));
+        // node, they just walk there (with any others, who gather).
+        let gathers = !(self.selected.iter()).all(|&h| self.world.builds_only(h));
         let job = match (mend, self.node_near(at).filter(|_| gathers)) {
             (Some(structure), _) => Job::Mend(structure),
             (None, Some(node)) => Job::Gather(node),
@@ -340,6 +340,13 @@ impl Running {
             Job::Mend(structure) => Command::Construct {
                 regiment,
                 structure,
+            },
+            Job::Gather(_) if self.world.builds_only(regiment) => Command::MoveTo {
+                regiment,
+                target: crate::fx_vec(at),
+                facing: None,
+                files: 0,
+                pace: gc_fixed::Fx::ZERO,
             },
             Job::Gather(node) => Command::Gather { regiment, node },
         };

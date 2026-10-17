@@ -13,8 +13,9 @@
 //!   kind within its reach with no workers (see [`crate::economy`]). A node
 //!   takes only the tuner whose centre is nearest it.
 //!
-//! All this is worked out afresh each tick from the buildings standing, so
-//! it is not stored or hashed.
+//! Which buildings power and tune is worked out afresh each tick from the
+//! buildings standing, so it is not stored or hashed; the economy hands
+//! nodes to tuners again only when the tuners change.
 
 use gc_fixed::FxVec2;
 
@@ -38,27 +39,29 @@ impl Structures {
     /// Work out this tick's powering and tuning buildings.
     pub(crate) fn link_power(&mut self) {
         self.powerers.clear();
+        core::mem::swap(&mut self.tuners, &mut self.tuners_was);
         self.tuners.clear();
-        for i in 0..self.vein_from.len() {
+        for i in 0..self.slots() {
             if !self.stands(i) || !self.finished(i) {
                 continue;
             }
             let b = *self.stats_of(i);
             if b.flags & POWERS_FIELD != 0 && b.field > 0 {
-                self.powerers.push(i as u32);
+                self.powerers.push(self.handle(i));
             }
             if b.tunes.is_some() {
-                self.tuners.push(i as u32);
+                self.tuners.push(self.handle(i));
             }
+        }
+        if self.tuners != self.tuners_was {
+            self.tuner_stamp = self.tuner_stamp.wrapping_add(1);
         }
     }
 
-    /// The slots of this tick's powering buildings still standing.
+    /// The slots of this tick's powering buildings still standing (a slot
+    /// freed since, and reused, is not one of them).
     fn fields(&self) -> impl Iterator<Item = usize> + '_ {
-        self.powerers
-            .iter()
-            .map(|&v| v as usize)
-            .filter(|&v| self.stands(v))
+        self.powerers.iter().filter_map(|&h| self.resolve(h))
     }
 
     /// Whether one of `owner`'s fields of power reaches footprint `foot`
@@ -91,13 +94,12 @@ impl Structures {
         })
     }
 
-    /// Of the finished buildings tuning `resource` that reach `point`, the
-    /// one whose centre is nearest it (the first, on a tie).
+    /// Of this tick's tuning buildings still standing that tune `resource`
+    /// and reach `point`, the one whose centre is nearest it (the lowest
+    /// slot, on a tie).
     pub(crate) fn tuner_of(&self, resource: Resource, point: FxVec2) -> Option<usize> {
-        self.tuners
-            .iter()
-            .map(|&v| v as usize)
-            .filter(|&v| self.stands(v))
+        (self.tuners.iter())
+            .filter_map(|&h| self.resolve(h))
             .filter(|&v| {
                 self.stats_of(v).tunes.is_some_and(|(r, tiles)| {
                     r == resource && within(self.footprint(v), point, i32::from(tiles))

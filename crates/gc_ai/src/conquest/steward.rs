@@ -308,7 +308,8 @@ impl Steward {
         let idle: Vec<RegimentHandle> = s
             .world
             .idle_workers(s.party)
-            .filter(|&h| !self.recently_sent(h))
+            // A worker that only builds (the Choir's Tuner) can't gather.
+            .filter(|&h| !self.recently_sent(h) && !s.world.builds_only(h))
             .collect();
         let mut sent: Vec<(u16, Vec<RegimentHandle>)> = Vec::new();
         for h in idle {
