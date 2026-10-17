@@ -354,14 +354,14 @@ fn tuning_of(
     s: &gc_sim::StructureView,
 ) -> Option<Tuning> {
     let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
-    let nodes = (world.economy()?.nodes())
+    let economy = world.economy()?;
+    let nodes = (economy.nodes())
         .filter(|n| n.tuner == Some(s.handle))
-        .count() as u32;
-    let a_minute = resource.load() * 60 * gc_sim::TICKS_PER_SECOND / resource.tune_ticks();
+        .count();
     Some(Tuning {
         vein: resource == gc_sim::Resource::Marrow,
-        nodes: nodes.min(u32::from(u8::MAX)) as u8,
-        per_minute: nodes * a_minute,
+        nodes: nodes.min(usize::from(u8::MAX)) as u8,
+        per_minute: economy.tuned_per_minute(s.handle),
     })
 }
 
@@ -650,34 +650,34 @@ impl Running {
         }
         let structure = picked_structure
             .and_then(|h| self.world.structures()?.get(h))
-            .map(|s| StructurePanel {
-                name: self.buildings.name(s.building),
-                color: crate::color_of(&self.parties, s.owner),
-                hp: s.hp,
-                max_hp: s.max_hp,
-                building: (!s.finished()).then_some(s.built_percent),
-                upgrading: s
-                    .upgrading
-                    .map(|(to, percent)| (self.buildings.name(to), percent)),
-                queue: &queue[..queued],
-                // Your own finished ones only: a foundation grows none, and
-                // an enemy's larvae are not yours to count.
-                larvae: (s.owner == self.sandbox.side && s.finished())
-                    .then(|| self.world.larvae_in(s.handle))
-                    .flatten()
-                    .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
-                // Your own finished living buildings regrow on your veins.
-                rooted: (s.owner == self.sandbox.side)
-                    .then(|| self.world.rooted(s.handle))
-                    .flatten(),
-                // Your own finished Choir buildings need a field of power.
-                powered: (s.owner == self.sandbox.side && s.finished())
-                    .then(|| self.world.powered(s.handle))
-                    .flatten(),
-                // Your own finished Resonators and Siphons tune nodes.
-                tuning: (s.owner == self.sandbox.side && s.finished())
-                    .then(|| tuning_of(&self.world, &self.buildings, &s))
-                    .flatten(),
+            .map(|s| {
+                let mine = s.owner == self.sandbox.side;
+                let mine_up = mine && s.finished();
+                StructurePanel {
+                    name: self.buildings.name(s.building),
+                    color: crate::color_of(&self.parties, s.owner),
+                    hp: s.hp,
+                    max_hp: s.max_hp,
+                    building: (!s.finished()).then_some(s.built_percent),
+                    upgrading: s
+                        .upgrading
+                        .map(|(to, percent)| (self.buildings.name(to), percent)),
+                    queue: &queue[..queued],
+                    // Your own finished ones only: a foundation grows none, and
+                    // an enemy's larvae are not yours to count.
+                    larvae: mine_up
+                        .then(|| self.world.larvae_in(s.handle))
+                        .flatten()
+                        .map(|n| (n, gc_sim::larvae::LARVA_CAP)),
+                    // Your own finished living buildings regrow on your veins.
+                    rooted: mine.then(|| self.world.rooted(s.handle)).flatten(),
+                    // Your own finished Choir buildings need a field of power.
+                    powered: mine_up.then(|| self.world.powered(s.handle)).flatten(),
+                    // Your own finished Resonators and Siphons tune nodes.
+                    tuning: mine_up
+                        .then(|| tuning_of(&self.world, &self.buildings, &s))
+                        .flatten(),
+                }
             });
 
         let mut input = std::mem::take(&mut hud.input);

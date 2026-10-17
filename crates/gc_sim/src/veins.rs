@@ -50,10 +50,17 @@ pub struct VeinView {
 
 /// Squared gap between two footprints `[x, y, w, d]`, edge to edge, in
 /// tiles.
-pub(crate) fn gap_sq([ax, ay, aw, ad]: [i32; 4], [bx, by, bw, bd]: [i32; 4]) -> i64 {
+fn gap_sq([ax, ay, aw, ad]: [i32; 4], [bx, by, bw, bd]: [i32; 4]) -> i64 {
     let dx = i64::from((ax - (bx + bw)).max(bx - (ax + aw)).max(0));
     let dy = i64::from((ay - (by + bd)).max(by - (ay + ad)).max(0));
     dx * dx + dy * dy
+}
+
+/// Whether footprints `a` and `b` lie within `tiles` of each other, edge
+/// to edge.
+pub(crate) fn foot_reaches(a: [i32; 4], b: [i32; 4], tiles: u8) -> bool {
+    let reach = i64::from(tiles);
+    gap_sq(a, b) <= reach * reach
 }
 
 /// Whether `point` lies within `tiles` of footprint `foot`'s edge.
@@ -65,9 +72,9 @@ pub(crate) fn within(foot: [i32; 4], point: FxVec2, tiles: i32) -> bool {
 impl Structures {
     /// How far building slot `i`'s veins reach, if it spreads them: a main
     /// building's further than a relay's.
-    fn vein_reach(&self, i: usize) -> Option<i32> {
+    fn vein_reach(&self, i: usize) -> Option<u8> {
         let b = self.stats_of(i);
-        (b.flags & VEINS != 0 && b.field > 0).then_some(i32::from(b.field))
+        (b.flags & VEINS != 0 && b.field > 0).then_some(b.field)
     }
 
     /// Work out which veins buildings link back to a main building: each
@@ -109,8 +116,7 @@ impl Structures {
 
     /// Whether linked veins building `v`'s veins reach footprint `foot`.
     fn reaches(&self, v: usize, foot: [i32; 4]) -> bool {
-        let reach = i64::from(self.vein_reach(v).unwrap_or(0));
-        gap_sq(self.footprint(v), foot) <= reach * reach
+        foot_reaches(self.footprint(v), foot, self.vein_reach(v).unwrap_or(0))
     }
 
     /// The slots of the linked veins buildings still standing (one may
@@ -135,7 +141,7 @@ impl Structures {
             parent: self.handle(parent),
             at: self.centre(i),
             from: self.centre(parent),
-            reach: self.vein_reach(i).unwrap_or(0),
+            reach: i32::from(self.vein_reach(i).unwrap_or(0)),
         }
     }
 
@@ -148,7 +154,13 @@ impl Structures {
     /// one whose centre is nearest it (the first, on a tie).
     pub(crate) fn vein_home(&self, owner: PlayerId, point: FxVec2) -> Option<usize> {
         self.veins_of(owner)
-            .filter(|&v| within(self.footprint(v), point, self.vein_reach(v).unwrap_or(0)))
+            .filter(|&v| {
+                within(
+                    self.footprint(v),
+                    point,
+                    i32::from(self.vein_reach(v).unwrap_or(0)),
+                )
+            })
             .min_by_key(|&v| ((self.centre(v) - point).length_sq_raw(), v))
     }
 

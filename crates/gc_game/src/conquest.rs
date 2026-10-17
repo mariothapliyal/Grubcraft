@@ -374,13 +374,16 @@ pub fn opening(
 
 /// How far from its main building a starting building looks for a node to
 /// tune, in tiles.
-const TUNE_SEARCH_TILES: f32 = 24.0;
+const TUNE_SEARCH_TILES: i32 = 24;
 
-/// For a starting building `w` by `d` tiles (`size`) that tunes `resource`
-/// nodes within `tiles` of its edge (`tunes`): where it goes to tune the node of that kind
+/// For a starting building `w` by `d` tiles that tunes `resource` nodes
+/// within `tiles` of its edge: where it goes to tune the node of that kind
 /// nearest main building `main` that `tuned` doesn't hold and that is
 /// within [`TUNE_SEARCH_TILES`], and that node's tile; the spot nearest the
 /// main building of those that `fits`.
+///
+/// Worked in half tiles, in whole numbers, so "within reach" is exactly
+/// the sim's test (a node sits at its tile's centre).
 fn tuning_spot(
     map: &Map,
     main: Foot,
@@ -393,44 +396,31 @@ fn tuning_spot(
         Resource::Grub => Kind::GrubSeep,
         Resource::Marrow => Kind::MarrowVein,
     };
-    let mid = (
-        main[0] as f32 + main[2] as f32 / 2.0,
-        main[1] as f32 + main[3] as f32 / 2.0,
-    );
-    let from_main = |(x, y): (f32, f32)| (x - mid.0).hypot(y - mid.1);
-    let mut nodes: Vec<(i32, i32)> = map
-        .objects
-        .iter()
+    let sq = |x: i32, y: i32| i64::from(x) * i64::from(x) + i64::from(y) * i64::from(y);
+    // Main building's centre, and distances from it, in half tiles.
+    let mid = (2 * main[0] + main[2], 2 * main[1] + main[3]);
+    let from_main = |(x, y): (i32, i32)| sq(x - mid.0, y - mid.1);
+    let mut nodes: Vec<(i32, i32)> = (map.objects.iter())
         .filter(|o| o.kind == kind && !tuned.contains(&o.at))
         .map(|o| o.at)
-        .filter(|&(x, y)| from_main((x as f32 + 0.5, y as f32 + 0.5)) <= TUNE_SEARCH_TILES)
+        .filter(|&(x, y)| from_main((2 * x + 1, 2 * y + 1)) <= sq(2 * TUNE_SEARCH_TILES, 0))
         .collect();
-    nodes.sort_by(|a, b| {
-        let d = |&(x, y): &(i32, i32)| from_main((x as f32 + 0.5, y as f32 + 0.5));
-        d(a).total_cmp(&d(b))
-    });
+    nodes.sort_by_key(|&(x, y)| (from_main((2 * x + 1, 2 * y + 1)), (x, y)));
     let reach = i32::from(tiles);
     nodes.into_iter().find_map(|(nx, ny)| {
-        let point = (nx as f32 + 0.5, ny as f32 + 0.5);
-        // Every corner whose footprint comes within reach of the node.
-        let mut spots: Vec<(i32, i32)> = (nx - reach - w..=nx + reach + 1)
+        let point = (2 * nx + 1, 2 * ny + 1);
+        // Every corner whose footprint comes within reach of the node,
+        // nearest the main building first.
+        let near = |(x, y): (i32, i32)| {
+            let gap_x = point.0.clamp(2 * x, 2 * (x + w)) - point.0;
+            let gap_y = point.1.clamp(2 * y, 2 * (y + d)) - point.1;
+            sq(gap_x, gap_y) <= sq(2 * reach, 0)
+        };
+        (nx - reach - w..=nx + reach + 1)
             .flat_map(|x| (ny - reach - d..=ny + reach + 1).map(move |y| (x, y)))
-            .filter(|&(x, y)| {
-                let near = (
-                    point.0.clamp(x as f32, (x + w) as f32),
-                    point.1.clamp(y as f32, (y + d) as f32),
-                );
-                (near.0 - point.0).hypot(near.1 - point.1) <= reach as f32
-            })
-            .filter(|&t| fits(t))
-            .collect();
-        spots.sort_by(|a, b| {
-            let c = |&(x, y): &(i32, i32)| {
-                from_main((x as f32 + w as f32 / 2.0, y as f32 + d as f32 / 2.0))
-            };
-            c(a).total_cmp(&c(b)).then(a.cmp(b))
-        });
-        spots.first().map(|&t| (t, (nx, ny)))
+            .filter(|&t| near(t) && fits(t))
+            .min_by_key(|&(x, y)| (from_main((2 * x + w, 2 * y + d)), (x, y)))
+            .map(|t| (t, (nx, ny)))
     })
 }
 
@@ -944,7 +934,8 @@ mod tests {
             out.iter()
                 .filter(|b| {
                     fields.iter().filter(|f| f.owner == owner).any(|f| {
-                        let at = crate::from_fx_vec(f.at);
+                        let [x, y, w, d] = f.foot.map(|v| v as f32);
+                        let at = glam::Vec2::new(x + w / 2.0, y + d / 2.0);
                         (glam::Vec2::from(b.pos) - at).length() <= f.reach as f32 + 6.0
                     })
                 })

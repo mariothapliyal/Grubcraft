@@ -619,13 +619,8 @@ impl Economy {
                 continue;
             };
             let left = self.node_left[n];
-            let mut ticks = kind.tune_ticks();
-            if left == 0 {
-                ticks = ticks * 100 / DREGS_PERCENT;
-            }
-            ticks = (ticks * 100 / self.gather_percent).max(1);
             self.tune_clock[n] += 1;
-            if self.tune_clock[n] < ticks {
+            if self.tune_clock[n] < self.tune_period(n) {
                 continue;
             }
             self.tune_clock[n] = 0;
@@ -635,9 +630,28 @@ impl Economy {
             } else {
                 kind.load().min(left)
             };
-            self.node_left[n] = left - take.min(left);
+            self.node_left[n] = left.saturating_sub(take);
             self.deposit(structures.owner_of(s), kind, take, regs, kinds, used);
         }
+    }
+
+    /// Ticks between loads from tuned node `n`: slower once it runs dry,
+    /// and scaled by tempo.
+    fn tune_period(&self, n: usize) -> u32 {
+        let mut ticks = self.node_resource[n].tune_ticks();
+        if self.node_left[n] == 0 {
+            ticks = ticks * 100 / DREGS_PERCENT;
+        }
+        (ticks * 100 / self.gather_percent).max(1)
+    }
+
+    /// How much the nodes tuned by building `h` yield a minute, as things
+    /// stand (dry nodes and tempo counted).
+    pub fn tuned_per_minute(&self, h: StructureHandle) -> u32 {
+        (0..self.node_at.len())
+            .filter(|&n| self.node_tuner[n] == Some(h))
+            .map(|n| self.node_resource[n].load() * 60 * TICKS_PER_SECOND / self.tune_period(n))
+            .sum()
     }
 
     /// `amount` of `kind` goes into player `p`'s store: Grub cut by their

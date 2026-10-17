@@ -7,7 +7,7 @@
 use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
-use gc_data::conquest::{UNIT_BUILDS_ONLY, UNIT_CONSUMED};
+use gc_data::conquest::UNIT_CONSUMED;
 use gc_sim::structures::CANCEL_REFUND_PERCENT;
 use gc_sim::{
     BuildingId, Command, PlayerCommand, RegimentHandle, Regiments, StructureHandle, StructureView,
@@ -330,8 +330,7 @@ impl Running {
         }
         // Workers that only build (the Choir's) don't gather: sent to a
         // node, they just walk there.
-        let gathers =
-            !(self.selected.iter()).any(|&h| has_flag(regiments, units, h, UNIT_BUILDS_ONLY));
+        let gathers = !(self.selected.iter()).any(|&h| self.world.builds_only(h));
         let job = match (mend, self.node_near(at).filter(|_| gathers)) {
             (Some(structure), _) => Job::Mend(structure),
             (None, Some(node)) => Job::Gather(node),

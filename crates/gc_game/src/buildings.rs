@@ -627,9 +627,6 @@ pub fn push_fields(
     lit: bool,
     out: &mut Vec<BoxInstance>,
 ) {
-    let Some(structures) = world.structures() else {
-        return;
-    };
     let (colour, glow, width) = if lit {
         (RING_LIT_COLOR, RING_LIT_GLOW, RING_LIT_WIDTH)
     } else {
@@ -639,13 +636,8 @@ pub fn push_fields(
         if f.owner != side && !reveal_all {
             continue;
         }
-        let Some(s) = structures.get(f.building) else {
-            continue;
-        };
-        let (x, y) = (s.tile.0 as f32, s.tile.1 as f32);
-        let (w, d) = (f32::from(s.width), f32::from(s.depth));
         push_ring(
-            [x, y, w, d],
+            f.foot.map(|v| v as f32),
             f.reach as f32,
             (width, colour, glow),
             RING_LIFT,
@@ -660,7 +652,7 @@ pub fn push_fields(
 fn push_ring(
     foot: [f32; 4],
     reach: f32,
-    look: (f32, [u8; 3], u8),
+    (width, colour, glow): (f32, [u8; 3], u8),
     lift: f32,
     out: &mut Vec<BoxInstance>,
 ) {
@@ -677,37 +669,17 @@ fn push_ring(
         let a = (from + 90.0 * k as f32 / steps as f32).to_radians();
         c + Vec2::new(a.cos(), a.sin()) * reach
     };
-    let mut prev = point(corners[0].0, corners[0].1, 0);
-    let start = prev;
+    let mut piece = |from, to| push_ribbon(from, to, (width, width), colour, lift, |_| glow, out);
+    let start = point(corners[0].0, corners[0].1, 0);
+    let mut prev = start;
     for (c, from) in corners {
         for k in 0..=steps {
             let to = point(c, from, k);
-            push_piece(prev, to, look, lift, out);
+            piece(prev, to);
             prev = to;
         }
     }
-    push_piece(prev, start, look, lift, out);
-}
-
-/// One flat piece of a ring from `from` to `to`.
-fn push_piece(
-    from: Vec2,
-    to: Vec2,
-    (width, [r, g, b], glow): (f32, [u8; 3], u8),
-    lift: f32,
-    out: &mut Vec<BoxInstance>,
-) {
-    let len = (to - from).length();
-    if len < 0.01 || out.len() >= MAX_BOX_INSTANCES {
-        return;
-    }
-    out.push(BoxInstance {
-        pos: ((from + to) / 2.0).to_array(),
-        facing: ((to - from) / len).to_array(),
-        size: [width, VEIN_THICK, len + 0.05],
-        color: [r, g, b, glow],
-        lift,
-    });
+    piece(prev, start);
 }
 
 /// The Titan's Heart's colour: its holder's while held, else red.

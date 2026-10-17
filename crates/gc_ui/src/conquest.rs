@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 
-use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, text_width};
+use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, text_width, wrap};
 use crate::hud::{HudEvent, HudInput, WIDGET_QUEUE, draw_portrait, health_color, rgb};
 use crate::lobby::thousands;
 use crate::ui::{Press, theme};
@@ -132,22 +132,6 @@ impl Tuning {
 
 /// A building that needs power, with none.
 const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";
-
-/// `text` broken at spaces into lines of at most `chars` characters (a
-/// word longer than that is cut).
-fn wrap(text: &str, chars: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for word in text.split_whitespace() {
-        match lines.last_mut() {
-            Some(line) if line.chars().count() + 1 + word.chars().count() <= chars => {
-                line.push(' ');
-                line.push_str(word);
-            }
-            _ => lines.push(fit(word, chars)),
-        }
-    }
-    lines
-}
 
 /// Match time as "14:32", or "1:02:05" from the first hour.
 pub(crate) fn clock(secs: u32) -> String {

@@ -21,26 +21,25 @@ use gc_fixed::FxVec2;
 use crate::PlayerId;
 use crate::economy::Resource;
 use crate::structures::{NEEDS_POWER, POWERS_FIELD, StructureHandle, Structures};
-use crate::veins::{gap_sq, within};
+use crate::veins::{foot_reaches, within};
 
 /// A finished building powering a field, as the game sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldView {
     pub owner: PlayerId,
     pub building: StructureHandle,
-    /// Centre of its footprint.
-    pub at: FxVec2,
+    /// Its footprint, `[x, y, width, depth]` in tiles.
+    pub foot: [i32; 4],
     /// How far its field reaches from its edge, in tiles.
     pub reach: i32,
 }
 
 impl Structures {
-    /// Work out this tick's powering and tuning buildings, and which
-    /// buildings are powered.
+    /// Work out this tick's powering and tuning buildings.
     pub(crate) fn link_power(&mut self) {
         self.powerers.clear();
         self.tuners.clear();
-        for i in 0..self.powered.len() {
+        for i in 0..self.vein_from.len() {
             if !self.stands(i) || !self.finished(i) {
                 continue;
             }
@@ -51,11 +50,6 @@ impl Structures {
             if b.tunes.is_some() {
                 self.tuners.push(i as u32);
             }
-        }
-        for i in 0..self.powered.len() {
-            self.powered[i] = !self.stands(i)
-                || self.stats_of(i).flags & NEEDS_POWER == 0
-                || self.power_reaches(self.owner_of(i), self.footprint(i));
         }
     }
 
@@ -72,15 +66,14 @@ impl Structures {
     pub(crate) fn power_reaches(&self, owner: PlayerId, foot: [i32; 4]) -> bool {
         self.fields()
             .filter(|&v| self.owner_of(v) == owner)
-            .any(|v| {
-                let reach = i64::from(self.stats_of(v).field);
-                gap_sq(self.footprint(v), foot) <= reach * reach
-            })
+            .any(|v| foot_reaches(self.footprint(v), foot, self.stats_of(v).field))
     }
 
     /// Whether building slot `i` works: it needs no power, or has it.
     pub(crate) fn powered(&self, i: usize) -> bool {
-        self.powered[i]
+        !self.stands(i)
+            || !self.needs_power(i)
+            || self.power_reaches(self.owner_of(i), self.footprint(i))
     }
 
     /// Whether building slot `i` needs power to work.
@@ -93,7 +86,7 @@ impl Structures {
         self.fields().map(|v| FieldView {
             owner: self.owner_of(v),
             building: self.handle(v),
-            at: self.centre(v),
+            foot: self.footprint(v),
             reach: i32::from(self.stats_of(v).field),
         })
     }

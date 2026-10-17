@@ -481,10 +481,9 @@ pub struct Structures {
     pub(crate) vein_cands: Vec<u32>,
     /// Power and tuning, worked out each tick (see [`crate::power`]): the
     /// standing finished buildings that power a field, those that tune
-    /// nodes, and whether each slot is powered.
+    /// nodes.
     pub(crate) powerers: Vec<u32>,
     pub(crate) tuners: Vec<u32>,
-    pub(crate) powered: Vec<bool>,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -559,7 +558,6 @@ impl Structures {
             vein_cands: Vec::with_capacity(n),
             powerers: Vec::with_capacity(n),
             tuners: Vec::with_capacity(n),
-            powered: vec![true; n],
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
