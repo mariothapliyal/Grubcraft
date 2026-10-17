@@ -6,7 +6,7 @@ use gc_sim::formation::GroupOrder;
 use gc_sim::{MoraleState, PlayerId, StructureHandle};
 use gc_ui::DrawList;
 use gc_ui::alerts::{Alert, AlertData, AlertKind};
-use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar};
+use gc_ui::conquest::{Block, NodeDot, QUEUE_SLOTS, QueueItem, StructurePanel, TopBar, Tuning};
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, Hud, HudData,
@@ -347,7 +347,31 @@ pub fn upload_ui(
     renderer.set_ui(buf, scale);
 }
 
+/// What building `s` tunes now, if it is a tuning building.
+fn tuning_of(
+    world: &gc_sim::World,
+    table: &crate::buildings::Table,
+    s: &gc_sim::StructureView,
+) -> Option<Tuning> {
+    let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
+    let nodes = (world.economy()?.nodes())
+        .filter(|n| n.tuner == Some(s.handle))
+        .count() as u32;
+    let a_minute = resource.load() * 60 * gc_sim::TICKS_PER_SECOND / resource.tune_ticks();
+    Some(Tuning {
+        vein: resource == gc_sim::Resource::Marrow,
+        nodes: nodes.min(u32::from(u8::MAX)) as u8,
+        per_minute: nodes * a_minute,
+    })
+}
+
 impl Running {
+    /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)
+    /// has nothing to gather, so standing about is not idling.
+    fn idle_workers(&self, side: PlayerId) -> impl Iterator<Item = gc_sim::RegimentHandle> + '_ {
+        (self.world.idle_workers(side)).filter(|&h| !self.world.builds_only(h))
+    }
+
     /// The screen in UI pixels, as the menus see it.
     pub fn ui_screen(&self) -> ((i32, i32), f32) {
         let scale = self.ui_scale();
@@ -403,7 +427,7 @@ impl Running {
                 tick,
                 side,
                 top,
-                idle_workers: workers.then(|| self.world.idle_workers(side).count() as u32),
+                idle_workers: workers.then(|| self.idle_workers(side).count() as u32),
             });
         }
 
@@ -646,6 +670,14 @@ impl Running {
                 rooted: (s.owner == self.sandbox.side)
                     .then(|| self.world.rooted(s.handle))
                     .flatten(),
+                // Your own finished Choir buildings need a field of power.
+                powered: (s.owner == self.sandbox.side && s.finished())
+                    .then(|| self.world.powered(s.handle))
+                    .flatten(),
+                // Your own finished Resonators and Siphons tune nodes.
+                tuning: (s.owner == self.sandbox.side && s.finished())
+                    .then(|| tuning_of(&self.world, &self.buildings, &s))
+                    .flatten(),
             });
 
         let mut input = std::mem::take(&mut hud.input);
@@ -859,8 +891,7 @@ impl Running {
         if !self.conquest_units || self.watching.is_some() {
             return;
         }
-        let idle: Vec<gc_sim::RegimentHandle> =
-            self.world.idle_workers(self.sandbox.side).collect();
+        let idle: Vec<gc_sim::RegimentHandle> = self.idle_workers(self.sandbox.side).collect();
         let Some(&h) = idle
             .iter()
             .find(|h| self.idle_from.is_some_and(|from| h.index > from))

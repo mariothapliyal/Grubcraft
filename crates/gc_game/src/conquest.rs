@@ -294,7 +294,7 @@ pub fn opening(
                         && world.can_build(i as u16, t).is_ok()
                 };
                 let tuning = s.tunes.zip(first).and_then(|((resource, tiles), main)| {
-                    tuning_spot(map, main, resource, tiles, w, d, &tuned, &fits)
+                    tuning_spot(map, main, (resource, tiles), (w, d), &tuned, &fits)
                 });
                 let tile = match (tuning, first) {
                     (Some((tile, node)), _) => {
@@ -376,18 +376,16 @@ pub fn opening(
 /// tune, in tiles.
 const TUNE_SEARCH_TILES: f32 = 24.0;
 
-/// For a starting building `w` by `d` tiles that tunes `resource` nodes
-/// within `tiles` of its edge: where it goes to tune the node of that kind
+/// For a starting building `w` by `d` tiles (`size`) that tunes `resource`
+/// nodes within `tiles` of its edge (`tunes`): where it goes to tune the node of that kind
 /// nearest main building `main` that `tuned` doesn't hold and that is
 /// within [`TUNE_SEARCH_TILES`], and that node's tile; the spot nearest the
 /// main building of those that `fits`.
 fn tuning_spot(
     map: &Map,
     main: Foot,
-    resource: Resource,
-    tiles: u8,
-    w: i32,
-    d: i32,
+    (resource, tiles): (Resource, u8),
+    (w, d): (i32, i32),
     tuned: &[(i32, i32)],
     fits: &impl Fn((i32, i32)) -> bool,
 ) -> Option<((i32, i32), (i32, i32))> {
@@ -462,6 +460,16 @@ mod tests {
 
     /// A fresh Conquest world on `map` for `factions`, and its plan.
     fn world_on(map: &Map, factions: &[Faction], tempo: Tempo) -> (World, ConquestRecord, Table) {
+        world_for(map, factions, tempo, Victories::default())
+    }
+
+    /// The same, played for `victories` (any at all means fog of war).
+    fn world_for(
+        map: &Map,
+        factions: &[Faction],
+        tempo: Tempo,
+        victories: Victories,
+    ) -> (World, ConquestRecord, Table) {
         let data = data();
         let table = Table::new(&data);
         let stats = unit_stats(&data);
@@ -476,7 +484,7 @@ mod tests {
             ground: map.ground(),
             champions: false,
         });
-        let plan = plan(&table, &data, map, factions, tempo, Victories::default());
+        let plan = plan(&table, &data, map, factions, tempo, victories);
         assert!(world.conquest(&plan.setup()));
         (world, plan, table)
     }
@@ -840,5 +848,114 @@ mod tests {
         assert_eq!(marks(&plain) + marks(&flowing), 0);
         assert_eq!(marks(&cut), 2, "a cross on the cut-off seep");
         assert!(near(&cut, off.at, 0.1) >= 2);
+    }
+
+    /// A Choir opening tunes the two nearest seeps with its two starting
+    /// Resonators, and a beam is drawn to each from the Resonator, for the
+    /// buildings a side is shown (all with `reveal_all`).
+    #[test]
+    fn tuning_beams_are_drawn_for_the_resonators_a_side_is_shown() {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::Choir, Faction::Choir];
+        let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        world.tick(&[]);
+        let draw = |side: PlayerId, reveal_all: bool| {
+            let mut out = Vec::new();
+            buildings::push_tuning(&world, side, reveal_all, &mut out);
+            out
+        };
+        // Boxes lying within `r` tiles of `at`.
+        let near = |out: &[gc_render::BoxInstance], at: gc_fixed::FxVec2, r: f32| {
+            let at = crate::from_fx_vec(at);
+            out.iter()
+                .filter(|b| (glam::Vec2::from(b.pos) - at).length() <= r)
+                .count()
+        };
+        let structures = world.structures().unwrap();
+        // Each tuned node, with who owns its tuner and whether `0` has
+        // seen it.
+        let tuned: Vec<_> = world
+            .economy()
+            .unwrap()
+            .nodes()
+            .filter_map(|n| {
+                let s = structures.get(n.tuner?)?;
+                Some((n.at, s.owner, s.seen_by(0)))
+            })
+            .collect();
+        for p in 0..2 {
+            let mine = tuned.iter().filter(|t| t.1 == p).count();
+            assert_eq!(mine, 2, "player {p}'s two Resonators tune two seeps");
+        }
+
+        // A beam ends on each node whose tuner is shown; none in the fog.
+        let plain = draw(0, false);
+        let all = draw(0, true);
+        // The first piece of a beam's last segment ends at the node.
+        let beam = |out: &[gc_render::BoxInstance], at| near(out, at, 1.6);
+        for &(at, owner, seen) in &tuned {
+            assert!(beam(&all, at) >= 1, "a beam to every node with reveal_all");
+            assert_eq!(beam(&plain, at) >= 1, seen, "player {owner}'s beam");
+        }
+        assert!(
+            tuned.iter().any(|t| t.1 == 0 && t.2),
+            "you see your own Resonators"
+        );
+        // Thin, glowing, flat on the ground.
+        assert!(
+            all.iter()
+                .all(|b| b.size[0] < 0.3 && b.size[1] < 0.2 && b.lift < 0.5 && b.color[3] > 100)
+        );
+        assert!(
+            tuned.iter().any(|t| t.1 == 1 && !t.2),
+            "the enemy's Resonators start in the fog"
+        );
+        assert!(all.len() > plain.len(), "an unseen Resonator's beams hide");
+    }
+
+    /// Fields of power show as rings for your own buildings (everyone's
+    /// with `reveal_all`), brighter while a building that needs power is
+    /// being placed.
+    #[test]
+    fn power_fields_are_drawn_as_rings_round_their_buildings() {
+        let data = data();
+        let map = make_map(0, 0);
+        let factions = [Faction::Choir, Faction::Choir];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let opening = opening(&data, &table, &map, &world, &factions);
+        world.tick(&opening);
+        let draw = |side: PlayerId, reveal_all: bool, lit: bool| {
+            let mut out = Vec::new();
+            buildings::push_fields(&world, side, reveal_all, lit, &mut out);
+            out
+        };
+        let fields: Vec<_> = world.power_fields().collect();
+        assert!(fields.iter().any(|f| f.owner == 0) && fields.iter().any(|f| f.owner == 1));
+        let plain = draw(0, false, false);
+        let all = draw(0, true, false);
+        let lit = draw(0, false, true);
+        assert!(!plain.is_empty() && all.len() > plain.len());
+        assert_eq!(lit.len(), plain.len());
+        // Only your own buildings' rings, each within its field's reach.
+        let around = |out: &[gc_render::BoxInstance], owner: PlayerId| {
+            out.iter()
+                .filter(|b| {
+                    fields.iter().filter(|f| f.owner == owner).any(|f| {
+                        let at = crate::from_fx_vec(f.at);
+                        (glam::Vec2::from(b.pos) - at).length() <= f.reach as f32 + 6.0
+                    })
+                })
+                .count()
+        };
+        assert_eq!(around(&plain, 0), plain.len());
+        assert_eq!(around(&plain, 1), 0);
+        assert_eq!(around(&all, 1), all.len() - plain.len());
+        // Faint, flat and thin, and brighter and wider when lit.
+        assert!(plain.iter().all(|b| b.size[1] < 0.2 && b.color[3] < 50));
+        assert!(lit.iter().all(|b| b.color[3] > 100));
+        assert!(lit[0].size[0] > plain[0].size[0]);
     }
 }

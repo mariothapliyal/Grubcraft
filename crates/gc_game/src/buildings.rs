@@ -571,6 +571,145 @@ pub fn push_veins(
     }
 }
 
+/// A tuning beam: a thin, glowing crystal-blue ribbon from a tuning
+/// building to each node it works, in tiles.
+const BEAM_WIDTH: f32 = 0.16;
+const BEAM_COLOR: [u8; 3] = [140, 210, 255];
+const BEAM_GLOW: u8 = 150;
+const BEAM_LIFT: f32 = VEIN_LIFT + 0.02;
+/// A field of power's edge is a faint ring on the ground, brighter and
+/// wider while a building that needs power is being placed.
+const RING_COLOR: [u8; 3] = [70, 115, 160];
+const RING_GLOW: u8 = 20;
+const RING_WIDTH: f32 = 0.1;
+const RING_LIT_COLOR: [u8; 3] = [150, 215, 255];
+const RING_LIT_GLOW: u8 = 130;
+const RING_LIT_WIDTH: f32 = 0.22;
+const RING_LIFT: f32 = 0.04;
+/// Ring pieces round a corner are about this long (tiles).
+const RING_STEP: f32 = 1.2;
+
+/// Draw the Choir's tuning (Conquest): a beam from each tuning building
+/// that `side` is shown to every node it tunes. `reveal_all` shows every
+/// beam.
+pub fn push_tuning(world: &World, side: PlayerId, reveal_all: bool, out: &mut Vec<BoxInstance>) {
+    let (Some(structures), Some(economy)) = (world.structures(), world.economy()) else {
+        return;
+    };
+    let shown = shown_to(side, reveal_all);
+    for n in economy.nodes() {
+        let Some(s) = n.tuner.and_then(|h| structures.get(h)).filter(&shown) else {
+            continue;
+        };
+        if out.len() >= MAX_BOX_INSTANCES {
+            return;
+        }
+        push_ribbon(
+            centre_of(s.tile, s.width, s.depth),
+            crate::from_fx_vec(n.at),
+            (BEAM_WIDTH, BEAM_WIDTH),
+            BEAM_COLOR,
+            BEAM_LIFT,
+            |_| BEAM_GLOW,
+            out,
+        );
+    }
+}
+
+/// Draw the edge of each field of power (Conquest) as a ring on the ground
+/// round its building's footprint: `side`'s own, or every side's with
+/// `reveal_all`. Faint, unless `lit` (a building that needs power is being
+/// placed), when the rings stand out.
+pub fn push_fields(
+    world: &World,
+    side: PlayerId,
+    reveal_all: bool,
+    lit: bool,
+    out: &mut Vec<BoxInstance>,
+) {
+    let Some(structures) = world.structures() else {
+        return;
+    };
+    let (colour, glow, width) = if lit {
+        (RING_LIT_COLOR, RING_LIT_GLOW, RING_LIT_WIDTH)
+    } else {
+        (RING_COLOR, RING_GLOW, RING_WIDTH)
+    };
+    for f in world.power_fields() {
+        if f.owner != side && !reveal_all {
+            continue;
+        }
+        let Some(s) = structures.get(f.building) else {
+            continue;
+        };
+        let (x, y) = (s.tile.0 as f32, s.tile.1 as f32);
+        let (w, d) = (f32::from(s.width), f32::from(s.depth));
+        push_ring(
+            [x, y, w, d],
+            f.reach as f32,
+            (width, colour, glow),
+            RING_LIFT,
+            out,
+        );
+    }
+}
+
+/// A closed ring on the ground `reach` tiles outside the rectangle `foot`
+/// (`[x, y, width, depth]`): straight along its sides, round at its
+/// corners. `look` is its width, colour and glow.
+fn push_ring(
+    foot: [f32; 4],
+    reach: f32,
+    look: (f32, [u8; 3], u8),
+    lift: f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let [x, y, w, d] = foot;
+    let steps = ((reach * std::f32::consts::FRAC_PI_2 / RING_STEP).ceil() as usize).max(2);
+    // Clockwise from the north-east corner, a quarter turn at each.
+    let corners = [
+        (Vec2::new(x + w, y), -90.0f32),
+        (Vec2::new(x + w, y + d), 0.0),
+        (Vec2::new(x, y + d), 90.0),
+        (Vec2::new(x, y), 180.0),
+    ];
+    let point = |c: Vec2, from: f32, k: usize| {
+        let a = (from + 90.0 * k as f32 / steps as f32).to_radians();
+        c + Vec2::new(a.cos(), a.sin()) * reach
+    };
+    let mut prev = point(corners[0].0, corners[0].1, 0);
+    let start = prev;
+    for (c, from) in corners {
+        for k in 0..=steps {
+            let to = point(c, from, k);
+            push_piece(prev, to, look, lift, out);
+            prev = to;
+        }
+    }
+    push_piece(prev, start, look, lift, out);
+}
+
+/// One flat piece of a ring from `from` to `to`.
+fn push_piece(
+    from: Vec2,
+    to: Vec2,
+    (width, [r, g, b], glow): (f32, [u8; 3], u8),
+    lift: f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let len = (to - from).length();
+    if len < 0.01 || out.len() >= MAX_BOX_INSTANCES {
+        return;
+    }
+    out.push(BoxInstance {
+        pos: ((from + to) / 2.0).to_array(),
+        facing: ((to - from) / len).to_array(),
+        size: [width, VEIN_THICK, len + 0.05],
+        color: [r, g, b, glow],
+        lift,
+    });
+}
+
 /// The Titan's Heart's colour: its holder's while held, else red.
 pub fn heart_color(heart: &HeartView, parties: &[Party]) -> [u8; 3] {
     (heart.held).map_or(HEART_COLOR, |(p, _)| crate::color_of(parties, p))

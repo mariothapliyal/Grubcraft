@@ -391,7 +391,6 @@ fn is_worker(regiments: &Regiments, units: &[ConquestUnitRecord], h: RegimentHan
     })
 }
 
-/// Whether regiment `h` is a worker used up by the building it starts.
 /// Whether regiment `h`'s unit has the `UNIT_*` flag `flag`.
 fn has_flag(
     regiments: &Regiments,
