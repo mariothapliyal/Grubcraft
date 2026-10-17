@@ -214,6 +214,10 @@ impl Mind {
     /// Orders sent so far.
     pub fn orders_sent(&self) -> u32 {
         self.orders.count
+            + self
+                .realm
+                .as_ref()
+                .map_or(0, |r| r.marshal.orders().count + r.clicks().count)
     }
 
     /// The order layer, for its counters.

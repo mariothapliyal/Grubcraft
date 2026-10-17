@@ -104,13 +104,23 @@ impl Realm {
     /// One line on what it is doing.
     pub fn summary(&self) -> String {
         let l = &self.steward.ledger;
-        let fight = if self.marshal.fighting() {
-            ", in battle"
-        } else {
-            ""
+        let fight = match self.marshal.captain() {
+            Some(c) => format!(
+                ", in battle ({}, {}{})",
+                c.doctrine.name(),
+                c.posture.name(),
+                if c.finishing { ", finishing" } else { "" }
+            ),
+            None => String::new(),
+        };
+        let at = match self.marshal.goal {
+            marshal::Goal::Attack(p) | marshal::Goal::Defend(p) | marshal::Goal::Heart(p) => {
+                format!(" at ({:.0}, {:.0})", p.x, p.y)
+            }
+            marshal::Goal::Gather => String::new(),
         };
         format!(
-            "tier {}, {}/{} workers, {} producing, army {}{fight}",
+            "tier {}, {}/{} workers, {} producing, army {}{at}{fight}",
             l.tier,
             l.workers,
             l.want_workers,

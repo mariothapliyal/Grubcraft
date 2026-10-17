@@ -165,7 +165,7 @@ mod tests {
             for (p, s) in self.sides.iter().enumerate() {
                 out += &format!(
                     "\n  side {p} {:?}: {}/{} grub/marrow, supply {}/{}, {} buildings, \
-                     {} regiments, {} orders + {} clicks\n    {}",
+                     {} regiments, {} orders ({} economy)\n    {}",
                     s.faction,
                     s.bank.grub,
                     s.bank.marrow,
@@ -260,11 +260,32 @@ mod tests {
         let end = max_minutes * 60 * TICKS_PER_SECOND;
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
+        // AI_TRACE=2 also prints every journal entry as it is written.
+        let journal = std::env::var("AI_TRACE").is_ok_and(|v| v == "2");
+        let mut noted = vec![0u32; factions.len()];
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
             minds.tick(&world, &mut cmds);
             world.tick(&cmds);
             let t = world.tick_count();
+            if journal {
+                for (p, last) in noted.iter_mut().enumerate() {
+                    let Some(m) = minds.get(p as PlayerId) else {
+                        continue;
+                    };
+                    let from = *last;
+                    for e in m.journal().entries().filter(|e| e.tick > from) {
+                        println!(
+                            "{}:{:02} side {p}: {}",
+                            e.tick / 1200,
+                            e.tick / 20 % 60,
+                            e.text
+                        );
+                        *last = e.tick;
+                    }
+                }
+            }
+            let trace = trace || journal;
             if trace && t.is_multiple_of(every) {
                 println!("-- {}:00", t / 60 / TICKS_PER_SECOND);
                 for (p, &f) in factions.iter().enumerate() {
@@ -275,7 +296,7 @@ mod tests {
                         .map_or(String::new(), |e| format!("[{}] {}", e.tick, e.text));
                     println!(
                         "side {p} {f:?}: bank {}/{} supply {}/{}, {} buildings, {} regiments, \
-                         {} orders + {} clicks\n    {}\n    last: {last}",
+                         {} orders ({} economy)\n    {}\n    last: {last}",
                         s.bank.grub,
                         s.bank.marrow,
                         s.bank.supply_used,
@@ -376,20 +397,27 @@ mod tests {
         );
     }
 
-    // Enabled once stage 1 lands.
+    // A game takes seconds in a release build and minutes in a debug one,
+    // so these run in CI's release step.
     #[test]
-    #[ignore = "enabled once stage 1 lands"]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_ribcage_1v1_ends_in_a_win() {
-        let factions = [Faction::EmberClans, Faction::CarrionConcord];
-        let played = play(0, &factions, &[Difficulty::Veteran], 7, 45);
-        assert!(played.winner().is_some(), "{}", played.report());
+        let pairs = [
+            [Faction::EmberClans, Faction::CarrionConcord],
+            [Faction::Brood, Faction::Choir],
+        ];
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
+            let played = play(0, factions, &[Difficulty::Veteran], seed, 45);
+            assert!(played.winner().is_some(), "{}", played.report());
+        }
     }
 
-    // Enabled once stage 1 lands.
     #[test]
-    #[ignore = "enabled once stage 1 lands"]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_four_teeth_ends_in_a_win() {
-        let played = play(1, &Faction::ALL, &[Difficulty::Veteran], 7, 60);
-        assert!(played.winner().is_some(), "{}", played.report());
+        for seed in [7, 8] {
+            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 60);
+            assert!(played.winner().is_some(), "{}", played.report());
+        }
     }
 }

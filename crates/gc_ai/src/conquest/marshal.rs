@@ -16,6 +16,7 @@ use glam::Vec2;
 
 use super::Sense;
 use crate::captain::{Captain, Ctx};
+use crate::difficulty::Knobs;
 use crate::orders::{Act, Orders, ROUTINE, Want};
 use crate::perception::{Perception, Seen, right_of, v2};
 
@@ -29,6 +30,15 @@ const BATTLE_REACH: f32 = 60.0;
 const QUIET_TICKS: u32 = 8 * TICKS_PER_SECOND;
 /// Enemies within this many tiles of its buildings are a threat to home.
 const THREAT: f32 = 30.0;
+/// Enemies at an outlying building call the whole army home once they are
+/// this share of its soldiers.
+const THREAT_SHARE: f32 = 0.25;
+/// Regiments holding the Heart stand this far from its middle; the rest
+/// screen them further out.
+const HEART_RING: f32 = 3.5;
+const HEART_SCREEN: f32 = 11.0;
+/// Regiments in the Heart's inner ring.
+const HEART_HOLDERS: usize = 6;
 /// The rally point stands this far from home towards the enemy.
 const RALLY_OUT: f32 = 16.0;
 /// Within this many tiles of its target the army goes for the buildings.
@@ -58,6 +68,8 @@ pub enum Goal {
     Defend(Vec2),
     /// Marching on an enemy building, or to look at a start.
     Attack(Vec2),
+    /// Taking and holding the Titan's Heart.
+    Heart(Vec2),
 }
 
 impl Goal {
@@ -66,6 +78,7 @@ impl Goal {
             Goal::Gather => "gathering",
             Goal::Defend(_) => "defending",
             Goal::Attack(_) => "attacking",
+            Goal::Heart(_) => "holding the Heart",
         }
     }
 }
@@ -74,7 +87,10 @@ impl Goal {
 struct Battle {
     captain: Captain,
     view: Perception,
+    /// Where the enemies it fights were last seen together.
+    at: Vec2,
     quiet_since: Option<u32>,
+    next_think: u32,
 }
 
 pub struct Marshal {
@@ -91,6 +107,7 @@ pub struct Marshal {
     battle: Option<Battle>,
     orders: Orders,
     wants: Vec<Want>,
+    battle_wants: Vec<Want>,
 }
 
 /// What the Marshal needs from the mind besides the field.
@@ -111,6 +128,7 @@ impl Marshal {
             battle: None,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
+            battle_wants: Vec::new(),
         }
     }
 
@@ -150,30 +168,37 @@ impl Marshal {
             .filter(|r| r.owner == party && s.kit.is_fighter(r.unit) && !r.broken())
             .collect();
         self.out.retain(|h| army.iter().any(|r| r.handle == *h));
-        if !army.is_empty() {
+        if army.is_empty() {
+            self.battle = None;
+        } else {
             self.battle(c, &army);
         }
-        if s.now >= self.next_think && self.battle.is_none() {
+        if s.now >= self.next_think {
             self.next_think = s.now + THINK_TICKS;
             self.wants.clear();
             self.decide(c, &army, home);
+            // The Captain has those in the battle.
+            if let Some(b) = &self.battle {
+                self.wants.retain(|w| b.view.get(w.regiment).is_none());
+            }
             self.orders.decide(view, &mut self.wants);
         }
         self.orders.release(s.now, out);
     }
 
-    /// Start, run or end a battle round the army.
+    /// Start, run or end a battle where enemies come near the army.
     fn battle(&mut self, c: &mut Command, army: &[&Seen]) {
         let s = c.sense;
         let view = s.view;
         let party = s.party;
-        let near = |p: Vec2, reach: f32| army.iter().any(|r| r.pos.distance(p) <= reach);
-        let foe_near = view
+        let near = |p: Vec2| army.iter().any(|r| r.pos.distance(p) <= ENGAGE);
+        let foes: Vec<&Seen> = view
             .regiments
             .iter()
-            .any(|r| is_foe(s, r) && !r.broken() && near(r.pos, ENGAGE));
+            .filter(|r| is_foe(s, r) && !r.broken() && near(r.pos))
+            .collect();
         if self.battle.is_none() {
-            if !foe_near {
+            if foes.is_empty() {
                 return;
             }
             c.captain
@@ -182,16 +207,20 @@ impl Marshal {
             self.battle = Some(Battle {
                 captain: Captain::new(),
                 view: Perception::new(),
+                at: centroid(&foes),
                 quiet_since: None,
+                next_think: s.now,
             });
         }
         let Some(b) = self.battle.as_mut() else {
             return;
         };
-        if foe_near {
+        b.captain.pressing = !matches!(self.goal, Goal::Gather);
+        if foes.is_empty() {
+            b.quiet_since.get_or_insert(s.now);
+        } else {
             b.quiet_since = None;
-        } else if b.quiet_since.is_none() {
-            b.quiet_since = Some(s.now);
+            b.at = centroid(&foes);
         }
         if b.quiet_since.is_some_and(|t| s.now >= t + QUIET_TICKS) {
             c.captain
@@ -201,41 +230,57 @@ impl Marshal {
             self.next_think = 0;
             return;
         }
-        let mid = centroid(army);
-        // The army, and whoever else stands about it. Regiments at the
-        // rally point fight with it once it comes home.
+        // The regiments of the army about the enemy, and whoever else
+        // stands there; the rest of the army goes on as the Marshal says.
+        let at = b.at;
         view.subset(&mut b.view, |r| {
-            if r.owner == party {
-                s.kit.is_fighter(r.unit) && r.pos.distance(mid) <= BATTLE_REACH
+            let fights = if r.owner == party {
+                s.kit.is_fighter(r.unit)
             } else {
-                !s.kit.all_workers.contains(&r.unit) && r.pos.distance(mid) <= BATTLE_REACH
-            }
+                !s.kit.all_workers.contains(&r.unit)
+            };
+            fights && r.pos.distance(at) <= BATTLE_REACH
         });
-        if s.now < self.next_think {
+        if s.now < b.next_think {
             return;
         }
-        self.next_think = s.now + c.captain.knobs.think_ticks.max(1);
-        self.wants.clear();
+        b.next_think = s.now + c.captain.knobs.think_ticks.max(1);
+        self.battle_wants.clear();
+        // Every army in a Conquest battle is about this one fight: the team
+        // rules for a field of several armies (letting two others fight
+        // first) are for a Field Battle.
+        let knobs = Knobs {
+            team_play: false,
+            ..*c.captain.knobs
+        };
         let mut ctx = Ctx {
             view: &b.view,
             terrain: c.captain.terrain,
             party,
-            knobs: c.captain.knobs,
+            knobs: &knobs,
             persona: c.captain.persona,
             rng: &mut *c.captain.rng,
             journal: &mut *c.captain.journal,
             next_slip: &mut *c.captain.next_slip,
         };
-        b.captain.think(&mut ctx, &mut self.wants);
-        self.orders.decide(&b.view, &mut self.wants);
+        b.captain.think(&mut ctx, &mut self.battle_wants);
+        self.orders.decide(&b.view, &mut self.battle_wants);
     }
 
     /// Choose the army's goal and march it there.
     fn decide(&mut self, c: &mut Command, army: &[&Seen], home: Option<Vec2>) {
         let s = c.sense;
         let Some(rally) = self.rally else { return };
-        // Home first.
-        if let Some(threat) = threat_to_home(s) {
+        let ready = wave_ready(c, army);
+        // Home first, but a threat to outlying buildings doesn't pull the
+        // army off the Titan's Heart: a game of armies guarding sprawling
+        // bases never ends otherwise.
+        let threat = threat_to_home(s, army).filter(|&(_, at_main)| {
+            at_main
+                || heart_to_take(s).is_none() && !we_hold_heart(s)
+                || !(matches!(self.goal, Goal::Heart(_)) || enemy_holds_heart(s) || ready)
+        });
+        if let Some((threat, _)) = threat {
             if !matches!(self.goal, Goal::Defend(_)) {
                 c.captain.journal.note(
                     s.now,
@@ -256,34 +301,25 @@ impl Marshal {
         };
         match self.goal {
             Goal::Gather => {
-                let supply: f32 = army
-                    .iter()
-                    .filter_map(|r| s.kit.unit(r.unit))
-                    .map(|u| f32::from(u.unit.supply))
-                    .sum();
-                let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
-                let boldness = 1.3 - 0.6 * c.captain.persona.aggression();
-                let wave = ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE);
-                let capped = s
-                    .world
-                    .bank(s.party)
-                    .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
-                if (supply >= wave || (capped && supply >= FIRST_WAVE))
-                    && let Some(target) = self.target(s, centroid(army))
-                {
+                if (ready || enemy_holds_heart(s)) && let Some(heart) = heart_to_take(s) {
+                    self.out = army.iter().map(|r| r.handle).collect();
+                    self.set_out_with = soldiers(&self.out);
+                    self.goal = Goal::Heart(heart);
+                    c.captain.journal.note(
+                        s.now,
+                        format!("Going to take the Titan's Heart with {} regiments", army.len()),
+                    );
+                } else if ready && let Some(target) = self.target(s, centroid(army)) {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
                     self.goal = Goal::Attack(target);
                     c.captain.journal.note(
                         s.now,
-                        format!(
-                            "Attacking with {} regiments ({supply:.0} supply)",
-                            army.len()
-                        ),
+                        format!("Attacking with {} regiments", army.len()),
                     );
                 }
             }
-            Goal::Attack(_) => {
+            Goal::Attack(_) | Goal::Heart(_) => {
                 let left = soldiers(&self.out);
                 if (left as f32) < FALL_BACK_SHARE * self.set_out_with as f32 {
                     c.captain.journal.note(
@@ -292,6 +328,23 @@ impl Marshal {
                     );
                     self.goal = Goal::Gather;
                     self.out.clear();
+                } else if let Some(heart) = heart_to_take(s).filter(|_| {
+                    // An enemy holding the Heart wins unless it is stopped;
+                    // otherwise an attack under way goes on.
+                    matches!(self.goal, Goal::Heart(_)) || enemy_holds_heart(s)
+                }) {
+                    if !matches!(self.goal, Goal::Heart(_)) {
+                        c.captain
+                            .journal
+                            .note(s.now, "They hold the Heart: going to take it back".to_string());
+                    }
+                    self.goal = Goal::Heart(heart);
+                } else if matches!(self.goal, Goal::Heart(_)) {
+                    // Ours now, or shut: back to gathering.
+                    if !we_hold_heart(s) {
+                        self.goal = Goal::Gather;
+                        self.out.clear();
+                    }
                 } else {
                     let mid = centroid_of(s.view, &self.out).unwrap_or(rally);
                     match self.target(s, mid) {
@@ -316,7 +369,7 @@ impl Marshal {
             .copied()
             .filter(|r| !self.out.contains(&r.handle))
             .collect();
-        if let Goal::Attack(_) = self.goal
+        if matches!(self.goal, Goal::Attack(_) | Goal::Heart(_))
             && waiting.len() >= REINFORCE
             && waiting.iter().all(|r| r.pos.distance(rally) <= 20.0)
         {
@@ -340,6 +393,7 @@ impl Marshal {
                     2,
                 );
             }
+            Goal::Heart(at) => hold_heart(s, &going, at, &mut self.wants),
             Goal::Attack(at) => {
                 let mid = centroid(&going);
                 if mid.distance(at) > AT_TARGET {
@@ -418,6 +472,73 @@ impl Marshal {
     }
 }
 
+/// The Titan's Heart, if it is open and not held by its own side.
+/// Whether the army gathered at the rally is big enough to set out: a
+/// wave that grows with the game and shrinks with aggression, or a full
+/// supply cap.
+fn wave_ready(c: &Command, army: &[&Seen]) -> bool {
+    let s = c.sense;
+    let supply: f32 = army
+        .iter()
+        .filter_map(|r| s.kit.unit(r.unit))
+        .map(|u| f32::from(u.unit.supply))
+        .sum();
+    let minutes = s.now as f32 / (60.0 * TICKS_PER_SECOND as f32);
+    let boldness = 1.3 - 0.6 * c.captain.persona.aggression();
+    let wave = ((FIRST_WAVE + PER_MINUTE * minutes) * boldness).min(BIGGEST_WAVE);
+    let capped = s
+        .world
+        .bank(s.party)
+        .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
+    supply >= wave || (capped && supply >= FIRST_WAVE)
+}
+
+fn heart_to_take(s: &Sense) -> Option<Vec2> {
+    let h = s.world.heart().filter(|h| h.open)?;
+    let ours = h.held.is_some_and(|(p, _)| !s.view.hostile(s.party, p));
+    (!ours).then(|| v2(h.at))
+}
+
+fn enemy_holds_heart(s: &Sense) -> bool {
+    s.world
+        .heart()
+        .and_then(|h| h.held)
+        .is_some_and(|(p, _)| s.view.hostile(s.party, p))
+}
+
+fn we_hold_heart(s: &Sense) -> bool {
+    s.world
+        .heart()
+        .and_then(|h| h.held)
+        .is_some_and(|(p, _)| !s.view.hostile(s.party, p))
+}
+
+/// Stand on the Heart: a few regiments close round its middle, the rest
+/// in a ring further out facing away from it.
+fn hold_heart(s: &Sense, going: &[&Seen], at: Vec2, wants: &mut Vec<Want>) {
+    let n = going.len();
+    for (k, r) in going.iter().enumerate() {
+        let (radius, i, of) = if k < HEART_HOLDERS {
+            (HEART_RING, k, n.min(HEART_HOLDERS))
+        } else {
+            (HEART_SCREEN, k - HEART_HOLDERS, n - HEART_HOLDERS)
+        };
+        let angle = std::f32::consts::TAU * i as f32 / of.max(1) as f32;
+        let out = Vec2::from_angle(angle);
+        let spot = (at + out * radius).clamp(Vec2::splat(2.0), Vec2::splat(s.tiles - 2.0));
+        wants.push(Want {
+            regiment: r.handle,
+            act: Act::Move {
+                to: spot,
+                facing: Some(out),
+                pace: 0.0,
+            },
+            priority: 2,
+            group: 0,
+        });
+    }
+}
+
 /// An enemy regiment worth fighting: not a worker.
 fn is_foe(s: &Sense, r: &Seen) -> bool {
     s.view.hostile(s.party, r.owner) && !s.kit.all_workers.contains(&r.unit)
@@ -453,22 +574,41 @@ fn enemy_buildings(s: &Sense) -> Vec<(StructureHandle, Vec2, Role)> {
         .collect()
 }
 
-/// The middle of the enemies it sees near its buildings, if any.
-fn threat_to_home(s: &Sense) -> Option<Vec2> {
+/// The middle of the enemies it sees at its buildings, if they are a
+/// threat worth the whole army: at a main building, or a good part of the
+/// army's strength. A few passing by an outlying building are left to the
+/// buildings and the regiments at the rally point.
+fn threat_to_home(s: &Sense, army: &[&Seen]) -> Option<(Vec2, bool)> {
     let st = s.world.structures()?;
-    let mine: Vec<Vec2> = st
+    let table = st.buildings();
+    let mine: Vec<(Vec2, bool)> = st
         .iter()
         .filter(|v| v.owner == s.party)
-        .map(|v| v2(v.centre()))
+        .map(|v| {
+            let main = table
+                .get(usize::from(v.building))
+                .is_some_and(|b| b.role == Role::Main);
+            (v2(v.centre()), main)
+        })
         .collect();
+    let mut at_main = false;
     let near: Vec<&Seen> = s
         .view
         .regiments
         .iter()
         .filter(|r| is_foe(s, r) && !r.broken())
-        .filter(|r| mine.iter().any(|b| b.distance(r.pos) <= THREAT))
+        .filter(|r| {
+            mine.iter().any(|&(b, main)| {
+                let close = b.distance(r.pos) <= THREAT;
+                at_main |= close && main;
+                close
+            })
+        })
         .collect();
-    (!near.is_empty()).then(|| centroid(&near))
+    let theirs: u32 = near.iter().map(|r| u32::from(r.models)).sum();
+    let ours: u32 = army.iter().map(|r| u32::from(r.models)).sum();
+    let serious = at_main || theirs as f32 >= THREAT_SHARE * ours as f32;
+    (!near.is_empty() && serious).then(|| (centroid(&near), at_main))
 }
 
 /// March `regiments` abreast to `to`, facing `face`, at the pace of the

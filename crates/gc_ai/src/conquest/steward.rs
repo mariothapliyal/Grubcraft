@@ -44,8 +44,12 @@ const MIX: [f32; 3] = [0.5, 0.2, 0.3];
 /// [`MAX_BREAKERS`].
 const PER_BREAKER: usize = 6;
 const MAX_BREAKERS: usize = 3;
+/// Marrow in store it stops sending more workers to the veins at.
+const MARROW_ENOUGH: u32 = 600;
 /// A node with less than this left counts as running out.
 const LOW: u32 = 1_500;
+/// How often a Marrow gatherer may move to Grub.
+const REBALANCE_TICKS: u32 = 5 * TICKS_PER_SECOND;
 
 /// A building it ordered laid that hasn't shown on the field yet.
 #[derive(Clone, Copy, Debug)]
@@ -78,6 +82,8 @@ pub struct Steward {
     pub ledger: Ledger,
     /// The middle of its first main building: home.
     pub home: Option<Vec2>,
+    /// When a Marrow gatherer may next move to Grub.
+    next_rebalance: u32,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -152,6 +158,7 @@ impl Steward {
         self.ledger.halls = look.mine.iter().filter(|m| m.takes(Resource::Grub)).count() as u8;
 
         self.put_to_work(s, clicks, &look);
+        self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
@@ -215,20 +222,24 @@ impl Steward {
         self.sent.iter().any(|&(w, _)| w == h)
     }
 
-    /// Whether it wants Marrow brought in now.
-    fn wants_marrow(look: &Look) -> bool {
-        look.tier >= 2
+    /// Whether it wants Marrow brought in now: once it trains soldiers or
+    /// has tiered up, while it has less than it can soon spend.
+    fn wants_marrow(&self, s: &Sense, look: &Look) -> bool {
+        let banked = s.world.bank(s.party).map_or(0, |b| b.marrow);
+        let started = look.tier >= 2
+            || look.workers.len() >= 10
             || look
                 .mine
                 .iter()
-                .any(|m| m.stats.role == Role::Production && m.finished())
+                .any(|m| m.finished() && trains_fighters(s.kit, s, m.view.building));
+        started && banked < MARROW_ENOUGH
     }
 
     /// Idle workers go to the served node that most needs them, the nearest
     /// first; workers sent to one node go in one click.
     fn put_to_work(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         let mut at_node = look.at_node.clone();
-        let marrow = Self::wants_marrow(look);
+        let marrow = self.wants_marrow(s, look);
         let idle: Vec<RegimentHandle> = s
             .world
             .idle_workers(s.party)
@@ -287,6 +298,36 @@ impl Steward {
                 self.sent.push((regiment, s.now));
             }
         }
+    }
+
+    /// With Marrow piling up, one Marrow gatherer every few seconds moves to the
+    /// nearest Grub seep with room: a bank of Marrow buys nothing without
+    /// the Grub to go with it.
+    fn rebalance(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        let banked = s.world.bank(s.party).map_or(0, |b| b.marrow);
+        if banked < 2 * MARROW_ENOUGH || s.now < self.next_rebalance || !clicks.free() {
+            return;
+        }
+        let on_marrow = |n: u16| look.served.iter().any(|m| m.0 == n && m.1 == Resource::Marrow);
+        let Some(w) = look.workers.iter().find(|w| {
+            !self.recently_sent(w.handle)
+                && s.world.gathers_at(w.handle).is_some_and(on_marrow)
+        }) else {
+            return;
+        };
+        let Some(&(node, ..)) = look
+            .served
+            .iter()
+            .filter(|n| {
+                n.1 == Resource::Grub && look.at_node[usize::from(n.0)] < u16::from(GRUB_SLOTS)
+            })
+            .min_by_key(|n| w.pos.distance(n.2) as i32)
+        else {
+            return;
+        };
+        clicks.give(s.now, Command::Gather { regiment: w.handle, node });
+        self.sent.push((w.handle, s.now));
+        self.next_rebalance = s.now + REBALANCE_TICKS;
     }
 
     /// A building going up with nobody building it gets the nearest
@@ -354,7 +395,7 @@ impl Steward {
 
     fn train_workers(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         let Some(worker) = s.kit.worker() else { return };
-        let marrow = Self::wants_marrow(look);
+        let marrow = self.wants_marrow(s, look);
         let slots: usize = look
             .served
             .iter()
@@ -722,20 +763,25 @@ impl Steward {
                 let k = class_slot(info.class);
                 MIX[k] - by_class[k] as f32 / total
             };
-            let Some(unit) = options.iter().max_by(|a, b| {
-                deficit(a)
-                    .total_cmp(&deficit(b))
-                    .then(a.unit.tier.cmp(&b.unit.tier))
-            }) else {
+            // The class it is shortest of first, the higher tier first
+            // within a class; the first it can pay for (so Grub piling up
+            // while Marrow runs short still buys regiments).
+            let mut options = options;
+            options.sort_by(|a, b| {
+                deficit(b)
+                    .total_cmp(&deficit(a))
+                    .then(b.unit.tier.cmp(&a.unit.tier))
+            });
+            // What is set aside is kept back only from what it costs: a
+            // Grub-only regiment doesn't wait on Marrow saved for a tier.
+            let paid = |u: &&KitUnit| {
+                let (g, m) = (u32::from(u.unit.cost_grub), u32::from(u.unit.cost_marrow));
+                (g == 0 || bank.grub >= g + save_grub) && (m == 0 || bank.marrow >= m + save_marrow)
+            };
+            let Some(unit) = options.into_iter().find(paid) else {
                 continue;
             };
-            let (g, mr) = (
-                u32::from(unit.unit.cost_grub),
-                u32::from(unit.unit.cost_marrow),
-            );
-            if bank.grub < g + save_grub || bank.marrow < mr + save_marrow {
-                continue;
-            }
+            let (g, mr) = (u32::from(unit.unit.cost_grub), u32::from(unit.unit.cost_marrow));
             if bank.supply_used + u32::from(unit.unit.supply) > bank.supply_cap {
                 return;
             }

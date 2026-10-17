@@ -80,6 +80,10 @@ jobs:
       - name: Warlord in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_ai --test versus warlord
+      # Whole AI-only Conquest games, which take minutes in a debug build.
+      - name: Conquest AI games in release mode
+        if: runner.os == 'Linux'
+        run: cargo test --release -p gc_game ai_only -- --ignored
       - name: Simulation benchmark and budgets
         run: cargo run --release -p gc_bench
       # Counts instructions under valgrind, which a busy runner cannot skew,
