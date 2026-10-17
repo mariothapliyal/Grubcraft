@@ -466,7 +466,8 @@ mod tests {
             for seed in 1..=games {
                 for a_side in 0..2u8 {
                     let levels = if a_side == 0 { [a, b] } else { [b, a] };
-                    let roll = seed * 31 + u64::from(a_side);
+                    // The same game with the sides swapped.
+                    let roll = seed * 31;
                     let temper = Some(super::temper(roll, 0));
                     let played = play_with(0, &[f, f], &levels, roll, 45, temper);
                     match played.winner() {

@@ -390,7 +390,7 @@ impl Marshal {
                         ),
                     )),
                     None if regrouped => self
-                        .attack_plan(s, c.persona, army, ready)
+                        .attack_plan(s, c.persona, army, ready, enough)
                         .map(|(t, note)| (Goal::Attack(t), note)),
                     None => None,
                 };
@@ -490,7 +490,12 @@ impl Marshal {
             Goal::Heart(at) => self.hold_heart(s, &going, at),
             Goal::Attack(at) => {
                 let mid = centroid(&going);
-                if mid.distance(at) > AT_TARGET {
+                // There once its middle is, or its van: a big army crowds
+                // round a base in a corner and its middle may never get
+                // close.
+                let there = mid.distance(at) <= AT_TARGET
+                    || going.iter().any(|r| r.pos.distance(at) <= AT_TARGET / 2.0);
+                if !there {
                     march(
                         s,
                         &going,
@@ -552,10 +557,10 @@ impl Marshal {
         persona: &Personality,
         army: &[&Seen],
         ready: bool,
+        enough: bool,
     ) -> Option<(Vec2, String)> {
         let from = centroid(army);
         let full = capped(s);
-        let enough = s.kit.supply_of(army.iter().copied()) >= FIRST_WAVE;
         if !ready && !enough {
             return None;
         }
@@ -588,7 +593,12 @@ impl Marshal {
     /// distance.
     fn best_odds(&self, s: &Sense, army: &[&Seen], from: Vec2) -> Option<(Vec2, f32)> {
         let mut nearest: Vec<(u8, Vec2)> = Vec::new();
+        // Only enemies whose army it has seen: odds against an army it
+        // knows nothing of would be a guess.
         for b in enemy_buildings(s) {
+            if spymaster::army_of(s, b.owner).next().is_none() {
+                continue;
+            }
             match nearest.iter_mut().find(|(o, _)| *o == b.owner) {
                 Some((_, at)) if at.distance(from) > b.at.distance(from) => *at = b.at,
                 Some(_) => {}

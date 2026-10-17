@@ -56,6 +56,9 @@ const ARMY_PER_MINUTE: f32 = 4.0;
 const ARMY_FLOOR: f32 = 40.0;
 /// Odds against an enemy army it knows of that make it arm.
 const OUTMATCHED: f32 = -0.1;
+/// Supply short of the limit at which it stops arming: it is as armed as
+/// it can be.
+const ARMED_SLACK: u32 = 8;
 /// How often a Marrow gatherer may move to Grub.
 const REBALANCE_TICKS: u32 = 5 * TICKS_PER_SECOND;
 /// Workers the Choir keeps, all builders.
@@ -104,8 +107,8 @@ pub struct Steward {
     busy: Vec<(StructureHandle, Option<UnitId>, u32)>,
     /// Nodes it found no spot to tune from.
     untunable: Vec<u16>,
-    /// It is short of an army: it trains soldiers first, and doesn't
-    /// expand, add production or tier up meanwhile.
+    /// It is short of an army: it trains soldiers first, and puts off
+    /// timed expansion and new production meanwhile.
     arming: bool,
 }
 
@@ -631,9 +634,6 @@ impl Steward {
                 .map(|b| (b, self.inner_spot(look)))
         };
         let expand = || {
-            if self.arming {
-                return None;
-            }
             let b = match s.kit.economy {
                 EconomyStyle::Tuned => s.kit.tuner(Resource::Grub),
                 _ => s.kit.expansion(),
@@ -818,10 +818,10 @@ impl Steward {
             .filter(|n| n.1 == Resource::Grub)
             .collect();
         // The Choir's tuned seeps need nobody: they are as full as they get.
+        // Others count as full with as many on each as their level keeps.
+        let keeps = (u16::from(GRUB_SLOTS) - 1) * u16::from(s.plan.workers_percent) / 100;
         let full = s.kit.economy == EconomyStyle::Tuned
-            || grub
-                .iter()
-                .all(|n| look.at_node[usize::from(n.0)] >= u16::from(GRUB_SLOTS) - 1);
+            || grub.iter().all(|n| look.at_node[usize::from(n.0)] >= keeps);
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
@@ -829,7 +829,8 @@ impl Steward {
             .mine
             .iter()
             .any(|m| !m.finished() && m.hub(s.kit.economy));
-        !rising && (running_out || (time && full))
+        // Arming puts off growing, but not replacing seeps that run dry.
+        !rising && (running_out || (time && full && !self.arming))
     }
 
     /// The middle of the nearest cluster of Grub seeps no hall of its own
@@ -879,7 +880,7 @@ impl Steward {
 
     /// Tier up when the economy and army can stand the wait.
     fn tier_up(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
-        if self.arming || look.tier >= 3 || look.mine.iter().any(|m| m.view.upgrading.is_some()) {
+        if look.tier >= 3 || look.mine.iter().any(|m| m.view.upgrading.is_some()) {
             return;
         }
         let production = look
@@ -1032,6 +1033,13 @@ impl Steward {
     /// could have by now, or would lose to an enemy army it knows of.
     fn must_arm(&self, s: &Sense, look: &Look) -> bool {
         if !s.plan.weighs_odds {
+            return false;
+        }
+        // At the supply limit there is nothing more to arm with.
+        if s.world
+            .bank(s.party)
+            .is_some_and(|b| b.supply_used + ARMED_SLACK >= SUPPLY_LIMIT)
+        {
             return false;
         }
         let minutes = s.now as f32 / (60 * TICKS_PER_SECOND) as f32;

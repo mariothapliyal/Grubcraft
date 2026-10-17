@@ -73,7 +73,8 @@ pub struct Kit {
 }
 
 impl Kit {
-    /// The supply `regiments` take up: how big an army they are.
+    /// The supply `regiments` of this faction take up: how big an army
+    /// they are. Units not in its kit count for nothing.
     pub fn supply_of<'a>(&self, regiments: impl IntoIterator<Item = &'a Seen>) -> f32 {
         regiments
             .into_iter()
