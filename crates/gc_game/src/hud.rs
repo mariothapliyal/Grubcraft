@@ -482,13 +482,7 @@ impl Running {
                 continue;
             };
             let stats = &self.units.stats[r.unit as usize];
-            let this = if stats.range.raw() > 0 {
-                Icon::Bow
-            } else if stats.reach {
-                Icon::Spear
-            } else {
-                Icon::Sword
-            };
+            let this = troop_icon(stats);
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
@@ -1198,13 +1192,7 @@ impl Running {
         let rows = (0..u.stats.len())
             .map(|i| {
                 let s = &u.stats[i];
-                let icon = if s.range.raw() > 0 {
-                    Icon::Bow
-                } else if s.reach {
-                    Icon::Spear
-                } else {
-                    Icon::Sword
-                };
+                let icon = troop_icon(s);
                 let speed = s.speed.raw() as f32 / 65536.0;
                 let detail = format!(
                     "{} soldiers   {speed:.1} tiles/s   {} points",
@@ -1323,13 +1311,25 @@ impl PlaceView<'_> {
     }
 }
 
-/// A faction's colour on the Place panel.
+/// A faction's colour on the Place panel: the tapestry dyes.
 fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
-    match f {
-        gc_ai::Faction::EmberClans => [154, 58, 42],
-        gc_ai::Faction::Brood => [90, 107, 58],
-        gc_ai::Faction::Choir => [46, 73, 104],
-        gc_ai::Faction::CarrionConcord => [112, 84, 120],
+    let [r, g, b, _] = match f {
+        gc_ai::Faction::EmberClans => gc_ui::ui::theme::MADDER,
+        gc_ai::Faction::Brood => gc_ui::ui::theme::WODE,
+        gc_ai::Faction::Choir => gc_ui::ui::theme::WOAD,
+        gc_ai::Faction::CarrionConcord => [112, 84, 120, 255],
+    };
+    [r, g, b]
+}
+
+/// The picture for a troop: a bow, a spear or a sword by how it fights.
+fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
+    if s.range.raw() > 0 {
+        Icon::Bow
+    } else if s.reach {
+        Icon::Spear
+    } else {
+        Icon::Sword
     }
 }
 

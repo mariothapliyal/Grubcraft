@@ -265,7 +265,7 @@ pub(crate) fn draw(
             id: 300,
             anchor: close,
             name: "Close".into(),
-            key: "B".into(),
+            key: String::new(),
             text: "Put the panel away. Placing carries on until Esc.".into(),
         });
     }

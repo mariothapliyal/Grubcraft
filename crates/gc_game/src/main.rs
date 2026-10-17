@@ -1596,7 +1596,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyB if down && !event.repeat => {
                             r.sandbox.placing = !r.sandbox.placing;
                             // The Place panel follows: open to pick a troop.
-                            r.hud.placer = r.sandbox.placing;
+                            r.hud.placer = r.sandbox.placing && r.can_place();
                             r.sandbox.building_tool = false;
                             r.hud.armed = None;
                             r.sandbox.dirty = true;
