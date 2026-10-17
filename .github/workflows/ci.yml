@@ -80,8 +80,12 @@ jobs:
       - name: Warlord in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_ai --test versus warlord
+      # macOS runner clocks are too noisy to gate tick time on (the same
+      # code has timed 1.2 to 2.8 ms p99 there): it only warns. Linux and
+      # Windows still gate it, and the instruction counts below (Linux)
+      # are the real guard against slowdowns.
       - name: Simulation benchmark and budgets
-        run: cargo run --release -p gc_bench
+        run: cargo run --release -p gc_bench -- ${{ runner.os == 'macOS' && '--warn-on-time' || '' }}
       # Counts instructions under valgrind, which a busy runner cannot skew,
       # and compares them with tools/gc_bench/baseline.json.
       - name: Benchmark instruction counts

@@ -2,7 +2,8 @@
 //!
 //! Runs scripted scenarios at maximum speed on the ridged test map and reports
 //! per-tick time percentiles, simulation heap and process memory. Exits
-//! non-zero when a budget is exceeded, so CI can enforce it.
+//! non-zero when a budget is exceeded, so CI can enforce it (the p99 tick
+//! budget only warns with `--warn-on-time`).
 //!
 //! Scenarios:
 //! - `drill`: four players with 300 regiments each, ordering moves and group
@@ -22,7 +23,10 @@
 //!
 //! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
-//!                 [--no-fog]
+//!                 [--no-fog] [--warn-on-time]
+//! `--warn-on-time` reports a p99 tick over budget as a warning instead of a
+//! failure, for runners whose clocks are too noisy to gate on (CI's macOS
+//! runner); heap, allocation and route-wait budgets still fail.
 //! `--open` runs the scripted scenarios on an open plane with no obstacles
 //! (no route searches); `--ticks` cuts the replay short. The grand battle
 //! takes its map, armies and seed from the replay. With no `--scenario`,
@@ -45,7 +49,8 @@ static ALLOC: TaggedAlloc = TaggedAlloc;
 /// Simulation memory budget from the budget table.
 const SIM_HEAP_BUDGET: usize = 8 * 1024 * 1024;
 /// p99 tick budget. The real target is 2 ms on the low-tier laptop running a
-/// full game; the benchmark must stay below it on any CI machine.
+/// full game; the benchmark must stay below it on CI's Linux and Windows
+/// runners (macOS only warns, see `--warn-on-time`).
 const P99_TICK_BUDGET_US: f64 = 2_000.0;
 /// The pathing storm's last regiment must have its route within this many
 /// ticks of the order (2 s).
@@ -67,6 +72,8 @@ struct Options {
     open: bool,
     /// Play `conquest-6p` with no fog of war.
     no_fog: bool,
+    /// Warn instead of failing when the p99 tick is over budget.
+    warn_on_time: bool,
 }
 
 fn main() {
@@ -77,6 +84,7 @@ fn main() {
         seed: 1,
         open: false,
         no_fog: false,
+        warn_on_time: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -86,6 +94,10 @@ fn main() {
         }
         if flag == "--no-fog" {
             opts.no_fog = true;
+            continue;
+        }
+        if flag == "--warn-on-time" {
+            opts.warn_on_time = true;
             continue;
         }
         let value = args.next();
@@ -139,7 +151,7 @@ fn main() {
 fn usage() -> ! {
     eprintln!(
         "usage: gc_bench [--scenario {}] [--ticks N] \
-         [--regiments-per-player N] [--seed N] [--open] [--no-fog]",
+         [--regiments-per-player N] [--seed N] [--open] [--no-fog] [--warn-on-time]",
         SCENARIOS.join("|")
     );
     std::process::exit(2);
@@ -205,8 +217,9 @@ impl Timings {
         self.allocs += tagged_alloc::allocation_count() - a0;
     }
 
-    /// Print the common report; returns true if a budget was missed.
-    fn report(mut self, world: &World) -> bool {
+    /// Print the common report; returns true if a budget was missed (a p99
+    /// tick over budget only warns when `warn_on_time`).
+    fn report(mut self, world: &World, warn_on_time: bool) -> bool {
         self.times_us.sort_by(f64::total_cmp);
         let pct = |p: f64| self.times_us[((self.times_us.len() - 1) as f64 * p) as usize];
         let sim_heap = tagged_alloc::live_bytes(Tag::Sim);
@@ -230,8 +243,16 @@ impl Timings {
 
         let mut failed = false;
         if pct(0.99) > P99_TICK_BUDGET_US {
-            eprintln!("FAIL: p99 tick time over budget");
-            failed = true;
+            if warn_on_time {
+                // A GitHub Actions annotation, so the warning shows on the run.
+                println!(
+                    "::warning title=gc_bench::p99 tick {:.0} us over the {P99_TICK_BUDGET_US:.0} us budget (not gated on this runner)",
+                    pct(0.99)
+                );
+            } else {
+                eprintln!("FAIL: p99 tick time over budget");
+                failed = true;
+            }
         }
         if sim_heap > SIM_HEAP_BUDGET {
             eprintln!("FAIL: simulation heap over budget");
@@ -262,7 +283,7 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
     let map = opts.map_name();
     println!("scenario     drill, 4 players x {per_player} regiments, {ticks} ticks, {map}");
     println!("route queue  {most_queued:>9}      (most waiting at once)");
-    timings.report(&world)
+    timings.report(&world, opts.warn_on_time)
 }
 
 fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
@@ -329,7 +350,7 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
     println!(
         "route wait   {wait:>9} ticks (budget {STORM_WAIT_BUDGET}; last regiment's wait for its route)"
     );
-    let mut failed = timings.report(&world);
+    let mut failed = timings.report(&world, opts.warn_on_time);
     if wait > STORM_WAIT_BUDGET {
         eprintln!("FAIL: routes took too long to find");
         failed = true;
@@ -392,7 +413,7 @@ fn grand_battle(opts: &Options) -> bool {
         // Not a failure here: `gc_replay verify` is the determinism check.
         println!("note         the simulation no longer plays this replay as recorded");
     }
-    timings.report(&world)
+    timings.report(&world, opts.warn_on_time)
 }
 
 /// Six players in Conquest on the largest map, in fog of war unless
@@ -506,7 +527,7 @@ fn conquest_six(opts: &Options) -> bool {
             "laying       {typical:>9.1} us   (typical tick a building went up in; worst {worst:.1} us)"
         );
     }
-    timings.report(&world)
+    timings.report(&world, opts.warn_on_time)
 }
 
 fn mb(bytes: usize) -> f64 {
