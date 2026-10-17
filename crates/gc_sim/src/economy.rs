@@ -648,7 +648,8 @@ impl Economy {
                 continue;
             };
             let left = self.node_left[n];
-            self.tune_clock[n] += 1;
+            // A hasted tuner works faster (see [`crate::powers`]).
+            self.tune_clock[n] += structures.steps(s);
             if self.tune_clock[n] < self.tune_period(n) {
                 continue;
             }

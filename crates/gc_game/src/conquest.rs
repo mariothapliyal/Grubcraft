@@ -83,6 +83,23 @@ pub fn choice_of(file: &str) -> Option<usize> {
     gc_map::SHIPPED.iter().position(|&(name, _)| name == file)
 }
 
+/// What a faction power record is to the simulation.
+pub fn power_of(p: &gc_data::PowerRecord) -> gc_sim::PowerStats {
+    use gc_data::conquest::{POWER_HASTE, POWER_SHIFT};
+    gc_sim::PowerStats {
+        tier: p.tier,
+        cost: p.cost,
+        cooldown_ticks: p.cooldown_ticks,
+        duration_ticks: p.duration_ticks,
+        effect: match p.effect {
+            POWER_HASTE => gc_sim::PowerEffect::Haste { percent: p.percent },
+            POWER_SHIFT => gc_sim::PowerEffect::Shift { to: p.to_building },
+            _ => gc_sim::PowerEffect::NotBuilt,
+        },
+    }
+    .sanitized()
+}
+
 /// What a Conquest unit record is to the simulation.
 pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
     ConquestUnit {
@@ -197,6 +214,7 @@ pub fn plan(
             .objects_of(Kind::Heart)
             .next()
             .map(|o| tile_centre(o.at)),
+        powers: data.powers.iter().map(power_of).collect(),
     }
 }
 

@@ -267,6 +267,10 @@ regiment_fields! {
     /// [`FALL_BACK_TICKS`](crate::combat::FALL_BACK_TICKS) for the tick the
     /// order lands, when its foes still hold it for their parting blow.
     falling_back: u16 = 0,
+    /// A haste (see [`crate::powers`]): ticks left (0 for none), and how
+    /// many percent faster it reloads, strikes and builds.
+    haste_left: u16 = 0,
+    haste: u8 = 0,
 }
 
 impl Regiments {

@@ -1051,6 +1051,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Busy => "That building is busy.",
         Refusal::Larva => "No larvae are ready.",
         Refusal::Unpowered => "It must stand inside a field of power.",
+        Refusal::Cooling => "That power isn't ready again yet.",
     }
 }
 
