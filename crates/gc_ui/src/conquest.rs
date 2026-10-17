@@ -145,7 +145,7 @@ impl Tuning {
 }
 
 /// The Resonance meter's top (the simulation's `MAX_RESONANCE`).
-const RESONANCE_FULL: u32 = 100;
+pub const RESONANCE_FULL: u32 = 100;
 
 /// A building that needs power, with none.
 const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";

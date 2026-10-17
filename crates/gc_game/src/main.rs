@@ -4679,12 +4679,6 @@ impl Running {
             self.reveal_all,
             &mut self.instances,
         );
-        buildings::push_links(
-            &self.world,
-            &self.buildings,
-            self.sandbox.side,
-            &mut self.instances,
-        );
         buildings::push_chords(
             &self.world,
             self.sandbox.side,

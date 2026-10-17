@@ -355,15 +355,21 @@ pub(crate) fn tuning_of(
 ) -> Option<Tuning> {
     let (resource, _) = table.stats.get(usize::from(s.building))?.tunes?;
     let economy = world.economy()?;
-    let mine = || (economy.nodes()).filter(|n| n.tuner == Some(s.handle));
-    let nodes = mine().count();
+    let (mut nodes, mut harmony) = (0usize, 0);
+    for n in (economy.nodes()).filter(|n| n.tuner == Some(s.handle)) {
+        nodes += 1;
+        harmony = harmony.max(n.harmony);
+    }
     Some(Tuning {
         vein: resource == gc_sim::Resource::Marrow,
         nodes: nodes.min(usize::from(u8::MAX)) as u8,
         per_minute: economy.tuned_per_minute(s.handle),
-        harmony: mine().map(|n| n.harmony).max().unwrap_or(0),
+        harmony,
     })
 }
+
+// The top bar's Resonance meter tops out where the simulation's does.
+const _: () = assert!(gc_ui::conquest::RESONANCE_FULL == gc_sim::chords::MAX_RESONANCE);
 
 impl Running {
     /// `side`'s idle workers. A worker that only builds (the Choir's Tuner)

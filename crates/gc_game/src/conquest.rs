@@ -1069,9 +1069,8 @@ mod tests {
         None
     }
 
-    /// A Choir world, opened, where each of `owners` has three more
-    /// Resonators round one of its seeps. Returns the corners each got.
-    fn chord_world(owners: &[PlayerId]) -> (World, Table, Vec<[Vec2; 3]>) {
+    /// A two-player Choir world, its opening laid and settled.
+    fn opened_choir_world() -> (World, Table) {
         let data = data();
         let map = make_map(0, 0);
         let factions = [Faction::Choir, Faction::Choir];
@@ -1079,6 +1078,18 @@ mod tests {
         let opening = opening(&data, &table, &map, &world, &factions);
         world.tick(&opening);
         world.tick(&[]);
+        (world, table)
+    }
+
+    /// Whether a drawn piece is a chord's edge, not a plain link.
+    fn chord_piece(b: &gc_render::BoxInstance) -> bool {
+        b.size[0] > 0.2
+    }
+
+    /// A Choir world, opened, where each of `owners` has three more
+    /// Resonators round one of its seeps. Returns the corners each got.
+    fn chord_world(owners: &[PlayerId]) -> (World, Table, Vec<[Vec2; 3]>) {
+        let (mut world, table) = opened_choir_world();
         assert!(world.chords().is_empty(), "no chords in the opening");
         let mut spots = Vec::new();
         for &owner in owners {
@@ -1097,9 +1108,12 @@ mod tests {
         let (world, _, spots) = chord_world(&[0, 1]);
         let own = |o: PlayerId| world.chords().iter().filter(move |c| c.owner == o);
         assert!(own(0).count() >= 1 && own(1).count() >= 1);
+        // The chords' edges (links that are no chord's edge are drawn too,
+        // thinner).
         let draw = |side: PlayerId, reveal_all: bool| {
             let mut out = Vec::new();
             buildings::push_chords(&world, side, reveal_all, &mut out);
+            out.retain(chord_piece);
             out
         };
         // Every chord edge of `owner`'s, as a pair of points.
@@ -1183,6 +1197,7 @@ mod tests {
         let pieces: usize = edges.iter().map(|e| (e.2 / 3.0).ceil() as usize).sum();
         let mut out = Vec::new();
         buildings::push_chords(&world, 0, false, &mut out);
+        out.retain(chord_piece);
         assert_eq!(out.len(), pieces);
     }
 
@@ -1190,17 +1205,12 @@ mod tests {
     /// your Resonators, which a chord then replaces.
     #[test]
     fn links_are_drawn_between_resonators_that_are_not_a_chord() {
-        let data = data();
-        let map = make_map(0, 0);
-        let factions = [Faction::Choir, Faction::Choir];
-        let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
-        let opening = opening(&data, &table, &map, &world, &factions);
-        world.tick(&opening);
-        world.tick(&[]);
+        let (mut world, table) = opened_choir_world();
         let [a, b, c] = lonely_spots(&world, &table, 0).expect("room away from the rest");
         let links = |world: &World, side: PlayerId| {
             let mut out = Vec::new();
-            buildings::push_links(world, &table, side, &mut out);
+            buildings::push_chords(world, side, false, &mut out);
+            out.retain(|b| !chord_piece(b));
             out
         };
         let on = |out: &[gc_render::BoxInstance], x: Vec2, y: Vec2| {
@@ -1218,8 +1228,8 @@ mod tests {
         assert!(pair.iter().all(|p| p.size[0] < 0.12 && p.color[3] < 100));
         // Yours only.
         assert_eq!(links(&world, 1).len(), 0);
-        // The third makes a chord of the three, so no link is left on its
-        // edges (only the chord is, from `push_chords`).
+        // The third makes a chord of the three, so no thin link is left on
+        // its edges (they are drawn as the chord).
         spawn_resonators(&mut world, &table, 0, &[c]);
         assert!(!world.chords().is_empty());
         let chord = links(&world, 0);
@@ -1250,13 +1260,7 @@ mod tests {
     /// yield more, by the best of their harmonies.
     #[test]
     fn a_resonators_card_carries_its_chords_harmony() {
-        let data = data();
-        let map = make_map(0, 0);
-        let factions = [Faction::Choir, Faction::Choir];
-        let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
-        let opening = opening(&data, &table, &map, &world, &factions);
-        world.tick(&opening);
-        world.tick(&[]);
+        let (mut world, table) = opened_choir_world();
         let tuner = |world: &World| {
             let all = world.structures().unwrap();
             all.iter()

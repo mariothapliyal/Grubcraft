@@ -838,6 +838,12 @@ impl World {
         self.structures().map_or(&[], Structures::chords)
     }
 
+    /// This tick's links, each with the harmony of the best chord it is an
+    /// edge of (Conquest only; see [`chords`]).
+    pub fn links(&self) -> &[chords::Link] {
+        self.structures().map_or(&[], Structures::links)
+    }
+
     /// The finished buildings powering a field (Conquest only).
     pub fn power_fields(&self) -> impl Iterator<Item = power::FieldView> + '_ {
         self.structures()

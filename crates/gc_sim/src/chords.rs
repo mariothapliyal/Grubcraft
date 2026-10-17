@@ -16,21 +16,26 @@
 //!   point, to [`MAX_RESONANCE`].
 //!
 //! Which buildings link and the chords they make are worked out again only
-//! when the linking buildings change; neither is stored or hashed. The
-//! Resonance meters are.
+//! when the linking buildings change; neither is stored or hashed (each
+//! player keeps their first [`MAX_LINKS_EACH`] links and [`MAX_CHORDS_EACH`]
+//! chords, in slot order). The Resonance meters are.
 
 use gc_fixed::{Fx, FxVec2};
 
 use crate::structures::{StructureHandle, Structures};
 use crate::{MAX_PARTIES, PlayerId, TICKS_PER_SECOND};
 
-/// At most this many chords are kept, the first found (in slot order).
-pub const MAX_CHORDS: usize = 128;
+/// At most this many chords are kept for each player, the first found
+/// (in slot order).
+pub const MAX_CHORDS_EACH: usize = 32;
+/// At most this many links are kept for each player (they are only
+/// drawn), the first found.
+pub const MAX_LINKS_EACH: usize = 256;
 /// A seep in the smallest chord yields this many percent more.
-pub const MIN_HARMONY: u32 = 10;
+pub const MIN_HARMONY: u8 = 10;
 /// A seep in the largest chord the links allow yields this many percent
 /// more.
-pub const MAX_HARMONY: u32 = 60;
+pub const MAX_HARMONY: u8 = 60;
 /// The Resonance meter's top.
 pub const MAX_RESONANCE: u32 = 100;
 /// Chord-ticks to a point of Resonance: a point every 3 seconds for one
@@ -50,23 +55,71 @@ pub struct Chord {
     pub harmony: u8,
 }
 
+/// Two of one owner's buildings, linked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Link {
+    pub owner: PlayerId,
+    pub ends: [StructureHandle; 2],
+    /// The ends' centres.
+    pub at: [FxVec2; 2],
+    /// The harmony of the best chord it is an edge of; 0 for none.
+    pub harmony: u8,
+}
+
 impl Structures {
-    /// Find the chords this tick's linking buildings make.
+    /// Find the links and chords this tick's linking buildings make. The
+    /// linkers are sorted by owner, so each owner's lie together.
     pub(crate) fn find_chords(&mut self) {
         self.chords.clear();
+        self.links.clear();
         self.chord_count = [0; MAX_PARTIES];
         let n = self.linkers.len();
-        for a in 0..n {
-            for b in a + 1..n {
+        let mut start = 0;
+        while start < n {
+            let owner = self.owner_of(self.linker(start));
+            let end = (start..n)
+                .find(|&k| self.owner_of(self.linker(k)) != owner)
+                .unwrap_or(n);
+            self.chords_among(start, end);
+            start = end;
+        }
+        for l in 0..self.links.len() {
+            let link = self.links[l];
+            self.links[l].harmony = (self.chords.iter())
+                .filter(|c| {
+                    c.owner == link.owner && link.ends.iter().all(|e| c.corners.contains(e))
+                })
+                .map(|c| c.harmony)
+                .max()
+                .unwrap_or(0);
+        }
+    }
+
+    /// The links and chords among one owner's linkers `start..end`.
+    fn chords_among(&mut self, start: usize, end: usize) {
+        let (mut chords, mut links) = (0, 0);
+        for a in start..end {
+            for b in a + 1..end {
                 if !self.links_with(a, b) {
                     continue;
                 }
-                for c in b + 1..n {
-                    if self.chords.len() >= MAX_CHORDS {
-                        return;
-                    }
-                    if self.links_with(a, c) && self.links_with(b, c) {
-                        self.add_chord([a, b, c]);
+                if links < MAX_LINKS_EACH {
+                    links += 1;
+                    let ends = [self.linkers[a], self.linkers[b]];
+                    self.links.push(Link {
+                        owner: self.owner_of(self.linker(a)),
+                        ends,
+                        at: [a, b].map(|k| self.centre(self.linker(k))),
+                        harmony: 0,
+                    });
+                }
+                for c in b + 1..end {
+                    if chords < MAX_CHORDS_EACH
+                        && self.links_with(a, c)
+                        && self.links_with(b, c)
+                        && self.add_chord([a, b, c])
+                    {
+                        chords += 1;
                     }
                 }
             }
@@ -78,26 +131,25 @@ impl Structures {
         self.linkers[k].index as usize
     }
 
-    /// Whether this tick's linkers `a` and `b` link: one owner, and
-    /// centres within the shorter link of the two.
+    /// Whether this tick's linkers `a` and `b`, of one owner, link: their
+    /// centres are within the shorter link of the two.
     fn links_with(&self, a: usize, b: usize) -> bool {
         let (i, j) = (self.linker(a), self.linker(b));
         let reach = self.stats_of(i).links.min(self.stats_of(j).links);
         let reach = u64::from(Fx::from_int(i32::from(reach)).raw().unsigned_abs());
-        self.owner_of(i) == self.owner_of(j)
-            && (self.centre(i) - self.centre(j)).length_sq_raw() <= reach * reach
+        (self.centre(i) - self.centre(j)).length_sq_raw() <= reach * reach
     }
 
     /// Keep the chord linkers `k` make, unless its corners lie in a line.
-    fn add_chord(&mut self, k: [usize; 3]) {
+    /// Whether it was kept.
+    fn add_chord(&mut self, k: [usize; 3]) -> bool {
         let slots = k.map(|k| self.linker(k));
         let at = slots.map(|i| self.centre(i));
         let twice_area = cross(at[0], at[1], at[2]).unsigned_abs();
         if twice_area == 0 {
-            return;
+            return false;
         }
-        let reach = slots
-            .iter()
+        let reach = (slots.iter())
             .map(|&i| self.stats_of(i).links)
             .min()
             .unwrap_or(0);
@@ -106,19 +158,20 @@ impl Structures {
             owner,
             corners: k.map(|k| self.linkers[k]),
             at,
-            harmony: harmony_of(twice_area, reach) as u8,
+            harmony: harmony_of(twice_area, reach),
         });
         if let Some(count) = self.chord_count.get_mut(usize::from(owner)) {
             *count = count.saturating_add(1);
         }
+        true
     }
 
     /// How many percent more a seep at `point` that `owner` tunes yields:
     /// its best chord of theirs that covers it, or 0.
-    pub(crate) fn harmony_at(&self, owner: PlayerId, point: FxVec2) -> u32 {
+    pub(crate) fn harmony_at(&self, owner: PlayerId, point: FxVec2) -> u8 {
         (self.chords.iter())
             .filter(|c| c.owner == owner && covers(c.at, point))
-            .map(|c| u32::from(c.harmony))
+            .map(|c| c.harmony)
             .max()
             .unwrap_or(0)
     }
@@ -137,9 +190,14 @@ impl Structures {
         (self.resonance.get(usize::from(p))).map_or(0, |&r| r / RESONANCE_TICKS)
     }
 
-    /// This tick's chords (the first [`MAX_CHORDS`]).
+    /// This tick's chords (each player's first [`MAX_CHORDS_EACH`]).
     pub fn chords(&self) -> &[Chord] {
         &self.chords
+    }
+
+    /// This tick's links (each player's first [`MAX_LINKS_EACH`]).
+    pub fn links(&self) -> &[Link] {
+        &self.links
     }
 }
 
@@ -163,13 +221,13 @@ fn covers(t: [FxVec2; 3], point: FxVec2) -> bool {
 /// The harmony of a chord of twice the area `twice_area` (raw units
 /// squared) whose shortest link is `reach` tiles: [`MIN_HARMONY`] up to
 /// [`MAX_HARMONY`] at the area of an equilateral triangle of side `reach`.
-fn harmony_of(twice_area: u128, reach: u8) -> u32 {
+fn harmony_of(twice_area: u128, reach: u8) -> u8 {
     let one = u128::from(Fx::ONE.raw().unsigned_abs());
     // Twice an equilateral triangle's area is √3/2 of its side squared.
     let side = u128::from(reach) * one;
     let most = (side * side * 866 / 1000).max(1);
     let share = twice_area.min(most) * u128::from(MAX_HARMONY - MIN_HARMONY) / most;
-    MIN_HARMONY + share as u32
+    MIN_HARMONY + share as u8
 }
 
 #[cfg(test)]

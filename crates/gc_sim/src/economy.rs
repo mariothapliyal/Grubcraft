@@ -638,7 +638,7 @@ impl Economy {
                     }
                     _ => 0,
                 };
-                self.node_harmony[n] = harmony.min(u32::from(u8::MAX)) as u8;
+                self.node_harmony[n] = harmony;
             }
         }
         for n in 0..self.node_at.len() {

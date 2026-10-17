@@ -247,7 +247,7 @@ fn run(w: &mut World, ticks: u32) {
 
 /// Whether a harmony is within the bounds a chord can give.
 fn in_bounds(harmony: u32) -> bool {
-    (MIN_HARMONY..=MAX_HARMONY).contains(&harmony)
+    (u32::from(MIN_HARMONY)..=u32::from(MAX_HARMONY)).contains(&harmony)
 }
 
 /// Three of one player's Resonators within 14 tiles of each other make one

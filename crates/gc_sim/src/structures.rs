@@ -497,11 +497,13 @@ pub struct Structures {
     pub(crate) tuners: Vec<StructureHandle>,
     pub(crate) tuners_was: Vec<StructureHandle>,
     /// The Choir's chords (see [`crate::chords`]): this tick's standing
-    /// finished buildings that link (and last tick's), the chords they
-    /// make, how many each player has, and each player's Resonance.
+    /// finished buildings that link, by owner (and last tick's), the
+    /// chords and links they make, how many chords each player has, and
+    /// each player's Resonance.
     pub(crate) linkers: Vec<StructureHandle>,
     pub(crate) linkers_was: Vec<StructureHandle>,
     pub(crate) chords: Vec<crate::chords::Chord>,
+    pub(crate) links: Vec<crate::chords::Link>,
     pub(crate) chord_count: [u8; crate::MAX_PARTIES],
     pub(crate) resonance: [u32; crate::MAX_PARTIES],
     /// Bumped whenever the tuners or the chords change, so the economy
@@ -584,7 +586,8 @@ impl Structures {
             tuners_was: Vec::with_capacity(n),
             linkers: Vec::with_capacity(n),
             linkers_was: Vec::with_capacity(n),
-            chords: Vec::with_capacity(crate::chords::MAX_CHORDS),
+            chords: Vec::with_capacity(crate::chords::MAX_CHORDS_EACH * crate::MAX_PARTIES),
+            links: Vec::with_capacity(crate::chords::MAX_LINKS_EACH * crate::MAX_PARTIES),
             chord_count: [0; crate::MAX_PARTIES],
             resonance: [0; crate::MAX_PARTIES],
             power_stamp: 0,

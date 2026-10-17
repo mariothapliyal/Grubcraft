@@ -110,13 +110,11 @@ fn buildings() -> [BuildingStats; 5] {
         BuildingStats {
             role: Role::Economy,
             tunes: Some((Resource::Grub, 4)),
-            links: 0,
             ..building(Role::Economy, Armour::Structure, 2, 1500, 0)
         },
         BuildingStats {
             role: Role::Economy,
             tunes: Some((Resource::Marrow, 3)),
-            links: 0,
             ..building(Role::Economy, Armour::Structure, 2, 1500, 0)
         },
         building(Role::Production, Armour::Structure, 3, 1500, NEEDS_POWER),

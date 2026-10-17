@@ -58,6 +58,10 @@ impl Structures {
                 self.linkers.push(self.handle(i));
             }
         }
+        // By owner, so each owner's lie together for the chords.
+        let mut linkers = core::mem::take(&mut self.linkers);
+        linkers.sort_unstable_by_key(|h| (self.owner_of(h.index as usize), h.index));
+        self.linkers = linkers;
         let relink = self.linkers != self.linkers_was;
         if relink {
             self.find_chords();

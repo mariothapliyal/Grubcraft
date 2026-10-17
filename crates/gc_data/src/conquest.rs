@@ -105,10 +105,8 @@ const BUILDING_FLAGS: u8 = BUILDING_DROP_OFF_GRUB
 pub const TUNES_NOTHING: u8 = 0;
 pub const TUNES_SEEPS: u8 = 1;
 pub const TUNES_VEINS: u8 = 2;
-/// The furthest a field or tuning reaches, in tiles.
+/// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
-/// The furthest two buildings link, centre to centre, in tiles.
-pub const MAX_LINK_TILES: u8 = 30;
 
 /// One building. Times are simulation ticks at Standard tempo, lengths `Fx`
 /// raw values, so the simulation reads them without floating point.
@@ -335,7 +333,7 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     {
         return Err("a building tunes seeps or veins 1 to 30 tiles off, or nothing");
     }
-    if b.link_tiles > MAX_LINK_TILES {
+    if b.link_tiles > MAX_REACH_TILES {
         return Err("a building links 1 to 30 tiles off, or not at all");
     }
     if b.upgrades_from != NONE && usize::from(b.upgrades_from) >= count {
