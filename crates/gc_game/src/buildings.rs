@@ -27,6 +27,7 @@ const _: () = assert!(
         && record::BUILDING_VEINS == gc_sim::structures::VEINS
         && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
+        && record::MAX_LINK_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );
 
@@ -113,6 +114,7 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             record::TUNES_VEINS => Some((Resource::Marrow, b.tune_tiles)),
             _ => None,
         },
+        links: b.link_tiles,
     }
 }
 

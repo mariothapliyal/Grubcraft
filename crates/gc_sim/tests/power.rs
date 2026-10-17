@@ -85,6 +85,7 @@ fn building(role: Role, armour: Armour, side: u8, hp: u16, flags: u8) -> Buildin
         attack: None,
         field: 0,
         tunes: None,
+        links: 0,
     }
 }
 
@@ -109,11 +110,13 @@ fn buildings() -> [BuildingStats; 5] {
         BuildingStats {
             role: Role::Economy,
             tunes: Some((Resource::Grub, 4)),
+            links: 0,
             ..building(Role::Economy, Armour::Structure, 2, 1500, 0)
         },
         BuildingStats {
             role: Role::Economy,
             tunes: Some((Resource::Marrow, 3)),
+            links: 0,
             ..building(Role::Economy, Armour::Structure, 2, 1500, 0)
         },
         building(Role::Production, Armour::Structure, 3, 1500, NEEDS_POWER),

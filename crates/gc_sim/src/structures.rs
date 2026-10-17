@@ -231,6 +231,11 @@ pub struct BuildingStats {
     /// The nodes it works with no workers, and how far from its edge, in
     /// tiles (the Choir's Resonators and Siphons, see [`crate::power`]).
     pub tunes: Option<(Resource, u8)>,
+    /// How far apart, centre to centre in tiles, two of its owner's
+    /// buildings that link stand at most to link; three mutually linked
+    /// form a chord (the Choir's Resonators and Siphons, see
+    /// [`crate::chords`]). 0 for one that doesn't link.
+    pub links: u8,
 }
 
 /// Largest footprint side, in tiles.
@@ -246,6 +251,7 @@ impl BuildingStats {
             build_ticks: self.build_ticks.max(1),
             field: self.field.min(MAX_REACH),
             tunes: self.tunes.map(|(r, tiles)| (r, tiles.min(MAX_REACH))),
+            links: self.links.min(MAX_REACH),
             attack: self.attack.map(|a| TowerAttack {
                 range: a.range.max(Fx::ZERO),
                 reload_ticks: a.reload_ticks.max(1),
@@ -282,6 +288,7 @@ impl BuildingStats {
             }
             None => h.u8(0),
         }
+        h.u8(self.links);
     }
 }
 
@@ -489,7 +496,17 @@ pub struct Structures {
     pub(crate) powerers: Vec<StructureHandle>,
     pub(crate) tuners: Vec<StructureHandle>,
     pub(crate) tuners_was: Vec<StructureHandle>,
-    pub(crate) tuner_stamp: u32,
+    /// The Choir's chords (see [`crate::chords`]): this tick's standing
+    /// finished buildings that link (and last tick's), the chords they
+    /// make, how many each player has, and each player's Resonance.
+    pub(crate) linkers: Vec<StructureHandle>,
+    pub(crate) linkers_was: Vec<StructureHandle>,
+    pub(crate) chords: Vec<crate::chords::Chord>,
+    pub(crate) chord_count: [u8; crate::MAX_PARTIES],
+    pub(crate) resonance: [u32; crate::MAX_PARTIES],
+    /// Bumped whenever the tuners or the chords change, so the economy
+    /// only works out again which tuner and chord each node has then.
+    pub(crate) power_stamp: u32,
     /// Tempo: build and upgrade times at this percent of Standard.
     build_percent: u32,
     /// By regiment slot: the building it is attacking, and the generation
@@ -565,7 +582,12 @@ impl Structures {
             powerers: Vec::with_capacity(n),
             tuners: Vec::with_capacity(n),
             tuners_was: Vec::with_capacity(n),
-            tuner_stamp: 0,
+            linkers: Vec::with_capacity(n),
+            linkers_was: Vec::with_capacity(n),
+            chords: Vec::with_capacity(crate::chords::MAX_CHORDS),
+            chord_count: [0; crate::MAX_PARTIES],
+            resonance: [0; crate::MAX_PARTIES],
+            power_stamp: 0,
             build_percent: build_percent.clamp(10, 1000),
             siege: vec![None; regiments],
             siege_gen: vec![0; regiments],
@@ -1296,6 +1318,9 @@ impl Structures {
             }
         }
         h.u32(self.build_percent);
+        for &r in &self.resonance {
+            h.u32(r);
+        }
         for r in 0..self.siege.len() {
             match self.siege_of(regs, r) {
                 Some(s) => {

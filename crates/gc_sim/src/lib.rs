@@ -18,6 +18,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 pub mod champions;
+pub mod chords;
 pub mod combat;
 pub mod conquest;
 pub mod deploy;
@@ -830,6 +831,11 @@ impl World {
     /// Whether `point` lies on `owner`'s linked root-veins.
     pub fn on_veins(&self, owner: PlayerId, point: FxVec2) -> bool {
         self.structures().is_some_and(|s| s.on_veins(owner, point))
+    }
+
+    /// This tick's chords (Conquest only; see [`chords`]).
+    pub fn chords(&self) -> &[chords::Chord] {
+        self.structures().map_or(&[], Structures::chords)
     }
 
     /// The finished buildings powering a field (Conquest only).
