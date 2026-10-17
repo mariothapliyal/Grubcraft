@@ -21,18 +21,8 @@ pub mod theme {
 
     pub const SCRIM: Color = [20, 12, 6, 200];
     pub const PANEL: Color = [43, 30, 18, 245];
-    pub const PANEL_EDGE: Color = [154, 120, 52, 255];
     pub const TEXT: Color = [236, 224, 188, 255];
     pub const MUTED: Color = [180, 160, 120, 255];
-    pub const DISABLED: Color = [112, 98, 76, 255];
-    pub const ACCENT: Color = [222, 176, 70, 255];
-    pub const GOOD: Color = [128, 168, 84, 255];
-    pub const BAD: Color = [214, 84, 66, 255];
-    /// Amber, for a warning that is not yet a disaster.
-    pub const WARN: Color = [236, 190, 60, 255];
-    pub const BUTTON: Color = [74, 54, 34, 255];
-    pub const BUTTON_HOT: Color = [102, 76, 46, 255];
-    pub const BUTTON_DOWN: Color = [52, 38, 24, 255];
     pub const PRIMARY: Color = [154, 58, 42, 255];
     pub const PRIMARY_HOT: Color = [186, 76, 54, 255];
     pub const PRIMARY_DOWN: Color = [120, 42, 30, 255];

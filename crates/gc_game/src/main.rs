@@ -3407,18 +3407,11 @@ impl Running {
                 true
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let up = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
-                };
-                // A trackpad sends fractions of a row: collect them.
-                self.guide_scroll -= up;
-                let rows = self.guide_scroll.trunc();
-                self.guide_scroll -= rows;
-                if rows != 0.0
+                let rows = wheel_rows(&mut self.guide_scroll, delta);
+                if rows != 0
                     && let Some(guide) = &mut self.guide
                 {
-                    guide.wheel(screen, at, rows as i32);
+                    guide.wheel(screen, at, rows);
                 }
                 true
             }
@@ -3495,21 +3488,14 @@ impl Running {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let up = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
-                };
                 // Over a panel the wheel scrolls it; over the model it zooms.
                 if over_panel {
-                    // A trackpad sends fractions of a row: collect them.
-                    self.viewer_scroll -= up;
-                    let rows = self.viewer_scroll.trunc();
-                    self.viewer_scroll -= rows;
-                    if rows != 0.0 {
-                        viewer.panel.wheel(screen, at, rows as i32);
+                    let rows = wheel_rows(&mut self.viewer_scroll, delta);
+                    if rows != 0 {
+                        viewer.panel.wheel(screen, at, rows);
                     }
                 } else {
-                    viewer.zoom(0.88f32.powf(up));
+                    viewer.zoom(0.88f32.powf(wheel_lines(delta)));
                 }
             }
             WindowEvent::PinchGesture { delta, .. } => viewer.zoom(1.0 - *delta as f32),
@@ -5543,6 +5529,23 @@ fn pose_between(
 /// Unit vector for a simulation angle (0 = +x, a quarter turn = +y).
 fn angle_vec(a: gc_fixed::Angle) -> Vec2 {
     Vec2::from_angle(f32::from(a.0) / 65536.0 * std::f32::consts::TAU)
+}
+
+/// How far the wheel turned, in rows (up is positive).
+fn wheel_lines(delta: &MouseScrollDelta) -> f32 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => *y,
+        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+    }
+}
+
+/// Whole rows to scroll down for this wheel turn. A trackpad sends fractions
+/// of a row: `rest` collects them until they add up.
+fn wheel_rows(rest: &mut f32, delta: &MouseScrollDelta) -> i32 {
+    *rest -= wheel_lines(delta);
+    let rows = rest.trunc();
+    *rest -= rows;
+    rows as i32
 }
 
 fn main() {
