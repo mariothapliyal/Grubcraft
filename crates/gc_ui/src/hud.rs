@@ -649,7 +649,8 @@ impl Hud {
             theme::INK,
         );
         draw.text_bold(help.x + 24, text_y, 1, theme::INK, "Help");
-        if hot {
+        // Open, the scroll itself is the explanation (and sits just below).
+        if hot && !open {
             self.tip = Some(Tip {
                 id: TIP_HELP,
                 anchor: help,
@@ -2001,6 +2002,319 @@ mod tests {
         });
         assert_eq!(in_top_bar(&full, theme::WODE), bold("100/100"));
         assert_eq!(in_top_bar(&clans, theme::WODE), 0);
+    }
+
+    /// A frame with the mouse at `mouse` and the clock at `now_ms`.
+    fn hover(hud: &mut Hud, mouse: (i32, i32), now_ms: u64) -> DrawList {
+        let input = HudInput {
+            mouse,
+            now_ms,
+            ..HudInput::default()
+        };
+        run(hud, input, &[], &[]).1
+    }
+
+    #[test]
+    fn a_tooltip_waits_for_the_mouse_to_rest_then_names_the_button() {
+        let mut hud = Hud::default();
+        let l = HudLayout::new(SCREEN);
+        // The Move button (slot 0), whose label is "Move".
+        let spot = (l.grid.x + 10, l.grid.y + 10);
+        hover(&mut hud, spot, 1_000);
+        assert!(hud.tooltip_rect().is_none(), "not at once");
+        hover(&mut hud, spot, 1_000 + TOOLTIP_DELAY_MS - 1);
+        assert!(hud.tooltip_rect().is_none(), "not yet");
+        let draw = hover(&mut hud, spot, 1_000 + TOOLTIP_DELAY_MS);
+        let tip = hud.tooltip_rect().expect("shown after the delay");
+        assert!(tip.x >= 0 && tip.y >= 0 && tip.right() <= SCREEN.0 && tip.bottom() <= SCREEN.1);
+        assert!(
+            !tip.contains(spot.0, spot.1) || tip.y < l.grid.y,
+            "clear of the button"
+        );
+        // The key in brackets is drawn, in the tooltip's heading colour.
+        let glyph = |c: char| u32::from(c as u8 - b' ');
+        assert!(draw.quads.windows(3).any(|w| w[0].glyph == glyph('[')
+            && w[1].glyph == glyph('Q')
+            && w[2].glyph == glyph(']')));
+        // Moving to another button starts the wait again.
+        let other = (l.grid.x + l.grid.w - 10, l.grid.y + 10);
+        hover(&mut hud, other, 5_000);
+        assert!(hud.tooltip_rect().is_none());
+        // Off the buttons: gone.
+        hover(&mut hud, (400, 100), 6_000);
+        hover(&mut hud, (400, 100), 9_000);
+        assert!(hud.tooltip_rect().is_none());
+    }
+
+    #[test]
+    fn a_tooltip_at_a_screen_corner_stays_on_the_screen() {
+        for screen in [(1280, 760), (640, 400), (1920, 1080)] {
+            let l = HudLayout::new(screen);
+            let t = terrain();
+            let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot {
+                label: "Fall back",
+                tip: "Back out of the fight in good order, taking one parting blow.",
+                state: SlotState::Ready,
+                ..GridSlot::default()
+            });
+            let mut hud = Hud::default();
+            for now in [0, TOOLTIP_DELAY_MS + 1] {
+                let data = HudData {
+                    grid: &grid,
+                    status: StatusStrip::default(),
+                    selection: None,
+                    help: None,
+                    hero: None,
+                    minimap: MinimapData {
+                        map_tiles: 256.0,
+                        terrain: &t,
+                        dots: &[],
+                        view: &[],
+                        nodes: &[],
+                        blocks: &[],
+                    },
+                    cards: &[],
+                    tray_title: "",
+                    deployment: None,
+                    alerts: AlertData::default(),
+                    top: None,
+                    structure: None,
+                    powers: &[],
+                };
+                let input = HudInput {
+                    // The last button, in the bar's bottom-right corner.
+                    mouse: (l.grid.right() - 4, l.grid.bottom() - 4),
+                    now_ms: now,
+                    ..HudInput::default()
+                };
+                let (mut draw, mut events) = (DrawList::default(), Vec::new());
+                hud.frame(&mut draw, screen, input, &data, &mut events);
+            }
+            let tip = hud.tooltip_rect().expect("a tooltip");
+            assert!(
+                tip.x >= 0 && tip.y >= 0 && tip.right() <= screen.0 && tip.bottom() <= screen.1,
+                "{tip:?} on {screen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_help_button_reports_a_click_and_the_scroll_takes_the_mouse() {
+        let mut hud = Hud::default();
+        // The button is the right-most thing in the top bar.
+        let button = (SCREEN.0 - 30, TOP_BAR_HEIGHT / 2 - 4);
+        let click = HudInput {
+            mouse: button,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let (ev, _) = run(&mut hud, click, &[], &[]);
+        assert_eq!(ev, vec![HudEvent::ToggleHelp]);
+
+        let field_spot = (SCREEN.0 - 100, 150);
+        assert!(!hud.wants(SCREEN, field_spot), "scroll closed: the world's");
+        let mut data_with_scroll = |notes: &[String]| {
+            let t = terrain();
+            let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+            let data = HudData {
+                grid: &grid,
+                status: StatusStrip::default(),
+                selection: None,
+                help: Some(HelpScroll { notes }),
+                hero: None,
+                minimap: MinimapData {
+                    map_tiles: 256.0,
+                    terrain: &t,
+                    dots: &[],
+                    view: &[],
+                    nodes: &[],
+                    blocks: &[],
+                },
+                cards: &[],
+                tray_title: "",
+                deployment: None,
+                alerts: AlertData::default(),
+                top: None,
+                structure: None,
+                powers: &[],
+            };
+            let (mut draw, mut events) = (DrawList::default(), Vec::new());
+            hud.frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
+            draw
+        };
+        let notes = ["SANDBOX, commanding red (player 1)".to_string()];
+        let open = data_with_scroll(&notes);
+        assert!(
+            hud.wants(SCREEN, field_spot),
+            "scroll open: it takes clicks"
+        );
+        assert!(!hud.wants(SCREEN, (20, 300)), "the field beside it");
+        // The title and every group heading are on it.
+        let has = |d: &DrawList, text: &str| {
+            let g: Vec<u32> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| u32::from(c as u8 - b' '))
+                .collect();
+            d.quads
+                .windows(g.len())
+                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
+        };
+        assert!(has(&open, "THE MARSHAL'S SCROLL"));
+        for (name, keys) in HELP_GROUPS {
+            assert!(has(&open, name), "{name}");
+            for (key, what) in keys {
+                assert!(has(&open, key.trim()) && has(&open, what), "{key} {what}");
+            }
+        }
+        assert!(has(&open, "commanding red"), "the live notes");
+    }
+
+    #[test]
+    fn help_lists_every_key_once_per_group_and_fits_a_720p_field() {
+        for (name, keys) in HELP_GROUPS {
+            let mut seen = std::collections::HashSet::new();
+            assert!(
+                keys.iter().all(|(k, _)| seen.insert(*k)),
+                "{name} repeats a key"
+            );
+        }
+        // At 1280x720 the scroll leaves the bar and top bar alone.
+        let mut hud = Hud::default();
+        let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let data = HudData {
+            grid: &grid,
+            status: StatusStrip::default(),
+            selection: None,
+            help: Some(HelpScroll::default()),
+            hero: None,
+            minimap: MinimapData {
+                map_tiles: 256.0,
+                terrain: &t,
+                dots: &[],
+                view: &[],
+                nodes: &[],
+                blocks: &[],
+            },
+            cards: &[],
+            tray_title: "",
+            deployment: None,
+            alerts: AlertData::default(),
+            top: None,
+            structure: None,
+            powers: &[],
+        };
+        let screen = (1280, 720);
+        let (mut draw, mut events) = (DrawList::default(), Vec::new());
+        hud.frame(&mut draw, screen, HudInput::default(), &data, &mut events);
+        let l = HudLayout::new(screen);
+        let scroll = hud
+            .over
+            .iter()
+            .copied()
+            .find(|r| r.w > 400 && r.y >= l.top.bottom());
+        let scroll = scroll.expect("the scroll");
+        assert!(scroll.bottom() <= l.bar.y && scroll.right() <= screen.0 && scroll.x >= 0);
+    }
+
+    fn selection<'a>() -> Selection<'a> {
+        Selection {
+            name: "Yari Ashigaru",
+            color: [200, 60, 50],
+            icon: Icon::Spear,
+            regiments: 1,
+            models: 40,
+            max_models: 60,
+            morale: 80,
+            state: CardState::Steady,
+            formation: "Line",
+        }
+    }
+
+    /// A frame with `selection` and `cards`; its quads.
+    fn with_selection(sel: Option<Selection>, cards: &[Card]) -> DrawList {
+        let t = terrain();
+        let grid: [GridSlot; GRID_SLOTS] = std::array::from_fn(|_| GridSlot::default());
+        let data = HudData {
+            grid: &grid,
+            status: StatusStrip::default(),
+            selection: sel,
+            help: None,
+            hero: None,
+            minimap: MinimapData {
+                map_tiles: 256.0,
+                terrain: &t,
+                dots: &[],
+                view: &[],
+                nodes: &[],
+                blocks: &[],
+            },
+            cards,
+            tray_title: "Selected",
+            deployment: None,
+            alerts: AlertData::default(),
+            top: None,
+            structure: None,
+            powers: &[],
+        };
+        let (mut draw, mut events) = (DrawList::default(), Vec::new());
+        Hud::default().frame(&mut draw, SCREEN, HudInput::default(), &data, &mut events);
+        draw
+    }
+
+    #[test]
+    fn a_selection_shows_a_banner_in_the_sides_colour_with_its_name_and_count() {
+        let tray = HudLayout::new(SCREEN).tray;
+        let none = with_selection(None, &[]);
+        let one = with_selection(Some(selection()), &[card(1)]);
+        let in_tray = |d: &DrawList, c: Color| {
+            d.quads
+                .iter()
+                .filter(|q| {
+                    q.glyph == SOLID
+                        && q.color == c
+                        && tray.contains(i32::from(q.pos[0]), i32::from(q.pos[1]))
+                })
+                .count()
+        };
+        let side = rgb([200, 60, 50]);
+        assert_eq!(in_tray(&none, side), 0);
+        assert!(
+            in_tray(&one, side) > 5,
+            "the banner's cloth is in the side's colour"
+        );
+        let has = |d: &DrawList, text: &str| {
+            let g: Vec<u32> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| u32::from(c as u8 - b' '))
+                .collect();
+            d.quads
+                .windows(g.len())
+                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
+        };
+        assert!(has(&one, "Yari") && has(&one, "Ashigaru"));
+        assert!(has(&one, "40of60soldiers"));
+        assert!(has(&one, "Health") && has(&one, "Morale") && has(&one, "Formation:Line"));
+        assert!(has(&none, "Clickaregimenttocommandit"));
+        assert!(!has(&one, "Clickaregimenttocommandit"));
+        // A mixed selection counts regiments and soldiers.
+        let many = Selection {
+            name: "3 regiments",
+            regiments: 3,
+            models: 120,
+            ..selection()
+        };
+        let d = with_selection(Some(many), &[card(1), card(2), card(3)]);
+        assert!(has(&d, "3regiments,120soldiers"));
+        // Routing says so on the morale bar's label.
+        let broken = Selection {
+            state: CardState::Routing,
+            ..selection()
+        };
+        assert!(has(&with_selection(Some(broken), &[card(1)]), "Routing"));
     }
 
     #[test]
