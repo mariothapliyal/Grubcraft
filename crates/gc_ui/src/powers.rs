@@ -168,7 +168,7 @@ mod tests {
         // Back, four border sides, and a quad a letter of "F2", "Overclock"
         // and "20 Resonance".
         let letters = "F2Overclock20Resonance".len();
-        assert!(ready.quads.len() >= 1 + letters, "{}", ready.quads.len());
+        assert!(ready.quads.len() > letters, "{}", ready.quads.len());
         let has = |d: &DrawList, c| d.quads.iter().any(|q| q.color == c);
         assert!(has(&armed, theme::WELD) && !has(&ready, theme::WELD));
         let dim = slot_colors(SlotState::Blocked, false).2;

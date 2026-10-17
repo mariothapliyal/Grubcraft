@@ -213,6 +213,9 @@ fn icon_item(
     Some(end + TOP_GAP)
 }
 
+/// One item of the top bar, drawn at an x; where the next goes, if it fit.
+type TopItem = Box<dyn Fn(&mut DrawList, i32) -> Option<i32>>;
+
 /// Draw the economy along the top bar's `area`: Grub, Marrow and Supply as
 /// pictures with numbers, then the faction meters. Items that do not fit
 /// before the status chips are left out.
@@ -227,7 +230,7 @@ pub(crate) fn draw_resources(draw: &mut DrawList, area: Rect, t: &TopBar) {
     } else {
         ink
     };
-    let mut items: Vec<Box<dyn Fn(&mut DrawList, i32) -> Option<i32>>> = Vec::new();
+    let mut items: Vec<TopItem> = Vec::new();
     let (grub, marrow) = (thousands(t.grub), thousands(t.marrow));
     items.push(Box::new(move |d, x| {
         icon_item(d, x, area, Icon::Grub, theme::WODE, &grub, ink)
