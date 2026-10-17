@@ -160,7 +160,12 @@ fn layout(screen: (i32, i32)) -> Layout {
     let top = row_y + 34 + 12;
     let bottom = panel.bottom() - 32;
     let list = Rect::new(x0, top, LIST_W.min((right - x0) / 3), bottom - top);
-    let card = Rect::new(list.right() + 12, top, right - list.right() - 12, bottom - top);
+    let card = Rect::new(
+        list.right() + 12,
+        top,
+        right - list.right() - 12,
+        bottom - top,
+    );
     let sub = [
         Rect::new(card.x + 12, card.y + 58, 130, 30),
         Rect::new(card.x + 12 + 136, card.y + 58, 130, 30),
@@ -432,7 +437,7 @@ impl Guide {
 
         ui.label(
             l.panel.x + 24,
-            l.panel.bottom() - 26,
+            l.panel.bottom() - 30,
             1,
             theme::INK_MUTED,
             &fit(
@@ -466,12 +471,20 @@ impl Guide {
         let selected = self.selected[t][f];
         let mut clicked = None;
         if len == 0 {
-            ui.label(area.x + 12, area.y + 12, 1, theme::INK_MUTED, "Nothing here.");
+            ui.label(
+                area.x + 12,
+                area.y + 12,
+                1,
+                theme::INK_MUTED,
+                "Nothing here.",
+            );
         }
         let text_w = area.w - 2 * 6 - SCROLLBAR_W - 6;
         for (k, i) in (top..len.min(top + rows)).enumerate() {
             let row = Rect::new(area.x + 6, area.y + 6 + k as i32 * ROW_H, text_w, ROW_H - 2);
-            let (click, held) = self.press.widget(i as u32 + 1, row, mouse, pressed, released);
+            let (click, held) = self
+                .press
+                .widget(i as u32 + 1, row, mouse, pressed, released);
             if click {
                 clicked = Some(i);
             }
@@ -497,7 +510,13 @@ impl Guide {
             }
             let tag_w = e.tag.chars().count() as i32 * CELL_W;
             let name_chars = ((row.w - 16 - tag_w - 8) / CELL_W).max(1) as usize;
-            ui.label(row.x + 8, row.y + (row.h - 16) / 2, 1, ink, &fit(&e.name, name_chars));
+            ui.label(
+                row.x + 8,
+                row.y + (row.h - 16) / 2,
+                1,
+                ink,
+                &fit(&e.name, name_chars),
+            );
             ui.label_right(row.right() - 8, row.y + (row.h - 16) / 2, 1, dim, &e.tag);
         }
         if let Some(i) = clicked {
@@ -505,7 +524,12 @@ impl Guide {
         }
         scrollbar(
             &mut ui.draw,
-            Rect::new(area.right() - SCROLLBAR_W - 4, area.y + 6, SCROLLBAR_W, area.h - 12),
+            Rect::new(
+                area.right() - SCROLLBAR_W - 4,
+                area.y + 6,
+                SCROLLBAR_W,
+                area.h - 12,
+            ),
             top,
             rows,
             len,
@@ -516,12 +540,30 @@ impl Guide {
     fn card_panel(&mut self, ui: &mut Ui, l: &Layout) {
         ui.draw.boxed(l.card, theme::FIELD_CLOTH, 2);
         let Some(e) = self.selected().cloned() else {
-            ui.label(l.card.x + 14, l.card.y + 14, 1, theme::INK_MUTED, "Nothing to show.");
+            ui.label(
+                l.card.x + 14,
+                l.card.y + 14,
+                1,
+                theme::INK_MUTED,
+                "Nothing to show.",
+            );
             return;
         };
         let chars = ((l.card.w - 24) / CELL_W) as usize;
-        ui.label(l.card.x + 12 + 1, l.card.y + 12, 2, theme::INK, &fit(&e.name, chars / 2));
-        ui.label(l.card.x + 12, l.card.y + 12, 2, theme::MADDER, &fit(&e.name, chars / 2));
+        ui.label(
+            l.card.x + 12 + 1,
+            l.card.y + 12,
+            2,
+            theme::INK,
+            &fit(&e.name, chars / 2),
+        );
+        ui.label(
+            l.card.x + 12,
+            l.card.y + 12,
+            2,
+            theme::MADDER,
+            &fit(&e.name, chars / 2),
+        );
         ui.label(
             l.card.x + 12,
             l.card.y + 38,
@@ -723,8 +765,15 @@ fn draw_lines(ui: &mut Ui, area: Rect, lines: &[Line], scroll: usize) {
     }
 }
 
+/// The dev overlay's font, to draw pictures of the screen in tests.
+#[cfg(test)]
+#[path = "../../gc_render/src/debug_font.rs"]
+#[allow(dead_code)]
+mod debug_font;
+
 #[cfg(test)]
 mod tests {
+    use super::debug_font;
     use super::*;
     use crate::draw::SOLID;
     use crate::ui::UiInput;
@@ -746,11 +795,13 @@ mod tests {
             tag: "T2".into(),
             summary: "It does a useful thing at a useful time, and costs a fair amount for it. "
                 .repeat(8),
-            facts: (0..14)
+            facts: (0..24)
                 .map(|k| (format!("Fact {k}"), format!("value {k}")))
                 .collect(),
             links: vec![("Trains".into(), "Alpha, Beta, Gamma".into())],
-            upgrades: (0..n_upgrades).map(|k| upgrade(&format!("Up {k}"))).collect(),
+            upgrades: (0..n_upgrades)
+                .map(|k| upgrade(&format!("Up {k}")))
+                .collect(),
             no_upgrades: "It has no upgrades.".into(),
         }
     }
@@ -844,7 +895,11 @@ mod tests {
         let mut ui = Ui::new();
         idle(&mut g, &mut ui);
         let l = layout(SCREEN);
-        click(&mut g, &mut ui, (l.list.x + 60, l.list.y + 6 + 2 * ROW_H + 10));
+        click(
+            &mut g,
+            &mut ui,
+            (l.list.x + 60, l.list.y + 6 + 2 * ROW_H + 10),
+        );
         assert_eq!(g.selected().unwrap().name, "Thing 0-2");
         click(&mut g, &mut ui, centre(l.factions[1]));
         assert_eq!(g.selected().unwrap().name, "Thing 1-0");
@@ -981,14 +1036,16 @@ mod tests {
         let mut ui = Ui::new();
         idle(&mut g, &mut ui);
         let l = layout(SCREEN);
+        // (The title banner hangs over the panel's top edge on purpose.)
         for q in ui.draw.quads.iter().filter(|q| q.glyph != SOLID) {
             let (x, y) = (i32::from(q.pos[0]), i32::from(q.pos[1]));
+            if y < l.panel.y {
+                continue;
+            }
             let inside = |r: Rect| r.contains(x, y) && r.contains(x + 7, y + 15);
             let ok = inside(l.card)
                 || inside(l.list)
-                || inside(l.panel)
-                    && !l.card.contains(x, y)
-                    && !l.list.contains(x, y);
+                || inside(l.panel) && !l.card.contains(x, y) && !l.list.contains(x, y);
             assert!(ok, "glyph at {x},{y} straddles an edge");
         }
         // And nothing in the card runs below its body.
@@ -1016,7 +1073,10 @@ mod tests {
         let mut ui = Ui::new();
         assert!(g.show(GuideTab::Troops, 2, "Thing 2-104"));
         idle(&mut g, &mut ui);
-        assert_eq!((g.tab(), g.faction(), g.selected_index()), (GuideTab::Troops, 2, 4));
+        assert_eq!(
+            (g.tab(), g.faction(), g.selected_index()),
+            (GuideTab::Troops, 2, 4)
+        );
         assert!(!g.show(GuideTab::Troops, 2, "Nobody"));
         assert!(!g.show(GuideTab::Troops, 9, "Thing 2-104"));
         assert!(g.show(GuideTab::Buildings, 0, "Thing 0-35"));
@@ -1071,10 +1131,6 @@ mod tests {
         }
         out
     }
-
-    #[path = "../../../../gc_render/src/debug_font.rs"]
-    #[allow(dead_code)]
-    mod debug_font;
 
     /// Rasterise the draw list into a binary PPM, solid quads and the dev
     /// overlay's 8x16 glyphs at scale 1.

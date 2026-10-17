@@ -371,7 +371,10 @@ pub fn build(src: &Sources<'_>) -> Result<GuideData, String> {
         let text: GuideFile = ron::from_str(src.guides[i])
             .map_err(|e| format!("data/guide/{}: {e}", faction_label(f)))?;
         if text.faction != f {
-            return Err(format!("guide file {i} is for {:?}, not {f:?}", text.faction));
+            return Err(format!(
+                "guide file {i} is for {:?}, not {f:?}",
+                text.faction
+            ));
         }
         factions.push(faction_guide(f, &roster, &text, &classes));
     }
@@ -618,7 +621,11 @@ fn ability_upgrade(a: &Ability, hero: bool) -> GuideUpgrade {
     }
     let mut facts = Vec::new();
     if hero && a.effect.contains('/') {
-        fact(&mut facts, "Ranks", "1/2/3 in the text are the values at ranks 1, 2 and 3");
+        fact(
+            &mut facts,
+            "Ranks",
+            "1/2/3 in the text are the values at ranks 1, 2 and 3",
+        );
     }
     GuideUpgrade {
         name: a.name.clone(),
@@ -750,7 +757,11 @@ impl Ctx<'_> {
 
     fn unit_summary_facts(&self, u: &RUnit) -> Facts {
         let mut f = Facts::new();
-        fact(&mut f, "Class", format!("{}, tier {}", class_name(u.class), u.tier));
+        fact(
+            &mut f,
+            "Class",
+            format!("{}, tier {}", class_name(u.class), u.tier),
+        );
         stat_facts(&mut f, &u.stats, false);
         f
     }
@@ -778,7 +789,9 @@ impl Ctx<'_> {
         let mut facts = Facts::new();
         fact(&mut facts, "Role", role_name(b.role));
         match (b.role, b.upgrades_from.as_deref(), self.main_at(b.tier)) {
-            (Role::Main, Some(from), _) => fact(&mut facts, "Needs", format!("An upgrade of the {from}")),
+            (Role::Main, Some(from), _) => {
+                fact(&mut facts, "Needs", format!("An upgrade of the {from}"))
+            }
             (Role::Main, None, _) => fact(&mut facts, "Needs", "You start with it"),
             (_, _, Some(main)) if b.tier > 1 => fact(
                 &mut facts,
@@ -791,7 +804,11 @@ impl Ctx<'_> {
         fact(&mut facts, "Build time", secs(b.build_time));
         fact(&mut facts, "Hit points", thousands(u32::from(b.hp)));
         fact(&mut facts, "Armour", format!("{:?}", b.armour));
-        fact(&mut facts, "Size", format!("{} x {} tiles", b.footprint.0, b.footprint.1));
+        fact(
+            &mut facts,
+            "Size",
+            format!("{} x {} tiles", b.footprint.0, b.footprint.1),
+        );
         if b.supply > 0 {
             fact(&mut facts, "Supply", format!("+{}", b.supply));
         }
@@ -822,10 +839,18 @@ impl Ctx<'_> {
                 Node::Veins => "veins",
                 Node::Other => "nodes",
             };
-            fact(&mut facts, "Tunes", format!("{what} within {} tiles", t.tiles));
+            fact(
+                &mut facts,
+                "Tunes",
+                format!("{what} within {} tiles", t.tiles),
+            );
         }
         if b.links > 0 {
-            fact(&mut facts, "Links", format!("with its kind within {} tiles", b.links));
+            fact(
+                &mut facts,
+                "Links",
+                format!("with its kind within {} tiles", b.links),
+            );
         }
 
         // Links to other entries.
@@ -843,7 +868,11 @@ impl Ctx<'_> {
         }
         let trains = self.trained_at(&b.name);
         if !trains.is_empty() {
-            fact(&mut links, "Trains", join(trains.iter().map(|u| &u.stats.name)));
+            fact(
+                &mut links,
+                "Trains",
+                join(trains.iter().map(|u| &u.stats.name)),
+            );
         }
         let hires: Vec<&RHero> = self
             .r
@@ -852,7 +881,11 @@ impl Ctx<'_> {
             .filter(|h| h.hired_at == b.name)
             .collect();
         if !hires.is_empty() {
-            fact(&mut links, "Hires", join(hires.iter().map(|h| &h.stats.name)));
+            fact(
+                &mut links,
+                "Hires",
+                join(hires.iter().map(|h| &h.stats.name)),
+            );
         }
         let evolves = b.role == Role::Tech && self.has_evolutions();
         if evolves {
@@ -967,7 +1000,11 @@ impl Ctx<'_> {
         GuideUpgrade {
             name: u.stats.name.clone(),
             tag: format!("Evolution of {parent}"),
-            cost: format!("{}, {} in the cocoon", cost_text(u.cost), secs(u.train_time)),
+            cost: format!(
+                "{}, {} in the cocoon",
+                cost_text(u.cost),
+                secs(u.train_time)
+            ),
             benefit: self.tagline(&u.stats.name),
             facts,
         }
@@ -976,7 +1013,11 @@ impl Ctx<'_> {
     fn hero_upgrade(&self, h: &RHero) -> GuideUpgrade {
         let mut facts = Facts::new();
         fact(&mut facts, "Role", h.role.clone());
-        fact(&mut facts, "Hit points", thousands(u32::from(h.stats.hp_per_model)));
+        fact(
+            &mut facts,
+            "Hit points",
+            thousands(u32::from(h.stats.hp_per_model)),
+        );
         fact(&mut facts, "Hire", HERO_RULES);
         GuideUpgrade {
             name: h.stats.name.clone(),
@@ -1049,7 +1090,11 @@ impl Ctx<'_> {
         }
         let kids = self.evolutions_of(&name);
         if !kids.is_empty() {
-            fact(&mut links, "Evolves into", join(kids.iter().map(|k| &k.stats.name)));
+            fact(
+                &mut links,
+                "Evolves into",
+                join(kids.iter().map(|k| &k.stats.name)),
+            );
         }
         self.class_links(&mut links, class_name(u.class));
 
@@ -1114,7 +1159,11 @@ impl Ctx<'_> {
                 .map_or_else(String::new, |t| ascii(&t.summary)),
             facts,
             links,
-            upgrades: h.abilities.iter().map(|a| ability_upgrade(a, true)).collect(),
+            upgrades: h
+                .abilities
+                .iter()
+                .map(|a| ability_upgrade(a, true))
+                .collect(),
             no_upgrades: "No abilities.".into(),
             name,
         }
@@ -1168,9 +1217,16 @@ mod tests {
                     assert!(guide.contains(n), "{f:?}: no guide entry for {what} {n}");
                 }
                 for n in guide {
-                    assert!(roster.contains(n), "{f:?}: guide entry {n} is not a {what} in the roster");
+                    assert!(
+                        roster.contains(n),
+                        "{f:?}: guide entry {n} is not a {what} in the roster"
+                    );
                 }
-                assert!(dupes(guide).is_empty(), "{f:?}: repeated {what} entries {:?}", dupes(guide));
+                assert!(
+                    dupes(guide).is_empty(),
+                    "{f:?}: repeated {what} entries {:?}",
+                    dupes(guide)
+                );
             }
         }
     }
@@ -1187,19 +1243,30 @@ mod tests {
             for u in &g.units {
                 check_text(&u.name, &u.summary, MAX_SUMMARY);
                 check_text(&u.name, &u.tagline, MAX_TAGLINE);
-                assert!(u.summary.len() > 60 && u.tagline.len() > 10, "{} is too thin", u.name);
+                assert!(
+                    u.summary.len() > 60 && u.tagline.len() > 10,
+                    "{} is too thin",
+                    u.name
+                );
             }
         }
     }
 
     fn check_text(who: &str, text: &str, max: usize) {
         assert!(!text.trim().is_empty(), "{who}: empty text");
-        assert!(text.len() <= max, "{who}: {} characters, at most {max}", text.len());
+        assert!(
+            text.len() <= max,
+            "{who}: {} characters, at most {max}",
+            text.len()
+        );
         assert!(
             text.chars().all(|c| (' '..='~').contains(&c)),
             "{who}: the font draws only printable ASCII"
         );
-        assert!(!text.contains("  ") && text == text.trim(), "{who}: stray spaces");
+        assert!(
+            !text.contains("  ") && text == text.trim(),
+            "{who}: stray spaces"
+        );
     }
 
     #[test]
@@ -1214,7 +1281,11 @@ mod tests {
                 for (what, _) in &b.notes {
                     let ok = what == "Research" && matches!(rb.role, Role::Tech | Role::Economy)
                         || next.is_some_and(|n| &n.name == what);
-                    assert!(ok, "{f:?}: {}'s note {what:?} names nothing it upgrades", b.name);
+                    assert!(
+                        ok,
+                        "{f:?}: {}'s note {what:?} names nothing it upgrades",
+                        b.name
+                    );
                 }
                 if let Some(n) = next {
                     assert!(
@@ -1242,16 +1313,28 @@ mod tests {
         let d = load();
         assert_eq!(d.factions.len(), 4);
         let names: Vec<_> = d.factions.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, ["Ember Clans", "Brood", "Shard Choir", "Carrion Concord"]);
+        assert_eq!(
+            names,
+            ["Ember Clans", "Brood", "Shard Choir", "Carrion Concord"]
+        );
         let rs = rosters();
         for (f, r) in d.factions.iter().zip(&rs) {
             assert_eq!(f.buildings.len(), r.buildings.len());
             assert_eq!(f.troops.len(), r.units.len() + r.heroes.len());
             for e in f.buildings.iter().chain(&f.troops) {
                 assert!(!e.summary.is_empty(), "{} has no summary", e.name);
-                assert!(!e.facts.is_empty() && !e.links.is_empty(), "{} is bare", e.name);
+                assert!(
+                    !e.facts.is_empty() && !e.links.is_empty(),
+                    "{} is bare",
+                    e.name
+                );
                 for u in &e.upgrades {
-                    assert!(!u.benefit.is_empty(), "{}: {} has no benefit line", e.name, u.name);
+                    assert!(
+                        !u.benefit.is_empty(),
+                        "{}: {} has no benefit line",
+                        e.name,
+                        u.name
+                    );
                     assert!(!u.tag.is_empty() && !u.cost.is_empty());
                 }
                 let all = [&e.name, &e.kind, &e.tag, &e.summary, &e.no_upgrades]
@@ -1260,9 +1343,14 @@ mod tests {
                     .chain(e.facts.iter().flat_map(|(a, b)| [a.clone(), b.clone()]))
                     .chain(e.links.iter().flat_map(|(a, b)| [a.clone(), b.clone()]))
                     .chain(e.upgrades.iter().flat_map(|u| {
-                        [u.name.clone(), u.tag.clone(), u.cost.clone(), u.benefit.clone()]
-                            .into_iter()
-                            .chain(u.facts.iter().flat_map(|(a, b)| [a.clone(), b.clone()]))
+                        [
+                            u.name.clone(),
+                            u.tag.clone(),
+                            u.cost.clone(),
+                            u.benefit.clone(),
+                        ]
+                        .into_iter()
+                        .chain(u.facts.iter().flat_map(|(a, b)| [a.clone(), b.clone()]))
                     }));
                 for s in all {
                     assert!(
@@ -1285,7 +1373,11 @@ mod tests {
 
     fn find<'a>(d: &'a GuideData, f: usize, tab_buildings: bool, name: &str) -> &'a GuideEntry {
         let fg = &d.factions[f];
-        let list = if tab_buildings { &fg.buildings } else { &fg.troops };
+        let list = if tab_buildings {
+            &fg.buildings
+        } else {
+            &fg.troops
+        };
         list.iter().find(|e| e.name == name).unwrap()
     }
 
@@ -1299,11 +1391,18 @@ mod tests {
         let hall = find(&d, 0, true, "Clan Hall");
         assert_eq!(fact_of(&hall.facts, "Cost"), "400 Grub");
         assert_eq!(fact_of(&hall.facts, "Hit points"), "3,000");
-        let keep = hall.upgrades.iter().find(|u| u.name == "Castle Keep").unwrap();
+        let keep = hall
+            .upgrades
+            .iter()
+            .find(|u| u.name == "Castle Keep")
+            .unwrap();
         assert_eq!(keep.cost, "300 Grub, 100 Marrow, 60 s");
         assert_eq!(keep.tag, "Tier 2 upgrade");
         let unlocks = fact_of(&keep.facts, "Unlocks troops");
-        assert!(unlocks.contains("Katana Samurai") && unlocks.contains("War Kite"), "{unlocks}");
+        assert!(
+            unlocks.contains("Katana Samurai") && unlocks.contains("War Kite"),
+            "{unlocks}"
+        );
         assert!(fact_of(&keep.facts, "Unlocks buildings").contains("Stables"));
         // The Brood's Chrysalis Chamber lists the four evolutions with costs.
         let chrysalis = find(&d, 1, true, "Chrysalis Chamber");
@@ -1318,28 +1417,53 @@ mod tests {
         // A unit.
         let yari = find(&d, 0, false, "Yari Ashigaru");
         assert_eq!(fact_of(&yari.facts, "Cost"), "120 Grub");
-        assert_eq!(fact_of(&yari.facts, "Regiment"), "28 models, 8 hp each (224 in all)");
+        assert_eq!(
+            fact_of(&yari.facts, "Regiment"),
+            "28 models, 8 hp each (224 in all)"
+        );
         assert!(fact_of(&yari.facts, "Weapons").contains("Reach"));
         assert_eq!(fact_of(&yari.links, "Trained at"), "Dojo");
         assert!(fact_of(&yari.links, "Strong against").starts_with("Cavalry (x1.5)"));
         assert!(fact_of(&yari.links, "Weak against").contains("Ranged"));
-        assert!(yari.upgrades.iter().any(|u| u.name == "Brace" && u.tag == "Toggle"));
+        assert!(
+            yari.upgrades
+                .iter()
+                .any(|u| u.name == "Brace" && u.tag == "Toggle")
+        );
         // Skitterlings evolve into Spitters and Burrowers.
         let skit = find(&d, 1, false, "Skitterlings");
         assert_eq!(fact_of(&skit.links, "Evolves into"), "Spitters, Burrowers");
-        assert_eq!(skit.upgrades.iter().filter(|u| u.tag.starts_with("Evolution")).count(), 2);
+        assert_eq!(
+            skit.upgrades
+                .iter()
+                .filter(|u| u.tag.starts_with("Evolution"))
+                .count(),
+            2
+        );
         // Heroes carry their ultimate at level 6.
         let daimyo = find(&d, 0, false, "The Daimyo");
-        assert!(daimyo.upgrades.iter().any(|u| u.tag == "Ultimate (level 6)"));
+        assert!(
+            daimyo
+                .upgrades
+                .iter()
+                .any(|u| u.tag == "Ultimate (level 6)")
+        );
         assert_eq!(daimyo.upgrades.len(), 4);
         // Research is honest about not existing.
         let forge = find(&d, 0, true, "Forge");
-        let research = forge.upgrades.iter().find(|u| u.name == "Research").unwrap();
+        let research = forge
+            .upgrades
+            .iter()
+            .find(|u| u.name == "Research")
+            .unwrap();
         assert_eq!(research.cost, "not designed yet");
         // A production building lists what it trains.
         let dojo = find(&d, 0, true, "Dojo");
         assert_eq!(dojo.upgrades.len(), 3);
-        assert_eq!(fact_of(&dojo.links, "Trains"), "Yari Ashigaru, Yumi Ashigaru, Katana Samurai");
+        assert_eq!(
+            fact_of(&dojo.links, "Trains"),
+            "Yari Ashigaru, Yumi Ashigaru, Katana Samurai"
+        );
     }
 
     #[test]
