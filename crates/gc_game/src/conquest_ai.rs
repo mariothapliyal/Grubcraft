@@ -76,6 +76,7 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
             .into_iter()
             .map(|(x, y)| Vec2::new(x as f32 + 0.5, y as f32 + 0.5))
             .collect(),
+        rivals: Vec::new(),
     }
 }
 
@@ -104,14 +105,7 @@ pub fn seat(
         let level = Difficulty::from_index(usize::from(slot.ai_level));
         let temper = temper(roll, i);
         minds.add(mind_for(
-            data,
-            table,
-            map,
-            i,
-            factions[i],
-            level,
-            temper,
-            roll,
+            data, table, map, i, &factions, level, temper, roll,
         ));
     }
 }
@@ -124,23 +118,30 @@ fn mind_for(
     table: &Table,
     map: &Map,
     i: usize,
-    faction: Faction,
+    factions: &[Faction],
     level: Difficulty,
     temper: u32,
     roll: u64,
 ) -> Mind {
+    let faction = factions[i];
     let config = MindConfig {
         party: i as u8,
         difficulty: level,
         personality: gc_ai::personality::pick(faction, temper),
         seed: roll ^ i as u64,
     };
-    Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
+    let mut kit = kit(data, table, map, faction);
+    kit.rivals = (0..factions.len())
+        .filter(|&j| j != i)
+        .map(|j| factions[j])
+        .collect();
+    Mind::conquest(config, Arc::new(kit))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gc_ai::conquest::opening::{self, Opening};
     use gc_sim::economy::Bank;
     use gc_sim::{
         Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
@@ -248,7 +249,7 @@ mod tests {
         seed: u64,
         max_minutes: u32,
     ) -> Played {
-        play_with(choice, factions, levels, seed, max_minutes, None)
+        play_with(choice, factions, levels, seed, max_minutes, None, &[])
     }
 
     /// [`play`], every side with the personality `temper` picks for its
@@ -260,6 +261,7 @@ mod tests {
         seed: u64,
         max_minutes: u32,
         temper: Option<u32>,
+        openings: &[&'static Opening],
     ) -> Played {
         let trace = std::env::var("AI_TRACE").unwrap_or_default();
         // AI_TRACE=2 also prints every journal entry as it is written.
@@ -294,12 +296,16 @@ mod tests {
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
         let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
-        for (i, &faction) in factions.iter().enumerate() {
+        for i in 0..factions.len() {
             let level = levels[i.min(levels.len() - 1)];
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
-            minds.add(mind_for(
-                &data, &table, &map, i, faction, level, temper, seed,
-            ));
+            let mut mind = mind_for(&data, &table, &map, i, factions, level, temper, seed);
+            if let Some(&o) = openings.get(i)
+                && let Some(r) = mind.realm_mut()
+            {
+                r.set_opening(o);
+            }
+            minds.add(mind);
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
         let stats = world.tick(&opening);
@@ -360,6 +366,18 @@ mod tests {
         let var = std::env::var("AI_LEVEL").unwrap_or_default();
         var.split(',')
             .map(|v| level_named(v).unwrap_or(Difficulty::Veteran))
+            .collect()
+    }
+
+    /// Openings named in `var`, a comma list (none if unset or unknown).
+    fn openings_from_env(var: &str) -> Vec<&'static Opening> {
+        let v = std::env::var(var).unwrap_or_default();
+        v.split(',')
+            .filter_map(|n| {
+                opening::all()
+                    .iter()
+                    .find(|o| o.name.eq_ignore_ascii_case(n.trim()))
+            })
             .collect()
     }
 
@@ -436,7 +454,8 @@ mod tests {
         // AI_SAME=1 gives every side the same personality, as the arena does.
         let same = std::env::var("AI_SAME").is_ok_and(|v| v == "1");
         let temper = same.then(|| super::temper(seed, 0));
-        let played = play_with(choice, &factions, &levels, seed, minutes, temper);
+        let openings = openings_from_env("AI_OPENINGS");
+        let played = play_with(choice, &factions, &levels, seed, minutes, temper, &openings);
         println!("{}", played.report());
         println!(
             "{} game minutes in {:.1?}",
@@ -459,6 +478,11 @@ mod tests {
         };
         let a = find("AI_A", Difficulty::General);
         let b = find("AI_B", Difficulty::Veteran);
+        // AI_OPEN_A and AI_OPEN_B set each level's opening, by name.
+        let (open_a, open_b) = (
+            openings_from_env("AI_OPEN_A"),
+            openings_from_env("AI_OPEN_B"),
+        );
         let games = env_number("AI_GAMES", 3);
         let (mut won, mut lost, mut drawn) = (0, 0, 0);
         for f in Faction::ALL {
@@ -469,7 +493,12 @@ mod tests {
                     // The same game with the sides swapped.
                     let roll = seed * 31;
                     let temper = Some(super::temper(roll, 0));
-                    let played = play_with(0, &[f, f], &levels, roll, 45, temper);
+                    let openings: Vec<_> = match (&open_a[..], &open_b[..]) {
+                        ([oa], [ob]) if a_side == 0 => vec![*oa, *ob],
+                        ([oa], [ob]) => vec![*ob, *oa],
+                        _ => Vec::new(),
+                    };
+                    let played = play_with(0, &[f, f], &levels, roll, 45, temper, &openings);
                     match played.winner() {
                         Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),
                         Some(_) => (lost, fl) = (lost + 1, fl + 1),
@@ -510,5 +539,17 @@ mod tests {
             let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 90);
             assert!(played.winner().is_some(), "{}", played.report());
         }
+    }
+
+    /// Six computer players on a big Wilds map (the first choice past the
+    /// shipped maps).
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_six_player_wilds_ends_in_a_win() {
+        use gc_ai::personality::Faction::*;
+        let factions = [EmberClans, Brood, Choir, CarrionConcord, EmberClans, Brood];
+        let wilds = gc_map::SHIPPED.len();
+        let played = play(wilds, &factions, &[Difficulty::Veteran], 1, 120);
+        assert!(played.winner().is_some(), "{}", played.report());
     }
 }

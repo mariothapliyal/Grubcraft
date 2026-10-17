@@ -1,10 +1,9 @@
 //! The Conquest layers of a mind (docs/18-ai.md, "Inside a mind"): the
 //! [`Steward`](steward::Steward) runs the economy, production and building;
 //! the [`Marshal`](marshal::Marshal) runs the army and hands each battle to
-//! a [`Captain`](crate::Captain). The Sovereign's choice of intents and the
-//! Spymaster's beliefs come in the next stage; for now the Marshal's few
-//! rules (gather, attack when strong enough, defend home, fall back when
-//! beaten) stand in for them.
+//! a [`Captain`](crate::Captain). The [`spymaster`] says what it believes
+//! of each enemy's army, its level's [`Strategy`] how it plays the long
+//! game, and its [`opening`] how it spends its first minutes.
 //!
 //! A Conquest mind plays by the same rules as any other: it reads what its
 //! side sees (fog of war), and acts only through the commands a player's
@@ -12,6 +11,7 @@
 
 pub mod kit;
 pub mod marshal;
+pub mod opening;
 pub mod placing;
 pub mod spymaster;
 pub mod steward;
@@ -27,6 +27,7 @@ use crate::perception::Perception;
 use crate::terrain::Terrain;
 use kit::Kit;
 use marshal::Marshal;
+use opening::Opening;
 use steward::Steward;
 use strategy::Strategy;
 
@@ -49,6 +50,8 @@ pub struct Sense<'a> {
     pub expand_after: u32,
     /// How its level plays the long game.
     pub plan: &'a Strategy,
+    /// The opening it is playing, while it lasts.
+    pub opening: Option<&'static Opening>,
 }
 
 /// A Conquest mind's economy and army.
@@ -60,6 +63,7 @@ pub struct Realm {
     /// The tick from which it expands once its seeps are full.
     expand_after: u32,
     plan: Strategy,
+    opening: &'static Opening,
 }
 
 impl Realm {
@@ -67,6 +71,7 @@ impl Realm {
         kit: Arc<Kit>,
         party: PlayerId,
         plan: Strategy,
+        opening: &'static Opening,
         knobs: &Knobs,
         expand_after: u32,
     ) -> Realm {
@@ -81,7 +86,19 @@ impl Realm {
             clicks: Hands::new(party, knobs.reaction_ticks, economy, 3.0),
             expand_after,
             plan,
+            opening,
         }
+    }
+
+    /// The opening it plays.
+    pub fn opening(&self) -> &'static Opening {
+        self.opening
+    }
+
+    /// Play `opening` instead, before the match starts: for tests and
+    /// tuning.
+    pub fn set_opening(&mut self, opening: &'static Opening) {
+        self.opening = opening;
     }
 
     /// Economy orders sent so far.
@@ -107,6 +124,7 @@ impl Realm {
             terrain: captain.terrain,
             expand_after: self.expand_after,
             plan: &self.plan,
+            opening: (captain.view.tick < self.opening.ends()).then_some(self.opening),
         };
         self.clicks.refresh(sense.now);
         self.steward

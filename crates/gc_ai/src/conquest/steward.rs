@@ -34,6 +34,9 @@ const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
 const QUEUE: usize = 2;
 /// Most workers it keeps.
 const MAX_WORKERS: usize = 48;
+/// Workers it has before its first production building, unless its
+/// opening says otherwise.
+const FIRST_PRODUCTION: usize = 6;
 /// Workers it keeps beyond those its nodes take: builders.
 const SPARE_WORKERS: usize = 2;
 /// Army make-up it aims for, by class: line, shock, ranged.
@@ -527,7 +530,11 @@ impl Steward {
             EconomyStyle::Tuned => BUILDERS + usize::from(look.tier),
             _ => {
                 let want = (slots + SPARE_WORKERS + rising * 4).min(MAX_WORKERS);
-                want * usize::from(s.plan.workers_percent) / 100
+                let want = want * usize::from(s.plan.workers_percent) / 100;
+                match s.opening.and_then(|o| o.worker_cap) {
+                    Some(cap) => want.min(usize::from(cap)),
+                    None => want,
+                }
             }
         };
         self.ledger.workers = look.workers.len() as u16;
@@ -628,10 +635,24 @@ impl Steward {
             .then(|| (b, self.inner_spot(look)))
         };
         let first = || {
-            (production == 0 && workers >= 6)
+            let at = s
+                .opening
+                .map_or(FIRST_PRODUCTION, |o| usize::from(o.workers_first));
+            (production == 0 && workers >= at)
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
+        };
+        // The opening's towers by the hall.
+        let tower = || {
+            let o = s.opening.filter(|o| o.towers > 0)?;
+            let b = s.kit.tower(look.tier)?;
+            let towers = look
+                .mine
+                .iter()
+                .filter(|m| m.stats.role == Role::Defence)
+                .count();
+            (towers < usize::from(o.towers)).then(|| (b, self.inner_spot(look)))
         };
         let expand = || {
             let b = match s.kit.economy {
@@ -647,11 +668,17 @@ impl Steward {
             }
             Some((b, self.expansion_site(s, look, self.home?)?))
         };
+        // The opening's production buildings go up whatever the workers,
+        // and while it is arming.
+        let opening_more = s
+            .opening
+            .is_some_and(|o| production < usize::from(o.producers));
         let more = || {
-            (!self.arming
-                && production
-                    < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
-                && workers >= 8 + 6 * production)
+            (opening_more
+                || !self.arming
+                    && production
+                        < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
+                    && workers >= 8 + 6 * production)
                 .then(|| self.production_type(s, look))
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
@@ -659,6 +686,7 @@ impl Steward {
         let wanted: Option<(&KitBuilding, Vec2)> = housing()
             .or_else(tune)
             .or_else(first)
+            .or_else(tower)
             .or_else(hatch)
             .or_else(expand)
             .or_else(more);
@@ -825,12 +853,17 @@ impl Steward {
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
+        // An opening that expands early does, seeps full or not.
+        let early = s
+            .opening
+            .and_then(|o| o.expand_at)
+            .is_some_and(|m| s.now >= u32::from(m) * 60 * TICKS_PER_SECOND);
         let rising = look
             .mine
             .iter()
             .any(|m| !m.finished() && m.hub(s.kit.economy));
         // Arming puts off growing, but not replacing seeps that run dry.
-        !rising && (running_out || (time && full && !self.arming))
+        !rising && (running_out || early || (time && full && !self.arming))
     }
 
     /// The middle of the nearest cluster of Grub seeps no hall of its own

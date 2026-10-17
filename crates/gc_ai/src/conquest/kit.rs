@@ -70,6 +70,9 @@ pub struct Kit {
     /// Every start on the map, in tiles (centre of the start tile), in the
     /// map's order. Public knowledge: the map shows them.
     pub starts: Vec<Vec2>,
+    /// The factions of the other players in the match, as the lobby shows
+    /// them.
+    pub rivals: Vec<Faction>,
 }
 
 impl Kit {
@@ -155,6 +158,15 @@ impl Kit {
             .iter()
             .filter(|b| b.stats.tunes.is_some_and(|(r, _)| r == resource))
             .min_by_key(|b| b.stats.cost_grub)
+    }
+
+    /// The cheapest defence tower it can put up at `tier`.
+    pub fn tower(&self, tier: u8) -> Option<&KitBuilding> {
+        self.buildings
+            .iter()
+            .filter(|b| b.stats.role == Role::Defence && b.stats.tier <= tier.max(1))
+            .filter(|b| b.stats.upgrades_from.is_none())
+            .min_by_key(|b| u32::from(b.stats.cost_grub) + 2 * u32::from(b.stats.cost_marrow))
     }
 
     /// The building that adds larvae, main buildings aside: the Brood's

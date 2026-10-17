@@ -162,20 +162,32 @@ impl Mind {
     pub fn conquest(config: MindConfig, kit: Arc<conquest::kit::Kit>) -> Mind {
         let mut mind = Mind::new(config);
         let plan = conquest::strategy::Strategy::of(config.difficulty);
+        let opening =
+            conquest::opening::pick(mind.persona, config.difficulty, &kit.rivals, config.seed);
+        mind.journal.note(
+            0,
+            format!("Takes up the Conquest: opens with {}", opening.name),
+        );
         mind.realm = Some(conquest::Realm::new(
             kit,
             config.party,
             plan,
+            opening,
             &mind.knobs,
             plan.expand_after(mind.persona.greed),
         ));
-        mind.journal.note(0, "Takes up the Conquest".to_string());
         mind
     }
 
     /// Its economy and army, in Conquest.
     pub fn realm(&self) -> Option<&conquest::Realm> {
         self.realm.as_ref()
+    }
+
+    /// Its economy and army, to set up before the match: for tests and
+    /// tuning.
+    pub fn realm_mut(&mut self) -> Option<&mut conquest::Realm> {
+        self.realm.as_mut()
     }
 
     pub fn party(&self) -> PlayerId {

@@ -33,7 +33,7 @@ const QUIET_TICKS: u32 = 8 * TICKS_PER_SECOND;
 const LOOK_TICKS: u32 = 4;
 /// How long it gathers after falling back before setting out again.
 const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
-/// Ticks it contests the Titan's Heart with a full army, never holding it,
+/// Ticks it contests the Titan's Heart, never holding it,
 /// before it gives the Heart a rest and raids a base instead.
 const HEART_PATIENCE: u32 = 10 * 60 * TICKS_PER_SECOND;
 /// Ticks such a raid lasts, Heart or no Heart.
@@ -47,8 +47,6 @@ const ODDS_STRIKE: f32 = 0.5;
 /// Tiles of distance that cost as much as 1 of odds, when choosing whom to
 /// attack.
 const ODDS_PER_DISTANCE: f32 = 400.0;
-/// Supply short of the limit that still counts as a full army.
-const FULL_SLACK: u32 = 12;
 /// Supply short of its current cap that counts as capped.
 const CAP_SLACK: u32 = 8;
 /// Enemies within this many tiles of its buildings are a threat to home.
@@ -138,6 +136,8 @@ pub struct Marshal {
     contesting_since: Option<u32>,
     /// Until this tick it raids and leaves the Heart alone.
     raid_until: u32,
+    /// It has set out on an attack: its opening's first wave is spent.
+    attacked: bool,
     orders: Orders,
     wants: Vec<Want>,
     battle_wants: Vec<Want>,
@@ -158,6 +158,7 @@ impl Marshal {
             regroup_until: 0,
             contesting_since: None,
             raid_until: 0,
+            attacked: false,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
             wants: Vec::new(),
             battle_wants: Vec::new(),
@@ -314,23 +315,26 @@ impl Marshal {
     /// Choose the army's goal and march it there.
     fn decide(&mut self, c: &mut Ctx, s: &Sense, army: &[&Seen], home: Option<Vec2>) {
         let Some(rally) = self.rally else { return };
-        let ready = wave_ready(s, c.persona, army);
-        // Every army full and on the Heart, and nobody holding it, is a
-        // stalemate (four-way games): a full army that has fought for it a
-        // long while goes to break a base instead, and leaves the Heart be
-        // until it is back.
+        // An opening may send a smaller first wave sooner.
+        let first_wave = s
+            .opening
+            .and_then(|o| o.first_wave)
+            .filter(|_| !self.attacked)
+            .is_some_and(|w| s.kit.supply_of(army.iter().copied()) >= f32::from(w));
+        let ready = first_wave || wave_ready(s, c.persona, army);
+        // Armies brawling on the Heart and nobody holding it long is a
+        // stalemate (games of four or more): an army that has fought for it
+        // a long while goes to break a base instead, or to find one on a
+        // big map where it has seen none, and leaves the Heart be until it
+        // is back.
         if we_hold_heart(s) || !s.world.heart().is_some_and(|h| h.open) {
             self.contesting_since = None;
         }
-        let full = s
-            .world
-            .bank(s.party)
-            .is_some_and(|b| b.supply_used + FULL_SLACK >= SUPPLY_LIMIT);
-        if full
-            && self
-                .contesting_since
-                .is_some_and(|t| s.now >= t + HEART_PATIENCE)
-            && let Some(t) = raid_target(s, centroid(army))
+        if self
+            .contesting_since
+            .is_some_and(|t| s.now >= t + HEART_PATIENCE)
+            && let Some(t) =
+                raid_target(s, centroid(army)).or_else(|| self.target(s, centroid(army)))
         {
             c.journal.note(
                 s.now,
@@ -389,9 +393,13 @@ impl Marshal {
                             army.len()
                         ),
                     )),
-                    None if regrouped => self
-                        .attack_plan(s, c.persona, army, ready, enough)
-                        .map(|(t, note)| (Goal::Attack(t), note)),
+                    None if regrouped => {
+                        self.attack_plan(s, c.persona, army, ready, enough)
+                            .map(|(t, note)| {
+                                self.attacked = true;
+                                (Goal::Attack(t), note)
+                            })
+                    }
                     None => None,
                 };
                 if let Some((goal, note)) = set_out {
