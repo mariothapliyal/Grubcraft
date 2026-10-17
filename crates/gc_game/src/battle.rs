@@ -398,10 +398,12 @@ impl Battle {
             Win::Field => "holds the field",
             Win::Annihilation => "is the last standing",
             Win::Heart => "holds the Titan's Heart",
+            Win::Draw => "",
         };
-        let won = self.me.map(|me| !world.hostile(me, p));
+        let won = self.me.map(|me| v.by != Win::Draw && !world.hostile(me, p));
         self.won = won;
         let said = match (won, v.by) {
+            (_, Win::Draw) => "OVER  nobody is left standing".into(),
             (None, _) => format!("OVER  {name} {how}"),
             (Some(false), _) => format!("DEFEAT  {name} {how}"),
             (Some(true), Win::Field) => "VICTORY  the field is yours".into(),

@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use gc_replay::{EXTENSION, Replay};
-use gc_sim::TICKS_PER_SECOND;
+use gc_sim::{TICKS_PER_SECOND, Win};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -202,11 +202,13 @@ fn info(file: &Path) -> bool {
         None => println!("  sim version unknown (before format 7)"),
     }
     if let Some(v) = h.result {
-        println!(
-            "  party {} held the field, decided {} into the match",
-            v.holder,
-            clock(v.tick)
-        );
+        let how = match v.by {
+            Win::Field => format!("party {} held the field", v.holder),
+            Win::Annihilation => format!("party {} was the last standing", v.holder),
+            Win::Heart => format!("party {} held the Titan's Heart", v.holder),
+            Win::Draw => "nobody was left standing".to_string(),
+        };
+        println!("  {how}, decided {} into the match", clock(v.tick));
     }
     if let Some(tick) = h.desync_tick {
         println!("  desync report: out of sync with the host from tick {tick}");

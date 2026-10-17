@@ -711,7 +711,9 @@ impl World {
         self.events.reserve(setup.structures as usize);
         // A match played for a victory is won only that way; the sandbox's
         // buildings leave holding the field as it was.
-        let v = setup.victories;
+        // The Heart counts only on a map that has it.
+        let mut v = setup.victories;
+        v.heart &= setup.heart.is_some();
         if v.any() {
             self.judge
                 .conquest(verdict::Throne::new(v, setup.heart, setup.build_percent));

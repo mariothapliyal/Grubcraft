@@ -759,7 +759,7 @@ impl<N: Network> Menu<N> {
         // Which victories count is a Conquest setting too, but the four
         // columns above have no room for another stepper: it sits in the
         // header, between the title and the host's name, clear of them.
-        let victory_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36).min(sp(64) - 16));
+        let victory_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {

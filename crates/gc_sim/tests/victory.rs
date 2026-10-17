@@ -7,7 +7,7 @@ use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, Role};
 use gc_sim::{
-    BuildingStats, Capacities, Command, ConquestSetup, EXILE_TICKS, HEART_HOLD_TICKS,
+    BuildingStats, Capacities, Command, ConquestSetup, ConquestUnit, EXILE_TICKS, HEART_HOLD_TICKS,
     HEART_UNLOCK_TICKS, HOLD_TICKS, MatchSetup, PlayerCommand, RegimentHandle, StructureHandle,
     TICKS_PER_SECOND, Verdict, Victories, Win, World,
 };
@@ -26,7 +26,8 @@ fn buildings() -> [BuildingStats; 2] {
         upgrades_from: None,
         cost_grub: 400,
         cost_marrow: 0,
-        build_ticks: 100,
+        // Long enough to stay a foundation through a test.
+        build_ticks: 60_000,
         hp: 3000,
         armour: Armour::Fortified,
         width: 3,
@@ -43,7 +44,8 @@ fn buildings() -> [BuildingStats; 2] {
 }
 
 /// An open 64-tile map in Conquest for `teams`, played for `victories`,
-/// the Heart in the middle.
+/// the Heart in the middle. Every regiment is a worker, and every player
+/// can pay for a hall.
 fn conquest(teams: &[u8], victories: Victories) -> World {
     let side = 64 * CELLS_PER_TILE as usize;
     let nav = vec![1u8; side * side];
@@ -59,6 +61,11 @@ fn conquest(teams: &[u8], victories: Victories) -> World {
     });
     assert!(w.conquest(&ConquestSetup {
         buildings: &buildings(),
+        units: &[ConquestUnit {
+            worker: true,
+            ..ConquestUnit::default()
+        }],
+        start: [(1000, 0); gc_sim::MAX_PARTIES],
         structures: 32,
         build_percent: QUICK,
         victories,
@@ -174,12 +181,112 @@ fn laying_a_main_building_stops_the_countdown() {
     order(&mut w, 1, Command::RemoveStructure { structure: theirs });
     run(&mut w, 60 * TICKS_PER_SECOND);
     assert!(w.exiled(1).is_some());
-    // A new hall, even one that has only been laid, will do.
+    // A new hall ends it.
     put_up(&mut w, 1, HALL, 40, 56);
     run(&mut w, TICKS_PER_SECOND);
     assert_eq!(w.exiled(1), None);
     run(&mut w, EXILE_TICKS);
     assert!(!w.is_out(1));
+    assert_eq!(w.verdict(), None);
+}
+
+#[test]
+fn a_main_building_going_up_holds_the_countdown() {
+    let (mut w, theirs) = two_sides(Victories::BOTH);
+    let worker = spawn(&mut w, 1, 40, 50);
+    run(&mut w, TICKS_PER_SECOND);
+    order(&mut w, 1, Command::RemoveStructure { structure: theirs });
+    run(&mut w, 30 * TICKS_PER_SECOND);
+    let left = w.exiled(1).unwrap() - w.tick_count();
+    order(
+        &mut w,
+        1,
+        Command::Build {
+            regiment: worker,
+            building: HALL,
+            tile: (40, 53),
+        },
+    );
+    let site = (w.structures().unwrap().iter())
+        .find(|s| s.tile == (40, 53))
+        .unwrap();
+    assert!(!site.finished());
+    run(&mut w, EXILE_TICKS);
+    assert_eq!(w.exiled(1), None);
+    assert!(!w.is_out(1));
+    // Calling it off takes the countdown up where it was, not from the top.
+    order(
+        &mut w,
+        1,
+        Command::CallOff {
+            structure: site.handle,
+        },
+    );
+    until(&mut w, TICKS_PER_SECOND, |w| w.exiled(1).is_some());
+    let resumed = w.exiled(1).unwrap() - w.tick_count();
+    assert!(resumed <= left && resumed + 2 * TICKS_PER_SECOND >= left);
+    until(&mut w, resumed + TICKS_PER_SECOND, |w| w.is_out(1));
+}
+
+#[test]
+fn the_last_players_put_out_together_draw() {
+    let mut w = conquest(&[], Victories::BOTH);
+    let halls = [
+        put_up(&mut w, 0, HALL, 4, 4),
+        put_up(&mut w, 1, HALL, 56, 56),
+    ];
+    run(&mut w, TICKS_PER_SECOND);
+    let gone = halls.map(|structure| PlayerCommand {
+        player: structure_owner(&w, structure),
+        command: Command::RemoveStructure { structure },
+    });
+    assert_eq!(w.tick(&gone).commands_applied, 2);
+    until(&mut w, EXILE_TICKS + TICKS_PER_SECOND, |w| w.is_out(0));
+    assert!(w.is_out(1));
+    assert_eq!(w.verdict().map(|v| v.by), Some(Win::Draw));
+}
+
+fn structure_owner(w: &World, h: StructureHandle) -> u8 {
+    w.structures().unwrap().get(h).unwrap().owner
+}
+
+#[test]
+fn an_army_without_a_main_building_is_still_standing() {
+    let mut w = conquest(&[], Victories::BOTH);
+    put_up(&mut w, 0, HALL, 4, 4);
+    let theirs = put_up(&mut w, 1, HALL, 56, 56);
+    let army = spawn(&mut w, 2, 30, 60);
+    run(&mut w, TICKS_PER_SECOND);
+    order(&mut w, 1, Command::RemoveStructure { structure: theirs });
+    until(&mut w, EXILE_TICKS + TICKS_PER_SECOND, |w| w.is_out(1));
+    run(&mut w, 2 * TICKS_PER_SECOND);
+    assert_eq!(w.verdict(), None, "party 2's army still stands");
+    order(&mut w, 2, Command::RemoveRegiment { regiment: army });
+    until(&mut w, TICKS_PER_SECOND, |w| w.verdict().is_some());
+    assert_eq!(
+        w.verdict().map(|v| (v.holder, v.by)),
+        Some((0, Win::Annihilation))
+    );
+}
+
+#[test]
+fn an_ally_keeps_the_heart_when_its_holder_is_out() {
+    let mut w = conquest(&[0, 0, 1], Victories::BOTH);
+    let first = put_up(&mut w, 0, HALL, 4, 4);
+    put_up(&mut w, 1, HALL, 56, 4);
+    put_up(&mut w, 2, HALL, 56, 56);
+    spawn(&mut w, 0, HEART.0, HEART.1 + 2);
+    spawn(&mut w, 1, HEART.0, HEART.1 - 2);
+    run(&mut w, TICKS_PER_SECOND);
+    order(&mut w, 0, Command::RemoveStructure { structure: first });
+    // The Heart opens at a minute; party 0 is out half a minute later.
+    until(&mut w, 70 * TICKS_PER_SECOND, |w| {
+        w.heart().unwrap().held.is_some()
+    });
+    let (holder, since) = w.heart().unwrap().held.unwrap();
+    assert_eq!(holder, 0);
+    until(&mut w, EXILE_TICKS, |w| w.is_out(0));
+    assert_eq!(w.heart().unwrap().held, Some((1, since)));
     assert_eq!(w.verdict(), None);
 }
 

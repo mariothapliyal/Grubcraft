@@ -9,10 +9,13 @@
 //!
 //! Conquest is won otherwise (docs/06-game-modes.md, "Victory conditions"),
 //! by whichever of these the lobby turned on ([`Victories`]):
-//! - **Annihilation:** a player with no main building left (one going up
-//!   counts) has [`EXILE_TICKS`] to lay one, or is out: their regiments and
-//!   buildings leave the field. When everyone left is on one side, that
-//!   side wins.
+//! - **Annihilation:** a player with no main building left has
+//!   [`EXILE_TICKS`] to lay one, or is out: their regiments and buildings
+//!   leave the field. The countdown waits while one is going up and ends
+//!   when one is finished. When everyone left (those who have had a main
+//!   building, and any other with an army) is on one side, that side wins;
+//!   when the last of them are put out together, nobody does
+//!   ([`Win::Draw`]).
 //! - **Titan's Heart:** from [`HEART_UNLOCK_TICKS`] (scaled by tempo), a
 //!   side with regiments within [`HEART_REACH`] tiles of the Heart and no
 //!   enemy there holds it; holding it for [`HEART_HOLD_TICKS`] in a row
@@ -47,11 +50,14 @@ pub enum Win {
     Annihilation,
     /// A side held the Titan's Heart.
     Heart,
+    /// The last players in a Conquest match were put out together: nobody
+    /// won (the verdict's holder is the lowest of them).
+    Draw,
 }
 
 impl Win {
     pub fn from_u8(v: u8) -> Option<Win> {
-        [Win::Field, Win::Annihilation, Win::Heart]
+        [Win::Field, Win::Annihilation, Win::Heart, Win::Draw]
             .get(usize::from(v))
             .copied()
     }
@@ -66,6 +72,14 @@ pub struct Verdict {
     /// The tick it was decided on, counted from the start of the match.
     pub tick: u32,
     pub by: Win,
+}
+
+/// The parties with a main building finished (`built`) and with one going
+/// up (`rising`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Mains {
+    pub(crate) built: u8,
+    pub(crate) rising: u8,
 }
 
 /// Which victories a Conquest match is played for. With neither, it never
@@ -112,6 +126,8 @@ pub(crate) struct Throne {
     had_main: u8,
     /// Parties put out.
     out: u8,
+    /// Parties whose countdown waits on a main building going up.
+    paused: u8,
     /// The tick each party lost its last main building, while it has none.
     exiled: [Option<u32>; MAX_PARTIES],
 }
@@ -159,8 +175,11 @@ impl Throne {
     }
 
     /// The tick `party` is out unless it lays a main building first, while
-    /// it has none and isn't out yet.
+    /// it has none and isn't out yet (not while one is going up).
     pub(crate) fn exiled(&self, party: PlayerId) -> Option<u32> {
+        if self.paused & (1 << party) != 0 {
+            return None;
+        }
         let since = self.exiled.get(usize::from(party)).copied().flatten()?;
         Some(since + EXILE_TICKS)
     }
@@ -175,18 +194,27 @@ impl Throne {
     fn update(
         &mut self,
         regs: &Regiments,
-        mains: u8,
+        mains: Mains,
         stances: &Stances,
         now: u32,
         battle: u32,
     ) -> (u8, Option<Verdict>) {
+        let Mains { built, rising } = mains;
         let mut put_out = 0;
         if self.victories.annihilation {
-            self.had_main |= mains;
+            self.had_main |= built | rising;
+            self.paused = 0;
             for p in parties(self.had_main & !self.out) {
                 let (p, bit) = (usize::from(p), 1u8 << p);
-                if mains & bit != 0 {
+                if built & bit != 0 {
                     self.exiled[p] = None;
+                } else if rising & bit != 0 {
+                    // Its countdown, if running, waits on the one going up:
+                    // calling that off doesn't start it over.
+                    if let Some(since) = &mut self.exiled[p] {
+                        *since += TICKS_PER_SECOND;
+                        self.paused |= bit;
+                    }
                 } else {
                     let since = *self.exiled[p].get_or_insert(now);
                     if now - since >= EXILE_TICKS {
@@ -200,7 +228,10 @@ impl Throne {
         if self.heart.is_some() {
             let at_heart = self.at_heart(regs, battle) & !self.out;
             self.held = match (self.held, one_side(at_heart, stances)) {
-                (Some((p, since)), Some(h)) if !stances.hostile(p, h) => Some((p, since)),
+                // Allies share a hold, even when the first of them is out.
+                (Some((p, since)), Some(h)) if !stances.hostile(p, h) => {
+                    Some((if self.is_out(p) { h } else { p }, since))
+                }
                 (_, Some(h)) => Some((h, now)),
                 (_, None) => None,
             };
@@ -217,15 +248,29 @@ impl Throne {
                 );
             }
         }
-        // Once someone is out, the match ends when everyone left is friends.
+        // Once someone is out, the match ends when everyone left is friends:
+        // those who have had a main building, and any other with an army.
         if self.out == 0 {
             return (put_out, None);
         }
-        let verdict = one_side(self.had_main & !self.out, stances).map(|holder| Verdict {
-            holder,
-            tick: now,
-            by: Win::Annihilation,
-        });
+        let armies = (0..regs.alive.len())
+            .filter(|&i| regs.alive[i] && regs.models[i] > 0)
+            .fold(0u8, |m, i| m | 1 << regs.owner[i]);
+        let left = (self.had_main | armies) & !self.out;
+        let verdict = match one_side(left, stances) {
+            Some(holder) => Some(Verdict {
+                holder,
+                tick: now,
+                by: Win::Annihilation,
+            }),
+            // The last of them were put out together.
+            None if left == 0 => Some(Verdict {
+                holder: put_out.trailing_zeros() as PlayerId,
+                tick: now,
+                by: Win::Draw,
+            }),
+            None => None,
+        };
         (put_out, verdict)
     }
 
@@ -240,6 +285,7 @@ impl Throne {
         }
         h.u8(self.had_main);
         h.u8(self.out);
+        h.u8(self.paused);
         for e in self.exiled {
             h.u32(e.unwrap_or(u32::MAX));
         }
@@ -295,7 +341,7 @@ impl Judge {
     pub(crate) fn update_conquest(
         &mut self,
         regs: &Regiments,
-        mains: impl FnOnce() -> u8,
+        mains: impl FnOnce() -> Mains,
         stances: &Stances,
         now: u32,
         battle: u32,
@@ -306,7 +352,11 @@ impl Judge {
         if self.decided.is_some() || !now.is_multiple_of(TICKS_PER_SECOND) {
             return 0;
         }
-        let mains = if throne.counts_mains() { mains() } else { 0 };
+        let mains = if throne.counts_mains() {
+            mains()
+        } else {
+            Mains::default()
+        };
         let (out, verdict) = throne.update(regs, mains, stances, now, battle);
         self.decided = verdict;
         out
