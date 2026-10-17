@@ -1,4 +1,4 @@
-# 23 · Brood models
+# 24 · Brood models
 
 The Brood is the swarm faction of Grubcraft. Its units are insects and insect-like creatures: ants, beetles, mantises, moths, crickets and a centipede, plus three heroes who lead them. This document covers its fifteen 3D models: how they are made, where the sources live, and the numbers behind them. The look itself is described in [09 · Art and Audio](09-art-and-audio.md).
 
