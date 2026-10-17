@@ -384,7 +384,8 @@ impl<N: Network> Menu<N> {
             let x = r.x + (s[0] * r.w as f32) as i32;
             let y = r.y + (s[1] * r.h as f32) as i32;
             if inner.contains(x, y) {
-                ui.draw.rect(Rect::new(x - 3, y - 3, 7, 7), theme::FIELD_CLOTH);
+                ui.draw
+                    .rect(Rect::new(x - 3, y - 3, 7, 7), theme::FIELD_CLOTH);
                 ui.draw.rect(Rect::new(x - 2, y - 2, 5, 5), theme::MADDER);
             }
         }
@@ -446,12 +447,7 @@ impl<N: Network> Menu<N> {
         // The game's name, hung from the top of the cloth.
         let title = "GRUBCRAFT";
         let banner_w = crate::draw::text_width(title, 3) + 40;
-        ui.banner(
-            panel.x + (panel.w - banner_w) / 2,
-            panel.y - 14,
-            3,
-            title,
-        );
+        ui.banner(panel.x + (panel.w - banner_w) / 2, panel.y - 14, 3, title);
         ui.label_centered(
             Rect::new(panel.x, panel.y + 72, panel.w, 16),
             1,
@@ -570,7 +566,10 @@ impl<N: Network> Menu<N> {
         }
         let (hint, hint_color) = match self.code_note {
             Some(note) => (note, theme::BAD_INK),
-            None => ("Friends on your Wi-Fi see it automatically.", theme::INK_MUTED),
+            None => (
+                "Friends on your Wi-Fi see it automatically.",
+                theme::INK_MUTED,
+            ),
         };
         ui.label(s.x, hint_y, 1, hint_color, hint);
         // The map's picture sits beside the three rows below it (mode,
@@ -729,7 +728,11 @@ impl<N: Network> Menu<N> {
         // Footer.
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         if let Some((text, is_error)) = &self.message {
-            let color = if *is_error { theme::BAD_INK } else { theme::GOOD_INK };
+            let color = if *is_error {
+                theme::BAD_INK
+            } else {
+                theme::GOOD_INK
+            };
             let chars = ((panel.w - 48) / 8) as usize;
             // Two lines at most.
             let first: String = text.chars().take(chars).collect();
@@ -893,7 +896,12 @@ impl<N: Network> Menu<N> {
             };
             ui.label_centered(option_r, 1, theme::INK, &text);
             let on = if settings.champions { "on" } else { "off" };
-            ui.label_centered(champions_r, 1, theme::INK_MUTED, &format!("{CHAMPIONS}: {on}"));
+            ui.label_centered(
+                champions_r,
+                1,
+                theme::INK_MUTED,
+                &format!("{CHAMPIONS}: {on}"),
+            );
         }
 
         // The map: its picture (when there is room), its name and its code.
@@ -1291,7 +1299,7 @@ impl<N: Network> Menu<N> {
         ui.header(
             panel,
             "Replays",
-            "Every battle is saved. Pick one and press Watch.",
+            "Every battle is saved here. Pick one to see it again.",
         );
         let row_h = sp(56);
         let top = panel.y + sp(64);
@@ -1346,7 +1354,13 @@ impl<N: Network> Menu<N> {
         let btn_y = panel.bottom() - 52;
         if let Some((text, _)) = &self.message {
             let chars = ((panel.w - 48) / 8).max(8) as usize;
-            ui.label(panel.x + 24, btn_y - 26, 1, theme::BAD_INK, &fit(text, chars));
+            ui.label(
+                panel.x + 24,
+                btn_y - 26,
+                1,
+                theme::BAD_INK,
+                &fit(text, chars),
+            );
         }
         if pages > 1 {
             if ui.button(
@@ -1389,11 +1403,7 @@ impl<N: Network> Menu<N> {
         let sp = |n: i32| (n as f32 * k).round() as i32;
         let panel = centered(ui.screen, 880, sp(640));
         ui.panel(panel);
-        ui.header(
-            panel,
-            "Settings",
-            "Changes are saved when you go back.",
-        );
+        ui.header(panel, "Settings", "Changes are saved when you go back.");
         let col_w = (panel.w - 72) / 2;
         let row = sp(34);
         let gap = sp(6);
@@ -1844,7 +1854,7 @@ mod tests {
         assert!(champions(&h));
         h.click("Champions before AI battles");
         assert!(!champions(&h));
-        let (x, y) = h.text_pos("Start");
+        let (x, y) = *find_all(&h.ui.draw, "Start").last().unwrap();
         h.frame(UiInput {
             mouse: (x, y),
             pressed: true,
@@ -1959,11 +1969,11 @@ mod tests {
         let (x, y) = find_all(&h.ui.draw, "-")[0];
         h.click_at(x, y);
         assert!(h.has("3 regiments, 1,400 of 4,000 points"));
-        h.click("Done");
+        h.click_last("Done");
         assert_eq!(h.menu.screen(), Screen::Lobby);
         assert!(h.has("Army: 3 regiments, 1,400 of 4,000 points."));
         h.click("Add AI");
-        let (x, y) = h.text_pos("Start");
+        let (x, y) = *find_all(&h.ui.draw, "Start").last().unwrap();
         h.frame(UiInput {
             mouse: (x, y),
             pressed: true,

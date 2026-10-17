@@ -249,20 +249,20 @@ impl Viewer {
         ui.label_centered(
             Rect::new(l.bar.x, MARGIN + 4, l.bar.w, LINE_H),
             1,
-            theme::INK,
+            theme::TEXT,
             "Drag to turn the model   Right-drag to move it   Wheel to zoom",
         );
         ui.label_centered(
             Rect::new(l.bar.x, MARGIN + 4 + LINE_H, l.bar.w, LINE_H),
             1,
-            theme::INK_MUTED,
+            theme::MUTED,
             "Home puts the view back   Arrow keys change unit",
         );
         if let Some(e) = self.selected()
             && e.clips.is_empty()
         {
             let middle = Rect::new(l.left.right(), 0, l.right.x - l.left.right(), ui.screen.1);
-            ui.label_centered(middle, 2, theme::INK_MUTED, "No 3D model for this unit yet");
+            ui.label_centered(middle, 2, theme::MUTED, "No 3D model for this unit yet");
         }
         if escape {
             action = ViewerAction::Back;

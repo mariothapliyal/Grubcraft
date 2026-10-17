@@ -226,7 +226,6 @@ impl DrawList {
     }
 }
 
-
 /// `a` blended towards `b` by `t` (0 is `a`, 1 is `b`), alpha kept from `a`.
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
@@ -264,6 +263,19 @@ impl DrawList {
         run(self, r.x, r.y + t, r.h - 2 * t, false);
         run(self, r.x, r.bottom() - t, r.w, true);
         run(self, r.right() - t, r.y + t, r.h - 2 * t, false);
+    }
+
+    /// One horizontal row of stitches `t` thick from `x` across `len`.
+    pub fn stitch_row(&mut self, x: i32, y: i32, len: i32, t: i32) {
+        use crate::ui::theme;
+        let dyes = [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE];
+        let (mut at, mut n) = (0, 0usize);
+        while at < len {
+            let l = STITCH.min(len - at);
+            self.rect(Rect::new(x + at, y, l, t), dyes[n % dyes.len()]);
+            n += 1;
+            at += STITCH + STITCH_GAP;
+        }
     }
 
     /// A linen cloth panel: `fill`, a dark ink outline and a stitched strip
@@ -375,7 +387,10 @@ mod tests {
         let r = Rect::new(0, 0, 100, 50);
         let mut d = DrawList::default();
         assert_eq!(d.cloth(r, [1; 4]), r.inset(9));
-        assert_eq!(mix([0, 0, 0, 255], [100, 200, 50, 0], 0.5), [50, 100, 25, 255]);
+        assert_eq!(
+            mix([0, 0, 0, 255], [100, 200, 50, 0], 0.5),
+            [50, 100, 25, 255]
+        );
     }
 
     #[test]

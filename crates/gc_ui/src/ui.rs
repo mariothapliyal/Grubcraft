@@ -981,4 +981,131 @@ mod tests {
         ui.text_field(r, &mut s, 8, "");
         assert!(!ui.text_focused());
     }
+
+    fn solid_colors(ui: &Ui) -> Vec<Color> {
+        ui.draw
+            .quads
+            .iter()
+            .filter(|q| q.glyph == crate::draw::SOLID)
+            .map(|q| q.color)
+            .collect()
+    }
+
+    /// WCAG relative luminance contrast of two colours.
+    fn contrast(a: Color, b: Color) -> f32 {
+        let lum = |c: Color| {
+            let f = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn a_panel_is_linen_cloth_with_a_stitched_four_dye_border() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (800, 600));
+        ui.panel(Rect::new(20, 20, 400, 300));
+        let colors = solid_colors(&ui);
+        assert!(colors.contains(&theme::INK) && colors.contains(&theme::LINEN));
+        for dye in [theme::MADDER, theme::WOAD, theme::WELD, theme::WODE] {
+            assert!(colors.contains(&dye), "stitch dye {dye:?} missing");
+        }
+    }
+
+    #[test]
+    fn a_banner_hangs_below_its_anchor_and_holds_the_title() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (800, 600));
+        let body = ui.banner(50, 40, 2, "Lobby");
+        assert_eq!((body.x, body.y), (50, 40));
+        assert!(body.w >= text_width("Lobby", 2));
+        // The swallow-tail reaches below the body.
+        let lowest = ui
+            .draw
+            .quads
+            .iter()
+            .map(|q| i32::from(q.pos[1]) + i32::from(q.size[1]))
+            .max()
+            .unwrap();
+        assert!(lowest > body.bottom());
+        // Title in linen on madder.
+        assert!(
+            ui.draw
+                .quads
+                .iter()
+                .any(|q| q.glyph != crate::draw::SOLID && q.color == theme::LINEN)
+        );
+        assert!(contrast(theme::LINEN, theme::MADDER) > 4.5);
+    }
+
+    #[test]
+    fn the_header_puts_a_hint_beside_the_banner() {
+        let mut ui = Ui::new();
+        ui.begin_frame(UiInput::default(), (1280, 720));
+        let panel = Rect::new(100, 80, 800, 500);
+        let banner = ui.header(panel, "Settings", "Changes are saved when you go back.");
+        assert!(banner.y < panel.y, "the banner hangs from the top edge");
+        let hint_x = ui
+            .draw
+            .quads
+            .iter()
+            .filter(|q| q.glyph != crate::draw::SOLID && q.color == theme::INK_MUTED)
+            .map(|q| i32::from(q.pos[0]))
+            .min()
+            .expect("a hint");
+        assert!(hint_x > banner.right());
+    }
+
+    #[test]
+    fn button_states_read_differently() {
+        let draw = |enabled: bool, style: ButtonStyle, mouse: (i32, i32), down: bool| {
+            let mut ui = Ui::new();
+            ui.begin_frame(
+                UiInput {
+                    mouse,
+                    pressed: down,
+                    ..Default::default()
+                },
+                (800, 600),
+            );
+            ui.button(Rect::new(10, 10, 140, 44), "Go", style, enabled);
+            ui.draw.quads
+        };
+        let away = (500, 500);
+        let normal = draw(true, ButtonStyle::Normal, away, false);
+        let hot = draw(true, ButtonStyle::Normal, (20, 20), false);
+        let down = draw(true, ButtonStyle::Normal, (20, 20), true);
+        let off = draw(false, ButtonStyle::Normal, (20, 20), false);
+        let primary = draw(true, ButtonStyle::Primary, away, false);
+        assert_ne!(normal, hot);
+        assert_ne!(hot, down);
+        assert_ne!(normal, off);
+        let fills = |q: &[crate::draw::Quad]| -> Vec<Color> {
+            q.iter()
+                .filter(|q| q.glyph == crate::draw::SOLID)
+                .map(|q| q.color)
+                .collect()
+        };
+        assert!(fills(&hot).contains(&theme::WELD), "hover shows a weld rim");
+        assert!(fills(&primary).contains(&theme::PRIMARY));
+        assert!(!fills(&normal).contains(&theme::PRIMARY));
+        // Text is ink on cloth (readable), pale and soft when disabled.
+        let ink = |q: &[crate::draw::Quad], c: Color| {
+            q.iter()
+                .any(|q| q.glyph != crate::draw::SOLID && q.color == c)
+        };
+        assert!(ink(&normal, theme::INK) && ink(&off, theme::DISABLED_INK));
+        assert!(ink(&primary, theme::LINEN));
+        assert!(contrast(theme::INK, theme::CLOTH) > 7.0);
+        assert!(contrast(theme::LINEN, theme::PRIMARY) > 4.5);
+        assert!(contrast(theme::INK_MUTED, theme::LINEN) > 4.5);
+    }
 }
