@@ -451,9 +451,12 @@ impl Running {
         self.sandbox.dirty = true;
     }
 
-    /// F1: the next idle worker while there is one, else the scroll.
+    /// F1: closes the scroll if it is open, else the next idle worker while
+    /// there is one, else opens the scroll.
     pub fn f1_key(&mut self) {
-        let idle = self.conquest_units
+        // With the scroll open, F1 closes it like the scroll's own hint says.
+        let idle = !self.hud.help
+            && self.conquest_units
             && self.watching.is_none()
             && self.idle_workers(self.sandbox.side).next().is_some();
         if idle {

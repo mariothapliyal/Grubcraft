@@ -130,7 +130,7 @@ mod field;
 mod fog;
 #[cfg(test)]
 mod goldens;
-// Not wired in yet: the Guide's data (docs/08-ui-ux.md#guide).
+// The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
 mod hud;
 mod lens;
@@ -3416,17 +3416,20 @@ impl Running {
                 true
             }
             WindowEvent::KeyboardInput { event: key, .. } => {
-                if key.state == ElementState::Pressed {
-                    match key.physical_key {
-                        PhysicalKey::Code(KeyCode::ArrowUp) => self.ui_input.up = true,
-                        PhysicalKey::Code(KeyCode::ArrowDown) => self.ui_input.down = true,
-                        PhysicalKey::Code(KeyCode::ArrowLeft) => self.ui_input.left = true,
-                        PhysicalKey::Code(KeyCode::ArrowRight) => self.ui_input.right = true,
-                        PhysicalKey::Code(KeyCode::Escape | KeyCode::KeyU) if !key.repeat => {
-                            self.ui_input.escape = true;
-                        }
-                        _ => {}
+                // Key releases carry on to the battle, so a key held while the
+                // Guide opened is not left stuck down.
+                if key.state != ElementState::Pressed {
+                    return false;
+                }
+                match key.physical_key {
+                    PhysicalKey::Code(KeyCode::ArrowUp) => self.ui_input.up = true,
+                    PhysicalKey::Code(KeyCode::ArrowDown) => self.ui_input.down = true,
+                    PhysicalKey::Code(KeyCode::ArrowLeft) => self.ui_input.left = true,
+                    PhysicalKey::Code(KeyCode::ArrowRight) => self.ui_input.right = true,
+                    PhysicalKey::Code(KeyCode::Escape | KeyCode::KeyU) if !key.repeat => {
+                        self.ui_input.escape = true;
                     }
+                    _ => {}
                 }
                 true
             }

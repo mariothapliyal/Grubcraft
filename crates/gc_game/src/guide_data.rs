@@ -403,7 +403,10 @@ fn num(v: f64) -> String {
     if (v - v.round()).abs() < 1e-9 {
         format!("{}", v.round() as i64)
     } else {
-        format!("{v:.2}").trim_end_matches('0').to_string()
+        format!("{v:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 
@@ -781,7 +784,9 @@ impl Ctx<'_> {
             .r
             .units
             .iter()
-            .filter(|u| u.tier == tier && u.class != Class::Worker)
+            .filter(|u| {
+                u.tier == tier && u.class != Class::Worker && matches!(u.from, From::Building(_))
+            })
             .map(|u| u.stats.name.as_str())
             .collect();
         (b, u)
