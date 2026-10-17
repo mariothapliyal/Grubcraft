@@ -668,9 +668,9 @@ impl Steward {
             }
             Some((b, self.expansion_site(s, look, self.home?)?))
         };
-        // The opening's production buildings go up whatever the workers,
-        // and while it is arming.
-        let opening_more = production < usize::from(s.plan.early.producers);
+        // The opening's production buildings after the first go up
+        // whatever the workers, and while it is arming.
+        let opening_more = production > 0 && production < usize::from(s.plan.early.producers);
         let grown = !self.arming
             && production < usize::from(s.plan.producers_per_tier) * usize::from(look.tier.max(1))
             && workers >= 8 + 6 * production;
@@ -850,8 +850,15 @@ impl Steward {
         let left: u32 = grub.iter().map(|n| n.3).sum();
         let running_out = left < LOW * grub.len().max(1) as u32 || grub.len() < 2;
         let time = s.now >= s.expand_after;
-        // An opening that expands early does, seeps full or not.
-        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t);
+        // An opening that expands early does, seeps full or not, once: while
+        // every hub it has is at home.
+        let early = s.plan.early.expand_at.is_some_and(|t| s.now >= t)
+            && self.home.is_some_and(|home| {
+                look.mine
+                    .iter()
+                    .filter(|m| m.hub(s.kit.economy))
+                    .all(|m| m.at().distance(home) <= SERVE)
+            });
         let rising = look
             .mine
             .iter()

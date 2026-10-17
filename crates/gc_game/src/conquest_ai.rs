@@ -102,7 +102,7 @@ pub fn seat(
     roll: u64,
     minds: &mut Minds,
 ) {
-    let factions = conquest::factions(setup);
+    let sides: Vec<(Faction, u8)> = setup.players.iter().map(|s| (s.faction, s.team)).collect();
     for (i, slot) in setup.players.iter().enumerate() {
         if slot.kind != SlotKind::Ai {
             continue;
@@ -110,36 +110,38 @@ pub fn seat(
         let level = Difficulty::from_index(usize::from(slot.ai_level));
         let temper = temper(roll, i);
         minds.add(mind_for(
-            data, table, map, i, &factions, level, temper, roll, None,
+            data, table, map, i, &sides, level, temper, roll, None,
         ));
     }
 }
 
-/// The Conquest mind for player `i`, playing `faction` at `level`, its
-/// personality picked by `temper` and its seed from `roll`; it picks its
-/// own opening unless given one.
+/// The Conquest mind for player `i` of `sides` (each player's faction and
+/// team) at `level`, its personality picked by `temper` and its seed from
+/// `roll`; it picks its own opening unless given one.
 #[allow(clippy::too_many_arguments)]
 fn mind_for(
     data: &GameData,
     table: &Table,
     map: &Map,
     i: usize,
-    factions: &[Faction],
+    sides: &[(Faction, u8)],
     level: Difficulty,
     temper: u32,
     roll: u64,
     opening: Option<&'static Opening>,
 ) -> Mind {
-    let faction = factions[i];
+    let (faction, team) = sides[i];
     let config = MindConfig {
         party: i as u8,
         difficulty: level,
         personality: gc_ai::personality::pick(faction, temper),
         seed: roll ^ i as u64,
     };
-    let rivals: Vec<Faction> = (0..factions.len())
-        .filter(|&j| j != i)
-        .map(|j| factions[j])
+    // The factions it faces: its allies are no rivals.
+    let rivals: Vec<Faction> = sides
+        .iter()
+        .filter(|&&(_, t)| t != team)
+        .map(|&(f, _)| f)
         .collect();
     let kit = Arc::new(kit(data, table, map, faction));
     Mind::conquest(config, kit, &rivals, opening)
@@ -284,6 +286,7 @@ mod tests {
         let units = conquest::unit_stats(&data);
         let nav = map.nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
+        let sides: Vec<(Faction, u8)> = factions.iter().copied().zip(teams.clone()).collect();
         let setup = MatchSetup {
             seed,
             capacities: Capacities::default(),
@@ -312,7 +315,7 @@ mod tests {
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
             let opening = openings.get(i).copied().flatten();
             minds.add(mind_for(
-                &data, &table, &map, i, factions, level, temper, seed, opening,
+                &data, &table, &map, i, &sides, level, temper, seed, opening,
             ));
         }
         let opening = conquest::opening(&data, &table, &map, &world, factions);
@@ -521,7 +524,8 @@ mod tests {
     /// after the battle lines, and what the army waits for once it is
     /// gathering.
     #[test]
-    fn a_conquest_minds_lens_panel_shows_its_economy_belief_and_plan() {
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::CarrionConcord];
         let played = play(0, &factions, &[Difficulty::Veteran], 7, 8);
         let mut weighed = false;

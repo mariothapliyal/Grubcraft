@@ -20,11 +20,12 @@ pub struct Opening {
     pub who: Vec<String>,
     /// Workers it has before its first production building.
     pub workers_first: u8,
-    /// Production buildings it puts up early, whatever its worker count.
+    /// Production buildings it puts up early: the first at `workers_first`,
+    /// the others whatever its worker count.
     pub producers: u8,
     /// Most workers while the opening lasts.
     pub worker_cap: Option<u8>,
-    /// Minute from which it expands, its seeps full or not.
+    /// Minute from which it takes one more base, its seeps full or not.
     pub expand_at: Option<u8>,
     /// Defence towers it puts up by its hall.
     pub towers: u8,

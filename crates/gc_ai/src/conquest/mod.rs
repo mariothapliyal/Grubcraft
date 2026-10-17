@@ -205,8 +205,10 @@ impl Realm {
                     .marshal
                     .odds
                     .iter()
-                    .find(|(o, _)| *o == b.owner)
-                    .map_or(String::new(), |(_, o)| format!(", odds {o:+.2}"));
+                    .find(|(o, ..)| *o == b.owner)
+                    .map_or(String::new(), |&(_, o, at)| {
+                        format!(", odds {o:+.2} as of {}", crate::lens::clock(at))
+                    });
                 format!("{} {} supply{odds}", named(b), b.supply)
             })
             .collect();

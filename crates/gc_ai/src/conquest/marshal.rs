@@ -136,7 +136,8 @@ pub struct Marshal {
     contesting_since: Option<u32>,
     /// Until this tick it raids and leaves the Heart alone.
     raid_until: u32,
-    /// It has set out on an attack: its opening's first wave is spent.
+    /// It has set out on an attack or for the Heart: its opening's first
+    /// wave is spent.
     attacked: bool,
     orders: Orders,
     wants: Vec<Want>,
@@ -145,11 +146,12 @@ pub struct Marshal {
     /// for the AI lens to show.
     pub belief: Vec<spymaster::Belief>,
     /// How it last weighed its army against each enemy's (-1 to +1), by
-    /// owner. Only for the AI lens to show.
-    pub odds: Vec<(u8, f32)>,
-    /// The supply it has gathered and the wave it waits for, as of its
-    /// last think. Only for the AI lens to show.
-    pub wave: Option<(u32, u32)>,
+    /// owner, and the tick it did. Only for the AI lens to show.
+    pub odds: Vec<(u8, f32, u32)>,
+    /// The supply it has gathered, the wave it waits for, and whether it
+    /// is ready to set out (its wave gathered, or its supply full), as of
+    /// its last think. Only for the AI lens to show.
+    pub wave: Option<(u32, u32, bool)>,
 }
 
 impl Marshal {
@@ -334,7 +336,7 @@ impl Marshal {
         let ready = have >= want || (capped(s) && have >= FIRST_WAVE);
         let enough = have >= FIRST_WAVE;
         self.belief = spymaster::beliefs(s);
-        self.wave = Some((have.round() as u32, want.ceil() as u32));
+        self.wave = Some((have.round() as u32, want.ceil() as u32, ready));
         // Armies brawling on the Heart and nobody holding it long is a
         // stalemate (games of four or more): an army that has fought for it
         // a long while goes to break a base instead, or to find one on a
@@ -343,9 +345,11 @@ impl Marshal {
         if we_hold_heart(s) || !s.world.heart().is_some_and(|h| h.open) {
             self.contesting_since = None;
         }
-        if self
-            .contesting_since
-            .is_some_and(|t| s.now >= t + HEART_PATIENCE)
+        if ready
+            && s.now >= self.regroup_until
+            && self
+                .contesting_since
+                .is_some_and(|t| s.now >= t + HEART_PATIENCE)
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -415,13 +419,10 @@ impl Marshal {
                 if let Some((goal, note)) = set_out {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
-                    match goal {
-                        Goal::Heart(_) => {
-                            self.contesting_since.get_or_insert(s.now);
-                        }
-                        Goal::Attack(_) => self.attacked = true,
-                        _ => {}
+                    if matches!(goal, Goal::Heart(_)) {
+                        self.contesting_since.get_or_insert(s.now);
                     }
+                    self.attacked = true;
                     self.goal = goal;
                     c.journal.note(s.now, note);
                 }
@@ -637,9 +638,9 @@ impl Marshal {
             .collect();
         // Keep the odds for the lens.
         for &(o, _, margin) in &weighed {
-            match self.odds.iter_mut().find(|(owner, _)| *owner == o) {
-                Some((_, m)) => *m = margin,
-                None => self.odds.push((o, margin)),
+            match self.odds.iter_mut().find(|(owner, ..)| *owner == o) {
+                Some(kept) => *kept = (o, margin, s.now),
+                None => self.odds.push((o, margin, s.now)),
             }
         }
         weighed
@@ -668,8 +669,10 @@ impl Marshal {
                 "regrouping after a costly attack, {}s more",
                 (self.regroup_until - now).div_ceil(TICKS_PER_SECOND)
             )),
-            Goal::Gather => wave.map(|(have, want)| {
-                if have >= want {
+            Goal::Gather => wave.map(|(have, want, ready)| {
+                if ready && have < want {
+                    format!("supply is full at {have}: waiting for a target or better odds")
+                } else if ready {
                     format!("wave of {want} supply is ready: waiting for a target or better odds")
                 } else {
                     format!("gathering until its wave is ready: {have} of {want} supply")

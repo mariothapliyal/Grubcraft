@@ -5,16 +5,17 @@
 //
 // Each match a mind picks one of its personality's openings at random; a
 // Warlord picks one that does well against the factions it faces. A Recruit
-// always plays Steady.
+// always plays Steady. Steady lasts no time at all: it is the usual rules,
+// which its numbers spell out.
 //
 //   who            the personalities that play it (empty: every one)
 //   workers_first  workers it has before its first production building
-//   producers      production buildings it puts up early, whatever its
-//                  worker count
+//   producers      production buildings it puts up early: the first at
+//                  workers_first, the others whatever its worker count
 //   worker_cap     most workers while the opening lasts (None: as many as
 //                  its seeps take)
-//   expand_at      minute from which it expands, seeps full or not (None:
-//                  when they are full, or run low)
+//   expand_at      minute from which it takes one more base, seeps full
+//                  or not (None: when they are full, or run low)
 //   towers         defence towers it puts up by its hall
 //   first_wave     supply its first attack sets out with (None: the usual
 //                  wave)
