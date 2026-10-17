@@ -54,3 +54,22 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 | Drill p99, wall clock | 1.37 to 1.45 ms | 1.19 to 1.25 ms |
 
 **Left for later:** number 2 (crowding) already looks only under each regiment's own circle; making it cheaper means caching overlaps between ticks. Number 3 belongs with the pathfinding work in M3, when Conquest maps add buildings to route around.
+
+## Six players on a 768-tile map (2026-10-17, Conquest step 6)
+
+**Where it was measured:** the new `conquest-6p` bench (`gc_bench --scenario conquest-6p`): six players with 100 regiments each on a 768-tile ridged map in a Conquest match played in fog of war, 230 buildings laid one a tick at the start, 6,000 ticks. Cloud container, wall clock; instruction counts under callgrind for the breakdowns.
+
+**Two costs that only show on big maps, found and cut:**
+
+| | Before | After |
+|---|---|---|
+| A building going up (typical tick, few regiments) | 21 ms | 3.9 ms |
+| A building going up (worst tick) | 220 ms | about 25 ms |
+| Tick p50 in fog of war | 2.5 ms | 0.97 ms |
+| Tick p50 without fog | 0.42 ms | 0.41 ms |
+
+- **Laying a building** renumbered the walking grid's areas with a flood fill over the whole map (about 650 M instructions on a 768-tile map). Areas are now renumbered near the building when that can be told from a box round it, and in two quick passes over the map when it can't; links are made again only in sectors where a cell may have opened or shut. The worst ticks left are the whole-map renumbering (two areas joined, or a wall cutting the map) and the sector searches, about 25 ms on a 768-tile map.
+- **Fog of war** had every regiment test every building each tick (600 × 230), and search 32 tiles round it every tick. Buildings are now sorted into 32-tile cells each tick and only nearby cells are tested, and each regiment and building looks round it once in four ticks (five times a second, each on its own tick; a sighting lingers 3 seconds anyway).
+
+**Left for later:** the sim heap is 20.5 MB on a 768-tile map (the walking grid and its copies), over the 8 MB budget set for 256-tile maps; budgets for big maps come with the six-player soak.
+
