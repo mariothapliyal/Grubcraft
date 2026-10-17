@@ -339,9 +339,14 @@ impl Steward {
     }
 
     /// A building going up with nobody building it gets the nearest
-    /// worker.
+    /// worker. One growing on its own (a Brood building that used up its
+    /// Gnawer) needs nobody.
     fn finish_buildings(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
-        for m in look.mine.iter().filter(|m| !m.finished()) {
+        for m in look
+            .mine
+            .iter()
+            .filter(|m| !m.finished() && !m.view.growing)
+        {
             if self.is_busy(m.view.handle) {
                 continue;
             }

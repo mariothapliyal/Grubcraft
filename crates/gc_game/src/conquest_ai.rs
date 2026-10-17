@@ -57,7 +57,7 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
         .collect();
     Kit {
         // gc_data and gc_ai list the factions in the same order.
-        faction: gc_ai::Faction::from_index(faction as u8),
+        faction,
         economy: EconomyStyle::Shared,
         buildings,
         units,
@@ -111,10 +111,7 @@ fn mind_for(
     let config = MindConfig {
         party: i as u8,
         difficulty: level,
-        personality: gc_ai::personality::pick(
-            gc_ai::Faction::from_index(faction as u8),
-            Pcg32::new(roll, i as u64).next_u32(),
-        ),
+        personality: gc_ai::personality::pick(faction, Pcg32::new(roll, i as u64).next_u32()),
         seed: roll ^ i as u64,
     };
     Mind::conquest(config, Arc::new(kit(data, table, map, faction)))
@@ -236,7 +233,7 @@ mod tests {
         let trace = journal || trace == "1";
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(choice);
+        let map = conquest::make_map(choice, seed);
         let units = conquest::unit_stats(&data);
         let nav = map.nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
@@ -340,7 +337,7 @@ mod tests {
     fn a_kit_holds_the_factions_own_build_menu_and_the_maps_starts() {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(1);
+        let map = conquest::make_map(1, 0);
         for f in Faction::ALL {
             let k = kit(&data, &table, &map, f);
             assert_eq!(k.faction as u8, f as u8);
