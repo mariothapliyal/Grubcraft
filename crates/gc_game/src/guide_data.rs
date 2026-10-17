@@ -409,7 +409,7 @@ fn thousands(v: u32) -> String {
     let s = v.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -790,7 +790,7 @@ impl Ctx<'_> {
         fact(&mut facts, "Role", role_name(b.role));
         match (b.role, b.upgrades_from.as_deref(), self.main_at(b.tier)) {
             (Role::Main, Some(from), _) => {
-                fact(&mut facts, "Needs", format!("An upgrade of the {from}"))
+                fact(&mut facts, "Needs", format!("An upgrade of the {from}"));
             }
             (Role::Main, None, _) => fact(&mut facts, "Needs", "You start with it"),
             (_, _, Some(main)) if b.tier > 1 => fact(
@@ -1195,7 +1195,7 @@ mod tests {
         names
             .iter()
             .filter(|n| !seen.insert(**n))
-            .map(|n| n.to_string())
+            .map(ToString::to_string)
             .collect()
     }
 
