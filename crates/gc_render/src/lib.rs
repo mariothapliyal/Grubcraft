@@ -243,6 +243,11 @@ struct TerrainGpu {
     max_height: f32,
     samples_per_tile: u32,
     water_level: f32,
+    /// One texel per tile: how much of the ground is in view (see
+    /// [`Renderer::set_fog`]).
+    fog_map: wgpu::Texture,
+    /// Whether the fog map holds anything but all-clear.
+    fogged: bool,
 }
 
 pub struct Renderer {
@@ -265,8 +270,9 @@ pub struct Renderer {
     block_shadow_pipeline: wgpu::RenderPipeline,
     shadow_map: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
-    /// Blends the ground tint between its texels.
-    tint_sampler: wgpu::Sampler,
+    /// Soft edges for the fog map, and the ground tint blended between
+    /// its texels.
+    soft_sampler: wgpu::Sampler,
     /// Bound where the shadow map would be while the shadow map is drawn.
     no_shadow_map: wgpu::TextureView,
     post: post::PostGpu,
@@ -530,6 +536,16 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -615,8 +631,8 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let tint_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("ground tint"),
+        let soft_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fog of war and ground tint"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
@@ -687,7 +703,7 @@ impl Renderer {
             block_shadow_pipeline,
             shadow_map,
             shadow_sampler,
-            tint_sampler,
+            soft_sampler,
             no_shadow_map,
             post,
             post_targets,
@@ -949,6 +965,29 @@ impl Renderer {
             tint_extent,
         );
         let tint_view = tint_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // All clear until `set_fog` says otherwise.
+        let tiles = (t.size - 1) / t.samples_per_tile;
+        let fog_map = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fog of war"),
+            size: wgpu::Extent3d {
+                width: tiles,
+                height: tiles,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        Self::write_fog(
+            &self.queue,
+            &fog_map,
+            tiles,
+            &vec![255; (tiles * tiles) as usize],
+        );
+        let fog_view = fog_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("world"),
@@ -972,11 +1011,15 @@ impl Renderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
-                        resource: wgpu::BindingResource::TextureView(&tint_view),
+                        resource: wgpu::BindingResource::TextureView(&fog_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::Sampler(&self.tint_sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.soft_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&tint_view),
                     },
                 ],
             })
@@ -984,7 +1027,6 @@ impl Renderer {
         let shadow_bind_group = bind_group(&self.shadow_globals, &self.no_shadow_map);
         let bind_group = bind_group(&self.globals, &self.shadow_map);
 
-        let tiles = (t.size - 1) / t.samples_per_tile;
         let chunks_per_side = tiles.div_ceil(CHUNK_TILES);
         let chunk_count = chunks_per_side * chunks_per_side;
         self.static_gpu_bytes -= self.chunk_instances.size();
@@ -1000,7 +1042,8 @@ impl Renderer {
         self.visible_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.sun_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.chunk_levels = vec![0; chunk_count as usize];
-        self.terrain_gpu_bytes = t.heights.len() as u64 * 2 + u64::from(tint_side * tint_side) * 4;
+        self.terrain_gpu_bytes = t.heights.len() as u64 * 2 + u64::from(tint_side * tint_side) * 4
+            + u64::from(tiles * tiles);
         self.terrain = Some(TerrainGpu {
             bind_group,
             shadow_bind_group,
@@ -1009,7 +1052,54 @@ impl Renderer {
             max_height: t.max_height,
             samples_per_tile: t.samples_per_tile,
             water_level: t.water_level,
+            fog_map,
+            fogged: false,
         });
+    }
+
+    fn write_fog(queue: &wgpu::Queue, texture: &wgpu::Texture, tiles: u32, values: &[u8]) {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            values,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(tiles),
+                rows_per_image: Some(tiles),
+            },
+            wgpu::Extent3d {
+                width: tiles,
+                height: tiles,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// Draw the ground as fog of war has it: one byte per map tile, row by
+    /// row from the north-west corner, 255 for ground in view, down to 0 for
+    /// ground never seen (about 140 is seen before but not now). The edges
+    /// are blurred over about a tile. `None` is no fog at all, as after
+    /// `set_terrain`; it costs nothing when the ground is already clear.
+    /// Cheap enough to call several times a second. Does nothing before
+    /// `set_terrain`, or when `values` is not `tiles × tiles` long.
+    pub fn set_fog(&mut self, values: Option<&[u8]>) {
+        let Some(terrain) = &mut self.terrain else {
+            return;
+        };
+        let tiles = terrain.tiles;
+        let n = (tiles * tiles) as usize;
+        match values {
+            Some(v) if v.len() == n => Self::write_fog(&self.queue, &terrain.fog_map, tiles, v),
+            None if terrain.fogged => {
+                Self::write_fog(&self.queue, &terrain.fog_map, tiles, &vec![255; n]);
+            }
+            _ => return,
+        }
+        terrain.fogged = values.is_some();
     }
 
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
