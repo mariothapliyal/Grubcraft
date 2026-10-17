@@ -308,10 +308,13 @@ impl Steward {
         if banked < 2 * MARROW_ENOUGH || s.now < self.next_rebalance || !clicks.free() {
             return;
         }
-        let on_marrow = |n: u16| look.served.iter().any(|m| m.0 == n && m.1 == Resource::Marrow);
+        let on_marrow = |n: u16| {
+            look.served
+                .iter()
+                .any(|m| m.0 == n && m.1 == Resource::Marrow)
+        };
         let Some(w) = look.workers.iter().find(|w| {
-            !self.recently_sent(w.handle)
-                && s.world.gathers_at(w.handle).is_some_and(on_marrow)
+            !self.recently_sent(w.handle) && s.world.gathers_at(w.handle).is_some_and(on_marrow)
         }) else {
             return;
         };
@@ -325,7 +328,13 @@ impl Steward {
         else {
             return;
         };
-        clicks.give(s.now, Command::Gather { regiment: w.handle, node });
+        clicks.give(
+            s.now,
+            Command::Gather {
+                regiment: w.handle,
+                node,
+            },
+        );
         self.sent.push((w.handle, s.now));
         self.next_rebalance = s.now + REBALANCE_TICKS;
     }
@@ -781,7 +790,10 @@ impl Steward {
             let Some(unit) = options.into_iter().find(paid) else {
                 continue;
             };
-            let (g, mr) = (u32::from(unit.unit.cost_grub), u32::from(unit.unit.cost_marrow));
+            let (g, mr) = (
+                u32::from(unit.unit.cost_grub),
+                u32::from(unit.unit.cost_marrow),
+            );
             if bank.supply_used + u32::from(unit.unit.supply) > bank.supply_cap {
                 return;
             }

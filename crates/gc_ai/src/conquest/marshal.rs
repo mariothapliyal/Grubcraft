@@ -301,22 +301,26 @@ impl Marshal {
         };
         match self.goal {
             Goal::Gather => {
-                if (ready || enemy_holds_heart(s)) && let Some(heart) = heart_to_take(s) {
+                if (ready || enemy_holds_heart(s))
+                    && let Some(heart) = heart_to_take(s)
+                {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
                     self.goal = Goal::Heart(heart);
                     c.captain.journal.note(
                         s.now,
-                        format!("Going to take the Titan's Heart with {} regiments", army.len()),
+                        format!(
+                            "Going to take the Titan's Heart with {} regiments",
+                            army.len()
+                        ),
                     );
                 } else if ready && let Some(target) = self.target(s, centroid(army)) {
                     self.out = army.iter().map(|r| r.handle).collect();
                     self.set_out_with = soldiers(&self.out);
                     self.goal = Goal::Attack(target);
-                    c.captain.journal.note(
-                        s.now,
-                        format!("Attacking with {} regiments", army.len()),
-                    );
+                    c.captain
+                        .journal
+                        .note(s.now, format!("Attacking with {} regiments", army.len()));
                 }
             }
             Goal::Attack(_) | Goal::Heart(_) => {
@@ -334,9 +338,10 @@ impl Marshal {
                     matches!(self.goal, Goal::Heart(_)) || enemy_holds_heart(s)
                 }) {
                     if !matches!(self.goal, Goal::Heart(_)) {
-                        c.captain
-                            .journal
-                            .note(s.now, "They hold the Heart: going to take it back".to_string());
+                        c.captain.journal.note(
+                            s.now,
+                            "They hold the Heart: going to take it back".to_string(),
+                        );
                     }
                     self.goal = Goal::Heart(heart);
                 } else if matches!(self.goal, Goal::Heart(_)) {
