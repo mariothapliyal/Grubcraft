@@ -18,7 +18,7 @@ use gc_sim::{
 use gc_ui::Settings;
 use gc_ui::lobby::{
     COLORS, CONQUEST_MAP_PLAYERS, Faction as LobbyFaction, GameMode, LobbySettings, MatchStart,
-    Slot, SlotKind, Tempo,
+    Slot, SlotKind, Tempo, Victory,
 };
 use glam::Vec2;
 
@@ -159,6 +159,14 @@ pub fn plan(
             .objects_of(Kind::Heart)
             .next()
             .map(|o| tile_centre(o.at)),
+    }
+}
+
+/// What the simulation plays a lobby's Victory setting for.
+pub fn victories(v: Victory) -> Victories {
+    Victories {
+        annihilation: v.annihilation(),
+        heart: v.heart(),
     }
 }
 
@@ -543,10 +551,7 @@ mod tests {
     fn every_conquest_map_has_its_heart_in_the_middle() {
         for choice in 0..CONQUEST_MAP_PLAYERS.len() {
             let map = make_map(choice);
-            let both = Victories {
-                annihilation: true,
-                heart: true,
-            };
+            let both = Victories::BOTH;
             let data = data();
             let plan = plan(&Table::new(&data), &data, &map, &[], Tempo::Epic, both);
             let at = plan.heart.expect("a Heart");

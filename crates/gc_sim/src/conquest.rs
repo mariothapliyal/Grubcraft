@@ -408,6 +408,24 @@ impl Conquest {
         self.economy.stop(r);
     }
 
+    /// The parties in `out` leave the field: their regiments, then their
+    /// buildings.
+    pub(crate) fn eliminate(&mut self, out: u8, regs: &mut Regiments, nav: &mut Nav) {
+        for i in 0..regs.alive.len() {
+            if regs.alive[i] && out & (1 << regs.owner[i]) != 0 {
+                self.stop_work(i);
+                regs.despawn(regs.handle(i));
+            }
+        }
+        let gone: Vec<StructureHandle> = (self.structures.iter())
+            .filter(|s| out & (1 << s.owner) != 0)
+            .map(|s| s.handle)
+            .collect();
+        for h in gone {
+            self.structures.despawn(h, nav, regs);
+        }
+    }
+
     /// The "structures" part of the state hash: the unit table and the
     /// buildings.
     pub(crate) fn hash_structures(&self, regs: &Regiments, h: &mut StateHasher) {

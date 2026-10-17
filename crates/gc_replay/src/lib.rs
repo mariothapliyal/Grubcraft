@@ -519,7 +519,7 @@ impl Replay {
             Some(v) => {
                 w.var(u64::from(v.holder) + 1);
                 w.var(u64::from(v.tick));
-                w.u8(Win::ALL.iter().position(|&b| b == v.by).unwrap_or(0) as u8);
+                w.u8(v.by as u8);
             }
             None => w.var(0),
         }
@@ -928,7 +928,7 @@ fn read_header(r: &mut Reader, format: u16) -> Option<Header> {
                     .filter(|&p| usize::from(p) < gc_sim::MAX_PARTIES)?,
                 tick: r.var_as()?,
                 by: if format >= 14 {
-                    *Win::ALL.get(usize::from(r.u8()?))?
+                    Win::from_u8(r.u8()?)?
                 } else {
                     Win::Field
                 },
@@ -1325,10 +1325,7 @@ mod tests {
             start,
             gather_percent: 150,
             build_percent: 75,
-            victories: Victories {
-                annihilation: true,
-                heart: true,
-            },
+            victories: Victories::BOTH,
             heart: Some(FxVec2::from_ints(32, 32)),
         };
         let mut world = World::new(&setup);

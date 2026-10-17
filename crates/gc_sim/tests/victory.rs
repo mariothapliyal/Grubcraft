@@ -68,11 +68,6 @@ fn conquest(teams: &[u8], victories: Victories) -> World {
     w
 }
 
-const BOTH: Victories = Victories {
-    annihilation: true,
-    heart: true,
-};
-
 fn order(w: &mut World, player: u8, command: Command) {
     let applied = w
         .tick(&[PlayerCommand { player, command }])
@@ -143,19 +138,21 @@ fn two_sides(victories: Victories) -> (World, StructureHandle) {
 
 #[test]
 fn a_player_without_a_main_building_is_out_after_ninety_seconds() {
-    let (mut w, theirs) = two_sides(BOTH);
+    let (mut w, theirs) = two_sides(Victories::BOTH);
     put_up(&mut w, 1, HOUSE, 50, 50);
     run(&mut w, 2 * TICKS_PER_SECOND);
     assert_eq!(w.exiled(1), None);
     order(&mut w, 1, Command::RemoveStructure { structure: theirs });
-    let since = until(&mut w, TICKS_PER_SECOND, |w| w.exiled(1).is_some());
-    let lost = w.exiled(1).unwrap();
+    until(&mut w, TICKS_PER_SECOND, |w| w.exiled(1).is_some());
+    let deadline = w.exiled(1).unwrap();
+    assert_eq!(deadline, w.tick_count() + EXILE_TICKS);
     assert!(!w.is_out(1));
     // Not out a second early.
-    run(&mut w, EXILE_TICKS - TICKS_PER_SECOND - since);
+    let wait = deadline - TICKS_PER_SECOND - w.tick_count();
+    run(&mut w, wait);
     assert!(!w.is_out(1) && w.verdict().is_none());
     until(&mut w, 2 * TICKS_PER_SECOND, |w| w.is_out(1));
-    assert_eq!(w.tick_count(), lost + EXILE_TICKS);
+    assert_eq!(w.tick_count(), deadline);
     // Their regiments and buildings leave the field.
     assert!(w.regiments.iter().all(|r| r.owner == 0));
     assert!(w.structures().unwrap().iter().all(|s| s.owner == 0));
@@ -164,7 +161,7 @@ fn a_player_without_a_main_building_is_out_after_ninety_seconds() {
         w.verdict(),
         Some(Verdict {
             holder: 0,
-            tick: lost + EXILE_TICKS,
+            tick: deadline,
             by: Win::Annihilation
         })
     );
@@ -172,7 +169,7 @@ fn a_player_without_a_main_building_is_out_after_ninety_seconds() {
 
 #[test]
 fn laying_a_main_building_stops_the_countdown() {
-    let (mut w, theirs) = two_sides(BOTH);
+    let (mut w, theirs) = two_sides(Victories::BOTH);
     run(&mut w, TICKS_PER_SECOND);
     order(&mut w, 1, Command::RemoveStructure { structure: theirs });
     run(&mut w, 60 * TICKS_PER_SECOND);
@@ -203,7 +200,7 @@ fn conquest_is_not_won_by_holding_the_field() {
 #[test]
 fn allies_win_together_and_a_free_for_all_goes_on() {
     for (teams, ends) in [(&[0u8, 0, 1][..], true), (&[0, 1, 2][..], false)] {
-        let mut w = conquest(teams, BOTH);
+        let mut w = conquest(teams, Victories::BOTH);
         put_up(&mut w, 0, HALL, 4, 4);
         put_up(&mut w, 1, HALL, 56, 4);
         let last = put_up(&mut w, 2, HALL, 56, 56);
@@ -219,7 +216,7 @@ fn allies_win_together_and_a_free_for_all_goes_on() {
 
 #[test]
 fn holding_the_heart_uncontested_for_three_minutes_wins() {
-    let (mut w, _) = two_sides(BOTH);
+    let (mut w, _) = two_sides(Victories::BOTH);
     let unlock = HEART_UNLOCK_TICKS * QUICK / 100;
     assert_eq!(w.heart().unwrap().unlock, unlock);
     spawn(&mut w, 0, HEART.0, HEART.1 + 2);
@@ -227,9 +224,11 @@ fn holding_the_heart_uncontested_for_three_minutes_wins() {
     let wait = unlock - w.tick_count() - 1;
     run(&mut w, wait);
     assert_eq!(w.heart().unwrap().held, None);
+    assert!(!w.heart().unwrap().open);
     until(&mut w, 2 * TICKS_PER_SECOND, |w| {
         w.heart().unwrap().held.is_some()
     });
+    assert!(w.heart().unwrap().open);
     let (holder, since) = w.heart().unwrap().held.unwrap();
     assert_eq!(holder, 0);
     // An enemy at the Heart contests it, and the hold starts over.

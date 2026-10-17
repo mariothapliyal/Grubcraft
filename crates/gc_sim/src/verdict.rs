@@ -38,10 +38,10 @@ pub const HEART_HOLD_TICKS: u32 = 3 * 60 * TICKS_PER_SECOND;
 pub const HEART_REACH: Fx = Fx::from_int(6);
 
 /// How a match was won.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Win {
     /// A side held the field.
-    #[default]
     Field,
     /// Every enemy is out of a Conquest match.
     Annihilation,
@@ -50,7 +50,11 @@ pub enum Win {
 }
 
 impl Win {
-    pub const ALL: [Win; 3] = [Win::Field, Win::Annihilation, Win::Heart];
+    pub fn from_u8(v: u8) -> Option<Win> {
+        [Win::Field, Win::Annihilation, Win::Heart]
+            .get(usize::from(v))
+            .copied()
+    }
 }
 
 /// How a match was decided.
@@ -72,6 +76,18 @@ pub struct Victories {
     pub heart: bool,
 }
 
+impl Victories {
+    pub const BOTH: Victories = Victories {
+        annihilation: true,
+        heart: true,
+    };
+
+    /// Whether the match is played for any victory at all.
+    pub fn any(self) -> bool {
+        self.annihilation || self.heart
+    }
+}
+
 /// The Titan's Heart as the game shows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeartView {
@@ -79,6 +95,8 @@ pub struct HeartView {
     pub at: FxVec2,
     /// The battle tick it can first be held.
     pub unlock: u32,
+    /// Whether that tick has come.
+    pub open: bool,
     /// The party holding it and the tick it took it, while one does.
     pub held: Option<(PlayerId, u32)>,
 }
@@ -110,37 +128,54 @@ impl Throne {
         }
     }
 
-    /// Where the Heart is, if it counts.
-    pub(crate) fn heart_at(&self) -> Option<FxVec2> {
-        self.heart.map(|(at, _)| at)
+    /// Whether the rulings want to know who has a main building.
+    pub(crate) fn counts_mains(&self) -> bool {
+        self.victories.annihilation
     }
 
-    pub(crate) fn heart(&self) -> Option<HeartView> {
+    /// The Heart `battle` ticks into the battle.
+    pub(crate) fn heart(&self, battle: u32) -> Option<HeartView> {
         self.heart.map(|(at, unlock)| HeartView {
             at,
             unlock,
+            open: battle >= unlock,
             held: self.held,
         })
     }
 
-    /// The tick `party` lost its last main building, while it has none and
-    /// isn't out yet.
+    /// The parties with fighting regiments at the Heart, `battle` ticks
+    /// into the battle: none before it unlocks.
+    fn at_heart(&self, regs: &Regiments, battle: u32) -> u8 {
+        let Some((at, unlock)) = self.heart else {
+            return 0;
+        };
+        if battle < unlock {
+            return 0;
+        }
+        let reach = u64::from(HEART_REACH.raw().unsigned_abs()).pow(2);
+        (0..regs.alive.len())
+            .filter(|&i| fighting(regs, i) && (regs.position[i] - at).length_sq_raw() <= reach)
+            .fold(0u8, |m, i| m | 1 << regs.owner[i])
+    }
+
+    /// The tick `party` is out unless it lays a main building first, while
+    /// it has none and isn't out yet.
     pub(crate) fn exiled(&self, party: PlayerId) -> Option<u32> {
-        self.exiled.get(usize::from(party)).copied().flatten()
+        let since = self.exiled.get(usize::from(party)).copied().flatten()?;
+        Some(since + EXILE_TICKS)
     }
 
     pub(crate) fn is_out(&self, party: PlayerId) -> bool {
         self.out & (1 << party) != 0
     }
 
-    /// One look, at tick `now` (`battle` ticks into the battle): the parties
-    /// with a main building (`mains`) and with regiments at the Heart
-    /// (`at_heart`). Returns the parties put out now, and the verdict if
-    /// this decides the match.
-    pub(crate) fn update(
+    /// One look, at tick `now` (`battle` ticks into the battle), given the
+    /// parties with a main building (`mains`). Returns the parties put out
+    /// now, and the verdict if this decides the match.
+    fn update(
         &mut self,
+        regs: &Regiments,
         mains: u8,
-        at_heart: u8,
         stances: &Stances,
         now: u32,
         battle: u32,
@@ -148,11 +183,8 @@ impl Throne {
         let mut put_out = 0;
         if self.victories.annihilation {
             self.had_main |= mains;
-            for p in 0..MAX_PARTIES {
-                let bit = 1u8 << p;
-                if self.had_main & !self.out & bit == 0 {
-                    continue;
-                }
+            for p in parties(self.had_main & !self.out) {
+                let (p, bit) = (usize::from(p), 1u8 << p);
                 if mains & bit != 0 {
                     self.exiled[p] = None;
                 } else {
@@ -165,10 +197,9 @@ impl Throne {
             }
             self.out |= put_out;
         }
-        let at_heart = at_heart & !self.out;
-        if let Some((_, unlock)) = self.heart {
+        if self.heart.is_some() {
+            let at_heart = self.at_heart(regs, battle) & !self.out;
             self.held = match (self.held, one_side(at_heart, stances)) {
-                _ if battle < unlock => None,
                 (Some((p, since)), Some(h)) if !stances.hostile(p, h) => Some((p, since)),
                 (_, Some(h)) => Some((h, now)),
                 (_, None) => None,
@@ -187,15 +218,14 @@ impl Throne {
             }
         }
         // Once someone is out, the match ends when everyone left is friends.
-        let left = self.had_main & !self.out;
-        let verdict = (self.out != 0)
-            .then(|| one_side(left, stances))
-            .flatten()
-            .map(|holder| Verdict {
-                holder,
-                tick: now,
-                by: Win::Annihilation,
-            });
+        if self.out == 0 {
+            return (put_out, None);
+        }
+        let verdict = one_side(self.had_main & !self.out, stances).map(|holder| Verdict {
+            holder,
+            tick: now,
+            by: Win::Annihilation,
+        });
         (put_out, verdict)
     }
 
@@ -211,7 +241,7 @@ impl Throne {
         h.u8(self.had_main);
         h.u8(self.out);
         for e in self.exiled {
-            h.u32(e.map_or(u32::MAX, |t| t));
+            h.u32(e.unwrap_or(u32::MAX));
         }
     }
 }
@@ -219,11 +249,20 @@ impl Throne {
 /// The lowest of the parties in `mask`, if there are any and none of them
 /// is another's enemy.
 fn one_side(mask: u8, stances: &Stances) -> Option<PlayerId> {
-    let parties = || (0..MAX_PARTIES as PlayerId).filter(move |&p| mask & (1 << p) != 0);
-    let first = parties().next()?;
-    parties()
-        .all(|p| parties().all(|q| !stances.hostile(p, q)))
+    let first = parties(mask).next()?;
+    parties(mask)
+        .all(|p| parties(mask).all(|q| !stances.hostile(p, q)))
         .then_some(first)
+}
+
+/// The parties in `mask`, lowest first.
+fn parties(mask: u8) -> impl Iterator<Item = PlayerId> + Clone {
+    (0..MAX_PARTIES as PlayerId).filter(move |&p| mask & (1 << p) != 0)
+}
+
+/// Whether regiment `i` is still fighting: not broken, not wiped out.
+fn fighting(regs: &Regiments, i: usize) -> bool {
+    regs.alive[i] && regs.models[i] > 0 && !regs.morale_state[i].broken()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,17 +288,14 @@ impl Judge {
         self.throne.as_ref()
     }
 
-    /// Whether Conquest's rulings want a look at tick `now`.
-    pub(crate) fn conquest_due(&self, now: u32) -> bool {
-        self.throne.is_some() && self.decided.is_none() && now.is_multiple_of(TICKS_PER_SECOND)
-    }
-
-    /// Conquest's look at tick `now` (see [`Throne::update`]); returns the
-    /// parties put out.
+    /// Conquest's once-a-second look after tick `now` has been played
+    /// (`battle` ticks into the battle; see [`Throne::update`]), asking
+    /// `mains` for the parties with a main building only if the rulings
+    /// need them. Returns the parties put out.
     pub(crate) fn update_conquest(
         &mut self,
-        mains: u8,
-        at_heart: u8,
+        regs: &Regiments,
+        mains: impl FnOnce() -> u8,
         stances: &Stances,
         now: u32,
         battle: u32,
@@ -267,8 +303,12 @@ impl Judge {
         let Some(throne) = &mut self.throne else {
             return 0;
         };
-        let (out, verdict) = throne.update(mains, at_heart, stances, now, battle);
-        self.decided = self.decided.or(verdict);
+        if self.decided.is_some() || !now.is_multiple_of(TICKS_PER_SECOND) {
+            return 0;
+        }
+        let mains = if throne.counts_mains() { mains() } else { 0 };
+        let (out, verdict) = throne.update(regs, mains, stances, now, battle);
+        self.decided = verdict;
         out
     }
 
@@ -346,27 +386,25 @@ pub(crate) fn holding_the_field(
 ) -> Option<PlayerId> {
     // Parties with regiments fighting, and those with one in the open.
     let (mut standing, mut shown) = (0u8, 0u8);
-    let fighting = |i: usize| regs.alive[i] && regs.models[i] > 0 && !regs.morale_state[i].broken();
-    for i in (0..regs.alive.len()).filter(|&i| fighting(i)) {
+    for i in (0..regs.alive.len()).filter(|&i| fighting(regs, i)) {
         let bit = 1u8 << regs.owner[i];
         standing |= bit;
         if !vision.hidden(i, regs.owner[i]) {
             shown |= bit;
         }
     }
-    (0..MAX_PARTIES as PlayerId).find(|&p| {
-        if standing & (1 << p) == 0 {
-            return false;
-        }
-        let foes = (0..MAX_PARTIES as PlayerId)
-            .filter(|&q| standing & (1 << q) != 0 && stances.hostile(p, q))
+    parties(standing).find(|&p| {
+        let foes = parties(standing)
+            .filter(|&q| stances.hostile(p, q))
             .fold(0u8, |m, q| m | 1 << q);
         if foes == 0 {
             return true;
         }
         shown & (1 << p) != 0
             && !(0..regs.alive.len()).any(|i| {
-                fighting(i) && foes & (1 << regs.owner[i]) != 0 && vision.sees(p, i, regs.owner[i])
+                fighting(regs, i)
+                    && foes & (1 << regs.owner[i]) != 0
+                    && vision.sees(p, i, regs.owner[i])
             })
     })
 }

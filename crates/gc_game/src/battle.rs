@@ -8,8 +8,8 @@ use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_fixed::Fx;
 use gc_sim::champions::{HEART, Outcome};
 use gc_sim::{
-    Challenge, Command, EXILE_TICKS, HEART_HOLD_TICKS, PlayerCommand, PlayerId, UnitStats, Win,
-    World,
+    Challenge, Command, HEART_HOLD_TICKS, PlayerCommand, PlayerId, TICKS_PER_SECOND, UnitStats,
+    Win, World,
 };
 use gc_ui::Settings;
 use gc_ui::lobby::{
@@ -32,7 +32,7 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
 }
 
 /// The champions' result stays on screen this long after the duel ends.
-const NEWS_TICKS: u32 = 8 * gc_sim::TICKS_PER_SECOND;
+const NEWS_TICKS: u32 = 8 * TICKS_PER_SECOND;
 
 /// One side of a match.
 pub struct Party {
@@ -323,6 +323,9 @@ pub struct Battle {
     /// Conquest: who is running out of time to lay a main building, and
     /// who holds the Titan's Heart.
     pub throne: Option<String>,
+    /// The second of the match and whether it was decided when `throne`
+    /// was last written: its clocks count whole seconds.
+    looked: Option<(u32, bool)>,
 }
 
 impl Battle {
@@ -334,12 +337,20 @@ impl Battle {
             champions: None,
             heard: None,
             throne: None,
+            looked: None,
         }
     }
 
     /// Follow Conquest's countdowns: players with no main building left
     /// and the Titan's Heart. Returns true when the news changed.
     pub fn watch_throne(&mut self, world: &World, parties: &[Party]) -> bool {
+        let look = (
+            world.tick_count() / TICKS_PER_SECOND,
+            self.outcome.is_some(),
+        );
+        if self.looked.replace(look) == Some(look) {
+            return false;
+        }
         let news = (self.outcome.is_none())
             .then(|| throne_news(world, parties, self.me))
             .flatten();
@@ -382,39 +393,22 @@ impl Battle {
             .battle_ticks()
             .saturating_sub(world.tick_count() - v.tick);
         let time = gc_ai::lens::clock(ticks);
-        let Some(me) = self.me else {
-            let how = match v.by {
-                Win::Field => "holds the field",
-                Win::Annihilation => "is the last standing",
-                Win::Heart => "holds the Titan's Heart",
-            };
-            self.outcome = Some(format!(
-                "OVER  {} {how} after {time}. Esc: menu",
-                party_name(parties, p)
-            ));
-            return true;
-        };
-        let won = !world.hostile(me, p);
-        self.won = Some(won);
         let name = party_name(parties, p);
-        self.outcome = Some(match (won, v.by) {
-            (true, Win::Field) => format!("VICTORY  the field is yours after {time}. Esc: menu"),
-            (true, Win::Annihilation) => {
-                format!("VICTORY  every enemy is out after {time}. Esc: menu")
-            }
-            (true, Win::Heart) => {
-                format!("VICTORY  the Titan's Heart is yours after {time}. Esc: menu")
-            }
-            (false, Win::Field) => {
-                format!("DEFEAT  {name} holds the field after {time}. Esc: menu")
-            }
-            (false, Win::Annihilation) => {
-                format!("DEFEAT  {name} is the last standing after {time}. Esc: menu")
-            }
-            (false, Win::Heart) => {
-                format!("DEFEAT  {name} holds the Titan's Heart after {time}. Esc: menu")
-            }
-        });
+        let how = match v.by {
+            Win::Field => "holds the field",
+            Win::Annihilation => "is the last standing",
+            Win::Heart => "holds the Titan's Heart",
+        };
+        let won = self.me.map(|me| !world.hostile(me, p));
+        self.won = won;
+        let said = match (won, v.by) {
+            (None, _) => format!("OVER  {name} {how}"),
+            (Some(false), _) => format!("DEFEAT  {name} {how}"),
+            (Some(true), Win::Field) => "VICTORY  the field is yours".into(),
+            (Some(true), Win::Annihilation) => "VICTORY  every enemy is out".into(),
+            (Some(true), Win::Heart) => "VICTORY  the Titan's Heart is yours".into(),
+        };
+        self.outcome = Some(format!("{said} after {time}. Esc: menu"));
         true
     }
 }
@@ -424,24 +418,22 @@ impl Battle {
 /// Titan's Heart once it can be held.
 fn throne_news(world: &World, parties: &[Party], me: Option<PlayerId>) -> Option<String> {
     let now = world.tick_count();
-    let left = |since: u32| gc_ai::lens::clock((since + EXILE_TICKS).saturating_sub(now));
     let mut lines: Vec<String> = (0..parties.len() as PlayerId)
         .filter_map(|p| {
-            let since = world.exiled(p)?;
+            let left = gc_ai::lens::clock(world.exiled(p)?.saturating_sub(now));
             Some(if Some(p) == me {
-                format!(
-                    "YOUR LAST MAIN BUILDING IS DOWN  lay one within {} or you are out",
-                    left(since)
-                )
+                format!("YOUR LAST MAIN BUILDING IS DOWN  lay one within {left} or you are out")
             } else {
                 format!(
-                    "{} has {} to lay a main building or is out",
-                    party_name(parties, p),
-                    left(since)
+                    "{} has {left} to lay a main building or is out",
+                    party_name(parties, p)
                 )
             })
         })
         .collect();
+    if me.is_some_and(|me| world.is_out(me)) {
+        lines.push("YOU ARE OUT  your regiments and buildings have left the field".into());
+    }
     if let Some(heart) = world.heart() {
         let battle = world.battle_ticks();
         match heart.held {
@@ -455,8 +447,11 @@ fn throne_news(world: &World, parties: &[Party], me: Option<PlayerId>) -> Option
                 lines.push(format!("HEART  {who} the Titan's Heart: {held} of {of}"));
             }
             // Said for a while once it opens.
-            None if battle >= heart.unlock && battle < heart.unlock + HEART_NEWS_TICKS => {
-                lines.push("HEART  The Titan's Heart can be held: three minutes wins".into());
+            None if heart.open && battle < heart.unlock + HEART_NEWS_TICKS => {
+                lines.push(format!(
+                    "HEART  The Titan's Heart can be held: hold it for {} to win",
+                    gc_ai::lens::clock(HEART_HOLD_TICKS)
+                ));
             }
             None => {}
         }
@@ -465,7 +460,7 @@ fn throne_news(world: &World, parties: &[Party], me: Option<PlayerId>) -> Option
 }
 
 /// How long the Heart's opening is news.
-const HEART_NEWS_TICKS: u32 = 15 * gc_sim::TICKS_PER_SECOND;
+const HEART_NEWS_TICKS: u32 = 15 * TICKS_PER_SECOND;
 
 /// The line about the champions' duel `c`, which stands at `outcome`.
 fn champion_news(

@@ -629,6 +629,13 @@ impl Structures {
         self.standing().map(|i| self.view(i))
     }
 
+    /// The parties with a main building standing (one going up counts).
+    pub(crate) fn mains(&self) -> u8 {
+        (self.standing())
+            .filter(|&i| self.stats_of(i).role == Role::Main)
+            .fold(0u8, |m, i| m | 1 << self.owner[i])
+    }
+
     /// The slots of the buildings standing, in index order.
     fn standing(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.hp.len()).filter(|&i| self.hp[i] > 0)

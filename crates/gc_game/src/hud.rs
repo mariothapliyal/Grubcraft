@@ -450,11 +450,10 @@ impl Running {
         }
         if let Some(heart) = self.world.heart() {
             let at = from_fx_vec(heart.at);
+            let width = crate::buildings::HEART_BASE;
             hud.blocks.push(Block {
-                rect: [at.x - 1.5, at.y - 1.5, 3.0, 3.0],
-                color: (heart.held).map_or(crate::buildings::HEART_COLOR, |(p, _)| {
-                    crate::color_of(&self.parties, p)
-                }),
+                rect: [at.x - width / 2.0, at.y - width / 2.0, width, width],
+                color: crate::buildings::heart_color(&heart, &self.parties),
                 selected: false,
             });
         }

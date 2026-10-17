@@ -712,7 +712,7 @@ impl World {
         // A match played for a victory is won only that way; the sandbox's
         // buildings leave holding the field as it was.
         let v = setup.victories;
-        if v.annihilation || v.heart {
+        if v.any() {
             self.judge
                 .conquest(verdict::Throne::new(v, setup.heart, setup.build_percent));
         }
@@ -965,9 +965,7 @@ impl World {
         self.tick += 1;
         self.judge
             .update(&self.regiments, &self.stances, &self.vision, self.tick);
-        if self.judge.conquest_due(self.tick) {
-            self.judge_conquest();
-        }
+        self.judge_conquest();
         stats
     }
 
@@ -977,46 +975,16 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return;
         };
-        let stats = c.structures.buildings();
-        let mains = (c.structures.iter())
-            .filter(|s| stats[usize::from(s.building)].role == structures::Role::Main)
-            .fold(0u8, |m, s| m | 1 << s.owner);
-        let regs = &self.regiments;
-        let at_heart = self
-            .judge
-            .throne()
-            .and_then(verdict::Throne::heart_at)
-            .map_or(0, |at| {
-                let reach = u64::from(HEART_REACH.raw().unsigned_abs()).pow(2);
-                (0..regs.alive.len())
-                    .filter(|&i| {
-                        regs.alive[i]
-                            && regs.models[i] > 0
-                            && !regs.morale_state[i].broken()
-                            && (regs.position[i] - at).length_sq_raw() <= reach
-                    })
-                    .fold(0u8, |m, i| m | 1 << regs.owner[i])
-            });
         let battle = self.deploy.battle_ticks(self.tick);
-        let out = (self.judge).update_conquest(mains, at_heart, &self.stances, self.tick, battle);
-        if out == 0 {
-            return;
-        }
-        // Whoever is out leaves the field: their regiments, then their
-        // buildings.
-        for i in 0..self.regiments.alive.len() {
-            if self.regiments.alive[i] && out & (1 << self.regiments.owner[i]) != 0 {
-                c.stop_work(i);
-                let h = self.regiments.handle(i);
-                self.regiments.despawn(h);
-            }
-        }
-        let gone: Vec<StructureHandle> = (c.structures.iter())
-            .filter(|s| out & (1 << s.owner) != 0)
-            .map(|s| s.handle)
-            .collect();
-        for h in gone {
-            c.structures.despawn(h, &mut self.nav, &self.regiments);
+        let out = self.judge.update_conquest(
+            &self.regiments,
+            || c.structures.mains(),
+            &self.stances,
+            self.tick,
+            battle,
+        );
+        if out != 0 {
+            c.eliminate(out, &mut self.regiments, &mut self.nav);
         }
     }
 
@@ -1441,8 +1409,9 @@ impl World {
         self.judge.verdict()
     }
 
-    /// The tick Conquest player `party` lost its last main building, while
-    /// it has none and has [`EXILE_TICKS`] from then to lay one.
+    /// The tick Conquest player `party` is out unless it lays a main
+    /// building first, while it has none ([`EXILE_TICKS`] after it lost
+    /// its last).
     pub fn exiled(&self, party: PlayerId) -> Option<u32> {
         self.judge.throne()?.exiled(party)
     }
@@ -1454,12 +1423,13 @@ impl World {
 
     /// The Titan's Heart, in a Conquest match played for it.
     pub fn heart(&self) -> Option<HeartView> {
-        self.judge.throne()?.heart()
+        self.judge.throne()?.heart(self.battle_ticks())
     }
 
     /// The party holding the field right now, if one is (see [`verdict`]).
     pub fn holding_the_field(&self) -> Option<PlayerId> {
-        if self.deploying() {
+        // Conquest's rulings don't count it.
+        if self.deploying() || self.judge.throne().is_some() {
             return None;
         }
         verdict::holding_the_field(&self.regiments, &self.stances, &self.vision)

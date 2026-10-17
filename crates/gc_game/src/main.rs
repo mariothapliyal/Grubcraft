@@ -3036,10 +3036,7 @@ impl Running {
                 &self.heightmap,
                 &conquest::factions(start),
                 start.settings.tempo,
-                gc_sim::Victories {
-                    annihilation: start.settings.victory.annihilation(),
-                    heart: start.settings.victory.heart(),
-                },
+                conquest::victories(start.settings.victory),
             )),
             _ => None,
         };
@@ -4050,10 +4047,7 @@ impl Running {
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
         buildings::push_nodes(&self.world, &mut self.instances);
-        let holder = (self.world.heart())
-            .and_then(|h| h.held)
-            .map(|(p, _)| color_of(parties, p));
-        buildings::push_heart(&self.world, holder, &mut self.instances);
+        buildings::push_heart(&self.world, parties, &mut self.instances);
     }
 
     /// A plate under the cursor the size of the regiment B would place.

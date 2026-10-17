@@ -172,10 +172,7 @@ impl Match {
             &map,
             &FACTIONS,
             Tempo::Swift,
-            Victories {
-                annihilation: true,
-                heart: true,
-            },
+            Victories::BOTH,
         );
         let mut world = World::new(&setup);
         assert!(world.conquest(&plan.setup()));
