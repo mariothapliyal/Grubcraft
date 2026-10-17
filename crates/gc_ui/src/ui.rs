@@ -249,7 +249,7 @@ impl Ui {
             y += 6;
         }
         self.draw.border(cloth, 1, theme::LINEN_DK);
-        stitch(&mut self.draw, r.inset(8));
+        stitch(&mut self.draw, r.inset(5));
     }
 
     /// A hanging cloth banner with a swallow-tail, `title` on it, hung from

@@ -1314,7 +1314,9 @@ impl<N: Network> Menu<N> {
             } else {
                 "No replays yet. Play a battle and it will be here to watch."
             };
-            ui.label(panel.x + 24, top, 1, theme::INK_MUTED, text);
+            // An empty shelf: the message sits in the middle of the cloth.
+            let middle = Rect::new(panel.x + 24, top, panel.w - 48, (bottom - top) / 2);
+            ui.label_centered(middle, 1, theme::INK_MUTED, text);
         }
         let first = self.replay_page * per_page;
         let mut y = top;
@@ -1709,6 +1711,80 @@ mod tests {
             self.frame(i);
             self.frame(UiInput::default());
         }
+    }
+
+    #[test]
+    fn every_screen_has_a_title_banner_and_a_hint() {
+        let mut h = Harness::new();
+        assert!(h.has("GRUBCRAFT") && h.has("Command regiments"));
+        h.click("Play");
+        assert!(h.has("Play") && h.has("Host a game for friends"));
+        h.click("Back");
+        h.click("Replays");
+        assert!(h.has("Every battle is saved"));
+        h.click("Back");
+        h.click("Settings");
+        assert!(h.has("Changes are saved when you go back"));
+        h.click("Back");
+        h.click("Play");
+        h.click_last("Host");
+        assert_eq!(h.menu.screen(), Screen::Lobby);
+        assert!(h.has("Lobby") && h.has("press Start"));
+    }
+
+    #[test]
+    fn back_is_in_the_same_place_on_every_screen() {
+        let mut h = Harness::new();
+        let mut spots = Vec::new();
+        h.click("Play");
+        spots.push(("Play", h.text_pos("Back")));
+        h.click("Back");
+        h.click("Replays");
+        spots.push(("Replays", h.text_pos("Back")));
+        h.click("Back");
+        h.click("Settings");
+        spots.push(("Settings", h.text_pos("Back")));
+        // Bottom left of each panel (panels differ in width, so the exact x
+        // does; each label sits in a 140 wide button at the panel's edge).
+        for (name, (x, y)) in &spots {
+            assert!(*x < 440 && *y > 520, "{name}: {x},{y}");
+        }
+    }
+
+    #[test]
+    fn a_greyed_start_says_why_beside_it() {
+        let mut h = Harness::new();
+        h.click("Play");
+        h.click_last("Host");
+        assert!(h.has("Add at least one more player"));
+        let (rx, ry) = h.text_pos("Add at least one more player");
+        let (sx, sy) = *find_all(&h.ui.draw, "Start").last().unwrap();
+        // Right-aligned just above the Start button, in the same column.
+        assert!(rx + 40 > sx - 100 && ry < sy);
+        h.click("Add AI");
+        assert!(!h.has("Add at least one more player"));
+        assert!(h.has("Everyone is ready."));
+    }
+
+    #[test]
+    fn join_says_what_it_needs_while_it_is_greyed_out() {
+        let mut h = Harness::new();
+        h.click("Play");
+        assert!(h.has("Pick a game above, or type its address."));
+    }
+
+    #[test]
+    fn the_menu_draws_cloth_not_the_old_dark_panels() {
+        let h = Harness::new();
+        let solid: Vec<_> =
+            h.ui.draw
+                .quads
+                .iter()
+                .filter(|q| q.glyph == crate::draw::SOLID)
+                .map(|q| q.color)
+                .collect();
+        assert!(solid.contains(&theme::LINEN) && solid.contains(&theme::MADDER));
+        assert!(!solid.contains(&theme::PANEL));
     }
 
     #[test]
