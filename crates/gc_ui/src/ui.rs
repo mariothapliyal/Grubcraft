@@ -256,7 +256,7 @@ impl Ui {
     /// its top-left corner at `(x, y)`. Returns the banner's body.
     pub fn banner(&mut self, x: i32, y: i32, scale: i32, title: &str) -> Rect {
         let tw = text_width(title, scale);
-        let body = Rect::new(x, y, tw + 40, 16 * scale + 8);
+        let body = Rect::new(x, y, tw + 40, 16 * scale + 12);
         let tail = 6 + 2 * scale;
         // Shadow, then the swallow-tail: ink first, madder inside it.
         self.draw.rect(
@@ -301,7 +301,7 @@ impl Ui {
     /// the panel's top edge and, beside it, a one-line hint saying what to
     /// do here. Returns the banner's body.
     pub fn header(&mut self, panel: Rect, title: &str, hint: &str) -> Rect {
-        let banner = self.banner(panel.x + 24, panel.y - 10, 2, title);
+        let banner = self.banner(panel.x + 24, panel.y - 12, 2, title);
         if !hint.is_empty() {
             let x = banner.right() + 20;
             let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
@@ -512,9 +512,11 @@ impl Ui {
         ] {
             let c = if lit { theme::MADDER } else { theme::INK };
             let (cx, cy) = (box_r.x + box_r.w / 2, box_r.y + box_r.h / 2);
+            // A small triangle: its tip points the way the arrow steps.
             for i in 0..5 {
-                let x = if back { cx - 3 + i } else { cx + 3 - i - 2 };
-                self.draw.rect(Rect::new(x, cy - 5 + i, 2, 11 - 2 * i), c);
+                let h = if back { 2 + 2 * i } else { 10 - 2 * i };
+                self.draw
+                    .rect(Rect::new(cx - 4 + i * 2, cy - h / 2, 2, h), c);
             }
         }
         let mid = Rect::new(r.x + arrow, r.y, r.w - 2 * arrow, r.h);

@@ -799,7 +799,7 @@ impl<N: Network> Menu<N> {
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
         // between the title and the host's name, clear of them.
-        let option_r = Rect::new(panel.x + 164, panel.y + 4, 270, sp(36));
+        let option_r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -1100,7 +1100,7 @@ impl<N: Network> Menu<N> {
         // Why Start is greyed out, right beside it.
         let (why, color) = match &blocker {
             Some(why) if mismatch => (why.as_str(), theme::BAD_INK),
-            Some(why) => (why.as_str(), theme::INK_MUTED),
+            Some(why) => (why.as_str(), theme::INK),
             None => ("Everyone is ready.", theme::GOOD_INK),
         };
         let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
@@ -1407,7 +1407,7 @@ impl<N: Network> Menu<N> {
         let col_w = (panel.w - 72) / 2;
         let row = sp(34);
         let gap = sp(6);
-        let top = panel.y + sp(60);
+        let top = panel.y + sp(60).max(46);
         let before = self.settings.clone();
         let s = &mut self.settings;
 
@@ -1418,7 +1418,7 @@ impl<N: Network> Menu<N> {
             w: col_w,
             gap,
         };
-        ui.label(st.x, st.y, 1, theme::MADDER, "PLAYER");
+        ui.section(st.x, st.y, st.w, "PLAYER");
         st.skip(sp(22));
         let mut name = std::mem::take(&mut s.player_name);
         ui.text_field(st.next(row), &mut name, 16, "Your name");
@@ -1440,7 +1440,7 @@ impl<N: Network> Menu<N> {
             s.faction = Faction::ALL[fi];
         }
         st.skip(sp(10));
-        ui.label(st.x, st.y, 1, theme::MADDER, "DISPLAY");
+        ui.section(st.x, st.y, st.w, "DISPLAY");
         st.skip(sp(22));
         let gnames: Vec<&str> = GraphicsPreset::ALL.iter().map(|g| g.name()).collect();
         let mut gi = GraphicsPreset::ALL
@@ -1483,7 +1483,7 @@ impl<N: Network> Menu<N> {
             w: col_w,
             gap,
         };
-        ui.label(st.x, st.y, 1, theme::MADDER, "AUDIO");
+        ui.section(st.x, st.y, st.w, "AUDIO");
         st.skip(sp(22));
         ui.slider(st.next(row), "Master", &mut s.volume_master);
         ui.slider(st.next(row), "Music", &mut s.volume_music);
@@ -1491,7 +1491,7 @@ impl<N: Network> Menu<N> {
         ui.slider(st.next(row), "Unit voices", &mut s.volume_voices);
         ui.slider(st.next(row), "Interface", &mut s.volume_ui);
         st.skip(sp(10));
-        ui.label(st.x, st.y, 1, theme::MADDER, "ACCESSIBILITY");
+        ui.section(st.x, st.y, st.w, "ACCESSIBILITY");
         st.skip(sp(22));
         ui.toggle(
             st.next(row),
