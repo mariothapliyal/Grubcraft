@@ -5,10 +5,13 @@
 //! with `gc_mapcheck gen RECIPE SIZE SEED OUT.ron` (or `gc_mapcheck
 //! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
+use gc_map::Kind;
 use gc_map::SizeClass;
-use gc_map::battle::{Region, battle_map};
+use gc_map::battle::{DEFENDER, FORT_RADIUS, Region, battle_map};
 use gc_map::conquest::{self, CONQUEST_SIZES, ConquestRecipe};
 use gc_map::recipe::{Recipe, describe};
+use gc_mapcheck::Map;
+use gc_mapcheck::map::Ground;
 use gc_mapcheck::{check, generate};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
@@ -156,4 +159,50 @@ fn every_campaign_battle_map_passes_the_checker() {
         failed.len(),
         failed.join("\n")
     );
+}
+
+/// A Fort's palisade closes round the defender's start but for its gate:
+/// with the gate shut, nothing walks out. (The checker can't see this: the
+/// defender still reaches the attacker through the gate.)
+#[test]
+fn a_forts_palisade_is_shut_but_for_its_gate() {
+    let jobs: Vec<(Region, u64)> = Region::all()
+        .filter(|r| r.fort)
+        .enumerate()
+        .map(|(k, region)| (region, k as u64))
+        .collect();
+    let failed = failures(&jobs, |&(region, seed)| {
+        let def = battle_map(region, seed);
+        let map = Map::build(&def);
+        let n = map.n;
+        let (cx, cy) = def
+            .objects
+            .iter()
+            .find(|o| o.kind == Kind::Start && o.owner == Some(DEFENDER))?
+            .at;
+        let r = FORT_RADIUS * n / 80;
+        // The gate's opening faces south, about 0.38 of the radius either
+        // side of the middle.
+        let gate = |(x, y): (i32, i32)| y >= cy + r * 4 / 5 && (x - cx).abs() <= r / 2;
+        let mut seen = vec![false; (n * n) as usize];
+        let mut todo = vec![(cx, cy)];
+        while let Some((x, y)) = todo.pop() {
+            if (x - cx).pow(2) + (y - cy).pow(2) > (r + 4).pow(2) {
+                return Some(format!("{region:?} seed {seed}: out at ({x}, {y})"));
+            }
+            for p in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                let inside = (0..n).contains(&p.0) && (0..n).contains(&p.1);
+                if !inside || gate(p) {
+                    continue;
+                }
+                let i = (p.1 * n + p.0) as usize;
+                if !seen[i] && map.ground_at(p) != Ground::Blocked {
+                    seen[i] = true;
+                    todo.push(p);
+                }
+            }
+        }
+        None
+    });
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }

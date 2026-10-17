@@ -150,7 +150,7 @@ Every recipe also scatters clumps of woods and tall grass over the north half, k
 
 *Built (random maps step 3, 2026-10-16).* `gc_map::battle::battle_map` writes the battlefield of a campaign battle from a region: its ground, the route the attacker came along, at most one feature and maybe a Fort. The campaign ([19](19-campaign.md#battles-on-the-campaign)) will call it; the lobby does not offer these maps, and the campaign itself is not built yet.
 
-**Making a campaign battle map.** A map is 64 to 96 tiles a side. Road and Burrow maps start at 64, Pass and Ford maps at 80, and a Seat, a Fort or the Lungs add 16, up to 96. The region's area, route, feature and Fort (yes or no) and a seed give the land, so the same region and seed always give the same map. Unlike a Conquest map, it is not rerolled: every kind of map passes the checker as made.
+**Making a campaign battle map.** A map is 64 to 96 tiles a side: Road and Burrow maps are 64 or 80, Pass and Ford maps 80 or 96 (the seed picks), and a Seat, a Fort or the Lungs add 16, up to 96. The region's area, route, feature and Fort (yes or no) and a seed give the land, so the same region and seed always give the same map. Unlike a Conquest map, it is not rerolled: every kind of map passes the checker as made.
 
 The map is not fair and not turned on purpose. The defender (player 0) holds the north, with its feature on its hill: a settlement's village on the slope facing the middle, a Great Place on the top. The attacker (player 1) deploys in the south, on the side it came from. With a Fort, the defender's start is on a hill inside an eight-sided palisade with a gate facing south. For now the palisade is a steep earth bank; real walls come with M3 buildings. Every map has at least two named high-ground set pieces.
 
@@ -164,7 +164,7 @@ Features become objects: a Seat is the defender's town, a Settlement a village, 
 
 **The areas.** The area is the part of the Titan's body the region lies in, and it dresses the ground: **Crown** (higher ground and a crater lake), **Ribs** (rock ridges), **Lungs** (cavern walls down the east and west edges, and rock pillars), **Gut** (low boggy ground with wadeable pools and tall grass), **Spine** (high broken ground and steep rocks), **Hands** (deep forest), **Tail** (flat waste) and **Heart** (two raised veins).
 
-**Tools and tests.** `cargo run -p gc_mapcheck -- battle AREA ROUTE FEATURE fort|open SEED OUT.ron` writes one map, and `check` and `png` work on it as on any other. The test `every_campaign_battle_map_passes_the_checker` in `tools/gc_mapcheck/tests/recipes.rs` builds one seed of each of the 448 combinations (eight areas, four routes, seven features, with or without a Fort) and requires all of them to pass. A sweep of 40 seeds of each combination (17,920 maps) also passed when the generator was built.
+**Tools and tests.** `cargo run -p gc_mapcheck -- battle AREA ROUTE FEATURE fort|open SEED OUT.ron` writes one map, and `check` and `png` work on it as on any other. The test `every_campaign_battle_map_passes_the_checker` in `tools/gc_mapcheck/tests/recipes.rs` builds one seed of each of the 448 combinations (eight areas, four routes, seven features, with or without a Fort) and requires all of them to pass. A sweep of 40 seeds of each combination (17,920 maps) also passed when the generator was built. `a_forts_palisade_is_shut_but_for_its_gate` checks that no one walks out of a Fort except through its gate.
 
 ## Water (later)
 

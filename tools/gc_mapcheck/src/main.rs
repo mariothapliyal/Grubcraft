@@ -62,7 +62,7 @@ fn battle_cmd(args: &[String]) -> Result<(), String> {
         area: named(&Area::ALL, area)?,
         route: named(&Route::ALL, route)?,
         feature: named(&Feature::ALL, feature)?,
-        fort: match fort.as_str() {
+        fort: match fort.to_ascii_lowercase().as_str() {
             "fort" => true,
             "open" => false,
             _ => return Err(format!("{fort} isn't fort or open")),
