@@ -270,6 +270,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("M  N", "Mute  music"),
             ("F11", "Dev overlay"),
             ("H or F1", "This scroll"),
+            ("U", "Guide"),
             ("F1", "Idle worker"),
         ],
     ),
@@ -345,6 +346,7 @@ pub(crate) const WIDGET_ALERT: u32 = 5 << 24;
 pub(crate) const WIDGET_QUEUE: u32 = 6 << 24;
 pub(crate) const WIDGET_POWER: u32 = 7 << 24;
 pub(crate) const WIDGET_HELP: u32 = 8 << 24;
+pub(crate) const WIDGET_GUIDE: u32 = 9 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -385,6 +387,8 @@ pub enum HudEvent {
     Power(usize),
     /// The `? Help` button was clicked: open or close the Marshal's Scroll.
     ToggleHelp,
+    /// The Guide button was clicked: open the Guide.
+    OpenGuide,
 }
 
 #[derive(Default)]
@@ -407,6 +411,7 @@ pub struct Hud {
 
 /// Widget id of the Help button's tooltip; grid slots use their index.
 const TIP_HELP: u32 = 100;
+const TIP_GUIDE: u32 = 101;
 
 /// What a tooltip says, about the button `id` at `anchor`.
 #[derive(Clone, Debug)]
@@ -657,6 +662,44 @@ impl Hud {
                 name: "Help".into(),
                 key: "H or F1".into(),
                 text: "Open or close the Marshal's Scroll, the list of keys.".into(),
+                note: String::new(),
+            });
+        }
+
+        // Guide: just left of Help.
+        let guide = Rect::new(right - 84, chip_y, 84, chip_h);
+        right = guide.x - gap;
+        let hot = guide.contains(input.mouse.0, input.mouse.1);
+        let (clicked, down) = self.press.widget(
+            WIDGET_GUIDE,
+            guide,
+            input.mouse,
+            input.left_pressed,
+            input.left_released,
+        );
+        if clicked {
+            events.push(HudEvent::OpenGuide);
+        }
+        let fill = match (down, hot) {
+            (true, _) => mix(theme::WELD, theme::INK, 0.2),
+            (_, true) => mix(theme::WELD, [255, 240, 190, 255], 0.4),
+            _ => theme::WELD,
+        };
+        draw.boxed(guide, fill, 2);
+        icons::icon(
+            draw,
+            Rect::new(guide.x + 7, guide.y + 6, 12, 12),
+            Icon::Book,
+            theme::INK,
+        );
+        draw.text_bold(guide.x + 24, text_y, 1, theme::INK, "Guide");
+        if hot {
+            self.tip = Some(Tip {
+                id: TIP_GUIDE,
+                anchor: guide,
+                name: "Guide".into(),
+                key: "U".into(),
+                text: "Every building and troop: its role, stats and upgrades.".into(),
                 note: String::new(),
             });
         }

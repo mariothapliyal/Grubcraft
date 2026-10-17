@@ -19,7 +19,9 @@ use serde::Deserialize;
 
 /// The most characters in a guide summary, so it fits the card without
 /// scrolling a long way, and in a tagline.
+#[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_SUMMARY: usize = 350;
+#[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_TAGLINE: usize = 80;
 
 /// What the roster files say about hiring a hero (docs/17 "Shared rules").

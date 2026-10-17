@@ -981,6 +981,7 @@ impl Running {
             }
             HudEvent::IdleWorker => self.next_idle_worker(),
             HudEvent::ToggleHelp => self.toggle_help(),
+            HudEvent::OpenGuide => self.open_guide(),
             // The queue gives back its last regiment, whichever is clicked.
             HudEvent::Unqueue(_) => self.untrain(),
             HudEvent::Ready => {

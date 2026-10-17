@@ -131,7 +131,6 @@ mod fog;
 #[cfg(test)]
 mod goldens;
 // Not wired in yet: the Guide's data (docs/08-ui-ux.md#guide).
-#[allow(dead_code)]
 mod guide_data;
 mod hud;
 mod lens;
@@ -657,6 +656,10 @@ struct Running {
     viewer: Option<viewer::Viewer>,
     /// Wheel movement over the viewer's panels not yet worth a whole row.
     viewer_scroll: f32,
+    /// The Guide (every building and troop), over the menu or the battle.
+    guide: Option<gc_ui::guide::Guide>,
+    /// Wheel movement over the Guide not yet worth a whole row.
+    guide_scroll: f32,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -1311,6 +1314,8 @@ impl App {
             showroom,
             viewer: None,
             viewer_scroll: 0.0,
+            guide: None,
+            guide_scroll: 0.0,
             reveal_all: false,
             fog: Default::default(),
             data_label: format!(
@@ -1396,6 +1401,9 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        if r.guide.is_some() && r.guide_event(&event) {
+            return;
+        }
         if r.menu_open {
             if r.viewer_event(&event) {
                 return;
@@ -1625,6 +1633,7 @@ impl ApplicationHandler for App {
                             r.hud.toggle_hero_preview();
                         }
                         KeyCode::KeyH if down && !event.repeat => r.toggle_help(),
+                        KeyCode::KeyU if down && !event.repeat => r.open_guide(),
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
@@ -2885,7 +2894,9 @@ impl Running {
                 .push(&cull, gc_render::MAX_BOX_INSTANCES, &mut self.instances);
         }
 
-        if self.menu_open {
+        if self.guide.is_some() {
+            self.run_guide();
+        } else if self.menu_open {
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
@@ -3279,6 +3290,7 @@ impl Running {
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox),
             MenuAction::OpenViewer => self.open_viewer("start"),
+            MenuAction::OpenGuide => self.open_guide(),
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();
@@ -3346,6 +3358,87 @@ impl Running {
         // Nothing of the battlefield view carries over.
         self.commander = false;
         self.reset_ui_input();
+    }
+
+    /// Open the Guide over whatever is on screen.
+    fn open_guide(&mut self) {
+        if self.guide.is_none() {
+            self.guide = Some(gc_ui::guide::Guide::new(guide_data::load()));
+        }
+        self.guide_scroll = 0.0;
+        self.reset_ui_input();
+    }
+
+    /// Draw this frame's Guide and close it when asked.
+    fn run_guide(&mut self) {
+        let (screen, scale) = self.ui_screen();
+        let mut input = std::mem::take(&mut self.ui_input);
+        input.mouse = self.ui_cursor();
+        self.ui.begin_frame(input, screen);
+        let event = match &mut self.guide {
+            Some(guide) => guide.frame(&mut self.ui),
+            None => gc_ui::guide::GuideEvent::None,
+        };
+        self.ui.end_frame();
+        hud::upload_ui(&mut self.renderer, &mut self.ui_quads, &self.ui.draw, scale);
+        if event == gc_ui::guide::GuideEvent::Close {
+            self.guide = None;
+            self.reset_ui_input();
+        }
+    }
+
+    /// Mouse, wheel and keys while the Guide is open. True when the event is
+    /// dealt with: neither the menu nor the battle sees it.
+    fn guide_event(&mut self, event: &WindowEvent) -> bool {
+        let (screen, _) = self.ui_screen();
+        let at = self.ui_cursor();
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.cursor = Some(*position);
+                true
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if *button == MouseButton::Left {
+                    match state {
+                        ElementState::Pressed => self.ui_input.pressed = true,
+                        ElementState::Released => self.ui_input.released = true,
+                    }
+                }
+                true
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let up = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                // A trackpad sends fractions of a row: collect them.
+                self.guide_scroll -= up;
+                let rows = self.guide_scroll.trunc();
+                self.guide_scroll -= rows;
+                if rows != 0.0
+                    && let Some(guide) = &mut self.guide
+                {
+                    guide.wheel(screen, at, rows as i32);
+                }
+                true
+            }
+            WindowEvent::KeyboardInput { event: key, .. } => {
+                if key.state == ElementState::Pressed {
+                    match key.physical_key {
+                        PhysicalKey::Code(KeyCode::ArrowUp) => self.ui_input.up = true,
+                        PhysicalKey::Code(KeyCode::ArrowDown) => self.ui_input.down = true,
+                        PhysicalKey::Code(KeyCode::ArrowLeft) => self.ui_input.left = true,
+                        PhysicalKey::Code(KeyCode::ArrowRight) => self.ui_input.right = true,
+                        PhysicalKey::Code(KeyCode::Escape | KeyCode::KeyU) if !key.repeat => {
+                            self.ui_input.escape = true;
+                        }
+                        _ => {}
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Forget a half-made click and anything typed or pressed.

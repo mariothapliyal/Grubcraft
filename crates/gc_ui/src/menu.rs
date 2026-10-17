@@ -61,6 +61,8 @@ pub enum MenuAction {
     WatchReplay(PathBuf),
     /// The Unit viewer button: the game should open the viewer.
     OpenViewer,
+    /// The Guide button: the game should open the Guide.
+    OpenGuide,
     Quit,
 }
 
@@ -437,7 +439,7 @@ impl<N: Network> Menu<N> {
 
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
-        let count = if self.in_match { 7 } else { 6 };
+        let count = if self.in_match { 8 } else { 7 };
         // Up to 66 pixels for each button and its gap, less in a short window.
         let step = ((h - 104 - 12 - 48) / count).clamp(40, 66);
         let (button_h, gap) = (step - step / 5, step / 5);
@@ -483,6 +485,9 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Replays);
             action = MenuAction::ListReplays;
+        }
+        if ui.button(stack.next(button_h), "Guide", ButtonStyle::Normal, true) {
+            action = MenuAction::OpenGuide;
         }
         if ui.button(
             stack.next(button_h),

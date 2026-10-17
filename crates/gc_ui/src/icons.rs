@@ -39,11 +39,13 @@ pub enum Icon {
     Heart,
     Flag,
     Alarm,
+    /// An open book: the Guide.
+    Book,
 }
 
 impl Icon {
     /// Every icon that draws something.
-    pub const ALL: [Icon; 24] = [
+    pub const ALL: [Icon; 25] = [
         Icon::Move,
         Icon::Attack,
         Icon::Hold,
@@ -68,6 +70,7 @@ impl Icon {
         Icon::Heart,
         Icon::Flag,
         Icon::Alarm,
+        Icon::Book,
     ];
 
     /// The pattern, top row first; `#` is ink.
@@ -225,6 +228,20 @@ impl Icon {
                 "..###.......",
                 "...##.......",
                 "....#.......",
+                "............",
+                "............",
+            ],
+            Icon::Book => [
+                "............",
+                ".####..####.",
+                "#...#..#...#",
+                "#.#.#..#.#.#",
+                "#...#..#...#",
+                "#.#.#..#.#.#",
+                "#...#..#...#",
+                "#.#.#..#.#.#",
+                "#...####...#",
+                ".###....###.",
                 "............",
                 "............",
             ],
