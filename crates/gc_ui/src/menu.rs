@@ -771,7 +771,7 @@ impl<N: Network> Menu<N> {
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
         // between the title and the host's name, clear of them.
-        let victory_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
+        let option_r = Rect::new(panel.x + 140, panel.y + 8, 270, sp(36));
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -827,7 +827,7 @@ impl<N: Network> Menu<N> {
                     .iter()
                     .position(|&v| v == settings.victory)
                     .unwrap_or(0);
-                if ui.stepper(victory_r, "Victory", &mut victory, &names) {
+                if ui.stepper(option_r, "Victory", &mut victory, &names) {
                     settings.victory = Victory::ALL[victory];
                     changed = true;
                 }
@@ -837,7 +837,7 @@ impl<N: Network> Menu<N> {
                     .iter()
                     .position(|&z| z == settings.map_size)
                     .unwrap_or(0);
-                if ui.stepper(victory_r, "Size", &mut size, &names) {
+                if ui.stepper(option_r, "Size", &mut size, &names) {
                     settings.map_size = MapSize::ALL[size];
                     changed = true;
                 }
@@ -864,7 +864,7 @@ impl<N: Network> Menu<N> {
             } else {
                 format!("Size: {}", settings.map_size.name())
             };
-            ui.label_centered(victory_r, 1, theme::TEXT, &text);
+            ui.label_centered(option_r, 1, theme::TEXT, &text);
             let on = if settings.champions { "on" } else { "off" };
             ui.label_centered(champions_r, 1, theme::MUTED, &format!("{CHAMPIONS}: {on}"));
         }

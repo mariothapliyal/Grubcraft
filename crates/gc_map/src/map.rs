@@ -3,7 +3,7 @@
 //! game, the map checker and (later) the campaign, whichever way the map
 //! was made.
 
-use crate::def::{Kind, Pos, SetPiece, SizeClass};
+use crate::def::{Kind, Land, Pos, SetPiece, SizeClass};
 
 /// Height samples per tile side. The renderer draws the ground from the
 /// samples; the walkable-ground grid reads two cells per tile from them.
@@ -189,7 +189,7 @@ impl Map {
                 let mean = sum / n;
                 let rise = hi - lo;
                 let tile = (cy / cells_per_tile) * self.tiles + cx / cells_per_tile;
-                let thicket = self.thicket.get(tile as usize) == Some(&true);
+                let thicket = self.is_thicket(tile as usize);
                 cells.push(if mean < deep || rise > cliff || thicket {
                     gc_sim::nav::BLOCKED
                 } else if mean < water {
@@ -237,6 +237,16 @@ impl Map {
             }
         }
         out
+    }
+
+    /// Whether a tile (row by row) is thicket.
+    pub fn is_thicket(&self, tile: usize) -> bool {
+        self.thicket.get(tile) == Some(&true)
+    }
+
+    /// A tile's land (row by row), or `None` on a map without lands.
+    pub fn land_at(&self, tile: usize) -> Option<Land> {
+        self.land.get(tile).map(|&b| Land::from_u8(b))
     }
 
     pub fn objects_of(&self, kind: Kind) -> impl Iterator<Item = &Placed> {

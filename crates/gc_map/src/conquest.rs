@@ -17,7 +17,7 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
+    CoverKind, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
     SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
@@ -329,10 +329,7 @@ impl Share<'_> {
             let r = self.w.range(4, 8);
             let half = self.f.scaled(60);
             if let Some(at) = self.spot((250, 950), (-half, half), r + 3) {
-                self.w.cover.push(CoverOp {
-                    shape: Shape::Disc { at, r },
-                    kind,
-                });
+                self.w.cover(Shape::Disc { at, r }, kind);
             }
         }
     }
@@ -505,7 +502,7 @@ impl Share<'_> {
                 continue;
             };
             self.claim(at, r + 2);
-            self.w.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+            self.w.ford(at, r);
             if !named && r >= 5 {
                 self.w.set_piece(SetPieceKind::Ford, at, "The reed ford");
                 named = true;

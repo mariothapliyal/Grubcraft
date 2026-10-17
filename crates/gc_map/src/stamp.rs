@@ -199,14 +199,10 @@ impl Map {
         // woods that also blocks.
         let n = tiles as usize;
         let mut cover = vec![0u8; n * n];
-        let mut thicket = vec![
-            false;
-            if def.cover.iter().any(|c| c.kind == CoverKind::Thicket) {
-                n * n
-            } else {
-                0
-            }
-        ];
+        // A layer only a map that uses it fills; empty otherwise.
+        let layer = |used: bool| if used { n * n } else { 0 };
+        let mut thicket =
+            vec![false; layer(def.cover.iter().any(|c| c.kind == CoverKind::Thicket))];
         for op in &def.cover {
             let byte = match op.kind {
                 CoverKind::Open => gc_sim::Cover::Open as u8,
@@ -214,19 +210,17 @@ impl Map {
                 CoverKind::Wood | CoverKind::Thicket => gc_sim::Cover::Wood as u8,
             };
             let dense = op.kind == CoverKind::Thicket;
-            for i in tiles_in(op.shape, def.symmetry, tiles) {
+            each_tile_in(op.shape, def.symmetry, tiles, |i| {
                 cover[i] = byte;
                 if let Some(t) = thicket.get_mut(i) {
                     *t = dense;
                 }
-            }
+            });
         }
         // The land, painted in order.
-        let mut land = vec![0u8; if def.land.is_empty() { 0 } else { n * n }];
+        let mut land = vec![0u8; layer(!def.land.is_empty())];
         for op in &def.land {
-            for i in tiles_in(op.shape, def.symmetry, tiles) {
-                land[i] = op.land as u8;
-            }
+            each_tile_in(op.shape, def.symmetry, tiles, |i| land[i] = op.land as u8);
         }
         map.cover = cover;
         map.thicket = thicket;
@@ -240,12 +234,11 @@ impl Map {
     }
 }
 
-/// The tiles (as indices, row by row) whose centres lie in a shape or any
-/// of its turned copies.
-fn tiles_in(shape: Shape, symmetry: Symmetry, tiles: i32) -> Vec<usize> {
+/// Call `f` with each tile (as an index, row by row) whose centre lies in
+/// a shape or any of its turned copies.
+fn each_tile_in(shape: Shape, symmetry: Symmetry, tiles: i32, mut f: impl FnMut(usize)) {
     let n = i64::from(tiles);
     let last = n * UNIT;
-    let mut out = Vec::new();
     for s in images(shape, symmetry, tiles) {
         let (x0, x1, y0, y1) = reach(s, 0, last);
         let tile_range = |a: i64, b: i64| (a / UNIT).max(0)..(b / UNIT + 1).min(n);
@@ -253,12 +246,11 @@ fn tiles_in(shape: Shape, symmetry: Symmetry, tiles: i32) -> Vec<usize> {
             for x in tile_range(x0, x1) {
                 let (px, py) = (x * UNIT + UNIT / 2, y * UNIT + UNIT / 2);
                 if weight(s, 0, px, py) > 0 {
-                    out.push((y * n + x) as usize);
+                    f((y * n + x) as usize);
                 }
             }
         }
     }
-    out
 }
 
 /// Octaves of rolling ground: each finer and half as strong.

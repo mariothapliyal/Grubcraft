@@ -44,8 +44,8 @@ impl Recipe {
 }
 
 /// Ground level before the stamps, and the water line (sixteenths of a
-/// tile); the Conquest recipes share the water.
-const BASE: i32 = 48;
+/// tile); the Wilds share both, the Conquest recipes the water.
+pub(crate) const BASE: i32 = 48;
 pub(crate) const WATER: i32 = 24;
 /// Water this far under the line is a ford (shallower than the 0.35 tiles
 /// the walking rules allow), and this far is too deep to wade.
@@ -89,17 +89,6 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
     for _ in 0..meadows {
         w.clump(CoverKind::Grass, &starts);
     }
-    let objects = starts
-        .iter()
-        .enumerate()
-        .map(|(owner, &at)| Object {
-            kind: Kind::Start,
-            at,
-            owner: Some(owner as u8),
-            label: String::new(),
-            once: true,
-        })
-        .collect();
     MapDef {
         name: format!("{} {seed}", recipe.name()),
         size: SizeClass::Field(tiles),
@@ -111,9 +100,24 @@ pub fn describe(recipe: Recipe, tiles: i32, seed: u64) -> MapDef {
         terrain: w.terrain,
         cover: w.cover,
         land: Vec::new(),
-        objects,
+        objects: start_objects(&starts),
         set_pieces: w.set_pieces,
     }
+}
+
+/// A start object for each player, at `starts` in player order.
+pub(crate) fn start_objects(starts: &[Pos]) -> Vec<Object> {
+    starts
+        .iter()
+        .enumerate()
+        .map(|(owner, &at)| Object {
+            kind: Kind::Start,
+            at,
+            owner: Some(owner as u8),
+            label: String::new(),
+            once: true,
+        })
+        .collect()
 }
 
 /// Writes the first player's share of a map: the north half of a Field
@@ -165,9 +169,27 @@ impl<'a> Writer<'a> {
         });
     }
 
+    pub(crate) fn cover(&mut self, shape: Shape, kind: CoverKind) {
+        self.cover.push(CoverOp { shape, kind });
+    }
+
     /// A flat, open place round a start.
     pub(crate) fn flat(&mut self, at: Pos, r: i32, edge: i32) {
         self.stamp(Shape::Disc { at, r }, Mode::Set, BASE, edge);
+    }
+
+    /// A wadeable ford of radius `r` at `at`.
+    pub(crate) fn ford(&mut self, at: Pos, r: i32) {
+        self.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+    }
+
+    /// `count` whole numbers from `lo` to `hi`, each in its own stretch of
+    /// the range, so they spread out.
+    pub(crate) fn spread(&mut self, lo: i32, hi: i32, count: i32) -> Vec<i32> {
+        let band = (hi - lo) / count.max(1);
+        (0..count)
+            .map(|k| lo + band * k + self.range(band / 4, band * 3 / 4))
+            .collect()
     }
 
     /// Where the ways through the middle line go: the distances from the
@@ -177,14 +199,7 @@ impl<'a> Writer<'a> {
         let n = self.range(fewest, most);
         let centre = n % 2 == 1;
         let pairs = n / 2;
-        let reach = self.mid - 16;
-        let offsets = (0..pairs)
-            .map(|k| {
-                // Spread the pairs out, each in its own band.
-                let band = (reach - 12) / pairs.max(1);
-                12 + band * k + self.range(band / 4, band * 3 / 4)
-            })
-            .collect();
+        let offsets = self.spread(12, self.mid - 16, pairs);
         (offsets, centre)
     }
 
@@ -218,7 +233,7 @@ impl<'a> Writer<'a> {
         } else {
             (self.mid - offsets[0], self.mid)
         };
-        self.stamp(Shape::Disc { at, r: width + 1 }, Mode::Set, FORD, 3);
+        self.ford(at, width + 1);
         self.set_piece(SetPieceKind::Ford, at, "The ford");
         // A rise behind one of the gaps, to hold it from.
         let d = offsets.last().copied().unwrap_or(0);
@@ -257,7 +272,7 @@ impl<'a> Writer<'a> {
         let (a, b) = ((-4, self.mid), (self.mid, self.mid));
         self.stamp(Shape::Line { a, b, half_width }, Mode::Lower, DEEP, 4);
         for &at in &fords {
-            self.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+            self.ford(at, r);
         }
         self.set_piece(SetPieceKind::Ford, fords[0], "The ford");
         // A rise above the first ford, far enough back that its slope
@@ -333,10 +348,7 @@ impl<'a> Writer<'a> {
                 dx * dx + dy * dy >= near * near
             });
             if clear {
-                self.cover.push(CoverOp {
-                    shape: Shape::Disc { at, r },
-                    kind,
-                });
+                self.cover(Shape::Disc { at, r }, kind);
                 return;
             }
         }

@@ -50,8 +50,8 @@ pub fn ground_tint(map: &Map) -> (u32, Vec<[u8; 4]>) {
             let (mut sum, mut count) = ([0u32; 3], 0);
             for y in ty * TINT_TILES..((ty + 1) * TINT_TILES).min(tiles) {
                 for x in tx * TINT_TILES..((tx + 1) * TINT_TILES).min(tiles) {
-                    let land = map.land[(y * tiles + x) as usize];
-                    let c = gc_map::def::Land::from_u8(land).colour();
+                    let land = map.land_at((y * tiles + x) as usize);
+                    let c = land.unwrap_or_default().colour();
                     for (s, v) in sum.iter_mut().zip(c) {
                         *s += u32::from(v);
                     }

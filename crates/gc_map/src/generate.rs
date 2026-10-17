@@ -26,8 +26,15 @@ pub const START_PLATEAUS: usize = 6;
 pub fn plateaus(tiles: u32) -> [Pos; START_PLATEAUS] {
     let n = tiles as i32;
     let inset = if n >= 512 { n / 6 } else { n / 4 };
-    let (q1, q2, q3) = (inset, n / 2, n - inset);
-    [(q1, q1), (q3, q1), (q1, q3), (q3, q3), (q2, q1), (q2, q3)]
+    let (near, mid, far) = (inset, n / 2, n - inset);
+    [
+        (near, near),
+        (far, near),
+        (near, far),
+        (far, far),
+        (mid, near),
+        (mid, far),
+    ]
 }
 
 /// [`plateaus`] for map making's wider integers.

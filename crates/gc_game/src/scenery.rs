@@ -194,7 +194,7 @@ fn thicket_tree(out: &mut Vec<BoxInstance>, tile: Vec2, seed: u64, x: u32, y: u3
         lift,
     });
     let top = lift + tall;
-    let spire = (g >> 16) % 3 == 0;
+    let spire = (g >> 16).is_multiple_of(3);
     out.push(BoxInstance {
         pos: at.to_array(),
         facing,

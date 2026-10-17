@@ -19,8 +19,7 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape, SizeClass,
-    Symmetry,
+    CoverKind, Kind, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::dist2;
@@ -677,10 +676,7 @@ impl Battle<'_> {
             let route = self.band == 0 || (at.1 - self.mid()).abs() >= self.band + r;
             let off = |&(p, d): &(Pos, i32)| dist2(p, at) >= (r + d) * (r + d);
             if route && self.no_cover.iter().all(off) {
-                self.w.cover.push(CoverOp {
-                    shape: Shape::Disc { at, r },
-                    kind,
-                });
+                self.w.cover(Shape::Disc { at, r }, kind);
                 return;
             }
         }
@@ -719,14 +715,15 @@ impl Battle<'_> {
     /// The road, kept clear of woods and grass.
     fn road(&mut self) {
         for pair in self.road.windows(2) {
-            self.w.cover.push(CoverOp {
-                shape: Shape::Line {
-                    a: pair[0],
-                    b: pair[1],
+            let (a, b) = (pair[0], pair[1]);
+            self.w.cover(
+                Shape::Line {
+                    a,
+                    b,
                     half_width: 2,
                 },
-                kind: CoverKind::Open,
-            });
+                CoverKind::Open,
+            );
         }
     }
 }

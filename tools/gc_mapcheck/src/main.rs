@@ -23,19 +23,17 @@ fn png_cmd(src: &str, out: &str) -> Result<(), String> {
 fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String> {
     let seed = seed.parse().map_err(|_| format!("{seed} isn't a seed"))?;
     let is = |name: &str| name.eq_ignore_ascii_case(recipe);
+    let tiles = || {
+        size.parse()
+            .map_err(|_| format!("{size} isn't a size in tiles"))
+    };
     let def = if let Some(field) = gc_map::recipe::Recipe::ALL
         .into_iter()
         .find(|r| is(r.name()))
     {
-        let tiles = size
-            .parse()
-            .map_err(|_| format!("{size} isn't a size in tiles"))?;
-        gc_map::recipe::describe(field, tiles, seed)
-    } else if let Some(wild) = Wildness::ALL.into_iter().find(|w| is(&format!("{w:?}"))) {
-        let tiles = size
-            .parse()
-            .map_err(|_| format!("{size} isn't a size in tiles"))?;
-        gc_map::wilds::describe(tiles, seed, wild)
+        gc_map::recipe::describe(field, tiles()?, seed)
+    } else if let Some(wild) = Wildness::ALL.into_iter().find(|w| is(w.name())) {
+        gc_map::wilds::describe(tiles()?, seed, wild)
     } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {
         let size = named(&CONQUEST_SIZES, size)?;
         let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;

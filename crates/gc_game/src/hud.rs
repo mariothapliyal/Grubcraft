@@ -277,15 +277,15 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
         let tile = z as usize * tiles as usize + x as usize;
         let cover = hm.cover.get(tile).copied().map(gc_sim::Cover::from_u8);
         match cover {
-            Some(gc_sim::Cover::Wood) if hm.thicket.get(tile) == Some(&true) => [20, 50, 30, 255],
+            Some(gc_sim::Cover::Wood) if hm.is_thicket(tile) => [20, 50, 30, 255],
             Some(gc_sim::Cover::Wood) => [34, 78, 44, 255],
             Some(gc_sim::Cover::Grass) => [104, 140, 70, 255],
             _ => {
                 // A few shades, so neighbouring cells merge into one rectangle.
                 let t = ((h / hm.max_height()).clamp(0.0, 1.0) * 6.0).round() / 6.0;
-                if let Some(&land) = hm.land.get(tile) {
+                if let Some(land) = hm.land_at(tile) {
                     // The land's own colour, lighter on high ground.
-                    let c = gc_map::def::Land::from_u8(land).colour();
+                    let c = land.colour();
                     let k = 0.85 + 0.35 * t;
                     let shade = |v: u8| (f32::from(v) * k).min(255.0) as u8;
                     return [shade(c[0]), shade(c[1]), shade(c[2]), 255];

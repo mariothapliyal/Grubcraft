@@ -86,19 +86,25 @@ impl FieldMap {
             tiles,
             seed,
         } = self;
-        use wilds::Wildness;
-        let recipe = match choice {
-            1..=4 => Ok(recipe::Recipe::ALL[choice - 1]),
-            5 => Ok(recipe::Recipe::ALL[(seed % 4) as usize]),
-            WILDS => Err(Wildness::ALL[(seed % 3) as usize]),
-            7..=9 => Err(Wildness::ALL[choice - 7]),
+        enum Maker {
+            Recipe(recipe::Recipe),
+            Wilds(wilds::Wildness),
+        }
+        let (recipes, lands) = (recipe::Recipe::ALL, wilds::Wildness::ALL);
+        let pick = |count: usize| (seed % count as u64) as usize;
+        let maker = match choice {
+            0 => return Map::generate(seed, tiles),
+            c if c <= recipes.len() => Maker::Recipe(recipes[c - 1]),
+            c if c == recipes.len() + 1 => Maker::Recipe(recipes[pick(recipes.len())]),
+            WILDS => Maker::Wilds(lands[pick(lands.len())]),
+            c if c <= WILDS + lands.len() => Maker::Wilds(lands[c - WILDS - 1]),
             _ => return Map::generate(seed, tiles),
         };
         let make = |k| {
             let seed = seed.wrapping_add(k);
-            Map::from_def(&match recipe {
-                Ok(recipe) => recipe::describe(recipe, tiles as i32, seed),
-                Err(wild) => wilds::describe(tiles as i32, seed, wild),
+            Map::from_def(&match maker {
+                Maker::Recipe(recipe) => recipe::describe(recipe, tiles as i32, seed),
+                Maker::Wilds(wild) => wilds::describe(tiles as i32, seed, wild),
             })
         };
         let first = make(0);
@@ -182,6 +188,17 @@ mod tests {
                 "seed {seed}"
             );
         }
+    }
+
+    /// After the recipes (see `recipe_names_are_the_lobby_names`), the
+    /// lobby names the Wilds by how wild.
+    #[test]
+    fn the_wilds_choices_are_named_for_how_wild() {
+        assert_eq!(FIELD_MAPS[WILDS], "Land: Random");
+        for (k, wild) in wilds::Wildness::ALL.iter().enumerate() {
+            assert_eq!(FIELD_MAPS[WILDS + 1 + k], format!("Land: {}", wild.name()));
+        }
+        assert_eq!(FIELD_MAPS.len(), WILDS + 1 + wilds::Wildness::ALL.len());
     }
 
     /// Every lobby choice, at both Field Battle sizes, makes a map whose

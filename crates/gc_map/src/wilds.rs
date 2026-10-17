@@ -31,15 +31,11 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, CoverOp, Kind, Land, LandOp, MapDef, Mode, Noise, Object, Pos, SetPieceKind, Shape,
-    SizeClass, Symmetry,
+    CoverKind, Land, LandOp, MapDef, Mode, Noise, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::generate::plateaus;
-use crate::recipe::{DEEP, FORD, WATER, Writer};
+use crate::recipe::{BASE, DEEP, RISE_REACH, WATER, Writer, start_objects};
 use crate::stamp::dist2;
-
-/// Ground level before the stamps, as on the other Field Battle maps.
-const BASE: i32 = 48;
 
 /// How wild a Wilds map is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +50,14 @@ pub enum Wildness {
 
 impl Wildness {
     pub const ALL: [Wildness; 3] = [Wildness::Plains, Wildness::Mixed, Wildness::Wild];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Wildness::Plains => "Plains",
+            Wildness::Mixed => "Mixed",
+            Wildness::Wild => "Wild",
+        }
+    }
 }
 
 /// What lies across the way.
@@ -91,7 +95,6 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
     };
     let starts = plateaus(tiles as u32);
     let mut wilds = Wilds {
-        n: tiles,
         wildness,
         starts,
         keep: Vec::new(),
@@ -103,17 +106,6 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
     };
     wilds.layout();
     let Wilds { w, land, .. } = wilds;
-    let objects = starts
-        .iter()
-        .enumerate()
-        .map(|(owner, &at)| Object {
-            kind: Kind::Start,
-            at,
-            owner: Some(owner as u8),
-            label: String::new(),
-            once: true,
-        })
-        .collect();
     MapDef {
         name: format!("Wilds {seed}"),
         size: SizeClass::Field(tiles),
@@ -125,13 +117,12 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
         terrain: w.terrain,
         cover: w.cover,
         land,
-        objects,
+        objects: start_objects(&starts),
         set_pieces: w.set_pieces,
     }
 }
 
 struct Wilds<'a> {
-    n: i32,
     wildness: Wildness,
     starts: [Pos; 6],
     /// Places later things stay clear of, with how far.
@@ -149,12 +140,21 @@ struct Wilds<'a> {
 impl Wilds<'_> {
     /// `t` tiles on a 512-tile map, scaled to this one.
     fn scaled(&self, t: i32) -> i32 {
-        t * self.n / 512
+        t * self.w.tiles / 512
+    }
+
+    /// Whether a band or spur that only some maps have is on this one:
+    /// never on plains, half the time on a mixed map, always on a wild one.
+    fn often(&mut self) -> bool {
+        match self.wildness {
+            Wildness::Plains => false,
+            Wildness::Mixed => self.w.range(0, 1) == 0,
+            Wildness::Wild => true,
+        }
     }
 
     fn layout(&mut self) {
-        let n = self.n;
-        let mid = n / 2;
+        let (n, mid) = (self.w.tiles, self.w.mid);
         // Round every start: open meadow, kept clear.
         let clear = self.scaled(60);
         for &s in &self.starts {
@@ -185,7 +185,7 @@ impl Wilds<'_> {
             band.push((x, band_y + self.w.range(-wave, wave)));
         }
         let gap_xs = match self.wildness {
-            Wildness::Plains => self.spread(n / 10, n * 9 / 10, 3 + i32::from(n >= 640)),
+            Wildness::Plains => self.w.spread(n / 10, n * 9 / 10, 3 + i32::from(n >= 640)),
             Wildness::Mixed if n >= 640 => {
                 vec![
                     betweens[0],
@@ -195,20 +195,12 @@ impl Wilds<'_> {
             }
             _ => betweens.to_vec(),
         };
-        let course = self.course(&band, &gap_xs, true);
-        let kind = self.barrier();
-        self.lay(kind, &course);
-        let band_points = course.points;
+        let band_points = self.barrier_along(&band, &gap_xs, true);
 
         // A band along the middle line too, on a wild map and often on a
         // mixed one: the west half, which meets its turned copy at the
         // centre. A small map has no room for it.
-        let middle = match self.wildness {
-            Wildness::Plains => false,
-            Wildness::Mixed => self.w.range(0, 1) == 0,
-            Wildness::Wild => true,
-        };
-        if middle && n >= 512 {
+        if self.often() && n >= 512 {
             let mut line = vec![(-8, mid + self.w.range(-wave, wave))];
             let mut x = 0;
             while x < mid - n / 8 {
@@ -224,27 +216,20 @@ impl Wilds<'_> {
                 vec![inset + self.w.range(-jitter, jitter)]
             } else {
                 let count = self.w.range(1, 2);
-                let mut xs = self.spread(n / 12, mid - n / 10, count);
+                let mut xs = self.w.spread(n / 12, mid - n / 10, count);
                 if self.w.range(0, 1) == 0 {
                     xs.push(mid);
                 }
                 xs
             };
-            let course = self.course(&line, &xs, true);
-            let kind = self.barrier();
-            self.lay(kind, &course);
+            self.barrier_along(&line, &xs, true);
         }
 
         // Spurs between the north starts, from the edge down towards the
         // band's ways, stopping short of them: neighbours go round the end
         // (or, on a mixed map, through a pass). A small map has no room.
         for x in betweens {
-            let spur = match self.wildness {
-                Wildness::Plains => false,
-                Wildness::Mixed => self.w.range(0, 1) == 0,
-                Wildness::Wild => true,
-            };
-            if !spur || n < 512 {
+            if !self.often() || n < 512 {
                 continue;
             }
             let end_y = height_at(&band_points, x) - self.scaled(48);
@@ -259,9 +244,7 @@ impl Wilds<'_> {
             } else {
                 Vec::new()
             };
-            let course = self.course(&line, &gap, false);
-            let kind = self.barrier();
-            self.lay(kind, &course);
+            self.barrier_along(&line, &gap, false);
         }
 
         // The land between them, patch by patch, then copses and meadows
@@ -281,9 +264,9 @@ impl Wilds<'_> {
         self.w.cover.extend(barrier_cover);
         self.land.extend(barrier_land);
         for label in ["The knoll", "The far knoll"] {
-            if let Some(at) = self.spot(crate::recipe::RISE_REACH) {
+            if let Some(at) = self.spot(RISE_REACH) {
                 self.w.rise(at, label);
-                self.keep.push((at, crate::recipe::RISE_REACH));
+                self.keep.push((at, RISE_REACH));
             }
         }
 
@@ -293,27 +276,25 @@ impl Wilds<'_> {
             if s.1 < mid {
                 let r = self.scaled(20);
                 self.w.flat(s, r, r * 4 / 5);
-                self.w.cover.push(CoverOp {
-                    shape: Shape::Disc {
-                        at: s,
-                        r: clear - 20,
-                    },
-                    kind: CoverKind::Open,
-                });
+                let open = Shape::Disc {
+                    at: s,
+                    r: clear - 20,
+                };
+                self.w.cover(open, CoverKind::Open);
             }
         }
         for (at, r) in std::mem::take(&mut self.fords) {
-            self.w.stamp(Shape::Disc { at, r }, Mode::Set, FORD, 3);
+            self.w.ford(at, r);
         }
     }
 
-    /// `count` whole numbers from `lo` to `hi`, each in its own stretch of
-    /// the range, so they spread out.
-    fn spread(&mut self, lo: i32, hi: i32, count: i32) -> Vec<i32> {
-        let band = (hi - lo) / count.max(1);
-        (0..count)
-            .map(|k| lo + band * k + self.w.range(band / 4, band * 3 / 4))
-            .collect()
+    /// A barrier along `line`, with ways through at `at` (see
+    /// [`Wilds::course`]): its points.
+    fn barrier_along(&mut self, line: &[Pos], at: &[i32], across: bool) -> Vec<Pos> {
+        let course = self.course(line, at, across);
+        let kind = self.barrier();
+        self.lay(kind, &course);
+        course.points
     }
 
     /// Which barrier a band or spur is.
@@ -336,8 +317,7 @@ impl Wilds<'_> {
     /// within a gap's half-width of one of `at`.
     fn course(&mut self, line: &[Pos], at: &[i32], across: bool) -> Course {
         let mut points = Vec::new();
-        for pair in line.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
+        for (a, b) in segments(line) {
             let steps = ((b.0 - a.0).abs().max((b.1 - a.1).abs()) / STEP).max(1);
             for i in 0..steps {
                 points.push((a.0 + (b.0 - a.0) * i / steps, a.1 + (b.1 - a.1) * i / steps));
@@ -367,39 +347,32 @@ impl Wilds<'_> {
         let base = self.w.base;
         let pts = &course.points;
         // The solid stretches, as runs of points not in a gap.
-        let mut runs: Vec<Vec<Pos>> = Vec::new();
-        let mut run = Vec::new();
-        for (&p, &open) in pts.iter().zip(&course.open) {
-            if open {
-                if run.len() > 1 {
-                    runs.push(std::mem::take(&mut run));
-                }
-                run.clear();
-            } else {
-                run.push(p);
-            }
-        }
-        if run.len() > 1 {
-            runs.push(run);
-        }
+        let marked: Vec<(Pos, bool)> = pts
+            .iter()
+            .copied()
+            .zip(course.open.iter().copied())
+            .collect();
+        let runs: Vec<Vec<Pos>> = marked
+            .chunk_by(|a, b| a.1 == b.1)
+            .filter(|run| !run[0].1 && run.len() > 1)
+            .map(|run| run.iter().map(|&(p, _)| p).collect())
+            .collect();
         let line = |a: Pos, b: Pos, half_width: i32| Shape::Line { a, b, half_width };
         match kind {
             Barrier::Mountains => {
                 // Foothills all along, through the passes too; the cliffs
                 // only on the solid stretches, with peaks.
-                for pair in pts.windows(2) {
-                    self.w
-                        .stamp(line(pair[0], pair[1], 8), Mode::Raise, base + 36, 14);
-                    self.paint(line(pair[0], pair[1], 30), Land::Highland);
+                for (a, b) in segments(pts) {
+                    self.w.stamp(line(a, b, 8), Mode::Raise, base + 36, 14);
+                    self.paint(line(a, b, 30), Land::Highland);
                 }
                 // The ridges and peaks come to a point, with sides too
                 // steep to climb: at least 64 sixteenths over the
                 // foothills in 3 tiles, 1.3 tiles a tile.
                 for run in &runs {
                     let height = base + self.w.range(100, 130);
-                    for pair in run.windows(2) {
-                        self.w
-                            .stamp(line(pair[0], pair[1], 0), Mode::Raise, height, 3);
+                    for (a, b) in segments(run) {
+                        self.w.stamp(line(a, b, 0), Mode::Raise, height, 3);
                     }
                     for &p in run.iter().step_by(5) {
                         let peak = height + self.w.range(20, 40);
@@ -418,10 +391,9 @@ impl Wilds<'_> {
                     self.w
                         .stamp(Shape::Disc { at: g, r: r + 6 }, Mode::Set, base, 10);
                 }
-                for pair in pts.windows(2) {
-                    self.w
-                        .stamp(line(pair[0], pair[1], hw), Mode::Lower, DEEP, 4);
-                    self.paint(line(pair[0], pair[1], 24), Land::Valley);
+                for (a, b) in segments(pts) {
+                    self.w.stamp(line(a, b, hw), Mode::Lower, DEEP, 4);
+                    self.paint(line(a, b, 24), Land::Valley);
                 }
                 self.fords.extend(course.gaps.iter().map(|&g| (g, r)));
                 if let Some(&g) = course.gaps.first() {
@@ -441,13 +413,13 @@ impl Wilds<'_> {
                 let hw = self.w.range(5, 8);
                 // Walkable woods along it, through the paths too, then the
                 // thicket on the solid stretches.
-                for pair in pts.windows(2) {
-                    self.cover(line(pair[0], pair[1], hw + 8), CoverKind::Wood);
-                    self.paint(line(pair[0], pair[1], 30), Land::Forest);
+                for (a, b) in segments(pts) {
+                    self.w.cover(line(a, b, hw + 8), CoverKind::Wood);
+                    self.paint(line(a, b, 30), Land::Forest);
                 }
                 for run in &runs {
-                    for pair in run.windows(2) {
-                        self.cover(line(pair[0], pair[1], hw), CoverKind::Thicket);
+                    for (a, b) in segments(run) {
+                        self.w.cover(line(a, b, hw), CoverKind::Thicket);
                     }
                 }
                 self.keep_along(pts, hw + 12);
@@ -464,7 +436,7 @@ impl Wilds<'_> {
     /// patches over the north half, each a kind of land with its dressing,
     /// painted in a random order so their borders are ragged.
     fn patches(&mut self) {
-        let n = self.n;
+        let n = self.w.tiles;
         let size = self.scaled(170).max(96);
         let cols = (n + size - 1) / size;
         let rows = (n / 2 + size - 1) / size;
@@ -490,21 +462,32 @@ impl Wilds<'_> {
     /// `core`, by what it is.
     fn patch(&mut self, at: Pos, r: i32, core: i32) {
         // The odds of each land, out of their sum.
-        let odds = match self.wildness {
-            Wildness::Plains => [3, 6, 2, 0, 1],
-            Wildness::Mixed => [3, 2, 2, 2, 2],
-            Wildness::Wild => [4, 1, 2, 3, 2],
+        let odds: [(Land, i32); 5] = match self.wildness {
+            Wildness::Plains => [
+                (Land::Forest, 3),
+                (Land::Meadow, 6),
+                (Land::Fen, 2),
+                (Land::Highland, 0),
+                (Land::Waste, 1),
+            ],
+            Wildness::Mixed => [
+                (Land::Forest, 3),
+                (Land::Meadow, 2),
+                (Land::Fen, 2),
+                (Land::Highland, 2),
+                (Land::Waste, 2),
+            ],
+            Wildness::Wild => [
+                (Land::Forest, 4),
+                (Land::Meadow, 1),
+                (Land::Fen, 2),
+                (Land::Highland, 3),
+                (Land::Waste, 2),
+            ],
         };
-        let lands = [
-            Land::Forest,
-            Land::Meadow,
-            Land::Fen,
-            Land::Highland,
-            Land::Waste,
-        ];
-        let mut k = self.w.range(0, odds.iter().sum::<i32>() - 1);
+        let mut k = self.w.range(0, odds.iter().map(|o| o.1).sum::<i32>() - 1);
         let mut land = Land::Meadow;
-        for (&odd, &l) in odds.iter().zip(&lands) {
+        for (l, odd) in odds {
             if k < odd {
                 land = l;
                 break;
@@ -532,7 +515,8 @@ impl Wilds<'_> {
                     let p = self.inside(at, core * 2 / 3);
                     let s = self.w.range(4, 7);
                     if self.open_for(p, s + 2) {
-                        self.cover(Shape::Disc { at: p, r: s }, CoverKind::Thicket);
+                        self.w
+                            .cover(Shape::Disc { at: p, r: s }, CoverKind::Thicket);
                         self.keep.push((p, s + 2));
                     }
                 }
@@ -560,8 +544,7 @@ impl Wilds<'_> {
                     let p = self.inside(at, wet);
                     let s = self.w.range(4, 8);
                     if self.open_for(p, s + 3) {
-                        self.w
-                            .stamp(Shape::Disc { at: p, r: s }, Mode::Set, FORD, 3);
+                        self.w.ford(p, s);
                         self.wet.push((p, s));
                     }
                 }
@@ -602,7 +585,7 @@ impl Wilds<'_> {
             }
             Land::Waste | Land::Valley => {
                 // Rock spurs no one climbs, a low ridge, little cover.
-                self.cover(Shape::Disc { at, r: core }, CoverKind::Open);
+                self.w.cover(Shape::Disc { at, r: core }, CoverKind::Open);
                 for _ in 0..count(700) {
                     let p = self.inside(at, core);
                     let s = self.w.range(2, 4);
@@ -676,7 +659,7 @@ impl Wilds<'_> {
     /// Whether something `r` across at `at` leaves every way through and
     /// every start alone, and stays on the north half's map.
     fn free(&self, at: Pos, r: i32) -> bool {
-        let n = self.n;
+        let n = self.w.tiles;
         (r + 4..n - r - 4).contains(&at.0)
             && (r + 4..n / 2 - 4).contains(&at.1)
             && apart(&self.gaps, at, n, r)
@@ -685,28 +668,29 @@ impl Wilds<'_> {
     /// Whether a region or knoll of radius `r` can go at `at`: clear of the
     /// barriers, the starts and the other regions.
     fn clear(&self, at: Pos, r: i32) -> bool {
-        self.free(at, r) && apart(&self.keep, at, self.n, r / 2)
+        self.free(at, r) && apart(&self.keep, at, self.w.tiles, r / 2)
     }
 
     /// Whether something that blocks or floods, `r` across at `at`, can go
     /// there: [`Wilds::free`], and clear of the barriers and everything
     /// else kept clear by its whole width.
     fn open_for(&self, at: Pos, r: i32) -> bool {
-        self.free(at, r) && apart(&self.keep, at, self.n, r)
+        self.free(at, r) && apart(&self.keep, at, self.w.tiles, r)
     }
 
     /// A random spot for something of radius `r` (see [`Wilds::clear`]).
     fn spot(&mut self, r: i32) -> Option<Pos> {
+        let n = self.w.tiles;
         for _ in 0..48 {
-            let at = (self.w.range(0, self.n - 1), self.w.range(0, self.n / 2));
+            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
             if self.clear(at, r) {
                 return Some(at);
             }
         }
         // A crowded map: any clear spot on an eight-tile grid.
-        let spots: Vec<Pos> = (0..self.n / 2)
+        let spots: Vec<Pos> = (0..n / 2)
             .step_by(8)
-            .flat_map(|y| (0..self.n).step_by(8).map(move |x| (x, y)))
+            .flat_map(|y| (0..n).step_by(8).map(move |x| (x, y)))
             .filter(|&at| self.clear(at, r))
             .collect();
         if spots.is_empty() {
@@ -721,9 +705,10 @@ impl Wilds<'_> {
     fn clump(&mut self, kind: CoverKind, lo: i32, hi: i32) {
         for _ in 0..12 {
             let r = self.w.range(lo, hi);
-            let at = (self.w.range(0, self.n - 1), self.w.range(0, self.n / 2));
+            let n = self.w.tiles;
+            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
             if self.grows(at, r) {
-                self.cover(Shape::Disc { at, r }, kind);
+                self.w.cover(Shape::Disc { at, r }, kind);
                 return;
             }
         }
@@ -732,18 +717,14 @@ impl Wilds<'_> {
     /// A clump of cover at `at`, if it [`Wilds::grows`] there.
     fn clump_at(&mut self, kind: CoverKind, at: Pos, r: i32) {
         if self.grows(at, r) {
-            self.cover(Shape::Disc { at, r }, kind);
+            self.w.cover(Shape::Disc { at, r }, kind);
         }
     }
 
     /// Whether a clump of cover `r` across can grow at `at`: not on a way
     /// through or a start, and not in water.
     fn grows(&self, at: Pos, r: i32) -> bool {
-        self.free(at, r) && apart(&self.wet, at, self.n, r)
-    }
-
-    fn cover(&mut self, shape: Shape, kind: CoverKind) {
-        self.w.cover.push(CoverOp { shape, kind });
+        self.free(at, r) && apart(&self.wet, at, self.w.tiles, r)
     }
 
     fn paint(&mut self, shape: Shape, land: Land) {
@@ -772,6 +753,11 @@ fn apart(places: &[(Pos, i32)], at: Pos, n: i32, r: i32) -> bool {
         let reach = (r + d) * (r + d);
         dist2(p, at) >= reach && dist2(p, copy) >= reach
     })
+}
+
+/// A line's segments, each pair of neighbouring points.
+fn segments(points: &[Pos]) -> impl Iterator<Item = (Pos, Pos)> + '_ {
+    points.windows(2).map(|pair| (pair[0], pair[1]))
 }
 
 /// The y of a band's line at `x`, from its points.

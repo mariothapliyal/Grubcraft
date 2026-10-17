@@ -7,7 +7,7 @@
 //! - `cargo test -p gc_game --release terrain_table -- --ignored --nocapture`
 //! - `cargo test -p gc_game --release big_map_table -- --ignored --nocapture`
 //!
-//! Both read `AI_LEVEL` (default General), `AI_BATTLES` and `AI_FROM` (the
+//! All three read `AI_LEVEL` (default General), `AI_BATTLES` and `AI_FROM` (the
 //! first seed, default 1). `AI_OFF=team_play` or `AI_OFF=read_ground` takes
 //! only that away from the old side (`AI_OFF=none`: nothing, new against
 //! new); `AI_OLD=1` plays old against old, to see where the field stands

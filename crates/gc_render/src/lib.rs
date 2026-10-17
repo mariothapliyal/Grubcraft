@@ -171,12 +171,6 @@ pub struct RenderStats {
     pub boxes_drawn: u32,
     pub soldiers_drawn: u32,
     pub triangles: u64,
-    /// Terrain triangles in the camera's pass, and in the sun's shadow pass
-    /// (zero with shadows off).
-    pub terrain_triangles: u64,
-    pub shadow_terrain_triangles: u64,
-    /// How many of `chunks_drawn` are at each level of detail, finest first.
-    pub chunks_by_level: [u32; TERRAIN_LEVELS],
     /// Boxes and soldiers asked for beyond the fixed instance buffers this
     /// frame, so left undrawn. Zero unless a match outgrows the capacity.
     pub dropped: u32,
@@ -1042,7 +1036,8 @@ impl Renderer {
         self.visible_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.sun_chunks = ChunkList::with_capacity(chunk_count as usize);
         self.chunk_levels = vec![0; chunk_count as usize];
-        self.terrain_gpu_bytes = t.heights.len() as u64 * 2 + u64::from(tint_side * tint_side) * 4
+        self.terrain_gpu_bytes = t.heights.len() as u64 * 2
+            + u64::from(tint_side * tint_side) * 4
             + u64::from(tiles * tiles);
         self.terrain = Some(TerrainGpu {
             bind_group,
@@ -1209,8 +1204,7 @@ impl Renderer {
         }
         debug_assert!(self.visible_chunks.len() <= self.chunk_instance_capacity as usize);
         let sun_chunks_at = u64::from(self.chunk_instance_capacity) * CHUNK_INSTANCE_BYTES;
-        for (chunks, at) in [(&self.visible_chunks, 0), (&self.sun_chunks, sun_chunks_at)] {
-            let mut at = at;
+        for (chunks, mut at) in [(&self.visible_chunks, 0), (&self.sun_chunks, sun_chunks_at)] {
             for instances in &chunks.levels {
                 if !instances.is_empty() {
                     self.queue.write_buffer(
@@ -1438,9 +1432,6 @@ impl Renderer {
             draw_calls,
             chunks_drawn: self.visible_chunks.len() as u32,
             chunks_total: n * n,
-            terrain_triangles: self.visible_chunks.triangles(),
-            shadow_terrain_triangles: self.sun_chunks.triangles(),
-            chunks_by_level: self.visible_chunks.per_level(),
             boxes_drawn: boxes.len() as u32,
             soldiers_drawn,
             triangles,
@@ -1743,12 +1734,6 @@ fn level_indices(level: usize) -> std::ops::Range<u32> {
     start..start + len(level)
 }
 
-/// Triangles in one chunk drawn at `level`.
-fn level_triangles(level: usize) -> u64 {
-    let range = level_indices(level);
-    u64::from(range.end - range.start) / 3
-}
-
 /// The level of detail for a chunk with these coordinates, seen from `eye`:
 /// by the distance to the nearest point of the chunk's box, so a big chunk
 /// is as fine as its nearest corner needs.
@@ -1804,16 +1789,6 @@ impl ChunkList {
 
     fn is_empty(&self) -> bool {
         self.levels.iter().all(Vec::is_empty)
-    }
-
-    fn per_level(&self) -> [u32; TERRAIN_LEVELS] {
-        std::array::from_fn(|l| self.levels[l].len() as u32)
-    }
-
-    fn triangles(&self) -> u64 {
-        (0..TERRAIN_LEVELS)
-            .map(|l| self.levels[l].len() as u64 * level_triangles(l))
-            .sum()
     }
 }
 
@@ -1875,12 +1850,11 @@ mod tests {
             let range = level_indices(level);
             assert_eq!(range.start, end);
             end = range.end;
-            let quads = u64::from(CHUNK_QUADS >> level);
-            assert_eq!(level_triangles(level), quads * quads * 2);
-            let indices = chunk_grid_indices(CHUNK_QUADS >> level);
+            let quads = CHUNK_QUADS >> level;
+            assert_eq!((range.end - range.start) / 3, quads * quads * 2);
+            let indices = chunk_grid_indices(quads);
             assert_eq!(indices.len() as u32, range.end - range.start);
         }
-        assert_eq!(level_triangles(0), 4 * level_triangles(1));
     }
 
     #[test]
