@@ -1155,7 +1155,8 @@ impl Structures {
             if regs.engaged[r].is_some() {
                 continue;
             }
-            self.siege_clock[r] = self.siege_clock[r].saturating_sub(1);
+            // A hasted regiment strikes buildings faster too.
+            self.siege_clock[r] = self.siege_clock[r].saturating_sub(regs.steps(r));
             // Standing (in reach or not) until its next blow or try.
             if self.siege_clock[r] > 0 && regs.target[r].is_none() {
                 continue;
@@ -1195,7 +1196,7 @@ impl Structures {
             if building {
                 // A hasted building or builder builds faster (see
                 // [`crate::powers`]).
-                if !self.build(s, regs.steps(r)) {
+                if !self.build(s, u32::from(regs.steps(r))) {
                     // Built and whole: its work is done.
                     self.siege[r] = None;
                 }

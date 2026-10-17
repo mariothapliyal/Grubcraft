@@ -7,6 +7,8 @@
 //! are plain functions on plain data; the `Running` methods feed them from
 //! the world and the mouse.
 
+use std::fmt::Write as _;
+
 use gc_data::{Faction, PowerRecord};
 use gc_sim::{
     BuildingId, Command, PowerEffect, PowerTarget, Refusal, RegimentHandle, StructureHandle,
@@ -79,20 +81,28 @@ pub fn cooling_secs(ticks: u32) -> u32 {
     ticks.div_ceil(gc_sim::TICKS_PER_SECOND)
 }
 
-/// A button's second line, in 20 characters: what it costs, or what holds
-/// it back.
-pub fn detail(cost: u8, tier: u8, hold: Option<Hold>, cooling_ticks: u32, armed: bool) -> String {
-    match hold {
-        _ if armed => "Pick a target".to_string(),
-        None => format!("{cost} Resonance"),
-        Some(Hold::NoRegiments) => "Select regiments".to_string(),
+/// A button's second line, in 20 characters, into `out`: what it costs, or
+/// what holds it back.
+pub fn detail(
+    out: &mut String,
+    (cost, tier): (u8, u8),
+    hold: Option<Hold>,
+    cooling_ticks: u32,
+    armed: bool,
+) {
+    out.clear();
+    // Writing to a String can't fail.
+    let _ = match hold {
+        _ if armed => write!(out, "Pick a target"),
+        None => write!(out, "{cost} Resonance"),
+        Some(Hold::NoRegiments) => write!(out, "Select regiments"),
         Some(Hold::Refused(Refusal::Cooling)) => {
-            format!("Ready in {}s", cooling_secs(cooling_ticks))
+            write!(out, "Ready in {}s", cooling_secs(cooling_ticks))
         }
-        Some(Hold::Refused(Refusal::Tier)) => format!("Needs tier {tier}"),
-        Some(Hold::Refused(Refusal::Price)) => format!("Needs {cost} Resonance"),
-        Some(Hold::Refused(_)) => "Unavailable".to_string(),
-    }
+        Some(Hold::Refused(Refusal::Tier)) => write!(out, "Needs tier {tier}"),
+        Some(Hold::Refused(Refusal::Price)) => write!(out, "Needs {cost} Resonance"),
+        Some(Hold::Refused(_)) => write!(out, "Unavailable"),
+    };
 }
 
 /// What the player is told when they press a button that is held.
@@ -197,7 +207,13 @@ impl Running {
             let cooling = self.world.power_cooling(self.sandbox.side, power);
             names[i].clear();
             names[i].push_str(record.name());
-            details[i] = detail(stats.cost, stats.tier, hold, cooling, armed);
+            detail(
+                &mut details[i],
+                (stats.cost, stats.tier),
+                hold,
+                cooling,
+                armed,
+            );
             states[i] = state(hold, armed);
             shown = i + 1;
         }
@@ -388,7 +404,11 @@ mod tests {
 
     #[test]
     fn a_button_shows_its_price_or_what_holds_it() {
-        let line = |hold, ticks, armed| detail(60, 2, hold, ticks, armed);
+        let line = |hold, ticks, armed| {
+            let mut out = String::from("stale");
+            detail(&mut out, (60, 2), hold, ticks, armed);
+            out
+        };
         let refused = |r| Some(Hold::Refused(r));
         assert_eq!(line(None, 0, false), "60 Resonance");
         assert_eq!(line(None, 0, true), "Pick a target");

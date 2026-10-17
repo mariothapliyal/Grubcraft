@@ -11,10 +11,11 @@
 //!   reloads, strikes and builds faster. Used again on the same target, the
 //!   new haste replaces the old.
 //! - **Shift** (Phase Shift): the caster's chosen regiments step straight
-//!   to one of their finished buildings of the power's type, round it.
-//!   Every [`Command::UsePower`](crate::Command::UsePower) shifting a
-//!   regiment in the tick the power was paid for rides on that payment, so
-//!   a group order is one use.
+//!   to one of their finished buildings of the power's type, round it,
+//!   leaving any fight. Every [`Command::UsePower`](crate::Command::UsePower)
+//!   shifting a regiment to the same building within [`RIDE_TICKS`] of the
+//!   payment rides on it, so a group order is one use even when the network
+//!   carries it over a few turns.
 //!
 //! The powers table and when each player last used each power are in the
 //! state hash; a haste's ticks left are, with the building or regiment.
@@ -41,7 +42,10 @@ pub const MAX_POWERS: usize = 64;
 const SHIFT_OUT: i32 = 3;
 const SHIFT_RING: i32 = 4;
 /// Rings of eight spots round the building a shift fills, nearest first.
-const SHIFT_RINGS: i32 = 3;
+const SHIFT_RINGS: i32 = 5;
+/// How long after a shift is paid for more regiments shifted to the same
+/// building ride on it, in ticks (a second).
+pub const RIDE_TICKS: u32 = crate::TICKS_PER_SECOND;
 
 /// What a power does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -132,11 +136,11 @@ pub(crate) struct Powers {
     stats: Vec<PowerStats>,
     /// By player, then power: the tick it was last used, if ever.
     used_at: Vec<Option<u32>>,
-    /// Regiments each player has shifted this tick, to spread them round
-    /// the building.
+    /// By player: the building their last paid shift went to, and how
+    /// many regiments have gone there on that payment, to spread them
+    /// round it.
+    shift_to: [Option<StructureHandle>; MAX_PARTIES],
     shifted: [u8; MAX_PARTIES],
-    /// The tick `shifted` counts.
-    shifted_at: u32,
 }
 
 impl Powers {
@@ -147,8 +151,8 @@ impl Powers {
         Powers {
             used_at: vec![None; stats.len() * MAX_PARTIES],
             stats,
+            shift_to: [None; MAX_PARTIES],
             shifted: [0; MAX_PARTIES],
-            shifted_at: 0,
         }
     }
 
@@ -199,11 +203,12 @@ impl Powers {
         Ok(stats)
     }
 
-    /// Whether `player` paid for `power` this tick (`now`): a shift
-    /// ordered in the same tick rides on it.
-    fn paid_now(&self, player: PlayerId, power: u8, now: u32) -> bool {
-        self.slot(player, power)
-            .is_some_and(|slot| self.used_at[slot] == Some(now))
+    /// Whether a shift of `player`'s to `to` with `power` at `now` rides on
+    /// one they paid for: to the same building, within [`RIDE_TICKS`].
+    fn rides(&self, player: PlayerId, power: u8, to: StructureHandle, now: u32) -> bool {
+        let paid = self.slot(player, power).and_then(|slot| self.used_at[slot]);
+        paid.is_some_and(|at| now.wrapping_sub(at) < RIDE_TICKS)
+            && self.shift_to.get(usize::from(player)) == Some(&Some(to))
     }
 
     /// `player` uses `power` on `target` at `now`; false (and nothing
@@ -219,8 +224,10 @@ impl Powers {
         target: PowerTarget,
         now: u32,
     ) -> bool {
-        let riding =
-            matches!(target, PowerTarget::Shift { .. }) && self.paid_now(player, power, now);
+        let riding = match target {
+            PowerTarget::Shift { to, .. } => self.rides(player, power, to, now),
+            _ => false,
+        };
         let stats = match self.stats.get(usize::from(power)) {
             Some(&s) if riding => s,
             _ => match self.can_use(structures, player, power, now) {
@@ -246,7 +253,16 @@ impl Powers {
                 })
                 .is_some(),
             (PowerEffect::Shift { to: building }, PowerTarget::Shift { regiment, to }) => {
-                self.shift(structures, regs, nav, player, regiment, building, to, now)
+                let p = usize::from(player);
+                let before = if riding { self.shifted[p] } else { 0 };
+                let moved = shift(
+                    structures, regs, nav, player, regiment, building, to, before,
+                );
+                if moved {
+                    self.shift_to[p] = Some(to);
+                    self.shifted[p] = before.saturating_add(1);
+                }
+                moved
             }
             _ => false,
         };
@@ -259,69 +275,6 @@ impl Powers {
         done
     }
 
-    /// Step `player`'s regiment to the next free spot round their finished
-    /// building `to` of type `building`.
-    #[allow(clippy::too_many_arguments)]
-    fn shift(
-        &mut self,
-        structures: &Structures,
-        regs: &mut Regiments,
-        nav: &Nav,
-        player: PlayerId,
-        regiment: RegimentHandle,
-        building: BuildingId,
-        to: StructureHandle,
-        now: u32,
-    ) -> bool {
-        let Some(r) = regs.resolve(regiment).filter(|&r| {
-            regs.owner[r] == player && regs.alive[r] && !regs.morale_state[r].broken()
-        }) else {
-            return false;
-        };
-        let Some(s) = structures.resolve(to).filter(|&s| {
-            structures.owner_of(s) == player
-                && structures.finished(s)
-                && structures.building_of(s) == building
-        }) else {
-            return false;
-        };
-        if self.shifted_at != now {
-            self.shifted = [0; MAX_PARTIES];
-            self.shifted_at = now;
-        }
-        let p = usize::from(player);
-        let Some(&done) = self.shifted.get(p) else {
-            return false;
-        };
-        let foot = structures.footprint(s);
-        let centre = structures.centre(s);
-        // The spots round the building, nearest ring first, eight to a
-        // ring; the next free one this tick.
-        let spots = (0..SHIFT_RINGS).flat_map(|ring| {
-            let out = foot[2].max(foot[3]) / 2 + SHIFT_OUT + ring * SHIFT_RING;
-            [
-                (0, 1),
-                (1, 1),
-                (1, 0),
-                (1, -1),
-                (0, -1),
-                (-1, -1),
-                (-1, 0),
-                (-1, 1),
-            ]
-            .map(|(x, y)| centre + FxVec2::new(Fx::from_int(x * out), Fx::from_int(y * out)))
-        });
-        let Some(at) = spots.filter(|&at| nav.walkable(at)).nth(usize::from(done)) else {
-            return false;
-        };
-        let facing = regs.facing[r];
-        if regs.place(regiment, at, facing, 0).is_none() {
-            return false;
-        }
-        self.shifted[p] = done.saturating_add(1);
-        true
-    }
-
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         h.u32(self.stats.len() as u32);
         for s in &self.stats {
@@ -330,7 +283,69 @@ impl Powers {
         for at in &self.used_at {
             h.u32(at.map_or(u32::MAX, |t| t));
         }
+        for (to, &n) in self.shift_to.iter().zip(&self.shifted) {
+            h.u32(to.map_or(u32::MAX, |t| t.index));
+            h.u32(to.map_or(u32::MAX, |t| u32::from(t.generation)));
+            h.u8(n);
+        }
     }
+}
+
+/// Step `player`'s regiment out of any fight (its foes let it go) to the
+/// spot after the first `before` round their finished building `to` of
+/// type `building`.
+#[allow(clippy::too_many_arguments)]
+fn shift(
+    structures: &Structures,
+    regs: &mut Regiments,
+    nav: &Nav,
+    player: PlayerId,
+    regiment: RegimentHandle,
+    building: BuildingId,
+    to: StructureHandle,
+    before: u8,
+) -> bool {
+    let Some(r) = regs
+        .resolve(regiment)
+        .filter(|&r| regs.owner[r] == player && regs.alive[r] && !regs.morale_state[r].broken())
+    else {
+        return false;
+    };
+    let Some(s) = structures.resolve(to).filter(|&s| {
+        structures.owner_of(s) == player
+            && structures.finished(s)
+            && structures.building_of(s) == building
+    }) else {
+        return false;
+    };
+    let foot = structures.footprint(s);
+    let centre = structures.centre(s);
+    // The spots round the building, nearest ring first, eight to a ring.
+    let spots = (0..SHIFT_RINGS).flat_map(|ring| {
+        let out = foot[2].max(foot[3]) / 2 + SHIFT_OUT + ring * SHIFT_RING;
+        [
+            (0, 1),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, -1),
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+        ]
+        .map(|(x, y)| centre + FxVec2::new(Fx::from_int(x * out), Fx::from_int(y * out)))
+    });
+    let Some(at) = spots
+        .filter(|&at| nav.walkable(at))
+        .nth(usize::from(before))
+    else {
+        return false;
+    };
+    let facing = regs.facing[r];
+    regs.place(regiment, at, facing, 0).is_some_and(|i| {
+        regs.vanish_from_fight(i);
+        true
+    })
 }
 
 /// A haste's ticks, as a building's or regiment's count of them.
@@ -341,12 +356,25 @@ fn haste_ticks(duration: u32) -> u16 {
 /// How many steps of work something hasted `percent` percent with `left`
 /// ticks of haste to go does this tick: 1, and one more on the ticks that
 /// add up to `percent` percent over the haste.
-pub(crate) fn steps(left: u16, percent: u8) -> u32 {
+pub(crate) fn steps(left: u16, percent: u8) -> u16 {
     if left == 0 {
         return 1;
     }
-    let (left, p) = (u32::from(left), u32::from(percent));
-    1 + left * p / 100 - (left - 1) * p / 100
+    let (left, p) = (u32::from(left), u32::from(percent.min(MAX_HASTE)));
+    // At most 2: a haste is at most 100 percent.
+    1 + (left * p / 100 - (left - 1) * p / 100) as u16
+}
+
+/// Whether something whose turns fall on multiples of the strike interval,
+/// hasted `percent` percent, has an extra turn at `t`: halfway through turn
+/// `k`, each time the turns so far times the percent pass another hundred.
+fn extra_turn(t: u64, percent: u8) -> bool {
+    let interval = u64::from(crate::combat::STRIKE_INTERVAL);
+    if t % interval != interval / 2 {
+        return false;
+    }
+    let (k, p) = (t / interval, u64::from(percent.min(MAX_HASTE)));
+    (k + 1) * p / 100 != k * p / 100
 }
 
 impl Structures {
@@ -358,7 +386,7 @@ impl Structures {
 
     /// The steps of work building slot `i` does this tick (see [`steps`]).
     pub(crate) fn steps(&self, i: usize) -> u32 {
-        steps(self.haste_left[i], self.haste_percent[i])
+        u32::from(steps(self.haste_left[i], self.haste_percent[i]))
     }
 
     /// Building `h`'s haste: ticks left, 0 for none.
@@ -376,7 +404,7 @@ impl Structures {
 
 impl Regiments {
     /// The steps of work regiment slot `i` does this tick (see [`steps`]).
-    pub(crate) fn steps(&self, i: usize) -> u32 {
+    pub(crate) fn steps(&self, i: usize) -> u16 {
         steps(self.haste_left[i], self.haste[i])
     }
 
@@ -384,10 +412,13 @@ impl Regiments {
     /// `tick`: as many more turns as it is hasted percent, halfway between
     /// its own, so the two never fall together.
     pub(crate) fn extra_turn(&self, i: usize, tick: u32) -> bool {
-        let interval = crate::combat::STRIKE_INTERVAL;
-        self.haste_left[i] > 0 && {
-            let every = interval * 100 / u32::from(self.haste[i].clamp(1, MAX_HASTE));
-            (tick + i as u32 + interval / 2).is_multiple_of(every)
+        self.haste_left[i] > 0 && extra_turn(u64::from(tick) + i as u64, self.haste[i])
+    }
+
+    /// A tick of every regiment's haste goes by.
+    pub(crate) fn wear_haste(&mut self) {
+        for left in &mut self.haste_left {
+            *left = left.saturating_sub(1);
         }
     }
 
@@ -403,11 +434,22 @@ mod tests {
 
     #[test]
     fn a_fifty_percent_haste_takes_three_steps_every_two_ticks() {
-        let total: u32 = (1..=400).rev().map(|left| steps(left, 50)).sum();
+        let total: u32 = (1..=400).rev().map(|left| u32::from(steps(left, 50))).sum();
         assert_eq!(total, 600);
         assert_eq!(steps(0, 50), 1);
-        let total: u32 = (1..=7).rev().map(|left| steps(left, 100)).sum();
+        let total: u32 = (1..=7).rev().map(|left| u32::from(steps(left, 100))).sum();
         assert_eq!(total, 14);
+    }
+
+    #[test]
+    fn a_haste_adds_its_percent_of_strike_turns_and_never_on_a_turn_of_its_own() {
+        let interval = u64::from(crate::combat::STRIKE_INTERVAL);
+        for percent in [1, 30, 40, 50, 60, 75, 100] {
+            let turns = 100 * interval;
+            let extra: Vec<u64> = (0..turns).filter(|&t| extra_turn(t, percent)).collect();
+            assert_eq!(extra.len(), usize::from(percent), "{percent}%");
+            assert!(extra.iter().all(|t| t % interval != 0), "{percent}%");
+        }
     }
 
     #[test]

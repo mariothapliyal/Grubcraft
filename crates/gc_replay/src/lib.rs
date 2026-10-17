@@ -186,7 +186,9 @@ impl ConquestRecord {
             build_percent: setup.build_percent,
             victories: setup.victories,
             heart: setup.heart,
-            powers: setup.powers.to_vec(),
+            // The simulation keeps no more than this, and reading takes no
+            // more.
+            powers: setup.powers.iter().take(MAX_POWERS).copied().collect(),
         }
     }
 

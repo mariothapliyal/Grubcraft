@@ -650,10 +650,12 @@ impl Economy {
             let left = self.node_left[n];
             // A hasted tuner works faster (see [`crate::powers`]).
             self.tune_clock[n] += structures.steps(s);
-            if self.tune_clock[n] < self.tune_period(n) {
+            let period = self.tune_period(n);
+            if self.tune_clock[n] < period {
                 continue;
             }
-            self.tune_clock[n] = 0;
+            // A hasted tuner's step past the load counts toward the next.
+            self.tune_clock[n] -= period;
             // A dry node gives a whole load, only slower.
             let take = if left == 0 {
                 kind.load()

@@ -189,7 +189,9 @@ impl Conquest {
         self.production.update(&self.structures, nav, units, || {
             economy.supply_in_use(units, regs)
         });
+        // Last, so every part of the tick saw the same haste.
         self.structures.wear_haste();
+        regs.wear_haste();
     }
 
     /// Player `p`'s store and supply. Supply in use counts the regiments in

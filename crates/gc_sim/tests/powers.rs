@@ -589,6 +589,67 @@ fn phase_shift_moves_two_regiments_in_one_tick_for_one_payment_and_starts_its_co
     assert!(position(&w, a) != position(&w, b), "they stand apart");
 }
 
+/// A group shift the network carries over two turns is still one payment,
+/// and a shift to another building is not part of it.
+#[test]
+fn a_group_shift_split_over_ticks_rides_on_one_payment() {
+    let mut w = chorded(&[]);
+    put_up(&mut w, 0, KEEP, 56, 56);
+    let a = spawn(&mut w, 0, CHOIR_UNIT, 20, 44);
+    let b = spawn(&mut w, 0, CHOIR_UNIT, 22, 44);
+    let c = spawn(&mut w, 0, CHOIR_UNIT, 24, 44);
+    let (target, other) = (at(&w, 37, 34).unwrap(), at(&w, 30, 22).unwrap());
+    align(&mut w);
+    run(&mut w, 70 * 60);
+    let before = resonance_of(&w, 0);
+
+    assert!(order(&mut w, 0, shift(a, target)));
+    assert!(order(&mut w, 0, shift(b, target)), "rides a tick later");
+    assert_eq!(resonance_of(&w, 0), before - 60, "paid once");
+    assert!(position(&w, a) != position(&w, b), "they stand apart");
+    assert!(!order(&mut w, 0, shift(c, other)), "another building pays");
+    run(&mut w, gc_sim::powers::RIDE_TICKS);
+    assert!(!order(&mut w, 0, shift(c, target)), "too late to ride");
+}
+
+/// A regiment shifted out of a melee stays where it was shifted to rather
+/// than marching back to its foe.
+#[test]
+fn a_regiment_shifted_out_of_a_fight_leaves_it() {
+    let mut w = chorded(&[]);
+    put_up(&mut w, 0, KEEP, 56, 56);
+    let mine = spawn(&mut w, 0, CHOIR_UNIT, 20, 44);
+    let target = at(&w, 37, 34).unwrap();
+    align(&mut w);
+    run(&mut w, 70 * 60);
+    let foe = spawn(&mut w, 1, CHOIR_UNIT, 20, 48);
+    assert!(order(
+        &mut w,
+        0,
+        Command::Attack {
+            regiment: mine,
+            target: foe
+        }
+    ));
+    let engaged = |w: &World| w.regiments.iter().any(|r| r.handle == mine && r.engaged);
+    let mut ticks = 0;
+    while !engaged(&w) {
+        run(&mut w, 1);
+        ticks += 1;
+        assert!(ticks < 60 * 20, "they never met");
+    }
+    run(&mut w, 20);
+    assert!(order(&mut w, 0, shift(mine, target)));
+    let landed = position(&w, mine);
+    run(&mut w, 10 * 20);
+    assert!(!engaged(&w));
+    let drift = (position(&w, mine) - landed).length();
+    assert!(
+        drift < Fx::from_int(3),
+        "it walked {drift:?} back to the fight"
+    );
+}
+
 /// Phase Shift to an enemy's Resonator, or to a building that isn't a
 /// Resonator, is rejected and spends nothing; a shift to your own Resonator
 /// still works after.
