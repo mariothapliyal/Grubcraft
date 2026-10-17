@@ -38,11 +38,12 @@
 
 use gc_fixed::Pcg32;
 
+use crate::conquest;
 use crate::def::{
-    BIG_MAP_TILES, CoverKind, Kind, Land, LandOp, MapDef, Mode, Noise, Object, Pos, SetPieceKind,
-    Shape, SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, FRONTIER_SLOTS, Kind, Land, LandOp, MIN_BLOODSEEPS, MapDef, Mode,
+    Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
-use crate::generate::plateaus;
+use crate::generate::{START_PLATEAUS, plateaus};
 use crate::recipe::{BASE, DEEP, RISE_REACH, WATER, Writer, start_objects};
 use crate::stamp::dist2;
 
@@ -99,6 +100,14 @@ const SITE_REACH: i32 = 12;
 const HEART_CLEAR: i32 = 40;
 const HEART_FLAT: i32 = 14;
 
+/// A Conquest map's six shares have a Bloodseep site and a frontier slot
+/// each, which make up the rules' counts.
+const _: () = assert!(
+    MIN_BLOODSEEPS <= START_PLATEAUS
+        && *FRONTIER_SLOTS.start() <= START_PLATEAUS
+        && START_PLATEAUS <= *FRONTIER_SLOTS.end()
+);
+
 /// What a Wilds map is made for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Purpose {
@@ -130,12 +139,6 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
         scale: w.range(56, 96),
     };
     let starts = plateaus(tiles as u32);
-    // A Field Battle's starts are each placed once, in the lobby's order;
-    // a Conquest map's are the north three's shares (see [`Wilds::shares`]).
-    let objects = match purpose {
-        Purpose::Battle => start_objects(&starts),
-        Purpose::Conquest => Vec::new(),
-    };
     let mut wilds = Wilds {
         wildness,
         purpose,
@@ -145,7 +148,7 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
         fords: Vec::new(),
         wet: Vec::new(),
         land: Vec::new(),
-        objects,
+        objects: Vec::new(),
         w,
     };
     wilds.layout();
@@ -181,7 +184,8 @@ struct Wilds<'a> {
     /// Water no copse grows in: the rivers, pools and meres.
     wet: Vec<(Pos, i32)>,
     land: Vec<LandOp>,
-    /// The north half's objects (see [`Wilds::sites`]).
+    /// The objects: the starts, and the sites and shares of the north
+    /// half, which the loader turns for the south (see [`Wilds::sites`]).
     objects: Vec<Object>,
     w: Writer<'a>,
 }
@@ -190,6 +194,28 @@ impl Wilds<'_> {
     /// `t` tiles on a 512-tile map, scaled to this one.
     fn scaled(&self, t: i32) -> i32 {
         t * self.w.tiles / 512
+    }
+
+    /// How far round each start the ground is kept open and clear.
+    fn clearing(&self) -> i32 {
+        self.scaled(60)
+    }
+
+    fn conquest(&self) -> bool {
+        self.purpose == Purpose::Conquest
+    }
+
+    /// Keep everything later `r` clear of `at`: nothing blocks, floods or
+    /// covers it.
+    fn hold(&mut self, at: Pos, r: i32) {
+        self.keep.push((at, r));
+        self.gaps.push((at, r));
+    }
+
+    /// A random point in the north half.
+    fn north_point(&mut self) -> Pos {
+        let n = self.w.tiles;
+        (self.w.range(0, n - 1), self.w.range(0, n / 2))
     }
 
     /// Whether a band or spur that only some maps have is on this one:
@@ -205,18 +231,15 @@ impl Wilds<'_> {
     fn layout(&mut self) {
         let (n, mid) = (self.w.tiles, self.w.mid);
         // Round every start: open meadow, kept clear.
-        let clear = self.scaled(60);
-        for &s in &self.starts {
-            self.keep.push((s, clear));
-            self.gaps.push((s, clear));
+        let clear = self.clearing();
+        for s in self.starts {
+            self.hold(s, clear);
         }
         // On a Conquest map, round the Heart too.
-        let conquest = self.purpose == Purpose::Conquest;
+        let conquest = self.conquest();
         let centre = (mid, mid);
         if conquest {
-            let r = self.scaled(HEART_CLEAR);
-            self.keep.push((centre, r));
-            self.gaps.push((centre, r));
+            self.hold(centre, self.scaled(HEART_CLEAR));
         }
 
         // Between neighbouring north starts: where a wilder map's ways
@@ -372,26 +395,41 @@ impl Wilds<'_> {
     /// on a bigger map; on a Conquest map, each start's share too, and a
     /// rich field by each lair.
     fn sites(&mut self) {
-        if self.purpose == Purpose::Conquest {
+        // A Field Battle's starts are each placed once, in the lobby's
+        // order; a Conquest map's come with their shares.
+        if self.conquest() {
             self.shares();
+        } else {
+            self.objects.extend(start_objects(&self.starts));
         }
         let r = self.scaled(SITE_REACH);
+        // (The lairs' count is drawn first.)
         let lairs = self.per_area(1, 2);
+        // (kind, label, how many, whether it guards a rich field)
         let sites = [
-            (Kind::Village, "Grubfolk village", self.per_area(1, 2)),
-            (Kind::CreepCamp, "The company camp", self.per_area(0, 1)),
-            (Kind::CreepCamp, "The old fort", self.per_area(1, 1)),
-            (Kind::CreepCamp, "The lair", lairs),
-            (Kind::Shrine, "The standing stones", 1),
+            (
+                Kind::Village,
+                "Grubfolk village",
+                self.per_area(1, 2),
+                false,
+            ),
+            (
+                Kind::CreepCamp,
+                "The company camp",
+                self.per_area(0, 1),
+                false,
+            ),
+            (Kind::CreepCamp, "The old fort", self.per_area(1, 1), false),
+            (Kind::CreepCamp, "The lair", lairs, true),
+            (Kind::Shrine, "The standing stones", 1, false),
         ];
-        for (kind, label, count) in sites {
+        for (kind, label, count, rich) in sites {
             for _ in 0..count {
                 let Some(at) = self.reserve(r) else {
                     return;
                 };
                 self.put(kind, at, None, label);
-                // A lair guards a rich field: a seep and a vein beside it.
-                if self.purpose == Purpose::Conquest && label == "The lair" {
+                if rich && self.conquest() {
                     self.put(Kind::GrubSeep, (at.0 - 3, at.1 + 3), None, "");
                     self.put(Kind::MarrowVein, (at.0 + 3, at.1 + 3), None, "");
                 }
@@ -400,45 +438,43 @@ impl Wilds<'_> {
     }
 
     /// Each north start's share of a Conquest map, the same round every
-    /// start (the turned copies give the south three theirs), so the
-    /// starts have the same economy on the same open ground: the start
-    /// clearing is free of the land's features (see [`Wilds::layout`]).
-    /// The players go round the north starts west to east, 0 to 2; the
-    /// turned copies are players 3 to 5. Out to `z`, the clearing's reach:
-    /// - the base's two seeps and a Marrow vein, within a dozen tiles
-    ///   (well inside `BASE_AREA`), and the natural expansion's two seeps
-    ///   about 33 tiles out (past it, inside `EXPANSION_AREA`);
+    /// start, so the starts have the same economy on the same open ground
+    /// (the clearing, which the land's features keep out of). The players
+    /// go round the north starts west to east, 0 to 2; their turned copies
+    /// are players 3 to 5. A share has:
+    /// - the base's two seeps and a Marrow vein, as a Conquest recipe's
+    ///   ([`conquest::BASE_NODES`]), and a natural expansion of two seeps
+    ///   33 tiles out (past `BASE_AREA`, inside `EXPANSION_AREA`);
     /// - a hamlet, a Shrine, a Bloodseep site and a frontier slot;
     /// - three fields with creeps guarding them, so the first five
     ///   expansions a start takes are its own.
     fn shares(&mut self) {
+        // West to east (see [`plateaus`] for the order).
         let [nw, ne, _, _, n, _] = self.starts;
-        let z = self.scaled(60);
+        let z = self.clearing();
         // One jitter for every share, so they stay alike.
-        let mut jitter = || self.w.range(-1, 1);
-        let base = [
-            (Kind::GrubSeep, -9 + jitter(), 8 + jitter()),
-            (Kind::GrubSeep, 8 + jitter(), -9 + jitter()),
-            (Kind::MarrowVein, 8 + jitter(), 8 + jitter()),
-            (Kind::GrubSeep, -6 + jitter(), 33 + jitter()),
-            (Kind::GrubSeep, 7 + jitter(), 32 + jitter()),
-        ];
-        // The rest, in hundredths of the clearing's reach, with labels.
+        let natural = [(Kind::GrubSeep, -6, 33), (Kind::GrubSeep, 7, 32)];
+        let own: Vec<(Kind, i32, i32)> = conquest::BASE_NODES
+            .into_iter()
+            .chain(natural)
+            .map(|(kind, dx, dy)| (kind, dx + self.w.range(-1, 1), dy + self.w.range(-1, 1)))
+            .collect();
+        // The rest, at hundredths of the clearing's reach.
         let around = [
             (Kind::Village, -55, 30, ""),
             (Kind::Shrine, 65, -15, ""),
             (Kind::Bloodseep, -70, -25, ""),
             (Kind::FrontierSlot, 0, 80, ""),
             (Kind::GrubSeep, 45, 55, ""),
-            (Kind::CreepCamp, 50, 60, "Bile Toads"),
+            (Kind::CreepCamp, 50, 60, conquest::TOADS),
             (Kind::MarrowVein, -30, 70, ""),
-            (Kind::CreepCamp, -25, 75, "Marrow Golems"),
+            (Kind::CreepCamp, -25, 75, conquest::GOLEMS),
             (Kind::GrubSeep, -65, 50, ""),
-            (Kind::CreepCamp, -70, 55, "Bile Toads"),
+            (Kind::CreepCamp, -70, 55, conquest::TOADS),
         ];
         for (player, s) in (0..).zip([nw, n, ne]) {
             self.put(Kind::Start, s, Some(player), "");
-            for (kind, dx, dy) in base {
+            for &(kind, dx, dy) in &own {
                 self.put(kind, (s.0 + dx, s.1 + dy), Some(player), "");
             }
             for (kind, u, v, label) in around {
@@ -447,25 +483,19 @@ impl Wilds<'_> {
         }
     }
 
-    /// A clear place for a site of reach `r`, kept clear from now on:
-    /// nothing later blocks, floods or covers it, and it blocks no way
-    /// through. `None` on a map too crowded for one.
+    /// A clear place for a site of reach `r`, held clear from now on (see
+    /// [`Wilds::hold`]) and blocking no way through; `None` on a map too
+    /// crowded for one.
     fn reserve(&mut self, r: i32) -> Option<Pos> {
-        let n = self.w.tiles;
-        let mut tries = 0..64;
-        let at = loop {
-            tries.next()?;
-            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
-            if self.open_for(at, r) {
-                break at;
-            }
-        };
-        self.keep.push((at, r));
-        self.gaps.push((at, r));
+        let at = (0..64).find_map(|_| {
+            let at = self.north_point();
+            self.open_for(at, r).then_some(at)
+        })?;
+        self.hold(at, r);
         Some(at)
     }
 
-    /// An object of the north half, turned for the south (`owner` moved on
+    /// An object, turned for the south by the loader (an owner moved on
     /// with it).
     fn put(&mut self, kind: Kind, at: Pos, owner: Option<u8>, label: &str) {
         self.objects.push(Object {
@@ -478,7 +508,8 @@ impl Wilds<'_> {
     }
 
     /// How many sites of a kind in the north half: `lo` to `hi` on a
-    /// 512-tile map, more with the map's area.
+    /// 512-tile map, more with the map's area (rounded up from three
+    /// quarters).
     fn per_area(&mut self, lo: i32, hi: i32) -> i32 {
         let k = self.w.range(lo, hi);
         let n = self.w.tiles;
@@ -879,7 +910,7 @@ impl Wilds<'_> {
     fn spot(&mut self, r: i32) -> Option<Pos> {
         let n = self.w.tiles;
         for _ in 0..48 {
-            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
+            let at = self.north_point();
             if self.clear(at, r) {
                 return Some(at);
             }
@@ -902,8 +933,7 @@ impl Wilds<'_> {
     fn clump(&mut self, kind: CoverKind, lo: i32, hi: i32) {
         for _ in 0..12 {
             let r = self.w.range(lo, hi);
-            let n = self.w.tiles;
-            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
+            let at = self.north_point();
             if self.grows(at, r) {
                 self.w.cover(Shape::Disc { at, r }, kind);
                 return;

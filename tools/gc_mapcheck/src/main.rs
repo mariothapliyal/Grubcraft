@@ -47,10 +47,12 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
         .find(|w| is(&format!("Conquest-{}", w.name())))
     {
         let tiles = tiles()?;
-        gc_map::conquest::describe_wilds(tiles, seed, wild).ok_or(format!(
-            "the Conquest Wilds are {} tiles or more",
-            gc_map::def::BIG_MAP_TILES
-        ))?
+        gc_map::conquest::describe_wilds(tiles, seed, wild).ok_or_else(|| {
+            format!(
+                "the Conquest Wilds are {} tiles or more",
+                gc_map::def::BIG_MAP_TILES
+            )
+        })?
     } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {
         let size = named(&CONQUEST_SIZES, size)?;
         let (used, def) = generate(conquest, size, seed).map_err(|e| e.join("\n"))?;

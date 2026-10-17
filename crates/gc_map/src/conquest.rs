@@ -60,6 +60,17 @@ impl ConquestRecipe {
 pub const CONQUEST_SIZES: [SizeClass; 3] =
     [SizeClass::Duel, SizeClass::Skirmish, SizeClass::Warfield];
 
+/// A base's own nodes, from its start, within a dozen tiles (well inside
+/// `BASE_AREA`): the same for every Conquest map.
+pub(crate) const BASE_NODES: [(Kind, i32, i32); 3] = [
+    (Kind::GrubSeep, -9, 8),
+    (Kind::GrubSeep, 8, -9),
+    (Kind::MarrowVein, 8, 8),
+];
+/// The creeps that guard a contested seep and a contested vein.
+pub(crate) const TOADS: &str = "Bile Toads";
+pub(crate) const GOLEMS: &str = "Marrow Golems";
+
 /// Ground level (sixteenths of a tile), as the shipped maps have it, and
 /// a fen's dry ground, half a tile above the water.
 const BASE: i32 = 40;
@@ -131,9 +142,9 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
 /// Players 0 to 2 are the north starts west to east and 3 to 5 their
 /// turned copies, so three against three, north against south, is exactly
 /// fair, and every start has the same economy round it; in a game for
-/// all, the middle two are nearer the Heart. Every seed passes the
-/// checker (a sweep of 120 maps did when this was made, and
-/// `gc_mapcheck`'s tests sweep more), so it needs no reroll.
+/// all, the middle two are nearer the Heart. It isn't rerolled: every
+/// seed swept passes the checker (120 maps when this was made, and
+/// `gc_mapcheck`'s tests sweep some each build).
 pub fn describe_wilds(tiles: i32, seed: u64, wildness: Wildness) -> Option<MapDef> {
     (BIG_MAP_TILES..=*FIELD_TILES.end())
         .contains(&tiles)
@@ -247,16 +258,10 @@ impl Share<'_> {
         let f = self.f;
         let s = f.start;
         self.put(Kind::Start, s, true, false, "");
-        // The base, within a dozen tiles (well inside BASE_AREA), and the
-        // natural expansion out to the east, past BASE_AREA.
-        let own = [
-            (Kind::GrubSeep, -9, 8),
-            (Kind::GrubSeep, 8, -9),
-            (Kind::MarrowVein, 8, 8),
-            (Kind::GrubSeep, 32, -6),
-            (Kind::GrubSeep, 34, 6),
-        ];
-        for (kind, dx, dy) in own {
+        // The base, and the natural expansion out to the east, past
+        // BASE_AREA.
+        let natural = [(Kind::GrubSeep, 32, -6), (Kind::GrubSeep, 34, 6)];
+        for (kind, dx, dy) in BASE_NODES.into_iter().chain(natural) {
             let at = (
                 s.0 + dx + self.w.range(-1, 1),
                 s.1 + dy + self.w.range(-1, 1),
@@ -268,8 +273,8 @@ impl Share<'_> {
         self.put(Kind::Village, village, false, false, "");
         // Contested nodes, each with a camp of creeps between it and the middle.
         let contested = [
-            (Kind::GrubSeep, (640, 700), 28, (4, 2), "Bile Toads"),
-            (Kind::MarrowVein, (620, 680), -30, (2, 4), "Marrow Golems"),
+            (Kind::GrubSeep, (640, 700), 28, (4, 2), TOADS),
+            (Kind::MarrowVein, (620, 680), -30, (2, 4), GOLEMS),
         ];
         for (kind, u, v, (dx, dy), creeps) in contested {
             let at = f.at(self.w.range(u.0, u.1), f.scaled(v));
@@ -616,13 +621,9 @@ mod tests {
         };
         assert_eq!(share(0), share(1));
         assert_eq!(share(1), share(2));
-        let hearts: Vec<&Object> = def
-            .objects
-            .iter()
-            .filter(|o| o.kind == Kind::Heart)
-            .collect();
-        assert_eq!(hearts.len(), 1);
-        assert!(hearts[0].once);
+        let mut hearts = def.objects.iter().filter(|o| o.kind == Kind::Heart);
+        assert!(hearts.next().is_some_and(|h| h.once));
+        assert!(hearts.next().is_none());
         assert!(describe_wilds(320, 1, Wildness::Wild).is_none());
     }
 

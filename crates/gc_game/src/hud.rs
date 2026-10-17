@@ -281,21 +281,7 @@ fn site_colour(kind: Kind) -> Option<[u8; 4]> {
 pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let tiles = hm.tiles;
     let n = tiles as f32;
-    let side = terrain_cells(tiles);
-    let cell = |t: i32| (t.max(0) as usize * side / tiles as usize).min(side - 1);
-    let mut sites = vec![None; side * side];
-    if hm.objects_of(Kind::Heart).next().is_none() {
-        for o in &hm.objects {
-            if let Some(c) = site_colour(o.kind) {
-                sites[cell(o.at.1) * side + cell(o.at.0)] = Some(c);
-            }
-        }
-    }
-    MinimapTerrain::from_fn(side, |u, v| {
-        let k = (v * side as f32) as usize * side + (u * side as f32) as usize;
-        if let Some(c) = sites.get(k).copied().flatten() {
-            return c;
-        }
+    let mut picture = MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
         if h < hm.water_level() {
@@ -326,7 +312,23 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
                 ]
             }
         }
-    })
+    });
+    if !hm.is_conquest() {
+        for o in &hm.objects {
+            if let Some(c) = site_colour(o.kind) {
+                let k = minimap_cell(&picture, tiles, o.at);
+                picture.colors[k] = c;
+            }
+        }
+    }
+    picture
+}
+
+/// The cell of the minimap's ground picture that tile `at` is in.
+fn minimap_cell(picture: &MinimapTerrain, tiles: u32, (x, y): (i32, i32)) -> usize {
+    let side = picture.side;
+    let cell = |t: i32| (t.max(0) as usize * side / tiles as usize).min(side - 1);
+    cell(y) * side + cell(x)
 }
 
 /// Hand a frame of UI quads to the renderer.
@@ -968,29 +970,27 @@ mod tests {
             seed: 3,
         }
         .make();
+        let amber = site_colour(Kind::Village).unwrap();
         let picture = minimap_terrain(&field);
-        let side = picture.side;
         let site = field
             .objects
             .iter()
             .find(|o| o.kind == Kind::Village)
             .expect("a village");
-        let at = |t: i32| t as usize * side / field.tiles as usize;
         assert_eq!(
-            picture.colors[at(site.at.1) * side + at(site.at.0)],
-            site_colour(Kind::Village).unwrap()
+            picture.colors[minimap_cell(&picture, field.tiles, site.at)],
+            amber
         );
         let conquest = Map::from_def(
             &gc_map::conquest::describe_wilds(512, 3, gc_map::wilds::Wildness::Plains).unwrap(),
         );
         let marked = |m: &Map| {
-            let p = minimap_terrain(m);
-            p.colors
+            minimap_terrain(m)
+                .colors
                 .iter()
-                .filter(|c| **c == site_colour(Kind::Village).unwrap())
+                .filter(|&&c| c == amber)
                 .count()
         };
-        assert!(marked(&field) > 0);
         assert_eq!(marked(&conquest), 0);
     }
 

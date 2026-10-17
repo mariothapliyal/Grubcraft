@@ -85,6 +85,13 @@ impl Symmetry {
             Symmetry::Rot4 => 4,
         }
     }
+
+    /// How many players on each turned copy's owners are: the players
+    /// over the copies, so with six players under `Rot2` player 0's copy
+    /// belongs to player 3 (at least one, for a file with too few players).
+    pub fn owner_step(self, players: u8) -> u32 {
+        (u32::from(players.max(1)) / self.copies() as u32).max(1)
+    }
 }
 
 /// A point or tile as (x, y), x to the east and y to the south.
