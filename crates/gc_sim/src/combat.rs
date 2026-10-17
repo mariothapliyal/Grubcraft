@@ -103,6 +103,10 @@ pub(crate) fn pushing(step: Fx, crowd: Fx) -> Fx {
 /// then walks through, so no order is stuck for good. Friends locked in
 /// melee are never walked through.
 pub const PATIENCE: u16 = 3 * TICKS_PER_SECOND as u16;
+/// With nothing blocked within this many tiles there is always room to
+/// pass beside a friend, so nobody queues behind one (see
+/// [`Combat::friend_in_the_way`]).
+pub(crate) const OPEN_GROUND: i32 = 10;
 /// How far past touching distance the crowd check looks, so a regiment
 /// with no friend that near can march a few ticks without looking again.
 const LOOK_AHEAD: Fx = Fx::from_int(2);
@@ -688,7 +692,7 @@ impl Combat {
     /// Note which grid cells hold regiments that may hold their ground this
     /// tick (see `holder`). Called after [`Combat::before_move`], before
     /// anyone moves.
-    pub(crate) fn mark_holders(&mut self, regs: &Regiments) {
+    pub(crate) fn mark_holders(&mut self, regs: &Regiments, nav: &Nav) {
         self.holder.fill(false);
         self.big_holder = false;
         for i in 0..regs.alive.len() {
@@ -696,7 +700,8 @@ impl Combat {
                 || regs.morale_state[i].broken()
                 || !(regs.engaged[i].is_some()
                     || regs.held[i] > 0
-                    || (regs.target[i].is_none() && regs.attack_target[i].is_none()))
+                    || (regs.target[i].is_none() && regs.attack_target[i].is_none())
+                    || !nav.open_around(regs.position[i], OPEN_GROUND))
             {
                 continue;
             }
@@ -735,8 +740,12 @@ impl Combat {
     /// of an overlap is always allowed). Only friends
     /// holding their ground count: those fighting, waiting in a queue
     /// themselves, or standing still (the last two only for
-    /// [`PATIENCE`]). Friends on the march pass through each other, and
-    /// routers neither wait nor are waited for.
+    /// [`PATIENCE`]); and, also for [`PATIENCE`], friends marching ahead
+    /// of it the same way (facing within a right angle of `dir`, its way),
+    /// so blocks file through a ford one behind another instead of piling
+    /// into each other. Routers neither wait nor are waited for. Only
+    /// called in tight ground (see [`OPEN_GROUND`]); in the open, friends
+    /// on the march pass through each other.
     pub(crate) fn friend_in_the_way(
         &self,
         regs: &Regiments,
@@ -744,6 +753,7 @@ impl Combat {
         stances: &Stances,
         i: usize,
         next: FxVec2,
+        dir: FxVec2,
     ) -> Result<usize, Fx> {
         if regs.morale_state[i].broken() {
             return Err(Fx::ZERO);
@@ -778,10 +788,16 @@ impl Combat {
                 if j == i || found.is_some_and(|f| f < j) || regs.morale_state[j].broken() {
                     return;
                 }
+                let ahead = || {
+                    regs.target[j].is_some()
+                        && (regs.position[j] - regs.position[i]).dot(dir) > Fx::ZERO
+                        && regs.facing[j].to_vec().dot(dir) > Fx::ZERO
+                };
                 let holding = regs.engaged[j].is_some()
                     || (patient
                         && ((1..PATIENCE).contains(&regs.held[j])
-                            || (regs.target[j].is_none() && regs.attack_target[j].is_none())));
+                            || (regs.target[j].is_none() && regs.attack_target[j].is_none())
+                            || ahead()));
                 if !holding {
                     return;
                 }

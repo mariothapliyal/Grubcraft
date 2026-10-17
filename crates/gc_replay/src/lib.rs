@@ -1447,7 +1447,10 @@ mod tests {
         let s = world.structures().unwrap();
         assert_eq!(s.len(), 4, "a hall and a house each");
         assert!(s.iter().all(|v| v.finished()));
-        assert_eq!(world.regiments.iter().count(), 4);
+        // Two workers and two trained regiments, which meet at the rally
+        // point and fight: at least one of those lives.
+        assert!(world.regiments.iter().count() >= 3);
+        assert!(world.regiments.iter().any(|r| r.unit == 1));
         let bytes = replay.encode();
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, replay);

@@ -131,7 +131,7 @@ impl World {
         let i = h.index as usize;
         let models = s.models.min(stats.models);
         r.models[i] = models;
-        r.files[i] = s.files.clamp(1, models);
+        r.set_frontage(i, s.files);
         if stats.can_form(s.formation) {
             r.formation[i] = s.formation;
         }

@@ -17,6 +17,15 @@
 //!    filled in cell by cell inside their sector, then the whole chain is
 //!    pulled tight into a few waypoints the block marches between.
 //!
+//! A regiment's centre may go anywhere open, but its block is wider than
+//! that: every route keeps a *berth* for it, the cells from its centre to
+//! the edge of its block and a tile more (see [`Nav::plan`]). Cells closer
+//! than the berth to blocked ground cost more to cross, so searches run
+//! down the middle of a ford or a pass and swing wide round corners, and
+//! the chain is never pulled tighter than the berth (or than the chain
+//! itself went, through ground too narrow for it). Ground too narrow for
+//! the whole block is where it narrows into a column (`Regiments::squeeze`).
+//!
 //! Searches are budgeted: requests queue up and each tick serves them in
 //! order until [`WORK_PER_TICK`] units of work are spent (at least one request
 //! a tick), so a hundred regiments ordered at once can't stall a tick.
@@ -27,9 +36,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
-use gc_fixed::{Fx, FxVec2};
+use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::StateHasher;
+use crate::{StateHasher, UnitStats};
 use crate::regiments::Regiments;
 use crate::structures::Refusal;
 
@@ -47,6 +56,31 @@ pub const CLEARANCE: u8 = 3;
 pub const CLEAR_CAP: u8 = 32;
 /// Cost of a cell no regiment can enter.
 pub const BLOCKED: u8 = 0;
+/// The widest berth (cells from a block's centre that routes keep clear of
+/// blocked ground) any regiment asks for: 8 tiles.
+pub const MAX_BERTH: u8 = 16;
+/// The berth the portal graph's links are costed for (a regiment of eight
+/// files, four tiles across, wants about this much).
+const GRAPH_BERTH: u8 = 8;
+/// Most a cell's cost is raised by being close to blocked ground: on the
+/// very edge of open ground a step costs this much more than in the open.
+const WALL_COST: u32 = 4;
+/// [`WALL_COST`] shared out over a berth: `WALL_PENALTY[berth][short]` is
+/// what a cell `short` cells closer to blocked ground than `berth` adds to
+/// a step's cost (worked out once, as searches ask for it constantly).
+const WALL_PENALTY: [[u8; MAX_BERTH as usize + 1]; MAX_BERTH as usize + 1] = {
+    let mut table = [[0; MAX_BERTH as usize + 1]; MAX_BERTH as usize + 1];
+    let mut berth = 1;
+    while berth <= MAX_BERTH as usize {
+        let mut short = 0;
+        while short <= berth {
+            table[berth][short] = (short as u32 * WALL_COST).div_ceil(berth as u32) as u8;
+            short += 1;
+        }
+        berth += 1;
+    }
+    table
+};
 /// Waypoints stored per regiment. A longer route is followed in parts: when
 /// the last stored waypoint is reached, the rest is searched again.
 pub const MAX_WAYPOINTS: usize = 16;
@@ -141,6 +175,26 @@ impl Grid {
         self.clear[c as usize] >= CLEARANCE
     }
 
+    /// The berth a line or a stretch of route between cells `a` and `b`
+    /// can keep: `berth`, or less where either end is closer than that to
+    /// blocked ground.
+    fn need(&self, a: u32, b: u32, berth: u8) -> u8 {
+        berth
+            .min(self.clear[a as usize])
+            .min(self.clear[b as usize])
+            .max(CLEARANCE)
+    }
+
+    /// What crossing cell `c` costs a regiment wanting `berth`: the
+    /// ground's cost, plus up to [`WALL_COST`] the closer it is to
+    /// blocked ground than the berth.
+    fn weight(&self, c: u32, berth: u8) -> u32 {
+        let berth = berth.min(MAX_BERTH);
+        let short = berth.saturating_sub(self.clear[c as usize]);
+        u32::from(self.cost[c as usize])
+            + u32::from(WALL_PENALTY[usize::from(berth)][usize::from(short)])
+    }
+
     fn sector_of(&self, c: u32) -> u32 {
         let (x, y) = self.xy(c);
         ((y / SECTOR) * self.sectors + x / SECTOR) as u32
@@ -177,10 +231,10 @@ impl Grid {
     }
 
     /// Cost of one step between neighbouring cells: 10 straight and 14
-    /// diagonal on open ground, scaled by the cells' costs.
-    fn step_cost(&self, a: u32, b: u32, diagonal: bool) -> u32 {
+    /// diagonal on open ground, scaled by the cells' weights for `berth`.
+    fn step_cost(&self, a: u32, b: u32, diagonal: bool, berth: u8) -> u32 {
         let base = if diagonal { 7 } else { 5 };
-        base * (u32::from(self.cost[a as usize]) + u32::from(self.cost[b as usize]))
+        base * (self.weight(a, berth) + self.weight(b, berth))
     }
 
     /// Steps between two cells, diagonals counting as one.
@@ -202,13 +256,18 @@ impl Grid {
     /// cells. A line through a cell corner needs both cells beside the corner
     /// open. Adds the cells checked to `work`.
     fn line_open(&self, a: u32, b: u32, work: &mut u32) -> bool {
-        self.line_within(a, b, u8::MAX, work)
+        self.line_within(a, b, CLEARANCE, u8::MAX, work)
     }
 
-    /// [`Grid::line_open`], on cells costing no more than `max_cost`.
-    fn line_within(&self, a: u32, b: u32, max_cost: u8, work: &mut u32) -> bool {
-        let open =
-            |x: i32, y: i32| self.open(x, y) && self.cost[self.idx(x, y) as usize] <= max_cost;
+    /// [`Grid::line_open`], on cells at least `need` from blocked ground
+    /// and costing no more than `max_cost`.
+    fn line_within(&self, a: u32, b: u32, need: u8, max_cost: u8, work: &mut u32) -> bool {
+        let open = |x: i32, y: i32| {
+            self.inside(x, y) && {
+                let i = self.idx(x, y) as usize;
+                self.clear[i] >= need && self.cost[i] <= max_cost
+            }
+        };
         let (mut x, mut y) = self.xy(a);
         let (x1, y1) = self.xy(b);
         let (nx, ny) = ((x1 - x).abs(), (y1 - y).abs());
@@ -275,6 +334,40 @@ impl Grid {
             }
         }
         best.map(|(_, cell)| cell)
+    }
+
+    /// The cell with the most room (clearance, up to `berth`) within as
+    /// many cells of `c` as `c` falls short of `berth`, nearest on a tie,
+    /// in `c`'s area and in plain sight of it: `c` itself if it has the
+    /// berth already.
+    fn roomiest(&self, c: u32, berth: u8, work: &mut u32) -> u32 {
+        let have = self.clear[c as usize];
+        if have >= berth {
+            return c;
+        }
+        let r = i32::from(berth - have);
+        let (cx, cy) = self.xy(c);
+        let area = self.area[c as usize];
+        // (room, -distance squared) of the best so far.
+        let mut best = (have, 0, c);
+        for y in cy - r..=cy + r {
+            for x in cx - r..=cx + r {
+                *work += 1;
+                if !self.open(x, y) {
+                    continue;
+                }
+                let m = self.idx(x, y);
+                let room = self.clear[m as usize].min(berth);
+                let d = -((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                if (room, d) > (best.0, best.1)
+                    && self.area[m as usize] == area
+                    && self.line_open(c, m, work)
+                {
+                    best = (room, d, m);
+                }
+            }
+        }
+        best.2
     }
 }
 
@@ -365,7 +458,7 @@ impl Search {
     /// is reached; without one, every reachable cell of the sector. Returns
     /// whether the goal was reached (true without a goal). Afterwards
     /// [`Search::cost_to`] gives the cost to each cell reached.
-    fn sector(&mut self, grid: &Grid, sec: u32, from: u32, to: Option<u32>) -> bool {
+    fn sector(&mut self, grid: &Grid, sec: u32, from: u32, to: Option<u32>, berth: u8) -> bool {
         self.stamp = self.stamp.wrapping_add(1);
         if self.stamp == 0 {
             self.seen.fill(0);
@@ -395,6 +488,7 @@ impl Search {
             if Some(c) == to {
                 return true;
             }
+            let here = grid.weight(c, berth);
             for (k, &(dx, dy)) in DIRS.iter().enumerate() {
                 let (nx, ny) = (x + dx, y + dy);
                 if nx < x0 || ny < y0 || nx >= x1 || ny >= y1 || !grid.open(nx, ny) {
@@ -406,7 +500,8 @@ impl Search {
                 }
                 let n = grid.idx(nx, ny);
                 let nl = ((ny - y0) * SECTOR + (nx - x0)) as usize;
-                let ng = g + grid.step_cost(c, n, diagonal);
+                // As `grid.step_cost`, with this cell's weight found once.
+                let ng = g + if diagonal { 7 } else { 5 } * (here + grid.weight(n, berth));
                 if (self.seen[nl] != self.stamp || ng < self.g[nl])
                     && self.heap.len() < self.heap.capacity()
                 {
@@ -453,7 +548,7 @@ impl Search {
     /// enough: every node reachable inside the sector is linked to the ones
     /// in sight by the graph's own edges. Only when none is in sight is the
     /// sector searched.
-    fn link(&mut self, grid: &Grid, sec: u32, c: u32) {
+    fn link(&mut self, grid: &Grid, sec: u32, c: u32, berth: u8) {
         self.links.clear();
         let nodes = &grid.sector_nodes[grid.sector_first[sec as usize] as usize
             ..grid.sector_first[sec as usize + 1] as usize];
@@ -466,7 +561,7 @@ impl Search {
         if !self.links.is_empty() {
             return;
         }
-        self.sector(grid, sec, c, None);
+        self.sector(grid, sec, c, None, berth);
         for &n in nodes {
             if let Some(cost) = self.cost_to(grid, sec, grid.node_cell[n as usize]) {
                 self.links.push((n, cost));
@@ -476,7 +571,7 @@ impl Search {
 
     /// A* over the portal graph from cell `from` to cell `to`. On success the
     /// coarse route holds `from`, the portal cells in order, and `to`.
-    fn portals(&mut self, grid: &Grid, from: u32, to: u32) -> bool {
+    fn portals(&mut self, grid: &Grid, from: u32, to: u32, berth: u8) -> bool {
         let nodes = grid.node_cell.len() as u32;
         let (start, goal) = (nodes, nodes + 1);
         self.node_stamp = self.node_stamp.wrapping_add(1);
@@ -487,7 +582,7 @@ impl Search {
         let stamp = self.node_stamp;
         // Links into the goal (costs are the same both ways); NONE: no link.
         let goal_sector = grid.sector_of(to);
-        self.link(grid, goal_sector, to);
+        self.link(grid, goal_sector, to, berth);
         for &n in &grid.sector_nodes[grid.sector_first[goal_sector as usize] as usize
             ..grid.sector_first[goal_sector as usize + 1] as usize]
         {
@@ -509,7 +604,7 @@ impl Search {
         };
         let h = |n: u32| grid.estimate(cell_of(n), to) * GREED / 4;
 
-        self.link(grid, grid.sector_of(from), from);
+        self.link(grid, grid.sector_of(from), from, berth);
         self.node_heap.clear();
         self.node_seen[start as usize] = stamp;
         self.node_g[start as usize] = 0;
@@ -701,6 +796,81 @@ impl Nav {
             .is_none_or(|g| i32::from(g.clear[g.cell_at(p) as usize]) >= tiles * CELLS_PER_TILE)
     }
 
+    /// How far a block centred at `centre` and facing `facing` can spread
+    /// to either side before reaching blocked ground: the least room
+    /// either side along each line across the block at the offsets
+    /// `lines` (tiles ahead of the centre; behind when negative), up to
+    /// `reach`. A line that starts on blocked ground (the rear of a block
+    /// hanging over the water) doesn't count. Measured in quarter tiles.
+    pub(crate) fn room_across(&self, centre: FxVec2, facing: Angle, reach: Fx, lines: &[Fx]) -> Fx {
+        let Some(g) = &self.grid else {
+            return reach;
+        };
+        // Steps to blocked ground from the cell under `p` (0 on it or off
+        // the map).
+        let clear_at = |p: FxVec2| {
+            let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
+            if p.x < Fx::ZERO || p.y < Fx::ZERO || p.x >= side || p.y >= side {
+                0
+            } else {
+                g.clear[g.cell_at(p) as usize]
+            }
+        };
+        let mut room = reach;
+        let ahead = facing.to_vec();
+        let right = facing.wrapping_add(Angle::QUARTER).to_vec();
+        let quarter = Fx::from_ratio(1, 4);
+        for &a in lines {
+            let base = centre + ahead * a;
+            if clear_at(base) == 0 {
+                continue;
+            }
+            for side in [right, FxVec2::ZERO - right] {
+                let mut d = quarter;
+                while d < room {
+                    let clear = clear_at(base + side * d);
+                    if clear == 0 {
+                        // The edge lies somewhere in the last quarter.
+                        room = d - quarter;
+                        break;
+                    }
+                    // Every point within `clear - 1` cells of this one is
+                    // on firm ground too, so the probes in between (a cell
+                    // less, for rounding) needn't look: two a cell.
+                    d += quarter * (2 * (i32::from(clear) - 2)).max(1);
+                }
+            }
+        }
+        room
+    }
+
+    /// Where a block wanting `berth` (see [`Regiments::berth`]) ordered to
+    /// stand at `p` should stand: `p` if the block fits there, else the
+    /// roomiest ground within the shortfall of it in plain sight, so a
+    /// block sent to the water's edge stands back from it instead of
+    /// hanging over it. `p` on ground too close to blocked ground for a
+    /// regiment's centre first becomes the nearest that isn't (as a route
+    /// would take it). Always `p` with no map.
+    pub(crate) fn settle(&self, p: FxVec2, berth: u8) -> FxVec2 {
+        let Some(g) = &self.grid else {
+            return p;
+        };
+        let work = &mut 0;
+        let mut c = g.cell_at(p);
+        if !g.open_cell(c) {
+            match g.nearest_open(c, None, SNAP_GOAL, work) {
+                Some(open) => c = open,
+                None => return p,
+            }
+        }
+        let roomy = g.roomiest(c, berth, work);
+        if roomy == g.cell_at(p) {
+            p
+        } else {
+            g.centre(roomy)
+        }
+    }
+
     /// Whether a regiment's centre could walk the straight line from `from`
     /// to `to` (always true with no map).
     pub fn clear_line(&self, from: FxVec2, to: FxVec2) -> bool {
@@ -803,7 +973,12 @@ impl Nav {
 
     /// Bring every regiment's route up to date with its target, then run the
     /// queued searches this tick's budget allows.
-    pub(crate) fn plan(&mut self, regs: &mut Regiments) {
+    ///
+    /// Each route keeps the regiment's berth ([`Regiments::berth`]) from
+    /// blocked ground where the ground allows: a target in plain sight is
+    /// walked to straight only if the line keeps it (or as much as the
+    /// regiment has where it stands and the target has).
+    pub(crate) fn plan(&mut self, regs: &mut Regiments, units: &[UnitStats]) {
         let Some(grid) = &self.grid else {
             // Open plane: remember targets so the game can draw them.
             for i in 0..regs.alive.len() {
@@ -843,9 +1018,10 @@ impl Nav {
             }
             self.goal[i] = t;
             let (from, to) = (grid.cell_at(regs.position[i]), grid.cell_at(t));
+            let need = grid.need(from, to, regs.berth(units, i));
             if grid.open_cell(from)
                 && grid.open_cell(to)
-                && grid.line_open(from, to, &mut self.search.work)
+                && grid.line_within(from, to, need, u8::MAX, &mut self.search.work)
             {
                 self.route[i] = Route::Direct;
             } else {
@@ -867,7 +1043,12 @@ impl Nav {
             }
             served += 1;
             let way = &mut self.way[i * MAX_WAYPOINTS..][..MAX_WAYPOINTS];
-            match find(grid, &mut self.search, regs.position[i], t, way) {
+            let ask = Ask {
+                from: regs.position[i],
+                to: t,
+                berth: regs.berth(units, i),
+            };
+            match find(grid, &mut self.search, ask, way) {
                 Some((len, partial)) => {
                     self.route[i] = Route::Waypoints;
                     self.way_len[i] = len as u8;
@@ -989,16 +1170,21 @@ impl Nav {
     }
 }
 
-/// Find a route from `from` to `to`, writing waypoints into `out`. Returns
-/// how many, and whether they stop short of the goal (more to search for
-/// later); `None` when there is no way there.
-fn find(
-    grid: &Grid,
-    s: &mut Search,
+/// A route request.
+#[derive(Clone, Copy)]
+struct Ask {
     from: FxVec2,
     to: FxVec2,
-    out: &mut [FxVec2],
-) -> Option<(usize, bool)> {
+    /// Cells to keep between the regiment's centre and blocked ground,
+    /// where there is room.
+    berth: u8,
+}
+
+/// Find a route for `ask`, writing waypoints into `out`. Returns how many,
+/// and whether they stop short of the goal (more to search for later);
+/// `None` when there is no way there.
+fn find(grid: &Grid, s: &mut Search, ask: Ask, out: &mut [FxVec2]) -> Option<(usize, bool)> {
+    let Ask { from, to, berth } = ask;
     // Too close to blocked ground to start: first step out to open ground.
     let mut start = grid.cell_at(from);
     let mut lead = false;
@@ -1020,12 +1206,17 @@ fn find(
     let mut truncated = false;
     let mut via_portals = false;
     let (start_sector, goal_sector) = (grid.sector_of(start), grid.sector_of(goal));
-    if grid.line_open(start, goal, &mut s.work) {
+    let straight = |s: &mut Search, a: u32, b: u32| {
+        grid.line_within(a, b, grid.need(a, b, berth), u8::MAX, &mut s.work)
+    };
+    if straight(s, start, goal) {
         s.chain.push(goal);
-    } else if start_sector == goal_sector && s.sector(grid, start_sector, start, Some(goal)) {
+    } else if start_sector == goal_sector
+        && s.sector(grid, start_sector, start, Some(goal), berth)
+    {
         truncated = !s.append_sector_route(grid, start_sector, goal);
     } else {
-        if !s.portals(grid, start, goal) {
+        if !s.portals(grid, start, goal, berth) {
             return None;
         }
         via_portals = true;
@@ -1038,8 +1229,8 @@ fn find(
             }
             let sec = grid.sector_of(prev);
             let filled = sec == grid.sector_of(c)
-                && !grid.line_open(prev, c, &mut s.work)
-                && s.sector(grid, sec, prev, Some(c))
+                && !straight(s, prev, c)
+                && s.sector(grid, sec, prev, Some(c), berth)
                 && s.append_sector_route(grid, sec, c);
             if !filled {
                 if s.chain.len() == s.chain.capacity() {
@@ -1051,10 +1242,11 @@ fn find(
             prev = c;
         }
     }
-    let (n, partial) = smooth(grid, s, lead, goal_point, truncated, out);
+    let (n, partial) = smooth(grid, s, lead, goal_point, truncated, berth, out);
     if via_portals {
-        spread_through_portals(grid, s, usize::from(lead), from, n, out);
+        spread_through_portals(grid, s, usize::from(lead), from, n, berth, out);
     }
+    tighten(grid, s, usize::from(lead), from, n, berth, out);
     Some((n, partial))
 }
 
@@ -1065,8 +1257,9 @@ fn find(
 /// waypoint before to the next one that isn't a portal (a turn round
 /// something, or the route's end) crosses it, by up to [`PORTAL_SPAN`]
 /// cells, as long as the legs either side stay on open, plain (cost 1)
-/// ground: neighbours keep their spacing across open country, and the
-/// route still bends where the search said. Waypoints before `skip` stay
+/// ground, as far from blocked ground as the route went (up to `berth`):
+/// neighbours keep their spacing across open country, and the route still
+/// bends where the search said. Waypoints before `skip` stay
 /// put, as does the last. Only for routes that went through portals (the
 /// search's coarse route lists them).
 fn spread_through_portals(
@@ -1075,6 +1268,7 @@ fn spread_through_portals(
     skip: usize,
     from: FxVec2,
     n: usize,
+    berth: u8,
     out: &mut [FxVec2],
 ) {
     let portals = s.coarse.len().saturating_sub(1);
@@ -1113,7 +1307,12 @@ fn spread_through_portals(
         let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
         let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
-        for shift in [shift, shift / 2] {
+        let need = grid.need(from_cell, to_cell, berth).min(grid.need(c, c, berth));
+        // Across plain ground only, unless the portal itself is in a ford
+        // or on a slope: then across ground no worse than it, so blocks
+        // wade a ford side by side instead of in one file.
+        let max_cost = grid.cost[c as usize].max(1);
+        for shift in [shift, shift * 3 / 4, shift / 2, shift / 4] {
             let (x, y) = if along_x {
                 (cx + shift, cy)
             } else {
@@ -1123,8 +1322,8 @@ fn spread_through_portals(
                 break;
             }
             let moved = grid.idx(x, y);
-            if grid.line_within(from_cell, moved, 1, &mut s.work)
-                && grid.line_within(moved, to_cell, 1, &mut s.work)
+            if grid.line_within(from_cell, moved, need, max_cost, &mut s.work)
+                && grid.line_within(moved, to_cell, need, max_cost, &mut s.work)
             {
                 out[i] = grid.centre(moved);
                 break;
@@ -1134,14 +1333,76 @@ fn spread_through_portals(
     }
 }
 
+/// Smoothing keeps only cells of the chain the search found, and the
+/// search runs down the middle of narrow ground, so every route through a
+/// ford would cross on its middle line, in single file. Pull each turn of
+/// the route toward the straight line between its neighbours instead, as
+/// far as keeps the berth the route had there (up to all the way): a
+/// block coming from the west crosses on the west side of the ford, one
+/// from the east on the east side, each still a berth from the banks.
+/// Waypoints before `skip` stay put, as does the last; a turn never moves
+/// onto costlier ground than its own or its neighbours'.
+fn tighten(
+    grid: &Grid,
+    s: &mut Search,
+    skip: usize,
+    from: FxVec2,
+    n: usize,
+    berth: u8,
+    out: &mut [FxVec2],
+) {
+    let mut prev = if skip > 0 { out[skip - 1] } else { from };
+    for i in skip..n.saturating_sub(1) {
+        let (here, next) = (out[i], out[i + 1]);
+        let (a, c, b) = (grid.cell_at(prev), grid.cell_at(here), grid.cell_at(next));
+        // The nearest point to the turn on the line from `prev` to `next`.
+        let ab = next - prev;
+        let len2 = i64::from(ab.x.raw()).pow(2) + i64::from(ab.y.raw()).pow(2);
+        let along = i64::from((here - prev).x.raw()) * i64::from(ab.x.raw())
+            + i64::from((here - prev).y.raw()) * i64::from(ab.y.raw());
+        if len2 == 0 {
+            prev = here;
+            continue;
+        }
+        let t = i128::from(along.clamp(0, len2));
+        let part = |v: Fx| Fx::from_raw((i128::from(v.raw()) * t / i128::from(len2)) as i32);
+        let on_line = FxVec2::new(prev.x + part(ab.x), prev.y + part(ab.y));
+        let need = grid.need(a, b, berth).min(grid.need(c, c, berth));
+        let max_cost = grid.cost[a as usize]
+            .max(grid.cost[b as usize])
+            .max(grid.cost[c as usize]);
+        let pull = on_line - here;
+        for quarters in [4, 3, 2, 1] {
+            let to = here
+                + FxVec2::new(
+                    Fx::from_raw(pull.x.raw() / 4 * quarters),
+                    Fx::from_raw(pull.y.raw() / 4 * quarters),
+                );
+            let m = grid.cell_at(to);
+            if m == c {
+                break;
+            }
+            if grid.line_within(a, m, need, max_cost, &mut s.work)
+                && grid.line_within(m, b, need, max_cost, &mut s.work)
+            {
+                out[i] = to;
+                break;
+            }
+        }
+        prev = out[i];
+    }
+}
+
 /// Pull the chain of cells tight: keep only the cells where the straight
-/// line from the last kept one would leave open ground.
+/// line from the last kept one would come closer to blocked ground than
+/// `berth`, or than the chain itself came between them.
 fn smooth(
     grid: &Grid,
     s: &mut Search,
     lead: bool,
     goal_point: FxVec2,
     truncated: bool,
+    berth: u8,
     out: &mut [FxVec2],
 ) -> (usize, bool) {
     let mut n = 0;
@@ -1156,13 +1417,19 @@ fn smooth(
     }
     let mut partial = truncated;
     let (mut anchor, mut k) = (0, 1);
+    // The least room along the chain from the anchor to `k`, up to `berth`.
+    let room = |c: u32| berth.min(grid.clear[c as usize]).max(CLEARANCE);
+    let mut least = room(s.chain[0]).min(room(s.chain[1]));
     while k < len {
-        if k + 1 < len
-            && grid.span(s.chain[anchor], s.chain[k + 1]) <= SMOOTH_REACH
-            && grid.line_open(s.chain[anchor], s.chain[k + 1], &mut s.work)
-        {
-            k += 1;
-            continue;
+        if k + 1 < len {
+            let need = least.min(room(s.chain[k + 1]));
+            if grid.span(s.chain[anchor], s.chain[k + 1]) <= SMOOTH_REACH
+                && grid.line_within(s.chain[anchor], s.chain[k + 1], need, u8::MAX, &mut s.work)
+            {
+                least = need;
+                k += 1;
+                continue;
+            }
         }
         if n == out.len() {
             partial = true;
@@ -1176,6 +1443,9 @@ fn smooth(
         n += 1;
         anchor = k;
         k += 1;
+        if k < len {
+            least = room(s.chain[anchor]).min(room(s.chain[k]));
+        }
     }
     (n, partial)
 }
@@ -1271,17 +1541,28 @@ impl Grid {
         }
     }
 
-    /// Put portals where open cells face each other across sector edges.
-    /// Returns each node's partner across its edge.
+    /// Put portals where open cells face each other across sector edges:
+    /// in each stretch of edge, on the pair of cells furthest from blocked
+    /// ground (the middlemost of those), so routes cross where there is
+    /// most room. Returns each node's partner across its edge.
     fn place_portals(&mut self) -> Vec<u32> {
         // (cell on one side, cell on the other) for each portal.
         let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let clear = &self.clear;
         let mut add_run = |a: i32, b: i32, cells: &dyn Fn(i32) -> (u32, u32)| {
             let len = b - a;
             let pieces = (len + PORTAL_SPAN - 1) / PORTAL_SPAN;
             for j in 0..pieces {
                 let (pa, pb) = (a + j * len / pieces, a + (j + 1) * len / pieces);
-                pairs.push(cells((pa + pb - 1) / 2));
+                let middle = (pa + pb - 1) / 2;
+                let room = |t: i32| {
+                    let (u, v) = cells(t);
+                    clear[u as usize].min(clear[v as usize])
+                };
+                let best = (pa..pb)
+                    .max_by_key(|&t| (room(t), -(t - middle).abs(), -t))
+                    .unwrap_or(middle);
+                pairs.push(cells(best));
             }
         };
         for s in 0..self.sectors * self.sectors {
@@ -1355,7 +1636,12 @@ impl Grid {
         first.push(0);
         for (u, &p) in partner.iter().enumerate() {
             to.push(p);
-            cost.push(self.step_cost(self.node_cell[u], self.node_cell[p as usize], false));
+            cost.push(self.step_cost(
+                self.node_cell[u],
+                self.node_cell[p as usize],
+                false,
+                GRAPH_BERTH,
+            ));
             self.link_in_sector(search, u, &mut to, &mut cost);
             first.push(to.len() as u32);
         }
@@ -1374,7 +1660,7 @@ impl Grid {
     ) {
         let cell = self.node_cell[u];
         let sec = self.sector_of(cell);
-        search.sector(self, sec, cell, None);
+        search.sector(self, sec, cell, None, GRAPH_BERTH);
         for &v in self.nodes_in(sec as usize) {
             if v as usize == u {
                 continue;

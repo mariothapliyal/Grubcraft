@@ -91,7 +91,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 8;
+pub const SIM_VERSION: u32 = 9;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -910,8 +910,8 @@ impl World {
             &self.nav,
             self.map_tiles,
         );
-        self.nav.plan(&mut self.regiments);
-        self.combat.mark_holders(&self.regiments);
+        self.nav.plan(&mut self.regiments, &self.units);
+        self.combat.mark_holders(&self.regiments, &self.nav);
         self.regiments.step_movement(
             &mut self.nav,
             &self.terrain,
@@ -1063,6 +1063,11 @@ impl World {
                             },
                         );
                         if done {
+                            // A block sent where it would hang over the
+                            // water stands back from the edge.
+                            let i = regiment.index as usize;
+                            let berth = self.regiments.berth(&self.units, i);
+                            self.regiments.target[i] = Some(self.nav.settle(target, berth));
                             self.leave_off(regiment);
                         }
                         done

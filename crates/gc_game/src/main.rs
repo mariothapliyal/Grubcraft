@@ -1108,6 +1108,7 @@ impl App {
         let capacities = Capacities::default();
         let nav = tagged_alloc::scope(Tag::Map, || heightmap.nav_costs());
         let blocked_marks = blocked_marks(&nav, heightmap.tiles);
+        let map_tiles = heightmap.tiles;
         let scenery = tagged_alloc::scope(Tag::Render, || {
             // The showroom stands on bare ground, with no trees in the way.
             let cover = if opts.showroom.is_some() {
@@ -1241,7 +1242,8 @@ impl App {
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
-            puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
+            puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES)
+                .on_ground(&nav, map_tiles),
             arrows: field::Arrows::new(field::MAX_STUCK),
             art,
             commander: false,
@@ -3554,7 +3556,8 @@ impl Running {
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
-        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
+        self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES)
+            .on_ground(&nav, self.heightmap.tiles);
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
