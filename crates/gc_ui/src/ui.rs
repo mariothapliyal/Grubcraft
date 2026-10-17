@@ -9,24 +9,34 @@ use crate::draw::{Color, DrawList, Rect, fit, text_width};
 pub mod theme {
     use crate::draw::Color;
 
-    pub const SCRIM: Color = [6, 8, 12, 190];
-    pub const PANEL: Color = [22, 26, 34, 240];
-    pub const PANEL_EDGE: Color = [70, 78, 94, 255];
-    pub const TEXT: Color = [236, 238, 242, 255];
-    pub const MUTED: Color = [150, 158, 172, 255];
-    pub const DISABLED: Color = [96, 102, 114, 255];
-    pub const ACCENT: Color = [232, 132, 50, 255];
-    pub const GOOD: Color = [110, 200, 120, 255];
-    pub const BAD: Color = [240, 96, 84, 255];
+    // The Bayeux tapestry dyes: linen ground, ink outlines, and the madder,
+    // woad, weld and wode wools. Docs: docs/08-ui-ux.md#visual-style.
+    pub const LINEN: Color = [230, 214, 168, 255];
+    pub const LINEN_DK: Color = [201, 180, 124, 255];
+    pub const INK: Color = [43, 30, 18, 255];
+    pub const MADDER: Color = [154, 58, 42, 255];
+    pub const WOAD: Color = [46, 73, 104, 255];
+    pub const WELD: Color = [210, 165, 58, 255];
+    pub const WODE: Color = [90, 107, 58, 255];
+
+    pub const SCRIM: Color = [20, 12, 6, 200];
+    pub const PANEL: Color = [43, 30, 18, 245];
+    pub const PANEL_EDGE: Color = [154, 120, 52, 255];
+    pub const TEXT: Color = [236, 224, 188, 255];
+    pub const MUTED: Color = [180, 160, 120, 255];
+    pub const DISABLED: Color = [112, 98, 76, 255];
+    pub const ACCENT: Color = [222, 176, 70, 255];
+    pub const GOOD: Color = [128, 168, 84, 255];
+    pub const BAD: Color = [214, 84, 66, 255];
     /// Amber, for a warning that is not yet a disaster.
     pub const WARN: Color = [236, 190, 60, 255];
-    pub const BUTTON: Color = [44, 52, 68, 255];
-    pub const BUTTON_HOT: Color = [64, 74, 96, 255];
-    pub const BUTTON_DOWN: Color = [34, 40, 54, 255];
-    pub const PRIMARY: Color = [190, 92, 30, 255];
-    pub const PRIMARY_HOT: Color = [222, 118, 46, 255];
-    pub const PRIMARY_DOWN: Color = [150, 70, 22, 255];
-    pub const FIELD: Color = [12, 14, 20, 255];
+    pub const BUTTON: Color = [74, 54, 34, 255];
+    pub const BUTTON_HOT: Color = [102, 76, 46, 255];
+    pub const BUTTON_DOWN: Color = [52, 38, 24, 255];
+    pub const PRIMARY: Color = [154, 58, 42, 255];
+    pub const PRIMARY_HOT: Color = [186, 76, 54, 255];
+    pub const PRIMARY_DOWN: Color = [120, 42, 30, 255];
+    pub const FIELD: Color = [26, 18, 10, 255];
 }
 
 #[derive(Clone, Debug, Default)]
