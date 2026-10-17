@@ -140,8 +140,9 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
 /// `wildness`, with each start's economy round it, villages, outposts and
 /// lairs with rich fields out in the land, and the Heart in the middle.
 /// Players 0 to 2 are the north starts west to east and 3 to 5 their
-/// turned copies, so three against three, north against south, is exactly
-/// fair, and every start has the same economy round it; in a game for
+/// turned copies, so three against three, north against south, is fair
+/// (to the half tile the Heart stands off the turning centre), and every
+/// start has the same economy round it; in a game for
 /// all, the middle two are nearer the Heart. It isn't rerolled: every
 /// seed swept passes the checker (120 maps when this was made, and
 /// `gc_mapcheck`'s tests sweep some each build).

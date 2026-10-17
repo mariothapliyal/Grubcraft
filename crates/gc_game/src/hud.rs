@@ -265,8 +265,9 @@ impl HudState {
 }
 
 /// The colour a site stands out in on a Field Battle's minimap: villages
-/// amber, outposts and lairs dark red, standing stones pale blue.
-/// (Conquest draws its own.)
+/// amber, outposts and lairs dark red, standing stones pale blue. (Not on
+/// a Conquest map, whose minimap marks come from the Conquest mode: so
+/// far its gathering spots, not its sites.)
 fn site_colour(kind: Kind) -> Option<[u8; 4]> {
     match kind {
         Kind::Village | Kind::Town | Kind::Bazaar => Some([222, 168, 64, 255]),
@@ -316,7 +317,7 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     if !hm.is_conquest() {
         for o in &hm.objects {
             if let Some(c) = site_colour(o.kind) {
-                let k = minimap_cell(&picture, tiles, o.at);
+                let k = picture.cell_at(tile_uv(o.at.0, n), tile_uv(o.at.1, n));
                 picture.colors[k] = c;
             }
         }
@@ -324,11 +325,9 @@ pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     picture
 }
 
-/// The cell of the minimap's ground picture that tile `at` is in.
-fn minimap_cell(picture: &MinimapTerrain, tiles: u32, (x, y): (i32, i32)) -> usize {
-    let side = picture.side;
-    let cell = |t: i32| (t.max(0) as usize * side / tiles as usize).min(side - 1);
-    cell(y) * side + cell(x)
+/// The middle of tile `t` across a map `n` tiles wide, from 0 to 1.
+fn tile_uv(t: i32, n: f32) -> f32 {
+    (t as f32 + 0.5) / n
 }
 
 /// Hand a frame of UI quads to the renderer.
@@ -961,7 +960,7 @@ mod tests {
     use crate::camera::RtsCamera;
 
     /// A Field Battle's villages, outposts and stones show on the minimap
-    /// in their own colours; a Conquest map's don't (Conquest draws its own).
+    /// in their own colours; a Conquest map's don't.
     #[test]
     fn the_minimap_marks_a_field_maps_sites() {
         let field = gc_map::FieldMap {
@@ -977,10 +976,9 @@ mod tests {
             .iter()
             .find(|o| o.kind == Kind::Village)
             .expect("a village");
-        assert_eq!(
-            picture.colors[minimap_cell(&picture, field.tiles, site.at)],
-            amber
-        );
+        let n = field.tiles as f32;
+        let k = picture.cell_at(tile_uv(site.at.0, n), tile_uv(site.at.1, n));
+        assert_eq!(picture.colors[k], amber);
         let conquest = Map::from_def(
             &gc_map::conquest::describe_wilds(512, 3, gc_map::wilds::Wildness::Plains).unwrap(),
         );

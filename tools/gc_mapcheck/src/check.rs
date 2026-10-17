@@ -84,7 +84,7 @@ pub fn check(def: &MapDef) -> Report {
         return r;
     }
     areas(&map, &from, &mut r);
-    fairness(&map, &from, stride(def), &mut r);
+    fairness(&map, &from, &alike_starts(def, &map), &mut r);
     routes(&map, &walk, &from, &mut r);
     set_pieces(&map, &walk, &mut r);
     r
@@ -440,30 +440,30 @@ fn spread(values: &[u32]) -> u32 {
 }
 
 /// Note one number per player, and make it an error if they differ too
-/// much between the starts `stride` apart (every start, when it is 1).
+/// much between starts in the same group (`groups`, one per player; all
+/// the same group compares every start with every other).
 fn compare(
     r: &mut Report,
     label: &str,
     values: &[u32],
-    stride: usize,
+    groups: &[usize],
     show: impl Fn(u32) -> String,
 ) {
-    let alike = (0..stride)
+    let alike = (0..values.len())
         .map(|g| {
-            spread(
-                &values
-                    .iter()
-                    .skip(g)
-                    .step_by(stride)
-                    .copied()
-                    .collect::<Vec<u32>>(),
-            )
+            let group: Vec<u32> = values
+                .iter()
+                .zip(groups)
+                .filter(|&(_, &h)| h == g)
+                .map(|(&v, _)| v)
+                .collect();
+            spread(&group)
         })
         .max()
         .unwrap_or(0);
     let sp = spread(values);
     let shown: Vec<String> = values.iter().map(|&v| format!("{:>7}", show(v))).collect();
-    let between = if stride > 1 {
+    let between = if groups.iter().any(|&g| g != 0) {
         format!(", {alike}% between alike starts")
     } else {
         String::new()
@@ -479,49 +479,59 @@ fn compare(
     }
 }
 
-/// How far apart the starts the map's symmetry makes alike are, by
-/// player: 1 when its turned copies take every start round to every other
-/// (a Warfield's four) or there is no symmetry, else the loader's owner
-/// step (six players under `Rot2`: 0 with 3, 1 with 4, 2 with 5).
-fn stride(def: &MapDef) -> usize {
-    if def.symmetry.copies() > 1 {
-        def.symmetry.owner_step(def.players) as usize
-    } else {
-        1
-    }
+/// Which starts the map's symmetry makes alike, as a group per player:
+/// the lowest player whose start is one of this start's turned copies.
+/// On a six-player map under `Rot2` that is three pairs of twins, found by
+/// where they stand, however their owners are numbered. Every start is in
+/// one group when the turned copies take every start round to every
+/// other (a Warfield's four), when there is no symmetry, or when no start
+/// has a twin.
+fn alike_starts(def: &MapDef, map: &Map) -> Vec<usize> {
+    let starts: Vec<Pos> = (0..map.players).map(|p| map.start_of(p).unwrap()).collect();
+    let groups: Vec<usize> = starts
+        .iter()
+        .map(|&s| {
+            let copies = def.symmetry.tile_copies(s, map.n);
+            starts.iter().position(|t| copies.contains(t)).unwrap_or(0)
+        })
+        .collect();
+    let twins = (0..groups.len()).any(|p| groups.iter().filter(|&&g| g == p).count() > 1);
+    if twins { groups } else { vec![0; starts.len()] }
 }
 
 /// Every start has the same economy round it, near and far. Where a
 /// start stands on the map (how far the Heart and the nearest foe are)
 /// is fair between the starts the symmetry makes alike (`alike`, see
-/// [`stride`]): on a six-player map under `Rot2`, the middle two are
+/// [`alike_starts`]): on a six-player map under `Rot2`, the middle two are
 /// nearer the Heart than the corners, as on most six-player maps, and
-/// three against three across the middle is exactly fair.
-fn fairness(map: &Map, from: &[Search], alike: usize, r: &mut Report) {
+/// three against three across the middle is fair.
+fn fairness(map: &Map, from: &[Search], alike: &[usize], r: &mut Report) {
+    let every = vec![0; alike.len()];
     let hamlets = [Kind::Village, Kind::Town, Kind::Bazaar];
-    // (name, kinds, only unowned, how many nearest to add up, which starts
-    // it is compared between: every one, or for where a start stands
-    // rather than what is round it, the alike ones)
-    let metrics: [(&str, &[Kind], bool, usize, usize); 6] = [
-        ("4 nearest seeps", &[Kind::GrubSeep], false, 4, 1),
-        ("nearest vein", &[Kind::MarrowVein], false, 1, 1),
-        ("Heart", &[Kind::Heart], false, 1, alike),
-        ("nearest hamlet", &hamlets, false, 1, 1),
+    // (name, kinds, only unowned, how many nearest to add up, whether it is
+    // where a start stands rather than what is round it, so compared only
+    // between the alike starts)
+    let metrics: [(&str, &[Kind], bool, usize, bool); 6] = [
+        ("4 nearest seeps", &[Kind::GrubSeep], false, 4, false),
+        ("nearest vein", &[Kind::MarrowVein], false, 1, false),
+        ("Heart", &[Kind::Heart], false, 1, true),
+        ("nearest hamlet", &hamlets, false, 1, false),
         (
             "2 nearest contested",
             &[Kind::GrubSeep, Kind::MarrowVein],
             true,
             2,
-            1,
+            false,
         ),
-        ("nearest Shrine", &[Kind::Shrine], false, 1, 1),
+        ("nearest Shrine", &[Kind::Shrine], false, 1, false),
     ];
-    for (name, kinds, unowned_only, k, stride) in metrics {
+    for (name, kinds, unowned_only, k, positional) in metrics {
         let v: Vec<u32> = from
             .iter()
             .map(|s| nearest(map, s, kinds, unowned_only, k))
             .collect();
-        compare(r, name, &v, stride, tenths);
+        let groups = if positional { alike } else { &every };
+        compare(r, name, &v, groups, tenths);
     }
     let foes: Vec<u32> = (0..map.players)
         .map(|p| {
@@ -540,7 +550,7 @@ fn fairness(map: &Map, from: &[Search], alike: usize, r: &mut Report) {
         .collect();
     for (i, minutes) in MINUTES.iter().enumerate() {
         let v: Vec<u32> = curves.iter().map(|c| c[i]).collect();
-        compare(r, &format!("income by minute {minutes}"), &v, 1, |v| {
+        compare(r, &format!("income by minute {minutes}"), &v, &every, |v| {
             v.to_string()
         });
     }

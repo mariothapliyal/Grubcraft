@@ -155,8 +155,12 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
     let Wilds {
         w, land, objects, ..
     } = wilds;
+    let name = match purpose {
+        Purpose::Battle => format!("Wilds {seed}"),
+        Purpose::Conquest => format!("Conquest Wilds {seed}"),
+    };
     MapDef {
-        name: format!("Wilds {seed}"),
+        name,
         size: SizeClass::Field(tiles),
         symmetry: Symmetry::Rot2,
         players: starts.len() as u8,
@@ -425,6 +429,7 @@ impl Wilds<'_> {
         ];
         for (kind, label, count, rich) in sites {
             for _ in 0..count {
+                // (No room on the grid for one is no room for the rest.)
                 let Some(at) = self.reserve(r) else {
                     return;
                 };
@@ -484,12 +489,12 @@ impl Wilds<'_> {
     }
 
     /// A clear place for a site of reach `r`, held clear from now on (see
-    /// [`Wilds::hold`]) and blocking no way through; `None` on a map too
-    /// crowded for one.
+    /// [`Wilds::hold`]), blocking no way through and clear of its own
+    /// turned copy; `None` on a map too crowded for one.
     fn reserve(&mut self, r: i32) -> Option<Pos> {
-        let at = (0..64).find_map(|_| {
-            let at = self.north_point();
-            self.open_for(at, r).then_some(at)
+        let n = self.w.tiles;
+        let at = self.find(64, |w, at| {
+            w.open_for(at, r) && dist2(at, (n - 1 - at.0, n - 1 - at.1)) >= 4 * r * r
         })?;
         self.hold(at, r);
         Some(at)
@@ -908,18 +913,23 @@ impl Wilds<'_> {
 
     /// A random spot for something of radius `r` (see [`Wilds::clear`]).
     fn spot(&mut self, r: i32) -> Option<Pos> {
+        self.find(48, |w, at| w.clear(at, r))
+    }
+
+    /// A random point in the north half where `ok`, from `tries` draws,
+    /// or on a crowded map any such point on an eight-tile grid.
+    fn find(&mut self, tries: usize, ok: impl Fn(&Self, Pos) -> bool) -> Option<Pos> {
         let n = self.w.tiles;
-        for _ in 0..48 {
+        for _ in 0..tries {
             let at = self.north_point();
-            if self.clear(at, r) {
+            if ok(self, at) {
                 return Some(at);
             }
         }
-        // A crowded map: any clear spot on an eight-tile grid.
         let spots: Vec<Pos> = (0..n / 2)
             .step_by(8)
             .flat_map(|y| (0..n).step_by(8).map(move |x| (x, y)))
-            .filter(|&at| self.clear(at, r))
+            .filter(|&at| ok(self, at))
             .collect();
         if spots.is_empty() {
             return None;

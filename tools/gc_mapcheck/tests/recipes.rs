@@ -40,7 +40,8 @@ fn every_recipe_makes_maps_the_checker_passes() {
 }
 
 /// Every Wilds map, at every wildness and size from small to large, passes
-/// the checker (a sweep of 30 seeds of each passed when it was made).
+/// the checker and has room for all its sites (a sweep of 30 seeds of each
+/// passed when it was made).
 #[test]
 fn every_wilds_map_passes_the_checker() {
     let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
@@ -49,8 +50,13 @@ fn every_wilds_map_passes_the_checker() {
         .flat_map(|(w, t)| (1..=5).map(move |seed| (w, t, seed)))
         .collect();
     let failed = failures(&jobs, |&(wild, tiles, seed)| {
-        let report = check(&wilds::describe(tiles, seed, wild));
-        let e = report.errors.first()?;
+        let def = wilds::describe(tiles, seed, wild);
+        let report = check(&def);
+        let e = report
+            .errors
+            .first()
+            .cloned()
+            .or_else(|| short_of_sites(&def))?;
         Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
     });
     assert!(
@@ -61,11 +67,11 @@ fn every_wilds_map_passes_the_checker() {
     );
 }
 
-/// Big Conquest maps pass the checker at every wildness, at the Standard
-/// size and at 768 (which takes the bigger maps' branches): the game
-/// doesn't reroll them. A sweep of 10 seeds of each wildness at 512, 640,
-/// 768 and 896 passed when they were made; this keeps a few of them so
-/// the test stays quick.
+/// Big Conquest maps pass the checker's Conquest checks at every wildness,
+/// at the Standard size and at 768 (which takes the bigger maps'
+/// branches), with room for all their sites: the game doesn't reroll them.
+/// A sweep of 10 seeds of each wildness at 512, 640, 768 and 896 passed
+/// when they were made; this keeps a few of them so the test stays quick.
 #[test]
 fn every_conquest_wilds_map_passes_the_checker() {
     let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
@@ -73,8 +79,16 @@ fn every_conquest_wilds_map_passes_the_checker() {
         .flat_map(|w| [(512, 1), (512, 2), (768, 3)].map(|(t, seed)| (w, t, seed)))
         .collect();
     let failed = failures(&jobs, |&(wild, tiles, seed)| {
-        let report = check(&conquest::describe_wilds(tiles, seed, wild).unwrap());
-        let e = report.errors.first()?;
+        let def = conquest::describe_wilds(tiles, seed, wild).unwrap();
+        let report = check(&def);
+        // (The fairness notes show the Conquest checks ran.)
+        let fairness = report.notes.iter().any(|n| n.starts_with("Heart"));
+        let e = report
+            .errors
+            .first()
+            .cloned()
+            .or_else(|| (!fairness).then(|| "wasn't checked as a Conquest map".to_string()))
+            .or_else(|| short_of_sites(&def))?;
         Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
     });
     assert!(
@@ -153,6 +167,16 @@ fn seeds_at(size: SizeClass) -> u64 {
         SizeClass::Skirmish => 25,
         _ => 12,
     }
+}
+
+/// Why a Wilds map is short of sites, if it is: they are placed in
+/// turn, the standing stones last, so a map with its stones has them all.
+fn short_of_sites(def: &gc_map::MapDef) -> Option<String> {
+    let stones = def
+        .objects
+        .iter()
+        .any(|o| o.kind == Kind::Shrine && o.label == "The standing stones");
+    (!stones).then(|| "had no room for all its sites".to_string())
 }
 
 /// `fail` for every job, on every core, each taking the next job until

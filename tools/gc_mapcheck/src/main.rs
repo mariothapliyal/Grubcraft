@@ -49,8 +49,9 @@ fn gen_cmd(recipe: &str, size: &str, seed: &str, out: &str) -> Result<(), String
         let tiles = tiles()?;
         gc_map::conquest::describe_wilds(tiles, seed, wild).ok_or_else(|| {
             format!(
-                "the Conquest Wilds are {} tiles or more",
-                gc_map::def::BIG_MAP_TILES
+                "the Conquest Wilds are {} to {} tiles",
+                gc_map::def::BIG_MAP_TILES,
+                gc_map::def::FIELD_TILES.end()
             )
         })?
     } else if let Some(conquest) = ConquestRecipe::ALL.into_iter().find(|r| is(r.name())) {

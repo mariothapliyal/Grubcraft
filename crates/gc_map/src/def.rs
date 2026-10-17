@@ -92,6 +92,12 @@ impl Symmetry {
     pub fn owner_step(self, players: u8) -> u32 {
         (u32::from(players.max(1)) / self.copies() as u32).max(1)
     }
+
+    /// A tile and its turned copies on a `tiles`-wide map, in the order the
+    /// loader places them (a tile that turns onto itself appears again).
+    pub fn tile_copies(self, p: Pos, tiles: i32) -> Vec<Pos> {
+        crate::stamp::tile_copies(p, self, tiles)
+    }
 }
 
 /// A point or tile as (x, y), x to the east and y to the south.
