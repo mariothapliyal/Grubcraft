@@ -164,7 +164,7 @@ fn covers(t: [FxVec2; 3], point: FxVec2) -> bool {
 /// squared) whose shortest link is `reach` tiles: [`MIN_HARMONY`] up to
 /// [`MAX_HARMONY`] at the area of an equilateral triangle of side `reach`.
 fn harmony_of(twice_area: u128, reach: u8) -> u32 {
-    let one = Fx::ONE.raw().unsigned_abs() as u128;
+    let one = u128::from(Fx::ONE.raw().unsigned_abs());
     // Twice an equilateral triangle's area is √3/2 of its side squared.
     let side = u128::from(reach) * one;
     let most = (side * side * 866 / 1000).max(1);
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn harmony_grows_with_area_up_to_the_largest_triangle() {
-        let one = Fx::ONE.raw().unsigned_abs() as u128;
+        let one = u128::from(Fx::ONE.raw().unsigned_abs());
         let unit = one * one;
         assert_eq!(harmony_of(unit, 14), MIN_HARMONY);
         // An equilateral triangle of side 14: twice its area is about 169.7.
