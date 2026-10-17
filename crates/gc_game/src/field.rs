@@ -34,7 +34,7 @@ const BURIED: f32 = 0.1;
 /// The fletching on top, paler, and how far it leans back toward the
 /// archers (an arrow comes down steeply, tail up).
 const FLETCHING: [f32; 2] = [0.08, 0.14];
-const LEAN: f32 = 0.1;
+const LEAN: f32 = 0.04;
 const SHAFT_COLOR: [u8; 4] = [92, 66, 42, 0];
 const FLETCHING_COLOR: [u8; 4] = [228, 216, 178, 0];
 /// An arrow in a body starts this high (tiles) instead of at the ground.
@@ -222,8 +222,12 @@ impl Arrows {
 
     /// Append the arrows `cull` sees as two boxes each, a shaft and its
     /// fletching leaning back toward the archers, until `out` holds `limit`.
+    /// The newest go first, so when room runs short the oldest are the
+    /// ones left out.
     pub fn push(&self, cull: &Cull, limit: usize, out: &mut Vec<BoxInstance>) {
-        for a in &self.stuck {
+        // Once the ring has wrapped, those before `next` are the newest.
+        let (wrapped, rest) = self.stuck.split_at(self.next);
+        for a in wrapped.iter().rev().chain(rest.iter().rev()) {
             if out.len() + 2 > limit {
                 return;
             }
@@ -365,6 +369,11 @@ mod tests {
         let mut xs: Vec<f32> = a.stuck.iter().map(|s| s.pos.x).collect();
         xs.sort_by(f32::total_cmp);
         assert_eq!(xs, [2.0, 3.0, 4.0]);
+        // Short of room, the newest are drawn and the oldest left out.
+        let mut out = Vec::new();
+        a.push(&Cull::EVERYTHING, 4, &mut out);
+        let drawn: Vec<f32> = out.iter().step_by(2).map(|b| b.pos[0]).collect();
+        assert_eq!(drawn, [4.0, 3.0]);
     }
 
     #[test]
@@ -380,10 +389,11 @@ mod tests {
         // Partly buried: the shaft starts below the ground, the fletching
         // above the shaft's top and leaning back toward the archers (the
         // arrow flew toward -y, so its tail is toward +y).
-        assert!(out[0].lift < 0.0);
-        assert!(out[1].lift > out[0].lift + 0.1);
-        assert!(out[1].pos[1] > out[0].pos[1]);
-        assert!(out[10].lift > out[0].lift + 0.1);
+        // The newest first: the arrow in a body, then the last in the ground.
+        assert!(out[2].lift < 0.0);
+        assert!(out[3].lift > out[2].lift + 0.1);
+        assert!(out[3].pos[1] > out[2].pos[1]);
+        assert!(out[0].lift > out[2].lift + 0.1);
         // Short of room, it stops early and never splits an arrow.
         out.clear();
         a.push(&Cull::EVERYTHING, 5, &mut out);

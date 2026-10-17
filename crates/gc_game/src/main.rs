@@ -267,6 +267,9 @@ const HIDDEN_COLOR: [u8; 4] = [95, 150, 70, 120];
 /// (`field-8000pt-2v2`), the biggest we run. The renderer's own room for
 /// soldiers (65,536) is the real limit on what can be drawn.
 const MAX_CORPSES: usize = 32_768;
+/// Boxes kept free of the dead for what each frame draws after them.
+const BOX_ROOM_AFTER_CORPSES: usize = 16_384;
+
 /// A body lying down shows about a third of the height of one standing, so
 /// it is drawn this many levels of detail coarser than the living; past the
 /// coarsest model, a plain box (10 triangles).
@@ -4013,10 +4016,8 @@ impl Running {
                         } else {
                             0
                         };
-                    if lod < LODS {
-                        if room == 0 {
-                            break;
-                        }
+                    // Out of soldier room, he is drawn as a box instead.
+                    if lod < LODS && room > 0 {
                         room -= 1;
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
@@ -4034,6 +4035,11 @@ impl Running {
             }
             if !seen && !cull.sees(glam::Vec3::new(c.pos.x, ground + 0.1, c.pos.y), 0.5) {
                 continue;
+            }
+            // Leave room for what is drawn after the dead (arrows in the air,
+            // routes, overlays).
+            if self.instances.len() >= gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES {
+                break;
             }
             self.instances.push(BoxInstance {
                 pos: c.pos.to_array(),
@@ -4071,15 +4077,21 @@ impl Running {
             let ground = heightmap.height_at(p.x, p.y);
             (ground >= water && !buildings::covers(world, p)).then_some(ground)
         };
+        // Where each volley came from, as the arrows in the air are drawn, so
+        // they come down where they were seen to. One pass over the volleys
+        // in a tick that loosed any.
+        if self
+            .world
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::Loosed { .. }))
+        {
+            for v in self.world.volleys() {
+                self.arrows.loosed(v.id, v.from, v.shots);
+            }
+        }
         for e in self.world.events() {
             match *e {
-                // From the volley itself, as the arrows in the air are drawn,
-                // so they come down where they were seen to.
-                Event::Loosed { volley, .. } => {
-                    if let Some(v) = self.world.volleys().find(|v| v.id == volley) {
-                        self.arrows.loosed(volley, v.from, v.shots);
-                    }
-                }
                 Event::Landed {
                     volley,
                     target,

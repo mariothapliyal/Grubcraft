@@ -533,17 +533,39 @@ impl Puppets {
         }
         let base = r * SLOTS;
         for k in 0..(self.models[r] as usize).min(SLOTS) {
-            self.lay(Fallen {
+            let fallen = Fallen {
                 pos: self.pos[base + k],
                 facing: self.facing[base + k],
                 fell: self.time,
                 unit: self.unit[r],
                 owner: self.player[r],
-            });
+            };
+            self.lay(fallen);
+            self.lodge(h, k, &fallen);
         }
         self.owner[r] = None;
         self.models[r] = 0;
         self.shot[r] = 0;
+    }
+
+    /// If an arrow of regiment `h`'s last volley is still to find a man,
+    /// it stays in `fallen` (its `k`th to fall), somewhere along his length
+    /// and a little to one side.
+    fn lodge(&mut self, h: RegimentHandle, k: usize, fallen: &Fallen) {
+        let r = h.index as usize;
+        if self.shot[r] == 0 {
+            return;
+        }
+        self.shot[r] -= 1;
+        let along = unit_hash(h, k, 11) - 0.5;
+        let aside = unit_hash(h, k, 12) - 0.5;
+        let side = Vec2::new(-fallen.facing.y, fallen.facing.x);
+        self.lodged.push(Lodged {
+            pos: fallen.pos
+                + fallen.facing * (along * LODGED_ALONG)
+                + side * (aside * LODGED_ASIDE),
+            dir: self.shot_dir[r],
+        });
     }
 
     /// Lay a soldier on the field. When it is full the oldest sinks away to
@@ -1096,19 +1118,8 @@ impl Puppets {
                 owner,
             };
             self.lay(fallen);
-            if self.shot[r] > 0 && fell <= self.time {
-                // Struck by an arrow: it stays in him, somewhere along his
-                // length, and a little to one side.
-                self.shot[r] -= 1;
-                let along = unit_hash(block.handle, gone, 11) - 0.5;
-                let aside = unit_hash(block.handle, gone, 12) - 0.5;
-                let side = Vec2::new(-facing.y, facing.x);
-                self.lodged.push(Lodged {
-                    pos: fallen.pos
-                        + facing * (along * LODGED_ALONG)
-                        + side * (aside * LODGED_ASIDE),
-                    dir: self.shot_dir[r],
-                });
+            if fell <= self.time {
+                self.lodge(block.handle, gone, &fallen);
             }
             self.pos[victim] = self.pos[last];
             self.vel[victim] = self.vel[last];

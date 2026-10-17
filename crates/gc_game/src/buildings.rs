@@ -207,9 +207,6 @@ fn ground_range(ground: &impl Fn(f32, f32) -> f32, s: &StructureView) -> (f32, f
         .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)))
 }
 
-/// The middle of a footprint, in tiles.
-/// The middle of a `width` by `depth` footprint whose north-west tile is
-/// `tile`: the inverse of [`tile_for`].
 /// Whether a building of `world` stands over `p` (always false outside
 /// Conquest, the only mode with buildings).
 pub fn covers(world: &World, p: Vec2) -> bool {
@@ -221,6 +218,9 @@ pub fn covers(world: &World, p: Vec2) -> bool {
     })
 }
 
+/// The middle of a footprint, in tiles.
+/// The middle of a `width` by `depth` footprint whose north-west tile is
+/// `tile`: the inverse of [`tile_for`].
 pub fn centre_of(tile: (i32, i32), width: u8, depth: u8) -> Vec2 {
     Vec2::new(
         tile.0 as f32 + f32::from(width) / 2.0,
