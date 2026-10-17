@@ -233,7 +233,8 @@ regiment_fields! {
     /// Tick the regiment last broke and ran, plus one (0: never).
     last_rout: u32 = 0,
     /// Ticks spent waiting behind a friendly block in its way (see
-    /// [`crate::combat::Combat::friend_in_the_way`]); 0 while marching freely.
+    /// [`crate::combat::Combat::friend_in_the_way`]), counted RECHECK at a
+    /// time at each look; 0 while marching freely.
     held: u16 = 0,
     /// Ticks before it looks for friends in its way again (see
     /// `Regiments::step_movement`): standing, while it waits behind one;

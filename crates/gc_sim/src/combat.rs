@@ -268,6 +268,10 @@ impl Block {
     /// negative): stops at the first axis that shows it isn't, as most
     /// pairs tested are close but not that deep.
     fn overlap_over(&self, other: &Block, limit: Fx) -> Option<Fx> {
+        debug_assert!(
+            limit >= Fx::ZERO,
+            "overlap_over needs a limit of zero or more"
+        );
         let d = other.centre - self.centre;
         let mut least = Fx::MAX;
         for axis in [self.forward, self.right, other.forward, other.right] {

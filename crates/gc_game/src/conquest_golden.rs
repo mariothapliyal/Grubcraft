@@ -1,4 +1,4 @@
-//! The Conquest golden replay (`replays/conquest-ribcage-1v1.gcr`): five
+//! The Conquest golden replay (`replays/conquest-ribcage-1v1.gcr`): six
 //! minutes on Ribcage Pass, set up as the lobby sets up Conquest, between
 //! two scripted sides that use every Conquest order. Each gathers, trains
 //! workers (and takes one back off the queue), lays a building that trains
