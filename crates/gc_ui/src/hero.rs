@@ -13,8 +13,8 @@ use crate::hud::{
 };
 use crate::ui::theme;
 
-const WIDTH: i32 = 268;
-const HEIGHT: i32 = 104;
+const WIDTH: i32 = 284;
+const HEIGHT: i32 = 118;
 const MARGIN: i32 = 8;
 const PORTRAIT: i32 = 56;
 const ROW_H: i32 = 24;
@@ -88,7 +88,7 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     draw.shadow(r, 3);
     draw.cloth(r, theme::LINEN);
 
-    let portrait = Rect::new(r.x + 6, r.y + 6, PORTRAIT, PORTRAIT);
+    let portrait = Rect::new(r.x + 10, r.y + 10, PORTRAIT, PORTRAIT);
     if let Some(secs) = hero.revive_secs {
         draw.rect(portrait, theme::LINEN_DK);
         draw.text_centered(portrait, 1, theme::MADDER, "DEAD");
@@ -102,30 +102,30 @@ pub fn draw(draw: &mut DrawList, bar_top: i32, hero: &HeroPanel, over: &mut Vec<
     draw.border(portrait, 2, theme::INK);
 
     let x = portrait.right() + 6;
-    let w = r.right() - 6 - x;
+    let w = r.right() - 10 - x;
     let chars = (w / CELL_W).max(1) as usize;
-    draw.text_bold(x, r.y + 5, 1, theme::INK, &fit(hero.name, chars));
+    draw.text_bold(x, r.y + 9, 1, theme::INK, &fit(hero.name, chars));
     let sub = format!("Lv {} {}", hero.level, hero.role);
-    draw.text(x, r.y + 21, 1, muted_ink(), &fit(&sub, chars));
+    draw.text(x, r.y + 25, 1, muted_ink(), &fit(&sub, chars));
     let hp_frac = hero.hp as f32 / hero.max_hp.max(1) as f32;
     ink_meter(
         draw,
-        Rect::new(x, r.y + 38, w, 10),
+        Rect::new(x, r.y + 42, w, 10),
         hp_frac,
         health_color(hp_frac),
     );
     let hp = format!("{}/{}", hero.hp, hero.max_hp);
     draw.meter(
-        Rect::new(x, r.y + 50, w, 4),
+        Rect::new(x, r.y + 54, w, 4),
         hero.xp,
         XP_COLOR,
         theme::LINEN_DK,
     );
-    draw.text(x, r.y + 54, 1, muted_ink(), &fit(&hp, chars));
+    draw.text(x, r.y + 58, 1, muted_ink(), &fit(&hp, chars));
 
     // Ranks and cooldowns, then the three item slots.
-    let row_y = r.bottom() - 6 - ROW_H;
-    let mut cell_x = r.x + 6;
+    let row_y = r.bottom() - 10 - ROW_H;
+    let mut cell_x = r.x + 10;
     for (a, key) in hero
         .abilities
         .iter()
