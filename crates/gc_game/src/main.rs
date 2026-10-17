@@ -4705,7 +4705,9 @@ impl Running {
             let colour = color_of(parties, self.sandbox.side);
             buildings::push_rally(&self.world, h, colour, &mut self.instances);
         }
-        buildings::push_nodes(&self.world, &mut self.instances);
+        if !self.scenery.draws_nodes() {
+            buildings::push_nodes(&self.world, &mut self.instances);
+        }
         buildings::push_veins(
             &self.world,
             self.sandbox.side,
@@ -4757,6 +4759,14 @@ impl Running {
                 .map(|s| (s.tile.0, s.tile.1, s.width, s.depth))
         });
         self.scenery.set_footprints(rects);
+        let map = &self.heightmap;
+        let nodes = self
+            .world
+            .economy()
+            .into_iter()
+            .flat_map(gc_sim::Economy::nodes);
+        self.scenery
+            .set_nodes(nodes.map(|n| buildings::node_look(&n, |p| ground_of(map, p))));
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }
