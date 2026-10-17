@@ -863,20 +863,26 @@ pub fn push_regiment_haste(
     glow: u8,
     out: &mut Vec<BoxInstance>,
 ) {
-    let right = Vec2::new(-facing.y, facing.x);
-    let (hw, hd) = (width / 2.0 + HASTE_REACH, depth / 2.0 + HASTE_REACH);
-    // Round the block, front left first.
-    let corners = [
-        centre + facing * hd - right * hw,
-        centre + facing * hd + right * hw,
-        centre - facing * hd + right * hw,
-        centre - facing * hd - right * hw,
-    ];
+    let half = (width / 2.0 + HASTE_REACH, depth / 2.0 + HASTE_REACH);
+    let corners = block_corners(centre, facing, half);
     for (i, &from) in corners.iter().enumerate() {
         let to = corners[(i + 1) % corners.len()];
         let width = (HASTE_WIDTH, HASTE_WIDTH);
         push_ribbon(from, to, width, HASTE_COLOR, HASTE_LIFT, |_| glow, out);
     }
+}
+
+/// The corners of a regiment's block round `centre`, `half` its width
+/// across its `facing` and its depth along it: in order round the block,
+/// front left first.
+pub fn block_corners(centre: Vec2, facing: Vec2, (hw, hd): (f32, f32)) -> [Vec2; 4] {
+    let right = Vec2::new(-facing.y, facing.x);
+    [
+        centre + facing * hd - right * hw,
+        centre + facing * hd + right * hw,
+        centre - facing * hd + right * hw,
+        centre - facing * hd - right * hw,
+    ]
 }
 
 /// A closed ring on the ground `reach` tiles outside the rectangle `foot`

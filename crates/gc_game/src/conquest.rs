@@ -97,7 +97,6 @@ pub fn power_of(p: &gc_data::PowerRecord) -> gc_sim::PowerStats {
             _ => gc_sim::PowerEffect::NotBuilt,
         },
     }
-    .sanitized()
 }
 
 /// What a Conquest unit record is to the simulation.
@@ -1303,6 +1302,15 @@ mod tests {
             .max();
         assert_eq!(best, Some(after.harmony));
         assert!(after.per_minute > before.per_minute);
+    }
+
+    /// The baker and the simulation cap power times alike.
+    #[test]
+    fn power_times_have_one_limit() {
+        assert_eq!(
+            gc_data::conquest::MAX_POWER_TICKS,
+            gc_sim::powers::MAX_POWER_TICKS
+        );
     }
 
     /// A building a power has hasted glows cyan for the side that may see

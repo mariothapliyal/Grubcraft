@@ -4036,15 +4036,8 @@ impl Running {
         d: f32,
         seed: u32,
     ) {
-        let right = Vec2::new(-facing.y, facing.x);
-        let (hw, hd) = (width / 2.0 + 0.4, depth / 2.0 + 0.4);
-        // Corners in order round the block, front left first.
-        let corners = [
-            centre + facing * hd - right * hw,
-            centre + facing * hd + right * hw,
-            centre - facing * hd + right * hw,
-            centre - facing * hd - right * hw,
-        ];
+        let half = (width / 2.0 + 0.4, depth / 2.0 + 0.4);
+        let corners = buildings::block_corners(centre, facing, half);
         let length = DISORDER_DASH * (0.3 + 0.7 * d);
         let seed = seed.wrapping_mul(0x9E37_79B9);
         for side in 0..4 {

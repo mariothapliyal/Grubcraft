@@ -161,9 +161,17 @@ impl Running {
         )
     }
 
+    /// What `power` does, if the match has it.
+    fn power_effect(&self, power: u8) -> Option<PowerEffect> {
+        self.world
+            .powers()
+            .get(usize::from(power))
+            .map(|p| p.effect)
+    }
+
     /// What holds `power` back for the side you command, if anything.
     fn power_hold(&self, power: u8) -> Option<Hold> {
-        let effect = self.world.powers().get(usize::from(power))?.effect;
+        let effect = self.power_effect(power)?;
         let refusal = self.world.can_use_power(self.sandbox.side, power).err();
         hold(effect, refusal, self.selected.len())
     }
@@ -215,7 +223,7 @@ impl Running {
 
     /// The line that says what to click for `power`.
     fn power_prompt(&self, power: u8) -> Option<String> {
-        let effect = self.world.powers().get(usize::from(power))?.effect;
+        let effect = self.power_effect(power)?;
         let name = self.data.powers.get(usize::from(power))?.name();
         let to = match effect {
             PowerEffect::Shift { to } => self.buildings.name(to),
@@ -239,12 +247,7 @@ impl Running {
         let Some(Armed::Power(power)) = self.hud.armed else {
             return;
         };
-        let stale = match self
-            .world
-            .powers()
-            .get(usize::from(power))
-            .map(|p| p.effect)
-        {
+        let stale = match self.power_effect(power) {
             Some(PowerEffect::Shift { .. }) => self.selected.is_empty(),
             Some(PowerEffect::Haste { .. }) => false,
             Some(PowerEffect::NotBuilt) | None => true,
@@ -257,12 +260,7 @@ impl Running {
     /// The click after choosing a power: send it at what was clicked. A
     /// click on anything else does nothing, and the power stays chosen.
     pub fn finish_power(&mut self, power: u8) {
-        let Some(effect) = self
-            .world
-            .powers()
-            .get(usize::from(power))
-            .map(|p| p.effect)
-        else {
+        let Some(effect) = self.power_effect(power) else {
             self.hud.armed = None;
             return;
         };
