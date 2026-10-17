@@ -2695,7 +2695,10 @@ impl Running {
                 });
             }
             let blink = self.started.elapsed().as_millis() % 600 < 300;
+            // Workers carry no morale banner: their nerve is low by design
+            // (they waver all the time) and they are not in the battle line.
             let banner = match r.morale {
+                _ if self.world.is_worker(r.handle) => None,
                 MoraleState::Steady => None,
                 MoraleState::Wavering => blink.then_some([235, 170, 40, 200]),
                 MoraleState::Routing => Some([245, 245, 240, 200]),
