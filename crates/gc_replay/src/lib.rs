@@ -44,6 +44,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 15: the Conquest units' larva and used-up-worker traits (read as
+///   neither);
 /// - 14: how the battle was won (read as holding the field) and the
 ///   Conquest victories and Titan's Heart (read as a sandbox: no victory);
 /// - 13: the fall back and brace commands;
@@ -59,7 +61,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 14;
+pub const FORMAT: u16 = 15;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -223,7 +225,7 @@ impl ConquestRecord {
             .filter(|b| b.len() == n)?;
         let n: usize = r.var_as()?;
         let units = (0..n.min(r.remaining()))
-            .map(|_| r.conquest_unit())
+            .map(|_| r.conquest_unit(format))
             .collect::<Option<Vec<_>>>()
             .filter(|u| u.len() == n)?;
         let structures = r.var_as().filter(|&s| s <= MAX_STRUCTURES)?;
