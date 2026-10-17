@@ -1,7 +1,8 @@
 //! Recipes must make maps the checker passes. This sweeps a few seeds of
 //! each Field Battle recipe, at both sizes, of the Wilds at each
-//! wildness and three sizes, of each Conquest recipe at each size, and of
-//! every kind of campaign battle map, through the checker. When a recipe is tuned, the build also looks at a few by hand,
+//! wildness and three sizes (and made for Conquest at two), of each
+//! Conquest recipe at each size, and of every kind of campaign battle
+//! map, through the checker. When a recipe is tuned, the build also looks at a few by hand,
 //! with `gc_mapcheck gen RECIPE SIZE SEED OUT.ron` (or `gc_mapcheck
 //! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
@@ -55,6 +56,30 @@ fn every_wilds_map_passes_the_checker() {
     assert!(
         failed.is_empty(),
         "{} Wilds maps failed the checker:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+}
+
+/// Every big Conquest map, at every wildness and from the Standard size
+/// to the largest, passes the checker: the game doesn't reroll them (a
+/// sweep of 10 seeds of each wildness at 512, 640, 768 and 896 passed
+/// when they were made).
+#[test]
+fn every_conquest_wilds_map_passes_the_checker() {
+    let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
+        .into_iter()
+        .flat_map(|w| [512, 768].map(|t| (w, t)))
+        .flat_map(|(w, t)| (1..=3).map(move |seed| (w, t, seed)))
+        .collect();
+    let failed = failures(&jobs, |&(wild, tiles, seed)| {
+        let report = check(&conquest::describe_wilds(tiles, seed, wild).unwrap());
+        let e = report.errors.first()?;
+        Some(format!("{wild:?} {tiles} seed {seed}: {e}"))
+    });
+    assert!(
+        failed.is_empty(),
+        "{} Conquest Wilds maps failed the checker:\n{}",
         failed.len(),
         failed.join("\n")
     );

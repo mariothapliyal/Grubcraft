@@ -27,12 +27,20 @@
 //! Each band or spur is a mountain range (cliffs on foothills, passes
 //! through them), a river (deep, with fords) or a belt of thicket (with
 //! walkable woods along it and paths through).
+//!
+//! Out in the land between them stand the **sites**: Grubfolk villages,
+//! outposts (a company camp or an old fort), creep lairs and standing
+//! stones, which the land's dressing keeps clear of. A Field Battle has
+//! them as landmarks. A Conquest map ([`crate::conquest::describe_wilds`])
+//! is the same land with each start's economy round it, rich fields by
+//! the lairs, and the Heart in the middle, where the middle band always
+//! has a way over.
 
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    BIG_MAP_TILES, CoverKind, Land, LandOp, MapDef, Mode, Noise, Pos, SetPieceKind, Shape,
-    SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, Kind, Land, LandOp, MapDef, Mode, Noise, Object, Pos, SetPieceKind,
+    Shape, SizeClass, Symmetry,
 };
 use crate::generate::plateaus;
 use crate::recipe::{BASE, DEEP, RISE_REACH, WATER, Writer, start_objects};
@@ -85,10 +93,32 @@ struct Course {
 /// Tiles between a barrier's points.
 const STEP: i32 = 8;
 
-/// The map a seed makes, `tiles` on a side, as wild as `wildness`. The
-/// Wilds are for the lobby's sizes, 256 tiles and up ([`MIN_TILES`]): a
-/// smaller map has no room for a band between its starts.
+/// On a 512-tile map: how far a site keeps the land's features off, how
+/// far round the Heart they keep off, and the Heart's flat ground.
+const SITE_REACH: i32 = 12;
+const HEART_CLEAR: i32 = 40;
+const HEART_FLAT: i32 = 14;
+
+/// What a Wilds map is made for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Purpose {
+    /// A Field Battle: the armies' starts, the land and its sites.
+    Battle,
+    /// Conquest: the same, with each start's economy round it, rich fields
+    /// by the lairs, and the Heart in the middle.
+    Conquest,
+}
+
+/// The Field Battle map a seed makes, `tiles` on a side, as wild as
+/// `wildness`. The Wilds are for the lobby's sizes, 256 tiles and up
+/// ([`MIN_TILES`]): a smaller map has no room for a band between its
+/// starts.
 pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
+    make(tiles, seed, wildness, Purpose::Battle)
+}
+
+/// The map a seed makes for `purpose` (see [`describe`]).
+pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) -> MapDef {
     let mut rng = Pcg32::new(seed, 0x0077_696c);
     let mut w = Writer::new(&mut rng, tiles, BASE);
     let noise = Noise {
@@ -100,18 +130,28 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
         scale: w.range(56, 96),
     };
     let starts = plateaus(tiles as u32);
+    // A Field Battle's starts are each placed once, in the lobby's order;
+    // a Conquest map's are the north three's shares (see [`Wilds::shares`]).
+    let objects = match purpose {
+        Purpose::Battle => start_objects(&starts),
+        Purpose::Conquest => Vec::new(),
+    };
     let mut wilds = Wilds {
         wildness,
+        purpose,
         starts,
         keep: Vec::new(),
         gaps: Vec::new(),
         fords: Vec::new(),
         wet: Vec::new(),
         land: Vec::new(),
+        objects,
         w,
     };
     wilds.layout();
-    let Wilds { w, land, .. } = wilds;
+    let Wilds {
+        w, land, objects, ..
+    } = wilds;
     MapDef {
         name: format!("Wilds {seed}"),
         size: SizeClass::Field(tiles),
@@ -123,13 +163,14 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness) -> MapDef {
         terrain: w.terrain,
         cover: w.cover,
         land,
-        objects: start_objects(&starts),
+        objects,
         set_pieces: w.set_pieces,
     }
 }
 
 struct Wilds<'a> {
     wildness: Wildness,
+    purpose: Purpose,
     starts: [Pos; 6],
     /// Places later things stay clear of, with how far.
     keep: Vec<(Pos, i32)>,
@@ -140,6 +181,8 @@ struct Wilds<'a> {
     /// Water no copse grows in: the rivers, pools and meres.
     wet: Vec<(Pos, i32)>,
     land: Vec<LandOp>,
+    /// The north half's objects (see [`Wilds::sites`]).
+    objects: Vec<Object>,
     w: Writer<'a>,
 }
 
@@ -166,6 +209,14 @@ impl Wilds<'_> {
         for &s in &self.starts {
             self.keep.push((s, clear));
             self.gaps.push((s, clear));
+        }
+        // On a Conquest map, round the Heart too.
+        let conquest = self.purpose == Purpose::Conquest;
+        let centre = (mid, mid);
+        if conquest {
+            let r = self.scaled(HEART_CLEAR);
+            self.keep.push((centre, r));
+            self.gaps.push((centre, r));
         }
 
         // Between neighbouring north starts: where a wilder map's ways
@@ -218,7 +269,7 @@ impl Wilds<'_> {
             // the corner starts, back the way the band's ways led, so a
             // march from corner to corner zigzags. A mixed map has one or
             // two anywhere, and sometimes one at the centre.
-            let xs = if self.wildness == Wildness::Wild {
+            let mut xs = if self.wildness == Wildness::Wild {
                 vec![inset + self.w.range(-jitter, jitter)]
             } else {
                 let count = self.w.range(1, 2);
@@ -228,6 +279,10 @@ impl Wilds<'_> {
                 }
                 xs
             };
+            // A Conquest map's Heart is in the middle, on the way over.
+            if conquest && !xs.contains(&mid) {
+                xs.push(mid);
+            }
             self.barrier_along(&line, &xs, true);
         }
 
@@ -252,6 +307,10 @@ impl Wilds<'_> {
             };
             self.barrier_along(&line, &gap, false);
         }
+
+        // The sites, before the land is dressed, so its dressing keeps
+        // clear of them.
+        self.sites();
 
         // The land between them, patch by patch, then copses and meadows
         // everywhere, and two knolls to hold. Their cover and colour go
@@ -292,6 +351,138 @@ impl Wilds<'_> {
         for (at, r) in std::mem::take(&mut self.fords) {
             self.w.ford(at, r);
         }
+        // The Heart's ground last, so a ford at the middle band's way over
+        // is a bank here.
+        if conquest {
+            let r = self.scaled(HEART_FLAT);
+            self.w.flat(centre, r, r);
+            self.w.cover(Shape::Disc { at: centre, r }, CoverKind::Open);
+            self.objects.push(Object {
+                kind: Kind::Heart,
+                at: centre,
+                owner: None,
+                label: String::new(),
+                once: true,
+            });
+        }
+    }
+
+    /// The sites out in the land, each kept clear (see [`Wilds::reserve`]):
+    /// Grubfolk villages, outposts, creep lairs and standing stones, more
+    /// on a bigger map; on a Conquest map, each start's share too, and a
+    /// rich field by each lair.
+    fn sites(&mut self) {
+        if self.purpose == Purpose::Conquest {
+            self.shares();
+        }
+        let r = self.scaled(SITE_REACH);
+        let lairs = self.per_area(1, 2);
+        let sites = [
+            (Kind::Village, "Grubfolk village", self.per_area(1, 2)),
+            (Kind::CreepCamp, "The company camp", self.per_area(0, 1)),
+            (Kind::CreepCamp, "The old fort", self.per_area(1, 1)),
+            (Kind::CreepCamp, "The lair", lairs),
+            (Kind::Shrine, "The standing stones", 1),
+        ];
+        for (kind, label, count) in sites {
+            for _ in 0..count {
+                let Some(at) = self.reserve(r) else {
+                    return;
+                };
+                self.put(kind, at, None, label);
+                // A lair guards a rich field: a seep and a vein beside it.
+                if self.purpose == Purpose::Conquest && label == "The lair" {
+                    self.put(Kind::GrubSeep, (at.0 - 3, at.1 + 3), None, "");
+                    self.put(Kind::MarrowVein, (at.0 + 3, at.1 + 3), None, "");
+                }
+            }
+        }
+    }
+
+    /// Each north start's share of a Conquest map, the same round every
+    /// start (the turned copies give the south three theirs), so the
+    /// starts have the same economy on the same open ground: the start
+    /// clearing is free of the land's features (see [`Wilds::layout`]).
+    /// The players go round the north starts west to east, 0 to 2; the
+    /// turned copies are players 3 to 5. Out to `z`, the clearing's reach:
+    /// - the base's two seeps and a Marrow vein, within a dozen tiles
+    ///   (well inside `BASE_AREA`), and the natural expansion's two seeps
+    ///   about 33 tiles out (past it, inside `EXPANSION_AREA`);
+    /// - a hamlet, a Shrine, a Bloodseep site and a frontier slot;
+    /// - three fields with creeps guarding them, so the first five
+    ///   expansions a start takes are its own.
+    fn shares(&mut self) {
+        let [nw, ne, _, _, n, _] = self.starts;
+        let z = self.scaled(60);
+        // One jitter for every share, so they stay alike.
+        let mut jitter = || self.w.range(-1, 1);
+        let base = [
+            (Kind::GrubSeep, -9 + jitter(), 8 + jitter()),
+            (Kind::GrubSeep, 8 + jitter(), -9 + jitter()),
+            (Kind::MarrowVein, 8 + jitter(), 8 + jitter()),
+            (Kind::GrubSeep, -6 + jitter(), 33 + jitter()),
+            (Kind::GrubSeep, 7 + jitter(), 32 + jitter()),
+        ];
+        // The rest, in hundredths of the clearing's reach, with labels.
+        let around = [
+            (Kind::Village, -55, 30, ""),
+            (Kind::Shrine, 65, -15, ""),
+            (Kind::Bloodseep, -70, -25, ""),
+            (Kind::FrontierSlot, 0, 80, ""),
+            (Kind::GrubSeep, 45, 55, ""),
+            (Kind::CreepCamp, 50, 60, "Bile Toads"),
+            (Kind::MarrowVein, -30, 70, ""),
+            (Kind::CreepCamp, -25, 75, "Marrow Golems"),
+            (Kind::GrubSeep, -65, 50, ""),
+            (Kind::CreepCamp, -70, 55, "Bile Toads"),
+        ];
+        for (player, s) in (0..).zip([nw, n, ne]) {
+            self.put(Kind::Start, s, Some(player), "");
+            for (kind, dx, dy) in base {
+                self.put(kind, (s.0 + dx, s.1 + dy), Some(player), "");
+            }
+            for (kind, u, v, label) in around {
+                self.put(kind, (s.0 + z * u / 100, s.1 + z * v / 100), None, label);
+            }
+        }
+    }
+
+    /// A clear place for a site of reach `r`, kept clear from now on:
+    /// nothing later blocks, floods or covers it, and it blocks no way
+    /// through. `None` on a map too crowded for one.
+    fn reserve(&mut self, r: i32) -> Option<Pos> {
+        let n = self.w.tiles;
+        let mut tries = 0..64;
+        let at = loop {
+            tries.next()?;
+            let at = (self.w.range(0, n - 1), self.w.range(0, n / 2));
+            if self.open_for(at, r) {
+                break at;
+            }
+        };
+        self.keep.push((at, r));
+        self.gaps.push((at, r));
+        Some(at)
+    }
+
+    /// An object of the north half, turned for the south (`owner` moved on
+    /// with it).
+    fn put(&mut self, kind: Kind, at: Pos, owner: Option<u8>, label: &str) {
+        self.objects.push(Object {
+            kind,
+            at,
+            owner,
+            label: label.into(),
+            once: false,
+        });
+    }
+
+    /// How many sites of a kind in the north half: `lo` to `hi` on a
+    /// 512-tile map, more with the map's area.
+    fn per_area(&mut self, lo: i32, hi: i32) -> i32 {
+        let k = self.w.range(lo, hi);
+        let n = self.w.tiles;
+        (k * n * n + 256 * 256) / (512 * 512)
     }
 
     /// A barrier along `line`, with ways through at `at` (see

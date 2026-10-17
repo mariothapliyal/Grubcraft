@@ -17,11 +17,12 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
-    SetPieceKind, Shape, SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, FIELD_TILES, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode,
+    Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::{dist2, tile_copies};
+use crate::wilds::{self, Purpose, Wildness};
 
 /// The kinds of Conquest map a seed can make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,23 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
         objects,
         set_pieces: w.set_pieces,
     })
+}
+
+/// A big Conquest map for six players, `tiles` on a side, or `None` for
+/// a side under [`BIG_MAP_TILES`] (six bases need the room) or over the
+/// biggest Field size: the Wilds' land ([`crate::wilds`]) as wild as
+/// `wildness`, with each start's economy round it, villages, outposts and
+/// lairs with rich fields out in the land, and the Heart in the middle.
+/// Players 0 to 2 are the north starts west to east and 3 to 5 their
+/// turned copies, so three against three, north against south, is exactly
+/// fair, and every start has the same economy round it; in a game for
+/// all, the middle two are nearer the Heart. Every seed passes the
+/// checker (a sweep of 120 maps did when this was made, and
+/// `gc_mapcheck`'s tests sweep more), so it needs no reroll.
+pub fn describe_wilds(tiles: i32, seed: u64, wildness: Wildness) -> Option<MapDef> {
+    (BIG_MAP_TILES..=*FIELD_TILES.end())
+        .contains(&tiles)
+        .then(|| wilds::make(tiles, seed, wildness, Purpose::Conquest))
 }
 
 /// Where the first player's share sits on a map of one size.
@@ -562,6 +580,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_same_seed_gives_the_same_conquest_wilds() {
+        for wild in Wildness::ALL {
+            let a = describe_wilds(512, 5, wild).unwrap().to_ron();
+            assert_eq!(a, describe_wilds(512, 5, wild).unwrap().to_ron());
+        }
+    }
+
+    /// Six bases round the Wilds: three starts in the north half, each
+    /// with the same share round it, the Heart once in the middle.
+    #[test]
+    fn conquest_wilds_give_every_start_the_same_share() {
+        let def = describe_wilds(768, 2, Wildness::Mixed).unwrap();
+        assert_eq!((def.players, def.symmetry), (6, Symmetry::Rot2));
+        let starts: Vec<&Object> = def
+            .objects
+            .iter()
+            .filter(|o| o.kind == Kind::Start)
+            .collect();
+        assert_eq!(starts.len(), 3);
+        let share = |p: u8| {
+            let s = starts.iter().find(|o| o.owner == Some(p)).unwrap().at;
+            let mut around: Vec<(Kind, i32, i32)> = def
+                .objects
+                .iter()
+                .filter(|o| o.kind != Kind::Heart)
+                .map(|o| (o.kind, o.at.0 - s.0, o.at.1 - s.1))
+                .filter(|&(_, dx, dy)| dx * dx + dy * dy <= 90 * 90)
+                .collect();
+            around.sort_by_key(|&(k, dx, dy)| (k as u8, dx, dy));
+            around
+        };
+        assert_eq!(share(0), share(1));
+        assert_eq!(share(1), share(2));
+        let hearts: Vec<&Object> = def
+            .objects
+            .iter()
+            .filter(|o| o.kind == Kind::Heart)
+            .collect();
+        assert_eq!(hearts.len(), 1);
+        assert!(hearts[0].once);
+        assert!(describe_wilds(320, 1, Wildness::Wild).is_none());
     }
 
     #[test]

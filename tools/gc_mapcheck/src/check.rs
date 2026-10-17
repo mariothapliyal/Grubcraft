@@ -65,8 +65,9 @@ pub fn check(def: &MapDef) -> Report {
     placement(&map, &walk, &mut r);
     // A Field Battle map has armies and starts, no economy: it is checked
     // for placement, for every start reaching every other, and for its set
-    // pieces, and its fairness is its symmetry.
-    let field = matches!(map.size, Some(SizeClass::Field(_)));
+    // pieces, and its fairness is its symmetry. A big Conquest map (the
+    // Wilds made for Conquest) is Field size with a Heart.
+    let field = matches!(map.size, Some(SizeClass::Field(_))) && count(&map, Kind::Heart) == 0;
     if !r.ok() || !starts(&map, &mut r) || (!field && !counts(&map, &mut r)) {
         return r;
     }
@@ -83,7 +84,7 @@ pub fn check(def: &MapDef) -> Report {
         return r;
     }
     areas(&map, &from, &mut r);
-    fairness(&map, &from, &mut r);
+    fairness(&map, &from, &twins(def), &mut r);
     routes(&map, &walk, &from, &mut r);
     set_pieces(&map, &walk, &mut r);
     r
@@ -438,41 +439,79 @@ fn spread(values: &[u32]) -> u32 {
     ((hi - lo) * 100).checked_div(hi).unwrap_or(0) as u32
 }
 
-/// Note one number per player, and make it an error if they differ too much.
-fn compare(r: &mut Report, label: &str, values: &[u32], show: impl Fn(u32) -> String) {
+/// Note one number per player, and make it an error if they differ too
+/// much within any of `groups` (each a list of players).
+fn compare(
+    r: &mut Report,
+    label: &str,
+    values: &[u32],
+    groups: &[Vec<usize>],
+    show: impl Fn(u32) -> String,
+) {
     let sp = spread(values);
     let shown: Vec<String> = values.iter().map(|&v| format!("{:>7}", show(v))).collect();
     r.notes
         .push(format!("{label:<22} {}   spread {sp}%", shown.join(" ")));
-    if sp > TOLERANCE_PERCENT {
+    let worst = groups
+        .iter()
+        .map(|g| spread(&g.iter().map(|&p| values[p]).collect::<Vec<u32>>()))
+        .max()
+        .unwrap_or(0);
+    if worst > TOLERANCE_PERCENT {
         r.err(format!(
-            "unfair: {label} differs by {sp}% between starts (limit {TOLERANCE_PERCENT}%)"
+            "unfair: {label} differs by {worst}% between starts (limit {TOLERANCE_PERCENT}%)"
         ));
     }
 }
 
-fn fairness(map: &Map, from: &[Search], r: &mut Report) {
+/// The groups of starts the map's symmetry makes alike: all of them when
+/// its turned copies take each start round to every other (a Warfield's
+/// four), or each start with its own copies when there are more starts
+/// than copies (six players under `Rot2`: 0 with 3, 1 with 4, 2 with 5).
+fn twins(def: &MapDef) -> Vec<Vec<usize>> {
+    let players = usize::from(def.players);
+    let copies = def.symmetry.copies();
+    let step = players / copies;
+    if def.symmetry == Symmetry::None || step <= 1 {
+        return vec![(0..players).collect()];
+    }
+    (0..step)
+        .map(|p| (0..copies).map(|k| p + k * step).collect())
+        .collect()
+}
+
+/// Every start has the same economy round it, near and far. Where a
+/// start stands on the map (how far the Heart and the nearest foe are)
+/// is fair between the starts the symmetry makes alike (`twins`): on a
+/// six-player map under `Rot2`, the middle two are nearer the Heart
+/// than the corners, as on most six-player maps, and three against three
+/// across the middle is exactly fair.
+fn fairness(map: &Map, from: &[Search], twins: &[Vec<usize>], r: &mut Report) {
+    let all = [(0..from.len()).collect::<Vec<usize>>()];
     // (name, kinds, only unowned, how many nearest to add up)
     let hamlets = [Kind::Village, Kind::Town, Kind::Bazaar];
-    let metrics: [(&str, &[Kind], bool, usize); 6] = [
-        ("4 nearest seeps", &[Kind::GrubSeep], false, 4),
-        ("nearest vein", &[Kind::MarrowVein], false, 1),
-        ("Heart", &[Kind::Heart], false, 1),
-        ("nearest hamlet", &hamlets, false, 1),
+    // (name, kinds, only unowned, how many nearest to add up, whether it
+    // is where the start stands rather than what is round it)
+    let metrics: [(&str, &[Kind], bool, usize, bool); 6] = [
+        ("4 nearest seeps", &[Kind::GrubSeep], false, 4, false),
+        ("nearest vein", &[Kind::MarrowVein], false, 1, false),
+        ("Heart", &[Kind::Heart], false, 1, true),
+        ("nearest hamlet", &hamlets, false, 1, false),
         (
             "2 nearest contested",
             &[Kind::GrubSeep, Kind::MarrowVein],
             true,
             2,
+            false,
         ),
-        ("nearest Shrine", &[Kind::Shrine], false, 1),
+        ("nearest Shrine", &[Kind::Shrine], false, 1, false),
     ];
-    for (name, kinds, unowned_only, k) in metrics {
+    for (name, kinds, unowned_only, k, placed) in metrics {
         let v: Vec<u32> = from
             .iter()
             .map(|s| nearest(map, s, kinds, unowned_only, k))
             .collect();
-        compare(r, name, &v, tenths);
+        compare(r, name, &v, if placed { twins } else { &all }, tenths);
     }
     let foes: Vec<u32> = (0..map.players)
         .map(|p| {
@@ -484,14 +523,14 @@ fn fairness(map: &Map, from: &[Search], r: &mut Report) {
                 .unwrap_or(0)
         })
         .collect();
-    compare(r, "nearest enemy start", &foes, tenths);
+    compare(r, "nearest enemy start", &foes, twins, tenths);
 
     let curves: Vec<[u32; 3]> = (0..map.players)
         .map(|p| income(map, &from[p as usize], p))
         .collect();
     for (i, minutes) in MINUTES.iter().enumerate() {
         let v: Vec<u32> = curves.iter().map(|c| c[i]).collect();
-        compare(r, &format!("income by minute {minutes}"), &v, |v| {
+        compare(r, &format!("income by minute {minutes}"), &v, &all, |v| {
             v.to_string()
         });
     }

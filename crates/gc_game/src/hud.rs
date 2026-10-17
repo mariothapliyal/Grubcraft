@@ -15,7 +15,7 @@ use gc_ui::hud::{
 use glam::{Vec2, Vec3};
 
 use crate::{Running, from_fx_vec, fx_vec, sounds};
-use gc_map::Map;
+use gc_map::{Kind, Map};
 
 /// Cells per side of the minimap's ground picture: 48 up to a 384-tile
 /// map, then one for every 8 tiles, up to 80 (a 768 map's cells are
@@ -264,11 +264,38 @@ impl HudState {
     }
 }
 
-/// The ground as colours: water, woods, grass and rising hide.
+/// The colour a site stands out in on a Field Battle's minimap: villages
+/// amber, outposts and lairs dark red, standing stones pale blue.
+/// (Conquest draws its own.)
+fn site_colour(kind: Kind) -> Option<[u8; 4]> {
+    match kind {
+        Kind::Village | Kind::Town | Kind::Bazaar => Some([222, 168, 64, 255]),
+        Kind::CreepCamp => Some([150, 40, 50, 255]),
+        Kind::Shrine => Some([170, 214, 230, 255]),
+        _ => None,
+    }
+}
+
+/// The ground as colours: water, woods, grass and rising hide, and on a
+/// Field Battle map its sites, a cell each.
 pub(crate) fn minimap_terrain(hm: &Map) -> MinimapTerrain {
     let tiles = hm.tiles;
     let n = tiles as f32;
-    MinimapTerrain::from_fn(terrain_cells(tiles), |u, v| {
+    let side = terrain_cells(tiles);
+    let cell = |t: i32| (t.max(0) as usize * side / tiles as usize).min(side - 1);
+    let mut sites = vec![None; side * side];
+    if hm.objects_of(Kind::Heart).next().is_none() {
+        for o in &hm.objects {
+            if let Some(c) = site_colour(o.kind) {
+                sites[cell(o.at.1) * side + cell(o.at.0)] = Some(c);
+            }
+        }
+    }
+    MinimapTerrain::from_fn(side, |u, v| {
+        let k = (v * side as f32) as usize * side + (u * side as f32) as usize;
+        if let Some(c) = sites.get(k).copied().flatten() {
+            return c;
+        }
         let (x, z) = (u * n, v * n);
         let h = hm.height_at(x, z);
         if h < hm.water_level() {
@@ -930,6 +957,42 @@ fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
 mod tests {
     use super::*;
     use crate::camera::RtsCamera;
+
+    /// A Field Battle's villages, outposts and stones show on the minimap
+    /// in their own colours; a Conquest map's don't (Conquest draws its own).
+    #[test]
+    fn the_minimap_marks_a_field_maps_sites() {
+        let field = gc_map::FieldMap {
+            choice: gc_map::WILDS + 1,
+            tiles: 512,
+            seed: 3,
+        }
+        .make();
+        let picture = minimap_terrain(&field);
+        let side = picture.side;
+        let site = field
+            .objects
+            .iter()
+            .find(|o| o.kind == Kind::Village)
+            .expect("a village");
+        let at = |t: i32| t as usize * side / field.tiles as usize;
+        assert_eq!(
+            picture.colors[at(site.at.1) * side + at(site.at.0)],
+            site_colour(Kind::Village).unwrap()
+        );
+        let conquest = Map::from_def(
+            &gc_map::conquest::describe_wilds(512, 3, gc_map::wilds::Wildness::Plains).unwrap(),
+        );
+        let marked = |m: &Map| {
+            let p = minimap_terrain(m);
+            p.colors
+                .iter()
+                .filter(|c| **c == site_colour(Kind::Village).unwrap())
+                .count()
+        };
+        assert!(marked(&field) > 0);
+        assert_eq!(marked(&conquest), 0);
+    }
 
     #[test]
     fn the_focus_is_the_middle_of_the_screen_and_far_ground_is_off_it() {
