@@ -61,7 +61,7 @@ const FIRST_WAVE: u32 = 8 * 60 * TICKS_PER_SECOND;
 const WAVE_EVERY: u32 = 4 * 60 * TICKS_PER_SECOND;
 
 /// One side's orders so far.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Side {
     /// Which side its next wave goes at (counting round from its own).
     target: usize,
@@ -124,7 +124,11 @@ impl Soak {
         assert_eq!(stats.commands_applied as usize, opening.len());
         Soak {
             kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
-            sides: Default::default(),
+            // Each side's first wave goes at the next side round.
+            sides: core::array::from_fn(|p| Side {
+                target: p,
+                going_up: None,
+            }),
             starts: conquest::player_starts(map, PLAYERS),
             world,
             rejected: 0,
@@ -135,6 +139,8 @@ impl Soak {
     fn minute(&mut self) -> Minute {
         let mut times = Vec::with_capacity((60 * TICKS_PER_SECOND) as usize);
         let mut out = Vec::new();
+        // The sim heap's peak over the minute, read after every tick.
+        let mut sim_heap = 0;
         for _ in 0..60 * TICKS_PER_SECOND {
             out.clear();
             for p in 0..PLAYERS as PlayerId {
@@ -143,6 +149,7 @@ impl Soak {
             let began = Instant::now();
             let stats = tagged_alloc::scope(Tag::Sim, || self.world.tick(&out));
             times.push(began.elapsed().as_secs_f64() * 1000.0);
+            sim_heap = sim_heap.max(tagged_alloc::live_bytes(Tag::Sim));
             self.rejected += stats.commands_rejected;
         }
         times.sort_by(f64::total_cmp);
@@ -154,7 +161,7 @@ impl Soak {
             p50_ms: at(0.5),
             p99_ms: at(0.99),
             max_ms: at(1.0),
-            sim_heap: tagged_alloc::live_bytes(Tag::Sim),
+            sim_heap,
             heap: tagged_alloc::total_live_bytes(),
             process: gc_platform::memory::process_memory().current,
         }
@@ -232,18 +239,21 @@ impl Soak {
             }
         }
 
-        // Workers from the main building, its upgrade from minute ten.
+        // Workers from the main building, its upgrade from minute ten;
+        // each order's cost comes off what the later ones can spend.
         if queue_of(&main) == 0 && workers.len() < WORKERS && affords(&bank, k.worker_cost) {
             out.push(order(Command::Train {
                 structure: main.handle,
                 unit: k.worker,
             }));
+            spend(&mut bank, k.worker_cost);
         }
         let upgraded = main.upgrading.is_some() || Some(main.building) == k.keep;
         if t >= 10 * 60 * TICKS_PER_SECOND && !upgraded && affords(&bank, k.keep_cost) {
             out.push(order(Command::Upgrade {
                 structure: main.handle,
             }));
+            spend(&mut bank, k.keep_cost);
         }
 
         // A house when supply runs short, else another barracks, one
@@ -284,10 +294,7 @@ impl Soak {
                     structure: b.handle,
                     unit: k.fighter,
                 }));
-                let [grub, marrow, supply] = k.fighter_cost;
-                bank.grub -= grub;
-                bank.marrow -= marrow;
-                bank.supply_used += supply;
+                spend(&mut bank, k.fighter_cost);
             }
         }
 
@@ -328,6 +335,13 @@ impl Soak {
             }));
         }
     }
+}
+
+/// Take `cost` (Grub, Marrow, supply) out of `bank`, which affords it.
+fn spend(bank: &mut gc_sim::Bank, [grub, marrow, supply]: [u32; 3]) {
+    bank.grub -= grub;
+    bank.marrow -= marrow;
+    bank.supply_used += supply;
 }
 
 fn mb(bytes: f64) -> f64 {

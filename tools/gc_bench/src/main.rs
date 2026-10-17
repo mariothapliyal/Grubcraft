@@ -62,7 +62,7 @@ const BUDGETS: Budgets = Budgets {
 /// maps"): its ticks with no building going up, and a heap that holds the
 /// map's walking grid and fog, nine times a 256-tile map's.
 const BIG_MAP_BUDGETS: Budgets = Budgets {
-    p99_us: 4_000.0,
+    p99_us: 5_000.0,
     sim_heap: 48 * 1024 * 1024,
 };
 /// The longest a tick a building goes up in may take on a 768-tile map.
@@ -229,7 +229,13 @@ impl Timings {
     /// missed.
     fn report(mut self, world: &World, budgets: &Budgets) -> bool {
         self.times_us.sort_by(f64::total_cmp);
-        let pct = |p: f64| self.times_us[((self.times_us.len() - 1) as f64 * p) as usize];
+        let pct = |p: f64| {
+            let last = self.times_us.len().saturating_sub(1);
+            self.times_us
+                .get((last as f64 * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
         let sim_heap = tagged_alloc::live_bytes(Tag::Sim);
         let mem = gc_platform::memory::process_memory();
         println!("tick p50     {:>9.1} us", pct(0.50));

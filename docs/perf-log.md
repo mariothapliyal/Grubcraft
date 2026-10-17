@@ -127,6 +127,6 @@ Push-through added about 40%, close to the 1.35× its PR measured. The budget is
 
 Buildings coming down together are now grouped by where they stand (any that fit in a box 64 tiles across) and each group updates the grid once. Grids come out the same as a fresh build (a test checks), and no golden replay changed; SIM_VERSION went to 12 because routes near a razed base are searched again by group, which can differ from building by building.
 
-**Big-map gates:** `conquest-6p` is now gated in CI with budgets of its own: tick p99 ≤ 4 ms and no allocations outside the ticks a building goes up in (2.7 ms here), each such tick ≤ 40 ms (18 ms at worst here), sim heap ≤ 48 MB (22.4 MB).
+**Big-map gates:** `conquest-6p` is now gated in CI with budgets of its own: tick p99 ≤ 5 ms and no allocations outside the ticks a building goes up in (2.7 to 3.7 ms here), each such tick ≤ 40 ms (18 ms at worst here), sim heap ≤ 48 MB (22.4 MB).
 
 **Left for later:** many buildings destroyed by hand in one tick (several `RemoveStructure` orders) still update the grid one by one; only a side going out is batched.

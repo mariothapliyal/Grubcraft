@@ -54,18 +54,26 @@ pub fn make_map(choice: usize, seed: u64) -> Map {
 }
 
 /// Each of `players` players' start on `map`, in player order. With every
-/// start taken, player `p` has start `p`; a six-start Wilds map with fewer
-/// players spreads them, each next player taking the turned copy of the
-/// last one's start (0, 3, 1, 4, ...), so two players start across the
-/// map from each other and nobody shares a corner with a neighbour while
-/// another start is free.
+/// start taken, player `p` has start `p`. A six-start Wilds map with fewer
+/// players spreads them round it: its starts run round the map 0 to 5
+/// (north-west, north, north-east, then their turned copies south-east,
+/// south, south-west), and the players take every other one where they
+/// can, so two start across the map, three in a triangle and four in the
+/// corners.
 pub fn player_starts(map: &Map, players: usize) -> Vec<(i32, i32)> {
-    const SPREAD: [usize; 6] = [0, 3, 1, 4, 2, 5];
+    const SPREAD: [&[usize]; 6] = [
+        &[0],
+        &[0, 3],
+        &[0, 2, 4],
+        &[0, 2, 3, 5],
+        &[0, 2, 3, 5, 1],
+        &[],
+    ];
     let starts = map.starts();
-    if starts.len() != SPREAD.len() || players >= starts.len() {
+    if starts.len() != SPREAD.len() || players == 0 || players >= starts.len() {
         return starts;
     }
-    SPREAD[..players].iter().map(|&i| starts[i]).collect()
+    SPREAD[players - 1].iter().map(|&i| starts[i]).collect()
 }
 
 /// The lobby's Conquest map choice for a shipped map's file name.
@@ -243,7 +251,7 @@ fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 
 /// The commands that put every side's starting buildings and workers on
 /// the field: each faction's buildings and units with a start count, round
-/// its start on `map` (player `p` at the map's start `p`). The host sends
+/// its start on `map` (player `p` at its start from [`player_starts`]). The host sends
 /// them in the match's first turn, as it does a Field Battle's armies;
 /// `world` is the match's fresh world, to check the ground with. Works in
 /// floats, which is safe because only the host does it.
@@ -468,7 +476,11 @@ mod tests {
         assert_eq!(player_starts(&wild, 2), vec![starts[0], starts[3]]);
         assert_eq!(
             player_starts(&wild, 3),
-            vec![starts[0], starts[3], starts[1]]
+            vec![starts[0], starts[2], starts[4]]
+        );
+        assert_eq!(
+            player_starts(&wild, 4),
+            vec![starts[0], starts[2], starts[3], starts[5]]
         );
         let teeth = make_map(1, 0);
         assert_eq!(player_starts(&teeth, 2), teeth.starts());
