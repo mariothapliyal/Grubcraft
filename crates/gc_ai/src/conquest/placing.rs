@@ -8,14 +8,20 @@
 //! the reaction time between (someone stands there), and then the Steward
 //! simply tries again.
 
-use gc_sim::structures::BuildingStats;
+use gc_sim::structures::{BuildingStats, Role};
 use gc_sim::{BuildingId, PlayerId, World};
 use glam::Vec2;
 
 use crate::perception::v2;
 
-/// Tiles kept free round a building, so paths run between buildings.
+/// Tiles kept free between two small buildings (houses, towers, walls)
+/// set side by side.
 pub const GAP: i32 = 1;
+/// Tiles kept free round any other building: the narrowest ground a
+/// regiment can walk through ([`gc_sim::nav::CLEARANCE`] from blocked
+/// ground on both sides), so a production building's regiments can always
+/// get out.
+pub const WIDE_GAP: i32 = 3;
 /// Half-width of the lane kept free from a hall to each of its nodes.
 pub const LANE: f32 = 2.5;
 /// How far out from `near` a spot is looked for, in tiles.
@@ -35,8 +41,9 @@ pub struct Keep {
 
 /// The north-west tile for a building of type `building` (`stats`) that
 /// `party` could lay now, as near `near` as can be found within [`REACH`]
-/// tiles, keeping [`GAP`] tiles from its own buildings and everything in
-/// `keep`. `None` when nothing fits.
+/// tiles, keeping [`GAP`] tiles between two small buildings and
+/// [`WIDE_GAP`] round any other of its own and everything in `keep`.
+/// `None` when nothing fits.
 pub fn spot_for(
     world: &World,
     party: PlayerId,
@@ -46,13 +53,21 @@ pub fn spot_for(
     keep: &Keep,
 ) -> Option<(i32, i32)> {
     let (w, d) = (i32::from(stats.width), i32::from(stats.depth));
-    let mut taken = keep.taken.clone();
+    let small = is_small(stats.role);
+    // Each footprint with the gap to keep from it.
+    let mut taken: Vec<(Foot, i32)> = keep.taken.iter().map(|&f| (f, WIDE_GAP)).collect();
     if let Some(s) = world.structures() {
-        taken.extend(
-            s.iter()
-                .filter(|v| v.owner == party)
-                .map(|v| [v.tile.0, v.tile.1, i32::from(v.width), i32::from(v.depth)]),
-        );
+        let table = s.buildings();
+        taken.extend(s.iter().filter(|v| v.owner == party).map(|v| {
+            let theirs = table
+                .get(usize::from(v.building))
+                .is_some_and(|b| is_small(b.role));
+            let gap = if small && theirs { GAP } else { WIDE_GAP };
+            (
+                [v.tile.0, v.tile.1, i32::from(v.width), i32::from(v.depth)],
+                gap,
+            )
+        }));
     }
     let cx = (near.x - w as f32 / 2.0).round() as i32;
     let cy = (near.y - d as f32 / 2.0).round() as i32;
@@ -60,7 +75,7 @@ pub fn spot_for(
         let mut best: Option<((i32, i32), f32)> = None;
         for t in ring(cx, cy, r) {
             let foot = [t.0, t.1, w, d];
-            if taken.iter().any(|&f| overlaps(f, foot, GAP)) {
+            if taken.iter().any(|&(f, gap)| overlaps(f, foot, gap)) {
                 continue;
             }
             if keep.lanes.iter().any(|&(a, b)| crosses(foot, a, b)) {
@@ -87,9 +102,17 @@ fn ring(x: i32, y: i32, r: i32) -> Vec<(i32, i32)> {
     if r == 0 {
         return vec![(x, y)];
     }
-    let mut out: Vec<(i32, i32)> = (-r..=r).flat_map(|i| [(x + i, y - r), (x + i, y + r)]).collect();
+    let mut out: Vec<(i32, i32)> = (-r..=r)
+        .flat_map(|i| [(x + i, y - r), (x + i, y + r)])
+        .collect();
     out.extend((1 - r..r).flat_map(|i| [(x - r, y + i), (x + r, y + i)]));
     out
+}
+
+/// Houses, towers and walls: buildings nothing comes out of, which may
+/// stand a tile apart.
+fn is_small(role: Role) -> bool {
+    matches!(role, Role::Housing | Role::Defence | Role::Wall)
 }
 
 /// Whether footprints `a` and `b` come within `gap` tiles of each other.
@@ -104,8 +127,9 @@ pub fn overlaps(a: Foot, b: Foot, gap: i32) -> bool {
 fn crosses(f: Foot, a: Vec2, b: Vec2) -> bool {
     let min = Vec2::new(f[0] as f32, f[1] as f32);
     let max = min + Vec2::new(f[2] as f32, f[3] as f32);
-    // Sample along the lane; lanes are short (a hall to its seeps).
-    let steps = (a.distance(b) / 0.5).ceil().max(1.0) as i32;
+    // Sample along the lane, close enough to be within a tenth of a tile;
+    // lanes are short (a hall to its seeps).
+    let steps = (a.distance(b) / 0.2).ceil().max(1.0) as i32;
     (0..=steps).any(|i| {
         let p = a.lerp(b, i as f32 / steps as f32);
         let q = p.clamp(min, max);

@@ -145,7 +145,8 @@ impl Steward {
                     .iter()
                     .any(|m| m.view.building == l.building && m.view.tile == l.tile)
         });
-        self.sent.retain(|&(_, t)| s.now < t + reaction + SENT_TICKS);
+        self.sent
+            .retain(|&(_, t)| s.now < t + reaction + SENT_TICKS);
         self.ledger.saving = (0, 0);
         self.ledger.tier = look.tier;
         self.ledger.halls = look.mine.iter().filter(|m| m.takes(Resource::Grub)).count() as u8;
@@ -372,7 +373,9 @@ impl Steward {
         self.ledger.workers = look.workers.len() as u16;
         self.ledger.want_workers = want as u16;
         let mut have = look.workers.len() + Self::workers_queued(s, look);
-        let Some(p) = s.world.production() else { return };
+        let Some(p) = s.world.production() else {
+            return;
+        };
         let Some(mut bank) = s.world.bank(s.party) else {
             return;
         };
@@ -390,9 +393,7 @@ impl Steward {
             if bank.supply_used + u32::from(worker.unit.supply) > bank.supply_cap {
                 return;
             }
-            if s.world
-                .can_train(s.party, m.view.handle, worker.id)
-                .is_ok()
+            if s.world.can_train(s.party, m.view.handle, worker.id).is_ok()
                 && clicks.give(
                     s.now,
                     Command::Train {
@@ -459,10 +460,8 @@ impl Steward {
                 .flatten()
                 .map(|b| (b, self.inner_spot(look)))
         };
-        let wanted: Option<(&KitBuilding, Vec2)> = housing()
-            .or_else(first)
-            .or_else(expand)
-            .or_else(more);
+        let wanted: Option<(&KitBuilding, Vec2)> =
+            housing().or_else(first).or_else(expand).or_else(more);
         let Some((b, near)) = wanted else { return };
         if s.world.may_lay(s.party, b.id).is_err() {
             self.ledger.saving = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
@@ -530,7 +529,8 @@ impl Steward {
     /// The production building to add: one that trains fighters it can't
     /// train yet, else the one that trains the most.
     fn production_type<'k>(&self, s: &Sense<'k>, look: &Look) -> Option<&'k KitBuilding> {
-        let can = |b: &KitBuilding| b.stats.tier <= look.tier.max(1) && b.stats.upgrades_from.is_none();
+        let can =
+            |b: &KitBuilding| b.stats.tier <= look.tier.max(1) && b.stats.upgrades_from.is_none();
         let have = |id: BuildingId| look.mine.iter().any(|m| m.view.building == id);
         let fighters = |b: &KitBuilding| {
             s.kit
@@ -555,7 +555,11 @@ impl Steward {
     /// Grub seeps.
     fn wants_expansion(&self, s: &Sense, look: &Look) -> Option<Vec2> {
         s.kit.expansion()?;
-        let grub: Vec<_> = look.served.iter().filter(|n| n.1 == Resource::Grub).collect();
+        let grub: Vec<_> = look
+            .served
+            .iter()
+            .filter(|n| n.1 == Resource::Grub)
+            .collect();
         let full = grub
             .iter()
             .all(|n| look.at_node[usize::from(n.0)] >= u16::from(GRUB_SLOTS) - 1);
@@ -602,7 +606,11 @@ impl Steward {
             .collect();
         free.iter()
             .map(|&p| {
-                let cluster: Vec<Vec2> = free.iter().copied().filter(|q| q.distance(p) <= 12.0).collect();
+                let cluster: Vec<Vec2> = free
+                    .iter()
+                    .copied()
+                    .filter(|q| q.distance(p) <= 12.0)
+                    .collect();
                 let mid = cluster.iter().copied().sum::<Vec2>() / cluster.len() as f32;
                 (mid, home.distance(mid) - 25.0 * cluster.len() as f32)
             })
@@ -644,7 +652,10 @@ impl Steward {
         };
         if s.world.can_upgrade(s.party, main.view.handle).is_err() {
             if self.ledger.saving == (0, 0) {
-                self.ledger.saving = (u32::from(to.stats.cost_grub), u32::from(to.stats.cost_marrow));
+                self.ledger.saving = (
+                    u32::from(to.stats.cost_grub),
+                    u32::from(to.stats.cost_marrow),
+                );
             }
             return;
         }
@@ -658,7 +669,9 @@ impl Steward {
 
     /// Keep every production building training, towards [`MIX`].
     fn train_army(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
-        let Some(p) = s.world.production() else { return };
+        let Some(p) = s.world.production() else {
+            return;
+        };
         let Some(mut bank) = s.world.bank(s.party) else {
             return;
         };
@@ -716,7 +729,10 @@ impl Steward {
             }) else {
                 continue;
             };
-            let (g, mr) = (u32::from(unit.unit.cost_grub), u32::from(unit.unit.cost_marrow));
+            let (g, mr) = (
+                u32::from(unit.unit.cost_grub),
+                u32::from(unit.unit.cost_marrow),
+            );
             if bank.grub < g + save_grub || bank.marrow < mr + save_marrow {
                 continue;
             }
@@ -779,7 +795,8 @@ fn grew_from(s: &Sense, building: BuildingId, of: BuildingId) -> bool {
 
 /// Whether building type `b` trains any fighters.
 fn trains_fighters(kit: &Kit, s: &Sense, b: BuildingId) -> bool {
-    kit.trained_at(b, |x, y| grew_from(s, x, y)).any(|u| u.fighter)
+    kit.trained_at(b, |x, y| grew_from(s, x, y))
+        .any(|u| u.fighter)
 }
 
 /// A siege engine or artillery: what knocks buildings down.

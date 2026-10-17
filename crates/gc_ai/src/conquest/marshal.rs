@@ -9,6 +9,7 @@
 //! that army and the enemies about it, so the battle layers play exactly
 //! as they do in a Field Battle.
 
+use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
 use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
@@ -170,7 +171,7 @@ impl Marshal {
         let foe_near = view
             .regiments
             .iter()
-            .any(|r| view.hostile(party, r.owner) && !r.broken() && near(r.pos, ENGAGE));
+            .any(|r| is_foe(s, r) && !r.broken() && near(r.pos, ENGAGE));
         if self.battle.is_none() {
             if !foe_near {
                 return;
@@ -207,7 +208,7 @@ impl Marshal {
             if r.owner == party {
                 s.kit.is_fighter(r.unit) && r.pos.distance(mid) <= BATTLE_REACH
             } else {
-                r.pos.distance(mid) <= BATTLE_REACH
+                !s.kit.all_workers.contains(&r.unit) && r.pos.distance(mid) <= BATTLE_REACH
             }
         });
         if s.now < self.next_think {
@@ -236,9 +237,10 @@ impl Marshal {
         // Home first.
         if let Some(threat) = threat_to_home(s) {
             if !matches!(self.goal, Goal::Defend(_)) {
-                c.captain
-                    .journal
-                    .note(s.now, "Enemies at our buildings: going to defend".to_string());
+                c.captain.journal.note(
+                    s.now,
+                    "Enemies at our buildings: going to defend".to_string(),
+                );
             }
             self.goal = Goal::Defend(threat);
             self.out = army.iter().map(|r| r.handle).collect();
@@ -265,28 +267,29 @@ impl Marshal {
                 let capped = s
                     .world
                     .bank(s.party)
-                    .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.max(1).min(150));
-                if supply >= wave || (capped && supply >= FIRST_WAVE) {
-                    if let Some(target) = self.target(s, centroid(army)) {
-                        self.out = army.iter().map(|r| r.handle).collect();
-                        self.set_out_with = soldiers(&self.out);
-                        self.goal = Goal::Attack(target);
-                        c.captain.journal.note(
-                            s.now,
-                            format!(
-                                "Attacking with {} regiments ({supply:.0} supply)",
-                                army.len()
-                            ),
-                        );
-                    }
+                    .is_some_and(|b| b.supply_used + 8 >= b.supply_cap.clamp(1, SUPPLY_LIMIT));
+                if (supply >= wave || (capped && supply >= FIRST_WAVE))
+                    && let Some(target) = self.target(s, centroid(army))
+                {
+                    self.out = army.iter().map(|r| r.handle).collect();
+                    self.set_out_with = soldiers(&self.out);
+                    self.goal = Goal::Attack(target);
+                    c.captain.journal.note(
+                        s.now,
+                        format!(
+                            "Attacking with {} regiments ({supply:.0} supply)",
+                            army.len()
+                        ),
+                    );
                 }
             }
             Goal::Attack(_) => {
                 let left = soldiers(&self.out);
                 if (left as f32) < FALL_BACK_SHARE * self.set_out_with as f32 {
-                    c.captain
-                        .journal
-                        .note(s.now, "The attack has cost too much: falling back".to_string());
+                    c.captain.journal.note(
+                        s.now,
+                        "The attack has cost too much: falling back".to_string(),
+                    );
                     self.goal = Goal::Gather;
                     self.out.clear();
                 } else {
@@ -328,12 +331,26 @@ impl Marshal {
             Goal::Gather => {}
             Goal::Defend(at) => {
                 let mid = centroid(&going);
-                march(s, &going, at, (at - mid).normalize_or(face), &mut self.wants, 2);
+                march(
+                    s,
+                    &going,
+                    at,
+                    (at - mid).normalize_or(face),
+                    &mut self.wants,
+                    2,
+                );
             }
             Goal::Attack(at) => {
                 let mid = centroid(&going);
                 if mid.distance(at) > AT_TARGET {
-                    march(s, &going, at, (at - mid).normalize_or(face), &mut self.wants, 3);
+                    march(
+                        s,
+                        &going,
+                        at,
+                        (at - mid).normalize_or(face),
+                        &mut self.wants,
+                        3,
+                    );
                 } else {
                     self.knock_down(s, &going, at);
                 }
@@ -376,9 +393,8 @@ impl Marshal {
             return;
         }
         targets.sort_by(|a, b| {
-            let key = |t: &(StructureHandle, Vec2, Role)| {
-                (t.2 != Role::Defence, t.1.distance(at) as i32)
-            };
+            let key =
+                |t: &(StructureHandle, Vec2, Role)| (t.2 != Role::Defence, t.1.distance(at) as i32);
             key(a).cmp(&key(b))
         });
         targets.truncate(3);
@@ -400,6 +416,11 @@ impl Marshal {
             });
         }
     }
+}
+
+/// An enemy regiment worth fighting: not a worker.
+fn is_foe(s: &Sense, r: &Seen) -> bool {
+    s.view.hostile(s.party, r.owner) && !s.kit.all_workers.contains(&r.unit)
 }
 
 /// The rally point: in front of home, towards the nearest other start.
@@ -444,7 +465,7 @@ fn threat_to_home(s: &Sense) -> Option<Vec2> {
         .view
         .regiments
         .iter()
-        .filter(|r| s.view.hostile(s.party, r.owner) && !r.broken())
+        .filter(|r| is_foe(s, r) && !r.broken())
         .filter(|r| mine.iter().any(|b| b.distance(r.pos) <= THREAT))
         .collect();
     (!near.is_empty()).then(|| centroid(&near))

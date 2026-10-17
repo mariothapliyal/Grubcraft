@@ -44,6 +44,9 @@ pub struct Kit {
     pub economy: EconomyStyle,
     pub buildings: Vec<KitBuilding>,
     pub units: Vec<KitUnit>,
+    /// The worker types of every faction: anyone can tell a worker when
+    /// they see one, and an army doesn't stop to fight them.
+    pub all_workers: Vec<UnitId>,
     /// Every start on the map, in tiles (centre of the start tile), in the
     /// map's order. Public knowledge: the map shows them.
     pub starts: Vec<Vec2>,

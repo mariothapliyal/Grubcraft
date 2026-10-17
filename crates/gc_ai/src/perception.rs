@@ -331,7 +331,11 @@ impl Perception {
     pub fn subset(&self, out: &mut Perception, keep: impl Fn(&Seen) -> bool) {
         out.tick = self.tick;
         if out.units.len() != self.units.len()
-            || out.units.iter().zip(&self.units).any(|(a, b)| a.stats != b.stats)
+            || out
+                .units
+                .iter()
+                .zip(&self.units)
+                .any(|(a, b)| a.stats != b.stats)
         {
             out.units.clone_from(&self.units);
         }
