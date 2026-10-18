@@ -1312,7 +1312,8 @@ impl Running {
                 } else {
                     format!("{} points", table.points[i])
                 };
-                let detail = format!("{} soldiers   {speed:.1} tiles/s   {cost}", s.models);
+                let men = if s.models == 1 { "soldier" } else { "soldiers" };
+                let detail = format!("{} {men}  {speed:.1} tiles/s  {cost}", s.models);
                 (
                     table.names[i].clone(),
                     detail,

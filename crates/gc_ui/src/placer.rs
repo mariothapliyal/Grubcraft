@@ -15,7 +15,7 @@ use crate::icons::{self, Icon};
 use crate::ui::{Press, theme};
 
 /// Panel width when there is room, and the least worth drawing.
-const WIDTH: i32 = 392;
+const WIDTH: i32 = 440;
 const MIN_WIDTH: i32 = 220;
 const PAD: i32 = 14;
 const MARGIN: i32 = 8;
@@ -101,7 +101,7 @@ enum Tier {
     Names = 1,
     /// Counts only.
     Counts = 2,
-    /// Tighter two-line rows, the greyed counts as well.
+    /// Tighter two-line rows; nothing greyed.
     Tight = 3,
     /// One-line rows and nothing greyed.
     Bare = 4,
@@ -131,6 +131,12 @@ impl Tier {
     /// Rows of a name alone, with nothing greyed under them.
     fn one_line(self) -> bool {
         matches!(self, Tier::Bare | Tier::Tiny)
+    }
+
+    /// Whether the greyed section (the reason and each faction's troops) is
+    /// drawn: the three fullest tiers.
+    fn greyed(self) -> bool {
+        (self as usize) <= Tier::Counts as usize
     }
 
     fn gap(self) -> i32 {
@@ -170,7 +176,7 @@ fn plan(field: Rect, p: &PlacePicker) -> Option<Plan> {
     let name_chars = chars.saturating_sub(2).max(1);
     let room = field.h - 2 * MARGIN;
     for tier in Tier::ALL {
-        let reason = if tier.one_line() {
+        let reason = if !tier.greyed() {
             Vec::new()
         } else {
             wrap(p.reason, chars)
@@ -182,7 +188,7 @@ fn plan(field: Rect, p: &PlacePicker) -> Option<Plan> {
             .collect();
         let rows = p.rows.len() as i32 * (tier.row_h() + tier.gap());
         let mut h = p.rows_top() + PAD + rows;
-        if !tier.one_line() && !p.later.is_empty() {
+        if tier.greyed() && !p.later.is_empty() {
             h += 28 + reason.len() as i32 * 16;
             for l in &later {
                 h += 20 + l.len() as i32 * 16;
@@ -249,7 +255,7 @@ fn side_rect(r: Rect, i: usize) -> Rect {
 /// What the tabs say when the mouse rests on them.
 const TAB_TIPS: [&str; 2] = [
     "The five Field Battle types, as in a Field Battle army.",
-    "Every combat troop of the four factions' rosters (the Conquest table). Picking one starts the sandbox again on that table: the field is cleared.",
+    "Every fighting troop of the four rosters (workers and the Caravan are left out). Picking one starts the sandbox again on the roster table: the field is cleared.",
 ];
 
 /// Button `i` of `n` in a strip at `y`, each `w` wide.
@@ -529,7 +535,7 @@ pub(crate) fn draw(
     }
 
     // What exists but cannot be placed yet.
-    if !tier.one_line() && !p.later.is_empty() {
+    if tier.greyed() && !p.later.is_empty() {
         let mut y = row_rect(r, tier, p, p.rows.len()).y + 2;
         draw.text_bold(r.x + PAD, y, 1, theme::WOAD, "Not placeable yet");
         draw.rect(Rect::new(r.x + PAD, y + 17, r.w - 2 * PAD, 1), theme::INK);

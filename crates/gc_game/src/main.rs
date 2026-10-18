@@ -7,15 +7,20 @@
 //! B turns placing on and off: left-click puts down a regiment of the chosen
 //! type for that side, facing away from the camera, and [ and ] choose the
 //! type. The top bar's Place button (or B) opens a panel listing the types
-//! and sides to click (docs/08-ui-ux.md#the-place-panel). K does the same for buildings (the sandbox only): click puts the
+//! (the Field types, or any faction's roster troops, which starts the
+//! sandbox again on the Conquest table) and sides to click
+//! (docs/08-ui-ux.md#the-place-panel). K does the same for buildings (the sandbox only): click puts the
 //! chosen building down, centred on the cursor, and [ and ] choose which.
 //! Delete (or Backspace) takes the building under the cursor, else the
 //! selected regiments, off the field; Shift + Delete clears it. Right-click
 //! an enemy building to send the selected regiments against it. P pauses; - and = slow the game down to a tenth
 //! or speed it up to four times. T opens the stats panel for the chosen type:
 //! Up and Down pick a stat, Left and Right change it (Shift for ten steps),
-//! and regiments on the field change at once. Shift+R reloads `data/units.ron`
-//! when the game runs from the repository and was built with `--features dev`.
+//! and regiments on the field change at once (on whichever table the sandbox
+//! runs on). Shift+R reloads `data/units.ron` when the game runs from the
+//! repository and was built with `--features dev`; on the roster table it
+//! says to choose a Field type first, as the roster is baked, not read
+//! from disk.
 //! H, F1 or the ? Help button in the top bar opens the Marshal's Scroll: the keys
 //! in groups, and what each computer player is doing and expects (F1 finds an
 //! idle worker instead while a Conquest match has one). C shows the credits for
