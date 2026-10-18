@@ -404,6 +404,12 @@ pub enum HudEvent {
     /// A side of the Place panel was clicked (its place in
     /// [`PlacePicker::sides`]): place for, and command, that side.
     PlaceSide(usize),
+    /// A tab of the Place panel was clicked (its place in
+    /// [`PlacePicker::tabs`]): show that table's troops.
+    PlaceTab(usize),
+    /// A faction chip of the Place panel's roster tab was clicked (its place
+    /// in [`PlacePicker::chips`]).
+    PlaceFaction(usize),
 }
 
 #[derive(Default)]
