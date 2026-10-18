@@ -1195,15 +1195,17 @@ impl Running {
 
     /// The Field types' table and the roster's, whichever is in play.
     fn field_table(&self) -> &UnitTable {
-        if self.conquest_units {
-            &self.other_units
-        } else {
-            &self.units
-        }
+        self.table(false)
     }
 
     fn roster_table(&self) -> &UnitTable {
-        if self.conquest_units {
+        self.table(true)
+    }
+
+    /// The roster's table (`roster`) or the Field types', whichever slot
+    /// `use_units` left it in.
+    fn table(&self, roster: bool) -> &UnitTable {
+        if roster == self.conquest_units {
             &self.units
         } else {
             &self.other_units
