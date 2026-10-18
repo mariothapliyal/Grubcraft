@@ -1232,13 +1232,14 @@ impl Running {
     /// types, with the same side to command. The field is cleared: the two
     /// tables number their troops differently, so one world cannot hold both.
     fn restart_sandbox(&mut self, roster: bool) {
-        let side = self.sandbox.side;
+        let (side, faction) = (self.sandbox.side, self.hud.place_faction);
         self.restart_match(if roster {
             MatchKind::SandboxRoster
         } else {
             MatchKind::Sandbox
         });
         self.sandbox.side = side;
+        self.hud.place_faction = faction;
         self.say(if roster {
             "Sandbox started again on the roster table: troops of every faction. The field is clear."
         } else {
