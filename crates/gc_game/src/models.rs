@@ -178,6 +178,31 @@ impl Clips {
     }
 }
 
+/// Small differences between soldiers of one model, so a regiment does not
+/// look cloned: a tone byte for [`gc_render::SoldierInstance::color`] (128
+/// is neutral), a playback rate for idle, walk and run loops (0.93 to 1.07)
+/// and a height scale (0.97 to 1.03). `bits` is any stable value of the
+/// soldier; the same input always gives the same look.
+pub fn variation_of(bits: u32) -> (u8, f32, f32) {
+    let mut h = bits.wrapping_mul(0x9E37_79B1) ^ 0x85EB_CA6B;
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297A_2D39);
+    h ^= h >> 15;
+    let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
+    (
+        (h & 0xFF) as u8,
+        0.93 + 0.14 * unit(8),
+        0.97 + 0.06 * unit(16),
+    )
+}
+
+/// [`variation_of`] for a live soldier, from its stable phase.
+pub fn variation(phase: f32) -> (u8, f32, f32) {
+    variation_of(phase.to_bits())
+}
+
 /// 0 at both ends of `f` (0 to 1), rising to 1 halfway.
 fn peak(f: f32) -> f32 {
     1.0 - (2.0 * f - 1.0).abs()
@@ -208,6 +233,27 @@ fn looping(clip: &ClipRecord, seconds: f32) -> Pose {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn variation_stays_in_range_and_is_stable() {
+        let (mut tones, mut rates) = (std::collections::HashSet::new(), Vec::new());
+        for i in 0..1000 {
+            let phase = i as f32 / 1000.0;
+            let (tone, rate, scale) = variation(phase);
+            assert_eq!(variation(phase), (tone, rate, scale));
+            assert!((0.93..=1.07).contains(&rate), "{rate}");
+            assert!((0.97..=1.03).contains(&scale), "{scale}");
+            tones.insert(tone);
+            rates.push(rate);
+        }
+        // Plenty of spread, and not tied to the phase offset itself.
+        assert!(tones.len() > 100);
+        assert!(rates.iter().any(|&r| r < 0.96) && rates.iter().any(|&r| r > 1.04));
+        assert_ne!(
+            variation_of(1.5f32.to_bits()),
+            variation_of(2.5f32.to_bits())
+        );
+    }
 
     #[test]
     fn embedded_models_load_and_dress_every_unit_type() {

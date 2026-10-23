@@ -893,6 +893,7 @@ fn fighter_of(stats: &UnitStats, r: &gc_sim::RegimentView) -> Fighter {
         shield: stats.shield,
         mass: stats.mass,
         heavy_blade: stats.swing_room,
+        reach: stats.reach,
     }
 }
 
@@ -909,6 +910,8 @@ fn swing(first: bool) -> Action {
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
         Action::Run
+    } else if s.shouting {
+        Action::Cheer
     } else if s.striking && s.phase > 0.6 {
         // Behind the fighting line, some wait their turn.
         Action::Idle
@@ -2957,7 +2960,10 @@ impl Running {
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
-                        let seconds = time + s.phase * 4.0;
+                        let (tone, rate, scale) = models::variation(s.phase);
+                        // The rate keeps loops out of step; blows are timed by
+                        // their own progress, so it leaves fights alone.
+                        let seconds = time * rate + s.phase * 4.0;
                         // At the site and still: off on the way, they walk.
                         let working = site
                             .filter(|&(c, reach)| {
@@ -2990,9 +2996,9 @@ impl Running {
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [cr, cg, cb, 255],
+                            color: [cr, cg, cb, tone],
                             lift: 0.0,
-                            scale: 1.0,
+                            scale,
                         });
                     });
                 continue;
@@ -4437,14 +4443,16 @@ impl Running {
                     // Out of soldier room, he is drawn as a box instead.
                     if lod < LODS && room > 0 {
                         room -= 1;
+                        let bits = c.pos.x.to_bits() ^ c.pos.y.to_bits().rotate_left(16);
+                        let (tone, _, scale) = models::variation_of(bits);
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
-                            color: [r, g, b, 255],
+                            color: [r, g, b, tone],
                             lift: -0.5 * c.sink,
-                            scale: 1.0,
+                            scale,
                         });
                         continue;
                     }
@@ -5134,7 +5142,7 @@ impl Running {
                         facing: [0.0, 1.0],
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, 255],
+                        color: [r, g, b, 128],
                         lift,
                         scale: 1.0,
                     });
@@ -5163,7 +5171,7 @@ impl Running {
                     facing: facing.to_array(),
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
-                    color: [r, g, b, 255],
+                    color: [r, g, b, 128],
                     lift: 0.0,
                     scale: 1.0,
                 });

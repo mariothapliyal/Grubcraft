@@ -94,7 +94,10 @@ pub struct SoldierInstance {
     /// Blend toward the second frame, selection highlight, and whether the
     /// soldier lies fallen (for models without a death clip), as 0 to 255.
     pub flags: [u8; 4],
-    /// Team colour (rgb).
+    /// Team colour (rgb), and a per-soldier tone in the last byte: 128 leaves
+    /// the model as painted, lower is darker and cooler, higher is lighter and
+    /// warmer. It varies the cloth, skin and leather by about 8% and the team
+    /// colour by a third of that.
     pub color: [u8; 4],
     /// Height above the ground, in tiles (negative sinks the fallen).
     pub lift: f32,
