@@ -1901,6 +1901,13 @@ impl World {
         self.events.list()
     }
 
+    /// The melee blows struck in the last tick, soldier on soldier, in the
+    /// order they were struck (docs/28-soldier-combat.md). None in a
+    /// rehearsal's scratch world; in a very big battle some may be left out.
+    pub fn blows(&self) -> &[combat::Blow] {
+        self.combat.blows()
+    }
+
     /// The ambushes sprung in the last tick.
     pub fn ambushes(&self) -> &[Ambush] {
         self.vision.ambushes()
