@@ -3403,17 +3403,19 @@ impl Running {
             self.heightmap.tiles,
             &self.buildings,
         );
+        // Dust, sparks and worn ground go with game time: still while paused
+        // or behind the menu, slow in slow motion.
+        let live = !self.paused && !(self.menu_open && self.online.is_none());
+        let pace = if live { SPEEDS[self.speed] } else { 0.0 };
         self.scars.update(
             self.last_frame,
             &mut self.renderer,
             &self.world,
             (self.sandbox.side, self.reveal_all),
             self.heightmap.tiles,
+            pace,
         );
-        // Dust and sparks age with game time: still while paused or behind
-        // the menu, slow in slow motion.
-        let live = !self.paused && !(self.menu_open && self.online.is_none());
-        let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
+        let fx_speed = pace * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
         let density = self.menu.settings().graphics.effects_density();
         self.ambient.fell_demo(

@@ -1,9 +1,9 @@
 //! Marks on the ground, as the field shows them (docs/35-ground-marks.md):
 //! turned earth where trees were felled (`Event::Cleared`) and bare tracks
 //! worn by regiments marching and fighting. A few times a second this fills
-//! a grid for the renderer, four bytes a tile: felled, scorched, worn, and
-//! one spare. The shader draws the marks; this decides only where. Wear
-//! builds where a regiment the viewing side can see moves or fights, and
+//! a grid for the renderer, four bytes a tile: felled, scorched (nothing
+//! writes it yet), worn, and one spare. The shader draws the marks; this
+//! decides only where. Wear builds where a regiment the viewing side can see moves or fights, and
 //! heals over minutes as the grass comes back. Presentation only: it reads
 //! the world and writes nothing to it, and it is not part of any replay.
 
@@ -40,14 +40,16 @@ pub struct ScarView {
     healed: Option<Instant>,
     /// The grid differs from what the renderer holds.
     dirty: bool,
-    /// The renderer holds some mark.
-    shown: bool,
 }
 
 impl ScarView {
-    /// Forget every mark, for a new match or map.
+    /// Forget every mark, for a new match or map. The renderer is told at
+    /// the next `update`, since it may still hold some.
     pub fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            dirty: true,
+            ..Self::default()
+        };
     }
 
     /// Mark the tiles the simulation cleared in the last tick as felled.
@@ -56,8 +58,8 @@ impl ScarView {
             Event::Cleared { x, y, was, .. } => Some((x, y, was)),
             _ => None,
         });
+        self.size(tiles as usize);
         for (x, y, was) in cleared {
-            self.size(tiles as usize);
             let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
                 continue;
             };
@@ -70,8 +72,10 @@ impl ScarView {
     }
 
     /// Wear the ground under the regiments `side` sees (all with
-    /// `reveal_all`) and send the marks to the renderer. Call it every
-    /// frame; it only works a few times a second.
+    /// `reveal_all`) and send the marks to the renderer. `pace` is the
+    /// game's speed (0 paused, 1 normal): wear builds with game time and
+    /// heals with the clock. Call it every frame; it only works a few times
+    /// a second.
     pub fn update(
         &mut self,
         now: Instant,
@@ -79,25 +83,23 @@ impl ScarView {
         world: &World,
         (side, reveal_all): (PlayerId, bool),
         tiles: u32,
+        pace: f32,
     ) {
         if self.last.is_some_and(|t| now.duration_since(t) < EVERY) {
             return;
         }
-        let elapsed = self
-            .last
-            .map_or(0.0, |t| now.duration_since(t).as_secs_f32());
         self.last = Some(now);
         self.size(tiles as usize);
-        for r in world.regiments.iter() {
-            let amount = match (r.engaged, r.moving) {
+        for r in world.regiments.iter().filter(|_| pace > 0.0) {
+            let amount = match (r.engaged, r.still) {
                 (true, _) => FIGHT,
-                (false, true) => MARCH,
+                (false, false) => MARCH,
                 _ => continue,
             };
             if reveal_all || world.sees(side, r.handle) {
                 let at = crate::from_fx_vec(r.position);
                 let radius = 0.6 + 0.12 * f32::from(r.models).sqrt();
-                self.stamp(at, radius, amount);
+                self.stamp(at, radius, amount * pace);
             }
         }
         if self
@@ -108,12 +110,12 @@ impl ScarView {
                 .healed
                 .map_or(0.0, |t| now.duration_since(t).as_secs_f32());
             self.healed = Some(now);
-            self.heal(HEAL * secs.max(elapsed));
+            self.heal(HEAL * secs);
         }
         if self.dirty {
             self.dirty = false;
-            self.shown = self.grid.iter().any(|&b| b != 0);
-            renderer.set_scars(self.shown.then_some(self.grid.as_slice()));
+            let marked = self.grid.iter().any(|&b| b != 0);
+            renderer.set_scars(marked.then_some(self.grid.as_slice()));
         }
     }
 

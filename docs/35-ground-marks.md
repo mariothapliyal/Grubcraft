@@ -37,28 +37,31 @@ tick to take the trees off; it now hands the same events to
 Replays and network games tick a world the same way, so they show it too.
 
 **Worn ground.** A few times a second (every 250 ms) each regiment that is
-marching adds a little wear (0.05) and each that is in a fight a good deal more
-(0.15) in a soft circle round it, a little wider for a bigger regiment
-(`0.6 + 0.12 * sqrt(models)` tiles). Roads and favourite routes therefore wear
+marching (not standing or turning on the spot) adds a little wear (0.05) and
+each that is in a fight a good deal more (0.15), both scaled by game speed and
+nothing while paused, in a soft circle round it, a little wider for a bigger
+regiment (`0.6 + 0.12 * sqrt(models)` tiles). Roads and favourite routes therefore wear
 in over a few passes and a battlefield is churned quickly. Wear heals at 0.004
-a second (about four minutes from fully bare), in batches every five seconds
+a second (about four minutes from fully bare, on the clock), in batches every five seconds
 so the whole map is not walked each frame. A grid that has gone back to bare
 is released (`set_scars(None)`).
 
 It is presentation only, like the land: it reads the world and writes
 nothing, nothing is hashed, and it is not part of any replay. It follows the
 fog: only regiments the viewing side `sees` wear the ground (`reveal_all`
-shows all), so tracks do not reveal an enemy march. It runs on wall-clock time
-(like the land's growth), so a paused game still heals.
+shows all), so tracks do not reveal an enemy march. Healing runs on wall-clock time
+(like the land's growth), so a paused game still heals; building wear goes by game speed instead.
 
 ## Cost
 
 One more texture binding (a tile each; 2.4 MB on a 768-tile map), one extra
 fetch a pixel, a cheap early-out where nothing is marked, and a small CPU
-loop over the regiments four times a second. The shared ground bindings are
-now 17 sampled textures, past the 16 a baseline GPU allows, so the renderer
-asks for the adapter's own limit (every desktop GPU we target allows 128 or
-more).
+loop over the regiments four times a second. While regiments march in view
+the whole grid is sent each time it changes (up to 2.4 MB four times a
+second on the largest map); a settled map sends nothing. The soldiers'
+pipeline layout (the ground bindings plus its materials) is now 17 sampled
+textures, past the 16 a baseline GPU allows, so the renderer asks for the
+adapter's own limit (every desktop GPU we target allows 128 or more).
 
 ## Not yet
 

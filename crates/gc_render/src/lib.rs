@@ -502,9 +502,10 @@ impl Renderer {
                     max_storage_buffers_per_shader_stage: adapter
                         .limits()
                         .max_storage_buffers_per_shader_stage,
-                    // The shared ground bindings have grown past the 16
-                    // sampled textures the baseline allows; every desktop
-                    // GPU we target allows 128 or more.
+                    // The soldiers' pipeline (the ground bindings plus its
+                    // materials) has grown past the 16 sampled textures the
+                    // baseline allows; every desktop GPU we target allows
+                    // 128 or more.
                     max_sampled_textures_per_shader_stage: adapter
                         .limits()
                         .max_sampled_textures_per_shader_stage,

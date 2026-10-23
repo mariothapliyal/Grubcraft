@@ -901,11 +901,12 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let scar = textureSampleLevel(scar_map, soft_sampler, scar_uv, 0.0);
     if scar.r + scar.g + scar.b > 0.03 && rock < 1.0 {
         let keep = 1.0 - rock;
-        // Ragged edges: the noise moves where a mark begins.
+        // Ragged edges: the noise moves where a mark begins, but not into
+        // ground that has none of it (r or g of 0).
         let ragged = (nz(xz * 1.3) - 0.5) * 0.5;
         let worn = smoothstep(0.25, 0.75, scar.b + ragged) * keep;
-        let felled = smoothstep(0.2, 0.55, scar.r + ragged) * keep;
-        let burnt = smoothstep(0.2, 0.55, scar.g + ragged) * keep;
+        let felled = smoothstep(0.2, 0.55, scar.r + ragged) * smoothstep(0.0, 0.1, scar.r) * keep;
+        let burnt = smoothstep(0.2, 0.55, scar.g + ragged) * smoothstep(0.0, 0.1, scar.g) * keep;
         let grit = 0.7 + 0.6 * nz(xz * 2.1);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
