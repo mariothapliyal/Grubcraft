@@ -49,6 +49,9 @@ pub const MAX_BONES: u32 = 63;
 pub const BONES_PER_VERTEX: usize = 4;
 /// Texels in a bone texture row: three per bone, for `MAX_BONES + 1` bones.
 pub const BONE_TEXELS_PER_ROW: u32 = 3 * (MAX_BONES + 1);
+/// Most bone rows, and most pose rows, a pack (all packs joined) may hold:
+/// a soldier instance names its frames in 16 bits.
+pub const MAX_ROWS: usize = 1 << 16;
 /// Vertex positions are stored in 1/`POSITION_SCALE` tiles.
 pub const POSITION_SCALE: f32 = 4096.0;
 pub const NAME_BYTES: usize = 24;
@@ -233,6 +236,8 @@ pub enum ModelError {
     OutOfRange(usize),
     /// The texture table is not a whole number of materials, or too many.
     BadTextures,
+    /// More bone or pose rows than a soldier instance can name.
+    TooManyRows,
     Anim(crate::anim::AnimError),
 }
 
@@ -243,6 +248,10 @@ impl fmt::Display for ModelError {
             ModelError::Table(p, e) => write!(f, "{p}: {e}"),
             ModelError::OutOfRange(m) => write!(f, "model {m} points outside the pack's tables"),
             ModelError::BadTextures => write!(f, "model pack textures are not whole materials"),
+            ModelError::TooManyRows => write!(
+                f,
+                "model pack has more than {MAX_ROWS} bone or pose rows (an instance names rows in 16 bits)"
+            ),
             ModelError::Anim(e) => write!(f, "{e}"),
         }
     }
@@ -285,6 +294,9 @@ impl<'a> Models<'a> {
         m.anim = crate::anim::Anim::from_pack(pack, &m).map_err(ModelError::Anim)?;
         let pose_rows = m.anim.frame_rows() as usize;
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
+        if rows > MAX_ROWS || pose_rows > MAX_ROWS {
+            return Err(ModelError::TooManyRows);
+        }
         if !m.textures.len().is_multiple_of(BLOCKS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
             return Err(ModelError::BadTextures);
         }

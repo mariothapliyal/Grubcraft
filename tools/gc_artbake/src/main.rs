@@ -115,6 +115,67 @@ struct ModelConfig {
     /// many tiles (metres) apart. Left out, the model wears none.
     #[serde(default)]
     detail_tile: Option<f32>,
+    /// Tagged moves for the move picker (docs/33), beyond the plain clips.
+    /// Only for a model posed from a shared skeleton; its moves are shared
+    /// by every model on that skeleton.
+    #[serde(default)]
+    moves: Vec<MoveConfig>,
+}
+
+/// One tagged move: a glTF animation and what it is for. Tags are named as
+/// in `gc_assets::anim` (`act: "Parry", weapon: "Spear", side: "Left"`).
+#[derive(Deserialize)]
+struct MoveConfig {
+    /// The glTF animation's name.
+    anim: String,
+    act: String,
+    #[serde(default = "any")]
+    weapon: String,
+    #[serde(default = "any")]
+    side: String,
+    /// The joints it plays on when layered.
+    #[serde(default = "all_joints")]
+    mask: String,
+    /// Stored as changes from its first frame, to play on top of another.
+    #[serde(default)]
+    additive: bool,
+    /// Left out, the act decides: standing and moving loop, the rest play
+    /// once and hold. Written `loops: Some(true)`.
+    #[serde(default)]
+    loops: Option<bool>,
+}
+
+fn any() -> String {
+    "Any".into()
+}
+
+fn all_joints() -> String {
+    "All".into()
+}
+
+/// The value of `all` whose name is `name`.
+fn named<T: Copy + std::fmt::Debug>(all: &[T], name: &str, what: &str) -> Result<T, String> {
+    all.iter()
+        .copied()
+        .find(|v| format!("{v:?}") == name)
+        .ok_or_else(|| format!("unknown {what} {name:?}"))
+}
+
+impl MoveConfig {
+    fn tags(&self) -> Result<rig::Tags, String> {
+        use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, Side, Weapon};
+        let act = named(&Act::ALL, &self.act, "act")?;
+        let loops = self
+            .loops
+            .unwrap_or(matches!(act, Act::Idle | Act::Walk | Act::Run | Act::Guard));
+        Ok(rig::Tags {
+            act,
+            weapon: named(&Weapon::ALL, &self.weapon, "weapon")?,
+            side: named(&Side::ALL, &self.side, "side")?,
+            mask: named(&Mask::ALL, &self.mask, "mask")?,
+            flags: if loops { LOOPS } else { 0 } | if self.additive { ADDITIVE } else { 0 },
+        })
+    }
 }
 
 fn default_team_tolerance() -> f32 {
@@ -912,17 +973,15 @@ fn bake_model(
 
     // 5. Sample the clips: each joint's place in every frame.
     let mut clips = Vec::new();
+    let find = |name: &str| {
+        doc.animations()
+            .find(|a| a.name() == Some(name))
+            .ok_or_else(|| format!("no animation named {name:?}"))
+    };
     let mut sampled = Vec::new();
     for (kind_name, anim_name) in &cfg.clips {
-        let kind = ClipKind::ALL
-            .into_iter()
-            .find(|k| format!("{k:?}") == *kind_name)
-            .ok_or_else(|| format!("unknown clip kind {kind_name:?}"))?;
-        let anim = doc
-            .animations()
-            .find(|a| a.name() == Some(anim_name.as_str()))
-            .ok_or_else(|| format!("no animation named {anim_name:?}"))?;
-        let globals = sample_clip(&anim, kind, &skel, &joints, get)?;
+        let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
+        let globals = sample_clip(&find(anim_name)?, kind.loops(), &skel, &joints, get)?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -933,21 +992,47 @@ fn bake_model(
     // `to_game * global * rest_inverse * bind_fix * from_game`.
     let rest_inverse: Vec<Mat4> = joints.iter().map(|&n| rest_globals[n].inverse()).collect();
     let rig = rig::Rig::new(&joints, &skel.parent, &skel.names);
+    let pose_frames = |frames: &[Vec<Mat4>]| -> Option<Vec<Vec<rig::JointPose>>> {
+        frames.iter().map(|g| rig::poses(&rig, g)).collect()
+    };
     let posed_clips: Option<Vec<rig::PosedClip>> = skin.as_ref().and_then(|_| {
         sampled
             .iter()
             .map(|(kind, name, frames)| {
                 Some(rig::PosedClip {
-                    kind: *kind,
+                    kind: Some(*kind),
                     name: name.clone(),
-                    frames: frames
-                        .iter()
-                        .map(|g| rig::poses(&rig, g))
-                        .collect::<Option<_>>()?,
+                    tags: rig::Tags::of_kind(*kind),
+                    frames: pose_frames(frames)?,
                 })
             })
             .collect()
     });
+    let posed_clips = match posed_clips {
+        Some(mut posed) => {
+            for m in &cfg.moves {
+                let tags = m.tags()?;
+                let loops = tags.flags & gc_assets::anim::LOOPS != 0;
+                let globals = sample_clip(&find(&m.anim)?, loops, &skel, &joints, get)?;
+                let mut frames = pose_frames(&globals)
+                    .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
+                if m.additive {
+                    rig::make_additive(&mut frames);
+                }
+                posed.push(rig::PosedClip {
+                    kind: None,
+                    name: m.anim.clone(),
+                    tags,
+                    frames,
+                });
+            }
+            Some(posed)
+        }
+        None if !cfg.moves.is_empty() => {
+            return Err("tagged moves need a model posed from a shared skeleton".into());
+        }
+        None => None,
+    };
     let posed = posed_clips.map(|clips| rig::Posed {
         rig,
         pre: to_game,
@@ -1255,7 +1340,7 @@ impl Channel {
 /// Each joint's global matrix (in the source's space) for each frame.
 fn sample_clip<'a>(
     anim: &gltf::Animation<'a>,
-    kind: ClipKind,
+    loops: bool,
     skel: &Skeleton,
     joints: &[usize],
     get: impl Clone + Fn(gltf::Buffer<'a>) -> Option<&'a [u8]>,
@@ -1292,7 +1377,7 @@ fn sample_clip<'a>(
     }
     // Looping clips skip the last frame (it equals the first); one-shot clips
     // end on it and hold.
-    let frames = if kind.loops() {
+    let frames = if loops {
         ((duration * SAMPLE_FPS).round() as usize).max(1)
     } else {
         (duration * SAMPLE_FPS).ceil() as usize + 1
@@ -1455,7 +1540,7 @@ mod tests {
             .expect("the bug's joints store as poses");
         assert_eq!(posed.clips.len(), baked.clips.len());
         for (p, (kind, frames)) in posed.clips.iter().zip(&baked.clips) {
-            assert_eq!(p.kind, *kind);
+            assert_eq!(p.kind, Some(*kind));
             assert_eq!(p.frames.len(), frames.len());
             for (pose, bones) in p.frames.iter().zip(frames) {
                 for (a, b) in posed.matrices(pose).iter().zip(bones) {
@@ -1473,6 +1558,58 @@ mod tests {
                 .iter()
                 .all(|c| c.source == gc_assets::model::POSE_ROWS)
         );
+    }
+
+    #[test]
+    fn tagged_moves_are_stored_for_the_picker_and_additive_ones_as_changes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
+        let (_, _, mut cfg) = bake_alien_bug();
+        cfg.moves = ron::from_str(
+            r#"[
+                (anim: "Attack.001", act: "Parry", side: "Left"),
+                (anim: "Attack.000", act: "Flinch", mask: "Upper", additive: true),
+            ]"#,
+        )
+        .unwrap();
+        let baked = bake_model(&cfg, &path, None).unwrap();
+        let mut t = ModelTables::default();
+        baked
+            .append_to(&mut t, &mut rig::AnimBuilder::default(), "Alien Bug")
+            .unwrap();
+        // The plain clips are still the model's four; the tagged moves are
+        // only in the skeleton's moves.
+        assert_eq!(t.clips.len(), 4);
+        assert_eq!(t.anim.moves.len(), 6);
+        let parry = t
+            .anim
+            .moves
+            .iter()
+            .find(|m| m.act == gc_assets::anim::Act::Parry as u8)
+            .unwrap();
+        assert_eq!(parry.kind, gc_assets::anim::NO_KIND);
+        assert_eq!(parry.side, gc_assets::anim::Side::Left as u8);
+        assert_eq!(parry.flags, 0);
+        let flinch = t
+            .anim
+            .moves
+            .iter()
+            .find(|m| m.act == gc_assets::anim::Act::Flinch as u8)
+            .unwrap();
+        assert_eq!(flinch.flags, gc_assets::anim::ADDITIVE);
+        assert_eq!(flinch.mask, gc_assets::anim::Mask::Upper as u8);
+        // An additive move's first frame changes nothing.
+        let first = flinch.first_row as usize * gc_assets::anim::FRAME_TEXELS as usize;
+        for j in 0..baked.bones as usize - 1 {
+            let [x, y, z, w] = t.anim.frames[first + j * 2];
+            let [tx, ty, tz, scale] = t.anim.frames[first + j * 2 + 1];
+            assert!(x.abs() + y.abs() + z.abs() < 1e-5 && (w - 1.0).abs() < 1e-5);
+            assert!(tx.abs() + ty.abs() + tz.abs() < 1e-4 && (scale - 1.0).abs() < 1e-5);
+        }
+
+        cfg.moves[0].act = "Somersault".into();
+        let err = bake_model(&cfg, &path, None).err().unwrap();
+        assert!(err.contains("unknown act"), "{err}");
     }
 
     #[test]

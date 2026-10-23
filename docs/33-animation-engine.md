@@ -1,0 +1,30 @@
+# 33 · Animation engine
+
+*Stage 3 of [28 · Soldier combat](28-soldier-combat.md), the engine half of the "Materials, animation engine and fight library" thread of the [restart plan](29-restart-plan.md). Each part is marked built when it lands.*
+
+## Where it started
+
+A soldier played one clip at a time. `gc_artbake` sampled each clip at 12 frames a second into the model's own rows of the bone animation buffer (a 3×4 matrix per bone, bind pose already folded in), the instance named two rows and a blend, and `cs_skin` blended each vertex's bones from those two rows. The game picked a clip by `ClipKind` (ten kinds) through `gc_game::models::Clips`. So every model carried its own copy of the stock clips, a soldier could not swing his arms while his legs walked, and a flinch could not lie on top of a swing.
+
+## What the engine adds
+
+- **A pose pass (built).** `cs_pose` in `world.wgsl` runs before skinning: one workgroup of 64 threads per soldier writes his final bone matrices once into a palette buffer (48 bytes a bone; it starts at 64 Ki bones and grows by powers of two up to 1 Mi, 48 MB), and `cs_skin` only reads the palette. Before, every vertex re-blended its bones' frames itself. Both passes share one compute pass and one bind group (palette at binding 15, the animation tables at 16). The planner cuts soldiers for the palette's cap the same way as for the vertex buffers.
+- **Shared skeletons, clips as joint poses (built).** Models on the same skeleton (same joint names and parents; the Quaternius rig under most humanoids, each Brood creature its own) share one set of moves. A move frame stores, per joint, a rotation and a translation plus uniform scale relative to its parent joint, 128 texels a frame row. Each model keeps a *fit*: the matrix that takes the skeleton to the game's axes and, per bone, the rest inverse, bind fix and axis change the bake used to fold in. The pass rebuilds the joints' global matrices level by level in workgroup memory (a barrier per depth) and multiplies in the fit. A model whose clips squash or shear a joint (not expressible as a rotation, translation and uniform scale within 0.001) keeps its own bone rows and the old path, so nothing changes for it.
+- **Layers (built in the pass).** Each instance carries up to three layers on top of its base frames. A layer names two frame rows, a blend, a weight, a bone mask (all, legs, upper body, head, left arm, right arm) and whether it is *additive*. A plain layer mixes towards its own pose on the joints of its mask (legs from a walk, arms from a swing); an additive layer adds its change from its first frame, scaled by weight (a flinch on top of anything). Masks and left/right mirror pairs come from the joint names (Quaternius `.L/.R`, Mixamo `Left/Right`). Models still on bone rows take whole-body plain layers only, as a matrix blend.
+- **Moves, not kinds.** A move carries tags: an act (idle, walk, run, guard, attack, parry, block, hit, stagger, knockdown, get up, death, cheer, shoot, step, flinch), a weapon type, a side (front, back, left, right, high, low), a mask and flags (loops, additive, mirrors). Today's ten clip kinds become one move each.
+- **A move picker (built, `gc_game/src/moves.rs`).** `Moves::pick(model, want)` takes what the fight wants (an act, a weapon, the side a blow came from, a seed) and returns the best move the model has: the first act along a fallback list that the model has a move for (a parry falls back to a block, then an attack; a stagger to a hit; a knockdown to a death), then the move whose weapon and side fit best, then the seed among equals so a regiment does not move as one. Layered moves (additive, or on part of the body) are only picked when their own act is asked for. T4 keeps `puppets.rs`; the picker is what grows underneath it.
+- **Still to come:** mixed speeds and mirrors per soldier; look-at on head and chest; two-bone foot IK against the ground height.
+
+## Format: optional tables, packs stay readable
+
+The model schema stays 4. A pack may carry six optional tables (`anim/skeletons`, `anim/joints`, `anim/moves`, `anim/frames`, `anim/fits`, `anim/fixes`, format in `gc_assets::anim`, their own `ANIM_SCHEMA` 1); a pack without them, such as every building and scenery pack, loads as before. A clip record says whether its rows are bone rows (old packs) or pose rows in the shared frames. Moves are stored once per skeleton (deduplicated by content), so a fifty-move library costs its frames once per skeleton instead of once per model, and fitted models drop their bone rows, which is how `models.pak` stays under GitHub's 100 MB file limit as moves are added. The engine change does not re-bake anything; the units' pack is re-baked once with the new tables together with the units' surface detail of [31 · Surface detail](31-surface-detail.md), and that re-bake bumps the baker version.
+
+## Stages
+
+1. **Pose pass** (built; no visible change). Checked by poses rendered both ways in the showroom.
+2. **Shared skeletons, layers and the picker** (built). Next: tagged moves from the move library config (act, weapon, side, mask, additive per glTF animation), additive moves baked as changes from their first frame. T4 is told when the picker lands.
+3. **Look-at and foot IK.**
+4. **Units re-bake** with detail (`detail_tile` about 0.15) and the new tables.
+5. **Fight library**, Ember Clans first (about 50 moves for sword and shield and for spear), from Mixamo sets Mario downloads and Blender fitting; then the other human weapon types, Brood and Choir bodies.
+
+Open call for Mario, as in doc 28: where the moves come from (default: Mixamo plus Blender).

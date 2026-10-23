@@ -1,5 +1,5 @@
 //! Shared skeletons and their tagged moves (see
-//! `docs/32-animation-engine.md`). Optional tables in a model pack: a pack
+//! `docs/33-animation-engine.md`). Optional tables in a model pack: a pack
 //! without them (the building packs, and model packs baked before them)
 //! loads as before, its models posed from their own bone rows
 //! ([`crate::model`]).

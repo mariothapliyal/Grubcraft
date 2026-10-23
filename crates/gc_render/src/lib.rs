@@ -70,7 +70,10 @@ pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
-pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
+pub use soldiers::{
+    LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer, SoldierBatch, SoldierInstance,
+    TONE_NEUTRAL,
+};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 /// The colour a frame with nothing drawn shows, in sRGB.
@@ -2439,7 +2442,7 @@ mod tests {
     #[test]
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
-        assert_eq!(size_of::<SoldierInstance>(), 36);
+        assert_eq!(size_of::<SoldierInstance>(), 64);
     }
 
     #[test]

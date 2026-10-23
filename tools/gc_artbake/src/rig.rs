@@ -1,4 +1,4 @@
-//! Shared skeletons (docs/32-animation-engine.md): a skinned model's joints,
+//! Shared skeletons (docs/33-animation-engine.md): a skinned model's joints,
 //! and its clips stored as joint poses that every model on the same skeleton
 //! shares, instead of finished bone matrices of its own.
 //!
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use gc_assets::anim::{
     Act, AnimTables, FIX_FLOATS, FRAME_TEXELS, FitRecord, JointRecord, LOOPS, MASKS, Mask,
-    MoveRecord, ROOT, Role, Side, SkeletonRecord, Weapon,
+    MoveRecord, NO_KIND, ROOT, Role, Side, SkeletonRecord, Weapon,
 };
 use gc_assets::model::{ClipKind, ClipRecord, NAME_BYTES, POSE_ROWS};
 use glam::{Mat4, Quat, Vec3};
@@ -146,12 +146,57 @@ pub(crate) fn poses(rig: &Rig, globals: &[Mat4]) -> Option<Vec<JointPose>> {
         .collect()
 }
 
+/// What a move is for and how it plays (see `gc_assets::anim`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Tags {
+    pub act: Act,
+    pub weapon: Weapon,
+    pub side: Side,
+    pub mask: Mask,
+    /// `LOOPS`, `ADDITIVE`.
+    pub flags: u8,
+}
+
+impl Tags {
+    /// The tags of a plain clip kind's move.
+    pub fn of_kind(kind: ClipKind) -> Tags {
+        Tags {
+            act: act_of(kind),
+            weapon: Weapon::Any,
+            side: Side::Any,
+            mask: Mask::All,
+            flags: if kind.loops() { LOOPS } else { 0 },
+        }
+    }
+}
+
 /// A clip as joint poses.
 pub(crate) struct PosedClip {
-    pub kind: ClipKind,
+    /// The plain clip kind it plays, or `None` for a move only the move
+    /// picker finds.
+    pub kind: Option<ClipKind>,
     /// The source animation's name.
     pub name: String,
+    pub tags: Tags,
     pub frames: Vec<Vec<JointPose>>,
+}
+
+/// Turn `frames` into changes from the first frame, as an additive move is
+/// stored: the pose pass plays it as `delta * rotation`, `translation +
+/// delta` and `scale * delta`, scaled by the layer's weight.
+pub(crate) fn make_additive(frames: &mut [Vec<JointPose>]) {
+    let Some(first) = frames.first().cloned() else {
+        return;
+    };
+    for frame in frames.iter_mut() {
+        for (p, p0) in frame.iter_mut().zip(&first) {
+            *p = JointPose {
+                r: (p.r * p0.r.inverse()).normalize(),
+                t: p.t - p0.t,
+                s: p.s / p0.s,
+            };
+        }
+    }
 }
 
 /// A model posed from a shared skeleton.
@@ -329,7 +374,7 @@ fn rows(m: &Mat4) -> [f32; FIX_FLOATS] {
 #[derive(Default)]
 pub(crate) struct AnimBuilder {
     skeletons: HashMap<Rig, u16>,
-    moves: HashMap<(u16, Vec<i32>), u32>,
+    moves: HashMap<(u16, Tags, Vec<i32>), u32>,
 }
 
 impl AnimBuilder {
@@ -381,6 +426,7 @@ impl AnimBuilder {
                 .collect();
             let key = (
                 skeleton,
+                clip.tags,
                 texels
                     .iter()
                     .flatten()
@@ -394,12 +440,12 @@ impl AnimBuilder {
                     t.moves.push(MoveRecord {
                         name: name_bytes(&clip.name),
                         skeleton,
-                        kind: clip.kind as u8,
-                        act: act_of(clip.kind) as u8,
-                        weapon: Weapon::Any as u8,
-                        side: Side::Any as u8,
-                        mask: Mask::All as u8,
-                        flags: if clip.kind.loops() { LOOPS } else { 0 },
+                        kind: clip.kind.map_or(NO_KIND, |k| k as u8),
+                        act: clip.tags.act as u8,
+                        weapon: clip.tags.weapon as u8,
+                        side: clip.tags.side as u8,
+                        mask: clip.tags.mask as u8,
+                        flags: clip.tags.flags,
                         first_row: (t.frames.len() / FRAME_TEXELS as usize) as u32,
                         frames: clip.frames.len() as u32,
                         fps: crate::SAMPLE_FPS,
@@ -409,9 +455,13 @@ impl AnimBuilder {
                     k
                 }
             };
+            // A move only the picker finds is not one of the model's clips.
+            let Some(kind) = clip.kind else {
+                continue;
+            };
             let m = &t.moves[index as usize];
             clips.push(ClipRecord {
-                kind: clip.kind as u8,
+                kind: kind as u8,
                 source: POSE_ROWS,
                 _pad: [0; 2],
                 first_row: m.first_row,
@@ -429,7 +479,7 @@ mod tests {
 
     fn rig(names: &[&str], parent: &[Option<usize>]) -> Rig {
         Rig {
-            names: names.iter().map(|n| n.to_string()).collect(),
+            names: names.iter().map(ToString::to_string).collect(),
             parent: parent.to_vec(),
         }
     }
