@@ -3430,6 +3430,22 @@ impl Running {
             }
             None => (self.camera.focus, self.camera.distance),
         };
+        // Pollen, fireflies, leaves and whirlwinds, where the land has them;
+        // not behind the menu, where nobody is looking at the field.
+        if live && !self.menu_open {
+            let sun = Vec3::from_array(self.look.look().sun).normalize_or_zero().y;
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            self.ambient.touches.frame(
+                dt.as_secs_f32() * fx_speed,
+                view_focus,
+                view_distance,
+                sun,
+                density,
+                &self.heightmap,
+                |tile| reveal || fog.sees_tile(tile),
+                &mut self.effects,
+            );
+        }
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
