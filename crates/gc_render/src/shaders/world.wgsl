@@ -1855,12 +1855,8 @@ fn cs_pose(
         return;
     }
     if bone == joints {
-        // The still bone never moves.
-        write_palette(slot, mat3x4<f32>(
-            vec4<f32>(1.0, 0.0, 0.0, 0.0),
-            vec4<f32>(0.0, 1.0, 0.0, 0.0),
-            vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        ));
+        // The still bone never moves, but drops with the body.
+        write_palette(slot, matrix_rows(pose_fix[0]));
         return;
     }
     let post = anim_matrix(fit + 5u + bone * 3u);
