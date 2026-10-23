@@ -61,8 +61,8 @@ const DUEL_REACH: f32 = 2.6;
 const DUEL_KEEP: f32 = 3.4;
 /// Paired soldiers close to this gap, in tiles: the usual one, a spear's
 /// length, big bodies (cavalry, monsters and great blades) and small ones
-/// (swarms) that get right on top of their man. A pair keeps the wider of
-/// its two men's gaps.
+/// (swarms) that get right on top of their man. A pair stands apart by the
+/// mean of its two men's gaps, each body taking its own half.
 const DUEL_GAP: f32 = 0.85;
 const SPEAR_GAP: f32 = 1.4;
 const BIG_GAP: f32 = 1.05;
@@ -262,9 +262,9 @@ pub struct Soldier {
     /// In a fighting rank (the front one, and the second for spears),
     /// striking at the enemy.
     pub striking: bool,
-    /// Waiting his turn behind the fighting ranks, and shouting at the
-    /// enemy.
-    pub shouting: bool,
+    /// Waiting his turn behind the fighting ranks and standing still, and
+    /// shouting at the enemy: how many seconds into his shout.
+    pub shouting: Option<f32>,
     /// What he is doing in a duel: paired with an enemy soldier and trading
     /// blows, or still reeling from one. `None` out of a duel.
     pub fight: Option<Move>,
@@ -476,6 +476,9 @@ pub struct Puppets {
     /// swing begun before then.
     act: Vec<(Act, f32)>,
     reeling: Vec<f32>,
+    /// Each soldier's look ([`Soldier::look`]), which goes with him when he
+    /// steps into a gap.
+    looks: Vec<u8>,
     /// How many soldiers have picked each soldier as their man, counted
     /// afresh every frame.
     marked: Vec<u8>,
@@ -527,6 +530,7 @@ impl Puppets {
             partner: vec![NONE; regiment_capacity * SLOTS],
             act: vec![(Act::None, 0.0); regiment_capacity * SLOTS],
             reeling: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
+            looks: vec![0; regiment_capacity * SLOTS],
             marked: vec![0; regiment_capacity * SLOTS],
             fighting: Vec::with_capacity(regiment_capacity),
             near: Vec::with_capacity(regiment_capacity),
@@ -593,7 +597,7 @@ impl Puppets {
                 fell: self.time,
                 unit: self.unit[r],
                 owner: self.player[r],
-                look: look(h, k),
+                look: self.looks[base + k],
             };
             self.lay(fallen);
             self.lodge(h, k, &fallen);
@@ -982,6 +986,9 @@ impl Puppets {
             self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
             self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
             self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
+            for k in 0..SLOTS {
+                self.looks[r * SLOTS + k] = look_of(block.handle, k);
+            }
         } else {
             self.fall(block, owner, models);
         }
@@ -1075,7 +1082,7 @@ impl Puppets {
                 (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
                     let them = &self.fighter[j as usize / SLOTS];
-                    let gap = block.fighter.gap().max(them.gap());
+                    let gap = (block.fighter.gap() + them.gap()) / 2.0;
                     let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
                     let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
                     slot + (spot - slot).clamp_length_max(leash)
@@ -1132,10 +1139,12 @@ impl Puppets {
             let striking = block.engaged && k < band && champion.is_none();
             let waiting = pressing && !striking && champion.is_none();
             // About half the men waiting their turn shout now and then.
-            let shouting = waiting
+            let shout = (self.time / SHOUT_EVERY + unit_hash(block.handle, k, 15)).fract();
+            let shouting = (waiting
+                && speed < 0.15
                 && unit_hash(block.handle, k, 14) < 0.5
-                && (self.time / SHOUT_EVERY + unit_hash(block.handle, k, 15)).fract()
-                    < SHOUT_SECONDS / SHOUT_EVERY;
+                && shout * SHOUT_EVERY < SHOUT_SECONDS)
+                .then_some(shout * SHOUT_EVERY);
             let phase = unit_hash(block.handle, k, 5);
             let dueling = foe.is_some() && striking;
             let beat = dueling.then(|| Self::beat(i, j as usize, self.time));
@@ -1190,7 +1199,7 @@ impl Puppets {
                 shouting,
                 fight,
                 phase,
-                look: look(block.handle, k),
+                look: self.looks[i],
             });
         }
     }
@@ -1265,7 +1274,7 @@ impl Puppets {
                 fell,
                 unit: block.unit,
                 owner,
-                look: look(block.handle, pick),
+                look: self.looks[victim],
             };
             self.lay(fallen);
             if fell <= self.time {
@@ -1278,6 +1287,7 @@ impl Puppets {
             self.act[last] = (Act::None, 0.0);
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
+            self.looks[victim] = self.looks[last];
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -1365,7 +1375,7 @@ fn unit_hash(h: RegimentHandle, k: usize, salt: u32) -> f32 {
 }
 
 /// A stable look per soldier (see [`Soldier::look`]).
-fn look(h: RegimentHandle, k: usize) -> u8 {
+fn look_of(h: RegimentHandle, k: usize) -> u8 {
     (unit_hash(h, k, 16) * 256.0) as u8
 }
 
@@ -1856,8 +1866,8 @@ mod tests {
             ..Fighter::default()
         });
         let swords = apart(Fighter::default());
-        assert!(spears > swords + 0.3, "spears {spears} swords {swords}");
-        assert!(swarm <= swords + 1e-3, "swarm {swarm} swords {swords}");
+        assert!(spears > swords + 0.15, "spears {spears} swords {swords}");
+        assert!(swarm < swords - 0.05, "swarm {swarm} swords {swords}");
     }
 
     #[test]
@@ -1895,7 +1905,7 @@ mod tests {
             p.pair(|x, y| x != y);
             let mut k = 0;
             p.update(&a, 0, FRAME, |s| {
-                if s.shouting {
+                if s.shouting.is_some() {
                     if k < 4 { front += 1 } else { rear += 1 }
                 }
                 k += 1;

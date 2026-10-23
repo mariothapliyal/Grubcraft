@@ -910,7 +910,7 @@ fn swing(first: bool) -> Action {
 fn soldier_action(s: &Soldier, block: &Block, shooting: bool) -> Action {
     if block.routing {
         Action::Run
-    } else if s.shouting {
+    } else if s.shouting.is_some() {
         Action::Cheer
     } else if s.striking && s.phase > 0.6 {
         // Behind the fighting line, some wait their turn.
@@ -2979,8 +2979,11 @@ impl Running {
                                 .map(|p| (p, false)),
                             None => {
                                 let action = soldier_action(&s, &block, shooting);
-                                // Giving ground: the walk played backwards.
-                                let seconds = if s.backing && action == Action::Walk {
+                                // Giving ground: the walk played backwards; a
+                                // shout plays from its start.
+                                let seconds = if let Some(shout) = s.shouting {
+                                    shout
+                                } else if s.backing && action == Action::Walk {
                                     -seconds
                                 } else {
                                     seconds
