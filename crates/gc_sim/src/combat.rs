@@ -1111,13 +1111,16 @@ impl Combat {
             if let Some(j) = best {
                 if !was_engaged {
                     // Hitting home at speed after a run-up is a charge, but
-                    // nobody charges out of a river, from behind a shield
-                    // wall, or while pushing through friends. A fight ends
+                    // nobody charges out of a river, through mud (out of it
+                    // or into it), from behind a shield wall, or while
+                    // pushing through friends. A fight ends
                     // any march.
                     let charging = regs.target[i].is_some()
                         && regs.run_up[i] >= RUN_UP_TICKS
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
                         && !terrain.wet(regs.position[i])
+                        && !terrain.soft(regs.position[i])
+                        && !terrain.soft(regs.position[j])
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
                     if charging
@@ -1140,7 +1143,11 @@ impl Combat {
                         regs.strike[i] = Strike::Rest;
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
-                        regs.charge_bonus[i] = units[regs.unit[i] as usize].charge_bonus;
+                        regs.charge_bonus[i] = terrain.charge_bonus(
+                            units[regs.unit[i] as usize].charge_bonus,
+                            regs.position[i],
+                            regs.position[j],
+                        );
                     }
                     // Caught from the flank or rear while falling back.
                     regs.falling_back[i] = 0;
@@ -1273,7 +1280,7 @@ impl Combat {
             };
             let pace = Fx::from_raw((GIVE_GROUND.raw() * i32::from(regs.giving[i]) / 100).max(1));
             let mass = units[regs.unit[i] as usize].mass;
-            let give = away * terrain.going(pace, me.centre, mass);
+            let give = away * terrain.going(pace, me.centre, away, mass);
             if nav.blocks(regs.owner[j], foe, foe + give) {
                 // Its foe can't follow, so nobody is pushing.
                 continue;
@@ -1388,8 +1395,8 @@ impl Combat {
             return None;
         }
         let mass = units[regs.unit[i] as usize].mass;
-        let step =
-            (them.centre - me.centre).normalized() * terrain.going(CLOSE_UP, me.centre, mass);
+        let toward = (them.centre - me.centre).normalized();
+        let step = toward * terrain.going(CLOSE_UP, me.centre, toward, mass);
         let next = me.centre + step;
         (!nav.blocks(regs.owner[i], me.centre, next) && !self.backs_into(regs, stances, i, next))
             .then_some(step)

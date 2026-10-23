@@ -18,6 +18,16 @@
 //!   [`TREES_CATCH_PERCENT`] of the arrows shot out of a wood, and as many
 //!   again of those shot at a regiment standing in one.
 //!
+//! - **Slopes** (docs/32-changing-land.md, "Reading the ground"): a
+//!   regiment climbing marches slower, by [`CLIMB_SLOW_PERCENT`] of its pace
+//!   per tile of height it climbs per tile, at most [`CLIMB_SLOW_MAX`]; a
+//!   charge hitting home from high ground lands [`CHARGE_DOWNHILL_PERCENT`]
+//!   as hard, and one up onto high ground [`CHARGE_UPHILL_PERCENT`].
+//! - **Footing:** each tile is firm or soft ([`Footing`]): mud, bog and wet
+//!   meadow. A regiment in soft ground marches at [`SOFT_SPEED_PERCENT`]
+//!   ([`SOFT_HEAVY_SPEED_PERCENT`] for heavy troops), and nobody charges out
+//!   of it or into it.
+//!
 //! - **Growth:** what grows on each tile, for building and clearing
 //!   ([`Growth`], docs/32-changing-land.md): scrub, woods and thicket must
 //!   be cleared before a building can rise there. Clearing changes the
@@ -54,6 +64,40 @@ pub const WOODS_HEAVY_SPEED_PERCENT: i32 = 70;
 /// Arrows the trees catch, percent, at each end of a volley's flight that
 /// lies in a wood (both ends: about half the volley).
 pub const TREES_CATCH_PERCENT: u64 = 30;
+
+/// Pace lost climbing, percent, per tile of height climbed per tile.
+pub const CLIMB_SLOW_PERCENT: i32 = 50;
+/// The most pace a climb can take, percent.
+pub const CLIMB_SLOW_MAX: i32 = 40;
+/// Charge bonus hitting home from high ground (see [`Terrain::downhill`]),
+/// percent of the regiment's own.
+pub const CHARGE_DOWNHILL_PERCENT: u32 = 150;
+/// Charge bonus hitting home up onto high ground, percent.
+pub const CHARGE_UPHILL_PERCENT: u32 = 50;
+/// Marching pace in soft ground, percent, for soldiers on foot and swarms.
+pub const SOFT_SPEED_PERCENT: i32 = 75;
+/// Marching pace in soft ground, percent, for heavy troops.
+pub const SOFT_HEAVY_SPEED_PERCENT: i32 = 60;
+
+/// How a tile holds a soldier's feet (see [`Terrain::soft`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum Footing {
+    /// Ground that bears a charge.
+    Firm = 0,
+    /// Mud, bog and wet meadow: slow going, and no charges.
+    Soft = 1,
+}
+
+impl Footing {
+    /// The footing a byte stands for (anything unknown is firm).
+    pub fn from_u8(v: u8) -> Footing {
+        match v {
+            1 => Footing::Soft,
+            _ => Footing::Firm,
+        }
+    }
+}
 
 /// What covers a tile, for hiding (see [`crate::vision`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +169,10 @@ pub struct Ground<'a> {
     /// elsewhere. Otherwise there must be one per tile of the map (as for
     /// `cover`), or the map is taken as having none.
     pub growth: &'a [u8],
+    /// How each tile holds a soldier's feet, row by row, as [`Footing`]
+    /// bytes. Empty means firm everywhere; otherwise there must be one per
+    /// tile of the map, or the map is taken as firm.
+    pub footing: &'a [u8],
 }
 
 impl Ground<'static> {
@@ -134,6 +182,7 @@ impl Ground<'static> {
         water_level: 0,
         cover: &[],
         growth: &[],
+        footing: &[],
     };
 }
 
@@ -149,6 +198,10 @@ pub struct Terrain {
     cover: Vec<u8>,
     /// One [`Growth`] byte per tile when the map has cover, else empty.
     growth: Vec<u8>,
+    /// One [`Footing`] byte per tile of `footing_tiles` a side, or empty:
+    /// firm everywhere.
+    footing: Vec<u8>,
+    footing_tiles: i32,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -177,6 +230,19 @@ impl Terrain {
                 .map(|c| if woods(c) { Growth::Woods as u8 } else { 0 })
                 .collect()
         };
+        let footing: Vec<u8> =
+            if n > 0 && ground.footing.len() == n * n && ground.footing.iter().any(|&f| f != 0) {
+                (ground.footing.iter())
+                    .map(|&f| Footing::from_u8(f) as u8)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let footing_tiles = if footing.is_empty() {
+            0
+        } else {
+            map_tiles as i32
+        };
         if n == 0 || ground.heights.len() != n * n {
             return Terrain {
                 tiles: 0,
@@ -185,6 +251,8 @@ impl Terrain {
                 cover_tiles,
                 cover,
                 growth,
+                footing,
+                footing_tiles,
                 changes: 0,
             };
         }
@@ -195,6 +263,8 @@ impl Terrain {
             cover_tiles,
             cover,
             growth,
+            footing,
+            footing_tiles,
             changes: 0,
         }
     }
@@ -281,6 +351,51 @@ impl Terrain {
         i32::from(self.height[(y * self.tiles + x) as usize])
     }
 
+    /// How the tile `p` is on holds a soldier's feet.
+    pub fn footing(&self, p: FxVec2) -> Footing {
+        let side = self.footing_tiles;
+        if side == 0 {
+            return Footing::Firm;
+        }
+        let x = p.x.floor_int().clamp(0, side - 1);
+        let y = p.y.floor_int().clamp(0, side - 1);
+        Footing::from_u8(self.footing[(y * side + x) as usize])
+    }
+
+    /// Whether `p` is in soft ground (see [`Footing::Soft`]).
+    pub fn soft(&self, p: FxVec2) -> bool {
+        self.footing(p) == Footing::Soft
+    }
+
+    /// Whether the map has any soft ground.
+    pub fn has_soft_ground(&self) -> bool {
+        !self.footing.is_empty()
+    }
+
+    /// Pace kept climbing from `p` a tile along `heading`, percent (100 on
+    /// the level or going down).
+    pub fn climb_percent(&self, p: FxVec2, heading: FxVec2) -> i32 {
+        if self.tiles == 0 || heading == FxVec2::ZERO {
+            return 100;
+        }
+        let rise = self.height(p + heading) - self.height(p);
+        let slow = rise.max(0) * CLIMB_SLOW_PERCENT / HEIGHT_UNITS as i32;
+        100 - slow.min(CLIMB_SLOW_MAX)
+    }
+
+    /// The charge bonus `bonus` of a regiment at `from` hitting home on one
+    /// at `to`: more from high ground, less up onto it.
+    pub fn charge_bonus(&self, bonus: u8, from: FxVec2, to: FxVec2) -> u8 {
+        let percent = if self.downhill(from, to) {
+            CHARGE_DOWNHILL_PERCENT
+        } else if self.downhill(to, from) {
+            CHARGE_UPHILL_PERCENT
+        } else {
+            return bonus;
+        };
+        (u32::from(bonus) * percent / 100).min(255) as u8
+    }
+
     /// Whether `p` is in water.
     pub fn wet(&self, p: FxVec2) -> bool {
         self.tiles != 0 && self.height(p) < i32::from(self.water_level)
@@ -334,23 +449,32 @@ impl Terrain {
         percent
     }
 
-    /// `step` slowed by the ground at `p` for troops of `mass`: water,
-    /// then woods.
-    pub fn going(&self, step: Fx, p: FxVec2, mass: Mass) -> Fx {
+    /// `step` slowed by the ground at `p` for troops of `mass` going along
+    /// `heading` (a unit vector, or zero): water, woods, soft ground and
+    /// the climb.
+    pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
+        let heavy = mass == Mass::Heavy;
         let wading = if self.wet(p) {
             WADING_SPEED_PERCENT
         } else {
             100
         };
-        let woods = match (self.cover(p), mass) {
-            (Cover::Wood, Mass::Heavy) => WOODS_HEAVY_SPEED_PERCENT,
-            (Cover::Wood, _) => WOODS_SPEED_PERCENT,
+        let woods = match self.cover(p) {
+            Cover::Wood if heavy => WOODS_HEAVY_SPEED_PERCENT,
+            Cover::Wood => WOODS_SPEED_PERCENT,
             _ => 100,
         };
-        if wading * woods == 100 * 100 {
+        let soft = match self.soft(p) {
+            true if heavy => SOFT_HEAVY_SPEED_PERCENT,
+            true => SOFT_SPEED_PERCENT,
+            false => 100,
+        };
+        let percent = i64::from(wading * woods) * i64::from(soft * self.climb_percent(p, heading));
+        const WHOLE: i64 = 100 * 100 * 100 * 100;
+        if percent == WHOLE {
             step
         } else {
-            let raw = i64::from(step.raw()) * i64::from(wading * woods) / (100 * 100);
+            let raw = i64::from(step.raw()) * percent / WHOLE;
             Fx::from_raw((raw as i32).max(1))
         }
     }

@@ -30,10 +30,10 @@ const GOLDEN_RIBS: [(u32, u64); 4] = [
 /// The same drill on terraced, river-cut ground, where high ground and
 /// fords change the fighting.
 const GOLDEN_GROUND: [(u32, u64); 4] = [
-    (600, 0xe710_81c9_511f_de08),
-    (1200, 0x5950_6936_edf8_3d1b),
-    (1800, 0xd521_49ff_53dc_830b),
-    (2400, 0x6cbe_6b79_0afb_9939),
+    (600, 0x11dc_c772_e988_e842),
+    (1200, 0x9f3b_ba7b_611f_9159),
+    (1800, 0x3c29_aa60_4ebf_9fad),
+    (2400, 0xd890_5bef_bf3c_8fb6),
 ];
 
 /// Terraces a little under a tile high, every 16 tiles, crossed by shallow
@@ -118,6 +118,7 @@ fn matches_golden_hashes_on_terrain() {
         water_level: 256,
         cover: &[],
         growth: &[],
+        footing: &[],
     };
     let got = run_on(&[], ground);
     assert_eq!(got, run_on(&[], ground));

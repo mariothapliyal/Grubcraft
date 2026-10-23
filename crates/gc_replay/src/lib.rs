@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 30: the footing layer (read as firm ground everywhere);
 /// - 29: the Conquest units' clearing styles (read as the standard one);
 /// - 28: gates (the set-gate command);
 /// - 27: the growth layer and the Clear command (read as growth that
@@ -84,7 +85,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 29;
+pub const FORMAT: u16 = 30;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -362,6 +363,9 @@ pub struct Replay {
     /// What grows on each tile, as [`Ground::growth`] (empty: it follows
     /// the cover).
     pub growth: Vec<u8>,
+    /// How each tile holds a soldier's feet, as [`Ground::footing`] (empty:
+    /// firm everywhere).
+    pub footing: Vec<u8>,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
     pub champions: bool,
     /// What made it a Conquest match; `None` for a Field Battle.
@@ -464,6 +468,7 @@ impl Replay {
                 water_level: self.water_level,
                 cover: &self.cover,
                 growth: &self.growth,
+                footing: &self.footing,
             },
             champions: self.champions,
         }
@@ -639,9 +644,11 @@ impl Replay {
         w.bool(self.champions);
     }
 
-    /// The growth layer, just after the map (format 27 on).
+    /// The growth layer, just after the map (format 27 on), then the
+    /// footing (format 30 on).
     fn write_growth(&self, w: &mut Writer) {
         w.bytes(&self.growth);
+        w.bytes(&self.footing);
     }
 
     /// The Conquest record, if any; the info block says whether there is
@@ -888,6 +895,14 @@ impl Replay {
         if !growth.is_empty() && growth.len() != (map_tiles as usize).pow(2) {
             return None;
         }
+        let footing = if format >= 30 {
+            r.bytes()?.to_vec()
+        } else {
+            Vec::new()
+        };
+        if !footing.is_empty() && footing.len() != (map_tiles as usize).pow(2) {
+            return None;
+        }
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {
@@ -951,6 +966,7 @@ impl Replay {
             water_level,
             cover,
             growth,
+            footing,
             champions,
             conquest,
             ticks: info.ticks,
@@ -1108,6 +1124,15 @@ impl Recorder {
                 } else {
                     Vec::new()
                 },
+                // Footing that doesn't fit the map, or is firm everywhere,
+                // is none, as in the sim.
+                footing: if setup.ground.footing.len() == (setup.map_tiles as usize).pow(2)
+                    && setup.ground.footing.iter().any(|&f| f != 0)
+                {
+                    setup.ground.footing.to_vec()
+                } else {
+                    Vec::new()
+                },
                 champions: setup.champions,
                 conquest: None,
                 ticks: 0,
@@ -1232,6 +1257,7 @@ mod tests {
                 water_level: 200,
                 cover: &cover,
                 growth: &[],
+                footing: &[],
             },
             champions: false,
         };
@@ -1873,6 +1899,14 @@ mod tests {
     }
 
     #[test]
+    fn the_footing_layer_round_trips() {
+        let mut replay = record();
+        replay.footing = (0..64u32 * 64).map(|i| u8::from(i % 7 == 0)).collect();
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+        assert_eq!(replay.setup().ground.footing, &replay.footing[..]);
+    }
+
+    #[test]
     fn a_format_14_replay_has_no_unit_names() {
         let mut replay = record();
         replay.header.unit_names.clear();
@@ -1883,14 +1917,14 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth layer after the map.
+        // The body as it was then: no growth or footing layer after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
         replay.write_map(&mut map);
         let mut old_body = body[..map.buf.len()].to_vec();
-        assert_eq!(body[map.buf.len()], 0, "no growth layer");
-        old_body.extend_from_slice(&body[map.buf.len() + 1..]);
+        assert_eq!(body[map.buf.len()..map.buf.len() + 2], [0, 0], "no layers");
+        old_body.extend_from_slice(&body[map.buf.len() + 2..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);
         let path = temp("header-14", &old);

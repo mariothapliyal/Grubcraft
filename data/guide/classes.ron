@@ -13,7 +13,7 @@
         (name: "Spear", blurb: "Spear and pike lines, the answer to cavalry."),
         (name: "Heavy", blurb: "Armoured and elite infantry."),
         (name: "Ranged", blurb: "Archers, crossbows, beams and acid."),
-        (name: "Cavalry", blurb: "Riders and fast shock units."),
+        (name: "Cavalry", blurb: "Riders and fast shock units. Charge downhill; mud stops a charge."),
         (name: "Air", blurb: "Flying regiments."),
         (name: "Artillery", blurb: "Long-range area fire."),
         (name: "Siege", blurb: "Built to break structures."),
