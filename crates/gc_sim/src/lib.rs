@@ -1057,9 +1057,10 @@ impl World {
         })
     }
 
-    /// The tile worker `h` is clearing this moment, once it has reached
-    /// it and is at work (Conquest only). The game shows the felling with
-    /// it; nothing in the simulation reads it.
+    /// The tile worker `h` is clearing, once work has begun on it and
+    /// unless the worker is fighting (Conquest only). The game shows the
+    /// felling with it, and checks the worker is at the tile; nothing in
+    /// the simulation reads it.
     pub fn clearing_tile_of(&self, h: RegimentHandle) -> Option<(i32, i32)> {
         let c = self.conquest.as_ref()?;
         let side = self.terrain.growth_side();

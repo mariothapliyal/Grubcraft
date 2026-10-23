@@ -34,8 +34,8 @@ pub fn load(renderer: &mut gc_render::Renderer) -> Result<SceneryModels, String>
     Ok(SceneryModels::from_pack(&scenery))
 }
 
-/// At most this many extra models (gathering spots, morale banners) are
-/// drawn a frame, so they never crowd the scenery out of the buffer.
+/// At most this many extra models (gathering spots, morale banners, trees
+/// coming down) are drawn a frame, so they never crowd the scenery out of the buffer.
 const MAX_EXTRAS: usize = 4096;
 
 /// Tiles per chunk side.
@@ -456,8 +456,10 @@ type Rect = (i32, i32, u8, u8);
 /// Conquest gathering spot or a morale banner, at `at` (x, ground height,
 /// y), turned by `turn` (256ths of a circle), at `scale` and tinted by
 /// `tint` (128 as baked, so 255 doubles and a team colour halved shows as
-/// itself on white). `lean` tips it over about its base toward the way it
-/// turns, 0 (upright) to 255 (lying down): a tree coming down.
+/// itself on white). `lean` tips it over about its base, 0 (upright) to 255
+/// (lying down), toward `fall` (a turn from the way it faces, in 256ths,
+/// counted as [`fall_of`] does): a tree coming down. `phase` is its wind
+/// phase, so neighbours sway apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extra {
     pub model: Model,
@@ -465,7 +467,30 @@ pub struct Extra {
     pub turn: u8,
     pub scale: f32,
     pub tint: [u8; 3],
+    pub phase: u8,
     pub lean: u8,
+    pub fall: u8,
+}
+
+/// The turn (256ths of a circle) of the direction `dir` on the map, as the
+/// scenery's facings read it.
+pub fn turn_of(dir: Vec2) -> u8 {
+    (dir.y.atan2(dir.x) / std::f32::consts::TAU * 256.0).round() as i32 as u8
+}
+
+/// The unit direction on the map of a turn of `turn` 256ths.
+pub fn facing_of(turn: u8) -> Vec2 {
+    Vec2::from_angle(f32::from(turn) / 256.0 * std::f32::consts::TAU)
+}
+
+/// How a model turned `turn` falls toward the map direction `dir`, as an
+/// [`Extra`]'s `fall`: the direction in the model's own space, as a turn
+/// from its front, as the scenery shader reads it.
+pub fn fall_of(turn: u8, dir: Vec2) -> u8 {
+    let front = facing_of(turn);
+    let left = Vec2::new(front.y, -front.x);
+    let (x, z) = (dir.dot(left), dir.dot(front));
+    (x.atan2(z) / std::f32::consts::TAU * 256.0).round() as i32 as u8
 }
 
 /// A tree or bush that stood on a tile, as [`Scenery::standing`] finds it.
@@ -670,6 +695,17 @@ impl Scenery {
             })
     }
 
+    /// Whether a building (or the margin round one) covers `tile`.
+    pub fn occupied_at(&self, tile: (i32, i32)) -> bool {
+        let n = self.tiles as i32;
+        let (x, y) = tile;
+        if !(0..n).contains(&x) || !(0..n).contains(&y) {
+            return false;
+        }
+        let i = y as usize * n as usize + x as usize;
+        self.occupied[i / 64] >> (i % 64) & 1 != 0
+    }
+
     /// Put every felled tree and bush back (a new match on the same map).
     pub fn regrow(&mut self) {
         self.felled.fill(0);
@@ -813,14 +849,26 @@ impl Scenery {
             let Some(id) = models.id(n.model).map(usize::from) else {
                 continue;
             };
-            // A sphere round the whole model, from its base to its top.
-            let (radius, half) = (models.info[id].radius, models.info[id].height / 2.0);
-            let centre = n.at + Vec3::Y * half * n.scale;
-            if !cull.sees(centre, (radius + half) * n.scale) {
+            let info = &models.info[id];
+            let d = Vec2::new(n.at.x, n.at.z).distance(focus);
+            // A tree is only drawn within the scenery's reach, as the
+            // static ones are, so one felled far off does not pop in.
+            if info.class == 0 && d > reach[0] {
                 continue;
             }
-            let d = Vec2::new(n.at.x, n.at.z).distance(focus);
-            let bin = id * LODS + usize::from(lod_for(1, d.hypot(distance)));
+            // A sphere round the whole model, from its base to its top;
+            // tipped over, it reaches as far sideways as it was tall.
+            let (radius, half) = (info.radius, info.height / 2.0);
+            let centre = n.at + Vec3::Y * half * n.scale;
+            let round = if n.lean > 0 {
+                radius + 2.0 * half
+            } else {
+                radius + half
+            };
+            if !cull.sees(centre, round * n.scale) {
+                continue;
+            }
+            let bin = id * LODS + usize::from(lod_for(usize::from(info.class), d.hypot(distance)));
             counts[bin] += 1;
             total += 1;
             extra_bins.push((bin, k));
@@ -867,9 +915,10 @@ impl Scenery {
                 pos: [n.at.x, n.at.z],
                 facing: facings[usize::from(n.turn)],
                 scale: n.scale,
-                // Wind phase from the turn, so neighbours sway apart.
-                tint: [r, g, b, n.turn],
-                kind: models.info[bin / LODS].detail | u32::from(n.lean) << 8,
+                tint: [r, g, b, n.phase],
+                kind: models.info[bin / LODS].detail
+                    | u32::from(n.lean) << 8
+                    | u32::from(n.fall) << 16,
             };
         }
         for n in &near[..taken] {
@@ -1584,7 +1633,9 @@ mod tests {
             turn: 9,
             scale,
             tint: [140; 3],
+            phase: 9,
             lean: 0,
+            fall: 0,
         };
         s.set_extras(
             [
@@ -1750,7 +1801,9 @@ mod tests {
             turn: 0,
             scale: 1.0,
             tint: [128; 3],
+            phase: 0,
             lean,
+            fall: 64,
         };
         let kind_of = |s: &mut Scenery| {
             let (i, _) = s.frame(focus, 10.0, true, &Cull::EVERYTHING);
@@ -1763,8 +1816,9 @@ mod tests {
         let upright = kind_of(&mut s);
         s.set_extras([tip(200)].into_iter());
         let down = kind_of(&mut s);
-        assert_eq!(upright >> 8, 0);
-        assert_eq!(down >> 8, 200);
+        assert_eq!(upright >> 8 & 255, 0);
+        assert_eq!(down >> 8 & 255, 200);
+        assert_eq!(down >> 16, 64);
         assert_eq!(down & 255, upright & 255);
     }
 

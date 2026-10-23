@@ -3173,7 +3173,11 @@ impl Running {
                             wood,
                         )
                     });
-                let felling = &mut self.ambient.felling;
+                // Where the trees should fall from: the regiment's centre,
+                // whether or not its soldiers are on screen.
+                if let Some((tile, _, _)) = cutting {
+                    self.ambient.felling.cutting(tile, pos);
+                }
                 self.puppets
                     .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let mut s = s;
@@ -3216,8 +3220,7 @@ impl Running {
                         let working = working.or(chopping.map(|(_, c, _)| c));
                         let facing =
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
-                        if let Some((tile, _, wood)) = chopping {
-                            felling.cutting(tile, s.pos);
+                        if let Some((_, _, wood)) = chopping {
                             let tool = at + Vec3::new(facing.x * 0.5, 0.9, facing.y * 0.5);
                             effects.chop(dt, tool, facing, wood);
                         }
@@ -3345,13 +3348,19 @@ impl Running {
         let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
         let density = self.menu.settings().graphics.effects_density();
-        self.fell_demo(dt.as_secs_f32() * fx_speed);
+        self.ambient.fell_demo(
+            dt.as_secs_f32() * fx_speed,
+            &mut self.camera.focus,
+            &mut self.scenery,
+        );
         let heightmap = &self.heightmap;
-        self.ambient
-            .felling
-            .advance(dt.as_secs_f32() * fx_speed, &mut self.effects, |p| {
-                heightmap.height_at(p.x, p.y)
-            });
+        let scenery = &self.scenery;
+        self.ambient.felling.advance(
+            dt.as_secs_f32() * fx_speed,
+            &mut self.effects,
+            |p| heightmap.height_at(p.x, p.y),
+            |tile| scenery.occupied_at(tile),
+        );
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
@@ -5501,6 +5510,7 @@ impl Running {
             .filter_map(|r| {
                 let model = banner_model(r.morale)?;
                 let (pos, facing) = drawn_pose(prev, alpha, &r);
+                let turn = scenery::turn_of(facing);
                 let team = color_of(parties, r.owner);
                 let tint = match r.morale {
                     // The white rag of flight keeps its own colour.
@@ -5511,10 +5521,12 @@ impl Running {
                 Some(scenery::Extra {
                     model,
                     at: Vec3::new(pos.x, ground_of(map, pos), pos.y),
-                    turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32 as u8,
+                    turn,
                     scale: 1.0,
                     tint,
+                    phase: turn,
                     lean: 0,
+                    fall: 0,
                 })
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));

@@ -199,66 +199,24 @@ impl Running {
         }
     }
 
-    /// `--fell-demo`: a few seconds in, fell everything within seven tiles
-    /// of the thickest wood near the camera's focus (the camera moves
-    /// there), so the trees come down for a look without a worker.
-    pub fn fell_demo(&mut self, dt: f32) {
-        let Some(left) = self.ambient.fell_demo else {
-            return;
-        };
-        if left > dt {
-            self.ambient.fell_demo = Some(left - dt);
-            return;
-        }
-        self.ambient.fell_demo = None;
-        // The thickest wood within thirty tiles: the camera goes there.
-        let from = self.camera.focus;
-        let (fx, fy) = (from.x as i32, from.y as i32);
-        let mut best = (0, (fx, fy));
-        for y in (fy - 30..=fy + 30).step_by(2) {
-            for x in (fx - 30..=fx + 30).step_by(2) {
-                let trees = (0..2)
-                    .flat_map(|dy| (0..2).map(move |dx| (x + dx, y + dy)))
-                    .flat_map(|t| self.scenery.standing(t))
-                    .filter(|s| s.tree)
-                    .count();
-                if trees > best.0 {
-                    best = (trees, (x, y));
-                }
-            }
-        }
-        let focus = Vec2::new(best.1.0 as f32 + 0.5, best.1.1 as f32 + 0.5);
-        self.camera.focus = focus;
-        let (cx, cy) = best.1;
-        let tiles: Vec<(i32, i32)> = (-7..=7)
-            .flat_map(|dy| (-7..=7).map(move |dx| (cx + dx, cy + dy)))
-            .collect();
-        let scenery = &self.scenery;
-        for &tile in &tiles {
-            let tall = |s: &Stood| scenery.height_of(s.model);
-            // The demo's cutter stands south of the focus.
-            self.ambient
-                .felling
-                .cutting(tile, Vec2::new(focus.x, focus.y + 9.0));
-            self.ambient
-                .felling
-                .clear(tile, scenery.standing(tile), tall);
-        }
-        self.scenery.fell(tiles.into_iter());
-    }
-
     /// Take the trees and bushes off the tiles cleared in the tick just
     /// played. Replays and network games tick a world too, so they come
     /// here the same way.
     pub fn fell_scenery(&mut self) {
+        // Trees come down for the viewer only where it can see, and not
+        // for a rejoining player catching up on ticks long past.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let watch = !catching_up;
         for tile in cleared(self.world.events()) {
             let scenery = &self.scenery;
-            let tall = |s: &Stood| scenery.height_of(s.model);
-            self.ambient
-                .felling
-                .clear(tile, scenery.standing(tile), tall);
+            if watch && (self.reveal_all || self.fog.sees_tile(tile)) {
+                let tall = |s: &Stood| scenery.height_of(s.model);
+                self.ambient
+                    .felling
+                    .clear(tile, scenery.standing(tile), tall);
+            }
+            self.scenery.fell(std::iter::once(tile));
         }
-        self.scenery.fell(cleared(self.world.events()));
     }
 }
 
