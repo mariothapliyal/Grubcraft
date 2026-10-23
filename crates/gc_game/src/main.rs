@@ -3344,7 +3344,12 @@ impl Running {
                             return;
                         };
                         // Knocked down, his feet go where the fall puts them.
-                        let down = matches!(s.fight, Some(puppets::Move::Down(_)));
+                        let feet = match s.fight {
+                            Some(puppets::Move::Down(f)) => {
+                                models::feet_as_posed(models::down_depth(f))
+                            }
+                            _ => 0,
+                        };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: facing.to_array(),
@@ -3353,7 +3358,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: 0.0,
                             scale: look.scale,
-                            feet: if down { gc_render::FEET_AS_POSED } else { 0 },
+                            feet,
                             ..Default::default()
                         });
                     },
@@ -4993,7 +4998,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: -0.5 * c.sink,
                             scale: look.scale,
-                            feet: gc_render::FEET_AS_POSED,
+                            feet: models::dying_feet(c.age),
                             ..Default::default()
                         });
                         continue;

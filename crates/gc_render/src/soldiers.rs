@@ -186,13 +186,14 @@ pub struct SoldierInstance {
     pub look: [i8; 2],
     /// How much of `look` shows, 0 (none) to 255.
     pub look_weight: u8,
-    /// [`FEET_AS_POSED`] keeps the feet where the move puts them; otherwise
-    /// a fitted model's legs bend to stand on uneven ground.
+    /// How much the feet stay where the move puts them, 0 to
+    /// [`FEET_AS_POSED`]: at 0 a fitted model's legs bend to stand on
+    /// uneven ground; the game fades it up as a soldier falls.
     pub feet: u8,
 }
 
-/// [`SoldierInstance::feet`]: no foot IK (the dying and the dead).
-pub const FEET_AS_POSED: u8 = 1;
+/// [`SoldierInstance::feet`]: no foot IK at all (the fallen and the dead).
+pub const FEET_AS_POSED: u8 = 255;
 
 const _: () = assert!(size_of::<SoldierInstance>() == 64);
 
@@ -1346,8 +1347,9 @@ const NO_JOINT: u32 = 255;
 
 /// The joints `cs_pose` bends for foot IK and turns for look-at, and which
 /// of its fixes each joint takes. The rig is one vector: the left leg's
-/// upper, lower and foot joints (a byte each, `NO_JOINT` for a leg it cannot
-/// bend), the right leg's, then chest, neck and head. A joint takes the fix
+/// upper, lower and foot joints (a byte each; `NO_JOINT` for both legs
+/// unless each is a chain it can bend), the right leg's, then chest, neck
+/// and head. A joint takes the fix
 /// of the nearest of those at or above it: 1 to 3 the left leg's upper, lower
 /// and foot, 4 to 6 the right's, 7 to 9 chest, neck and head, 0 none (only
 /// the drop of the whole body).
@@ -1360,16 +1362,14 @@ fn rig_of(joints: &[JointRecord]) -> ([u32; 4], Vec<u8>) {
             .then_some([u, l, f])
     };
     let mut fixed = [None; 9];
-    for (k, l) in [
+    // Both legs or neither: the body drops to the lower foot, so a leg that
+    // cannot bend would sink into the ground.
+    if let (Some(l), Some(r)) = (
         leg(Role::UpperLegL, Role::LowerLegL, Role::FootL),
         leg(Role::UpperLegR, Role::LowerLegR, Role::FootR),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if let Some(l) = l {
-            fixed[k * 3..][..3].copy_from_slice(&l.map(Some));
-        }
+    ) {
+        fixed[..3].copy_from_slice(&l.map(Some));
+        fixed[3..6].copy_from_slice(&r.map(Some));
     }
     for (k, r) in [Role::Chest, Role::Neck, Role::Head]
         .into_iter()
@@ -1448,7 +1448,7 @@ mod tests {
         };
         // hips, chest, head, left leg (upper, lower, foot, toe), a right leg
         // whose foot hangs off the upper leg, and a hand on the chest.
-        let joints = [
+        let mut joints = vec![
             j(gc_assets::anim::ROOT, Role::Hips),
             j(0, Role::Chest),
             j(1, Role::Head),
@@ -1461,11 +1461,18 @@ mod tests {
             j(7, Role::FootR),
             j(1, Role::None),
         ];
+        let none = NO_JOINT | NO_JOINT << 8 | NO_JOINT << 16;
+        // One leg that cannot bend leaves both alone.
+        let (head, fixes) = rig_of(&joints);
+        assert_eq!(head[..2], [none, none]);
+        assert_eq!(head[2], 1 | NO_JOINT << 8 | 2 << 16);
+        assert_eq!(fixes, vec![0, 7, 9, 0, 0, 0, 0, 0, 0, 0, 7]);
+        // With the right foot on its lower leg, both legs bend.
+        joints[9].parent = 8;
         let (head, fixes) = rig_of(&joints);
         assert_eq!(head[0], 3 | 4 << 8 | 5 << 16);
-        assert_eq!(head[1], NO_JOINT | NO_JOINT << 8 | NO_JOINT << 16);
-        assert_eq!(head[2], 1 | NO_JOINT << 8 | 2 << 16);
-        assert_eq!(fixes, vec![0, 7, 9, 1, 2, 3, 3, 0, 0, 0, 7]);
+        assert_eq!(head[1], 7 | 8 << 8 | 9 << 16);
+        assert_eq!(fixes, vec![0, 7, 9, 1, 2, 3, 3, 4, 5, 6, 7]);
     }
     use gc_assets::model::ModelRecord;
 

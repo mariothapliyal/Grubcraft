@@ -97,6 +97,8 @@ pub(crate) struct Shown {
     /// Where it looks, and how much ([`gc_render::SoldierInstance::look`]).
     pub look: [i8; 2],
     pub look_weight: u8,
+    /// How much the feet keep to the move ([`gc_render::SoldierInstance::feet`]).
+    pub feet: u8,
 }
 
 /// What `model` shows `time` seconds into the show.
@@ -107,9 +109,13 @@ pub(crate) fn pose(clips: &Clips, model: usize, hold: Option<Clip>, time: f32) -
         layers: Default::default(),
         look: [0; 2],
         look_weight: 0,
+        feet: 0,
     };
     match at(hold, time) {
-        (Clip::Die, t) => clips.death(model, t).map(shown),
+        (Clip::Die, t) => clips.death(model, t).map(|d| Shown {
+            feet: crate::models::dying_feet(t),
+            ..shown(d)
+        }),
         (Clip::Play(action), t) => clips.pose(model, action, t).map(|p| shown((p, false))),
         (Clip::March, t) => {
             let mut s = shown((clips.pose(model, Action::Walk, t)?, false));
@@ -315,6 +321,7 @@ pub(crate) fn stand(
         layers,
         look,
         look_weight,
+        feet,
     } = *shown;
     let at = Vec3::new(pos.x, ground + lift, pos.y);
     let lod = art.view.lod(art.heights[model], at);
@@ -329,7 +336,7 @@ pub(crate) fn stand(
         layers,
         look,
         look_weight,
-        ..Default::default()
+        feet,
     });
 }
 
@@ -494,6 +501,13 @@ mod tests {
         let end = pose(&clips, m, die, 50.0).unwrap().pose;
         assert_ne!(start.rows, end.rows);
         assert_eq!(end, pose(&clips, m, die, 500.0).unwrap().pose);
+        // A falling model's feet leave the ground's hold as he goes down.
+        assert_eq!(pose(&clips, m, die, 0.0).unwrap().feet, 0);
+        assert_eq!(
+            pose(&clips, m, die, 50.0).unwrap().feet,
+            gc_render::FEET_AS_POSED
+        );
+        assert_eq!(pose(&clips, m, None, 1.0).unwrap().feet, 0);
         // The cycle's fall starts where the clip does and ends held, too.
         assert_eq!(pose(&clips, m, None, 12.0).unwrap().pose, start);
         assert_eq!(pose(&clips, m, None, 15.9).unwrap().pose.rows, end.rows);
