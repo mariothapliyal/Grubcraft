@@ -121,6 +121,7 @@ pub(crate) fn upload_bc7_layers(
     let per_layer: usize = (0..mips)
         .map(|mip| ((side >> mip) / BLOCK_SIDE).pow(2) as usize)
         .sum();
+    debug_assert_eq!(blocks.len() % per_layer, 0, "blocks are not whole layers");
     for (layer, blocks) in blocks.chunks_exact(per_layer).enumerate() {
         let mut offset = 0;
         for mip in 0..mips {

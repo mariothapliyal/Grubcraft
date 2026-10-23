@@ -759,6 +759,11 @@ fn bake_model(
         v.tangent = t.extend(v.tangent.w);
     }
 
+    if cfg.detail_tile.is_some() && verts.iter().all(|v| v.detail.class_a == 0) {
+        return Err(
+            "detail_tile is set but no face names a surface class (the glTF needs COLOR_0)".into(),
+        );
+    }
     // Detail repeats: how many metres of surface one unit of the texture
     // atlas covers, over how far one repeat reaches.
     if let Some(tile) = cfg.detail_tile {

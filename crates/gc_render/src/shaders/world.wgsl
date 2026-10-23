@@ -1081,8 +1081,9 @@ const DETAIL_TILES = array<f32, 15>(
     2.0, 3.0, 4.5, 6.8, 10.1, 15.2, 22.8, 34.2, 51.3, 76.9, 115.4, 173.1, 259.7, 389.6, 584.4,
 );
 
-// Past this many detail texels under one pixel (a little over mip 5) the
-// grain is averaged to grey: skip it.
+// The detail fades out between half this many detail repeats under one pixel
+// (32 texels of the 256, a little over mip 5) and all of it: past it the grain
+// is averaged to grey, so it is skipped.
 const DETAIL_FOOTPRINT: f32 = 32.0 / 256.0;
 
 // The two layers of a detail class (albedo and cavity, relief) at `duv`.
@@ -1125,16 +1126,22 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let duv = in.uv * DETAIL_TILES[max(repeat, 1u) - 1u];
     let ddx = dpdx(duv);
     let ddy = dpdy(duv);
-    if class_a != 0u && repeat != 0u && max(dot(ddx, ddx), dot(ddy, ddy)) < DETAIL_FOOTPRINT * DETAIL_FOOTPRINT {
+    // Full strength up close, fading to nothing as a pixel covers more detail.
+    let footprint = sqrt(max(dot(ddx, ddx), dot(ddy, ddy)));
+    let fade = 1.0 - smoothstep(0.5 * DETAIL_FOOTPRINT, DETAIL_FOOTPRINT, footprint);
+    if class_a != 0u && repeat != 0u && fade > 0.0 {
         var d = detail_sample(class_a, duv, ddx, ddy);
         if class_b != 0u && share_b > 0.0 {
-            let b = detail_sample(class_b, duv, ddx, ddy);
-            d = DetailSample(mix(d.albedo, b.albedo, share_b), mix(d.relief, b.relief, share_b));
+            let second = detail_sample(class_b, duv, ddx, ddy);
+            d = DetailSample(
+                mix(d.albedo, second.albedo, share_b),
+                mix(d.relief, second.relief, share_b),
+            );
         }
-        albedo = albedo * (d.albedo.rgb * 2.0);
-        ao = ao * d.albedo.a;
-        nxy = nxy + (d.relief.xy * 2.0 - 1.0);
-        rough = clamp(rough + (d.relief.z - 0.5), 0.04, 1.0);
+        albedo = albedo * mix(vec3<f32>(1.0), d.albedo.rgb * 2.0, fade);
+        ao = ao * mix(1.0, d.albedo.a, fade);
+        nxy = nxy + (d.relief.xy * 2.0 - 1.0) * fade;
+        rough = clamp(rough + (d.relief.z - 0.5) * fade, 0.04, 1.0);
         nxy = nxy * min(1.0, 0.95 / max(length(nxy), 1e-5));
     }
     let n0 = in.normal;

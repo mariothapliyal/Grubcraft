@@ -4,7 +4,7 @@
 manifest = 1
 baker = gc_artbake detail 1
 schema = 1
-pack = 571c52687fa7b3fab258f39af1dd5859
+pack = 8a6c2db952edd04da8c671b98976283c
 pack_bytes = 2621360
 source stone_d.png = ebf790046365f560eb2d612f03fc0774
 source stone_n.png = 5389dd8a532d4df48be5dd9e23bbe629

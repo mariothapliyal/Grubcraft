@@ -27,7 +27,8 @@ fn sources(dir: &Path) -> Vec<(PathBuf, Encoding)> {
         .flat_map(|c| {
             [
                 (dir.join(format!("{}_d.png", c.name())), Encoding::Linear),
-                (dir.join(format!("{}_n.png", c.name())), Encoding::Normal),
+                // Linear, so averaging the relief's tilt flattens it with distance.
+                (dir.join(format!("{}_n.png", c.name())), Encoding::Linear),
             ]
         })
         .collect()
