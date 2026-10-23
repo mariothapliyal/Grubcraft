@@ -108,7 +108,9 @@ struct Tuning {
     selected: usize,
     /// How far each knob has been moved from the look underneath it.
     deltas: [f32; KNOBS.len()],
-    /// The look as last drawn, knobs and all, for the panel to read.
+    /// The look the knobs act on (the land's air and Clarity in), and the
+    /// look as last drawn, knobs and all, for the panel to read.
+    under: Look,
     shown: Look,
 }
 
@@ -162,6 +164,7 @@ impl Atmosphere {
         if clarity {
             look = look.clear();
         }
+        self.tuning.under = look;
         self.tuning.shown = look.tuned(&self.tuning.deltas);
         self.tuning.shown
     }
@@ -182,8 +185,17 @@ impl Atmosphere {
             TuneKey::Down => t.selected = (t.selected + 1) % KNOBS.len(),
             TuneKey::Less | TuneKey::More => {
                 let sign = if key == TuneKey::More { 1.0 } else { -1.0 };
-                let step = KNOBS[t.selected].step * if fast { FAST } else { 1.0 };
-                t.deltas[t.selected] += sign * step;
+                let knob = &KNOBS[t.selected];
+                let step = knob.step * if fast { FAST } else { 1.0 };
+                // The knob's own limit decides how far it goes, so the
+                // panel shows what is on screen and a press past a limit
+                // does not pile up unseen.
+                let mut moved = t.under;
+                (knob.set)(
+                    &mut moved,
+                    (knob.get)(&t.under) + t.deltas[t.selected] + sign * step,
+                );
+                t.deltas[t.selected] = (knob.get)(&moved) - (knob.get)(&t.under);
             }
             TuneKey::Land => {
                 // None, then each land in turn, then None again.
@@ -372,6 +384,28 @@ mod tests {
             let look = atmosphere.look(0.0, &map, Vec2::new(8.0, 32.0), 40.0, true);
             assert_eq!((look.vignette, look.grain), (0.0, 0.0), "{}", preset.name());
         }
+    }
+
+    #[test]
+    fn a_knob_stops_at_its_limit_and_the_panel_shows_what_is_on_screen() {
+        let map = split(Land::Meadow, Land::Meadow);
+        let mut atmosphere = Atmosphere::new(None, None);
+        let focus = Vec2::new(30.0, 30.0);
+        atmosphere.look(0.0, &map, focus, 40.0, false);
+        // Sun height is the first knob; Shift+Left many times.
+        for _ in 0..30 {
+            atmosphere.tune_key(TuneKey::Less, true);
+            atmosphere.look(0.0, &map, focus, 40.0, false);
+        }
+        assert!(
+            atmosphere.panel_text().contains(" 2.0000"),
+            "{}",
+            atmosphere.panel_text()
+        );
+        // One press back up moves it at once, not after a pile of presses.
+        atmosphere.tune_key(TuneKey::More, false);
+        let up = atmosphere.look(0.0, &map, focus, 40.0, false);
+        assert!(up.sun_dir().y > 0.05);
     }
 
     #[test]

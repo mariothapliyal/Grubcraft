@@ -1718,6 +1718,14 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    // The light tuning panel keeps its keys while it is open,
+                    // ahead of the sandbox's tools and their refusals.
+                    if down
+                        && r.atmosphere.panel_open()
+                        && r.light_key(code, event.repeat, r.input.shift)
+                    {
+                        return;
+                    }
                     if r.sandbox.tuning && down && r.tune_key(code) {
                         return;
                     }
@@ -1794,10 +1802,6 @@ impl ApplicationHandler for App {
                     }
                     if grid_key && let Some(slot) = faction_powers::key_slot(code) {
                         r.power_press(slot);
-                        return;
-                    }
-                    // The tuning panel keeps the arrow keys while it is open.
-                    if down && r.atmosphere.panel_open() && r.light_key(code, r.input.shift) {
                         return;
                     }
                     match code {
@@ -1882,7 +1886,10 @@ impl ApplicationHandler for App {
                         // F1 finds an idle worker while there is one to find,
                         // and otherwise opens the Marshal's Scroll (like H).
                         KeyCode::F1 if down && !event.repeat => r.f1_key(),
-                        KeyCode::F9 if down && !event.repeat => r.atmosphere.next_preset(),
+                        KeyCode::F9 if down && !event.repeat => {
+                            r.atmosphere.next_preset();
+                            r.sandbox.dirty = true;
+                        }
                         KeyCode::F10 if down && !event.repeat => {
                             r.atmosphere.toggle_panel();
                             // The panel takes the arrow keys while it is open.
@@ -3450,6 +3457,10 @@ impl Running {
                 .is_some_and(|(_, at)| at.elapsed() > MESSAGE_TIME)
             {
                 self.sandbox.message = None;
+                self.sandbox.dirty = true;
+            }
+            // The light panel's values ease as the air does.
+            if self.atmosphere.panel_open() {
                 self.sandbox.dirty = true;
             }
             // What the minds are thinking changes as the battle goes.
@@ -6007,7 +6018,7 @@ impl Running {
     }
 
     /// A key while the light tuning panel is open; true when it took it.
-    fn light_key(&mut self, code: KeyCode, fast: bool) -> bool {
+    fn light_key(&mut self, code: KeyCode, repeat: bool, fast: bool) -> bool {
         use atmosphere::TuneKey;
         let key = match code {
             KeyCode::ArrowUp => TuneKey::Up,
@@ -6015,7 +6026,10 @@ impl Running {
             KeyCode::ArrowLeft => TuneKey::Less,
             KeyCode::ArrowRight => TuneKey::More,
             KeyCode::Backspace | KeyCode::Delete => TuneKey::Reset,
+            // Holding these down must not repeat them.
+            KeyCode::KeyL if repeat => return true,
             KeyCode::KeyL => TuneKey::Land,
+            KeyCode::Enter | KeyCode::NumpadEnter if repeat => return true,
             KeyCode::Enter | KeyCode::NumpadEnter => {
                 logln!("grubcraft: {}", self.atmosphere.values());
                 self.say("The tuned light is in the log.".into());

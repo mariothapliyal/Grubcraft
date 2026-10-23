@@ -429,6 +429,9 @@ fn scaled(c: [f32; 3], to: f32) -> [f32; 3] {
     c.map(|v| v * k)
 }
 
+/// The most the Warmth knob warms or cools the bright tint.
+const MAX_WARMTH: f32 = 0.5;
+
 /// A knob that is one plain number of the look, never below `min`.
 macro_rules! field_knob {
     ($name:literal, $step:literal, $field:ident, $min:literal) => {
@@ -484,6 +487,8 @@ pub const KNOBS: [Knob; 16] = [
         // Red against blue in the bright end's tint.
         get: |l| l.light_tint[0] - l.light_tint[2],
         set: |l, v| {
+            // Never so far that a tint goes negative.
+            let v = v.clamp(-MAX_WARMTH, MAX_WARMTH);
             let mid = (l.light_tint[0] + l.light_tint[2]) / 2.0;
             l.light_tint[0] = mid + v / 2.0;
             l.light_tint[2] = mid - v / 2.0;
