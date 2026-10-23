@@ -552,7 +552,9 @@ fn towers(s: &Sense) -> Vec<Tower> {
         .filter(|b| b.attack.is_some())
         .map(|b| Tower {
             at: b.at,
-            reach: b.range() + TOWER_MARGIN,
+            // As far as it could shoot from high ground.
+            reach: b.range() * gc_sim::terrain::DOWNHILL_RANGE_PERCENT as f32 / 100.0
+                + TOWER_MARGIN,
         })
         .collect()
 }

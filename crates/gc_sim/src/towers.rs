@@ -20,7 +20,7 @@
 //!
 //! The quirks:
 //! - **Tollgate** ([`TOLL`]): every [`TOLL_HP`] hit points its volleys take
-//!   earn its owner a Grub.
+//!   earn its owner a Grub, less upkeep as for any Grub gathered.
 //! - **Bell Tower** ([`SILENCES`]): when an enemy regiment comes within
 //!   [`BELL_REACH`] of it, it tolls, at most once in [`BELL_EVERY`]; for
 //!   [`BELL_SILENCE`] after, its enemies can't use a power on anything
@@ -82,7 +82,8 @@ impl Conquest {
             };
             let total = u32::from(s.toll[i]) + hp;
             s.toll[i] = (total % TOLL_HP) as u8;
-            self.economy.refund(s.owner_of(i), total / TOLL_HP, 0);
+            self.economy
+                .earn_grub(s.owner_of(i), total / TOLL_HP, regs, &self.units);
         }
         s.tolled.clear();
         for i in 0..s.slots() {
@@ -93,20 +94,16 @@ impl Conquest {
             if !s.finished(i) || !s.powered(i) {
                 continue;
             }
-            let steps = s.steps(i) as u16;
+            // A haste speeds its reloads, not its bell.
             if s.flags_of(i) & SILENCES != 0 {
-                s.bell[i] = s.bell[i].saturating_sub(steps);
-                if s.bell[i] == 0 {
-                    if s.enemy_near(combat, regs, stances, vision, i) {
-                        s.bell[i] = BELL_EVERY;
-                        s.silence[i] = BELL_SILENCE;
-                        s.tolled.push(s.handle(i));
-                    } else {
-                        // Nobody near: listen again in a moment.
-                        s.bell[i] = LOOK_EVERY;
-                    }
+                s.bell[i] = s.bell[i].saturating_sub(1);
+                if s.bell[i] == 0 && s.enemy_near(combat, regs, stances, vision, i) {
+                    s.bell[i] = BELL_EVERY;
+                    s.silence[i] = BELL_SILENCE;
+                    s.tolled.push(s.handle(i));
                 }
             }
+            let steps = s.steps(i) as u16;
             s.reload[i] = s.reload[i].saturating_sub(steps);
             if s.reload[i] > 0 {
                 continue;

@@ -24,7 +24,10 @@ use gc_audio::{Audio, Bank, Cry, SoundId};
 use gc_platform::logln;
 use gc_sim::champions::Outcome;
 use gc_sim::events::{Event, VolleyId};
-use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, World};
+use gc_sim::{
+    MoraleState, PlayerId, RegimentHandle, Shooter, StructureHandle, TICKS_PER_SECOND, UnitId,
+    World,
+};
 use glam::Vec2;
 use std::time::{Duration, Instant};
 
@@ -545,13 +548,15 @@ impl Sounds {
     /// whether the player can see a regiment: one they can't gives nothing
     /// away, though its state is still remembered for when it is revealed.
     /// `voice` says what a regiment type sounds like (None for a type it
-    /// doesn't know: it makes no cries).
+    /// doesn't know: it makes no cries). `known` says whether the player
+    /// has seen a building: an unseen tower shoots and tolls unheard.
     pub fn observe(
         &mut self,
         world: &World,
         listener: Listener,
         heard: bool,
         shown: impl Fn(RegimentHandle) -> bool,
+        known: impl Fn(StructureHandle) -> bool,
         voice: impl Fn(UnitId) -> Option<Voice>,
     ) {
         self.focus = listener.position;
@@ -559,7 +564,7 @@ impl Sounds {
         self.hearing = HEAR_BASE + listener.distance * HEAR_PER_ZOOM;
         let tick = world.tick_count();
 
-        self.volleys(world, heard, &shown);
+        self.volleys(world, heard, &shown, &known);
         self.regiments_told(world, heard, &shown, &voice);
         self.charges(world, heard, &shown, &voice);
         self.duel(world, heard, &shown, &voice);
@@ -877,7 +882,13 @@ impl Sounds {
     /// A volley loosed this tick sounds a twang, if its shooter can be seen
     /// (archers loose from the middle of their ranks); one that came down
     /// sounds its impact, louder for more arrows, wherever it fell.
-    fn volleys(&mut self, world: &World, heard: bool, shown: &impl Fn(RegimentHandle) -> bool) {
+    fn volleys(
+        &mut self,
+        world: &World,
+        heard: bool,
+        shown: &impl Fn(RegimentHandle) -> bool,
+        known: &impl Fn(StructureHandle) -> bool,
+    ) {
         for e in world.events() {
             match *e {
                 Event::Loosed {
@@ -885,9 +896,12 @@ impl Sounds {
                 } => {
                     let flying = world.volleys().find(|v| v.id == volley);
                     self.flights.push((volley, flying.map_or(0, |v| v.shots)));
-                    // A tower stands where everyone knows it.
                     let regiment = shooter.regiment();
-                    self.hushed = !heard || regiment.is_some_and(|h| !shown(h));
+                    self.hushed = !heard
+                        || match shooter {
+                            Shooter::Regiment(h) => !shown(h),
+                            Shooter::Tower(t) => !known(t),
+                        };
                     let from = flying.map(|v| from_fx_vec(v.from)).or_else(|| {
                         regiment
                             .and_then(|h| world.regiments.get(h))
@@ -903,7 +917,7 @@ impl Sounds {
                     let Some(st) = world.structures().and_then(|s| s.get(structure)) else {
                         continue;
                     };
-                    self.hushed = !heard;
+                    self.hushed = !heard || !known(structure);
                     let at = crate::buildings::centre_of(st.tile, st.width, st.depth);
                     self.play_at(SoundId::Waver, at, 1.0, 1.5, PRI_MORALE);
                 }

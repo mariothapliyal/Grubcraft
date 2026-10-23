@@ -1564,24 +1564,12 @@ impl World {
     /// [`Command::UsePower`]). A regiment shifted stops what it was doing
     /// and looks about it from where it stands now.
     fn use_power(&mut self, player: PlayerId, power: u8, target: PowerTarget) -> bool {
+        if self.power_silenced(player, target) {
+            return false;
+        }
         let Some(c) = &mut self.conquest else {
             return false;
         };
-        // Near an enemy Bell Tower that has just tolled, powers are silenced.
-        let regiment_at = |h| {
-            self.regiments
-                .resolve(h)
-                .map(|r| self.regiments.position[r])
-        };
-        let at = match target {
-            PowerTarget::Caster => None,
-            PowerTarget::Structure(h) => c.structures.resolve(h).map(|i| c.structures.centre(i)),
-            PowerTarget::Regiment(h) | PowerTarget::Shift { regiment: h, .. } => regiment_at(h),
-            PowerTarget::Point(at) => Some(at),
-        };
-        if at.is_some_and(|at| c.structures.silenced(&self.stances, player, at)) {
-            return false;
-        }
         let cast = c.use_power(
             &mut self.regiments,
             &self.nav,
@@ -1651,6 +1639,23 @@ impl World {
         self.conquest
             .as_ref()
             .is_some_and(|c| c.structures.silenced(&self.stances, player, at))
+    }
+
+    /// Whether `player`'s power on `target` would be silenced: what it
+    /// lands on (a shift's regiment where it stands) is near an enemy Bell
+    /// Tower that has just tolled. A power on the caster never is.
+    pub fn power_silenced(&self, player: PlayerId, target: PowerTarget) -> bool {
+        let Some(c) = &self.conquest else {
+            return false;
+        };
+        let regiment_at = |h| self.regiments.position(h);
+        let at = match target {
+            PowerTarget::Caster => None,
+            PowerTarget::Structure(h) => c.structures.resolve(h).map(|i| c.structures.centre(i)),
+            PowerTarget::Regiment(h) | PowerTarget::Shift { regiment: h, .. } => regiment_at(h),
+            PowerTarget::Point(at) => Some(at),
+        };
+        at.is_some_and(|at| self.silenced(player, at))
     }
 
     /// Whether faction power `power`, a summons, has room to put its

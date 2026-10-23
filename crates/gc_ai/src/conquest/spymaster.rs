@@ -31,6 +31,8 @@ pub struct Sighted {
     pub owner: u8,
     /// A finished tower's shooting (towers fire, docs/26-fortifications.md).
     pub attack: Option<TowerAttack>,
+    /// Hit points it has left.
+    pub hp: u32,
 }
 
 impl Sighted {
@@ -65,6 +67,7 @@ pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
                 role: b.role,
                 owner: v.owner,
                 attack: b.attack.filter(|_| v.finished()),
+                hp: v.hp,
             })
         })
         .collect()
@@ -206,7 +209,7 @@ pub fn odds_at<'a>(
     let mut theirs = Force::of(s.view, theirs);
     for t in seen {
         if t.attack.is_some() && t.at.distance(at) <= t.range() + TOWER_FIGHT {
-            theirs = theirs.with_tower(t.dps(), t.range());
+            theirs = theirs.with_tower(t.dps(), t.range(), t.hp as f32);
         }
     }
     estimate(&ours, &theirs, APPROACH).margin

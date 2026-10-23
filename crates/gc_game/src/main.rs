@@ -3200,6 +3200,11 @@ impl Running {
                     listener,
                     !catching_up,
                     |h| reveal || world.sees(viewer, h),
+                    |h| {
+                        reveal
+                            || (world.structures().and_then(|s| s.get(h)))
+                                .is_some_and(|v| v.seen_by(viewer))
+                    },
                     |unit| {
                         let i = usize::from(unit);
                         Some(sounds::Voice {

@@ -329,7 +329,10 @@ impl Running {
             self.say(hold_message(hold, cooling, self.meter_name(power)));
         } else if let Some(aim) = self.power_aim(power) {
             if aim.at_once() {
-                self.orders(pressed(aim, power, &self.selected));
+                let commands = pressed(aim, power, &self.selected);
+                if !self.silenced(&commands) {
+                    self.orders(commands);
+                }
             } else if let Some(text) = self.power_prompt(power) {
                 self.hud.armed = Some(Armed::Power(power));
                 self.say(text);
@@ -414,37 +417,25 @@ impl Running {
         if commands.is_empty() {
             return;
         }
-        let side = self.sandbox.side;
-        if commands
-            .iter()
-            .filter_map(|c| self.power_spot(c))
-            .any(|at| self.world.silenced(side, at))
-        {
-            self.say(SILENCED.into());
+        if self.silenced(&commands) {
             return;
         }
         self.orders(commands);
         self.hud.armed = None;
     }
 
-    /// Where a power order takes effect, if it names a place.
-    fn power_spot(&self, command: &Command) -> Option<gc_fixed::FxVec2> {
-        let Command::UsePower { target, .. } = command else {
-            return None;
-        };
-        let at_building = |h: StructureHandle| {
-            let s = self.world.structures()?.get(h)?;
-            Some(fx_vec(buildings::centre_of(s.tile, s.width, s.depth)))
-        };
-        match *target {
-            PowerTarget::Point(at) => Some(at),
-            // As the simulation judges it: a shift where the regiment stands.
-            PowerTarget::Regiment(h) | PowerTarget::Shift { regiment: h, .. } => {
-                self.world.regiments.position(h)
-            }
-            PowerTarget::Structure(h) => at_building(h),
-            PowerTarget::Caster => None,
+    /// Whether any of these power orders would be silenced by an enemy
+    /// Bell Tower; if so the player is told, and none should be sent.
+    fn silenced(&mut self, commands: &[Command]) -> bool {
+        let side = self.sandbox.side;
+        let silenced = commands.iter().any(|c| match *c {
+            Command::UsePower { target, .. } => self.world.power_silenced(side, target),
+            _ => false,
+        });
+        if silenced {
+            self.say(SILENCED.into());
         }
+        silenced
     }
 
     /// What a click would haste: one of your regiments, else one of your

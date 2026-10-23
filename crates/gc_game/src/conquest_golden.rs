@@ -627,7 +627,9 @@ impl Match {
                 tile: (tile.0 as i16, tile.1 as i16),
             }));
         }
-        let side = &mut self.sides[usize::from(p)];
+        if self.sides[usize::from(p)].focused {
+            return;
+        }
         let Some(tower) = own(&self.world, p, Some(b)).first().copied() else {
             return;
         };
@@ -639,12 +641,12 @@ impl Match {
                 && self.world.sees(p, r.handle)
                 && (r.position - tower.centre()).length() < range
         });
-        if let Some(foe) = foe.filter(|_| !side.focused) {
+        if let Some(foe) = foe {
             out.push(order(Command::FocusTower {
                 structure: tower.handle,
                 target: Some(foe.handle),
             }));
-            side.focused = true;
+            self.sides[usize::from(p)].focused = true;
         }
     }
 

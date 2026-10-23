@@ -160,14 +160,18 @@ impl Force {
         self.hp <= 0.0
     }
 
-    /// The same force with a tower shooting `dps` hit points a second for
-    /// it, as far as `range` tiles (docs/26-fortifications.md). A tower
-    /// isn't worn down in the fight, so it shoots as hard as if it were
-    /// one more archer regiment that never loses a soldier; as one, it is
-    /// counted only while the force has soldiers standing.
-    pub fn with_tower(mut self, dps: f32, range: f32) -> Force {
+    /// The same force with a tower of `hp` hit points shooting `dps` hit
+    /// points a second for it, as far as `range` tiles
+    /// (docs/26-fortifications.md): as one more archer regiment that never
+    /// routs and has to be knocked down, so towers alone are a force too.
+    /// (The force has one range, so its archers are taken to reach as far
+    /// as the tower.)
+    pub fn with_tower(mut self, dps: f32, range: f32, hp: f32) -> Force {
         self.ranged += dps;
         self.range = self.range.max(range);
+        self.hp += hp;
+        self.hp_full += hp;
+        self.stalwart_hp += hp;
         self
     }
 
@@ -440,7 +444,14 @@ mod tests {
             closing: 1.5,
         };
         let even = estimate(&spears(), &spears(), approach).margin;
-        let towered = estimate(&spears(), &spears().with_tower(4.25, 30.0), approach).margin;
+        let towered = estimate(&spears(), &spears().with_tower(4.25, 30.0, 0.0), approach).margin;
+        // Towers alone are no walkover.
+        let alone = estimate(
+            &spears(),
+            &Force::default().with_tower(8.5, 30.0, 2000.0),
+            approach,
+        );
+        assert!(alone.margin < 1.0, "{alone:?}");
         assert!(even.abs() < 0.2, "{even}");
         assert!(towered < even - 0.1, "{towered} against {even}");
     }
