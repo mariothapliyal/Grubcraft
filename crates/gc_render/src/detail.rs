@@ -3,7 +3,8 @@
 //! buildings layer them over their baked atlas (`fs_soldier_textured` in
 //! `world.wgsl`); scenery can bind the same view.
 
-use gc_assets::detail::{BLOCK_SIDE, BLOCKS_PER_LAYER, DETAIL_MIPS, DETAIL_SIZE, Detail, LAYERS};
+use gc_assets::detail::{BLOCK_SIDE, DETAIL_MIPS, DETAIL_SIZE, Detail, LAYERS};
+use gc_assets::model::Block;
 
 /// The detail array and the sampler that reads it.
 pub(crate) struct DetailGpu {
@@ -43,7 +44,9 @@ impl DetailGpu {
             view_formats: &[],
         });
         match real {
-            Some(detail) => upload_blocks(queue, &texture, detail),
+            Some(detail) => {
+                upload_bc7_layers(queue, &texture, detail.textures, DETAIL_SIZE, DETAIL_MIPS);
+            }
             None => {
                 // Layer by layer: albedo neutral (0.5, cavity open), relief
                 // flat (normal 0.5, roughness change 0.5, height 0.5).
@@ -90,14 +93,10 @@ impl DetailGpu {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 4,
+            anisotropy_clamp: 2,
             ..Default::default()
         });
-        let bytes = if real.is_some() {
-            std::mem::size_of_val(detail.map_or(&[][..], |d| d.textures)) as u64
-        } else {
-            4 * LAYERS as u64
-        };
+        let bytes = real.map_or(4 * LAYERS as u64, |d| size_of_val(d.textures) as u64);
         DetailGpu {
             view,
             sampler,
@@ -110,17 +109,22 @@ impl DetailGpu {
     }
 }
 
-fn upload_blocks(queue: &wgpu::Queue, texture: &wgpu::Texture, detail: &Detail<'_>) {
-    for (layer, blocks) in detail
-        .textures
-        .as_chunks::<BLOCKS_PER_LAYER>()
-        .0
-        .iter()
-        .enumerate()
-    {
+/// Upload BC7 `blocks`, as many blocks as one layer takes to each layer of `texture` (every
+/// layer `side` texels square with `mips` mip levels, mip by mip).
+pub(crate) fn upload_bc7_layers(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    blocks: &[Block],
+    side: u32,
+    mips: u32,
+) {
+    let per_layer: usize = (0..mips)
+        .map(|mip| ((side >> mip) / BLOCK_SIDE).pow(2) as usize)
+        .sum();
+    for (layer, blocks) in blocks.chunks_exact(per_layer).enumerate() {
         let mut offset = 0;
-        for mip in 0..DETAIL_MIPS {
-            let side = DETAIL_SIZE >> mip;
+        for mip in 0..mips {
+            let side = side >> mip;
             let across = side / BLOCK_SIDE;
             let count = (across * across) as usize;
             queue.write_texture(
@@ -137,7 +141,7 @@ fn upload_blocks(queue: &wgpu::Queue, texture: &wgpu::Texture, detail: &Detail<'
                 bytemuck::cast_slice(&blocks[offset..offset + count]),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(across * size_of::<[u8; 16]>() as u32),
+                    bytes_per_row: Some(across * size_of::<Block>() as u32),
                     rows_per_image: Some(across),
                 },
                 wgpu::Extent3d {

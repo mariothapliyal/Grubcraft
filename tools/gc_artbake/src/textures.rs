@@ -63,7 +63,7 @@ impl Layer {
     }
 
     /// Half the size, averaging 2 × 2 blocks (values are linear already).
-    pub(crate) fn half(&self, enc: Encoding) -> Layer {
+    fn half(&self, enc: Encoding) -> Layer {
         let side = (self.side / 2).max(1);
         let mut px = Vec::with_capacity(side * side);
         for y in 0..side {
@@ -99,7 +99,7 @@ fn decode_normal(p: Px) -> Vec3 {
     Vec3::new(x, y, (1.0 - x * x - y * y).max(0.0).sqrt())
 }
 
-pub(crate) fn srgb_to_linear(c: f32) -> f32 {
+fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -121,20 +121,9 @@ pub fn load_png(path: &Path) -> Result<Image, String> {
     crate::decode_png(&data).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Shrink a map to [`TEXTURE_SIZE`], decoding sRGB channels to linear.
-fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
-    let side = img.width as usize;
-    let target = TEXTURE_SIZE as usize;
-    if img.width != img.height || side < target || !side.is_power_of_two() {
-        return Err(format!(
-            "{}: {} × {} texels; maps must be square, {target} or a power of two larger",
-            path.display(),
-            img.width,
-            img.height
-        ));
-    }
-    let px = img
-        .rgba
+/// An image's texels in linear values, sRGB channels decoded when `enc` says so.
+pub(crate) fn pixels(img: &Image, enc: Encoding) -> Vec<Px> {
+    img.rgba
         .as_chunks::<4>()
         .0
         .iter()
@@ -149,7 +138,22 @@ fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
             };
             [col(0), col(1), col(2), f(3)]
         })
-        .collect();
+        .collect()
+}
+
+/// Shrink a map to [`TEXTURE_SIZE`], decoding sRGB channels to linear.
+fn shrink(img: &Image, path: &Path, enc: Encoding) -> Result<Layer, String> {
+    let side = img.width as usize;
+    let target = TEXTURE_SIZE as usize;
+    if img.width != img.height || side < target || !side.is_power_of_two() {
+        return Err(format!(
+            "{}: {} × {} texels; maps must be square, {target} or a power of two larger",
+            path.display(),
+            img.width,
+            img.height
+        ));
+    }
+    let px = pixels(img, enc);
     let mut layer = Layer { side, px };
     while layer.side > target {
         layer = layer.half(enc);

@@ -20,6 +20,7 @@
 
 use alloc::vec::Vec;
 
+pub use crate::model::BLOCK_SIDE;
 use crate::model::Block;
 use crate::{Pack, TableError, read_table};
 
@@ -29,8 +30,6 @@ pub const TEXTURES_PATH: &str = "detail/textures";
 
 /// Side of a detail layer, in texels.
 pub const DETAIL_SIZE: u32 = 256;
-/// Texels on a side of a compressed block.
-pub const BLOCK_SIDE: u32 = 4;
 /// Mip levels per layer, down to a single block.
 pub const DETAIL_MIPS: u32 = DETAIL_SIZE.ilog2() - BLOCK_SIDE.ilog2() + 1;
 /// Blocks in one layer with all its mips.
@@ -71,6 +70,12 @@ pub enum DetailClass {
     Earth = 15,
 }
 
+/// The classes' names, in number order.
+const NAMES: [&str; CLASSES] = [
+    "stone", "brick", "wood", "planks", "plaster", "tile", "cloth", "leather", "iron", "bronze",
+    "bone", "chitin", "organic", "crystal", "earth",
+];
+
 impl DetailClass {
     pub const ALL: [DetailClass; CLASSES] = [
         DetailClass::Stone,
@@ -92,23 +97,7 @@ impl DetailClass {
 
     /// The name the class's source images and the baker's config use.
     pub fn name(self) -> &'static str {
-        match self {
-            DetailClass::Stone => "stone",
-            DetailClass::Brick => "brick",
-            DetailClass::Wood => "wood",
-            DetailClass::Planks => "planks",
-            DetailClass::Plaster => "plaster",
-            DetailClass::Tile => "tile",
-            DetailClass::Cloth => "cloth",
-            DetailClass::Leather => "leather",
-            DetailClass::Iron => "iron",
-            DetailClass::Bronze => "bronze",
-            DetailClass::Bone => "bone",
-            DetailClass::Chitin => "chitin",
-            DetailClass::Organic => "organic",
-            DetailClass::Crystal => "crystal",
-            DetailClass::Earth => "earth",
-        }
+        NAMES[self as usize - 1]
     }
 
     pub fn from_name(name: &str) -> Option<DetailClass> {
@@ -255,7 +244,7 @@ impl DetailTables {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PackWriter;
+    use crate::{PackWriter, aligned_copy};
 
     #[test]
     fn a_layer_holds_every_mip() {
@@ -309,32 +298,24 @@ mod tests {
         assert!(!tag.is_none());
     }
 
-    #[test]
-    fn a_detail_pack_reads_back_and_is_checked() {
-        let tables = DetailTables {
-            textures: alloc::vec![[3; 16]; LAYERS * BLOCKS_PER_LAYER],
-        };
+    fn read(tables: &DetailTables) -> Result<usize, DetailError> {
         let mut w = PackWriter::new();
         tables.write(&mut w);
         let bytes = w.finish();
-        let mut store = alloc::vec![0u128; bytes.len().div_ceil(16)];
-        bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
+        let store = aligned_copy(&bytes);
         let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
-        let detail = Detail::from_pack(&Pack::parse(view).unwrap()).unwrap();
-        assert_eq!(detail.textures.len(), LAYERS * BLOCKS_PER_LAYER);
+        Detail::from_pack(&Pack::parse(view).unwrap()).map(|d| d.textures.len())
+    }
 
+    #[test]
+    fn a_detail_pack_reads_back_and_is_checked() {
+        let whole = DetailTables {
+            textures: alloc::vec![[3; 16]; LAYERS * BLOCKS_PER_LAYER],
+        };
+        assert_eq!(read(&whole), Ok(LAYERS * BLOCKS_PER_LAYER));
         let short = DetailTables {
             textures: alloc::vec![[3; 16]; BLOCKS_PER_LAYER],
         };
-        let mut w = PackWriter::new();
-        short.write(&mut w);
-        let bytes = w.finish();
-        let mut store = alloc::vec![0u128; bytes.len().div_ceil(16)];
-        bytemuck::cast_slice_mut::<u128, u8>(&mut store)[..bytes.len()].copy_from_slice(&bytes);
-        let view = &bytemuck::cast_slice::<u128, u8>(&store)[..bytes.len()];
-        assert_eq!(
-            Detail::from_pack(&Pack::parse(view).unwrap()).err(),
-            Some(DetailError::BadTextures)
-        );
+        assert_eq!(read(&short), Err(DetailError::BadTextures));
     }
 }

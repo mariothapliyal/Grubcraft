@@ -9,11 +9,10 @@
 
 use std::mem::offset_of;
 
-use crate::detail::DetailGpu;
+use crate::detail::{DetailGpu, upload_bc7_layers};
 use bytemuck::{Pod, Zeroable};
 use gc_assets::model::{
-    BLOCK_SIDE, BLOCKS_PER_LAYER, BONE_TEXELS_PER_ROW, Block, LAYERS_PER_MATERIAL, LODS,
-    ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
+    BONE_TEXELS_PER_ROW, LAYERS_PER_MATERIAL, LODS, ModelVertex, Models, TEXTURE_MIPS, TEXTURE_SIZE,
 };
 
 /// The finest level of detail the shadow pass draws.
@@ -1022,44 +1021,7 @@ fn upload_materials(
     if !textures {
         return texture;
     }
-    for (layer, blocks) in m
-        .textures
-        .as_chunks::<BLOCKS_PER_LAYER>()
-        .0
-        .iter()
-        .enumerate()
-    {
-        let mut offset = 0;
-        for mip in 0..TEXTURE_MIPS {
-            let side = TEXTURE_SIZE >> mip;
-            let across = side / BLOCK_SIDE;
-            let count = (across * across) as usize;
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: mip,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer as u32,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytemuck::cast_slice(&blocks[offset..offset + count]),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(across * size_of::<Block>() as u32),
-                    rows_per_image: Some(across),
-                },
-                wgpu::Extent3d {
-                    width: side,
-                    height: side,
-                    depth_or_array_layers: 1,
-                },
-            );
-            offset += count;
-        }
-    }
+    upload_bc7_layers(queue, &texture, m.textures, TEXTURE_SIZE, TEXTURE_MIPS);
     texture
 }
 

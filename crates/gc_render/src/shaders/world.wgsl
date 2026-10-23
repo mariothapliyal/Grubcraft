@@ -1075,10 +1075,28 @@ fn vs_soldier_textured(v: SoldierIn) -> TexturedOut {
     return out;
 }
 
-// Repeats across the texture atlas for a repeat code (1 to 15): 2, then half
-// again more each step (`tiles_of` in gc_assets/src/detail.rs).
-fn detail_tiles(code: u32) -> f32 {
-    return 2.0 * pow(1.5, f32(code) - 1.0);
+// Repeats across the texture atlas for each repeat code, 1 to 15 (`TILES` in
+// gc_assets/src/detail.rs: 2, then half again more each step).
+const DETAIL_TILES = array<f32, 15>(
+    2.0, 3.0, 4.5, 6.8, 10.1, 15.2, 22.8, 34.2, 51.3, 76.9, 115.4, 173.1, 259.7, 389.6, 584.4,
+);
+
+// Past this many detail texels under one pixel (a little over mip 5) the
+// grain is averaged to grey: skip it.
+const DETAIL_FOOTPRINT: f32 = 32.0 / 256.0;
+
+// The two layers of a detail class (albedo and cavity, relief) at `duv`.
+struct DetailSample {
+    albedo: vec4<f32>,
+    relief: vec4<f32>,
+};
+
+fn detail_sample(cls: u32, duv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> DetailSample {
+    let layer = i32(cls - 1u) * 2;
+    return DetailSample(
+        textureSampleGrad(detail_array, detail_sampler, duv, layer, ddx, ddy),
+        textureSampleGrad(detail_array, detail_sampler, duv, layer + 1, ddx, ddy),
+    );
 }
 
 @fragment
@@ -1104,27 +1122,24 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let class_b = (in.detail >> 4u) & 15u;
     let share_b = f32((in.detail >> 8u) & 15u) / 15.0;
     let repeat = (in.detail >> 12u) & 15u;
-    let duv = in.uv * detail_tiles(repeat);
+    let duv = in.uv * DETAIL_TILES[max(repeat, 1u) - 1u];
     let ddx = dpdx(duv);
     let ddy = dpdy(duv);
-    if class_a != 0u && repeat != 0u {
-        let la = i32(class_a - 1u) * 2;
-        var d0 = textureSampleGrad(detail_array, detail_sampler, duv, la, ddx, ddy);
-        var d1 = textureSampleGrad(detail_array, detail_sampler, duv, la + 1, ddx, ddy);
+    if class_a != 0u && repeat != 0u && max(dot(ddx, ddx), dot(ddy, ddy)) < DETAIL_FOOTPRINT * DETAIL_FOOTPRINT {
+        var d = detail_sample(class_a, duv, ddx, ddy);
         if class_b != 0u && share_b > 0.0 {
-            let lb = i32(class_b - 1u) * 2;
-            d0 = mix(d0, textureSampleGrad(detail_array, detail_sampler, duv, lb, ddx, ddy), share_b);
-            d1 = mix(d1, textureSampleGrad(detail_array, detail_sampler, duv, lb + 1, ddx, ddy), share_b);
+            let b = detail_sample(class_b, duv, ddx, ddy);
+            d = DetailSample(mix(d.albedo, b.albedo, share_b), mix(d.relief, b.relief, share_b));
         }
-        albedo = albedo * (d0.rgb * 2.0);
-        ao = ao * d0.a;
-        nxy = nxy + (d1.xy * 2.0 - 1.0);
-        rough = clamp(rough + (d1.z - 0.5), 0.04, 1.0);
+        albedo = albedo * (d.albedo.rgb * 2.0);
+        ao = ao * d.albedo.a;
+        nxy = nxy + (d.relief.xy * 2.0 - 1.0);
+        rough = clamp(rough + (d.relief.z - 0.5), 0.04, 1.0);
+        nxy = nxy * min(1.0, 0.95 / max(length(nxy), 1e-5));
     }
     let n0 = in.normal;
     let t = normalize(in.tangent.xyz - n0 * dot(n0, in.tangent.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
     let bt = cross(n0, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
-    nxy = nxy * min(1.0, 0.95 / max(length(nxy), 1e-5));
     let nt = vec3<f32>(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
     let n = normalize(t * nt.x + bt * nt.y + n0 * nt.z);
     let c = shade_material(albedo, n, in.world, rough, e.a, ao, e.rgb) + albedo * rim(n, in.world);

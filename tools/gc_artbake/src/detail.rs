@@ -13,12 +13,12 @@ use gc_assets::detail::{
 };
 use gc_assets::manifest::{Manifest, hash_hex};
 
-use crate::textures::{Encoding, Layer, Px, compress, load_png, mip_chain};
+use crate::manifest::{FORMAT, Stale, manifest_path, read};
+use crate::textures::{Encoding, Layer, compress, load_png, mip_chain, pixels};
 
 /// Bump when a change to this baker changes the bytes it bakes from the same
 /// images.
 const BAKER_VERSION: u32 = 1;
-const FORMAT: &str = "1";
 
 /// Each class's two source images, in layer order.
 fn sources(dir: &Path) -> Vec<(PathBuf, Encoding)> {
@@ -44,13 +44,7 @@ fn layer(path: &Path) -> Result<Layer, String> {
             img.height
         ));
     }
-    let px: Vec<Px> = img
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|c| c.map(|v| f32::from(v) / 255.0))
-        .collect();
+    let px = pixels(&img, Encoding::Linear);
     Ok(Layer { side, px })
 }
 
@@ -65,10 +59,6 @@ pub fn bake(dir: &Path) -> Result<Vec<u8>, String> {
     let mut pack = gc_assets::PackWriter::new();
     tables.write(&mut pack);
     Ok(pack.finish())
-}
-
-fn manifest_path(out: &Path) -> PathBuf {
-    out.with_extension("manifest")
 }
 
 pub fn run(dir: &Path, out: &Path) -> Result<(), String> {
@@ -103,8 +93,9 @@ pub fn run(dir: &Path, out: &Path) -> Result<(), String> {
 
 fn file_name(path: &Path) -> String {
     path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Compare the committed pack with its manifest and its images.
@@ -117,47 +108,20 @@ pub fn check(dir: &Path, out: &Path) -> Result<(), String> {
         )
     })?;
     let m = Manifest::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut stale: Vec<String> = Vec::new();
-    let expect = |stale: &mut Vec<String>, what: &str, key: &str, now: String| {
-        let then = m.get(key).unwrap_or("(missing)");
-        if then != now {
-            stale.push(format!("{what} is `{now}` but the manifest has `{then}`"));
-        }
-    };
-    expect(&mut stale, "manifest format", "manifest", FORMAT.into());
-    expect(
-        &mut stale,
-        "baker",
-        "baker",
+    let mut stale = Stale::new(&m);
+    stale.pack(
+        out,
         format!("gc_artbake detail {BAKER_VERSION}"),
+        DETAIL_SCHEMA,
     );
-    expect(
-        &mut stale,
-        "detail schema",
-        "schema",
-        DETAIL_SCHEMA.to_string(),
-    );
-    match std::fs::read(out) {
-        Ok(pack) => {
-            expect(&mut stale, "pack hash", "pack", hash_hex(&pack));
-            expect(
-                &mut stale,
-                "pack size",
-                "pack_bytes",
-                pack.len().to_string(),
-            );
-        }
-        Err(e) => stale.push(format!("{}: {e}", out.display())),
-    }
     for (src, _) in sources(dir) {
         let name = file_name(&src);
-        let key = format!("source {name}");
-        match std::fs::read(&src) {
-            Ok(data) => expect(&mut stale, &name, &key, hash_hex(&data)),
-            Err(e) => stale.push(format!("{}: {e}", src.display())),
+        match read(&src) {
+            Ok(data) => stale.expect(&name, &format!("source {name}"), hash_hex(&data)),
+            Err(e) => stale.found.push(e),
         }
     }
-    if stale.is_empty() {
+    if stale.found.is_empty() {
         println!(
             "{}: {} sources compared",
             path.display(),
@@ -168,7 +132,7 @@ pub fn check(dir: &Path, out: &Path) -> Result<(), String> {
     Err(format!(
         "{} is stale:\n  {}\nRe-bake with `cargo run -p gc_artbake --release -- --detail --out {}` and commit the pack and its manifest together.",
         out.display(),
-        stale.join("\n  "),
+        stale.found.join("\n  "),
         out.display(),
     ))
 }

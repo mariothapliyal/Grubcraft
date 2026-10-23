@@ -1029,7 +1029,6 @@ fn quantise(
     let is_team = team.iter().any(|t| t.distance(color) <= tolerance)
         || team_hue.is_some_and(|(lo, hi, sat)| hue >= lo && hue <= hi && saturation >= sat);
     let (bones, weights) = quantise_weights(&v.bones);
-    let has_detail = v.detail.tiles != 0;
     ModelVertex {
         pos: [q(v.pos.x), q(v.pos.y), q(v.pos.z)],
         team: if is_team { 255 } else { 0 },
@@ -1048,17 +1047,7 @@ fn quantise(
             n(v.tangent.z),
             n(v.tangent.w),
         ],
-        color: [
-            v.color[0],
-            v.color[1],
-            v.color[2],
-            // Models without detail keep the 255 older packs hold.
-            if has_detail {
-                v.detail.params_byte()
-            } else {
-                255
-            },
-        ],
+        color: [v.color[0], v.color[1], v.color[2], v.detail.params_byte()],
         uv: [unorm16(v.uv.x), unorm16(v.uv.y)],
     }
 }
