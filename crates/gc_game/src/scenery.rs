@@ -79,10 +79,10 @@ const LOD_AT: [[f32; LODS - 1]; 3] = [
 
 /// The one list of models the placement knows: each one's name in the pack,
 /// family (rocks tint less), class (0 trees, 1 bushes and big rocks, 2 grass
-/// and pebbles: which reach and level-of-detail distances it follows) and
-/// whether it casts shadows. Sizes come from the pack's own records.
+/// and pebbles: which reach and level-of-detail distances it follows),
+/// whether it casts shadows and its surface detail. Sizes come from the pack's own records.
 macro_rules! catalogue {
-    ($($variant:ident $name:literal $family:ident $class:literal $shadow:literal,)*) => {
+    ($($variant:ident $name:literal $family:ident $class:literal $shadow:literal $detail:ident,)*) => {
         /// Every model the placement knows by name.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(usize)]
@@ -98,6 +98,7 @@ macro_rules! catalogue {
                 family: Family::$family,
                 class: $class,
                 shadow: $shadow,
+                detail: detail::$detail,
             },)*];
         }
     };
@@ -108,60 +109,47 @@ struct Spec {
     family: Family,
     class: u8,
     shadow: bool,
+    /// The surface detail the shader paints on it (`gc_render::detail`).
+    detail: u32,
 }
 
 catalogue! {
-    OakA "oak-a" Tree 0 true,
-    OakB "oak-b" Tree 0 true,
-    PineA "pine-a" Tree 0 true,
-    PineB "pine-b" Tree 0 true,
-    ThicketFir "thicket-fir" Tree 0 true,
-    Birch "birch" Tree 0 true,
-    Willow "willow" Tree 0 true,
-    Snag "snag" Tree 0 true,
-    CragPine "crag-pine" Tree 0 true,
-    BoneSpire "bone-spire" Tree 0 true,
-    LeafyBush "leafy-bush" Bush 1 false,
-    Fern "fern" Bush 1 false,
-    Heather "heather" Bush 1 false,
-    ThornScrub "thorn-scrub" Bush 1 false,
-    Glowcap "glowcap" Bush 1 false,
-    GrassClump "grass-clump" Grass 2 false,
-    TallGrass "tall-grass" Grass 2 false,
-    Reeds "reeds" Grass 2 false,
-    DryGrass "dry-grass" Grass 2 false,
-    Wildflowers "wildflowers" Grass 2 false,
-    Pebbles "pebbles" Rock 2 false,
-    Boulder "boulder" Rock 1 true,
-    MossyBoulder "mossy-boulder" Rock 1 true,
-    Crag "crag" Rock 1 true,
-    Slab "slab" Rock 1 true,
-    BoneRibs "bone-ribs" Rock 1 true,
-    GrubSeep "grub-seep" Rock 1 true,
-    MarrowVein "marrow-vein" Rock 1 true,
-    BannerWavering "banner-wavering" Tree 1 true,
-    BannerRouting "banner-routing" Tree 1 true,
-    BannerShattered "banner-shattered" Tree 1 true,
+    OakA "oak-a" Tree 0 true BROADLEAF,
+    OakB "oak-b" Tree 0 true BROADLEAF,
+    PineA "pine-a" Tree 0 true CONIFER,
+    PineB "pine-b" Tree 0 true CONIFER,
+    ThicketFir "thicket-fir" Tree 0 true CONIFER,
+    Birch "birch" Tree 0 true BROADLEAF,
+    Willow "willow" Tree 0 true BROADLEAF,
+    Snag "snag" Tree 0 true CONIFER,
+    CragPine "crag-pine" Tree 0 true CONIFER,
+    BoneSpire "bone-spire" Tree 0 true NONE,
+    LeafyBush "leafy-bush" Bush 1 false FOLIAGE,
+    Fern "fern" Bush 1 false FOLIAGE,
+    Heather "heather" Bush 1 false FOLIAGE,
+    ThornScrub "thorn-scrub" Bush 1 false FOLIAGE,
+    Glowcap "glowcap" Bush 1 false FOLIAGE,
+    GrassClump "grass-clump" Grass 2 false FOLIAGE,
+    TallGrass "tall-grass" Grass 2 false FOLIAGE,
+    Reeds "reeds" Grass 2 false FOLIAGE,
+    DryGrass "dry-grass" Grass 2 false FOLIAGE,
+    Wildflowers "wildflowers" Grass 2 false FOLIAGE,
+    Pebbles "pebbles" Rock 2 false NONE,
+    Boulder "boulder" Rock 1 true STONE,
+    MossyBoulder "mossy-boulder" Rock 1 true MOSSY_STONE,
+    Crag "crag" Rock 1 true STONE,
+    Slab "slab" Rock 1 true STONE,
+    BoneRibs "bone-ribs" Rock 1 true NONE,
+    GrubSeep "grub-seep" Rock 1 true NONE,
+    MarrowVein "marrow-vein" Rock 1 true NONE,
+    BannerWavering "banner-wavering" Tree 1 true NONE,
+    BannerRouting "banner-routing" Tree 1 true NONE,
+    BannerShattered "banner-shattered" Tree 1 true NONE,
 }
 
 impl Model {
     fn spec(self) -> &'static Spec {
         &Model::SPECS[self as usize]
-    }
-
-    /// The surface detail the shader paints on this model (`gc_render::detail`).
-    fn detail(self) -> u32 {
-        use Model::*;
-        match self {
-            OakA | OakB | Birch | Willow => detail::BROADLEAF,
-            PineA | PineB | ThicketFir | CragPine | Snag => detail::CONIFER,
-            LeafyBush | Fern | Heather | ThornScrub | Glowcap | GrassClump | TallGrass | Reeds
-            | DryGrass | Wildflowers => detail::FOLIAGE,
-            Pebbles | Boulder | Crag | Slab => detail::STONE,
-            MossyBoulder => detail::MOSSY_STONE,
-            BoneSpire | BoneRibs | GrubSeep | MarrowVein | BannerWavering | BannerRouting
-            | BannerShattered => detail::NONE,
-        }
     }
 }
 
@@ -206,7 +194,7 @@ impl SceneryModels {
                 class: spec.map_or(2, |m| m.class),
                 shadow: spec.is_some_and(|m| m.shadow),
                 rock: spec.is_some_and(|m| m.family == Family::Rock),
-                detail: known.map_or(detail::NONE, |k| Model::ALL[k].detail()),
+                detail: spec.map_or(detail::NONE, |m| m.detail),
                 height,
                 radius,
             });

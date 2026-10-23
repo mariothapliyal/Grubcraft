@@ -39,6 +39,8 @@ struct SceneryOut {
     @location(5) normal_local: vec3<f32>,
     @location(6) facing: vec2<f32>,
     @location(7) @interpolate(flat) kind: u32,
+    // How green the baked colour is, 0 (bark) to 1 (leaf), before the tint.
+    @location(8) leaf: f32,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the
@@ -86,6 +88,7 @@ fn vs_scenery(v: SceneryIn) -> SceneryOut {
     out.normal_local = v.normal.xyz;
     out.facing = v.facing;
     out.kind = v.kind;
+    out.leaf = smoothstep(0.0, 0.06, v.color.g - max(v.color.r, v.color.b) * 0.95);
     return out;
 }
 
@@ -103,7 +106,7 @@ fn vs_scenery_depth(v: SceneryIn) -> @builtin(position) vec4<f32> {
 // colour relative to its own mean multiplies the baked colour (mostly its
 // light and dark), and its normal map tilts the surface. Stone is the cliffs'
 // Rock035; bark and foliage use the scenery arrays. Nothing is read beyond
-// DETAIL_REACH tiles from the eye, where mips would have flattened it.
+// a kind's reach from the eye, where mips would have flattened it.
 
 const DETAIL_NONE: u32 = 0u;
 const DETAIL_BROADLEAF: u32 = 1u;
@@ -111,7 +114,10 @@ const DETAIL_CONIFER: u32 = 2u;
 const DETAIL_FOLIAGE: u32 = 3u;
 const DETAIL_STONE: u32 = 4u;
 const DETAIL_MOSSY_STONE: u32 = 5u;
-const DETAIL_REACH: f32 = 90.0;
+// Tiles from the eye: grass and bushes, stone, trees.
+const FOLIAGE_REACH: f32 = 45.0;
+const STONE_REACH: f32 = 60.0;
+const TREE_REACH: f32 = 90.0;
 // Texture repeats a tile of model space.
 const BARK_SCALE: f32 = 1.4;
 const FOLIAGE_SCALE: f32 = 5.0;
@@ -135,51 +141,49 @@ fn detail_sample(layer: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, mean: 
     return r;
 }
 
-// A layer of the scenery arrays projected triplanar from model space at
-// `scale` repeats a tile: its colour ratio in `.ratio` and the model-space
-// normal `nl` tilted by its normal map in `.normal`. Rows run down and the
-// map's green runs up, so each plane's second coordinate is negated. `top`
-// (0 to 1) is how much the horizontal plane counts: bark leaves it out (a
-// trunk's ends are tiny), foliage uses all three.
+// A layer's colour ratio and the model-space normal tilted by its normal map.
 struct Surface {
     ratio: vec3<f32>,
     normal: vec3<f32>,
 };
 
+// A layer of the scenery arrays projected triplanar from model space at
+// `scale` repeats a tile, with `nl` the model-space normal. Rows run down and
+// the map's green runs up, so each plane's second coordinate is negated. `top`
+// (0 to 1) is how much the horizontal plane counts: bark leaves it out (a
+// trunk's ends are tiny), foliage uses all three.
 fn triplanar(layer: i32, mean: vec3<f32>, scale: f32, top: f32, p: vec3<f32>, nl: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Surface {
     var w = vec3<f32>(nl.z * nl.z, nl.x * nl.x, nl.y * nl.y * top) + vec3<f32>(0.02, 0.02, 0.0);
     w = w / (w.x + w.y + w.z);
     var ratio = vec3<f32>(0.0);
     var tilt = vec3<f32>(0.0);
+    var used = 0.0;
     // Facing +z or -z: the (x, y) plane.
     if w.x > 0.03 {
         let d = detail_sample(layer, vec2<f32>(p.x, -p.y) * scale, vec2<f32>(dpx.x, -dpx.y) * scale, vec2<f32>(dpy.x, -dpy.y) * scale, mean);
         ratio += d.ratio * w.x;
         tilt += vec3<f32>(d.tilt.x, d.tilt.y, 0.0) * w.x;
+        used += w.x;
     }
     // Facing +x or -x: the (z, y) plane.
     if w.y > 0.03 {
         let d = detail_sample(layer, vec2<f32>(p.z, -p.y) * scale, vec2<f32>(dpx.z, -dpx.y) * scale, vec2<f32>(dpy.z, -dpy.y) * scale, mean);
         ratio += d.ratio * w.y;
         tilt += vec3<f32>(0.0, d.tilt.y, d.tilt.x) * w.y;
+        used += w.y;
     }
     // Facing up or down: the (x, z) plane.
     if w.z > 0.03 {
         let d = detail_sample(layer, vec2<f32>(p.x, -p.z) * scale, vec2<f32>(dpx.x, -dpx.z) * scale, vec2<f32>(dpy.x, -dpy.z) * scale, mean);
         ratio += d.ratio * w.z;
         tilt += vec3<f32>(d.tilt.x, 0.0, d.tilt.y) * w.z;
+        used += w.z;
     }
     // Planes that were skipped leave their share out; the rest stand in.
-    let used = max(dot(vec3<f32>(step(0.03, w.x), step(0.03, w.y), step(0.03, w.z)), w), 0.05);
     var r: Surface;
     r.ratio = ratio / used;
     r.normal = normalize(nl + tilt / used);
     return r;
-}
-
-// Mostly light and dark: the texture's own hues would fight the baked colour.
-fn muted(ratio: vec3<f32>, chroma: f32) -> vec3<f32> {
-    return mix(vec3<f32>(dot(ratio, vec3<f32>(0.2126, 0.7152, 0.0722))), ratio, chroma);
 }
 
 @fragment
@@ -193,14 +197,18 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     // Leaves and blades may be single planes: light them from the side shown.
     var n = select(-in.normal, in.normal, front);
 
-    if in.kind != DETAIL_NONE && distance(in.world, g.camera_pos.xyz) < DETAIL_REACH {
+    var reach = TREE_REACH;
+    if in.kind == DETAIL_FOLIAGE {
+        reach = FOLIAGE_REACH;
+    } else if in.kind >= DETAIL_STONE {
+        reach = STONE_REACH;
+    }
+    if in.kind != DETAIL_NONE && distance(in.world, g.camera_pos.xyz) < reach {
         let nl = select(-in.normal_local, in.normal_local, front);
         var detailed = nl;
         if in.kind >= DETAIL_STONE {
             let r = rock_surface(in.local * STONE_SCALE, nl, dpx * STONE_SCALE, dpy * STONE_SCALE);
-            // Rock035's own colour is near black, so only its pattern is used.
-            let tex_l = dot(r.albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
-            albedo = albedo * mix(1.0, pow(clamp(tex_l / 0.0095, 0.02, 6.0), 0.45), 0.85);
+            albedo = albedo * mix(1.0, rock_pattern(r.albedo), 0.85);
             detailed = r.n;
             if in.kind == DETAIL_MOSSY_STONE {
                 // Moss settles on what faces up.
@@ -214,7 +222,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
             // Trees: bark where the baked colour is not green, leaves where it is.
             var leaf = 1.0;
             if in.kind != DETAIL_FOLIAGE {
-                leaf = smoothstep(0.0, 0.06, in.color.g - max(in.color.r, in.color.b) * 0.95);
+                leaf = in.leaf;
             }
             var ratio = vec3<f32>(1.0);
             if leaf > 0.02 {

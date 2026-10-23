@@ -177,12 +177,17 @@ pub(crate) fn pack(rgb: &Image, alpha: Option<&Image>) -> Option<Vec<u8>> {
 }
 
 pub(crate) fn to_linear(v: u8) -> f32 {
-    let c = f32::from(v) / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    static TABLE: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
+        std::array::from_fn(|v| {
+            let c = v as f32 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    });
+    TABLE[usize::from(v)]
 }
 
 fn to_srgb(l: f32) -> u8 {

@@ -99,15 +99,15 @@ The game embeds `assets/scenery.pak` at build time. The pack is read by `gc_asse
 
 ## Surface detail
 
-Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within 90 tiles of the camera:
+Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within reach of the camera (45 tiles for bushes and grass, 60 for stone, 90 for trees):
 
 | Surface | Models | Texture |
 |---|---|---|
 | Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow` | Bark001 (bark), Moss002 (leaves) |
 | Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag` | Bark014 (bark), Moss002 (needles) |
 | Foliage | every bush and every grass | Moss002 |
-| Stone | `pebbles`, `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
+| Stone | `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
 | Mossy stone | `mossy-boulder` | Rock035, with Moss002 on what faces up |
-| None | `bone-spire`, `bone-ribs`, gathering spots, banners | |
+| None | `pebbles`, `bone-spire`, `bone-ribs`, gathering spots, banners | |
 
-A tree's vertices are bark where their baked colour is not green and leaves where it is. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps and cleared ground ([27](27-living-land.md), idea 22) will use the bark kinds.
+A tree's vertices are bark where their baked colour (before the instance's tint) is not green and leaves where it is. A later re-bake should carry the kind and the bark or leaf choice per vertex in the vertex's spare component, instead of the game matching model names and guessing from colour. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps and cleared ground ([27](27-living-land.md), idea 22) will use the bark kinds.
