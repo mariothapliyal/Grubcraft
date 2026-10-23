@@ -103,6 +103,9 @@ fn the_minds_see_cleared_ground() {
     assert!(minds.blocked(wall));
     assert_eq!(minds.cover(wood), Cover::Wood);
     assert!(!minds.stale(w.terrain()));
+    // Minds told only the cover still see woods go.
+    let mut cover_only = Terrain::new(&nav, MAP).with_cover(cover.clone());
+    assert_eq!(cover_only.cover(wall), Cover::Wood);
 
     assert!(order(
         &mut w,
@@ -130,6 +133,10 @@ fn the_minds_see_cleared_ground() {
     assert_eq!(w.terrain().growth(44, 30), Growth::Open);
     assert!(minds.stale(w.terrain()));
     minds.follow(w.terrain());
+    assert!(cover_only.stale(w.terrain()));
+    cover_only.follow(w.terrain());
+    assert_eq!(cover_only.cover(wall), Cover::Open);
+    assert_eq!(cover_only.cover(wood), Cover::Wood);
     assert!(!minds.stale(w.terrain()));
     assert!(!minds.blocked(wall));
     assert!(minds.walkable(wall));

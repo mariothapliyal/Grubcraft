@@ -99,6 +99,16 @@ impl Terrain {
     pub fn with_cover(mut self, cover: Vec<u8>) -> Terrain {
         let n = self.map_tiles as usize;
         if cover.len() == n * n && n > 0 {
+            // Until told otherwise, woods grow where the cover is woods, as
+            // the simulation has it (so clearing them is followed too).
+            if self.growth.is_empty() {
+                self.growth = (cover.iter())
+                    .map(|&c| match Cover::from_u8(c) {
+                        Cover::Wood => Growth::Woods as u8,
+                        _ => Growth::Open as u8,
+                    })
+                    .collect();
+            }
             self.cover = cover;
         }
         self
@@ -113,6 +123,8 @@ impl Terrain {
         if growth.len() != n * n || n == 0 || self.side == 0 {
             return self;
         }
+        // Read as the simulation reads it: anything unknown grows nothing.
+        let growth: Vec<u8> = growth.iter().map(|&g| Growth::from_u8(g) as u8).collect();
         let thicket = |g: &u8| *g == Growth::Thicket as u8;
         if growth.iter().any(thicket) {
             self.under.clone_from(&self.cost);
