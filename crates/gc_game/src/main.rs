@@ -3349,7 +3349,9 @@ impl Running {
         let live = !self.paused && !(self.menu_open && self.online.is_none());
         let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
-        if viewing {
+        // Blows behind the menu, in Commander View (where the soldiers are
+        // blocks) and under the unit viewer show nothing, and don't pile up.
+        if viewing || self.commander || !live {
             drop(self.puppets.drain_impacts());
         } else {
             self.show_blows(&cull);
@@ -4897,11 +4899,11 @@ impl Running {
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
         let hm = &self.heightmap;
-        for i in self.puppets.drain_impacts().take(BLOWS_SHOWN) {
+        let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
-            if !cull.sees(at, 1.0) {
-                continue;
-            }
+            cull.on_screen(at, 1.0).then_some((i, at))
+        });
+        for (i, at) in on_screen.take(BLOWS_SHOWN) {
             let unit = usize::from(i.victim);
             let (Some(stats), Some(faction)) =
                 (self.units.stats.get(unit), self.units.factions.get(unit))
@@ -4912,7 +4914,9 @@ impl Running {
                 gc_ai::Faction::EmberClans => HitStyle::Flesh,
                 gc_ai::Faction::Brood => HitStyle::Ichor,
                 gc_ai::Faction::Choir => HitStyle::Crystal,
-                gc_ai::Faction::CarrionConcord => HitStyle::Ghost,
+                // Only the dead, who never rout, bleed ghost-light.
+                gc_ai::Faction::CarrionConcord if stats.morale == 0 => HitStyle::Ghost,
+                gc_ai::Faction::CarrionConcord => HitStyle::Flesh,
             };
             let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
             let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);

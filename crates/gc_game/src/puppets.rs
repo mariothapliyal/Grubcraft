@@ -686,17 +686,31 @@ impl Puppets {
     /// Note that `striker`'s blow lands on `victim` (puppet indices) at
     /// `when`, doing `hit`.
     fn impact(&mut self, when: f32, striker: usize, victim: usize, hit: Hit) {
-        if self.impacts.len() < MAX_IMPACTS {
-            let dir = (self.pos[victim] - self.pos[striker]).normalize_or(self.facing[striker]);
-            self.impacts.push((
-                when,
-                Impact {
-                    pos: self.pos[victim] - dir * 0.2,
-                    dir,
-                    hit,
-                    victim: self.unit[victim / SLOTS],
-                },
-            ));
+        // A full queue keeps the kills, the blows most worth showing, by
+        // giving up a lesser blow for one.
+        let room = if self.impacts.len() < MAX_IMPACTS {
+            Some(self.impacts.len())
+        } else if hit == Hit::Killed {
+            self.impacts.iter().position(|(_, i)| i.hit != Hit::Killed)
+        } else {
+            None
+        };
+        let Some(slot) = room else {
+            return;
+        };
+        let dir = (self.pos[victim] - self.pos[striker]).normalize_or(self.facing[striker]);
+        let told = (
+            when,
+            Impact {
+                pos: self.pos[victim] - dir * 0.2,
+                dir,
+                hit,
+                victim: self.unit[victim / SLOTS],
+            },
+        );
+        match self.impacts.get_mut(slot) {
+            Some(old) => *old = told,
+            None => self.impacts.push(told),
         }
     }
 
@@ -2294,16 +2308,32 @@ mod tests {
         // The blow travels from the killer toward the man struck.
         let killed = told.iter().find(|i| i.hit == Hit::Killed).unwrap();
         assert!((killed.dir.length() - 1.0).abs() < 1e-3);
+        // `melee_pair` stands the man struck south of his killer.
+        assert!(killed.dir.y < 0.0, "{:?}", killed.dir);
     }
 
     #[test]
-    fn the_impacts_waiting_are_capped() {
+    fn a_full_queue_gives_up_lesser_blows_for_kills() {
         let mut p = Puppets::new(2, 4);
         let (a, b) = melee_pair(Fighter::default(), Fighter::default());
-        for _ in 0..3000 {
-            frame(&mut p, &a, &b);
+        frame(&mut p, &a, &b);
+        p.impacts.clear();
+        for _ in 0..MAX_IMPACTS + 10 {
+            p.impact(0.0, 0, SLOTS, Hit::Parried);
         }
-        assert!(p.impacts.len() <= MAX_IMPACTS);
+        assert_eq!(p.impacts.len(), MAX_IMPACTS);
+        p.impact(0.0, 0, SLOTS, Hit::Killed);
+        assert_eq!(p.impacts.len(), MAX_IMPACTS);
+        assert_eq!(
+            p.impacts
+                .iter()
+                .filter(|(_, i)| i.hit == Hit::Killed)
+                .count(),
+            1
+        );
+        // Further lesser blows are turned away, and kills keep their place.
+        p.impact(0.0, 0, SLOTS, Hit::Wounded);
+        assert!(p.impacts.iter().all(|(_, i)| i.hit != Hit::Wounded));
     }
 
     #[test]
