@@ -11,8 +11,8 @@ use glam::{Vec2, Vec3};
 
 use crate::effects;
 
-/// How far from the camera's focus touches are made at the closest zoom and
-/// per tile of camera distance, and the most, in tiles.
+/// How far from the camera's focus touches are made at no distance and per
+/// tile of camera distance, and the most, in tiles.
 const REACH_NEAR: f32 = 14.0;
 const REACH_PER_ZOOM: f32 = 0.9;
 const REACH_MOST: f32 = 48.0;
@@ -20,6 +20,10 @@ const REACH_MOST: f32 = 48.0;
 const POLLEN_RATE: f32 = 0.010;
 const FIREFLY_RATE: f32 = 0.006;
 const LEAF_RATE: f32 = 0.004;
+/// Specks are under a pixel from a far camera: they fade out between these
+/// camera distances, in tiles, as the light motes do.
+const FADE_NEAR: f32 = 30.0;
+const FADE_FAR: f32 = 70.0;
 /// The sun's elevation (its y, normalised) above which pollen drifts and
 /// below which fireflies come out, each fading in over `DUSK_SPAN`.
 const DUSK_AT: f32 = 0.30;
@@ -127,44 +131,53 @@ impl Touches {
         let area = std::f32::consts::PI * reach * reach;
         let day = ((sun - DUSK_AT) / DUSK_SPAN + 0.5).clamp(0.0, 1.0);
         let dusk = ((DUSK_AT - sun) / DUSK_SPAN + 0.5).clamp(0.0, 1.0);
+        let near = 1.0 - ((distance - FADE_NEAR) / (FADE_FAR - FADE_NEAR)).clamp(0.0, 1.0);
         let tiles = map.tiles as i32;
-        let habitat_at = |p: Vec2| {
+        // The habitat on the viewer's ground at `p`; the fog is asked last,
+        // as the cheap checks rule most points out.
+        let habitat_at = |p: Vec2, wanted: &dyn Fn(Has) -> bool| {
             let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
             if !(0..tiles).contains(&x) || !(0..tiles).contains(&y) {
                 return None;
             }
             let h = Habitat::from_u8(*map.habitat.get(y as usize * tiles as usize + x as usize)?);
-            visible((x, y)).then_some(h)
+            (wanted(touches_of(h)) && visible((x, y))).then_some(h)
         };
         // Spawn on the ground (not under water), a little above it.
         let ground = |p: Vec2| map.height_at(p.x, p.y).max(map.water_level());
         let wet_ok = |p: Vec2| map.height_at(p.x, p.y) >= map.water_level();
         for (rate, want) in [
-            (POLLEN_RATE * day, 0u8),
-            (FIREFLY_RATE * dusk, 1),
-            (LEAF_RATE, 2),
+            (POLLEN_RATE * day * near, 0u8),
+            (FIREFLY_RATE * dusk * near, 1),
+            (LEAF_RATE * near, 2),
         ] {
             // The recipes thin themselves by the density, so trials are not.
             let trials = self.count(rate * area * dt);
             for _ in 0..trials {
                 let p = self.near(focus, reach);
-                let Some(h) = habitat_at(p) else { continue };
-                let has = touches_of(h);
+                let Some(h) = habitat_at(p, &|has| match want {
+                    0 => has.pollen,
+                    1 => has.firefly,
+                    _ => has.leaves,
+                }) else {
+                    continue;
+                };
                 let at = |up: f32| Vec3::new(p.x, ground(p) + up, p.y);
                 match want {
-                    0 if has.pollen && wet_ok(p) => {
-                        let up = 0.2 + self.unit() * 0.9;
-                        fx.pollen(at(up));
+                    0 => {
+                        if wet_ok(p) {
+                            let up = 0.2 + self.unit() * 0.9;
+                            fx.pollen(at(up));
+                        }
                     }
-                    1 if has.firefly => {
+                    1 => {
                         let up = 0.3 + self.unit() * 1.1;
                         fx.firefly(at(up));
                     }
-                    2 if has.leaves => {
+                    _ => {
                         let up = LEAF_HEIGHT[0] + self.unit() * (LEAF_HEIGHT[1] - LEAF_HEIGHT[0]);
                         fx.leaf_fall(at(up), leaf_colour(h));
                     }
-                    _ => {}
                 }
             }
         }
@@ -178,13 +191,13 @@ impl Touches {
         dt: f32,
         focus: Vec2,
         reach: f32,
-        habitat_at: &impl Fn(Vec2) -> Option<Habitat>,
+        habitat_at: &impl Fn(Vec2, &dyn Fn(Has) -> bool) -> Option<Habitat>,
         ground: &impl Fn(Vec2) -> f32,
         fx: &mut effects::Field,
     ) {
         if self.devil.is_none() && self.unit() < DEVIL_CHANCE * dt {
             let p = self.near(focus, reach);
-            if habitat_at(p).is_some_and(|h| touches_of(h).waste) {
+            if habitat_at(p, &|has| has.waste).is_some() {
                 let a = self.unit() * std::f32::consts::TAU;
                 self.devil = Some(Devil {
                     at: p,
@@ -200,7 +213,7 @@ impl Touches {
         // or when its time is up.
         let alive = d.left > 0.0
             && d.at.distance(focus) < reach * 1.5
-            && habitat_at(d.at).is_some_and(|h| touches_of(h).waste);
+            && habitat_at(d.at, &|has| has.waste).is_some();
         self.devil = alive.then_some(d);
         if alive {
             fx.dust_devil(dt, Vec3::new(d.at.x, ground(d.at), d.at.y));
@@ -239,5 +252,88 @@ mod tests {
         for _ in 0..1000 {
             assert!(t.near(focus, 10.0).distance(focus) <= 10.001);
         }
+    }
+
+    /// A small grown map whose every tile is `h`.
+    fn land(h: Habitat) -> Map {
+        let mut map = gc_map::FieldMap {
+            choice: gc_map::GROWN + 1,
+            tiles: 64,
+            seed: 5,
+        }
+        .make();
+        map.habitat.fill(h as u8);
+        map
+    }
+
+    /// What `touches` makes in `seconds` of frames, over the middle of
+    /// `map`, with the sun at `sun` and the camera `distance` away.
+    fn made(map: &Map, sun: f32, distance: f32, visible: bool, seconds: f32) -> usize {
+        let (mut touches, mut fx) = (Touches::default(), effects::Field::new(None));
+        let mut n = 0;
+        for _ in 0..(seconds * 30.0) as usize {
+            touches.frame(
+                1.0 / 30.0,
+                Vec2::new(32.0, 32.0),
+                distance,
+                sun,
+                1.0,
+                map,
+                |_| visible,
+                &mut fx,
+            );
+            // Far from its own motes, so only the touches come back.
+            n += fx
+                .frame(1.0 / 30.0, 1.0, Vec2::new(32.0, 32.0), 200.0, |_| 0.0)
+                .len();
+        }
+        n
+    }
+
+    #[test]
+    fn pollen_comes_by_day_and_fireflies_at_dusk() {
+        let meadow = land(Habitat::FlowerMeadow);
+        assert!(made(&meadow, 0.8, 20.0, true, 20.0) > 0);
+        assert_eq!(made(&meadow, 0.1, 20.0, true, 20.0), 0);
+        let fen = land(Habitat::PeatBog);
+        assert_eq!(made(&fen, 0.8, 20.0, true, 20.0), 0);
+        assert!(made(&fen, 0.1, 20.0, true, 20.0) > 0);
+    }
+
+    #[test]
+    fn nothing_is_made_in_the_fog_or_far_off() {
+        let meadow = land(Habitat::FlowerMeadow);
+        assert_eq!(made(&meadow, 0.8, 20.0, false, 20.0), 0);
+        assert_eq!(made(&meadow, 0.8, FADE_FAR, true, 20.0), 0);
+    }
+
+    #[test]
+    fn bare_ground_has_no_touches_and_a_paused_frame_none() {
+        assert_eq!(made(&land(Habitat::BareRock), 0.8, 20.0, true, 20.0), 0);
+        let (mut touches, mut fx) = (Touches::default(), effects::Field::new(None));
+        let map = land(Habitat::FlowerMeadow);
+        touches.frame(
+            0.0,
+            Vec2::new(32.0, 32.0),
+            20.0,
+            0.8,
+            1.0,
+            &map,
+            |_| true,
+            &mut fx,
+        );
+        assert!(
+            fx.frame(0.0, 1.0, Vec2::new(32.0, 32.0), 200.0, |_| 0.0)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_whirlwind_blows_over_the_waste_and_dies_out_of_it() {
+        let waste = land(Habitat::CrackedFlat);
+        // A few minutes is enough for one to start (a chance a second).
+        assert!(made(&waste, 0.8, 20.0, true, 300.0) > 0);
+        let meadow = land(Habitat::Grassland);
+        assert_eq!(made(&meadow, 0.1, 20.0, true, 300.0), 0);
     }
 }

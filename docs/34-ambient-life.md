@@ -60,14 +60,14 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 ### What a player sees
 
 - **Pollen** drifts up from flower meadows, grassland, glades and heather by day, fading out as the sun sinks.
-- **Fireflies** come out as the light goes (the Dusk look, and the tail of Golden hour): slow green-gold sparks that rise and fade over wet meadows, sedge, alder carr, bog, fern hollows and glades.
+- **Fireflies** come out as the light goes (the Dusk look): slow green-gold sparks that rise and fade over wet meadows, sedge, alder carr, bog, fern hollows and glades.
 - **Leaves** fall from old growth, birch fringes (gold), tree lines and fern hollows, at any hour.
-- **A whirlwind** now and then wanders the waste (cracked flats, bone drifts, dying grass) for about 14 seconds, throwing dust, and dies out when it leaves the waste.
-- Only near the camera and only on ground the viewer can see, so fog of war hides them too. All of it thins with the Graphics preset's effects density and stops with the pause.
+- **A whirlwind** now and then wanders the waste (cracked flats, bone drifts, dying grass) for about 14 seconds, throwing up a spreading column of dust, and dies out when it leaves the waste.
+- Only near the camera (they fade out between 30 and 70 tiles of camera distance, where they would be under a pixel) and only on ground the viewer can see, so fog of war hides them too. All of it thins with the Graphics preset's effects density and stops with the pause.
 
 ### How it works
 
-- `gc_game::ambient::Touches` is called once a frame from the effects block. It tries random points on the ground within a reach of the focus (14 tiles plus 0.9 per tile of camera distance, at most 48), looks the point's habitat up in `Map.habitat`, and spawns only where that habitat has the touch (`touches_of`). Rates are per tile of area, so a tidy screen costs a few dozen probes a second and keeps no per-creature state; only the whirlwind has any (one at a time). On a ride (the soldier's-eye camera) it follows the same ahead point the light motes do.
+- `gc_game::ambient::Touches` is called once a frame from the effects block. It tries random points on the ground within a reach of the focus (14 tiles plus 0.9 per tile of camera distance, at most 48; the specks fade out with distance), looks the point's habitat up in `Map.habitat`, and spawns only where that habitat has the touch (`touches_of`). Rates are per tile of area, so a tidy screen costs a few dozen probes a second and keeps no per-creature state; only the whirlwind has any (one at a time). On a ride (the soldier's-eye camera) it follows the same ahead point the light motes do.
 - Day and dusk are read from the look's sun elevation (`DUSK_AT` 0.30 over `DUSK_SPAN` 0.12), so a new look preset needs no change here.
 - Recipes in `gc_render::effects::ambient` (`pollen`, `firefly`, `dust_devil`, beside `leaves` and `cut_chips`) and wrappers in `gc_game::effects::Field` (`pollen`, `firefly`, `leaf_fall`, `dust_devil`). Its own xorshift generator; the particle system's seed and the simulation's are untouched.
 

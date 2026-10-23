@@ -110,7 +110,8 @@ impl Effects {
     }
 
     /// Dust thrown up by a whirlwind standing at `centre`, for `dt` seconds
-    /// of effects time: puffs that climb in a widening column, turning.
+    /// of effects time: puffs that climb in a column that spreads as it rises,
+    /// with a sideways push to each so it looks wound up.
     /// `centre` moves between calls to make the devil wander.
     pub fn dust_devil(&mut self, centre: Vec3, dt: f32, color: [u8; 3]) {
         for _ in 0..self.count(34.0 * dt) {
@@ -122,11 +123,11 @@ impl Effects {
             let r = self.rng.between(0.08, 0.3);
             self.out.push(Particle {
                 pos: centre + Vec3::new(cos * r, 0.05, sin * r),
-                // Tangent to the turn, and up.
-                vel: Vec3::new(-sin * 2.4, self.rng.between(1.8, 3.2), cos * 2.4),
+                // A little tangent to the turn, and up.
+                vel: Vec3::new(-sin * 0.8, self.rng.between(1.8, 3.2), cos * 0.8),
                 life: self.rng.between(1.6, 2.6),
                 size: [0.12, self.rng.between(0.5, 0.9)],
-                drag: 1.1,
+                drag: 0.9,
                 lift: 0.5,
                 shape,
                 flags: flags::SOFT | flags::WIND,
