@@ -22,7 +22,7 @@ Tall grass in an open meadow stays buildable: it is trampled flat, not grubbed o
 ### Orders
 
 - **Clear** (workers): drag an area, at most 16 by 16 tiles. The worker clears its overgrown tiles one at a time, the nearest first, and stops when none is left. Several workers sent to the same area share it.
-- **Build on overgrown ground**: allowed. The worker pays when ordered, clears the footprint, then lays the foundation and builds as usual. Until the foundation is laid, any other order calls it off with everything refunded. If the ground is taken meanwhile (a building or a regiment there), the price comes back and the worker stops.
+- **Build on overgrown ground**: allowed. The worker pays when ordered, clears the footprint, then lays the foundation and builds as usual. Until the foundation is laid, any other order calls it off with everything refunded. If the ground is taken meanwhile (a building or a regiment there), or part of it can't be reached, the price comes back and the worker stops. Ground paid for and still being cleared is spoken for: nobody else may build on it.
 - The placing preview shows overgrown tiles amber (they will be cleared first) and blocked tiles red.
 
 ### What a cleared tile becomes

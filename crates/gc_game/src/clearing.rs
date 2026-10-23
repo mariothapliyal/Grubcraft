@@ -64,11 +64,6 @@ pub fn overgrown_tiles(world: &World, area: [i32; 4]) -> impl Iterator<Item = (i
         .filter(|&(tx, ty)| terrain.growth(tx, ty) != Growth::Open)
 }
 
-/// Whether any tile of `area` is overgrown.
-pub fn any_overgrown(world: &World, area: [i32; 4]) -> bool {
-    overgrown_tiles(world, area).next().is_some()
-}
-
 /// Draw `area` on the ground: a wash over all of it (`chosen` for the area
 /// being dragged out, else the one a worker is clearing), and amber over the
 /// tiles where something still grows.
@@ -174,7 +169,7 @@ impl Running {
             return;
         };
         self.input.clear_from = None;
-        if !any_overgrown(&self.world, [x, y, w, d]) {
+        if !self.world.overgrown([x, y, w, d]) {
             self.say("Nothing grows there to clear.".into());
             return;
         }

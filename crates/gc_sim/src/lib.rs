@@ -1490,17 +1490,20 @@ impl World {
                 {
                     return false;
                 }
+                if conquest
+                    .structures
+                    .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
+                    .is_none()
+                {
+                    return false;
+                }
                 // A finished building stands on cleared ground.
                 let b = conquest.structures.buildings()[usize::from(building)];
                 let (w, d) = (i32::from(b.width), i32::from(b.depth));
                 let foot =
                     (tile.1..tile.1 + d).flat_map(|y| (tile.0..tile.0 + w).map(move |x| (x, y)));
-                self.change_ground(foot.collect::<Vec<_>>());
-                let conquest = self.conquest.as_mut().expect("checked above");
-                conquest
-                    .structures
-                    .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
-                    .is_some()
+                self.change_ground(foot);
+                true
             }
             Command::AttackStructure {
                 regiment,
@@ -1817,33 +1820,38 @@ impl World {
         if c.clearing.done.is_empty() {
             return;
         }
-        // Taken out and put back, so the list keeps its room.
+        // Taken out and put back, so the list keeps its room. The cleared
+        // tiles change the ground together, before any building is laid.
         let done = core::mem::take(&mut c.clearing.done);
-        let mut tiles = Vec::new();
         for d in &done {
             if let clearing::Done::Tile { x, y, owner } = *d {
                 let timber = clearing::timber(self.terrain.growth(x, y));
                 c.economy
                     .earn_grub(owner, timber, &self.regiments, &c.units);
-                tiles.push((x, y));
             }
         }
-        self.change_ground(tiles);
-        let Some(c) = &mut self.conquest else {
-            return;
-        };
+        self.change_ground(done.iter().filter_map(|d| match *d {
+            clearing::Done::Tile { x, y, .. } => Some((x, y)),
+            _ => None,
+        }));
         for d in &done {
             match *d {
+                clearing::Done::Tile { .. } => {}
                 clearing::Done::Lay { r, pledge } => {
-                    c.lay_pledged(r, pledge, &mut self.nav, &mut self.regiments, &self.terrain);
+                    if let Some(c) = &mut self.conquest {
+                        c.lay_pledged(r, pledge, &mut self.nav, &mut self.regiments, &self.terrain);
+                    }
                 }
                 clearing::Done::Refund { pledge } => {
-                    c.economy.refund(pledge.owner, pledge.grub, pledge.marrow);
+                    if let Some(c) = &mut self.conquest {
+                        c.economy.refund(pledge.owner, pledge.grub, pledge.marrow);
+                    }
                 }
-                clearing::Done::Tile { .. } => {}
             }
         }
-        c.clearing.done = done;
+        if let Some(c) = &mut self.conquest {
+            c.clearing.done = done;
+        }
     }
 
     /// The one way the ground changes mid-match (docs/31-changing-land.md):
@@ -1851,9 +1859,14 @@ impl World {
     /// standing on the walkable grid, the change goes into the state hash,
     /// and the game is told ([`Event::Cleared`]). Tiles with nothing
     /// growing are left as they are.
-    pub(crate) fn change_ground(&mut self, tiles: Vec<(i32, i32)>) {
+    pub(crate) fn change_ground(&mut self, tiles: impl IntoIterator<Item = (i32, i32)>) {
         let mut thicket = Vec::new();
         for (x, y) in tiles {
+            // Nothing to change (and no copy of a shared terrain made)
+            // where nothing grows.
+            if self.terrain.growth(x, y) == Growth::Open {
+                continue;
+            }
             let Some(was) = Arc::make_mut(&mut self.terrain).clear(x, y) else {
                 continue;
             };

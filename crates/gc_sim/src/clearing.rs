@@ -17,7 +17,7 @@
 use gc_fixed::{Fx, FxVec2};
 
 use crate::regiments::{Order, Regiments};
-use crate::structures::{Approach, BuildingId, footprint_centre};
+use crate::structures::{Approach, BuildingId, RETRY_TICKS, STALLS, footprint_centre};
 use crate::terrain::{Growth, Terrain};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
 
@@ -44,10 +44,6 @@ pub const fn timber(growth: Growth) -> u32 {
     }
 }
 
-/// Ticks a worker that couldn't get at its tile waits before trying again.
-const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
-/// Tries in a row that bring a worker no nearer before it gives a tile up.
-const STALLS: u8 = 3;
 /// Tiles a worker may give up on in one order before it stops.
 const SKIPS: usize = 4;
 /// Work a worker does a tick, in hundredths of a tick of clearing time.
@@ -91,6 +87,15 @@ struct Job {
     /// Tiles it gave up on, `skipped` of them.
     skip: [u32; SKIPS],
     skipped: u8,
+    /// The generation of the regiment the order was given to.
+    generation: u16,
+}
+
+impl Job {
+    /// On to the next tile: the walk to it starts afresh.
+    fn next(&mut self) {
+        (self.at, self.gap, self.stalls) = (None, Fx::MAX, 0);
+    }
 }
 
 /// What a tick of clearing came to, for the world to act on.
@@ -108,11 +113,11 @@ pub(crate) enum Done {
 /// Every worker's clearing order, by regiment slot.
 pub(crate) struct Clearing {
     job: alloc::vec::Vec<Option<Job>>,
-    /// The generation of the regiment each order was given to.
-    generation: alloc::vec::Vec<u16>,
     /// Tiles part cleared: the tile (row by row) and work left in
     /// hundredths of a tick, in tile order.
     worked: alloc::vec::Vec<(u32, u32)>,
+    /// Scratch: the tiles workers are at, sorted (kept for its room).
+    at: alloc::vec::Vec<u32>,
     /// What the last tick came to (see [`Done`]).
     pub(crate) done: alloc::vec::Vec<Done>,
     /// Tempo: clearing takes this percent of its Standard time.
@@ -123,8 +128,8 @@ impl Clearing {
     pub(crate) fn new(regiments: usize, build_percent: u32) -> Clearing {
         Clearing {
             job: alloc::vec![None; regiments],
-            generation: alloc::vec![0; regiments],
             worked: alloc::vec::Vec::with_capacity(regiments),
+            at: alloc::vec::Vec::with_capacity(regiments),
             // One tile and one footprint per worker at most, and each
             // order dropped.
             done: alloc::vec::Vec::with_capacity(2 * regiments),
@@ -150,8 +155,8 @@ impl Clearing {
             stalls: 0,
             skip: [0; SKIPS],
             skipped: 0,
+            generation: regs.generation[r],
         });
-        self.generation[r] = regs.generation[r];
         regs.target[r] = None;
     }
 
@@ -164,8 +169,14 @@ impl Clearing {
     /// The area worker slot `r` is clearing, and the building it will lay
     /// there, if it is clearing.
     pub(crate) fn job_of(&self, regs: &Regiments, r: usize) -> Option<([i32; 4], Option<Pledge>)> {
+        self.live(regs, r).map(|job| (job.area, job.then))
+    }
+
+    /// Worker slot `r`'s order, if the regiment it was given to is still
+    /// there.
+    fn live(&self, regs: &Regiments, r: usize) -> Option<&Job> {
         let job = self.job.get(r)?.as_ref()?;
-        (regs.alive[r] && regs.generation[r] == self.generation[r]).then_some((job.area, job.then))
+        (regs.alive[r] && regs.generation[r] == job.generation).then_some(job)
     }
 
     /// Every building paid for and waiting on its footprint being cleared.
@@ -181,11 +192,7 @@ impl Clearing {
             let Some(mut job) = self.job[r] else {
                 continue;
             };
-            if !regs.alive[r] || regs.generation[r] != self.generation[r] {
-                self.drop(r, job);
-                continue;
-            }
-            if regs.morale_state[r].broken() {
+            if self.live(regs, r).is_none() || regs.morale_state[r].broken() {
                 self.drop(r, job);
                 continue;
             }
@@ -196,6 +203,14 @@ impl Clearing {
             job.clock = job.clock.saturating_sub(regs.steps(r));
             let kept = self.work(regs, units, terrain, r, &mut job);
             self.job[r] = kept.then_some(job);
+        }
+        // Work on a tile nobody is at any more is forgotten.
+        if !self.worked.is_empty() {
+            let at = &mut self.at;
+            at.clear();
+            at.extend(self.job.iter().flatten().filter_map(|j| j.at));
+            at.sort_unstable();
+            self.worked.retain(|&(t, _)| at.binary_search(&t).is_ok());
         }
     }
 
@@ -224,11 +239,10 @@ impl Clearing {
             terrain.growth(x, y) != Growth::Open && !self.done.iter().any(cleared)
         };
         if job.at.is_some_and(|t| !left(t)) {
-            job.at = None;
+            job.next();
         }
         if job.at.is_none() {
             job.at = self.nearest(regs.position[r], terrain, job, &left);
-            (job.gap, job.stalls) = (Fx::MAX, 0);
         }
         let unit = &units[regs.unit[r] as usize];
         let Some(t) = job.at else {
@@ -236,6 +250,14 @@ impl Clearing {
             let Some(pledge) = job.then else {
                 return false;
             };
+            // A footprint with tiles given up on can't be built on.
+            if job.skip[..usize::from(job.skipped)]
+                .iter()
+                .any(|&t| left(t))
+            {
+                self.drop(r, *job);
+                return false;
+            }
             return self.leave(regs, unit, r, job, pledge);
         };
         let (x, y) = ((t % side) as i32, (t / side) as i32);
@@ -252,9 +274,11 @@ impl Clearing {
                         }
                         job.skip[usize::from(job.skipped)] = t;
                         job.skipped += 1;
-                        job.at = None;
+                        job.next();
                         return true;
                     }
+                } else {
+                    job.stalls = 0;
                 }
                 job.gap = way.gap;
                 job.clock = RETRY_TICKS;
@@ -281,7 +305,7 @@ impl Clearing {
                 y,
                 owner: regs.owner[r],
             });
-            job.at = None;
+            job.next();
         }
         true
     }
@@ -341,13 +365,16 @@ impl Clearing {
         if regs.target[r].is_some() || job.clock > 0 {
             return true;
         }
-        let gaps = [here.x - lo.x, hi.x - here.x, here.y - lo.y, hi.y - here.y];
-        let out = match (0..4).min_by_key(|&k| gaps[k]).unwrap_or(0) {
-            0 => FxVec2::new(lo.x - room - Fx::ONE / 4, here.y),
-            1 => FxVec2::new(hi.x + room + Fx::ONE / 4, here.y),
-            2 => FxVec2::new(here.x, lo.y - room - Fx::ONE / 4),
-            _ => FxVec2::new(here.x, hi.y + room + Fx::ONE / 4),
-        };
+        let out = room + Fx::ONE / 4;
+        let (_, out) = [
+            (here.x - lo.x, FxVec2::new(lo.x - out, here.y)),
+            (hi.x - here.x, FxVec2::new(hi.x + out, here.y)),
+            (here.y - lo.y, FxVec2::new(here.x, lo.y - out)),
+            (hi.y - here.y, FxVec2::new(here.x, hi.y + out)),
+        ]
+        .into_iter()
+        .min_by_key(|&(gap, _)| gap)
+        .expect("four sides");
         job.stalls += 1;
         if job.stalls > STALLS {
             self.drop(r, *job);
@@ -368,13 +395,10 @@ impl Clearing {
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
-        for (r, job) in self.job.iter().enumerate() {
-            let Some(job) = job else {
+        for r in 0..self.job.len() {
+            let Some(job) = self.live(regs, r) else {
                 continue;
             };
-            if !regs.alive[r] || regs.generation[r] != self.generation[r] {
-                continue;
-            }
             h.u32(r as u32);
             for v in job.area {
                 h.i32(v);
@@ -384,6 +408,9 @@ impl Clearing {
             h.i32(job.gap.raw());
             h.u8(job.stalls);
             h.u8(job.skipped);
+            for &t in &job.skip[..usize::from(job.skipped)] {
+                h.u32(t);
+            }
             if let Some(p) = job.then {
                 h.u8(p.owner);
                 h.u16(p.building);

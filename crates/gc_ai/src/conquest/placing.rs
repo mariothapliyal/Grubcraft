@@ -109,15 +109,15 @@ pub fn spot_for(
             .collect();
         open.sort_by(|a, b| a.1.total_cmp(&b.1));
         for &(t, _) in &open {
-            if world.can_lay(party, building, t).is_err() {
+            let grown = world.overgrown([t.0, t.1, w, d]);
+            // Only the nearest overgrown spot is wanted.
+            if grown && overgrown.is_some() || world.can_lay(party, building, t).is_err() {
                 continue;
             }
-            if !world.overgrown([t.0, t.1, w, d]) {
+            if !grown {
                 return Some(t);
             }
-            if overgrown.is_none() {
-                overgrown = Some((t, r));
-            }
+            overgrown = Some((t, r));
         }
     }
     overgrown.map(|(t, _)| t)

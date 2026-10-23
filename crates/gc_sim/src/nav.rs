@@ -1190,7 +1190,7 @@ impl Nav {
             return Err(Refusal::Rough);
         }
         let grown = |(cx, cy)| u8::from(thicket(cx / CELLS_PER_TILE, cy / CELLS_PER_TILE));
-        if cells().any(|c| g.built[at(c)] > grown(c)) {
+        if cells().any(|c| g.built[at(c)] > 0 && g.built[at(c)] > grown(c)) {
             return Err(Refusal::Built);
         }
         Ok(())

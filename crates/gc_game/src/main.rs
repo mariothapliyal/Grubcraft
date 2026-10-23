@@ -4078,7 +4078,7 @@ impl Running {
         });
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
-        let nav = hm.nav_costs();
+        let nav = hm.sim_nav_costs();
         self.blocked_marks = blocked_marks(&nav, hm.tiles);
         // A Conquest map's trees are the same in every match on it, and on
         // every machine; a Field Battle map's follow its seed.

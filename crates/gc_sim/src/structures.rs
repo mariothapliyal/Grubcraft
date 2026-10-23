@@ -444,9 +444,9 @@ const HP_SCALE: u32 = 100;
 const MELEE_REACH: Fx = Fx::from_int(2);
 /// Ticks a regiment that can't get at its building waits before trying
 /// again.
-const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
+pub(crate) const RETRY_TICKS: u16 = TICKS_PER_SECOND as u16;
 /// Tries in a row that bring a regiment no nearer before it gives up.
-const STALLS: u8 = 3;
+pub(crate) const STALLS: u8 = 3;
 /// A building goes up at this percent of its hit points and fills up as
 /// it is built.
 const FOUNDATION_PERCENT: u32 = 10;

@@ -237,13 +237,14 @@ impl Steward {
         let reaction = s.reaction;
         // A building waiting on its ground being cleared is still being
         // laid, however long that takes.
-        let pledged = |l: &Lay| {
-            s.world
-                .pledged()
-                .any(|p| p == (s.party, l.building, l.tile))
-        };
+        let pledged: Vec<_> = s
+            .world
+            .pledged()
+            .filter(|p| p.0 == s.party)
+            .map(|(_, b, tile)| (b, tile))
+            .collect();
         self.laying.retain(|l| {
-            (s.now < l.since + reaction + LAY_TICKS || pledged(l))
+            (s.now < l.since + reaction + LAY_TICKS || pledged.contains(&(l.building, l.tile)))
                 && !look
                     .mine
                     .iter()

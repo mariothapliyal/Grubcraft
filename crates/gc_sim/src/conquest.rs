@@ -187,6 +187,11 @@ pub(crate) struct Conquest {
     pub(crate) clearing: Clearing,
 }
 
+/// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
+fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+}
+
 /// Whether anything grows on the footprint `[x, y, w, d]` that must be
 /// cleared before a building goes up there.
 pub(crate) fn overgrown(terrain: &Terrain, [x, y, w, d]: [i32; 4]) -> bool {
@@ -346,7 +351,24 @@ impl Conquest {
             regs,
             self.economy.node_positions(),
             thicket,
-        )
+        )?;
+        // Ground paid for and still being cleared is spoken for.
+        let foot = self.footprint(building, tile);
+        if self
+            .clearing
+            .pledges()
+            .any(|p| overlaps(foot, self.footprint(p.building, p.tile)))
+        {
+            return Err(Refusal::Built);
+        }
+        Ok(())
+    }
+
+    /// The tiles a building of type `building` covers with its north-west
+    /// tile at `tile`, as `[x, y, width, depth]`.
+    fn footprint(&self, building: BuildingId, tile: (i32, i32)) -> [i32; 4] {
+        let b = self.structures.buildings()[usize::from(building)];
+        [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)]
     }
 
     /// Whether `player` could have a worker lay a building of type
@@ -363,7 +385,7 @@ impl Conquest {
         self.check(building, tile, nav, regs, terrain)?;
         self.may_lay(player, building)?;
         let b = self.structures.buildings()[usize::from(building)];
-        let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
+        let foot = self.footprint(building, tile);
         if b.flags & NEEDS_POWER != 0 && !self.structures.power_reaches(player, foot) {
             return Err(Refusal::Unpowered);
         }
@@ -460,9 +482,11 @@ impl Conquest {
         let b = self.structures.buildings()[usize::from(building)];
         let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
         let powered = b.flags & NEEDS_POWER == 0 || self.structures.power_reaches(owner, foot);
-        let laid = (powered && self.check(building, tile, nav, regs, terrain).is_ok())
-            .then(|| self.structures.found(owner, building, tile, nav, regs))
-            .flatten();
+        let laid = (powered
+            && !overgrown(terrain, foot)
+            && self.check(building, tile, nav, regs, terrain).is_ok())
+        .then(|| self.structures.found(owner, building, tile, nav, regs))
+        .flatten();
         match laid {
             Some(h) => {
                 self.stop_work(r);

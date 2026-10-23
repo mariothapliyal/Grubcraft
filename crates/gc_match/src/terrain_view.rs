@@ -25,10 +25,11 @@ pub fn ai_terrain(map: &Map, nav: &[u8]) -> gc_ai::Terrain {
     let per = gc_sim::nav::CELLS_PER_TILE as u32;
     let side = tiles * per;
     if nav.len() == (side * side) as usize {
-        for (c, cost) in nav.iter_mut().enumerate() {
-            let (cx, cy) = (c as u32 % side, c as u32 / side);
-            if map.is_thicket(((cy / per) * tiles + cx / per) as usize) {
-                *cost = gc_sim::nav::BLOCKED;
+        for t in (0..tiles * tiles).filter(|&t| map.is_thicket(t as usize)) {
+            let (tx, ty) = (t % tiles * per, t / tiles * per);
+            for cy in ty..ty + per {
+                let row = (cy * side) as usize;
+                nav[row + tx as usize..row + (tx + per) as usize].fill(gc_sim::nav::BLOCKED);
             }
         }
     }
