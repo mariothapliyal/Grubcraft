@@ -116,7 +116,7 @@ const ALBEDO: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_a
 const NORMAL: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_normal.png");
 const ROUGH: &[u8] = include_bytes!("../../../assets/textures/terrain/rock035_rough.png");
 
-/// The rock textures (also the ground's: see ground.rs).
+/// The rock textures (also the ground's and scenery's: see surface.rs).
 pub struct RockTextures {
     pub color: wgpu::TextureView,
     pub normal: wgpu::TextureView,
