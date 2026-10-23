@@ -167,6 +167,7 @@ mod showroom;
 mod siege;
 mod sounds;
 mod viewer;
+mod wall_tool;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -1935,7 +1936,9 @@ impl ApplicationHandler for App {
                                 s.toggle_music();
                             }
                         }
-                        KeyCode::Escape if down && r.hud.armed.take().is_some() => {}
+                        KeyCode::Escape if down && r.hud.armed.is_some() => {
+                            r.hud.armed = None;
+                        }
                         KeyCode::Escape if down && r.hud.help_open() => r.toggle_help(),
                         KeyCode::Escape if down && r.hud.build_menu => r.set_build_menu(false),
                         // Esc first gets you out of a ride.
@@ -2092,7 +2095,10 @@ impl Running {
             (MouseButton::Right, ElementState::Released) => {
                 // A right-click puts down a power being aimed, and orders
                 // nothing; any other armed order it takes the place of.
-                if matches!(self.hud.armed, Some(hud::Armed::Power(_))) {
+                if matches!(
+                    self.hud.armed,
+                    Some(hud::Armed::Power(_) | hud::Armed::Wall(..))
+                ) {
                     self.hud.armed = None;
                     self.input.right_down = None;
                     return;
@@ -2921,6 +2927,7 @@ impl Running {
         if !viewing {
             self.push_placement_ghost();
             self.push_building_ghost();
+            self.push_wall_ghost();
             self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;
@@ -5539,6 +5546,7 @@ impl Running {
     fn laying(&self) -> Option<BuildingId> {
         match self.hud.armed {
             Some(hud::Armed::Lay(id)) => Some(id),
+            Some(hud::Armed::Wall(..)) => None,
             _ => self.sandbox.building_tool.then_some(self.sandbox.building),
         }
     }
