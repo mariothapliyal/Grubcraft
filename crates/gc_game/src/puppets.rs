@@ -618,8 +618,7 @@ impl Puppets {
             }
             _ if striker != NONE && self.owner[r] == Some(b.target) => {
                 self.partner[striker as usize] = (r * SLOTS + b.target_slot as usize) as u32;
-                let wounded = b.outcome == Outcome::Wounded;
-                self.told[striker as usize] = Some((wounded, self.time));
+                self.told[striker as usize] = Some((b.outcome == Outcome::Wounded, self.time));
             }
             _ => {}
         }
@@ -906,8 +905,9 @@ impl Puppets {
     /// If puppet `i`'s swing landed on his man since last frame, it gets
     /// through and staggers him, or a heavier striker crushes through his
     /// guard and knocks him down, or he parries it or takes it on his
-    /// shield. Whether it gets through is the simulation's: as its last blow
-    /// by this man came out, if it told one lately, else by its odds.
+    /// shield. When the simulation told his last blow lately, it is played
+    /// as it came out: a wound gets through (or crushes through), anything
+    /// else is parried or blocked. Else it rolls the simulation's odds.
     fn strike(&mut self, i: usize) {
         let j = self.partner[i];
         if j == NONE || matches!(self.acting(i), Some((Act::Kill, _))) {
@@ -927,21 +927,19 @@ impl Puppets {
         } else {
             them.flank_defence
         };
-        let told = self.told[i]
-            .take()
-            .filter(|&(_, at)| self.time - at <= TOLD_KEEP);
-        let gets_through = match told {
-            Some((wounded, _)) => wounded,
-            None => roll(i, j, blow, 1) < me.lands(defence),
-        };
-        let act = if gets_through {
-            Act::Stagger
-        } else if roll(i, j, blow, 2) < CRUSH_PER_CLASS * me.outweighs(&them, true) {
-            Act::Down
-        } else if them.shield {
-            Act::Block
-        } else {
-            Act::Parry
+        let crushes = || roll(i, j, blow, 2) < CRUSH_PER_CLASS * me.outweighs(&them, true);
+        let guard = if them.shield { Act::Block } else { Act::Parry };
+        let act = match self.told[i].take() {
+            // The simulation's blow: a wound gets through (a heavier man's
+            // crushing through to knock him down), anything else is turned.
+            Some((wounded, at)) if self.time - at <= TOLD_KEEP => match () {
+                _ if !wounded => guard,
+                _ if crushes() => Act::Down,
+                _ => Act::Stagger,
+            },
+            _ if roll(i, j, blow, 1) < me.lands(defence) => Act::Stagger,
+            _ if crushes() => Act::Down,
+            _ => guard,
         };
         self.suffer(j, i, act);
     }
