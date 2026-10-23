@@ -586,6 +586,14 @@ mod tests {
         for (f, pace, pays, burns) in table {
             assert_eq!(clear_style(f), ClearStyle { pace, pays, burns }, "{f:?}");
         }
+        // The Choir's thicket takes about the time woods do.
+        let choir = clear_style(Faction::Choir);
+        let thicket = clear_ticks(Thicket) * choir.pace_on(Thicket);
+        let woods = clear_ticks(Woods) * 100;
+        assert!(
+            thicket.abs_diff(woods) * 100 < woods,
+            "{thicket} vs {woods}"
+        );
         let data = data();
         for (record, unit) in data.conquest_units.iter().zip(units_of(&data)) {
             assert_eq!(unit.clearing, clear_style(record.faction()));

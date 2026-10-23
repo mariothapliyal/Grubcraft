@@ -8,7 +8,7 @@
 //! same tile share its work. A worker ordered to build on overgrown ground
 //! clears the footprint first, having paid; then it steps off the footprint
 //! and lays the foundation. Felled woods and thicket pay a little Grub
-//! ([`ClearStyle::pays`]).
+//! ([`ClearStyle::pays_on`]).
 //!
 //! This module only decides which tiles are cleared in a tick
 //! ([`Clearing::cleared`]); the world changes the ground
@@ -59,18 +59,22 @@ impl ClearStyle {
     };
 
     /// What the worker pays for clearing a tile of `growth`.
-    pub fn pays(&self, growth: Growth) -> u32 {
+    pub fn pays_on(&self, growth: Growth) -> u32 {
         Self::index(growth).map_or(0, |i| u32::from(self.pays[i]))
     }
 
     /// Its pace on `growth`, in percent of the Standard time.
-    pub fn pace(&self, growth: Growth) -> u32 {
+    pub fn pace_on(&self, growth: Growth) -> u32 {
         Self::index(growth).map_or(100, |i| u32::from(self.pace[i]).max(1))
     }
 
-    /// Where `growth` is in the arrays (scrub, woods, thicket follow open).
     fn index(growth: Growth) -> Option<usize> {
-        (growth as usize).checked_sub(1)
+        match growth {
+            Growth::Open => None,
+            Growth::Scrub => Some(0),
+            Growth::Woods => Some(1),
+            Growth::Thicket => Some(2),
+        }
     }
 }
 
@@ -82,8 +86,9 @@ impl Default for ClearStyle {
 
 /// Tiles a worker may give up on in one order before it stops.
 const SKIPS: usize = 4;
-/// Work a worker does a tick, in hundredths of a tick of clearing time.
-const HAND: u32 = 100;
+/// A tick of clearing time, in work: fine enough that a pace that does not
+/// divide it (the Brood's 150%) still comes out within 0.01%.
+const HAND: u32 = 10_000;
 
 /// What a worker is clearing (see `World::clearing_of`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,7 +357,7 @@ impl Clearing {
         };
         // A worker's own pace: workers of different factions on the one
         // tile each do their own share.
-        let work = HAND * 100 / style.pace(growth) * u32::from(regs.steps(r));
+        let work = (HAND * 100 / style.pace_on(growth)).max(1) * u32::from(regs.steps(r));
         self.worked[k].1 = self.worked[k].1.saturating_sub(work);
         if self.worked[k].1 == 0 {
             self.worked.remove(k);
@@ -360,7 +365,7 @@ impl Clearing {
                 x,
                 y,
                 owner: regs.owner[r],
-                pays: style.pays(growth),
+                pays: style.pays_on(growth),
                 burnt: style.burns,
             });
             job.next();

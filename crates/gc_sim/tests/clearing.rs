@@ -225,7 +225,7 @@ fn felled_woods_pay_timber() {
     until(&mut w, 4000, |w| all_open(w, [20, 20, 2, 1]));
     assert_eq!(
         grub(&w),
-        START_GRUB + 2 * ClearStyle::STANDARD.pays(Growth::Woods)
+        START_GRUB + 2 * ClearStyle::STANDARD.pays_on(Growth::Woods)
     );
     assert_eq!(w.terrain().cover(FxVec2::from_ints(20, 20)), Cover::Open);
     // The rest of the wood still stands.
@@ -278,7 +278,7 @@ fn a_building_on_woods_waits_for_its_ground_to_be_cleared() {
     // The timber, and the worker went on to build it.
     assert_eq!(
         grub(&w),
-        START_GRUB - 60 + 4 * ClearStyle::STANDARD.pays(Growth::Woods)
+        START_GRUB - 60 + 4 * ClearStyle::STANDARD.pays_on(Growth::Woods)
     );
     assert!(w.pledged().next().is_none());
     until(&mut w, 2000, |w| {
@@ -428,7 +428,7 @@ const THICKET: [i32; 4] = [44, 30, 2, 1];
 fn clearing_styles_change_the_pace_and_the_pay() {
     use gc_sim::Growth::{Thicket, Woods};
     let (standard, pay, burnt) = clear_in(ClearStyle::STANDARD, WOODS);
-    assert_eq!(pay, 4 * ClearStyle::STANDARD.pays(Woods));
+    assert_eq!(pay, 4 * ClearStyle::STANDARD.pays_on(Woods));
     assert!(!burnt);
     // More timber from each tree (like the Ember Clans').
     let more = ClearStyle {
@@ -436,7 +436,7 @@ fn clearing_styles_change_the_pace_and_the_pay() {
         ..ClearStyle::STANDARD
     };
     let (ticks, pay, _) = clear_in(more, WOODS);
-    assert_eq!(pay, 4 * more.pays(Woods));
+    assert_eq!(pay, 4 * more.pays_on(Woods));
     assert_eq!(ticks, standard);
     // Burning: twice as fast, for nothing (like the Concord's).
     let burning = ClearStyle {
