@@ -285,6 +285,15 @@ impl Grid {
         10 * dx.max(dy) + 4 * dx.min(dy)
     }
 
+    /// Whether cell (x, y) is on the map, at least `need` from blocked
+    /// ground and costing no more than `max_cost`.
+    fn fits(&self, x: i32, y: i32, need: u8, max_cost: u8) -> bool {
+        self.inside(x, y) && {
+            let i = self.idx(x, y) as usize;
+            self.clear[i] >= need && self.cost[i] <= max_cost
+        }
+    }
+
     /// Whether the straight line between two cell centres stays on open
     /// cells. A line through a cell corner needs both cells beside the corner
     /// open. Adds the cells checked to `work`.
@@ -295,12 +304,7 @@ impl Grid {
     /// [`Grid::line_open`], on cells at least `need` from blocked ground
     /// and costing no more than `max_cost`.
     fn line_within(&self, a: u32, b: u32, need: u8, max_cost: u8, work: &mut u32) -> bool {
-        let open = |x: i32, y: i32| {
-            self.inside(x, y) && {
-                let i = self.idx(x, y) as usize;
-                self.clear[i] >= need && self.cost[i] <= max_cost
-            }
-        };
+        let open = |x: i32, y: i32| self.fits(x, y, need, max_cost);
         let (mut x, mut y) = self.xy(a);
         let (x1, y1) = self.xy(b);
         let (nx, ny) = ((x1 - x).abs(), (y1 - y).abs());
@@ -343,12 +347,7 @@ impl Grid {
     /// corner of a cell a regiment starting off-centre clips). Adds the
     /// cells checked to `work`.
     fn segment_within(&self, p: FxVec2, q: FxVec2, need: u8, max_cost: u8, work: &mut u32) -> bool {
-        let ok = |x: i32, y: i32| {
-            self.inside(x, y) && {
-                let i = self.idx(x, y) as usize;
-                self.clear[i] >= need && self.cost[i] <= max_cost
-            }
-        };
+        let ok = |x: i32, y: i32| self.fits(x, y, need, max_cost);
         // In cells, 16 bits of fraction.
         const ONE: i64 = 1 << 16;
         let cells = |v: Fx| i64::from(v.raw()) * i64::from(CELLS_PER_TILE);
@@ -378,10 +377,8 @@ impl Grid {
         }
         while x != ex || y != ey {
             *work += 1;
-            let (tx, ty) = (
-                i128::from(bx) * i128::from(ady),
-                i128::from(by) * i128::from(adx),
-            );
+            // Each factor is under 2^31 on any side under 2^15 cells.
+            let (tx, ty) = (bx * ady, by * adx);
             let step_x = sx != 0 && x != ex && (sy == 0 || y == ey || tx <= ty);
             let step_y = sy != 0 && y != ey && (sx == 0 || x == ex || ty <= tx);
             if step_x && step_y {
@@ -483,7 +480,7 @@ struct Search {
     g: Vec<u32>,
     parent: Vec<u32>,
     seen: Vec<u32>,
-    /// Cells [`Search::settle`] is done once it has settled (marked with
+    /// Cells [`Search::reach`] is done once it has settled (marked with
     /// its stamp), and the weights it reads.
     want: Vec<u32>,
     weights: Vec<u32>,
@@ -634,7 +631,7 @@ impl Search {
     }
 
     /// Note sector `sec`'s weights for `berth` (see [`Grid::weight`]), 0
-    /// on cells that aren't open, for [`Search::settle`]: one sector's
+    /// on cells that aren't open, for [`Search::reach`]: one sector's
     /// worth of searches reads them instead of working each out again.
     fn weigh(&mut self, grid: &Grid, sec: u32, berth: u8) {
         let (x0, y0, x1, y1) = grid.sector_bounds(sec);
@@ -656,7 +653,7 @@ impl Search {
     /// `wanted` (all in the sector): their costs from `from` are known
     /// then (other cells' may not be), or every reachable cell's if some
     /// of `wanted` can't be reached.
-    fn settle(&mut self, grid: &Grid, sec: u32, from: u32, wanted: &[u32]) {
+    fn reach(&mut self, grid: &Grid, sec: u32, from: u32, wanted: &[u32]) {
         self.next_stamp();
         let (x0, y0, x1, y1) = grid.sector_bounds(sec);
         let (w, h) = (x1 - x0, y1 - y0);
@@ -1267,15 +1264,12 @@ impl Nav {
         }
         match self.route[i] {
             Route::Direct => Some((target, true)),
-            Route::Waypoints => {
+            // A rerouting regiment walks on until its search is served; its
+            // route is partial, so never at its end.
+            Route::Waypoints | Route::Rerouting => {
                 let n = self.way_next[i] as usize;
                 let last = n + 1 == self.way_len[i] as usize && !self.partial[i];
                 Some((self.way[i * MAX_WAYPOINTS + n], last))
-            }
-            // Still walking until its search is served.
-            Route::Rerouting => {
-                let n = self.way_next[i];
-                (n < self.way_len[i]).then(|| (self.way[i * MAX_WAYPOINTS + usize::from(n)], false))
             }
             Route::Idle | Route::Waiting | Route::Failed => None,
         }
@@ -1286,7 +1280,7 @@ impl Nav {
     /// the regiment walks its last stretch, so it doesn't stop for it.
     pub(crate) fn reached(&mut self, i: usize) {
         self.way_next[i] += 1;
-        let left = self.way_len[i] - self.way_next[i].min(self.way_len[i]);
+        let left = self.way_len[i] - self.way_next[i];
         match (self.route[i], left) {
             (Route::Waypoints, 1) if self.partial[i] => self.reroute_now(i),
             (Route::Waypoints | Route::Rerouting, 0) if self.partial[i] => {
@@ -1305,9 +1299,8 @@ impl Nav {
 
     /// Queue a search for regiment slot `i` while it keeps walking the way
     /// it has ([`Route::Rerouting`]): a straight walk becomes a waypoint at
-    /// its old goal. Returns false, changing nothing, when it has no way
-    /// to walk.
-    pub(crate) fn reroute(&mut self, i: usize) -> bool {
+    /// its old goal. Changes nothing when it has no way to walk.
+    pub(crate) fn reroute(&mut self, i: usize) {
         match self.route[i] {
             Route::Direct => {
                 self.way[i * MAX_WAYPOINTS] = self.goal[i];
@@ -1315,10 +1308,9 @@ impl Nav {
                 self.way_next[i] = 0;
             }
             Route::Waypoints | Route::Rerouting if !self.ahead(i).is_empty() => {}
-            _ => return false,
+            _ => return,
         }
         self.reroute_now(i);
-        true
     }
 
     fn reroute_now(&mut self, i: usize) {
@@ -1577,9 +1569,9 @@ fn spread_through_portals(
         let cross = i64::from(p.1.raw()) + run * to_edge / across;
         let target = ((cross * i64::from(CELLS_PER_TILE)) >> 16) as i32;
         let shift = (target - here.1).clamp(-PORTAL_SPAN, PORTAL_SPAN);
-        let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(out[i + 1]));
-        let need = grid.need3(from_cell, c, to_cell, berth);
         let next = out[i + 1];
+        let (from_cell, to_cell) = (grid.cell_at(prev), grid.cell_at(next));
+        let need = grid.need3(from_cell, c, to_cell, berth);
         // Across plain ground only, unless the portal itself is in a ford
         // or on a slope: then across ground no worse than it, so blocks
         // wade a ford side by side instead of in one file.
@@ -1799,47 +1791,44 @@ impl Grid {
                 } else {
                     (x0..x1, y1 - 1, y1)
                 };
-                if outer >= self.side {
-                    pair_first.push(pairs.len() as u32);
-                    continue;
-                }
-                // Whether the cells either side of the edge are clear of the box.
-                let clear_of = |[bx0, by0, bx1, by1]: [i32; 4]| {
-                    if east {
-                        outer < bx0 || inner >= bx1 || y1 <= by0 || y0 >= by1
-                    } else {
-                        outer < by0 || inner >= by1 || x1 <= bx0 || x0 >= bx1
-                    }
-                };
-                if let Some((old, _)) = old.filter(|&(_, b)| clear_of(b)) {
-                    let e = pair_first.len() - 1;
-                    for k in old.pair_first[e]..old.pair_first[e + 1] {
-                        let k = 2 * k as usize;
-                        pairs.push((old.node_cell[k], old.node_cell[k + 1]));
-                    }
-                    pair_first.push(pairs.len() as u32);
-                    continue;
-                }
-                let cells = |t: i32| {
-                    if east {
-                        (self.idx(inner, t), self.idx(outer, t))
-                    } else {
-                        (self.idx(t, inner), self.idx(t, outer))
-                    }
-                };
-                let mut run = None;
-                for t in span.start..=span.end {
-                    let both = t < span.end && {
-                        let (a, b) = cells(t);
-                        self.open_cell(a) && self.open_cell(b)
-                    };
-                    match (both, run) {
-                        (true, None) => run = Some(t),
-                        (false, Some(a)) => {
-                            add_run(&mut pairs, a, t, &cells);
-                            run = None;
+                let e = pair_first.len() - 1;
+                if outer < self.side {
+                    // Whether the cells either side of the edge are clear of the box.
+                    let clear_of = |[bx0, by0, bx1, by1]: [i32; 4]| {
+                        if east {
+                            outer < bx0 || inner >= bx1 || y1 <= by0 || y0 >= by1
+                        } else {
+                            outer < by0 || inner >= by1 || x1 <= bx0 || x0 >= bx1
                         }
-                        _ => {}
+                    };
+                    if let Some((old, _)) = old.filter(|&(_, b)| clear_of(b)) {
+                        for k in old.pair_first[e]..old.pair_first[e + 1] {
+                            let k = 2 * k as usize;
+                            pairs.push((old.node_cell[k], old.node_cell[k + 1]));
+                        }
+                    } else {
+                        let cells = |t: i32| {
+                            if east {
+                                (self.idx(inner, t), self.idx(outer, t))
+                            } else {
+                                (self.idx(t, inner), self.idx(t, outer))
+                            }
+                        };
+                        let mut run = None;
+                        for t in span.start..=span.end {
+                            let both = t < span.end && {
+                                let (a, b) = cells(t);
+                                self.open_cell(a) && self.open_cell(b)
+                            };
+                            match (both, run) {
+                                (true, None) => run = Some(t),
+                                (false, Some(a)) => {
+                                    add_run(&mut pairs, a, t, &cells);
+                                    run = None;
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 pair_first.push(pairs.len() as u32);
@@ -1939,7 +1928,9 @@ impl Grid {
         let n = nodes.len();
         let mut costs = vec![NONE; n * n];
         let mut wanted = Vec::with_capacity(n);
-        let mut weighed = false;
+        if n > 1 {
+            search.weigh(self, sec as u32, GRAPH_BERTH);
+        }
         for (a, &u) in nodes.iter().enumerate() {
             let cell = self.node_cell[u as usize];
             let area = self.area[cell as usize];
@@ -1953,13 +1944,13 @@ impl Grid {
             if wanted.is_empty() {
                 continue;
             }
-            if !weighed {
-                search.weigh(self, sec as u32, GRAPH_BERTH);
-                weighed = true;
-            }
-            search.settle(self, sec as u32, cell, &wanted);
+            search.reach(self, sec as u32, cell, &wanted);
             for (b, &v) in nodes.iter().enumerate().skip(a + 1) {
-                if let Some(c) = search.cost_to(self, sec as u32, self.node_cell[v as usize]) {
+                let to = self.node_cell[v as usize];
+                if self.area[to as usize] != area {
+                    continue;
+                }
+                if let Some(c) = search.cost_to(self, sec as u32, to) {
                     costs[a * n + b] = c;
                     costs[b * n + a] = c;
                 }
