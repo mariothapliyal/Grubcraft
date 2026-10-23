@@ -830,10 +830,8 @@ impl Regiments {
                 self.models[i] -= 1;
             }
         }
-        self.files[i] = self.files[i].min(self.models[i]).max(1);
-        self.bled[i] = self.bled[i].saturating_add(bled);
         let lost = before - self.models[i];
-        self.losses[i] = self.losses[i].saturating_add(lost);
+        self.bleed(i, bled, lost);
         lost
     }
 
@@ -860,9 +858,15 @@ impl Regiments {
             self.models[i] -= 1;
             lost += 1;
         }
+        self.bleed(i, bled, lost);
+        lost
+    }
+
+    /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
+    fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
-        lost
+        self.losses[i] = self.losses[i].saturating_add(lost);
     }
 
     fn view(&self, i: usize) -> RegimentView {

@@ -1732,18 +1732,34 @@ fn deal(
     side: Side,
     rng: &mut Pcg32,
 ) -> u16 {
+    struck_on(regs, j, side);
+    let whole = carry(regs, j, roll(expected, rng));
+    let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
+    let lost = regs.take_damage(j, whole.min(u64::from(u32::MAX)) as u32);
+    step_up(regs, units, j, ranks_before);
+    lost
+}
+
+/// Marks regiment `j` as struck on `side`, for its next morale check.
+fn struck_on(regs: &mut Regiments, j: usize, side: Side) {
     regs.shock[j] |= match side {
         Side::Front => 0,
         Side::Flank => SHOCK_FLANK,
         Side::Rear => SHOCK_REAR,
     };
-    let rolled = expected * (192 + u64::from(rng.below(129))) / 256;
+}
+
+/// `expected` damage rolled ±25% on the combat random stream.
+fn roll(expected: u64, rng: &mut Pcg32) -> u64 {
+    expected * (192 + u64::from(rng.below(129))) / 256
+}
+
+/// Adds `rolled` (1/256 hit points) to regiment `j`'s carried fraction and
+/// returns the whole hit points it makes, keeping the rest.
+fn carry(regs: &mut Regiments, j: usize, rolled: u64) -> u64 {
     let total = rolled + u64::from(regs.damage_carry[j]);
     regs.damage_carry[j] = (total % 256) as u16;
-    let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    let lost = regs.take_damage(j, (total / 256).min(u64::from(u32::MAX)) as u32);
-    step_up(regs, units, j, ranks_before);
-    lost
+    total / 256
 }
 
 /// One regiment's melee turn against its foe, as [`duel`] plays it.
@@ -1826,22 +1842,42 @@ fn last_file_nearer(regs: &Regiments, units: &[UnitStats], i: usize, point: FxVe
     (last - point).length_sq_raw() < (first - point).length_sq_raw()
 }
 
-/// The soldier of regiment `j` along `edge` across from the point `p`: the
-/// one nearest where `p` falls on the line through the edge's ends.
-fn across_from(regs: &Regiments, units: &[UnitStats], j: usize, edge: &Edge, p: FxVec2) -> u16 {
-    let n = edge.len();
-    if n <= 1 {
-        return edge.slot(0);
+/// The soldiers along one side of a regiment's block, laid out on the
+/// ground, for finding who stands across from a point.
+struct Line {
+    edge: Edge,
+    /// The first soldier's spot, and the way to the last one's.
+    a: FxVec2,
+    along: FxVec2,
+}
+
+impl Line {
+    fn of(regs: &Regiments, units: &[UnitStats], j: usize, side: Side, last_file: bool) -> Line {
+        let edge = Edge::of(regs, j, side, last_file);
+        let a = slot_pos(regs, units, j, edge.slot(0));
+        let b = slot_pos(regs, units, j, edge.slot(edge.len().max(1) - 1));
+        Line {
+            edge,
+            a,
+            along: b - a,
+        }
     }
-    let a = slot_pos(regs, units, j, edge.slot(0));
-    let b = slot_pos(regs, units, j, edge.slot(n - 1));
-    let (along, from_a) = (b - a, p - a);
-    let dot = i64::from(from_a.x.raw()) * i64::from(along.x.raw())
-        + i64::from(from_a.y.raw()) * i64::from(along.y.raw());
-    let num = dot * i64::from(n - 1);
-    let den = (along.length_sq_raw() as i64).max(1);
-    let at = ((2 * num + den) / (2 * den)).clamp(0, i64::from(n - 1));
-    edge.slot(at as u16)
+
+    /// The soldier across from the point `p`: the one nearest where `p`
+    /// falls on the line through the side's ends.
+    fn across_from(&self, p: FxVec2) -> u16 {
+        let n = self.edge.len();
+        if n <= 1 {
+            return self.edge.slot(0);
+        }
+        let (along, from_a) = (self.along, p - self.a);
+        let dot = i64::from(from_a.x.raw()) * i64::from(along.x.raw())
+            + i64::from(from_a.y.raw()) * i64::from(along.y.raw());
+        let num = dot * i64::from(n - 1);
+        let den = (along.length_sq_raw() as i64).max(1);
+        let at = ((2 * num + den) / (2 * den)).clamp(0, i64::from(n - 1));
+        self.edge.slot(at as u16)
+    }
 }
 
 /// Regiment `fight.i`'s turn in melee: each of its soldiers who can reach
@@ -1852,15 +1888,15 @@ fn across_from(regs: &Regiments, units: &[UnitStats], j: usize, edge: &Edge, p: 
 /// as half the front, to the rear. A blow lands with the chance to hit, and
 /// then takes its damage, rolled ±25%, off its man; he dies when his hit
 /// points run out, and the soldier in the last slot steps up into his
-/// place and takes the rest of the blow. Blows are told to `blows`, while it has room. Returns soldiers
-/// lost.
+/// place and takes the rest of the blow. Blows are told to `blows`, while
+/// it has room.
 fn duel(
     regs: &mut Regiments,
     units: &[UnitStats],
     fight: Fight,
     rng: &mut Pcg32,
     mut blows: Option<&mut Vec<Blow>>,
-) -> u16 {
+) {
     let Fight {
         i,
         j,
@@ -1870,11 +1906,7 @@ fn duel(
         landed,
         reach,
     } = fight;
-    regs.shock[j] |= match side {
-        Side::Front => 0,
-        Side::Flank => SHOCK_FLANK,
-        Side::Rear => SHOCK_REAR,
-    };
+    struck_on(regs, j, side);
     let models = regs.models[i];
     let mine = Edge::of(
         regs,
@@ -1884,7 +1916,8 @@ fn duel(
     );
     let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
-    let before = regs.models[j];
+    // The foe's side facing us, laid out again only when a man falls.
+    let mut line = Line::of(regs, units, j, side, theirs_last_file);
     let striker = RegimentHandle {
         index: i as u32,
         generation: regs.generation[i],
@@ -1910,18 +1943,19 @@ fn duel(
             _ if n >= second => (n, crate::SECOND_RANK_PERCENT),
             _ => (mine.slot(n), 100),
         };
-        let edge = Edge::of(regs, j, side, theirs_last_file);
-        let t = across_from(regs, units, j, &edge, slot_pos(regs, units, i, k));
+        let t = line.across_from(slot_pos(regs, units, i, k));
         let outcome = if rng.below(100) >= hit {
             Outcome::Parried
         } else {
-            let rolled = landed * share / 100 * (192 + u64::from(rng.below(129))) / 256;
-            let total = rolled + u64::from(regs.damage_carry[j]);
-            regs.damage_carry[j] = (total % 256) as u16;
-            let damage = (total / 256).min(u64::from(u16::MAX)) as u16;
-            match regs.wound(j, t, damage) {
+            let damage = carry(regs, j, roll(landed * share / 100, rng));
+            match regs.wound(j, t, damage.min(u64::from(u16::MAX)) as u16) {
                 0 => Outcome::Wounded,
-                men => Outcome::Killed { men: men as u8 },
+                men => {
+                    if regs.models[j] > 0 {
+                        line = Line::of(regs, units, j, side, theirs_last_file);
+                    }
+                    Outcome::Killed { men: men as u8 }
+                }
             }
         };
         if let Some(list) = blows.as_deref_mut()
@@ -1936,10 +1970,7 @@ fn duel(
             });
         }
     }
-    let lost = before - regs.models[j];
-    regs.losses[j] = regs.losses[j].saturating_add(lost);
     step_up(regs, units, j, ranks_before);
-    lost
 }
 
 /// A regiment in melee that has lost whole ranks (it had `ranks_before`)

@@ -1245,8 +1245,9 @@ impl Puppets {
     /// blow. For other losses the men who fall are the ones fighting: a
     /// front-rank soldier (any soldier, for a block under arrows), in melee
     /// one locked in a duel if any are, whose man swings the killing blow;
-    /// a man struck down stands until the blow lands. A champion who has lost his duel falls to the
-    /// other's last blow; one still fighting is never taken from the ranks.
+    /// a man struck down stands until the blow lands. A champion who has
+    /// lost his duel falls to the other's last blow; one still fighting is
+    /// never taken from the ranks.
     fn fall(&mut self, block: &Block, owner: u8, models: usize) {
         let r = block.handle.index as usize;
         let base = r * SLOTS;
