@@ -125,8 +125,9 @@ const GROUND_STEP: f32 = 0.25;
 /// A regiment not updated for this long, in seconds, is gone.
 const STALE: f32 = 0.5;
 /// How long a blow the simulation told waits for the striker's next swing
-/// to land, in seconds: a little over a round, so each swing on screen plays
-/// the blow struck in the sim since the last one.
+/// to land on the man it struck, in seconds: a little over a round. The sim
+/// strikes a little more often than men swing on screen, so a swing plays
+/// the latest blow, or a wound if one of two drew blood.
 const TOLD_KEEP: f32 = 1.5;
 /// No partner.
 const NONE: u32 = u32::MAX;
@@ -510,9 +511,9 @@ pub struct Puppets {
     /// to fell, in the order they fell: the regiment, his slot then, and
     /// the puppet who struck him (or `NONE`).
     slain: Vec<(RegimentHandle, u8, u32)>,
-    /// Per puppet, the simulation's last blow by him that didn't kill and
-    /// when it was told: whether it wounded his man.
-    told: Vec<Option<(bool, f32)>>,
+    /// Per puppet, the simulation's last blow by him that didn't kill: the
+    /// puppet it fell on, whether it wounded him, and when it was told.
+    told: Vec<Option<(u32, bool, f32)>>,
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
@@ -601,6 +602,10 @@ impl Puppets {
         };
         match b.outcome {
             Outcome::Killed { men } if self.owner[r] == Some(b.target) => {
+                if striker != NONE {
+                    // His killing blow is played; what he struck before is done.
+                    self.told[striker as usize] = None;
+                }
                 if self.slain.len() + usize::from(men) > self.slain.capacity() {
                     // Kills for regiments since gone that never fell here.
                     let owner = &self.owner;
@@ -618,7 +623,13 @@ impl Puppets {
             }
             _ if striker != NONE && self.owner[r] == Some(b.target) => {
                 self.partner[striker as usize] = (r * SLOTS + b.target_slot as usize) as u32;
-                self.told[striker as usize] = Some((b.outcome == Outcome::Wounded, self.time));
+                let target = (r * SLOTS + b.target_slot as usize) as u32;
+                let told = &mut self.told[striker as usize];
+                // Two blows before his next swing: it shows the wound, if
+                // either drew blood on that man.
+                let bled =
+                    told.is_some_and(|(t, w, at)| w && t == target && self.time - at <= TOLD_KEEP);
+                *told = Some((target, b.outcome == Outcome::Wounded || bled, self.time));
             }
             _ => {}
         }
@@ -932,11 +943,13 @@ impl Puppets {
         let act = match self.told[i].take() {
             // The simulation's blow: a wound gets through (a heavier man's
             // crushing through to knock him down), anything else is turned.
-            Some((wounded, at)) if self.time - at <= TOLD_KEEP => match () {
-                _ if !wounded => guard,
-                _ if crushes() => Act::Down,
-                _ => Act::Stagger,
-            },
+            Some((t, wounded, at)) if t == self.partner[i] && self.time - at <= TOLD_KEEP => {
+                match () {
+                    _ if !wounded => guard,
+                    _ if crushes() => Act::Down,
+                    _ => Act::Stagger,
+                }
+            }
             _ if roll(i, j, blow, 1) < me.lands(defence) => Act::Stagger,
             _ if crushes() => Act::Down,
             _ => guard,
@@ -1362,7 +1375,10 @@ impl Puppets {
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
             self.looks[victim] = self.looks[last];
-            self.told[victim] = self.told[last].take();
+            // Whoever steps into the gap finds a new man, so the blows he
+            // struck from the last slot are done with.
+            self.told[victim] = None;
+            self.told[last] = None;
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -1876,7 +1892,7 @@ mod tests {
     }
 
     /// The same, with the simulation telling a blow by each of `a`'s front
-    /// rank on the man across from him, once a second, that came out as
+    /// rank on his man, four times a second, that came out as
     /// `told`.
     fn blows_told(
         a: Fighter,
@@ -1890,15 +1906,23 @@ mod tests {
         y.facing = facing;
         let mut seen = [(Act::None, 0.0); 4];
         let mut count = [0; 6];
-        let every = (1.0 / FRAME) as usize;
+        let every = (0.25 / FRAME) as usize;
         for f in 0..(seconds / FRAME) as usize {
-            if let Some(outcome) = told.filter(|_| f % every == 0) {
+            // From the second frame on, when the puppets know the blocks.
+            if let Some(outcome) = told.filter(|_| f % every == 1) {
+                // On the man he is fighting, as the simulation's man across
+                // from him would be.
                 for k in 0..4 {
+                    let man = p.partner[k as usize];
                     p.struck(&Blow {
                         striker: x.handle,
                         striker_slot: k,
                         target: y.handle,
-                        target_slot: k,
+                        target_slot: if man == NONE {
+                            k
+                        } else {
+                            (man as usize % SLOTS) as u8
+                        },
                         outcome,
                     });
                 }
@@ -2078,7 +2102,24 @@ mod tests {
             Some(Outcome::Wounded),
         );
         let total: u32 = c.iter().sum();
+        assert!(total > 100, "{c:?}");
         assert!(c[Act::Stagger as usize] * 100 > total * 80, "{c:?}");
+        // A heavy blade the simulation says was parried never crushes
+        // through; one it says wounded often does.
+        let heavy = Fighter {
+            mass: Mass::Heavy,
+            heavy_blade: true,
+            ..fighter(0, 20)
+        };
+        let light = Fighter {
+            mass: Mass::Light,
+            ..fighter(0, 60)
+        };
+        let c = blows_told(heavy, light, Vec2::Y, 60.0, Some(Outcome::Parried));
+        assert!(c.iter().sum::<u32>() > 100, "{c:?}");
+        assert_eq!(c[Act::Down as usize], 0, "{c:?}");
+        let c = blows_told(heavy, light, Vec2::Y, 60.0, Some(Outcome::Wounded));
+        assert!(c[Act::Down as usize] > 0, "{c:?}");
     }
 
     #[test]
