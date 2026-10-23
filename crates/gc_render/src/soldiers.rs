@@ -87,6 +87,9 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
     },
 ];
 
+/// The coarsest level of detail whose soldiers get a contact shadow.
+const CONTACT_MAX_LOD: usize = 1;
+
 /// What the contact shadow reads of an instance: where it stands, how high
 /// it is lifted and how big it is.
 const CONTACT_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
@@ -227,6 +230,7 @@ fn level_vertices(m: &Models<'_>) -> Levels {
 struct Draw {
     first: u32,
     end: u32,
+    lod: usize,
     mesh: [u32; 2],
     shadow_mesh: [u32; 2],
     textured: bool,
@@ -455,6 +459,7 @@ pub(crate) struct SoldiersGpu {
 pub(crate) fn make(
     device: &wgpu::Device,
     world_layout: &wgpu::BindGroupLayout,
+    world_pipeline_layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     hdr: crate::Hdr,
 ) -> SoldiersGpu {
@@ -622,14 +627,9 @@ pub(crate) fn make(
     );
     // Under each soldier a quad on the ground, darkening what is below it.
     // It needs only the instance's place, lift and size.
-    let contact_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("soldier contact shadows"),
-        bind_group_layouts: &[Some(world_layout)],
-        immediate_size: 0,
-    });
     let contact_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("soldier contact shadows"),
-        layout: Some(&contact_layout),
+        layout: Some(world_pipeline_layout),
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_contact"),
@@ -666,14 +666,7 @@ pub(crate) fn make(
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: hdr.format,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent::OVER,
-                }),
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -815,6 +808,7 @@ impl SoldiersGpu {
             self.draws.push(Draw {
                 first: r.first,
                 end: r.first + r.n as u32,
+                lod: r.lod,
                 mesh: level.mesh,
                 shadow_mesh: level.shadow_mesh,
                 textured: r.textured,
@@ -894,30 +888,31 @@ impl SoldiersGpu {
         }
         (calls, drawn, tris)
     }
-}
 
-impl SoldiersGpu {
-    /// Soft dark patches on the ground under every soldier drawn, after the
-    /// soldiers (so they are hidden behind them); the number of draw calls.
+    /// Soft dark patches on the ground under the soldiers drawn at the finest
+    /// levels of detail (farther off they are a pixel), after the soldiers so
+    /// they hide them; the number of draw calls.
     pub fn draw_contacts(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        if self.draws.is_empty() {
-            return 0;
-        }
         pass.set_pipeline(&self.contact_pipeline);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         let mut calls = 0;
         // Adjacent runs (the draws come in instance order) go in one call.
-        let mut run = self.draws[0].first..self.draws[0].first;
-        for d in &self.draws {
+        let mut run = 0..0;
+        for d in self.draws.iter().filter(|d| d.lod <= CONTACT_MAX_LOD) {
             if d.first != run.end {
-                pass.draw(0..4, run.clone());
-                calls += 1;
+                if !run.is_empty() {
+                    pass.draw(0..4, run.clone());
+                    calls += 1;
+                }
                 run.start = d.first;
             }
             run.end = d.end;
         }
-        pass.draw(0..4, run);
-        calls + 1
+        if !run.is_empty() {
+            pass.draw(0..4, run);
+            calls += 1;
+        }
+        calls
     }
 }
 

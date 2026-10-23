@@ -733,10 +733,6 @@ impl Renderer {
                     .contains(wgpu::TextureUsages::RENDER_ATTACHMENT);
             if ok { 4 } else { 1 }
         };
-        let options = RendererOptions {
-            msaa: samples,
-            ..options
-        };
         let hdr_target = Hdr {
             format: hdr_format,
             samples,
@@ -811,7 +807,7 @@ impl Renderer {
             cache: None,
         });
 
-        let soldiers = soldiers::make(&device, &bind_group_layout, &shader, hdr_target);
+        let soldiers = soldiers::make(&device, &bind_group_layout, &layout, &shader, hdr_target);
         let scenery = scenery::make(&device, &layout, hdr_target);
         let particles = particles::make(&device, &queue, &bind_group_layout, hdr_target);
         let shadow_texture = |label, side| {
@@ -1711,21 +1707,19 @@ impl Renderer {
             draw_calls += draw_boxes(&mut pass, &self.block_shadow_pipeline);
         }
         if !bare {
+            // Multisampled, then averaged down into the HDR image, which is
+            // all that is kept; or straight into the HDR image.
+            let hdr = &self.post_targets.hdr;
+            let (view, resolve_target, store) = match &self.world_targets.color {
+                Some(multisampled) => (multisampled, Some(hdr), wgpu::StoreOp::Discard),
+                None => (hdr, None, wgpu::StoreOp::Store),
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    // Multisampled, then averaged down into the HDR image.
-                    view: self
-                        .world_targets
-                        .color
-                        .as_ref()
-                        .unwrap_or(&self.post_targets.hdr),
+                    view,
                     depth_slice: None,
-                    resolve_target: self
-                        .world_targets
-                        .color
-                        .as_ref()
-                        .map(|_| &self.post_targets.hdr),
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: f64::from(fog_color[0]),
@@ -1733,12 +1727,7 @@ impl Renderer {
                             b: f64::from(fog_color[2]),
                             a: 1.0,
                         }),
-                        // Only the resolved image is kept.
-                        store: if self.world_targets.color.is_some() {
-                            wgpu::StoreOp::Discard
-                        } else {
-                            wgpu::StoreOp::Store
-                        },
+                        store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {

@@ -4307,6 +4307,13 @@ impl Running {
         });
     }
 
+    /// Move the camera out to `default` tiles from the ground, or to where
+    /// `--distance` said.
+    fn start_zoom(&mut self, default: f32) {
+        self.camera
+            .set_distance(self.start_distance.unwrap_or(default));
+    }
+
     /// Raise and deploy every side's army for a lobby Field Battle, and put
     /// a mind in charge of each AI player. Armies are a fixed mix from the
     /// faction's roster until production arrives (docs/06-game-modes.md).
@@ -4336,8 +4343,7 @@ impl Running {
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera
-            .set_distance(self.start_distance.unwrap_or(120.0));
+        self.start_zoom(120.0);
         // A joiner who starts in the north looks south, towards the enemy.
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
@@ -4410,8 +4416,7 @@ impl Running {
             });
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera
-            .set_distance(self.start_distance.unwrap_or(80.0));
+        self.start_zoom(80.0);
     }
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
@@ -4445,8 +4450,7 @@ impl Running {
         };
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera
-            .set_distance(self.start_distance.unwrap_or(120.0));
+        self.start_zoom(120.0);
         self.watching = Some(Watching {
             title: replays::title(&replay.info()),
             replay,
