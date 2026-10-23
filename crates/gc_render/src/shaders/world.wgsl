@@ -583,7 +583,7 @@ fn vein_mask(p: vec2<f32>, width: f32) -> f32 {
 
 fn brood_land(xz: vec2<f32>, spread: f32, dist: f32) -> Land {
     var l = Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
-    l.cover = smoothstep(0.32, 0.58, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
+    l.cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
     if l.cover <= 0.0 {
         return l;
     }
@@ -728,9 +728,9 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     var land_rough = 1.0;
     var landed = false;
     let land = textureSampleLevel(land_map, soft_sampler, xz / f32(textureDimensions(land_map).x), 0.0);
-    // The noise moves the edge by at most a quarter, so less than 0.07 of
-    // cover is bare for certain.
-    if land.r > 0.07 && rock < 1.0 {
+    // The noise moves the edge by at most a quarter, so under 0.05 of cover
+    // is bare for certain.
+    if land.r > 0.05 && rock < 1.0 {
         let keep = 1.0 - rock;
         let l = brood_land(xz, land.r, land.b * 255.0 / 4.0);
         let k = l.cover * keep;

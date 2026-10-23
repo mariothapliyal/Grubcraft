@@ -4286,6 +4286,8 @@ impl Running {
         tagged_alloc::scope(Tag::Render, || {
             set_terrain(&mut self.renderer, hm);
         });
+        // The renderer's land is bare again.
+        self.land.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();

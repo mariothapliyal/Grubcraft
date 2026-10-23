@@ -27,13 +27,13 @@ second, fills a grid for the renderer, four bytes a tile:
 | B | distance to the nearest source in quarter tiles, up to 63.75 |
 | A | spare |
 
-Each source covers fully out to 55% of its reach from the building's edge and
+Each source covers fully out to 70% of its reach from the building's edge and
 thins to nothing at the reach. A building linked to another shown building
 adds a corridor of land (2.6 tiles each side) between the two, so the network
 is joined up even where the reaches do not meet. `Renderer::set_land` uploads
 the grid as an `Rgba8Unorm` texture (binding 16, a tile each, 2.4 MB on a
 768-tile map; one fetch a pixel, and the shader draws nothing where the cover
-is under 0.07). The green byte is reserved: until a second land exists the
+is under 0.05). The green byte is reserved: until a second land exists the
 shader draws every land as the Brood's.
 
 The cover creeps: it grows 0.3 of a full cover a second when a building links

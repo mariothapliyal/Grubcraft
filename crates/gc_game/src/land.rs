@@ -92,13 +92,19 @@ impl LandView {
         }
         self.last = Some(now);
         let sources = sources(world, side, reveal_all);
-        if (sources.is_empty() && !self.shown) || (self.settled && sources == self.drawn) {
+        let same = sources == self.drawn;
+        if (sources.is_empty() && !self.shown) || (self.settled && same) {
             return;
         }
-        // The first look at a map shows the land as it stands.
-        let dt = elapsed.map_or(f32::INFINITY, |e| e.as_secs_f32());
+        // Land that is not yet on screen is shown as it stands, not grown
+        // (a game just started or loaded, an enemy base just seen).
+        let dt = elapsed
+            .filter(|_| self.shown)
+            .map_or(f32::INFINITY, |e| e.as_secs_f32());
         let step = self.land.step(tiles as usize, &sources, dt);
-        if step.moved || !self.settled {
+        // The distances in the grid change with the sources even when no
+        // cover moves.
+        if step.moved || !same {
             renderer.set_land(step.any.then_some(self.land.grid.as_slice()));
         }
         self.settled = !step.moved;
@@ -162,32 +168,35 @@ impl Land {
             };
             step.moved |= *cover != before;
             let texel = &mut self.grid[i * 4..i * 4 + 4];
+            // Bare tiles keep their distance (far), so the edge of the land
+            // does not blend towards a source.
+            texel[2] = (self.dist[i] * 4.0).round().min(255.0) as u8;
             if *cover > 0.0 {
                 step.any = true;
                 texel[0] = (*cover * 255.0).round() as u8;
                 texel[1] = BROOD;
-                texel[2] = (self.dist[i] * 4.0).round().min(255.0) as u8;
             } else {
-                texel[..3].fill(0);
+                texel[..2].fill(0);
             }
         }
         step
     }
 
-    /// Ask for land round one source: full cover up to about half of its
+    /// Ask for land round one source: full cover up to about two thirds of its
     /// reach from the edge, thinning to none at the reach, and a corridor to
     /// the building it links through.
     fn reach_from(&mut self, s: &Source) {
         let pad = Vec2::splat(s.reach + 1.0);
         self.paint(s.centre - s.half - pad, s.centre + s.half + pad, |p| {
             let outside = ((p - s.centre).abs() - s.half).max(Vec2::ZERO).length();
-            (1.0 - smooth(0.55 * s.reach, s.reach, outside), outside)
+            (1.0 - smooth(0.7 * s.reach, s.reach, outside), outside)
         });
         if let Some(from) = s.linked {
             let pad = Vec2::splat(CORRIDOR);
             self.paint(s.centre.min(from) - pad, s.centre.max(from) + pad, |p| {
                 let gap = segment_gap(p, s.centre, from);
-                let dist = p.distance(s.centre).min(p.distance(from));
+                // Counted from the building's edge, as its own reach is.
+                let dist = (p.distance(s.centre) - s.half.max_element()).max(0.0);
                 (1.0 - smooth(CORRIDOR * 0.45, CORRIDOR, gap), dist)
             });
         }
@@ -277,7 +286,8 @@ mod tests {
             land.step(64, &[], 1.0);
         }
         assert!(!land.step(64, &[], 1.0).any);
-        assert_eq!(texel(&land, 32, 32), [0; 4]);
+        // Bare, and far from any source.
+        assert_eq!(texel(&land, 32, 32), [0, 0, 255, 0]);
     }
 
     #[test]
