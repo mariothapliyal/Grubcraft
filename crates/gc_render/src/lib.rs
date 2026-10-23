@@ -1387,6 +1387,17 @@ impl Renderer {
         soldiers: &[SoldierInstance],
         batches: &[SoldierBatch],
     ) -> FrameOutcome {
+        // The effects clock runs with the frame clock; a long stall (a
+        // dragged window, a breakpoint) does not age particles by more than
+        // a few frames. Particles are written even when the frame is skipped,
+        // so a backlog does not arrive all at once.
+        let dt = self
+            .last_frame_time
+            .map_or(0.0, |t| (frame.time_seconds - t).clamp(0.0, 0.25));
+        self.last_frame_time = Some(frame.time_seconds);
+        self.fx_time += dt * self.fx_speed;
+        self.particles.flush(&self.queue, self.fx_time);
+
         let Some(terrain) = &self.terrain else {
             return FrameOutcome::Skipped;
         };
@@ -1407,16 +1418,6 @@ impl Renderer {
             | wgpu::CurrentSurfaceTexture::Occluded
             | wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Skipped,
         };
-
-        // The effects clock runs with the frame clock; a long stall (a
-        // dragged window, a breakpoint) does not age particles by more than
-        // a few frames.
-        let dt = self
-            .last_frame_time
-            .map_or(0.0, |t| (frame.time_seconds - t).clamp(0.0, 0.25));
-        self.last_frame_time = Some(frame.time_seconds);
-        self.fx_time += dt * self.fx_speed;
-        self.particles.flush(&self.queue, self.fx_time);
 
         let look = self.look;
         let sun = look.sun_dir();

@@ -10,8 +10,9 @@
 // How much brighter than its colour an additive particle shines (HDR; the
 // bloom takes the rest).
 const FX_GAIN: f32 = 2.6;
-// Pictures across and down the atlas.
-const FX_CELLS = vec2<f32>(4.0, 2.0);
+// Pictures across and down the atlas (`FX_COLUMNS` and `FX_ROWS` are
+// prepended from `particles::CELLS`).
+const FX_CELLS = vec2<f32>(f32(FX_COLUMNS), f32(FX_ROWS));
 
 struct FxIn {
     @builtin(vertex_index) vi: u32,
@@ -165,8 +166,8 @@ fn vs_particle(p: FxIn) -> FxOut {
     let soft = select(0.0, radius * 0.8 + 0.05, (flags & FX_SOFT) != 0u);
     out.height = vec3<f32>(corner_world.y, ground, soft);
     out.cell = vec3<f32>(
-        f32(p.bits.x % 4u) / FX_CELLS.x,
-        f32(p.bits.x / 4u) / FX_CELLS.y,
+        f32(p.bits.x % FX_COLUMNS) / FX_CELLS.x,
+        f32(p.bits.x / FX_COLUMNS) / FX_CELLS.y,
         select(0.0, 1.0, (flags & FX_ADDITIVE) != 0u),
     );
     return out;

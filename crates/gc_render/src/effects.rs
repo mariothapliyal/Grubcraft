@@ -130,9 +130,10 @@ impl Effects {
     }
 
     /// True with probability `p`: for effects that happen at a rate (a
-    /// foot every so often) rather than in a number.
+    /// foot every so often) rather than in a number. It does not thin by
+    /// the density; the recipe it gates does.
     pub fn chance(&mut self, p: f32) -> bool {
-        self.rng.unit() < p * self.density
+        self.rng.unit() < p
     }
 
     /// A count of `n` thinned by the density.

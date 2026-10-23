@@ -3027,7 +3027,13 @@ impl Running {
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
                 let effects = &mut self.effects;
-                let dt = game_dt.as_secs_f32();
+                // Footsteps follow the effects clock: none behind the menu or
+                // while it stands still.
+                let dt = if self.menu_open && self.online.is_none() {
+                    0.0
+                } else {
+                    game_dt.as_secs_f32() * effects.time_scale()
+                };
                 // Builders at a building going up (or being mended) turn
                 // to it and swing their tools.
                 let site = (self.world.building_target(r.handle))
@@ -4665,6 +4671,9 @@ impl Running {
                         self.world.regiments.get(regiment),
                         self.world.regiments.get(foe),
                     ) && r.charge > 0
+                        // Two regiments charging each other both report it:
+                        // one burst.
+                        && !(f.charge > 0 && foe.index < regiment.index)
                     {
                         let p = from_fx_vec(r.position).lerp(from_fx_vec(f.position), 0.5);
                         let ground = self.heightmap.height_at(p.x, p.y);

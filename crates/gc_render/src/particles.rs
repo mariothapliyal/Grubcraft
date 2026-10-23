@@ -164,8 +164,7 @@ impl From<&Particle> for ParticleInstance {
     }
 }
 
-/// The longest a particle lives, in seconds: longer lives are cut to it, so
-/// the draw knows when a batch of slots is certainly dead.
+/// The longest a particle lives, in seconds: longer lives are cut to it.
 const MAX_LIFE: f32 = 8.0;
 
 /// The ring of slots, and which of them can still hold a live particle.
@@ -352,7 +351,8 @@ pub(crate) fn atlas() -> Vec<(u32, u32, Vec<u8>)> {
 pub(crate) fn shader_source() -> String {
     format!(
         "{}\nconst FX_STRETCH: u32 = {}u;\nconst FX_ADDITIVE: u32 = {}u;\nconst FX_GROUND: u32 = {}u;\n\
-         const FX_SOFT: u32 = {}u;\nconst FX_WIND: u32 = {}u;\nconst FX_FLICKER: u32 = {}u;\n{}",
+         const FX_SOFT: u32 = {}u;\nconst FX_WIND: u32 = {}u;\nconst FX_FLICKER: u32 = {}u;\n\
+         const FX_COLUMNS: u32 = {}u;\nconst FX_ROWS: u32 = {}u;\n{}",
         crate::rock::world_source(),
         flags::STRETCH,
         flags::ADDITIVE,
@@ -360,6 +360,8 @@ pub(crate) fn shader_source() -> String {
         flags::SOFT,
         flags::WIND,
         flags::FLICKER,
+        CELLS[0],
+        CELLS[1],
         include_str!("shaders/particles.wgsl")
     )
 }
@@ -574,11 +576,18 @@ impl ParticlesGpu {
         if self.pending.is_empty() {
             return;
         }
+        // The batch is certainly dead when its longest-lived particle is.
+        let dies = now
+            + self
+                .pending
+                .iter()
+                .map(|p| p.life + p.start)
+                .fold(0.0, f32::max);
         for p in &mut self.pending {
             p.start += now;
         }
         let mut done = 0;
-        for (first, count) in self.ring.push(self.pending.len(), now + MAX_LIFE) {
+        for (first, count) in self.ring.push(self.pending.len(), dies) {
             if count == 0 {
                 continue;
             }

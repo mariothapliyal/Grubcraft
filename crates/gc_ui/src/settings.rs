@@ -190,7 +190,6 @@ pub fn settings_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
