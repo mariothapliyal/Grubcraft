@@ -16,7 +16,7 @@ use gc_assets::scenery::{Family, LODS};
 use gc_assets::{Aligned, Pack};
 use gc_map::def::Land;
 use gc_map::{Kind as Site, Map};
-use gc_render::{Cull, MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance};
+use gc_render::{Cull, MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, detail};
 use glam::{Vec2, Vec3};
 
 /// The scenery models, baked by `tools/gc_scenebake` and embedded in the
@@ -148,6 +148,21 @@ impl Model {
     fn spec(self) -> &'static Spec {
         &Model::SPECS[self as usize]
     }
+
+    /// The surface detail the shader paints on this model (`gc_render::detail`).
+    fn detail(self) -> u32 {
+        use Model::*;
+        match self {
+            OakA | OakB | Birch | Willow => detail::BROADLEAF,
+            PineA | PineB | ThicketFir | CragPine | Snag => detail::CONIFER,
+            LeafyBush | Fern | Heather | ThornScrub | Glowcap | GrassClump | TallGrass | Reeds
+            | DryGrass | Wildflowers => detail::FOLIAGE,
+            Pebbles | Boulder | Crag | Slab => detail::STONE,
+            MossyBoulder => detail::MOSSY_STONE,
+            BoneSpire | BoneRibs | GrubSeep | MarrowVein | BannerWavering | BannerRouting
+            | BannerShattered => detail::NONE,
+        }
+    }
 }
 
 /// What the frame needs to know about one model of the pack.
@@ -156,6 +171,7 @@ struct Info {
     class: u8,
     shadow: bool,
     rock: bool,
+    detail: u32,
     height: f32,
     radius: f32,
 }
@@ -190,6 +206,7 @@ impl SceneryModels {
                 class: spec.map_or(2, |m| m.class),
                 shadow: spec.is_some_and(|m| m.shadow),
                 rock: spec.is_some_and(|m| m.family == Family::Rock),
+                detail: known.map_or(detail::NONE, |k| Model::ALL[k].detail()),
                 height,
                 radius,
             });
@@ -756,6 +773,7 @@ impl Scenery {
                 scale: n.scale,
                 // Wind phase from the turn, so neighbours sway apart.
                 tint: [r, g, b, n.turn],
+                kind: models.info[bin / LODS].detail,
             };
         }
         for n in &near[..taken] {
@@ -770,6 +788,7 @@ impl Scenery {
                     facing: facings[usize::from(p.angle)],
                     scale: f32::from(p.scale) / 100.0,
                     tint: p.tint,
+                    kind: models.info[bin / LODS].detail,
                 };
             });
         }

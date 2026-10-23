@@ -80,6 +80,10 @@ const HIGHLIGHT: f32 = 1.6;
 // share rock_sampler.
 @group(0) @binding(12) var ground_color: texture_2d_array<f32>;
 @group(0) @binding(13) var ground_normal: texture_2d_array<f32>;
+// The same for scenery (scenery.wgsl): Bark001 (layer 0), Bark014 (1) and
+// Moss002 (2).
+@group(0) @binding(14) var scenery_color: texture_2d_array<f32>;
+@group(0) @binding(15) var scenery_normal: texture_2d_array<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
