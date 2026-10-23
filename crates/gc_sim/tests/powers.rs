@@ -814,5 +814,8 @@ fn a_bell_tower_silences_powers_used_near_it() {
     while w.silenced(0, position(&w, near)) {
         w.tick(&[]);
     }
-    assert!(order(&mut w, 0, haste(near)), "works once the silence is over");
+    assert!(
+        order(&mut w, 0, haste(near)),
+        "works once the silence is over"
+    );
 }

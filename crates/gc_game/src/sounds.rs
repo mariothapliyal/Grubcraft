@@ -897,6 +897,16 @@ impl Sounds {
                         self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
                     }
                 }
+                // A Bell Tower tolls: no bell is recorded, so the low tone
+                // that marks a wavering regiment stands in, heard far off.
+                Event::Tolled { structure } => {
+                    let Some(st) = world.structures().and_then(|s| s.get(structure)) else {
+                        continue;
+                    };
+                    self.hushed = !heard;
+                    let at = crate::buildings::centre_of(st.tile, st.width, st.depth);
+                    self.play_at(SoundId::Waver, at, 1.0, 1.5, PRI_MORALE);
+                }
                 Event::Landed { volley, at, .. } => {
                     let shots = match self.flights.iter().position(|f| f.0 == volley) {
                         Some(k) => self.flights.swap_remove(k).1,

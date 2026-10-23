@@ -160,6 +160,17 @@ impl Force {
         self.hp <= 0.0
     }
 
+    /// The same force with a tower shooting `dps` hit points a second for
+    /// it, as far as `range` tiles (docs/26-fortifications.md). A tower
+    /// isn't worn down in the fight, so it shoots as hard as if it were
+    /// one more archer regiment that never loses a soldier; as one, it is
+    /// counted only while the force has soldiers standing.
+    pub fn with_tower(mut self, dps: f32, range: f32) -> Force {
+        self.ranged += dps;
+        self.range = self.range.max(range);
+        self
+    }
+
     /// The same force fighting down a slope at its foe (docs/05-combat.md,
     /// "Terrain"): its blows land harder and its archers reach further.
     pub fn downhill(mut self) -> Force {
@@ -404,7 +415,35 @@ fn hurt(s: &mut Fighting, f: &Force, damage: f32, drain: f32, t: f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::hit_chance;
+    use super::*;
+
+    /// Two even blocks of spearmen.
+    fn spears() -> Force {
+        Force {
+            hp: 240.0,
+            hp_full: 240.0,
+            morale: 60.0,
+            soldiers: 24.0,
+            melee_regiments: 1.0,
+            front_damage: 16.0,
+            front_damage_attack: 16.0 * 25.0,
+            defence: 40.0,
+            speed: 3.0,
+            ..Force::default()
+        }
+    }
+
+    #[test]
+    fn a_tower_behind_the_defenders_turns_an_even_fight() {
+        let approach = Approach {
+            gap: 15.0,
+            closing: 1.5,
+        };
+        let even = estimate(&spears(), &spears(), approach).margin;
+        let towered = estimate(&spears(), &spears().with_tower(4.25, 30.0), approach).margin;
+        assert!(even.abs() < 0.2, "{even}");
+        assert!(towered < even - 0.1, "{towered} against {even}");
+    }
 
     #[test]
     fn hit_chance_is_the_sims() {

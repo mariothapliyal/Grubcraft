@@ -682,7 +682,13 @@ impl Combat {
     /// may come within `range` of `p` (a superset: callers check the real
     /// distance and whether it is hostile). A regiment can be visited more
     /// than once.
-    pub(crate) fn near_enemies(&self, p: FxVec2, range: Fx, friend: PlayerId, mut f: impl FnMut(usize)) {
+    pub(crate) fn near_enemies(
+        &self,
+        p: FxVec2,
+        range: Fx,
+        friend: PlayerId,
+        mut f: impl FnMut(usize),
+    ) {
         let (x0, y0, x1, y1) = Self::cells(p, range);
         let skip = friend as usize % OWNER_SLOTS;
         for y in y0..=y1 {

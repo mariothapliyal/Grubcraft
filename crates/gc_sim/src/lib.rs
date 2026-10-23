@@ -50,8 +50,8 @@ pub use champions::Challenge;
 use conquest::Conquest;
 pub use conquest::{ConquestSetup, ConquestUnit};
 pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
-pub use fork::Standing;
 pub use events::Shooter;
+pub use fork::Standing;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 use powers::Cast;
@@ -1550,7 +1550,9 @@ impl World {
                 .as_mut()
                 .is_some_and(|c| c.set_rally(pc.player, structure, at)),
             Command::UsePower { power, target } => self.use_power(pc.player, power, target),
-            Command::FocusTower { structure, target } => self.focus_tower(pc.player, structure, target),
+            Command::FocusTower { structure, target } => {
+                self.focus_tower(pc.player, structure, target)
+            }
             Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
                 c.structures
                     .despawn(structure, &mut self.nav, &self.regiments)
@@ -1566,7 +1568,11 @@ impl World {
             return false;
         };
         // Near an enemy Bell Tower that has just tolled, powers are silenced.
-        let regiment_at = |h| self.regiments.resolve(h).map(|r| self.regiments.position[r]);
+        let regiment_at = |h| {
+            self.regiments
+                .resolve(h)
+                .map(|r| self.regiments.position[r])
+        };
         let at = match target {
             PowerTarget::Caster => None,
             PowerTarget::Structure(h) => c.structures.resolve(h).map(|i| c.structures.centre(i)),

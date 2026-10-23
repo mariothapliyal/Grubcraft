@@ -717,7 +717,7 @@ impl Marshal {
             .into_iter()
             .map(|(o, at)| {
                 let margin =
-                    spymaster::odds(s, army.iter().copied(), spymaster::defenders(s, o, at));
+                    spymaster::odds_at(s, army.iter().copied(), spymaster::defenders(s, o, at), at);
                 (o, at, margin)
             })
             .collect();

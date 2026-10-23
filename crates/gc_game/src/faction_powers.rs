@@ -210,6 +210,9 @@ pub fn pressed(aim: Aim, power: u8, selected: &[RegimentHandle]) -> Vec<Command>
 /// Said when a summons has no room round the Shrine clicked.
 const NO_ROOM: &str = "No room round that Shrine.";
 
+/// Why a power can't land where an enemy Bell Tower has tolled.
+const SILENCED: &str = "Silenced by a Bell Tower.";
+
 /// The order that plants a power on the ground at `at` (in tiles).
 pub fn planted(power: u8, at: gc_fixed::FxVec2) -> Command {
     Command::UsePower {
@@ -411,8 +414,37 @@ impl Running {
         if commands.is_empty() {
             return;
         }
+        let side = self.sandbox.side;
+        if commands
+            .iter()
+            .filter_map(|c| self.power_spot(c))
+            .any(|at| self.world.silenced(side, at))
+        {
+            self.say(SILENCED.into());
+            return;
+        }
         self.orders(commands);
         self.hud.armed = None;
+    }
+
+    /// Where a power order takes effect, if it names a place.
+    fn power_spot(&self, command: &Command) -> Option<gc_fixed::FxVec2> {
+        let Command::UsePower { target, .. } = command else {
+            return None;
+        };
+        let at_building = |h: StructureHandle| {
+            let s = self.world.structures()?.get(h)?;
+            Some(fx_vec(buildings::centre_of(s.tile, s.width, s.depth)))
+        };
+        match *target {
+            PowerTarget::Point(at) => Some(at),
+            // As the simulation judges it: a shift where the regiment stands.
+            PowerTarget::Regiment(h) | PowerTarget::Shift { regiment: h, .. } => {
+                self.world.regiments.position(h)
+            }
+            PowerTarget::Structure(h) => at_building(h),
+            PowerTarget::Caster => None,
+        }
     }
 
     /// What a click would haste: one of your regiments, else one of your

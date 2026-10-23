@@ -344,7 +344,7 @@ pub fn crew_spots(centre: Vec2, width: u8, depth: u8) -> [(Vec2, Vec2); UPGRADE_
 }
 
 /// How tall a building of this role is drawn, in tiles.
-fn height_of(role: Role) -> f32 {
+pub fn height_of(role: Role) -> f32 {
     match role {
         Role::Wall => WALL_HEIGHT,
         Role::Main => MAIN_HEIGHT,

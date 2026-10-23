@@ -173,7 +173,9 @@ impl Structures {
             let siege = kinds
                 .get(usize::from(regs.unit[j]))
                 .is_some_and(|k| matches!(k.breaker, Breaker::Siege | Breaker::Artillery));
-            let besieging = self.besieging(regs, j).is_some_and(|b| !stances.hostile(owner, b));
+            let besieging = self
+                .besieging(regs, j)
+                .is_some_and(|b| !stances.hostile(owner, b));
             let priority = if siege {
                 Priority::Siege
             } else if besieging {
