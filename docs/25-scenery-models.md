@@ -99,7 +99,7 @@ The game embeds `assets/scenery.pak` at build time. The pack is read by `gc_asse
 
 ## Surface detail
 
-Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within reach of the camera (45 tiles for bushes and grass, 60 for stone, 90 for trees):
+Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within reach of the camera (36 tiles for bushes and grass, 60 for stone, 70 for trees):
 
 | Surface | Models | Texture |
 |---|---|---|

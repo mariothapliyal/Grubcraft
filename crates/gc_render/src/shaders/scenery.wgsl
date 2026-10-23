@@ -115,9 +115,9 @@ const DETAIL_FOLIAGE: u32 = 3u;
 const DETAIL_STONE: u32 = 4u;
 const DETAIL_MOSSY_STONE: u32 = 5u;
 // Tiles from the eye: grass and bushes, stone, trees.
-const FOLIAGE_REACH: f32 = 45.0;
+const FOLIAGE_REACH: f32 = 36.0;
 const STONE_REACH: f32 = 60.0;
-const TREE_REACH: f32 = 90.0;
+const TREE_REACH: f32 = 70.0;
 // Texture repeats a tile of model space.
 const BARK_SCALE: f32 = 1.4;
 const FOLIAGE_SCALE: f32 = 5.0;
@@ -151,7 +151,7 @@ struct Surface {
 // `scale` repeats a tile, with `nl` the model-space normal. Rows run down and
 // the map's green runs up, so each plane's second coordinate is negated. `top`
 // (0 to 1) is how much the horizontal plane counts: bark leaves it out (a
-// trunk's ends are tiny), foliage uses all three.
+// trunk's ends are tiny).
 fn triplanar(layer: i32, mean: vec3<f32>, scale: f32, top: f32, p: vec3<f32>, nl: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Surface {
     var w = vec3<f32>(nl.z * nl.z, nl.x * nl.x, nl.y * nl.y * top) + vec3<f32>(0.02, 0.02, 0.0);
     w = w / (w.x + w.y + w.z);
@@ -183,6 +183,38 @@ fn triplanar(layer: i32, mean: vec3<f32>, scale: f32, top: f32, p: vec3<f32>, nl
     var r: Surface;
     r.ratio = ratio / used;
     r.normal = normalize(nl + tilt / used);
+    return r;
+}
+
+// The same, from the one plane the surface faces most: a third of the cost,
+// for foliage, where the leaves are small and busy enough to hide the seams.
+fn single_plane(layer: i32, mean: vec3<f32>, scale: f32, p: vec3<f32>, nl: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> Surface {
+    let a = abs(nl);
+    var uv = vec2<f32>(p.x, -p.y);
+    var dx = vec2<f32>(dpx.x, -dpx.y);
+    var dy = vec2<f32>(dpy.x, -dpy.y);
+    var axes = 0;
+    if a.y >= a.x && a.y >= a.z {
+        uv = vec2<f32>(p.x, -p.z);
+        dx = vec2<f32>(dpx.x, -dpx.z);
+        dy = vec2<f32>(dpy.x, -dpy.z);
+        axes = 1;
+    } else if a.x >= a.z {
+        uv = vec2<f32>(p.z, -p.y);
+        dx = vec2<f32>(dpx.z, -dpx.y);
+        dy = vec2<f32>(dpy.z, -dpy.y);
+        axes = 2;
+    }
+    let d = detail_sample(layer, uv * scale, dx * scale, dy * scale, mean);
+    var tilt = vec3<f32>(d.tilt.x, d.tilt.y, 0.0);
+    if axes == 1 {
+        tilt = vec3<f32>(d.tilt.x, 0.0, d.tilt.y);
+    } else if axes == 2 {
+        tilt = vec3<f32>(0.0, d.tilt.y, d.tilt.x);
+    }
+    var r: Surface;
+    r.ratio = d.ratio;
+    r.normal = normalize(nl + tilt);
     return r;
 }
 
@@ -226,7 +258,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
             }
             var ratio = vec3<f32>(1.0);
             if leaf > 0.02 {
-                let f = triplanar(2, MOSS_MEAN, FOLIAGE_SCALE, 1.0, in.local, nl, dpx, dpy);
+                let f = single_plane(2, MOSS_MEAN, FOLIAGE_SCALE, in.local, nl, dpx, dpy);
                 ratio = mix(ratio, muted(f.ratio, 0.5), leaf);
                 detailed = normalize(nl + (f.normal - nl) * 0.8);
             }
