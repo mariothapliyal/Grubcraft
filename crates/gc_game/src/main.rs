@@ -3383,7 +3383,7 @@ impl Running {
                 continue;
             }
             // Gone, or its slot taken by another regiment, is not shooting.
-            if let Some(r) = self.world.regiments.get(v.shooter) {
+            if let Some(r) = v.shooter.regiment().and_then(|h| self.world.regiments.get(h)) {
                 self.shooting[r.handle.index as usize] = true;
             }
         }

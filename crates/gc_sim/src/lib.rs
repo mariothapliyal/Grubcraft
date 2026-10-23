@@ -41,6 +41,7 @@ pub mod stances;
 mod state;
 pub mod structures;
 pub mod terrain;
+pub mod towers;
 pub mod veins;
 pub mod verdict;
 pub mod vision;
@@ -50,6 +51,7 @@ use conquest::Conquest;
 pub use conquest::{ConquestSetup, ConquestUnit};
 pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
 pub use fork::Standing;
+pub use events::Shooter;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 use powers::Cast;
@@ -639,6 +641,14 @@ pub enum Command {
     /// faction meter (see [`powers`]). Refused before their tier allows it,
     /// while it cools down, or when they can't pay.
     UsePower { power: u8, target: PowerTarget },
+    /// Conquest: one of the issuer's towers shoots enemy regiment `target`
+    /// first whenever it is in range, until it falls; `None` lets the tower
+    /// choose again (see [`towers`]). The target must be one the issuer's
+    /// side can see.
+    FocusTower {
+        structure: StructureHandle,
+        target: Option<RegimentHandle>,
+    },
 }
 
 impl Command {
@@ -664,6 +674,7 @@ impl Command {
             | Command::Untrain { .. }
             | Command::Upgrade { .. }
             | Command::UsePower { .. }
+            | Command::FocusTower { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1190,6 +1201,14 @@ impl World {
             &mut self.combat_rng,
         );
         if let Some(conquest) = &mut self.conquest {
+            conquest.towers(
+                &mut self.combat,
+                &self.regiments,
+                &self.stances,
+                &self.terrain,
+                &self.vision,
+                self.tick,
+            );
             conquest.update(
                 &mut self.regiments,
                 &self.units,
@@ -1245,7 +1264,8 @@ impl World {
                 consumed,
             );
             if let Some(conquest) = &self.conquest {
-                self.events.fallen(&conquest.structures.fallen);
+                let s = &conquest.structures;
+                self.events.fallen(&s.tolled, &s.fallen);
             }
         }
         self.tick += 1;
@@ -1530,6 +1550,7 @@ impl World {
                 .as_mut()
                 .is_some_and(|c| c.set_rally(pc.player, structure, at)),
             Command::UsePower { power, target } => self.use_power(pc.player, power, target),
+            Command::FocusTower { structure, target } => self.focus_tower(pc.player, structure, target),
             Command::RemoveStructure { structure } => self.conquest.as_mut().is_some_and(|c| {
                 c.structures
                     .despawn(structure, &mut self.nav, &self.regiments)
@@ -1544,6 +1565,17 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return false;
         };
+        // Near an enemy Bell Tower that has just tolled, powers are silenced.
+        let regiment_at = |h| self.regiments.resolve(h).map(|r| self.regiments.position[r]);
+        let at = match target {
+            PowerTarget::Caster => None,
+            PowerTarget::Structure(h) => c.structures.resolve(h).map(|i| c.structures.centre(i)),
+            PowerTarget::Regiment(h) | PowerTarget::Shift { regiment: h, .. } => regiment_at(h),
+            PowerTarget::Point(at) => Some(at),
+        };
+        if at.is_some_and(|at| c.structures.silenced(&self.stances, player, at)) {
+            return false;
+        }
         let cast = c.use_power(
             &mut self.regiments,
             &self.nav,
@@ -1570,6 +1602,49 @@ impl World {
             );
         }
         cast != Cast::Refused
+    }
+
+    /// `player` tells their tower `structure` whom to shoot first (see
+    /// [`Command::FocusTower`]).
+    fn focus_tower(
+        &mut self,
+        player: PlayerId,
+        structure: StructureHandle,
+        target: Option<RegimentHandle>,
+    ) -> bool {
+        let Some(c) = &mut self.conquest else {
+            return false;
+        };
+        let Some(i) = c
+            .structures
+            .owned(structure, player)
+            .filter(|&i| c.structures.is_tower(i))
+        else {
+            return false;
+        };
+        let target = match target {
+            None => None,
+            Some(h) => {
+                let Some(j) = self.regiments.resolve(h) else {
+                    return false;
+                };
+                let enemy = self.regiments.owner[j];
+                if !self.stances.hostile(player, enemy) || !self.vision.sees(player, j, enemy) {
+                    return false;
+                }
+                Some(h)
+            }
+        };
+        c.structures.set_focus(i, target);
+        true
+    }
+
+    /// Whether a power `player` uses on something at `at` would be
+    /// silenced by an enemy Bell Tower (see [`towers`]).
+    pub fn silenced(&self, player: PlayerId, at: FxVec2) -> bool {
+        self.conquest
+            .as_ref()
+            .is_some_and(|c| c.structures.silenced(&self.stances, player, at))
     }
 
     /// Whether faction power `power`, a summons, has room to put its

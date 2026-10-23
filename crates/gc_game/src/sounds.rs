@@ -885,11 +885,12 @@ impl Sounds {
                 } => {
                     let flying = world.volleys().find(|v| v.id == volley);
                     self.flights.push((volley, flying.map_or(0, |v| v.shots)));
-                    self.hushed = !heard || !shown(shooter);
+                    // A tower stands where everyone knows it.
+                    let regiment = shooter.regiment();
+                    self.hushed = !heard || regiment.is_some_and(|h| !shown(h));
                     let from = flying.map(|v| from_fx_vec(v.from)).or_else(|| {
-                        world
-                            .regiments
-                            .get(shooter)
+                        regiment
+                            .and_then(|h| world.regiments.get(h))
                             .map(|r| from_fx_vec(r.position))
                     });
                     if let Some(from) = from {

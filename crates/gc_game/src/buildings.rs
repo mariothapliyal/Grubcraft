@@ -29,6 +29,8 @@ const _: () = assert!(
         && record::BUILDING_NEEDS_POWER == gc_sim::structures::NEEDS_POWER
         && record::BUILDING_HONOR == gc_sim::structures::HONOR
         && record::BUILDING_TRADE_POST == gc_sim::structures::TRADE_POST
+        && record::BUILDING_TOLL == gc_sim::structures::TOLL
+        && record::BUILDING_SILENCES == gc_sim::structures::SILENCES
         && record::MAX_REACH_TILES == gc_sim::structures::MAX_REACH
         && record::MAX_FOOTPRINT == gc_sim::structures::MAX_FOOTPRINT
 );

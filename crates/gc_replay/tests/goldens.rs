@@ -79,8 +79,9 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Brace { .. } => "Brace",
         Command::HandOver { .. } => "HandOver",
         Command::UsePower { .. } => "UsePower",
+        Command::FocusTower { .. } => "FocusTower",
     };
-    const KINDS: [&str; 24] = [
+    const KINDS: [&str; 25] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -105,6 +106,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Brace",
         "HandOver",
         "UsePower",
+        "FocusTower",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
