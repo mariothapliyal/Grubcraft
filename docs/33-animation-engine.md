@@ -22,7 +22,7 @@ The model schema stays 4. A pack may carry six optional tables (`anim/skeletons`
 ## Stages
 
 1. **Pose pass** (built; no visible change). Checked by poses rendered both ways in the showroom.
-2. **Shared skeletons, layers and the picker** (built). Next: tagged moves from the move library config (act, weapon, side, mask, additive per glTF animation), additive moves baked as changes from their first frame. T4 is told when the picker lands.
+2. **Shared skeletons, layers and the picker** (built). Tagged moves come from a model's `moves` in its config (act, weapon, side, mask, additive and loops per glTF animation), additive moves baked as changes from their first frame; no model has any yet. Checked by poses rendered both ways in the showroom, and `--showroom-clip march` (attack on the upper body over a walk) shows a masked layer.
 3. **Look-at and foot IK.**
 4. **Units re-bake** with detail (`detail_tile` about 0.15) and the new tables.
 5. **Fight library**, Ember Clans first (about 50 moves for sword and shield and for spear), from Mixamo sets Mario downloads and Blender fitting; then the other human weapon types, Brood and Choir bodies.
