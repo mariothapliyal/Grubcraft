@@ -83,6 +83,10 @@ const HIGHLIGHT: f32 = 1.6;
 // share rock_sampler.
 @group(0) @binding(12) var ground_color: texture_2d_array<f32>;
 @group(0) @binding(13) var ground_normal: texture_2d_array<f32>;
+// The same for scenery (scenery.wgsl): Bark001 (layer 0), Bark014 (1) and
+// Moss002 (2).
+@group(0) @binding(14) var scenery_color: texture_2d_array<f32>;
+@group(0) @binding(15) var scenery_normal: texture_2d_array<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -428,6 +432,20 @@ fn rock_plane(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, ng2: vec2<f32>, ngn: 
     return r;
 }
 
+// How light or dark Rock035's albedo is, relative to its mean, as a factor for
+// a stone colour: its own colour is near black (mean 0.01 linear), so it gives
+// the pattern only. Cliffs and scenery rocks share this, to look alike.
+fn rock_pattern(albedo: vec3<f32>) -> f32 {
+    let l = dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return pow(clamp(l / 0.0095, 0.02, 6.0), 0.45);
+}
+
+// A detail texture's colour ratio mostly as light and dark: its own hues would
+// fight the colour it is laid over. `chroma` is how much of the hue is kept.
+fn muted(ratio: vec3<f32>, chroma: f32) -> vec3<f32> {
+    return mix(vec3<f32>(dot(ratio, vec3<f32>(0.2126, 0.7152, 0.0722))), ratio, chroma);
+}
+
 // Triplanar Rock035 at `p` on a surface facing `ng`: the three projections
 // weighted by how squarely they face the surface, each normal map blended in
 // whiteout style. `dpx` and `dpy` are the screen derivatives of `p`, taken
@@ -627,8 +645,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
             );
         }
         // Mostly its light and dark: the texture's own hues would fight the land's tint.
-        let detail_l = dot(detail.ratio, vec3<f32>(0.2126, 0.7152, 0.0722));
-        albedo = albedo * mix(vec3<f32>(detail_l), detail.ratio, 0.35);
+        albedo = albedo * muted(detail.ratio, 0.35);
         // The surface, tilted by the ground's normal map (whiteout blend, the
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
@@ -644,8 +661,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // Rock035's own colour is near black (mean 0.01 linear), so it gives the
         // pattern only: its brightness, relative to its mean, scales a stone
         // colour from the game's palette.
-        let tex_l = dot(r.albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let pattern = pow(clamp(tex_l / 0.0095, 0.02, 6.0), 0.45);
+        let pattern = rock_pattern(r.albedo);
         let stone = srgb_to_linear(vec3<f32>(0.5, 0.45, 0.38)) * 0.8;
         var rc = stone * pattern * (0.78 + 0.44 * band) * mix(vec3<f32>(1.0), vec3<f32>(1.14, 0.98, 0.8), warm);
         // Higher stone is paler and cooler.
@@ -722,20 +738,51 @@ fn vs_block(
     @location(3) color: vec4<f32>,
     @location(4) lift: f32,
 ) -> BlockOut {
+    return block_vertex(vi, pos, facing, size, color, lift);
+}
+
+fn block_vertex(
+    vi: u32,
+    pos: vec2<f32>,
+    facing: vec2<f32>,
+    size: vec3<f32>,
+    color: vec4<f32>,
+    lift: f32,
+) -> BlockOut {
     let corner = BOX_POS[BOX_IDX[vi]];
     let n_local = BOX_NORMAL[vi / 6u];
     let fwd = vec2<f32>(facing.x, facing.y);
     let right = vec2<f32>(-facing.y, facing.x);
     let xz = pos + right * (corner.x * size.x) + fwd * (corner.z * size.z);
     // Drape over the terrain: each column sits on the ground beneath it.
+    // A negative height is drawn as positive (see `vs_block_shadow`).
     let ground = max(height_at(xz), g.misc.x - 0.05);
-    let world = vec3<f32>(xz.x, ground + lift + corner.y * size.y, xz.y);
+    let world = vec3<f32>(xz.x, ground + lift + corner.y * abs(size.y), xz.y);
     var out: BlockOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
     out.world = world;
     let nxz = right * n_local.x + fwd * n_local.z;
     out.normal = normalize(vec3<f32>(nxz.x, n_local.y, nxz.y));
     out.color = color;
+    return out;
+}
+
+// The boxes' shadows. A box given a negative height (smoke, dust and
+// flames) casts none: it is folded away here.
+@vertex
+fn vs_block_shadow(
+    @builtin(vertex_index) vi: u32,
+    @location(0) pos: vec2<f32>,
+    @location(1) facing: vec2<f32>,
+    @location(2) size: vec3<f32>,
+    @location(3) color: vec4<f32>,
+    @location(4) lift: f32,
+) -> BlockOut {
+    var out = block_vertex(vi, pos, facing, size, color, lift);
+    if size.y < 0.0 {
+        // Outside the clip volume (a w of 0 would divide by zero).
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    }
     return out;
 }
 

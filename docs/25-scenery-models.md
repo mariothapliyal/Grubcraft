@@ -4,7 +4,7 @@ Scenery is the trees, bushes, grass and rocks that dress the field. This documen
 
 ## What it is
 
-Each model is one mesh with vertex colours (the paint is on the mesh itself, with its ambient occlusion already in). There are no textures. Each model has four levels of detail: LOD0 is the closest and most detailed, LOD3 the farthest and simplest. Units are tiles, with 1 Blender metre to a tile, and a soldier is about 1.6 tall.
+Each model is one mesh with vertex colours (the paint is on the mesh itself, with its ambient occlusion already in). The pack has no textures and no texture coordinates; the game's shader adds surface detail over the vertex colours (see [Surface detail](#surface-detail)). Each model has four levels of detail: LOD0 is the closest and most detailed, LOD3 the farthest and simplest. Units are tiles, with 1 Blender metre to a tile, and a soldier is about 1.6 tall.
 
 - Trees and rocks (not pebbles) cast shadows. Bushes and grass do not.
 - The wind bends each model by height, so the tops move and the base stays put. The game computes the weights when the pack is baked, so the models need no rig.
@@ -86,7 +86,7 @@ The cloth is baked near-white and tinted with the owner's colour (halved, a thir
 1. **Blender scripts.** The models are built in Blender from code, using Blender's Python module (`bpy`), in the shared folder `/mnt/project-files/design/scenery/source/`. `skit.py` is the shared kit. `trees.py`, `trees_more.py`, `bushes.py`, `grass.py` and `rocks.py` build the models of each family, `seep.py` and `vein.py` the gathering spots, and `banners.py` the morale standards. Each script takes `--only <name>` to rebuild a single model.
 2. **The glb.** Each model is written to `/mnt/project-files/assets-src/grubcraft/scenery/<name>/<name>.glb`. The file holds four joined meshes, `<name>_LOD0` to `<name>_LOD3`, with the origin at the base and vertex colours only. Beside it sit `facts.json` (name, family, height, radius and triangles per level) and `review.png`, which shows the four levels at one scale.
 3. **The model list.** `assets-src/scenery.ron` lists every model in pack order: its name, its glb (`shared:grubcraft/scenery/<name>/<name>.glb`), its family and its sway.
-4. **The bake.** `cargo run --release -p gc_scenebake` reads the list and the glbs and writes `assets/scenery.pak` and `assets/scenery.manifest`. It refuses a level over its family's triangle budget (tree 2,500 / 900 / 300 / 80, bush 700 / 250 / 90 / 30, grass 160 / 60 / 24 / 8, rock 1,000 / 350 / 120 / 40, pebbles 300 / 120 / 40 / 12). It also refuses a level with more triangles than the one before it, and a model that reaches past 8 tiles from its origin. `--allow-missing` skips glbs that are not made yet, for development.
+4. **The bake.** `cargo run --release -p gc_scenebake` reads the list and the glbs and writes `assets/scenery.pak` and `assets/scenery.manifest`. It also bakes close-range ambient occlusion per vertex into the spare normal byte (`tools/gc_scenebake/src/occlusion.rs` says why and how) so the shader can darken the creases between a crown's lobes, the inside of a bush and the foot of a tuft. It refuses a level over its family's triangle budget (tree 2,500 / 900 / 300 / 80, bush 700 / 250 / 90 / 30, grass 160 / 60 / 24 / 8, rock 1,000 / 350 / 120 / 40, pebbles 300 / 120 / 40 / 12). It also refuses a level with more triangles than the one before it, and a model that reaches past 8 tiles from its origin. `--allow-missing` skips glbs that are not made yet, for development.
 5. **The check.** CI runs `cargo run --release -p gc_scenebake -- --check`. It compares the committed pack with its manifest without baking anything.
 6. **Commit.** Commit the new pack and manifest with the change to `scenery.ron` or a glb. Never merge the pack by hand: if two branches change it, merge, keep both sides' entries in `scenery.ron`, bake again and commit the new pack.
 
@@ -96,3 +96,18 @@ The game embeds `assets/scenery.pak` at build time. The pack is read by `gc_asse
 
 - **No flying or draping.** A model stands at the terrain height under its base. It does not follow slopes.
 - **Faces are double-sided.** Leaves and blades may be single planes, because the game draws both faces.
+
+## Surface detail
+
+Added 2026-10-23, render only, without re-baking the pack. The shader (`scenery.wgsl`) projects detail textures from each model's own space and lays their light and dark and their normal maps over the baked vertex colours, within reach of the camera (36 tiles for bushes and grass, 60 for stone, 70 for trees):
+
+| Surface | Models | Texture |
+|---|---|---|
+| Broadleaf bark and leaves | `oak-a`, `oak-b`, `birch`, `willow` | Bark001 (bark), Moss002 (leaves) |
+| Conifer bark and needles, dead wood | `pine-a`, `pine-b`, `thicket-fir`, `crag-pine`, `snag` | Bark014 (bark), Moss002 (needles) |
+| Foliage | every bush and every grass | Moss002 |
+| Stone | `boulder`, `crag`, `slab` | Rock035, the same as the cliffs |
+| Mossy stone | `mossy-boulder` | Rock035, with Moss002 on what faces up |
+| None | `pebbles`, `bone-spire`, `bone-ribs`, gathering spots, banners | |
+
+A tree's vertices are bark where their baked colour (before the instance's tint) is not green and leaves where it is. A later re-bake should carry the kind and the bark or leaf choice per vertex in the vertex's remaining spare field (`_pad`; the normal's fourth byte now holds occlusion), instead of the game matching model names and guessing from colour. Which kind a model gets is `Model::detail` in `gc_game/src/scenery.rs`. A new model with no entry fails to compile, so none is forgotten. Stumps and cleared ground ([27](27-living-land.md), idea 22) will use the bark kinds.
