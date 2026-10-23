@@ -2881,6 +2881,8 @@ impl Running {
             self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;
+            self.siege
+                .set_density(self.menu.settings().graphics.effects_density());
             (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
             self.note_building_looks();
             self.push_buildings();
@@ -3257,7 +3259,7 @@ impl Running {
         }
         if !viewing {
             self.push_arrows(now);
-            self.push_siege();
+            self.push_siege(&cull);
             self.push_routes();
         }
         if self.lens && !self.minds.is_empty() && !viewing {
@@ -4841,9 +4843,10 @@ impl Running {
         }
     }
 
-    /// The sieges on screen (see [`siege`]): shots at buildings, chips and
-    /// dust, smoke and fire, and rubble. Their sounds play here too.
-    fn push_siege(&mut self) {
+    /// The sieges on screen (see [`siege`]): shots at buildings, chunks,
+    /// stuck arrows and rubble as boxes, and dust, smoke, fire and sparks as
+    /// particles. Their sounds play here too.
+    fn push_siege(&mut self, cull: &gc_render::Cull) {
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let standing = self
             .world
@@ -4852,11 +4855,13 @@ impl Running {
             .flat_map(|all| all.iter().filter(move |v| shown(v)).map(|v| v.handle));
         let hm = &self.heightmap;
         self.siege.push(
-            standing,
             |p| hm.drawn_height(p.x, p.y),
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );
+        self.siege
+            .emit_damage(standing, |at, radius| cull.sees(at, radius));
+        self.renderer.spawn_particles(&self.siege.take_particles());
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
         for noise in self.siege.drain_noises() {
             if let Some(sounds) = self.sounds.as_ref().filter(|_| !catching_up) {
