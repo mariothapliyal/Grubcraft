@@ -1365,6 +1365,7 @@ impl Combat {
         stances: &Stances,
         terrain: &Terrain,
         vision: &Vision,
+        nav: &Nav,
         tick: u32,
         rng: &mut Pcg32,
     ) {
@@ -1476,6 +1477,7 @@ impl Combat {
             duel(
                 regs,
                 units,
+                nav,
                 Fight {
                     i,
                     j,
@@ -1613,7 +1615,7 @@ impl Combat {
                 / (100 * 100)
                 * VOLLEY_PACE_PERCENT
                 / 100;
-            let lost = deal(regs, units, j, expected, side, rng);
+            let lost = deal(regs, units, nav, j, expected, side, rng);
             if self.tell {
                 self.landed.push(landed(lost));
             }
@@ -1723,10 +1725,11 @@ pub fn heart_percent(state: MoraleState) -> u64 {
 /// Apply `expected` damage (in 1/256 hit points) to regiment `j`, rolled
 /// within ±25%, landing on its `side`. When a rank empties the block steps
 /// forward half a rank, so its front stays where it was (the rear thins; the
-/// front rank holds).
+/// front rank holds), unless that would step it onto blocked ground.
 fn deal(
     regs: &mut Regiments,
     units: &[UnitStats],
+    nav: &Nav,
     j: usize,
     expected: u64,
     side: Side,
@@ -1736,7 +1739,7 @@ fn deal(
     let whole = carry(regs, j, roll(expected, rng));
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
     let lost = regs.take_damage(j, whole.min(u64::from(u32::MAX)) as u32);
-    step_up(regs, units, j, ranks_before);
+    step_up(regs, units, nav, j, ranks_before);
     lost
 }
 
@@ -1893,6 +1896,7 @@ impl Line {
 fn duel(
     regs: &mut Regiments,
     units: &[UnitStats],
+    nav: &Nav,
     fight: Fight,
     rng: &mut Pcg32,
     mut blows: Option<&mut Vec<Blow>>,
@@ -1972,17 +1976,20 @@ fn duel(
             });
         }
     }
-    step_up(regs, units, j, ranks_before);
+    step_up(regs, units, nav, j, ranks_before);
 }
 
 /// A regiment that has lost whole ranks (it had `ranks_before`) steps
 /// forward, so its front stays where it was (in melee, in contact). A
 /// broken one, cut down as it runs, has no line to hold and stays put.
-fn step_up(regs: &mut Regiments, units: &[UnitStats], j: usize, ranks_before: u16) {
+fn step_up(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, ranks_before: u16) {
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
     if regs.models[j] > 0 && ranks_after < ranks_before && !regs.morale_state[j].broken() {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
-        regs.position[j] += regs.facing[j].to_vec() * step;
+        let to = regs.position[j] + regs.facing[j].to_vec() * step;
+        if !nav.blocks(regs.position[j], to) {
+            regs.position[j] = to;
+        }
     }
 }

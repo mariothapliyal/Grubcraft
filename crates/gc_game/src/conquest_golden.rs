@@ -777,7 +777,7 @@ pub(crate) fn site(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option
 }
 
 /// Three tiles round side `p`'s main building where buildings of type
-/// `b` can go up and make a chord: a triangle about 10 tiles a side,
+/// `b` can go up and make a chord: a triangle about 8 tiles a side,
 /// 10 tiles off one side of the main building.
 fn chord_sites(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option<[(i16, i16); 3]> {
     let main = main_of(world, k, p)?;
@@ -796,8 +796,8 @@ fn chord_sites(world: &World, k: &Kit, p: PlayerId, b: BuildingId) -> Option<[(i
             let base = (cx + dx * 10, cy + dy * 10);
             let (px, py) = (dy, dx);
             let sites = [
-                near((base.0 - px * 5, base.1 - py * 5))?,
-                near((base.0 + px * 5, base.1 + py * 5))?,
+                near((base.0 - px * 4, base.1 - py * 4))?,
+                near((base.0 + px * 4, base.1 + py * 4))?,
                 near((base.0 + dx * 8, base.1 + dy * 8))?,
             ];
             let apart = |a: (i32, i32), b: (i32, i32)| (a.0 - b.0).abs().max((a.1 - b.1).abs());

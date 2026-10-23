@@ -1186,6 +1186,7 @@ impl World {
             &self.stances,
             &self.terrain,
             &self.vision,
+            &self.nav,
             self.tick,
             &mut self.combat_rng,
         );
