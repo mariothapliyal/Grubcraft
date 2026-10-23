@@ -35,7 +35,7 @@ Mario chose all four as proposed (2026-10-24); they are built after the shared r
 
 ### Computer players
 
-A computer player prefers open spots for a new building; when only overgrown ground fits, it lays there anyway and its worker clears first.
+A computer player prefers open spots for a new building; when only overgrown ground fits, it lays there anyway and its worker clears first. Its picture of the ground (`gc_ai::Terrain`) follows the simulation's: whenever the ground changes, cleared thicket stops being a wall to its armies and cleared woods stop being cover for its ambushes (`Terrain::follow`, checked each think against `gc_sim::Terrain::changes`). Looking for a spot costs at most what it did before clearing existed: about 50 µs on a test base where nothing fits, against 4 µs on an open one.
 
 ## The one ground change
 

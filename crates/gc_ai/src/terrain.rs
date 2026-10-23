@@ -7,10 +7,11 @@
 //! of those (flank anchors, high ground, fords) is worked out in
 //! [`crate::ground`]; where to hide, in the Captain's ambush plans.
 
-use gc_sim::Cover;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
+use gc_sim::{Cover, Growth};
 use glam::Vec2;
 
+#[derive(Clone)]
 pub struct Terrain {
     map_tiles: u32,
     /// Cells per side; zero on an open plane.
@@ -28,6 +29,15 @@ pub struct Terrain {
     /// Woods and tall grass per tile, row by row, as `gc_sim::Ground::cover`;
     /// empty when the map has none.
     cover: Vec<u8>,
+    /// What grows on each tile, row by row, as `gc_sim::Ground::growth`;
+    /// empty when the map has none. Thicket is blocked in `cost`.
+    growth: Vec<u8>,
+    /// The ground's costs as they are under the thicket, for when it is
+    /// cleared; empty when the map has none.
+    under: Vec<u8>,
+    /// The simulation's ground digest when the minds last looked
+    /// (`gc_sim::Terrain::changes`).
+    seen: u64,
 }
 
 impl Terrain {
@@ -41,6 +51,9 @@ impl Terrain {
             height: Vec::new(),
             water_level: f32::MIN,
             cover: Vec::new(),
+            growth: Vec::new(),
+            under: Vec::new(),
+            seen: 0,
         }
     }
 
@@ -58,6 +71,9 @@ impl Terrain {
             height: Vec::new(),
             water_level: f32::MIN,
             cover: Vec::new(),
+            growth: Vec::new(),
+            under: Vec::new(),
+            seen: 0,
         };
         t.measure_clearance();
         t
@@ -84,6 +100,92 @@ impl Terrain {
             self.cover = cover;
         }
         self
+    }
+
+    /// Add what grows on each tile, one byte per tile as the simulation has
+    /// it (`gc_sim::Ground::growth`): thicket is blocked, as no regiment
+    /// marches through it, until it is cleared (see [`Terrain::follow`]).
+    /// Ignored if there isn't one per tile, or on an open plane.
+    pub fn with_growth(mut self, growth: Vec<u8>) -> Terrain {
+        let n = self.map_tiles as usize;
+        if growth.len() != n * n || n == 0 || self.side == 0 {
+            return self;
+        }
+        let thicket = |g: &u8| *g == Growth::Thicket as u8;
+        if growth.iter().any(thicket) {
+            self.under.clone_from(&self.cost);
+            for (t, _) in growth.iter().enumerate().filter(|(_, g)| thicket(g)) {
+                self.set_tile(t, BLOCKED);
+            }
+            self.clear.fill(0);
+            self.measure_clearance();
+        }
+        self.growth = growth;
+        self
+    }
+
+    /// Catch up with the simulation's ground, if it has changed since the
+    /// last look: cleared tiles lose their cover, and cleared thicket can
+    /// be walked again.
+    pub fn follow(&mut self, ground: &gc_sim::Terrain) {
+        if self.seen == ground.changes() {
+            return;
+        }
+        self.seen = ground.changes();
+        let n = self.map_tiles as i32;
+        let mut opened = false;
+        for t in 0..self.growth.len() {
+            let was = self.growth[t];
+            if was == Growth::Open as u8 {
+                continue;
+            }
+            let now = ground.growth(t as i32 % n, t as i32 / n) as u8;
+            if now == was {
+                continue;
+            }
+            self.growth[t] = now;
+            if let Some(c) = self.cover.get_mut(t) {
+                *c = Cover::Open as u8;
+            }
+            if was == Growth::Thicket as u8 && !self.under.is_empty() {
+                self.restore_tile(t);
+                opened = true;
+            }
+        }
+        if opened {
+            self.clear.fill(0);
+            self.measure_clearance();
+        }
+    }
+
+    /// Whether the minds' ground lags the simulation's.
+    pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
+        !self.growth.is_empty() && self.seen != ground.changes()
+    }
+
+    /// The cells of tile `t` (row by row), as ranges of `cost`.
+    fn tile_rows(&self, t: usize) -> Vec<core::ops::Range<usize>> {
+        let (per, n, side) = (
+            CELLS_PER_TILE as usize,
+            self.map_tiles as usize,
+            self.side as usize,
+        );
+        let (x, y) = (t % n * per, t / n * per);
+        (y..y + per)
+            .map(|cy| cy * side + x..cy * side + x + per)
+            .collect()
+    }
+
+    fn set_tile(&mut self, t: usize, cost: u8) {
+        for row in self.tile_rows(t) {
+            self.cost[row].fill(cost);
+        }
+    }
+
+    fn restore_tile(&mut self, t: usize) {
+        for row in self.tile_rows(t) {
+            self.cost[row.clone()].copy_from_slice(&self.under[row]);
+        }
     }
 
     /// Whether the map has woods or tall grass anywhere.
