@@ -34,11 +34,11 @@ pub struct TextureConfig {
 /// Roughness of a material without an `orm` map.
 const DEFAULT_ROUGHNESS: f32 = 0.7;
 
-type Px = [f32; 4];
+pub(crate) type Px = [f32; 4];
 
 /// How a map's channels are stored and filtered.
 #[derive(Clone, Copy, PartialEq)]
-enum Encoding {
+pub(crate) enum Encoding {
     /// Red, green and blue in sRGB; alpha linear.
     Srgb,
     Linear,
@@ -48,9 +48,9 @@ enum Encoding {
 }
 
 /// A square image in linear values (sRGB channels already decoded).
-struct Layer {
-    side: usize,
-    px: Vec<Px>,
+pub(crate) struct Layer {
+    pub(crate) side: usize,
+    pub(crate) px: Vec<Px>,
 }
 
 impl Layer {
@@ -63,7 +63,7 @@ impl Layer {
     }
 
     /// Half the size, averaging 2 × 2 blocks (values are linear already).
-    fn half(&self, enc: Encoding) -> Layer {
+    pub(crate) fn half(&self, enc: Encoding) -> Layer {
         let side = (self.side / 2).max(1);
         let mut px = Vec::with_capacity(side * side);
         for y in 0..side {
@@ -99,7 +99,7 @@ fn decode_normal(p: Px) -> Vec3 {
     Vec3::new(x, y, (1.0 - x * x - y * y).max(0.0).sqrt())
 }
 
-fn srgb_to_linear(c: f32) -> f32 {
+pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -170,7 +170,7 @@ pub fn bake(
 }
 
 /// BC7-compress mips from [`levels`], back to back.
-fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
+pub(crate) fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
     let settings = intel_tex_2::bc7::alpha_slow_settings();
     let mut out = Vec::new();
     for (side, rgba) in levels {
@@ -182,6 +182,37 @@ fn compress(levels: &[(u32, Vec<u8>)]) -> Vec<Block> {
         };
         let blocks = intel_tex_2::bc7::compress_blocks(&settings, &surface);
         out.extend(blocks.as_chunks::<16>().0);
+    }
+    out
+}
+
+/// A layer and its `mips` levels (each half the one before, the first being
+/// `level` itself) as their side and RGBA8 texels.
+pub(crate) fn mip_chain(mut level: Layer, enc: Encoding, mips: u32) -> Vec<(u32, Vec<u8>)> {
+    let mut out = Vec::new();
+    for mip in 0..mips {
+        if mip > 0 {
+            level = level.half(enc);
+        }
+        debug_assert!(level.side >= BLOCK_SIDE as usize);
+        out.push((
+            level.side as u32,
+            level
+                .px
+                .iter()
+                .flat_map(|p| {
+                    let byte = |c: usize| {
+                        let v = if enc == Encoding::Srgb && c < 3 {
+                            linear_to_srgb(p[c])
+                        } else {
+                            p[c]
+                        };
+                        (v.clamp(0.0, 1.0) * 255.0).round() as u8
+                    };
+                    [byte(0), byte(1), byte(2), byte(3)]
+                })
+                .collect(),
+        ));
     }
     out
 }
@@ -245,31 +276,8 @@ fn levels(
         ),
     ];
     let mut out = Vec::new();
-    for (mut level, enc) in layers {
-        for mip in 0..TEXTURE_MIPS {
-            if mip > 0 {
-                level = level.half(enc);
-            }
-            debug_assert!(level.side >= BLOCK_SIDE as usize);
-            out.push((
-                level.side as u32,
-                level
-                    .px
-                    .iter()
-                    .flat_map(|p| {
-                        let byte = |c: usize| {
-                            let v = if enc == Encoding::Srgb && c < 3 {
-                                linear_to_srgb(p[c])
-                            } else {
-                                p[c]
-                            };
-                            (v.clamp(0.0, 1.0) * 255.0).round() as u8
-                        };
-                        [byte(0), byte(1), byte(2), byte(3)]
-                    })
-                    .collect(),
-            ));
-        }
+    for (level, enc) in layers {
+        out.extend(mip_chain(level, enc, TEXTURE_MIPS));
     }
     Ok(out)
 }
