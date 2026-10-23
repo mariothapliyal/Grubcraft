@@ -2883,7 +2883,13 @@ impl Running {
             let hm = &self.heightmap;
             self.siege
                 .set_density(self.menu.settings().graphics.effects_density());
-            (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
+            // Behind the menu its time stands still, as the particles' do.
+            let siege_dt = if self.menu_open && self.online.is_none() {
+                0.0
+            } else {
+                game_dt.as_secs_f32()
+            };
+            (self.siege).advance(siege_dt, |p| hm.drawn_height(p.x, p.y));
             self.note_building_looks();
             self.push_buildings();
         }
@@ -3261,6 +3267,9 @@ impl Running {
             self.push_arrows(now);
             self.push_siege(&cull);
             self.push_routes();
+        } else {
+            // Blows told while the unit viewer is open show nothing.
+            drop(self.siege.take_particles());
         }
         if self.lens && !self.minds.is_empty() && !viewing {
             let lenses = lens::lenses(&self.minds);
@@ -4861,8 +4870,12 @@ impl Running {
         );
         self.siege
             .emit_damage(standing, |at, radius| cull.sees(at, radius));
-        self.renderer.spawn_particles(&self.siege.take_particles());
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let particles = self.siege.take_particles();
+        // Replayed blows would burst out all at once at stale spots.
+        if !catching_up {
+            self.renderer.spawn_particles(&particles);
+        }
         for noise in self.siege.drain_noises() {
             if let Some(sounds) = self.sounds.as_ref().filter(|_| !catching_up) {
                 sounds.siege(noise);

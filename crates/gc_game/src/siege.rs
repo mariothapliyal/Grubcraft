@@ -360,6 +360,7 @@ struct Chip {
 /// An arrow stuck in a wall.
 #[derive(Clone, Copy, Debug)]
 struct Stuck {
+    structure: StructureHandle,
     pos: Vec2,
     y: f32,
     dir: Vec2,
@@ -672,9 +673,12 @@ impl Siege {
         // Arrows stay in timber, flesh and bone.
         if kind == Kind::Arrows
             && matches!(look.stuff.style, Style::Timber | Style::Shell | Style::Bone)
+            // Not into a building already coming down.
+            && self.look(look.handle).is_some()
         {
             let k = self.pick(MAX_STUCK);
             let stuck = Stuck {
+                structure: look.handle,
                 pos: at,
                 y,
                 dir,
@@ -717,6 +721,7 @@ impl Siege {
             *l = None;
         }
         self.jolts.retain(|j| j.handle != structure);
+        self.stuck.retain(|a| a.structure != structure);
     }
 
     /// A building starts down: a burst of chunks and dust from every side,
@@ -792,7 +797,8 @@ impl Siege {
     /// A building going down, for the frame just played: dust rolling off
     /// all along its footprint (a wall's length too), and by what it is
     /// made of, flames, ghost-lights, glitter or ichor.
-    fn falling(&mut self, look: &Look, ground: f32) {
+    fn falling(&mut self, look: &Look) {
+        let ground = look.base;
         let dt = self.dt;
         for _ in 0..self.spawns(COLLAPSE_DUST_RATE, dt) {
             let (rise, swell) = (self.roll().abs(), self.roll().abs());
@@ -832,7 +838,7 @@ impl Siege {
             };
             let roof = look.base + look.top * 0.8;
             let centre = look.centre();
-            if !visible(up(centre, roof), look.top.max(2.0)) {
+            if !visible(up(centre, roof), look.top + 6.0) {
                 continue;
             }
             let area = look.area();
@@ -937,7 +943,7 @@ impl Siege {
                 self.falls[f].burst = true;
                 self.collapse(look);
             }
-            self.falling(&look, ground(look.centre()));
+            self.falling(&look);
         }
         self.falls
             .retain(|f| now - f.born < COLLAPSE_SECONDS + RUBBLE_SECONDS);
@@ -1378,6 +1384,23 @@ mod tests {
     }
 
     #[test]
+    fn arrows_do_not_hang_in_the_air_over_a_fallen_building() {
+        let mut s = Siege::new(8);
+        let h = handle(0);
+        s.remember(look(h, 1.0));
+        let mut a = blade(Vec2::new(12.0, 16.0));
+        a.kind = Kind::Arrows;
+        a.seen = false;
+        s.struck(h, a);
+        assert_eq!(s.stuck.len(), ARROWS_PER_VOLLEY);
+        s.fallen(h);
+        assert!(s.stuck.is_empty());
+        // Shots landing while it goes down stick in nothing.
+        s.struck(h, a);
+        assert!(s.stuck.is_empty());
+    }
+
+    #[test]
     fn a_building_smokes_once_hurt_and_burns_once_badly_hurt() {
         let mut s = Siege::new(8);
         let h = handle(0);
@@ -1446,8 +1469,9 @@ mod tests {
         }
         // Timbers burn, crystal glitters, stone only throws dust and rock.
         assert!(additive(&clans) > additive(&stone));
-        assert!(additive(&crystal) > 2 * additive(&shell));
-        assert!(additive(&bones) > additive(&shell));
+        assert!(additive(&crystal) > additive(&stone));
+        assert!(additive(&bones) > additive(&stone));
+        assert_eq!(additive(&shell), 0);
     }
 
     #[test]
