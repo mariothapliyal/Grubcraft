@@ -4,15 +4,18 @@
 //! feeds back into the simulation, and effects of what the viewer cannot see
 //! are never made, so the dust never shows an army the fog hides.
 
-use gc_render::{DUST, Effects, Particle};
+use gc_render::{DUST, Effects, HitStyle, Particle};
 use glam::{Vec2, Vec3};
 
 use crate::fx_demo::{Demo, Mode};
+use crate::puppets::Hit;
 
 /// How often a soldier on the move kicks up dust, a puff a second at a
 /// walk, more at a run.
 const FOOTSTEP_RATE: f32 = 0.25;
 const FOOTSTEP_RATE_PER_SPEED: f32 = 0.3;
+/// Splinters off a shield that took a blow.
+const SHIELD_WOOD: [u8; 3] = [130, 96, 60];
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 
@@ -69,6 +72,30 @@ impl Field {
         self.impact(pos, 2.2, 16.0, 8.0, 1.0);
     }
 
+    /// A soldier at `pos` (his chest, over the ground) took a blow of kind
+    /// `hit` travelling along `dir`: sparks when it rang on a weapon or
+    /// shield, else his side's wound (`style`), more for a heavy blow and
+    /// most for a killing one. `armoured` has his armour ring too.
+    pub fn blow(&mut self, pos: Vec3, dir: Vec2, hit: Hit, style: HitStyle, armoured: bool) {
+        let along = Vec3::new(dir.x, 0.15, dir.y);
+        match hit {
+            Hit::Parried => self.fx.sparks(pos, along, 5.0),
+            Hit::Blocked => {
+                self.fx.sparks(pos, along, 2.0);
+                self.fx.chips(pos, -dir, SHIELD_WOOD, 3.0, 0.04);
+            }
+            Hit::Wounded => self.fx.hit(pos, along, style, armoured, 1.0),
+            Hit::Crushed => {
+                self.fx.hit(pos, along, style, armoured, 1.6);
+                self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.5, 2.0, DUST);
+            }
+            Hit::Killed => {
+                self.fx.hit(pos, along, style, armoured, 2.2);
+                self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.6, 2.0, DUST);
+            }
+        }
+    }
+
     /// Dust rolling out to `radius` from `puffs`, and `clods` thrown up with
     /// `power`.
     fn impact(&mut self, pos: Vec3, radius: f32, puffs: f32, clods: f32, power: f32) {
@@ -94,5 +121,30 @@ impl Field {
             demo.play(&mut self.fx, dt, focus, &ground);
         }
         self.fx.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_blow_throws_something_and_a_kill_more_than_a_parry() {
+        let made = |hit, style| {
+            let mut f = Field::new(None);
+            f.blow(Vec3::new(5.0, 1.0, 5.0), Vec2::X, hit, style, false);
+            f.frame(0.0, 1.0, Vec2::ZERO, |_| 0.0).len()
+        };
+        for hit in [
+            Hit::Parried,
+            Hit::Blocked,
+            Hit::Wounded,
+            Hit::Crushed,
+            Hit::Killed,
+        ] {
+            assert!(made(hit, HitStyle::Flesh) > 0, "{hit:?}");
+        }
+        assert!(made(Hit::Killed, HitStyle::Flesh) > made(Hit::Wounded, HitStyle::Flesh));
+        assert!(made(Hit::Wounded, HitStyle::Ichor) > 0);
     }
 }

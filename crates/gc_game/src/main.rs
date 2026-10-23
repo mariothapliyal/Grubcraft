@@ -177,8 +177,8 @@ use gc_net::Lan;
 use gc_platform::logln;
 use gc_platform::tagged_alloc::{self, Tag, TaggedAlloc};
 use gc_render::{
-    BoxInstance, FrameParams, Renderer, RendererOptions, SoldierBatch, SoldierInstance, Terrain,
-    UiQuad,
+    BoxInstance, FrameParams, HitStyle, Renderer, RendererOptions, SoldierBatch, SoldierInstance,
+    Terrain, UiQuad,
 };
 use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
@@ -326,6 +326,11 @@ type SceneBuilding = (&'static str, Vec2, &'static [(&'static str, f32, f32)]);
 const SIEGE_SCENE_DISTANCE: f32 = 42.0;
 /// How far a ram draws back between its blows, in tiles.
 const RAM_DRAW: f32 = 0.5;
+
+/// Blows shown with sparks or wounds in one frame, at most.
+const BLOWS_SHOWN: usize = 48;
+/// Melee defence from which a soldier's armour rings under a blow.
+const ARMOURED_DEFENCE: u8 = 45;
 
 /// Arrows leave the bow and land at about this height above the ground.
 const ARROW_HEIGHT: f32 = 0.9;
@@ -3344,6 +3349,11 @@ impl Running {
         let live = !self.paused && !(self.menu_open && self.online.is_none());
         let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
+        if viewing {
+            drop(self.puppets.drain_impacts());
+        } else {
+            self.show_blows(&cull);
+        }
         let density = self.menu.settings().graphics.effects_density();
         let heightmap = &self.heightmap;
         let particles = self.effects.frame(
@@ -4879,6 +4889,31 @@ impl Running {
         }
         for b in self.world.blows() {
             self.puppets.struck(b);
+        }
+    }
+
+    /// Sparks and wounds for the blows soldiers landed on each other since
+    /// the last frame, those the camera sees (the fog hides the rest, as it
+    /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
+    fn show_blows(&mut self, cull: &gc_render::Cull) {
+        let hm = &self.heightmap;
+        for i in self.puppets.drain_impacts().take(BLOWS_SHOWN) {
+            let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
+            if !cull.sees(at, 1.0) {
+                continue;
+            }
+            let Some(stats) = self.units.stats.get(usize::from(i.victim)) else {
+                continue;
+            };
+            let style = match self.units.factions[usize::from(i.victim)] {
+                gc_ai::Faction::EmberClans => HitStyle::Flesh,
+                gc_ai::Faction::Brood => HitStyle::Ichor,
+                gc_ai::Faction::Choir => HitStyle::Crystal,
+                gc_ai::Faction::CarrionConcord => HitStyle::Ghost,
+            };
+            let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
+            let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);
+            self.effects.blow(chest, i.dir, i.hit, style, armoured);
         }
     }
 
