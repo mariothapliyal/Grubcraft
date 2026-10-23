@@ -81,6 +81,10 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
     },
 ];
 
+/// The tone byte (the last of [`SoldierInstance::color`]) that leaves a
+/// soldier as painted.
+pub const TONE_NEUTRAL: u8 = 128;
+
 /// One soldier to draw. 36 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]

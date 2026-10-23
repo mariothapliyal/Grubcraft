@@ -270,6 +270,9 @@ pub struct Soldier {
     pub fight: Option<Move>,
     /// A stable value in [0, 1) per soldier, to keep animations out of step.
     pub phase: f32,
+    /// A stable value per soldier for his look (`models::look`), which he
+    /// keeps when he falls.
+    pub look: u8,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -332,6 +335,7 @@ struct Fallen {
     fell: f32,
     unit: u16,
     owner: u8,
+    look: u8,
 }
 
 /// A soldier lying where he fell.
@@ -341,6 +345,8 @@ pub struct Corpse {
     pub facing: Vec2,
     pub owner: u8,
     pub unit: u16,
+    /// His look, as he had it standing ([`Soldier::look`]).
+    pub look: u8,
     /// Seconds since he fell; negative while he still stands, waiting for
     /// the killing blow.
     pub age: f32,
@@ -587,6 +593,7 @@ impl Puppets {
                 fell: self.time,
                 unit: self.unit[r],
                 owner: self.player[r],
+                look: look(h, k),
             };
             self.lay(fallen);
             self.lodge(h, k, &fallen);
@@ -662,7 +669,7 @@ impl Puppets {
                 if k >= band || j == NONE || !self.can_duel(a, j as usize, self.pos[i], &near) {
                     self.partner[i] = NONE;
                 } else {
-                    self.marked[j as usize] = self.marked[j as usize].saturating_add(1);
+                    self.mark(j as usize);
                 }
             }
         }
@@ -679,7 +686,7 @@ impl Puppets {
                     let foe = self.nearest_foe(self.pos[i], &near);
                     self.partner[i] = foe;
                     if foe != NONE {
-                        self.marked[foe as usize] = self.marked[foe as usize].saturating_add(1);
+                        self.mark(foe as usize);
                         if impact {
                             self.charge_home(i, foe as usize);
                         }
@@ -695,6 +702,11 @@ impl Puppets {
         }
         self.fighting = fighting;
         self.near = near;
+    }
+
+    /// One more soldier has puppet `j` as his man.
+    fn mark(&mut self, j: usize) {
+        self.marked[j] = self.marked[j].saturating_add(1);
     }
 
     /// The regiments of `fighting` hostile to regiment `a` and close enough
@@ -792,9 +804,12 @@ impl Puppets {
             let b = b as usize;
             for j in b * SLOTS..b * SLOTS + self.front(b) {
                 let d = me.distance_squared(self.pos[j]);
+                if d >= reach {
+                    continue;
+                }
                 let m = f32::from(self.marked[j]);
                 let score = d + CROWD * m * m;
-                if d < reach && score < best.1 {
+                if score < best.1 {
                     best = (j as u32, score);
                 }
             }
@@ -1158,13 +1173,8 @@ impl Puppets {
                 // At rest: shift weight and glance about; restlessly, waiting
                 // to fight.
                 let p = unit_hash(block.handle, k, 6) * tau;
-                let (sway_by, rate) = if waiting {
-                    (SWAY * RESTLESS, 1.6)
-                } else {
-                    (SWAY, 1.0)
-                };
-                let t = self.time * rate;
-                let sway = (t * 0.9 + p).sin() + 0.5 * (t * 2.3 + p * 1.7).sin();
+                let sway_by = if waiting { SWAY * RESTLESS } else { SWAY };
+                let sway = (self.time * 0.9 + p).sin() + 0.5 * (self.time * 2.3 + p * 1.7).sin();
                 pos += right * sway_by * sway;
                 let glance = (self.time * 0.31 + p).sin() * (self.time * 0.13 + p * 0.6).sin();
                 facing = Vec2::from_angle(GLANCE * glance).rotate(facing);
@@ -1180,6 +1190,7 @@ impl Puppets {
                 shouting,
                 fight,
                 phase,
+                look: look(block.handle, k),
             });
         }
     }
@@ -1254,6 +1265,7 @@ impl Puppets {
                 fell,
                 unit: block.unit,
                 owner,
+                look: look(block.handle, pick),
             };
             self.lay(fallen);
             if fell <= self.time {
@@ -1304,6 +1316,7 @@ impl Puppets {
             facing: f.facing,
             owner: f.owner,
             unit: f.unit,
+            look: f.look,
             age: self.time - f.fell,
             sink,
         };
@@ -1351,6 +1364,11 @@ fn unit_hash(h: RegimentHandle, k: usize, salt: u32) -> f32 {
     mix(h.index, u32::from(h.generation), k as u32, salt)
 }
 
+/// A stable look per soldier (see [`Soldier::look`]).
+fn look(h: RegimentHandle, k: usize) -> u8 {
+    (unit_hash(h, k, 16) * 256.0) as u8
+}
+
 /// A stable value in [0, 1) for blow `blow` between two puppets, one per
 /// `salt`.
 fn roll(i: usize, j: usize, blow: u32, salt: u32) -> f32 {
@@ -1358,7 +1376,7 @@ fn roll(i: usize, j: usize, blow: u32, salt: u32) -> f32 {
 }
 
 /// A stable value in [0, 1) from four numbers.
-fn mix(a: u32, b: u32, c: u32, d: u32) -> f32 {
+pub(crate) fn mix(a: u32, b: u32, c: u32, d: u32) -> f32 {
     let mut x = a.wrapping_mul(0x9E37_79B9)
         ^ b.wrapping_mul(0x85EB_CA6B)
         ^ c.wrapping_mul(0xC2B2_AE35)

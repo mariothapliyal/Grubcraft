@@ -2960,10 +2960,10 @@ impl Running {
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
-                        let (tone, rate, scale) = models::variation(s.phase);
+                        let look = models::look(s.look);
                         // The rate keeps loops out of step; blows are timed by
                         // their own progress, so it leaves fights alone.
-                        let seconds = time * rate + s.phase * 4.0;
+                        let seconds = time * look.rate + s.phase * 4.0;
                         // At the site and still: off on the way, they walk.
                         let working = site
                             .filter(|&(c, reach)| {
@@ -2996,9 +2996,9 @@ impl Running {
                             facing: facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
-                            color: [cr, cg, cb, tone],
+                            color: [cr, cg, cb, look.tone],
                             lift: 0.0,
-                            scale,
+                            scale: look.scale,
                         });
                     });
                 continue;
@@ -4443,16 +4443,15 @@ impl Running {
                     // Out of soldier room, he is drawn as a box instead.
                     if lod < LODS && room > 0 {
                         room -= 1;
-                        let bits = c.pos.x.to_bits() ^ c.pos.y.to_bits().rotate_left(16);
-                        let (tone, _, scale) = models::variation_of(bits);
+                        let look = models::look(c.look);
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: c.pos.to_array(),
                             facing: c.facing.to_array(),
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
-                            color: [r, g, b, tone],
+                            color: [r, g, b, look.tone],
                             lift: -0.5 * c.sink,
-                            scale,
+                            scale: look.scale,
                         });
                         continue;
                     }
@@ -5142,7 +5141,7 @@ impl Running {
                         facing: [0.0, 1.0],
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, 128],
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
                         lift,
                         scale: 1.0,
                     });
@@ -5171,7 +5170,7 @@ impl Running {
                     facing: facing.to_array(),
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
-                    color: [r, g, b, 128],
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
                 });
