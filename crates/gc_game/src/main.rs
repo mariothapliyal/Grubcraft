@@ -148,6 +148,7 @@ mod fog;
 mod fx_demo;
 #[cfg(test)]
 mod goldens;
+mod land;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
 mod hud;
@@ -754,6 +755,7 @@ struct Running {
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
+    land: land::LandView,
     /// Data hash and size, for the overlay.
     data_label: String,
     seed: u64,
@@ -1518,6 +1520,7 @@ impl App {
             tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
+            land: Default::default(),
             data_label: format!(
                 "{:016x}   {} unit types",
                 game_data.short_hash(),
@@ -2895,7 +2898,15 @@ impl Running {
             self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;
-            (self.siege).advance(game_dt.as_secs_f32(), |p| hm.drawn_height(p.x, p.y));
+            self.siege
+                .set_density(self.menu.settings().graphics.effects_density());
+            // Behind the menu its time stands still, as the particles' do.
+            let siege_dt = if self.menu_open && self.online.is_none() {
+                0.0
+            } else {
+                game_dt.as_secs_f32()
+            };
+            (self.siege).advance(siege_dt, |p| hm.drawn_height(p.x, p.y));
             self.note_building_looks();
             self.push_buildings();
         }
@@ -2941,9 +2952,10 @@ impl Running {
         };
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
-        // Soldiers stand only where a regiment could walk.
+        // Soldiers stand only where a regiment of theirs could walk (an
+        // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
-        let firm = |p: Vec2| nav.standable(fx_vec(p));
+        let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
         for r in self.world.regiments.iter().take_while(|_| !viewing) {
             // Enemies hidden in woods and tall grass aren't drawn (their
             // soldiers keep marching out of sight, below).
@@ -2992,8 +3004,13 @@ impl Running {
                 fighter: fighter_of(stats, &r),
             };
             if !seen {
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |_| {},
+                );
                 continue;
             }
             if block.disorder > 0.0 {
@@ -3098,8 +3115,13 @@ impl Running {
                     lift: pole[1] - flag_size[1],
                 });
                 // Keep the puppets marching (and falling) out of sight.
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |_| {});
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |_| {},
+                );
                 continue;
             }
             if let Some(color) = banner {
@@ -3178,8 +3200,12 @@ impl Running {
                 if let Some((tile, _, _)) = cutting {
                     self.ambient.felling.cutting(tile, pos);
                 }
-                self.puppets
-                    .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
+                self.puppets.update_on(
+                    &block,
+                    r.owner,
+                    game_dt.as_secs_f32(),
+                    firm(r.owner),
+                    |s| {
                         let mut s = s;
                         // At the wall: the ranks step up to it, and the front
                         // one swings.
@@ -3255,7 +3281,8 @@ impl Running {
                             lift: 0.0,
                             scale: look.scale,
                         });
-                    });
+                    },
+                );
                 continue;
             }
             let size = [
@@ -3266,7 +3293,7 @@ impl Running {
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
             self.puppets
-                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
+                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm(r.owner), |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -3298,8 +3325,11 @@ impl Running {
         }
         if !viewing {
             self.push_arrows(now);
-            self.push_siege();
+            self.push_siege(&cull);
             self.push_routes();
+        } else {
+            // Blows told while the unit viewer is open show nothing.
+            drop(self.siege.take_particles());
         }
         if self.lens && !self.minds.is_empty() && !viewing {
             let lenses = lens::lenses(&self.minds);
@@ -3341,6 +3371,14 @@ impl Running {
             self.sandbox.side,
             self.heightmap.tiles,
             !self.reveal_all,
+        );
+        self.land.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            buildings::shown_to(self.sandbox.side, self.reveal_all),
+            self.heightmap.tiles,
+            &self.buildings,
         );
         // Dust and sparks age with game time: still while paused or behind
         // the menu, slow in slow motion.
@@ -4214,6 +4252,7 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.land.reset();
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -4328,6 +4367,8 @@ impl Running {
         tagged_alloc::scope(Tag::Render, || {
             set_terrain(&mut self.renderer, hm);
         });
+        // The renderer's land is bare again.
+        self.land.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();
@@ -4895,9 +4936,10 @@ impl Running {
         }
     }
 
-    /// The sieges on screen (see [`siege`]): shots at buildings, chips and
-    /// dust, smoke and fire, and rubble. Their sounds play here too.
-    fn push_siege(&mut self) {
+    /// The sieges on screen (see [`siege`]): shots at buildings, chunks,
+    /// stuck arrows and rubble as boxes, and dust, smoke, fire and sparks as
+    /// particles. Their sounds play here too.
+    fn push_siege(&mut self, cull: &gc_render::Cull) {
         let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let standing = self
             .world
@@ -4906,12 +4948,18 @@ impl Running {
             .flat_map(|all| all.iter().filter(move |v| shown(v)).map(|v| v.handle));
         let hm = &self.heightmap;
         self.siege.push(
-            standing,
             |p| hm.drawn_height(p.x, p.y),
             gc_render::MAX_BOX_INSTANCES - BOX_ROOM_AFTER_CORPSES,
             &mut self.instances,
         );
+        self.siege
+            .emit_damage(standing, |at, radius| cull.sees(at, radius));
         let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let particles = self.siege.take_particles();
+        // Replayed blows would burst out all at once at stale spots.
+        if !catching_up {
+            self.renderer.spawn_particles(&particles);
+        }
         for noise in self.siege.drain_noises() {
             if let Some(sounds) = self.sounds.as_ref().filter(|_| !catching_up) {
                 sounds.siege(noise);
@@ -5292,7 +5340,7 @@ impl Running {
         let Some((at, facing)) = self.placement() else {
             return;
         };
-        if !self.world.nav().walkable(fx_vec(at)) {
+        if !self.world.nav().walkable(self.sandbox.side, fx_vec(at)) {
             self.say("No regiment can stand there.".into());
             return;
         }
@@ -5791,7 +5839,7 @@ impl Running {
         let stats = &self.units.stats[self.sandbox.unit as usize];
         let (width, depth) = stats.block_size_in(Formation::Line, stats.files, stats.models);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
-        let color = if self.world.nav().walkable(fx_vec(at)) {
+        let color = if self.world.nav().walkable(self.sandbox.side, fx_vec(at)) {
             [cr, cg, cb, 200]
         } else {
             BLOCKED_COLOR
