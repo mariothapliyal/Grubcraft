@@ -3,8 +3,8 @@
 A faction's buildings change the ground around them. The Brood go first
 (idea 19, built): where their root-veins reach, the soil turns to a living
 skin of dark, wet flesh crossed by a network of glowing veins that pulse
-towards the Hive. The Clans, Choir and Concord follow (idea 15, not built),
-each with a land of its own, drawn the same way.
+towards the Hive. The Clans, Choir and Concord follow (idea 15, built), each
+with a land of its own, drawn the same way.
 
 ## Why it is the ground and not objects
 
@@ -23,7 +23,7 @@ second, fills a grid for the renderer, four bytes a tile:
 | Byte | What it holds |
 |---|---|
 | R | cover, 0 bare to 255 fully covered |
-| G | whose land: a faction id in quarters of 255 (Brood is 64) |
+| G | whose land: `kind * 60` (see below) |
 | B | distance to the nearest source in quarter tiles, up to 63.75 |
 | A | spare |
 
@@ -33,8 +33,7 @@ adds a corridor of land (2.6 tiles each side) between the two, so the network
 is joined up even where the reaches do not meet. `Renderer::set_land` uploads
 the grid as an `Rgba8Unorm` texture (binding 16, a tile each, 2.4 MB on a
 768-tile map; one fetch a pixel, and the shader draws nothing where the cover
-is under 0.05). The green byte is reserved: until a second land exists the
-shader draws every land as the Brood's.
+is under 0.05). 
 
 The cover creeps: it grows 0.3 of a full cover a second when a building links
 and fades at 0.6 a second when one is lost, so the land spreads and withdraws
@@ -68,19 +67,27 @@ What still moves on the veins is drawn as boxes in `buildings::push_veins`:
 the bright flow of Grub from a worked seep home, and the dull stub and red
 cross on a seep the veins do not reach. They sit on top of the land.
 
-## Later lands (idea 15)
+## The other three lands (idea 15, built)
 
-The faction id byte is there for them: each land supplies its own `*_land`
-function (colour, normal tilt, glow, roughness), chosen by the id. Planned:
+The grid's green byte says whose land a tile is (`kind * 60`: 1 Brood, 2 Clans,
+3 Choir, 4 Concord). The shader reads it without blending (the biggest of the
+four nearest tiles, with `textureGather`) and `faction_land` picks the land.
+Where two lands overlap, the one with more cover takes the tile.
 
-| Faction | Land |
-|---|---|
-| Ember Clans | cultivated ground: tilled earth and short trampled grass round Halls and Farms |
-| Shard Choir | crystal-dusted ground with small shards and a faint ring-glow at each Resonator |
-| Carrion Concord | ash, bare earth and grave markers round Counting Houses and Tithe sites |
+| Faction | Spreads from | Look |
+|---|---|---|
+| Ember Clans | every finished building except walls and towers: 10 tiles from a Hall, 6 from an outpost, 2.5 from the rest | tilled earth: fields of about six tiles with furrows turned their own way, between yards of trodden earth |
+| Shard Choir | each finished powering building's field of power (`World::power_fields`: Spire 8, Resonator 6) | frosted lavender ground with pale cracks, glinting crystal dust and faint rings that spread out from the source |
+| Carrion Concord | the same as the Clans | grey ash, dried and split, with flecks of bone |
 
-The ground changes of clearing, burning and flooding (docs/32) are separate;
-when they land they can write the same grid or a sibling.
+Walls, towers and unfinished buildings spread no land (Clans and Concord), so
+land follows the settled base, not the siege line. Only buildings the viewing
+side is shown count, as for the Brood.
+
+Not built: land for tilled fields that grow crops, grave markers, and shards
+standing out of the ground. The ground changes of clearing, burning and
+flooding (docs/32) are separate; when they land they can write the same grid
+or a sibling.
 
 ## Tuning
 

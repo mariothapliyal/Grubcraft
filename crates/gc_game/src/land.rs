@@ -1,19 +1,44 @@
+//! The factions' lands, drawn over the ground (docs/33-faction-lands.md).
+//!
+//! The simulation says where each faction's land spreads from: the Brood's
+//! linked Hives and Pustules (`World::veins`, with how far their veins
+//! reach), the Choir's fields of power, and the finished buildings of the
+//! Clans and the Concord. A few times a second this turns that into a grid
+//! for the renderer, four bytes a tile: how much of the tile the land
+//! covers, whose land it is, and how far it is from the nearest source. The
+//! shader draws the ground; this decides only where. The cover grows
+//! outwards over a few seconds when a building appears and fades when one is
+//! lost, so the land creeps rather than appears. Presentation only: it reads
+//! the world and writes nothing to it.
+
 use std::time::{Duration, Instant};
 
+use gc_data::Faction;
 use gc_render::Renderer;
-use gc_sim::{PlayerId, World};
+use gc_sim::structures::Role;
+use gc_sim::{PlayerId, StructureView, World};
 use glam::Vec2;
 
-use crate::buildings::shown_to;
+use crate::buildings::{Table, shown_to};
 
 /// The grid is redrawn this often.
 const EVERY: Duration = Duration::from_millis(250);
 /// How fast the cover spreads and withdraws, in full covers a second.
 const GROW: f32 = 0.3;
 const FADE: f32 = 0.6;
-/// The Brood's id in the grid's green byte, in quarters of 255. Reserved:
-/// the shader draws every land as the Brood's until a second one exists.
-const BROOD: u8 = 64;
+/// Whose land, as the grid's green byte holds it: `kind * ID_STEP` (the
+/// shader reads it back).
+pub(crate) const BROOD: u8 = 1;
+pub(crate) const CLANS: u8 = 2;
+pub(crate) const CHOIR: u8 = 3;
+pub(crate) const CONCORD: u8 = 4;
+const ID_STEP: u8 = 60;
+/// How far the Clans' and the Concord's land reaches from the edge of a
+/// main building, an outpost and any other building, in tiles. Walls and
+/// towers spread none.
+const MAIN_REACH: f32 = 10.0;
+const OUTPOST_REACH: f32 = 6.0;
+const OTHER_REACH: f32 = 2.5;
 /// Half the width of the corridor of land between a building and the one it
 /// links through, in tiles.
 const CORRIDOR: f32 = 2.6;
@@ -24,6 +49,8 @@ const FAR: f32 = 63.75;
 /// One building the land spreads from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Source {
+    /// Whose land it is (`BROOD`, `CLANS`...).
+    pub kind: u8,
     pub centre: Vec2,
     /// Half the footprint's sides.
     pub half: Vec2,
@@ -55,6 +82,10 @@ struct Land {
     dist: Vec<f32>,
     /// How much is covered now.
     cover: Vec<f32>,
+    /// Whose land it is heading to be (0 for none, as `Source::kind`), and
+    /// whose it last was, so a fading land keeps its look.
+    owner: Vec<u8>,
+    held: Vec<u8>,
     /// What the renderer is given.
     grid: Vec<u8>,
 }
@@ -74,7 +105,8 @@ impl LandView {
         *self = Self::default();
     }
 
-    /// Draw the Brood's land the way `side` sees it. Call it every frame; it
+    /// Draw the factions' lands the way `side` sees them (everything with
+    /// `reveal_all`: the two make `(side, reveal_all)`). Call it every frame; it
     /// only redraws a few times a second, and does nothing where there is
     /// no land or it has settled.
     pub fn update(
@@ -82,16 +114,16 @@ impl LandView {
         now: Instant,
         renderer: &mut Renderer,
         world: &World,
-        side: PlayerId,
-        reveal_all: bool,
+        (side, reveal_all): (PlayerId, bool),
         tiles: u32,
+        table: &Table,
     ) {
         let elapsed = self.last.map(|t| now.duration_since(t));
         if elapsed.is_some_and(|e| e < EVERY) {
             return;
         }
         self.last = Some(now);
-        let sources = sources(world, side, reveal_all);
+        let sources = sources(world, side, reveal_all, table);
         let same = sources == self.drawn;
         if (sources.is_empty() && !self.shown) || (self.settled && same) {
             return;
@@ -113,28 +145,76 @@ impl LandView {
     }
 }
 
-/// The veins buildings `side` is shown, as sources of land.
-pub(crate) fn sources(world: &World, side: PlayerId, reveal_all: bool) -> Vec<Source> {
+/// The buildings `side` is shown that spread land, as sources of it: the
+/// Brood's veins, the Choir's fields of power, and what the Clans and the
+/// Concord have built and finished.
+pub(crate) fn sources(
+    world: &World,
+    side: PlayerId,
+    reveal_all: bool,
+    table: &Table,
+) -> Vec<Source> {
     let Some(structures) = world.structures() else {
         return Vec::new();
     };
     let shown = shown_to(side, reveal_all);
-    world
-        .veins()
-        .filter_map(|v| {
-            let s = structures.get(v.building).filter(|s| shown(s))?;
-            let linked = structures
-                .get(v.parent)
-                .filter(|p| v.parent != v.building && shown(p))
-                .map(|_| crate::from_fx_vec(v.from));
-            Some(Source {
-                centre: crate::from_fx_vec(v.at),
-                half: Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0,
-                reach: v.reach as f32,
-                linked,
-            })
+    let at = |s: &StructureView| {
+        let (w, d) = (f32::from(s.width), f32::from(s.depth));
+        (
+            Vec2::new(s.tile.0 as f32 + w / 2.0, s.tile.1 as f32 + d / 2.0),
+            Vec2::new(w, d) / 2.0,
+        )
+    };
+    let veins = world.veins().filter_map(|v| {
+        let s = structures.get(v.building).filter(|s| shown(s))?;
+        let linked = structures
+            .get(v.parent)
+            .filter(|p| v.parent != v.building && shown(p))
+            .map(|_| crate::from_fx_vec(v.from));
+        Some(Source {
+            kind: BROOD,
+            centre: crate::from_fx_vec(v.at),
+            half: Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0,
+            reach: v.reach as f32,
+            linked,
         })
-        .collect()
+    });
+    let fields = world.power_fields().filter_map(|f| {
+        let s = structures.get(f.building).filter(|s| shown(s))?;
+        let (centre, half) = at(&s);
+        Some(Source {
+            kind: CHOIR,
+            centre,
+            half,
+            reach: f.reach as f32,
+            linked: None,
+        })
+    });
+    let settled = structures.iter().filter_map(|s| {
+        let kind = match table.faction(s.building)? {
+            Faction::EmberClans => CLANS,
+            Faction::CarrionConcord => CONCORD,
+            _ => return None,
+        };
+        let reach = match table.stats.get(usize::from(s.building))?.role {
+            Role::Main => MAIN_REACH,
+            Role::Outpost => OUTPOST_REACH,
+            Role::Wall | Role::Defence => return None,
+            _ => OTHER_REACH,
+        };
+        if !s.finished() || !shown(&s) {
+            return None;
+        }
+        let (centre, half) = at(&s);
+        Some(Source {
+            kind,
+            centre,
+            half,
+            reach,
+            linked: None,
+        })
+    });
+    veins.chain(fields).chain(settled).collect()
 }
 
 impl Land {
@@ -147,11 +227,16 @@ impl Land {
                 v.clear();
                 v.resize(tiles * tiles, 0.0);
             }
+            for v in [&mut self.owner, &mut self.held] {
+                v.clear();
+                v.resize(tiles * tiles, 0);
+            }
             self.grid.clear();
             self.grid.resize(tiles * tiles * 4, 0);
         }
         self.target.fill(0.0);
         self.dist.fill(FAR);
+        self.owner.fill(0);
         for s in sources {
             self.reach_from(s);
         }
@@ -171,10 +256,13 @@ impl Land {
             // Bare tiles keep their distance (far), so the edge of the land
             // does not blend towards a source.
             texel[2] = (self.dist[i] * 4.0).round().min(255.0) as u8;
+            if self.owner[i] != 0 {
+                self.held[i] = self.owner[i];
+            }
             if *cover > 0.0 {
                 step.any = true;
                 texel[0] = (*cover * 255.0).round() as u8;
-                texel[1] = BROOD;
+                texel[1] = self.held[i] * ID_STEP;
             } else {
                 texel[..2].fill(0);
             }
@@ -187,34 +275,50 @@ impl Land {
     /// the building it links through.
     fn reach_from(&mut self, s: &Source) {
         let pad = Vec2::splat(s.reach + 1.0);
-        self.paint(s.centre - s.half - pad, s.centre + s.half + pad, |p| {
-            let outside = ((p - s.centre).abs() - s.half).max(Vec2::ZERO).length();
-            (1.0 - smooth(0.7 * s.reach, s.reach, outside), outside)
-        });
+        self.paint(
+            s.kind,
+            s.centre - s.half - pad,
+            s.centre + s.half + pad,
+            |p| {
+                let outside = ((p - s.centre).abs() - s.half).max(Vec2::ZERO).length();
+                (1.0 - smooth(0.7 * s.reach, s.reach, outside), outside)
+            },
+        );
         if let Some(from) = s.linked {
             let pad = Vec2::splat(CORRIDOR);
-            self.paint(s.centre.min(from) - pad, s.centre.max(from) + pad, |p| {
-                let gap = segment_gap(p, s.centre, from);
-                // Counted from the building's edge, as its own reach is.
-                let dist = (p.distance(s.centre) - s.half.max_element()).max(0.0);
-                (1.0 - smooth(CORRIDOR * 0.45, CORRIDOR, gap), dist)
-            });
+            self.paint(
+                s.kind,
+                s.centre.min(from) - pad,
+                s.centre.max(from) + pad,
+                |p| {
+                    let gap = segment_gap(p, s.centre, from);
+                    // Counted from the building's edge, as its own reach is.
+                    let dist = (p.distance(s.centre) - s.half.max_element()).max(0.0);
+                    (1.0 - smooth(CORRIDOR * 0.45, CORRIDOR, gap), dist)
+                },
+            );
         }
     }
 
     /// Ask for the cover and distance `at` gives for the tile centres within
-    /// the box `lo` to `hi`, keeping the most cover and the least distance
-    /// where lands overlap.
-    fn paint(&mut self, lo: Vec2, hi: Vec2, at: impl Fn(Vec2) -> (f32, f32)) {
+    /// the box `lo` to `hi`, for land of `kind`: where its own overlap it
+    /// keeps the most cover and least distance, and where another's does,
+    /// whichever has the most cover wins the tile.
+    fn paint(&mut self, kind: u8, lo: Vec2, hi: Vec2, at: impl Fn(Vec2) -> (f32, f32)) {
         let tiles = self.tiles;
         let (lo, hi) = (lo.max(Vec2::ZERO), hi.min(Vec2::splat(tiles as f32)));
         for y in lo.y as usize..(hi.y.ceil() as usize).min(tiles) {
             for x in lo.x as usize..(hi.x.ceil() as usize).min(tiles) {
                 let (cover, dist) = at(Vec2::new(x as f32 + 0.5, y as f32 + 0.5));
-                if cover > 0.0 {
-                    let i = y * tiles + x;
+                let i = y * tiles + x;
+                if cover > 0.0 && self.owner[i] == kind {
                     self.target[i] = self.target[i].max(cover);
                     self.dist[i] = self.dist[i].min(dist);
+                } else if cover > self.target[i] {
+                    // Another land has more of the tile.
+                    self.owner[i] = kind;
+                    self.target[i] = cover;
+                    self.dist[i] = dist;
                 }
             }
         }
@@ -240,6 +344,7 @@ mod tests {
 
     fn hive() -> Source {
         Source {
+            kind: BROOD,
             centre: Vec2::new(32.0, 32.0),
             half: Vec2::splat(2.5),
             reach: 15.0,
@@ -258,7 +363,7 @@ mod tests {
         // The first look shows the land as it stands.
         assert!(land.step(64, &[hive()], f32::INFINITY).any);
         let centre = texel(&land, 32, 32);
-        assert_eq!((centre[0], centre[1]), (255, BROOD));
+        assert_eq!((centre[0], centre[1]), (255, BROOD * ID_STEP));
         // 2.5 to the edge, 15 of reach: 20 tiles from the centre is bare.
         assert_eq!(texel(&land, 52, 32)[0], 0);
         // Between, it thins and the distance grows.
@@ -294,6 +399,7 @@ mod tests {
     fn a_linked_building_is_joined_to_its_parent_by_a_corridor() {
         let mut land = Land::default();
         let pustule = Source {
+            kind: BROOD,
             centre: Vec2::new(52.0, 32.0),
             half: Vec2::splat(1.0),
             reach: 3.0,

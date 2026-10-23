@@ -1455,7 +1455,7 @@ impl Renderer {
     /// Draw a faction's land over the ground: four bytes per map tile (red,
     /// green, blue, alpha), row by row from the north-west corner. Red is
     /// how much of the tile the land covers (0 bare, 255 fully), green is
-    /// whose it is (reserved: every land draws as the Brood's for now), blue is its distance from
+    /// whose it is (`kind * 60`: 1 Brood, 2 Clans, 3 Choir, 4 Concord), blue is its distance from
     /// the nearest source in quarter tiles (the pulses run along it), alpha
     /// is spare. Edges are blurred over about a tile. `None` is bare ground
     /// again, as after `set_terrain`; it costs nothing when the ground is

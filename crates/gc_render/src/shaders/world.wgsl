@@ -88,8 +88,8 @@ const HIGHLIGHT: f32 = 1.6;
 @group(0) @binding(14) var scenery_color: texture_2d_array<f32>;
 @group(0) @binding(15) var scenery_normal: texture_2d_array<f32>;
 // Where a faction's land has spread over the ground (Renderer::set_land), one
-// texel a tile: r how much of it is covered, g whose (reserved: the Brood's
-// land is drawn for all), b the distance to its nearest source in quarter
+// texel a tile: r how much of it is covered, g whose (kind * 60; the biggest of the
+// four nearest tiles is used), b the distance to its nearest source in quarter
 // tiles.
 @group(0) @binding(16) var land_map: texture_2d<f32>;
 
@@ -554,13 +554,17 @@ fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: ve
 
 // ---------------------------------------------------------------- faction lands
 //
-// Where a faction's land has spread, the ground is that faction's: the Brood's
-// is living flesh. Everything here is worked out from the position, so there
-// are no textures to tile: a ragged edge (the land creeps in tongues and
-// islands, not a disc), mottled skin, a network of veins that is thickest by
-// its source and fine at its edges, and a glow that pulses inwards along the
-// veins, the way the Grub flows home. The simulation's veins decide where the
-// land is; this only draws it.
+// Where a faction's land has spread, the ground is that faction's. Each land is
+// worked out from the position alone, so there are no textures to tile, and
+// the simulation decides where it is; this only draws it. Every land comes in
+// by a ragged edge (tongues and islands, not a disc), then:
+//   Brood: living flesh with a network of veins, thickest by its source, and a
+//     glow that pulses inwards, the way the Grub flows home.
+//   Ember Clans: tilled earth in patches of furrows, each field turned its own
+//     way, between yards of trodden earth.
+//   Shard Choir: frosted lavender ground with pale cracks, glinting crystal
+//     dust and faint rings that spread out from its fields of power.
+//   Carrion Concord: grey ash, cracked, with flecks of bone.
 
 struct Land {
     albedo: vec3<f32>,
@@ -581,12 +585,8 @@ fn vein_mask(p: vec2<f32>, width: f32) -> f32 {
     return max(major, fine * 0.7);
 }
 
-fn brood_land(xz: vec2<f32>, spread: f32, dist: f32) -> Land {
-    var l = Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
-    l.cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
-    if l.cover <= 0.0 {
-        return l;
-    }
+fn brood_land(xz: vec2<f32>, cover: f32, dist: f32) -> Land {
+    var l = Land(vec3<f32>(0.0), cover, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
     // Veins, their lines wandering with a warp; thick near the source.
     let warp = vec2<f32>(vnoise(xz * 0.45), vnoise(xz * 0.45 + vec2<f32>(5.2, 1.3))) - 0.5;
     let p = xz * 0.2 + warp * 0.9;
@@ -615,6 +615,90 @@ fn brood_land(xz: vec2<f32>, spread: f32, dist: f32) -> Land {
     // Wet.
     l.rough = 0.45;
     return l;
+}
+
+fn clans_land(xz: vec2<f32>, cover: f32) -> Land {
+    var l = Land(vec3<f32>(0.0), cover, vec2<f32>(0.0), vec3<f32>(0.0), 0.95);
+    // Fields of about six tiles, each with rows turned its own way; some
+    // lie fallow as trodden yards.
+    let cell = floor(xz / 6.0);
+    let turn = hash2(cell) * 3.14159;
+    let along = vec2<f32>(cos(turn), sin(turn));
+    let rows = dot(xz, along) * 2.4 * 6.28318;
+    let tilled = step(0.4, hash2(cell + vec2<f32>(7.0, 3.0)));
+    let furrow = 0.5 + 0.5 * sin(rows);
+    let loam = mix(
+        srgb_to_linear(vec3<f32>(0.2, 0.12, 0.07)),
+        srgb_to_linear(vec3<f32>(0.36, 0.24, 0.13)),
+        furrow,
+    );
+    let yard = mix(
+        srgb_to_linear(vec3<f32>(0.34, 0.26, 0.16)),
+        srgb_to_linear(vec3<f32>(0.46, 0.38, 0.22)),
+        nz(xz * 0.5),
+    );
+    l.albedo = mix(yard, loam, tilled) * (0.8 + 0.4 * nz(xz * 1.7));
+    // Rows rise and fall across the field.
+    l.tilt = along * cos(rows) * 0.35 * tilled * cover;
+    return l;
+}
+
+fn choir_land(xz: vec2<f32>, cover: f32, dist: f32) -> Land {
+    var l = Land(vec3<f32>(0.0), cover, vec2<f32>(0.0), vec3<f32>(0.0), 0.35);
+    let frost = mix(
+        srgb_to_linear(vec3<f32>(0.4, 0.38, 0.46)),
+        srgb_to_linear(vec3<f32>(0.64, 0.61, 0.7)),
+        nz(xz * 0.35),
+    );
+    // Pale cracks between the plates of frost.
+    let crack = 1.0 - smoothstep(0.0, 0.02, abs(nz(xz * 0.5 + vec2<f32>(9.1, 2.7)) - 0.5));
+    l.albedo = mix(frost, srgb_to_linear(vec3<f32>(0.75, 0.8, 0.95)), crack * 0.7);
+    l.tilt = vec2<f32>(vnoise(xz * 3.1) - 0.5, vnoise(xz * 3.1 + vec2<f32>(4.0, 9.0)) - 0.5) * 0.3 * cover;
+    // Crystal dust that glints, a few motes a tile, each on its own time.
+    let grain = xz * 4.0;
+    let mote = hash2(floor(grain));
+    let spot = 1.0 - smoothstep(0.0, 0.3, length(fract(grain) - 0.5));
+    let glint = step(0.9, mote) * spot * (0.5 + 0.5 * sin(g.misc.y * 3.0 + mote * 60.0));
+    // Rings spread outwards from the source and die away.
+    let ring = smoothstep(0.88, 1.0, sin(dist * 1.1 - g.misc.y * 1.6)) * (1.0 - smoothstep(0.0, 10.0, dist));
+    l.glow = (vec3<f32>(0.55, 0.75, 1.0) * glint * 1.6 + vec3<f32>(0.3, 0.5, 1.0) * crack * 0.15 + vec3<f32>(0.3, 0.5, 1.0) * ring * 0.2) * cover;
+    return l;
+}
+
+fn concord_land(xz: vec2<f32>, cover: f32) -> Land {
+    var l = Land(vec3<f32>(0.0), cover, vec2<f32>(0.0), vec3<f32>(0.0), 0.92);
+    let ash = mix(
+        srgb_to_linear(vec3<f32>(0.2, 0.19, 0.19)),
+        srgb_to_linear(vec3<f32>(0.4, 0.37, 0.34)),
+        nz(xz * 0.4),
+    ) * (0.8 + 0.4 * nz(xz * 3.0));
+    // The ash has dried and split.
+    let crack = 1.0 - smoothstep(0.0, 0.03, abs(nz(xz * 0.25 + vec2<f32>(1.7, 6.3)) - 0.5));
+    // Flecks of bone.
+    let grain = xz * 7.0;
+    let fleck = step(0.95, hash2(floor(grain))) * (1.0 - smoothstep(0.1, 0.3, length(fract(grain) - 0.5)));
+    var albedo = mix(ash, srgb_to_linear(vec3<f32>(0.07, 0.065, 0.065)), crack * 0.7);
+    albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.75, 0.72, 0.62)), fleck * 0.8);
+    l.albedo = albedo;
+    l.tilt = vec2<f32>(0.0, crack) * -0.3 * cover;
+    return l;
+}
+
+// Whose land it is by the grid's green byte (`kind * 60`: 1 Brood, 2 Clans, 3
+// Choir, 4 Concord), over how much of the tile it covers (`spread`) and how
+// far from its nearest source (`dist`, in tiles). Cover is 0 where there is
+// none.
+fn faction_land(kind: u32, xz: vec2<f32>, spread: f32, dist: f32) -> Land {
+    let cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
+    if cover <= 0.0 {
+        return Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+    }
+    switch kind {
+        case 2u: { return clans_land(xz, cover); }
+        case 3u: { return choir_land(xz, cover, dist); }
+        case 4u: { return concord_land(xz, cover); }
+        default: { return brood_land(xz, cover, dist); }
+    }
 }
 
 @fragment
@@ -732,7 +816,11 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // is bare for certain.
     if land.r > 0.05 && rock < 1.0 {
         let keep = 1.0 - rock;
-        let l = brood_land(xz, land.r, land.b * 255.0 / 4.0);
+        // The land's kind is not blended: the biggest id of the four
+        // nearest tiles (a bare tile's is 0).
+        let ids = textureGather(1, land_map, soft_sampler, xz / f32(textureDimensions(land_map).x));
+        let kind = u32(round(max(max(ids.x, ids.y), max(ids.z, ids.w)) * 255.0 / 60.0));
+        let l = faction_land(kind, xz, land.r, land.b * 255.0 / 4.0);
         let k = l.cover * keep;
         albedo = mix(albedo, l.albedo, k);
         nd = normalize(nd + vec3<f32>(l.tilt.x, 0.0, l.tilt.y) * keep);
