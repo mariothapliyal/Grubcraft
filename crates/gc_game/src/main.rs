@@ -143,6 +143,7 @@ mod effects;
 mod faction_powers;
 mod field;
 mod fog;
+mod fx_demo;
 #[cfg(test)]
 mod goldens;
 // The Guide's data (docs/08-ui-ux.md#guide).
@@ -374,9 +375,9 @@ struct Options {
     viewer: Option<String>,
     /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
     look: gc_render::LookPreset,
-    /// Set off every effect in turn at the camera's focus (`--fx-demo`).
-    fx_demo: bool,
-    fx_still: bool,
+    /// Set off every effect at the camera's focus (`--fx-demo`, or
+    /// `--fx-still` to stop time).
+    fx: Option<fx_demo::Mode>,
     render: RendererOptions,
 }
 
@@ -400,8 +401,7 @@ fn parse_args() -> Options {
         showroom_clip: None,
         viewer: None,
         look: gc_render::LookPreset::default(),
-        fx_demo: false,
-        fx_still: false,
+        fx: None,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -422,12 +422,12 @@ fn parse_args() -> Options {
             opts.host = true;
             continue;
         }
-        if flag == "--fx-still" {
-            opts.fx_still = true;
-            continue;
-        }
-        if flag == "--fx-demo" {
-            opts.fx_demo = true;
+        if flag == "--fx-demo" || flag == "--fx-still" {
+            opts.fx = Some(if flag == "--fx-demo" {
+                fx_demo::Mode::Live
+            } else {
+                fx_demo::Mode::Still
+            });
             continue;
         }
         if flag == "--crash-test" {
@@ -1375,7 +1375,7 @@ impl App {
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
-            effects: effects::Field::new(opts.fx_demo, opts.fx_still),
+            effects: effects::Field::new(opts.fx),
             arrows: field::Arrows::new(field::MAX_STUCK),
             art,
             commander: false,

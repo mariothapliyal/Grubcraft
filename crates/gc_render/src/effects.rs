@@ -93,8 +93,6 @@ impl Default for Effects {
 
 /// Dust: warm tan, a little lighter than the ground it was kicked from.
 pub const DUST: [u8; 3] = [196, 172, 134];
-/// Smoke: dark and slightly warm.
-pub const SMOKE: [u8; 3] = [58, 54, 50];
 
 impl Effects {
     pub fn new(seed: u32) -> Effects {
@@ -112,17 +110,9 @@ impl Effects {
         self.density = density.clamp(0.0, 1.0);
     }
 
-    pub fn density(&self) -> f32 {
-        self.density
-    }
-
     /// Hand over the particles collected, leaving the list empty.
     pub fn take(&mut self) -> Vec<Particle> {
         std::mem::take(&mut self.out)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.out.is_empty()
     }
 
     /// How many particles are collected so far, to pass to
@@ -188,15 +178,13 @@ impl Effects {
                 ),
                 life: self.rng.between(1.4, 2.4),
                 size: [0.14 * hard, self.rng.between(0.6, 0.9) * hard],
-                color: [c[0], c[1], c[2], (150.0 * hard).min(255.0) as u8],
-                color_end: [c[0], c[1], c[2], 0],
                 drag: 1.6,
                 lift: 0.07,
                 shape,
                 flags: flags::SOFT | flags::WIND,
                 spin,
                 seed,
-                ..Particle::default()
+                ..fading(c, (150.0 * hard).min(255.0) as u8)
             });
         }
     }
@@ -216,20 +204,18 @@ impl Effects {
                 vel: Vec3::new(out.x, self.rng.between(0.15, 0.6), out.y) * (radius * 1.1),
                 life: self.rng.between(1.6, 3.0),
                 size: [radius * 0.2, radius * self.rng.between(0.6, 0.95)],
-                color: [c[0], c[1], c[2], 200],
-                color_end: [c[0], c[1], c[2], 0],
                 drag: 2.2,
                 lift: 0.12,
                 shape,
                 flags: flags::SOFT | flags::WIND,
                 spin,
                 seed,
-                ..Particle::default()
+                ..fading(c, 200)
             });
         }
         // A thin shock ring on the ground for the first moment.
         if self.density > 0.0 && amount >= 3.0 {
-            let pale = c_of(color, 1.15);
+            let pale = brighten(color, 1.15);
             self.out.push(Particle {
                 pos: pos + Vec3::new(0.0, 0.08, 0.0),
                 life: 0.55,
@@ -363,15 +349,13 @@ impl Effects {
                 vel: Vec3::new(flat.x, self.rng.between(0.8, 2.0), flat.y) * (power * 2.0),
                 life: self.rng.between(1.4, 2.6),
                 size: [s, s],
-                color: [c[0], c[1], c[2], 255],
-                color_end: [c[0], c[1], c[2], 0],
                 gravity: 11.0,
                 drag: 0.35,
                 shape: Shape::Shard,
                 flags: flags::GROUND,
                 spin,
                 seed: self.rng.byte(),
-                ..Particle::default()
+                ..fading(c, 255)
             });
         }
     }
@@ -386,14 +370,12 @@ impl Effects {
                 vel: v,
                 life: self.rng.between(0.35, 0.7),
                 size: [0.05, 0.03],
-                color: [color[0], color[1], color[2], 255],
-                color_end: [color[0], color[1], color[2], 0],
                 gravity: 9.0,
                 drag: 0.6,
                 shape: Shape::Streak,
                 flags: flags::STRETCH,
                 seed: self.rng.byte(),
-                ..Particle::default()
+                ..fading(color, 255)
             });
         }
     }
@@ -443,14 +425,12 @@ impl Effects {
                 ),
                 life: self.rng.between(2.0, 3.8),
                 size: [0.05, 0.03],
-                color: [color[0], color[1], color[2], 200],
-                color_end: [color[0], color[1], color[2], 0],
                 drag: 0.6,
                 lift: 0.05,
                 shape: Shape::Glow,
                 flags: flags::ADDITIVE | flags::FLICKER | flags::WIND,
                 seed: self.rng.byte(),
-                ..Particle::default()
+                ..fading(color, 200)
             });
         }
     }
@@ -478,11 +458,21 @@ impl Effects {
     }
 }
 
+/// A particle that fades to nothing from `rgb` at opacity `alpha`, to build
+/// the rest of it on.
+fn fading(rgb: [u8; 3], alpha: u8) -> Particle {
+    Particle {
+        color: [rgb[0], rgb[1], rgb[2], alpha],
+        color_end: [rgb[0], rgb[1], rgb[2], 0],
+        ..Particle::default()
+    }
+}
+
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-fn c_of(c: [u8; 3], k: f32) -> [u8; 3] {
+fn brighten(c: [u8; 3], k: f32) -> [u8; 3] {
     c.map(|v| (f32::from(v) * k).min(255.0) as u8)
 }
 
@@ -519,7 +509,7 @@ mod tests {
         all_recipes(&mut fx);
         let particles = fx.take();
         assert!(particles.len() > 100);
-        assert!(fx.is_empty());
+        assert!(fx.take().is_empty());
         for p in &particles {
             assert!(p.pos.is_finite() && p.vel.is_finite(), "{p:?}");
             assert!(p.life > 0.05 && p.life < 10.0, "{p:?}");

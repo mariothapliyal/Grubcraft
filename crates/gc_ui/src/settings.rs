@@ -190,17 +190,18 @@ pub fn settings_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
     #[test]
     fn lower_graphics_presets_make_fewer_effects() {
         let d: Vec<f32> = GraphicsPreset::ALL
             .iter()
             .map(|g| g.effects_density())
             .collect();
-        assert!(d[0] < d[1] && d[1] < d[2]);
+        assert!(d.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(d[2], 1.0);
     }
-
-    use super::*;
 
     fn temp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("gc_ui_{name}_{}", std::process::id()))

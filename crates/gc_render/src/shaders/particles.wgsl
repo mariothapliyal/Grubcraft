@@ -7,8 +7,6 @@
 @group(1) @binding(0) var fx_atlas: texture_2d<f32>;
 @group(1) @binding(1) var fx_sampler: sampler;
 
-// The prevailing wind, as for the scenery (x east, y south).
-const FX_WIND_DIR = vec2<f32>(0.8, 0.6);
 // How much brighter than its colour an additive particle shines (HDR; the
 // bloom takes the rest).
 const FX_GAIN: f32 = 2.6;
@@ -83,10 +81,15 @@ fn vs_particle(p: FxIn) -> FxOut {
 
     var world = p.pos + fx_displacement(p, age);
     if (flags & FX_WIND) != 0u {
-        world += vec3<f32>(FX_WIND_DIR.x, 0.0, FX_WIND_DIR.y) * (0.45 * age * smoothstep(0.0, 1.5, age));
+        world += vec3<f32>(WIND_DIR.x, 0.0, WIND_DIR.y) * (0.45 * age * smoothstep(0.0, 1.5, age));
     }
     let radius = mix(p.size.x, p.size.y, 1.0 - (1.0 - u) * (1.0 - u));
-    let ground = max(surface_height(world.xz), g.misc.x - 0.05);
+    // The ground's height only matters to particles that rest on it or fade
+    // out toward it.
+    var ground = 0.0;
+    if (flags & (FX_GROUND | FX_SOFT)) != 0u {
+        ground = max(surface_height(world.xz), g.misc.x - 0.05);
+    }
     if (flags & FX_GROUND) != 0u {
         world.y = max(world.y, ground + radius * 0.4);
     }
@@ -147,8 +150,11 @@ fn vs_particle(p: FxIn) -> FxOut {
         // Dust between the eye and a low sun glows.
         pow(max(dot(fwd, sun), 0.0), 5.0) * 1.2,
     );
-    out.sun = g.sun_color.rgb * sunlight(world, vec3<f32>(0.0, 1.0, 0.0));
-    out.amb = ambient_light(vec3<f32>(0.0, 0.5, 0.0));
+    // Added light is not shaded.
+    if (flags & FX_ADDITIVE) == 0u {
+        out.sun = g.sun_color.rgb * sunlight(world, vec3<f32>(0.0, 1.0, 0.0));
+        out.amb = ambient_light(vec3<f32>(0.0, 0.5, 0.0));
+    }
 
     // The air in front. `finish` is linear in its colour, so two probes
     // give what it adds and what it lets through.

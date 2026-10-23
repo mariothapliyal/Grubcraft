@@ -18,6 +18,8 @@
 //! recipes. Particles are drawn after the sky in the world pass, tested
 //! against the world's depth and writing none.
 
+use std::collections::VecDeque;
+
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
@@ -63,6 +65,17 @@ pub enum Shape {
 
 impl Shape {
     pub const PUFFS: [Shape; 4] = [Shape::PuffA, Shape::PuffB, Shape::PuffC, Shape::PuffD];
+    /// Every picture, in atlas order.
+    const ALL: [Shape; 8] = [
+        Shape::PuffA,
+        Shape::PuffB,
+        Shape::PuffC,
+        Shape::PuffD,
+        Shape::Glow,
+        Shape::Streak,
+        Shape::Shard,
+        Shape::Ring,
+    ];
 }
 
 /// One particle to spawn. Lengths are tiles, times seconds; `y` is up.
@@ -141,7 +154,7 @@ impl From<&Particle> for ParticleInstance {
             pos: p.pos.to_array(),
             vel: p.vel.to_array(),
             start: -p.age,
-            life: p.life.max(0.01),
+            life: p.life.clamp(0.01, MAX_LIFE),
             size: p.size,
             color: p.color,
             color_end: p.color_end,
@@ -151,24 +164,56 @@ impl From<&Particle> for ParticleInstance {
     }
 }
 
-/// The slots a batch of new particles goes into: one run, or two when it
-/// wraps past the end of the ring.
-#[derive(Clone, Copy, Debug, Default)]
+/// The longest a particle lives, in seconds: longer lives are cut to it, so
+/// the draw knows when a batch of slots is certainly dead.
+const MAX_LIFE: f32 = 8.0;
+
+/// The ring of slots, and which of them can still hold a live particle.
+#[derive(Clone, Debug, Default)]
 struct Ring {
     head: usize,
-    filled: usize,
+    /// Batches written, oldest first: when the last of each is dead, and how
+    /// many slots it took.
+    batches: VecDeque<(f32, usize)>,
 }
 
 impl Ring {
-    /// Make room for `n` (at most the capacity) more: the (first slot,
-    /// count) runs to write them to, in order.
-    fn push(&mut self, n: usize) -> [(usize, usize); 2] {
+    /// Make room for `n` (at most the capacity) more, all dead by `dies`: the
+    /// (first slot, count) runs to write them to, in order (one run, or two
+    /// when it wraps past the end of the ring).
+    fn push(&mut self, n: usize, dies: f32) -> [(usize, usize); 2] {
         debug_assert!(n <= MAX_PARTICLES);
         let first = n.min(MAX_PARTICLES - self.head);
         let runs = [(self.head, first), (0, n - first)];
         self.head = (self.head + n) % MAX_PARTICLES;
-        self.filled = (self.filled + n).min(MAX_PARTICLES);
+        self.batches.push_back((dies, n));
         runs
+    }
+
+    /// Forget the batches that are dead by effects time `now`.
+    fn expire(&mut self, now: f32) {
+        while self.batches.front().is_some_and(|&(dies, _)| dies <= now) {
+            self.batches.pop_front();
+        }
+    }
+
+    /// The (first instance, end) runs of the slots that may be alive: those
+    /// written most recently, up to the whole ring.
+    fn live_runs(&self) -> [(u32, u32); 2] {
+        let live = self
+            .batches
+            .iter()
+            .map(|&(_, n)| n)
+            .sum::<usize>()
+            .min(MAX_PARTICLES);
+        let start = (self.head + MAX_PARTICLES - live) % MAX_PARTICLES;
+        if live == 0 {
+            [(0, 0); 2]
+        } else if start < self.head {
+            [(start as u32, self.head as u32), (0, 0)]
+        } else {
+            [(start as u32, MAX_PARTICLES as u32), (0, self.head as u32)]
+        }
     }
 }
 
@@ -198,7 +243,7 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 fn value_noise(x: f32, y: f32, seed: u32) -> f32 {
     let (ix, iy) = (x.floor(), y.floor());
     let (fx, fy) = (x - ix, y - iy);
-    let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+    let (ux, uy) = (smoothstep(0.0, 1.0, fx), smoothstep(0.0, 1.0, fy));
     let (ix, iy) = (ix as i32, iy as i32);
     let a = hash(ix, iy, seed);
     let b = hash(ix + 1, iy, seed);
@@ -272,18 +317,8 @@ fn density(shape: Shape, x: f32, y: f32) -> f32 {
 /// each level's width and height.
 pub(crate) fn atlas() -> Vec<(u32, u32, Vec<u8>)> {
     let (w, h) = (CELL * CELLS[0], CELL * CELLS[1]);
-    let shapes = [
-        Shape::PuffA,
-        Shape::PuffB,
-        Shape::PuffC,
-        Shape::PuffD,
-        Shape::Glow,
-        Shape::Streak,
-        Shape::Shard,
-        Shape::Ring,
-    ];
     let mut level = vec![0u8; w * h];
-    for (i, &shape) in shapes.iter().enumerate() {
+    for (i, &shape) in Shape::ALL.iter().enumerate() {
         let (ox, oy) = ((i % CELLS[0]) * CELL, (i / CELLS[0]) * CELL);
         for ty in 0..CELL {
             for tx in 0..CELL {
@@ -506,6 +541,12 @@ pub(crate) fn make(
     }
 }
 
+/// Trim a flood of queued particles to what the ring holds, the newest.
+fn keep_newest(pending: &mut Vec<ParticleInstance>) {
+    let excess = pending.len().saturating_sub(MAX_PARTICLES);
+    pending.drain(..excess);
+}
+
 impl ParticlesGpu {
     /// The fixed ring buffer plus the atlas, for the static GPU memory total.
     pub fn gpu_bytes(&self) -> u64 {
@@ -517,8 +558,7 @@ impl ParticlesGpu {
     pub fn spawn(&mut self, particles: &[Particle]) {
         self.pending
             .extend(particles.iter().map(ParticleInstance::from));
-        let excess = self.pending.len().saturating_sub(MAX_PARTICLES);
-        self.pending.drain(..excess);
+        keep_newest(&mut self.pending);
     }
 
     /// Forget every particle, queued and flying.
@@ -530,6 +570,7 @@ impl ParticlesGpu {
     /// Write the queued particles into the ring, born at effects time `now`
     /// (less the age they came with).
     pub fn flush(&mut self, queue: &wgpu::Queue, now: f32) {
+        self.ring.expire(now);
         if self.pending.is_empty() {
             return;
         }
@@ -537,7 +578,7 @@ impl ParticlesGpu {
             p.start += now;
         }
         let mut done = 0;
-        for (first, count) in self.ring.push(self.pending.len()) {
+        for (first, count) in self.ring.push(self.pending.len(), now + MAX_LIFE) {
             if count == 0 {
                 continue;
             }
@@ -551,23 +592,22 @@ impl ParticlesGpu {
         self.pending.clear();
     }
 
-    /// Slots that have held a particle, which the draw covers; the shader
-    /// skips the ones that have died.
-    pub fn slots(&self) -> u32 {
-        self.ring.filled as u32
-    }
-
-    /// Draw every slot into the world pass. Returns the draw calls.
+    /// Draw the slots that may still hold a live particle (the shader skips
+    /// the dead among them) into the world pass. Returns the draw calls.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        let slots = self.slots();
-        if slots == 0 {
+        let runs = self.ring.live_runs();
+        if runs[0].1 == 0 {
             return 0;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(1, &self.atlas_group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..));
-        pass.draw(0..4, 0..slots);
-        1
+        let mut calls = 0;
+        for (first, end) in runs.into_iter().filter(|&(first, end)| end > first) {
+            pass.draw(0..4, first..end);
+            calls += 1;
+        }
+        calls
     }
 }
 
@@ -584,14 +624,33 @@ mod tests {
     #[test]
     fn the_ring_wraps_and_overwrites_the_oldest() {
         let mut ring = Ring::default();
-        assert_eq!(ring.push(10), [(0, 10), (0, 0)]);
-        assert_eq!(ring.filled, 10);
+        assert_eq!(ring.push(10, 1.0), [(0, 10), (0, 0)]);
         assert_eq!(
-            ring.push(MAX_PARTICLES - 4),
+            ring.push(MAX_PARTICLES - 4, 2.0),
             [(10, MAX_PARTICLES - 10), (0, 6)]
         );
-        assert_eq!((ring.head, ring.filled), (6, MAX_PARTICLES));
-        assert_eq!(ring.push(2), [(6, 2), (0, 0)]);
+        assert_eq!(ring.head, 6);
+        assert_eq!(ring.push(2, 3.0), [(6, 2), (0, 0)]);
+    }
+
+    #[test]
+    fn the_draw_covers_only_slots_that_may_be_alive() {
+        let mut ring = Ring::default();
+        assert_eq!(ring.live_runs()[0], (0, 0));
+        ring.push(10, 1.0);
+        ring.push(5, 2.0);
+        assert_eq!(ring.live_runs(), [(0, 15), (0, 0)]);
+        ring.expire(1.0);
+        assert_eq!(ring.live_runs(), [(10, 15), (0, 0)]);
+        // Wrapping: the live slots end at the head, past the ring's end.
+        ring.push(MAX_PARTICLES - 20, 3.0);
+        ring.push(8, 4.0);
+        assert_eq!(ring.head, 3);
+        ring.expire(2.0);
+        // The 15 slots written first are dead; 3 are at the start.
+        assert_eq!(ring.live_runs(), [(15, MAX_PARTICLES as u32), (0, 3)]);
+        ring.expire(10.0);
+        assert_eq!(ring.live_runs()[0], (0, 0));
     }
 
     #[test]
@@ -602,8 +661,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        let excess = pending.len().saturating_sub(MAX_PARTICLES);
-        pending.drain(..excess);
+        keep_newest(&mut pending);
         assert_eq!(pending.len(), MAX_PARTICLES);
         assert_eq!(pending[0].life, 5.0);
     }

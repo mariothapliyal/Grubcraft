@@ -62,7 +62,7 @@ const LOD_DISTANCES: [f32; TERRAIN_LEVELS - 1] = [128.0, 256.0, 384.0];
 const CHUNK_INSTANCE_BYTES: u64 = 12;
 /// Fixed capacity of the box instance buffer (soldiers and markers); never reallocated.
 pub const MAX_BOX_INSTANCES: usize = 65_536;
-pub use effects::{DUST, Effects, HitStyle, Rng, SMOKE};
+pub use effects::{DUST, Effects, HitStyle};
 use look::rgba;
 pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
@@ -189,9 +189,6 @@ pub struct RenderStats {
     pub scenery_drawn: u32,
     /// Triangles drawn in the world pass, soldiers and scenery.
     pub triangles: u64,
-    /// Particle slots drawn (those that have held a particle; the shader
-    /// skips the dead).
-    pub particle_slots: u32,
     /// Boxes and soldiers asked for beyond the fixed instance buffers this
     /// frame, so left undrawn. Zero unless a match outgrows the capacity.
     pub dropped: u32,
@@ -546,6 +543,9 @@ impl Renderer {
 
         // The skinning pass stands soldiers on the terrain too.
         let world_stages = wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE;
+        // The shadow map, its sampler and the fog map: read by the particle
+        // vertex shader (lighting at a particle's centre) as well as fragments.
+        let lit_stages = wgpu::ShaderStages::VERTEX_FRAGMENT;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("world"),
             entries: &[
@@ -571,7 +571,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -581,13 +581,13 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: lit_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -938,6 +938,10 @@ impl Renderer {
     }
 
     /// Light and grade the world as `look` says, from the next frame on.
+    pub fn set_look(&mut self, look: Look) {
+        self.look = look;
+    }
+
     /// Start particles at the next frame (see [`Particle`], and the recipes
     /// in [`Effects`]). More than [`MAX_PARTICLES`] at once overwrite the
     /// oldest.
@@ -954,10 +958,6 @@ impl Renderer {
     /// freeze them while the game is paused, between for slow motion.
     pub fn set_effects_speed(&mut self, speed: f32) {
         self.fx_speed = speed.clamp(0.0, 4.0);
-    }
-
-    pub fn set_look(&mut self, look: Look) {
-        self.look = look;
     }
 
     pub fn stats(&self) -> RenderStats {
@@ -1762,7 +1762,6 @@ impl Renderer {
             soldiers_drawn,
             scenery_drawn,
             triangles,
-            particle_slots: if bare { 0 } else { self.particles.slots() },
             dropped: dropped as u32 + self.scenery.dropped(),
         };
         FrameOutcome::Presented
