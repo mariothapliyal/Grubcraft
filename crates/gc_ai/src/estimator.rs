@@ -44,7 +44,7 @@ const FLANK_DAMAGE: f32 = Side::Flank.damage_percent() as f32 / 100.0;
 /// The battle's pace: how hard blows and volleys land, and how fast the
 /// steady morale drains run, against their full values.
 const MELEE_PACE: f32 = combat::BATTLE_PACE_PERCENT as f32 / 100.0;
-const VOLLEY_PACE: f32 = combat::VOLLEY_PACE_PERCENT as f32 / 100.0;
+pub(crate) const VOLLEY_PACE: f32 = combat::VOLLEY_PACE_PERCENT as f32 / 100.0;
 /// Morale drains in the sim, points per second.
 const OUTNUMBERED_2: f32 = morale::OUTNUMBERED_2 as f32 * MELEE_PACE;
 const OUTNUMBERED_3: f32 = morale::OUTNUMBERED_3 as f32 * MELEE_PACE;

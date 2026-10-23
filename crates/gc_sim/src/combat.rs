@@ -1708,11 +1708,7 @@ impl Combat {
         }
         let mut best: Option<(u64, usize)> = None;
         // Look as far as high ground could carry, then check each.
-        let reach = if terrain.is_flat() {
-            range
-        } else {
-            Terrain::range_from_high_ground(range)
-        };
+        let reach = terrain.reach(range);
         self.near_enemies(me, reach, owner, |j| {
             if !regs.alive[j]
                 || !stances.hostile(owner, regs.owner[j])
@@ -1725,8 +1721,9 @@ impl Combat {
                 return;
             }
             let d = (regs.position[j] - me).length_sq_raw();
-            let r = i64::from(terrain.range(range, me, regs.position[j]).raw());
-            if d <= (r * r) as u64 && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj)) {
+            if terrain.in_range(range, me, regs.position[j])
+                && best.is_none_or(|(bd, bj)| (d, j) < (bd, bj))
+            {
                 best = Some((d, j));
             }
         });

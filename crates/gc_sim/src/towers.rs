@@ -31,10 +31,11 @@ use gc_fixed::{Fx, FxVec2};
 use crate::combat::{Combat, Shot};
 use crate::conquest::Conquest;
 use crate::events::Shooter;
-use crate::regiments::{RegimentHandle, Regiments};
+use crate::regiments::{RegimentHandle, Regiments, hash_handle};
 use crate::stances::Stances;
-use crate::structures::{Breaker, SILENCES, StructureHandle, Structures, TOLL, nearest_point};
+use crate::structures::{Breaker, SILENCES, StructureHandle, Structures, TOLL};
 use crate::terrain::Terrain;
+use crate::veins::within;
 use crate::vision::Vision;
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND};
 
@@ -42,7 +43,7 @@ use crate::{PlayerId, StateHasher, TICKS_PER_SECOND};
 pub const TOLL_HP: u32 = 4;
 /// How far from a Bell Tower's walls an enemy sets it tolling, and its
 /// silence reaches, in tiles.
-pub const BELL_REACH: Fx = Fx::from_int(10);
+pub const BELL_REACH: i32 = 10;
 /// Ticks between a Bell Tower's tolls, at the least (20 s).
 pub const BELL_EVERY: u16 = 20 * TICKS_PER_SECOND as u16;
 /// Ticks a toll silences enemy powers for (5 s).
@@ -95,10 +96,15 @@ impl Conquest {
             let steps = s.steps(i) as u16;
             if s.flags_of(i) & SILENCES != 0 {
                 s.bell[i] = s.bell[i].saturating_sub(steps);
-                if s.bell[i] == 0 && s.enemy_near(combat, regs, stances, vision, i) {
-                    s.bell[i] = BELL_EVERY;
-                    s.silence[i] = BELL_SILENCE;
-                    s.tolled.push(s.handle(i));
+                if s.bell[i] == 0 {
+                    if s.enemy_near(combat, regs, stances, vision, i) {
+                        s.bell[i] = BELL_EVERY;
+                        s.silence[i] = BELL_SILENCE;
+                        s.tolled.push(s.handle(i));
+                    } else {
+                        // Nobody near: listen again in a moment.
+                        s.bell[i] = LOOK_EVERY;
+                    }
                 }
             }
             s.reload[i] = s.reload[i].saturating_sub(steps);
@@ -125,9 +131,24 @@ impl Conquest {
             if combat.loose(regs, j, shot, tick) {
                 s.reload[i] = attack.reload_ticks;
                 s.mark_seen(i, vision.allies_of(regs.owner[j]));
+            } else {
+                // Every volley is in the air: try again in a moment.
+                s.reload[i] = LOOK_EVERY;
             }
         }
     }
+}
+
+/// Whether regiment slot `j` is an enemy of `owner`'s that their side can
+/// see.
+fn foe_in_sight(
+    owner: PlayerId,
+    regs: &Regiments,
+    stances: &Stances,
+    vision: &Vision,
+    j: usize,
+) -> bool {
+    regs.alive[j] && stances.hostile(owner, regs.owner[j]) && vision.sees(owner, j, regs.owner[j])
 }
 
 impl Structures {
@@ -148,37 +169,25 @@ impl Structures {
         let range = self.stats_of(i).attack?.range;
         let at = self.centre(i);
         let shootable = |j: usize| {
-            regs.alive[j]
-                && stances.hostile(owner, regs.owner[j])
-                && vision.sees(owner, j, regs.owner[j])
-        };
-        let in_range = |j: usize| {
-            let r = i64::from(terrain.range(range, at, regs.position[j]).raw());
-            (regs.position[j] - at).length_sq_raw() <= (r * r) as u64
+            foe_in_sight(owner, regs, stances, vision, j)
+                && terrain.in_range(range, at, regs.position[j])
         };
         let focus = self.focus[i].and_then(|h| regs.resolve(h));
-        if let Some(j) = focus.filter(|&j| shootable(j) && in_range(j)) {
+        if let Some(j) = focus.filter(|&j| shootable(j)) {
             return Some(j);
         }
-        let reach = if terrain.is_flat() {
-            range
-        } else {
-            Terrain::range_from_high_ground(range)
-        } + combat.max_step();
+        let reach = terrain.reach(range) + combat.max_step();
         let mut best: Option<(Priority, u64, usize)> = None;
         combat.near_enemies(at, reach, owner, |j| {
-            if !shootable(j) || !in_range(j) {
+            if !shootable(j) {
                 return;
             }
             let siege = kinds
                 .get(usize::from(regs.unit[j]))
                 .is_some_and(|k| matches!(k.breaker, Breaker::Siege | Breaker::Artillery));
-            let besieging = self
-                .besieging(regs, j)
-                .is_some_and(|b| !stances.hostile(owner, b));
             let priority = if siege {
                 Priority::Siege
-            } else if besieging {
+            } else if (self.besieging(regs, j)).is_some_and(|b| !stances.hostile(owner, b)) {
                 Priority::Besieger
             } else {
                 Priority::Other
@@ -211,15 +220,11 @@ impl Structures {
     ) -> bool {
         let owner = self.owner_of(i);
         let foot = self.footprint(i);
-        let reach = u64::from(BELL_REACH.raw().unsigned_abs());
-        let search = BELL_REACH + self.block(i).radius() + combat.max_step();
+        let search = Fx::from_int(BELL_REACH) + self.block(i).radius() + combat.max_step();
         let mut near = false;
         combat.near_enemies(self.centre(i), search, owner, |j| {
-            near |= regs.alive[j]
-                && stances.hostile(owner, regs.owner[j])
-                && vision.sees(owner, j, regs.owner[j])
-                && (nearest_point(foot, regs.position[j]) - regs.position[j]).length_sq_raw()
-                    <= reach * reach;
+            near |= foe_in_sight(owner, regs, stances, vision, j)
+                && within(foot, regs.position[j], BELL_REACH);
         });
         near
     }
@@ -227,11 +232,10 @@ impl Structures {
     /// Whether a power `player` uses on something at `at` is silenced: an
     /// enemy Bell Tower within [`BELL_REACH`] of it has tolled lately.
     pub(crate) fn silenced(&self, stances: &Stances, player: PlayerId, at: FxVec2) -> bool {
-        let reach = u64::from(BELL_REACH.raw().unsigned_abs());
         self.standing().any(|i| {
             self.silence[i] > 0
                 && stances.hostile(player, self.owner_of(i))
-                && (nearest_point(self.footprint(i), at) - at).length_sq_raw() <= reach * reach
+                && within(self.footprint(i), at, BELL_REACH)
         })
     }
 
@@ -254,13 +258,7 @@ impl Structures {
 
     pub(crate) fn hash_tower(&self, i: usize, h: &mut StateHasher) {
         h.u16(self.reload[i]);
-        match self.focus[i] {
-            Some(f) => {
-                h.u32(f.index);
-                h.u16(f.generation);
-            }
-            None => h.u32(u32::MAX),
-        }
+        hash_handle(h, self.focus[i]);
         let flags = self.flags_of(i);
         if flags & TOLL != 0 {
             h.u8(self.toll[i]);

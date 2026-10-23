@@ -256,13 +256,13 @@ impl Vision {
         self.posts.iter().map(|p| (p.owner, p.block, p.sight))
     }
 
-    /// Whether `party` sees the regiment in slot `i`, owned by `owner`: in
-    /// sight, and not hidden by cover.
     /// The parties that share `party`'s sight: itself and its allies.
     pub(crate) fn allies_of(&self, party: PlayerId) -> u8 {
         self.allies.get(usize::from(party)).copied().unwrap_or(0)
     }
 
+    /// Whether `party` sees the regiment in slot `i`, owned by `owner`: in
+    /// sight, and not hidden by cover.
     pub(crate) fn sees(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
         self.uncovered(party, i, owner)
             && (!self.fog || self.in_sight[i] & (1 << party) != 0 || self.friends(party, owner))

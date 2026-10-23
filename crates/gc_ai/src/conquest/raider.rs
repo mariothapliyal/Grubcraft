@@ -39,9 +39,6 @@ const CHASE: f32 = 40.0;
 /// A place this much further from an enemy tower than its range is still
 /// covered by it (workers run, raiders chase).
 const TOWER_MARGIN: f32 = 4.0;
-/// A place this near an enemy tower that doesn't shoot (none today) is
-/// covered by it.
-const TOWER_REACH: f32 = 18.0;
 /// A place this near an enemy fighter it knows of is guarded.
 const GUARD_REACH: f32 = 22.0;
 /// A worker it remembers is not worth a trip once a raider has come this
@@ -548,18 +545,14 @@ impl Tower {
     }
 }
 
-/// The enemy towers it has seen.
+/// The enemy towers it has seen that shoot.
 fn towers(s: &Sense) -> Vec<Tower> {
     spymaster::enemy_buildings(s)
         .iter()
-        .filter(|b| b.role == Role::Defence)
+        .filter(|b| b.attack.is_some())
         .map(|b| Tower {
             at: b.at,
-            reach: if b.attack.is_some() {
-                b.range() + TOWER_MARGIN
-            } else {
-                TOWER_REACH
-            },
+            reach: b.range() + TOWER_MARGIN,
         })
         .collect()
 }

@@ -4,12 +4,11 @@
 //! where it last saw them; it never knows of one it hasn't seen. The
 //! battle estimator then weighs that army against its own.
 
-use gc_sim::combat::VOLLEY_PACE_PERCENT;
 use gc_sim::structures::{Role, StructureHandle, TowerAttack};
 use glam::Vec2;
 
 use super::{Sense, steward};
-use crate::estimator::{Approach, Force, estimate};
+use crate::estimator::{Approach, Force, VOLLEY_PACE, estimate};
 use crate::perception::{Seen, TICKS, fx, v2};
 use crate::personality::Faction;
 
@@ -23,8 +22,6 @@ const APPROACH: Approach = Approach {
 /// A tower this far beyond its range from a building still shoots into a
 /// fight for it, in tiles: an army attacking a base spreads round it.
 const TOWER_FIGHT: f32 = 8.0;
-/// [`VOLLEY_PACE_PERCENT`] as a fraction.
-const VOLLEY_PACE: f32 = VOLLEY_PACE_PERCENT as f32 / 100.0;
 
 /// An enemy building its side has seen and still stands.
 pub struct Sighted {
@@ -195,17 +192,19 @@ pub fn odds<'a>(
     estimate(&ours, &theirs, APPROACH).margin
 }
 
-/// [`odds`] for a fight at enemy building `at`: the enemy towers it has
-/// seen that would reach the fight there shoot with `theirs`.
+/// [`odds`] for a fight at enemy building `at`: the enemy towers among
+/// `seen` (its [`enemy_buildings`]) that would reach the fight there shoot
+/// with `theirs`.
 pub fn odds_at<'a>(
     s: &Sense,
     ours: impl IntoIterator<Item = &'a Seen>,
     theirs: impl IntoIterator<Item = &'a Seen>,
     at: Vec2,
+    seen: &[Sighted],
 ) -> f32 {
     let ours = Force::of(s.view, ours);
     let mut theirs = Force::of(s.view, theirs);
-    for t in enemy_buildings(s) {
+    for t in seen {
         if t.attack.is_some() && t.at.distance(at) <= t.range() + TOWER_FIGHT {
             theirs = theirs.with_tower(t.dps(), t.range());
         }
