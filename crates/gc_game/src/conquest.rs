@@ -1003,14 +1003,14 @@ mod tests {
             s.seen_by(0)
         };
         assert!(seen(0), "you see your own Hive");
-        let plain = crate::land::sources(&world, 0, false, &table);
+        let plain = crate::land::sources(&world, buildings::shown_to(0, false), &table);
         assert!(plain.iter().any(|s| s.centre == at(&mine)));
         assert_eq!(
             plain.iter().any(|s| s.centre == at(&theirs)),
             seen(1),
             "no land in the fog"
         );
-        let all = crate::land::sources(&world, 0, true, &table);
+        let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
         assert!(all.iter().any(|s| s.centre == at(&theirs)));
         assert!(all.len() > plain.len() || seen(1));
     }
@@ -1023,16 +1023,16 @@ mod tests {
         let data = data();
         let map = make_map(0, 0);
         for (faction, kind) in [
-            (Faction::Brood, crate::land::BROOD),
-            (Faction::EmberClans, crate::land::CLANS),
-            (Faction::Choir, crate::land::CHOIR),
-            (Faction::CarrionConcord, crate::land::CONCORD),
+            (Faction::Brood, gc_render::LAND_BROOD),
+            (Faction::EmberClans, gc_render::LAND_CLANS),
+            (Faction::Choir, gc_render::LAND_CHOIR),
+            (Faction::CarrionConcord, gc_render::LAND_CONCORD),
         ] {
             let factions = [faction, faction];
             let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
             let opening = opening(&data, &table, &map, &world, &factions);
             world.tick(&opening);
-            let all = crate::land::sources(&world, 0, true, &table);
+            let all = crate::land::sources(&world, buildings::shown_to(0, true), &table);
             assert!(!all.is_empty(), "{faction:?} spreads no land");
             assert!(all.iter().all(|s| s.kind == kind), "{faction:?}: {all:?}");
         }

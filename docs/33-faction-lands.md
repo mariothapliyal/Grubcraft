@@ -16,14 +16,15 @@ the ground and costs no instances.
 
 ## How it works
 
-`gc_game::land` reads the simulation (`World::veins`: each linked Hive and
-Pustule, and how far its veins spread from its edge) and, a few times a
-second, fills a grid for the renderer, four bytes a tile:
+`gc_game::land` reads the simulation (the Brood's `World::veins`: each linked
+Hive and Pustule, and how far its veins spread from its edge; the Choir's
+`World::power_fields`; and the Clans' and Concord's finished buildings, below)
+and, a few times a second, fills a grid for the renderer, four bytes a tile:
 
 | Byte | What it holds |
 |---|---|
 | R | cover, 0 bare to 255 fully covered |
-| G | whose land: `kind * 60` (see below) |
+| G | whose land: a `LAND_*` kind (`gc_render`, shared with the shader) |
 | B | distance to the nearest source in quarter tiles, up to 63.75 |
 | A | spare |
 
@@ -33,7 +34,7 @@ adds a corridor of land (2.6 tiles each side) between the two, so the network
 is joined up even where the reaches do not meet. `Renderer::set_land` uploads
 the grid as an `Rgba8Unorm` texture (binding 16, a tile each, 2.4 MB on a
 768-tile map; one fetch a pixel, and the shader draws nothing where the cover
-is under 0.05). 
+is under 0.05; where there is cover it gathers the four nearest kinds too).
 
 The cover creeps: it grows 0.3 of a full cover a second when a building links
 and fades at 0.6 a second when one is lost, so the land spreads and withdraws
@@ -49,7 +50,7 @@ you have seen its buildings and not before; `reveal_all` shows all of it. The
 whole thing is presentation: it reads the world and writes nothing to it, so
 it cannot affect determinism.
 
-## The look (`brood_land` in `world.wgsl`)
+## The Brood's look (`brood_land` in `world.wgsl`)
 
 - **Skin:** two dark reds mottled by a slow noise and darkened by a fine one,
   rough 0.45 so it looks wet; soft swellings between the veins tilt the normal.
@@ -59,7 +60,8 @@ it cannot affect determinism.
 - **Pulses:** the glow brightens in bands running towards smaller distances,
   that is, inwards to the Hive, each band a little off the others' time by
   place. Time is `g.misc.y`.
-- **Edge:** the cover is wobbled by noise so the border is ragged, not a disc.
+- **Edge:** for every land (`faction_land`), the cover is wobbled by noise so
+  the border is ragged, not a disc.
 - Rock and cliff keep their own look, with only the glow added; water draws
   over the land as it does over the ground.
 
@@ -69,10 +71,12 @@ cross on a seep the veins do not reach. They sit on top of the land.
 
 ## The other three lands (idea 15, built)
 
-The grid's green byte says whose land a tile is (`kind * 60`: 1 Brood, 2 Clans,
-3 Choir, 4 Concord). The shader reads it without blending (the biggest of the
-four nearest tiles, with `textureGather`) and `faction_land` picks the land.
-Where two lands overlap, the one with more cover takes the tile.
+The grid's green byte says whose land a tile is (`LAND_BROOD`, `LAND_CLANS`,
+`LAND_CHOIR`, `LAND_CONCORD`: 1 to 4, defined in `gc_render` and put in front of
+the shader by `world_source`). The shader reads it without blending (the
+biggest of the four nearest tiles, with `textureGather`) and `faction_land`
+picks the land. Where two lands overlap, the one with more cover takes the tile,
+and a fading tile keeps the look of the land it had.
 
 | Faction | Spreads from | Look |
 |---|---|---|
@@ -92,5 +96,8 @@ or a sibling.
 ## Tuning
 
 The numbers are constants at the top of `land.rs` (growth and fade speed,
-corridor width) and in `brood_land` (colours, vein width, glow strength). The
-reach is the simulation's (docs/21: Hive 15 tiles, Pustule 8).
+corridor width, and the Clans' and Concord's reaches) and in each land's
+function (`brood_land`, `clans_land`, `choir_land`, `concord_land`: colours,
+widths, glow strength). The Brood's and the Choir's reach is the simulation's
+(docs/21: Hive 15 tiles, Pustule 8; Spire 8, Resonator 6); the Clans' and
+Concord's is for looks only, so it is not in the data or the replay.

@@ -3324,7 +3324,7 @@ impl Running {
             self.last_frame,
             &mut self.renderer,
             &self.world,
-            (self.sandbox.side, self.reveal_all),
+            buildings::shown_to(self.sandbox.side, self.reveal_all),
             self.heightmap.tiles,
             &self.buildings,
         );
