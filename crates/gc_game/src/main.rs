@@ -4902,10 +4902,13 @@ impl Running {
             if !cull.sees(at, 1.0) {
                 continue;
             }
-            let Some(stats) = self.units.stats.get(usize::from(i.victim)) else {
+            let unit = usize::from(i.victim);
+            let (Some(stats), Some(faction)) =
+                (self.units.stats.get(unit), self.units.factions.get(unit))
+            else {
                 continue;
             };
-            let style = match self.units.factions[usize::from(i.victim)] {
+            let style = match faction {
                 gc_ai::Faction::EmberClans => HitStyle::Flesh,
                 gc_ai::Faction::Brood => HitStyle::Ichor,
                 gc_ai::Faction::Choir => HitStyle::Crystal,

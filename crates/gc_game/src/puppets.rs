@@ -677,14 +677,9 @@ impl Puppets {
 
     /// The blows that landed since the last call, for sparks and wounds.
     pub fn drain_impacts(&mut self) -> impl Iterator<Item = Impact> + '_ {
-        let (now, ready) = (self.time, &mut self.ready);
-        self.impacts.retain(|&(when, i)| {
-            let due = when <= now;
-            if due {
-                ready.push(i);
-            }
-            !due
-        });
+        let now = self.time;
+        let due = self.impacts.extract_if(.., |&mut (when, _)| when <= now);
+        self.ready.extend(due.map(|(_, i)| i));
         self.ready.drain(..)
     }
 
