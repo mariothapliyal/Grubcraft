@@ -18,7 +18,9 @@ pub struct Terrain {
     side: i32,
     cost: Vec<u8>,
     /// Chessboard distance from each cell to blocked ground, as the sim
-    /// measures it: a regiment's centre needs [`CLEARANCE`].
+    /// measures it: a regiment's centre needs [`CLEARANCE`]. Only whether
+    /// it reaches [`CLEARANCE`] is read, so near cleared thicket it is kept
+    /// only that far (see [`Terrain::follow`]).
     clear: Vec<u8>,
     /// Ground height at each tile's centre, tiles, row by row; empty when
     /// the map has no heights (tests' open planes).
@@ -117,8 +119,7 @@ impl Terrain {
             for (t, _) in growth.iter().enumerate().filter(|(_, g)| thicket(g)) {
                 self.set_tile(t, BLOCKED);
             }
-            self.clear.fill(0);
-            self.measure_clearance();
+            self.remeasure();
         }
         self.growth = growth;
         self
@@ -133,7 +134,6 @@ impl Terrain {
         }
         self.seen = ground.changes();
         let n = self.map_tiles as i32;
-        let mut opened = false;
         for t in 0..self.growth.len() {
             let was = self.growth[t];
             if was == Growth::Open as u8 {
@@ -149,12 +149,7 @@ impl Terrain {
             }
             if was == Growth::Thicket as u8 && !self.under.is_empty() {
                 self.restore_tile(t);
-                opened = true;
             }
-        }
-        if opened {
-            self.clear.fill(0);
-            self.measure_clearance();
         }
     }
 
@@ -163,29 +158,69 @@ impl Terrain {
         !self.growth.is_empty() && self.seen != ground.changes()
     }
 
-    /// The cells of tile `t` (row by row), as ranges of `cost`.
-    fn tile_rows(&self, t: usize) -> Vec<core::ops::Range<usize>> {
-        let (per, n, side) = (
-            CELLS_PER_TILE as usize,
-            self.map_tiles as usize,
-            self.side as usize,
-        );
-        let (x, y) = (t % n * per, t / n * per);
-        (y..y + per)
-            .map(|cy| cy * side + x..cy * side + x + per)
-            .collect()
+    /// The first cell of tile `t`, as (column, row).
+    fn tile_cell(&self, t: usize) -> (i32, i32) {
+        let n = self.map_tiles as usize;
+        (
+            (t % n) as i32 * CELLS_PER_TILE,
+            (t / n) as i32 * CELLS_PER_TILE,
+        )
     }
 
     fn set_tile(&mut self, t: usize, cost: u8) {
-        for row in self.tile_rows(t) {
-            self.cost[row].fill(cost);
+        let ((x, y), side) = (self.tile_cell(t), self.side);
+        for cy in y..y + CELLS_PER_TILE {
+            let row = (cy * side + x) as usize;
+            self.cost[row..row + CELLS_PER_TILE as usize].fill(cost);
         }
     }
 
+    /// Tile `t`'s ground as it is under the thicket, and the clearance
+    /// [`CLEARANCE`] cells round it, which is all that can change.
     fn restore_tile(&mut self, t: usize) {
-        for row in self.tile_rows(t) {
+        let ((x, y), side) = (self.tile_cell(t), self.side);
+        for cy in y..y + CELLS_PER_TILE {
+            let row = (cy * side + x) as usize..(cy * side + x + CELLS_PER_TILE) as usize;
             self.cost[row.clone()].copy_from_slice(&self.under[row]);
         }
+        let reach = i32::from(CLEARANCE);
+        for cy in (y - reach).max(0)..(y + CELLS_PER_TILE + reach).min(side) {
+            for cx in (x - reach).max(0)..(x + CELLS_PER_TILE + reach).min(side) {
+                self.clear[(cy * side + cx) as usize] = self.clearance_at(cx, cy);
+            }
+        }
+    }
+
+    /// The clearance of cell `(x, y)`, up to [`CLEARANCE`]: 0 on blocked
+    /// ground, else how far blocked ground or the map's edge is.
+    fn clearance_at(&self, x: i32, y: i32) -> u8 {
+        let side = self.side;
+        let blocked = |cx: i32, cy: i32| {
+            cx < 0
+                || cy < 0
+                || cx >= side
+                || cy >= side
+                || self.cost[(cy * side + cx) as usize] == BLOCKED
+        };
+        if blocked(x, y) {
+            return 0;
+        }
+        (1..=i32::from(CLEARANCE))
+            .find(|&r| {
+                (-r..=r).any(|d| {
+                    blocked(x + d, y - r)
+                        || blocked(x + d, y + r)
+                        || blocked(x - r, y + d)
+                        || blocked(x + r, y + d)
+                })
+            })
+            .map_or(CLEARANCE, |r| r as u8)
+    }
+
+    /// Measure every cell's clearance afresh.
+    fn remeasure(&mut self) {
+        self.clear.fill(0);
+        self.measure_clearance();
     }
 
     /// Whether the map has woods or tall grass anywhere.

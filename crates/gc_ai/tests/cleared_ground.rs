@@ -137,4 +137,18 @@ fn the_minds_see_cleared_ground() {
     assert!(minds.blocked(Vec2::new(44.5, 10.5)));
     assert_eq!(minds.cover(wood), Cover::Wood);
     assert_eq!(minds.cover(wall), Cover::Open);
+    // The same as ground made afresh from the land as it now is.
+    let n = MAP as i32;
+    let now: Vec<u8> = (0..n * n)
+        .map(|t| w.terrain().growth(t % n, t / n) as u8)
+        .collect();
+    let fresh = Terrain::new(&nav, MAP).with_growth(now);
+    let step = 1.0 / CELLS_PER_TILE as f32;
+    for cy in 0..side {
+        for cx in 0..side {
+            let p = Vec2::new((cx as f32 + 0.5) * step, (cy as f32 + 0.5) * step);
+            assert_eq!(minds.walkable(p), fresh.walkable(p), "{p}");
+            assert_eq!(minds.blocked(p), fresh.blocked(p), "{p}");
+        }
+    }
 }
