@@ -9,9 +9,10 @@
 //! and a regiment at rest sways and looks about. In melee each front-rank
 //! soldier pairs off with the nearest enemy across the line and the two trade
 //! blows (docs/09-art-and-audio.md, "Animation"). Each blow is parried,
-//! blocked, staggers its man or crushes through his guard, with the odds the
-//! simulation uses; a heavier charge knocks men off their feet; and when the
-//! simulation takes a soldier, his man deals the killing blow. When the
+//! blocked, staggers its man or crushes through his guard: as the
+//! simulation's own blow by that man came out, when it told one, else with
+//! the odds the simulation uses; a heavier charge knocks men off their feet;
+//! and the man the simulation's blow killed falls to his killer's blow. When the
 //! simulation calls out champions before a battle, one man steps out of each
 //! champion's regiment, runs to the spot between the lines and plays out
 //! the duel the simulation rolled, blow by blow. None of this feeds back
@@ -123,6 +124,10 @@ const DUEL_REGIMENT_RANGE: f32 = 24.0;
 const GROUND_STEP: f32 = 0.25;
 /// A regiment not updated for this long, in seconds, is gone.
 const STALE: f32 = 0.5;
+/// How long a blow the simulation told waits for the striker's next swing
+/// to land, in seconds: a little over a round, so each swing on screen plays
+/// the blow struck in the sim since the last one.
+const TOLD_KEEP: f32 = 1.5;
 /// No partner.
 const NONE: u32 = u32::MAX;
 /// A routing regiment's soldiers spread this much further apart (as a
@@ -505,6 +510,9 @@ pub struct Puppets {
     /// to fell, in the order they fell: the regiment, his slot then, and
     /// the puppet who struck him (or `NONE`).
     slain: Vec<(RegimentHandle, u8, u32)>,
+    /// Per puppet, the simulation's last blow by him that didn't kill and
+    /// when it was told: whether it wounded his man.
+    told: Vec<Option<(bool, f32)>>,
     time: f32,
     /// The last frame's step, in seconds.
     dt: f32,
@@ -547,6 +555,7 @@ impl Puppets {
             shot_dir: vec![Vec2::X; regiment_capacity],
             lodged: Vec::with_capacity(MAX_SINKING),
             slain: Vec::with_capacity(MAX_SINKING),
+            told: vec![None; regiment_capacity * SLOTS],
             time: 0.0,
             dt: 0.0,
             duel: None,
@@ -580,8 +589,9 @@ impl Puppets {
     }
 
     /// A melee blow the simulation struck (`World::blows`): the striker
-    /// takes its target as his man, and a man it killed is the one who
-    /// falls, to his blow. Call for each tick's blows, in order.
+    /// takes its target as his man, his next swing wounds him or is turned
+    /// aside as the blow was, and a man it killed is the one who falls, to
+    /// his blow. Call for each tick's blows, in order.
     pub fn struck(&mut self, b: &Blow) {
         let (s, r) = (b.striker.index as usize, b.target.index as usize);
         let striker = if self.owner[s] == Some(b.striker) {
@@ -608,6 +618,8 @@ impl Puppets {
             }
             _ if striker != NONE && self.owner[r] == Some(b.target) => {
                 self.partner[striker as usize] = (r * SLOTS + b.target_slot as usize) as u32;
+                let wounded = b.outcome == Outcome::Wounded;
+                self.told[striker as usize] = Some((wounded, self.time));
             }
             _ => {}
         }
@@ -891,10 +903,11 @@ impl Puppets {
         (0.0..1.0).contains(&f).then_some((act, f))
     }
 
-    /// If puppet `i`'s swing landed on his man since last frame, it does so
-    /// with the simulation's odds: it gets through and staggers him, or a
-    /// heavier striker crushes through his guard and knocks him down, or he
-    /// parries it or takes it on his shield.
+    /// If puppet `i`'s swing landed on his man since last frame, it gets
+    /// through and staggers him, or a heavier striker crushes through his
+    /// guard and knocks him down, or he parries it or takes it on his
+    /// shield. Whether it gets through is the simulation's: as its last blow
+    /// by this man came out, if it told one lately, else by its odds.
     fn strike(&mut self, i: usize) {
         let j = self.partner[i];
         if j == NONE || matches!(self.acting(i), Some((Act::Kill, _))) {
@@ -914,7 +927,14 @@ impl Puppets {
         } else {
             them.flank_defence
         };
-        let act = if roll(i, j, blow, 1) < me.lands(defence) {
+        let told = self.told[i]
+            .take()
+            .filter(|&(_, at)| self.time - at <= TOLD_KEEP);
+        let gets_through = match told {
+            Some((wounded, _)) => wounded,
+            None => roll(i, j, blow, 1) < me.lands(defence),
+        };
+        let act = if gets_through {
             Act::Stagger
         } else if roll(i, j, blow, 2) < CRUSH_PER_CLASS * me.outweighs(&them, true) {
             Act::Down
@@ -1026,6 +1046,7 @@ impl Puppets {
             self.partner[r * SLOTS..(r + 1) * SLOTS].fill(NONE);
             self.act[r * SLOTS..(r + 1) * SLOTS].fill((Act::None, 0.0));
             self.reeling[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
+            self.told[r * SLOTS..(r + 1) * SLOTS].fill(None);
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -1343,6 +1364,7 @@ impl Puppets {
             self.reeling[victim] = self.reeling[last];
             self.reeling[last] = f32::NEG_INFINITY;
             self.looks[victim] = self.looks[last];
+            self.told[victim] = self.told[last].take();
             // Whoever steps into the gap finds his own man next frame.
             self.partner[victim] = NONE;
             self.partner[last] = NONE;
@@ -1852,12 +1874,37 @@ mod tests {
 
     /// The same with `b` facing `facing`.
     fn blows_facing(a: Fighter, b: Fighter, facing: Vec2, seconds: f32) -> [u32; 6] {
+        blows_told(a, b, facing, seconds, None)
+    }
+
+    /// The same, with the simulation telling a blow by each of `a`'s front
+    /// rank on the man across from him, once a second, that came out as
+    /// `told`.
+    fn blows_told(
+        a: Fighter,
+        b: Fighter,
+        facing: Vec2,
+        seconds: f32,
+        told: Option<Outcome>,
+    ) -> [u32; 6] {
         let mut p = Puppets::new(2, 64);
         let (x, mut y) = melee_pair(a, b);
         y.facing = facing;
         let mut seen = [(Act::None, 0.0); 4];
         let mut count = [0; 6];
-        for _ in 0..(seconds / FRAME) as usize {
+        let every = (1.0 / FRAME) as usize;
+        for f in 0..(seconds / FRAME) as usize {
+            if let Some(outcome) = told.filter(|_| f % every == 0) {
+                for k in 0..4 {
+                    p.struck(&Blow {
+                        striker: x.handle,
+                        striker_slot: k,
+                        target: y.handle,
+                        target_slot: k,
+                        outcome,
+                    });
+                }
+            }
             frame(&mut p, &x, &y);
             for (k, last) in seen.iter_mut().enumerate() {
                 let now = p.act[SLOTS + k];
@@ -2014,6 +2061,26 @@ mod tests {
         };
         let unsure = blows(shaken, fighter(0, 45), 60.0)[Act::Stagger as usize];
         assert!(unsure * 3 < sure * 2, "{unsure} of {sure}");
+    }
+
+    #[test]
+    fn swings_play_the_simulations_blows() {
+        // At 90% odds, blows the simulation says were parried are parried...
+        let sure = fighter(80, 20);
+        let c = blows_told(sure, fighter(0, 20), Vec2::Y, 60.0, Some(Outcome::Parried));
+        let total: u32 = c.iter().sum();
+        assert!(total > 100, "{c:?}");
+        assert!(c[Act::Parry as usize] * 100 > total * 80, "{c:?}");
+        // ...and at 10%, blows it says wounded stagger their man.
+        let c = blows_told(
+            fighter(0, 20),
+            fighter(0, 60),
+            Vec2::Y,
+            60.0,
+            Some(Outcome::Wounded),
+        );
+        let total: u32 = c.iter().sum();
+        assert!(c[Act::Stagger as usize] * 100 > total * 80, "{c:?}");
     }
 
     #[test]
