@@ -590,7 +590,13 @@ impl Puppets {
             NONE
         };
         match b.outcome {
-            Outcome::Killed { men } => {
+            Outcome::Killed { men } if self.owner[r] == Some(b.target) => {
+                if self.slain.len() + usize::from(men) > self.slain.capacity() {
+                    // Kills for regiments since gone that never fell here.
+                    let owner = &self.owner;
+                    self.slain
+                        .retain(|&(h, ..)| owner[h.index as usize] == Some(h));
+                }
                 // The first falls to the blow; any more who step up into
                 // his place go down with him.
                 for m in 0..men {
@@ -1267,10 +1273,10 @@ impl Puppets {
                 .is_none()
                 .then(|| self.slain.iter().position(|&(h, ..)| h == block.handle))
                 .flatten()
-                .map(|n| self.slain.remove(n))
-                .filter(|&(_, k, _)| usize::from(k) <= gone);
+                .map(|n| self.slain.remove(n));
             let champion = self.champion_of(r).map(|(_, _, c)| c);
             let out = |k: usize| champion == Some(base + k);
+            let blow = blow.filter(|&(_, k, _)| usize::from(k) <= gone && !out(usize::from(k)));
             // Best a man and his partner fighting each other, then any man
             // with a partner, else anyone not out as a champion.
             let partner = |k: usize| self.partner[base + k] as usize;

@@ -391,7 +391,7 @@ pub struct Blow {
 /// What a melee blow did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// It missed, or was parried or blocked.
+    /// It missed, was parried or blocked, or glanced off without a wound.
     Parried,
     /// It landed and wounded him.
     Wounded,
@@ -1885,7 +1885,7 @@ impl Line {
 /// faces it. The front rank fights to the front (and the second rank too,
 /// at [`crate::SECOND_RANK_PERCENT`] of a blow, for spears and pikes), the
 /// man at the end of each rank to a flank, and the rear rank's men, as many
-/// as half the front, to the rear. A blow lands with the chance to hit, and
+/// as half the front, to the rear (no more than stand in the rear rank). A blow lands with the chance to hit, and
 /// then takes its damage, rolled ±25%, off its man; he dies when his hit
 /// points run out, and the soldier in the last slot steps up into his
 /// place and takes the rest of the blow. Blows are told to `blows`, while
@@ -1932,7 +1932,7 @@ fn duel(
         Side::Front if reach => (front + front.min(models - front), front),
         Side::Front => (front, front),
         Side::Flank => (mine.len(), u16::MAX),
-        Side::Rear => (front.div_ceil(2).min(models), u16::MAX),
+        Side::Rear => (front.div_ceil(2).min(mine.len()), u16::MAX),
     };
     for n in 0..count {
         if regs.models[j] == 0 {
@@ -1949,6 +1949,8 @@ fn duel(
         } else {
             let damage = carry(regs, j, roll(landed * share / 100, rng));
             match regs.wound(j, t, damage.min(u64::from(u16::MAX)) as u16) {
+                // Too light to cut him, this time: it glanced off.
+                0 if damage == 0 => Outcome::Parried,
                 0 => Outcome::Wounded,
                 men => {
                     if regs.models[j] > 0 {
@@ -1973,12 +1975,12 @@ fn duel(
     step_up(regs, units, j, ranks_before);
 }
 
-/// A regiment in melee that has lost whole ranks (it had `ranks_before`)
-/// steps forward to stay in contact. One that isn't fighting, such as a
-/// router cut down as it runs, has no contact to keep and stays put.
+/// A regiment that has lost whole ranks (it had `ranks_before`) steps
+/// forward, so its front stays where it was (in melee, in contact). A
+/// broken one, cut down as it runs, has no line to hold and stays put.
 fn step_up(regs: &mut Regiments, units: &[UnitStats], j: usize, ranks_before: u16) {
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
-    if regs.models[j] > 0 && ranks_after < ranks_before && regs.engaged[j].is_some() {
+    if regs.models[j] > 0 && ranks_after < ranks_before && !regs.morale_state[j].broken() {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);
         regs.position[j] += regs.facing[j].to_vec() * step;

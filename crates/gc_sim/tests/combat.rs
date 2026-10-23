@@ -85,9 +85,19 @@ fn blocks_in_contact_fight_until_one_falls() {
     run(&mut w, 20 * 10);
     // Each blow falls on the man across from its striker: the front rank
     // is wounded, and men from the back step up into the gaps whole.
-    let hp = w.regiments.model_hp(a).unwrap();
-    assert!(hp.len() < 24 || hp[..8].iter().any(|&h| h < 10), "{hp:?}");
-    assert!(hp[8..].iter().all(|&h| h == 10), "{hp:?}");
+    for h in [a, b] {
+        let hp = w.regiments.model_hp(h).unwrap();
+        assert!(
+            hp[..8].iter().any(|&h| h < 10),
+            "both sides are cut: {hp:?}"
+        );
+        assert!(hp[8..].iter().all(|&h| h == 10), "{hp:?}");
+    }
+    run(&mut w, 20 * 10);
+    for h in [a, b] {
+        let hp = w.regiments.model_hp(h).unwrap();
+        assert!(hp.len() < 24, "both sides lose men: {hp:?}");
+    }
     run(&mut w, 20 * 300);
     let alive = [a, b]
         .iter()
