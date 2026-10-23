@@ -230,7 +230,8 @@ fn level_vertices(m: &Models<'_>) -> Levels {
 struct Draw {
     first: u32,
     end: u32,
-    lod: usize,
+    /// The level of detail asked for (the contact shadows follow it).
+    asked: usize,
     mesh: [u32; 2],
     shadow_mesh: [u32; 2],
     textured: bool,
@@ -727,6 +728,9 @@ impl SoldiersGpu {
             first: u32,
             n: usize,
             lod: usize,
+            /// The level of detail the caller asked for, before the budget
+            /// bumped the run to a coarser one.
+            asked: usize,
             levels: [Level; LODS],
             textured: bool,
         }
@@ -744,6 +748,7 @@ impl SoldiersGpu {
                 first: b.first,
                 n: (end - b.first) as usize,
                 lod: (b.lod as usize).min(LODS - 1),
+                asked: (b.lod as usize).min(LODS - 1),
                 levels,
                 textured,
             });
@@ -808,7 +813,7 @@ impl SoldiersGpu {
             self.draws.push(Draw {
                 first: r.first,
                 end: r.first + r.n as u32,
-                lod: r.lod,
+                asked: r.asked,
                 mesh: level.mesh,
                 shadow_mesh: level.shadow_mesh,
                 textured: r.textured,
@@ -896,9 +901,10 @@ impl SoldiersGpu {
         pass.set_pipeline(&self.contact_pipeline);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         let mut calls = 0;
-        // Adjacent runs (the draws come in instance order) go in one call.
+        // Adjacent runs (the batches are usually laid out in instance
+        // order) go in one call.
         let mut run = 0..0;
-        for d in self.draws.iter().filter(|d| d.lod <= CONTACT_MAX_LOD) {
+        for d in self.draws.iter().filter(|d| d.asked <= CONTACT_MAX_LOD) {
             if d.first != run.end {
                 if !run.is_empty() {
                     pass.draw(0..4, run.clone());

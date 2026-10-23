@@ -45,6 +45,12 @@ struct Globals {
     sky_horizon: vec4<f32>,
 };
 
+// Every lit varying a fragment shader reads is `@interpolate(perspective,
+// centroid)` (flat ones aside). With multisampling a pixel on the edge of a
+// thin triangle is otherwise shaded at a point outside it, where a normal or
+// a position can be extrapolated to nonsense or not-a-number, and the glow
+// would spread that over the screen. Keep to this for any new varying.
+
 // The prevailing wind blows toward this direction (x east, y south).
 const WIND_DIR = vec2<f32>(0.8, 0.6);
 
@@ -221,25 +227,22 @@ fn sunlight_taps(world: vec3<f32>, n: vec3<f32>, taps: u32) -> f32 {
         return clouds(world.xz);
     }
     let uv = c.xy * vec2<f32>(0.5, -0.5) + 0.5;
-    // Filtered taps spread over a disc about three texels across, the
-    // pattern turned by an angle that varies with the place, so the soft
-    // edge is smooth rather than banded. Light that only tints (a glow, a
-    // particle) takes the one tap in the middle.
+    // Eight filtered taps spread over a disc about three texels across
+    // give a soft edge (a fixed pattern, so a moving shadow does not
+    // crawl). Light that only tints (a glow, a particle) takes the one tap
+    // in the middle.
     var lit = 0.0;
     if taps == 1u {
         lit = textureSampleCompareLevel(shadow_map, shadow_sampler, uv, c.z);
     } else {
         let reach = SHADOW_SOFTNESS / f32(textureDimensions(shadow_map).x);
-        let angle = hash2(world.xz * 91.7 + vec2<f32>(world.y * 13.1, 0.0)) * 6.2831853;
-        let turn = vec2<f32>(cos(angle), sin(angle));
         for (var i = 0u; i < 8u; i++) {
-            let p = SHADOW_SPIRAL[i];
-            let o = vec2<f32>(p.x * turn.x - p.y * turn.y, p.x * turn.y + p.y * turn.x) * reach;
-            lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, c.z);
+            lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + SHADOW_SPIRAL[i] * reach, c.z);
         }
         lit *= 0.125;
     }
-    return mix(lit, 1.0, smoothstep(g.shadow.z, 1.0, edge)) * clouds(world.xz);}
+    return mix(lit, 1.0, smoothstep(g.shadow.z, 1.0, edge)) * clouds(world.xz);
+}
 
 // The radius of the shadow's soft edge, in shadow-map texels, and eight
 // points spread evenly over the unit disc (a sunflower spiral).
@@ -758,7 +761,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let r = reflect(-v, wn);
         let mirror = 0.1 + 0.9 * pow(1.0 - max(dot(v, wn), 0.0), 4.0);
         let sky = sky_color(vec3<f32>(r.x, abs(r.y), r.z), false);
-        let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 20.0 * sun;
+        let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
         let wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
         c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
     }

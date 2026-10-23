@@ -3325,11 +3325,23 @@ impl Running {
         self.renderer.set_effects_speed(fx_speed);
         let density = self.menu.settings().graphics.effects_density();
         let heightmap = &self.heightmap;
+        // The motes (and the demo) follow the view in use: where the
+        // bird's-eye camera looks, or a little ahead of a ride.
+        let (view_focus, view_distance) = match &self.ride {
+            Some(ride) => {
+                let (eye, forward) = (ride.camera.eye(), ride.camera.forward());
+                (
+                    Vec2::new(eye.x + forward.x * 8.0, eye.z + forward.z * 8.0),
+                    camera::MIN_DISTANCE,
+                )
+            }
+            None => (self.camera.focus, self.camera.distance),
+        };
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
-            self.camera.focus,
-            self.camera.distance,
+            view_focus,
+            view_distance,
             |p| heightmap.height_at(p.x, p.y),
         );
         if self.effects.still() {

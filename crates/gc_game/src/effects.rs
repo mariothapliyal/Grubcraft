@@ -92,8 +92,8 @@ impl Field {
         }
         let radius = distance * 0.45;
         let rate = (MOTES_RATE * std::f32::consts::PI * radius * radius * near).min(MOTES_MOST);
-        let at = Vec3::new(focus.x, ground(focus), focus.y);
-        self.fx.light_motes(at, radius, rate * dt.min(0.25));
+        self.fx
+            .light_motes(focus, radius, rate * dt.min(0.25), ground);
     }
 
     /// Everything collected this frame, ready for
