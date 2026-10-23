@@ -304,7 +304,11 @@ fn each_soldier_strikes_the_man_across_from_him() {
     assert!(!blows.is_empty());
     // Spears: the front rank and the second strike, at the foe's front.
     assert!(blows.iter().all(|x| x.target == b));
-    assert!(blows.iter().all(|x| x.striker_slot < 16 && x.target_slot < 8));
+    assert!(
+        blows
+            .iter()
+            .all(|x| x.striker_slot < 16 && x.target_slot < 8)
+    );
     assert!(blows.iter().any(|x| x.striker_slot >= 8));
     // Level fronts: each man in the front rank has his own man.
     let first: Vec<_> = blows.iter().take_while(|x| x.striker_slot < 16).collect();
@@ -357,7 +361,11 @@ fn men_gang_up_where_lines_overlap() {
     let a = spawn(&mut w, 0, 0, 50, 50, NORTH);
     let b = spawn(&mut w, 1, 1, 50, 48, SOUTH);
     let blows = blows_by(&mut w, a, 20 * 3);
-    let turn: Vec<_> = blows.iter().filter(|x| x.striker_slot < 12).take(12).collect();
+    let turn: Vec<_> = blows
+        .iter()
+        .filter(|x| x.striker_slot < 12)
+        .take(12)
+        .collect();
     assert_eq!(turn.len(), 12);
     let mut on = [0; 4];
     for x in &turn {

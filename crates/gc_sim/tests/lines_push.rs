@@ -300,7 +300,8 @@ fn a_pinned_regiment_loses_heart() {
     // Pinned after about four seconds, then 3 points a second at the
     // battle's pace (`gc_sim::combat::BATTLE_PACE_PERCENT`): at full pace,
     // 12 to 18 seconds pinned, 36 to 54 points.
-    let lost = (i64::from(free) - i64::from(pinned)) * 100 / gc_sim::combat::BATTLE_PACE_PERCENT as i64;
+    let lost =
+        (i64::from(free) - i64::from(pinned)) * 100 / gc_sim::combat::BATTLE_PACE_PERCENT as i64;
     assert!((36..=54).contains(&lost), "{pinned}");
 }
 

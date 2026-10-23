@@ -1876,7 +1876,12 @@ fn duel(
         Side::Rear => SHOCK_REAR,
     };
     let models = regs.models[i];
-    let mine = Edge::of(regs, i, my_side, last_file_nearer(regs, units, i, regs.position[j]));
+    let mine = Edge::of(
+        regs,
+        i,
+        my_side,
+        last_file_nearer(regs, units, i, regs.position[j]),
+    );
     let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
     let before = regs.models[j];
