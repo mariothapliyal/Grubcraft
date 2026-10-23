@@ -245,6 +245,15 @@ impl Grid {
         )
     }
 
+    /// Whether a map position is on the map.
+    fn on_map(&self, p: FxVec2) -> bool {
+        let inside = |v: Fx| {
+            v.raw() >= 0
+                && (i64::from(v.raw()) * i64::from(CELLS_PER_TILE)) >> 16 < i64::from(self.side)
+        };
+        inside(p.x) && inside(p.y)
+    }
+
     /// The cell under a map position (clamped onto the map).
     fn cell_at(&self, p: FxVec2) -> u32 {
         let to_cell = |v: Fx| {
@@ -368,12 +377,22 @@ impl Grid {
             _ => 0,
         };
         let (mut bx, mut by) = (edge(x0, sx), edge(y0, sy));
-        // A start exactly on an edge, heading back across it.
-        if sx < 0 && bx == 0 {
+        // A start exactly on a cell's low edge, heading back across it: the
+        // walk is in the cell beyond at once (both beside a corner).
+        let (back_x, back_y) = (sx < 0 && bx == 0, sy < 0 && by == 0);
+        if back_x && back_y && !(ok(x - 1, y) && ok(x, y - 1)) {
+            return false;
+        }
+        if back_x {
+            x -= 1;
             bx = ONE;
         }
-        if sy < 0 && by == 0 {
+        if back_y {
+            y -= 1;
             by = ONE;
+        }
+        if (back_x || back_y) && !ok(x, y) {
+            return false;
         }
         while x != ex || y != ey {
             *work += 1;
@@ -875,8 +894,8 @@ enum Route {
     Failed,
     /// Queued for a search, but still walking the stored waypoints until
     /// it is served (the rest of a long route, or ground changed near the
-    /// way ahead): it only stands if it reaches their end first. They
-    /// never end at the target.
+    /// way ahead): it only stands if they end short of the target and it
+    /// reaches their end first.
     Rerouting,
 }
 
@@ -943,6 +962,24 @@ impl Queue {
 
     fn iter(&self) -> impl Iterator<Item = u32> + '_ {
         (0..self.len).map(|k| self.slots[(self.head + k) % self.slots.len()])
+    }
+
+    /// Take `i` out of the queue, keeping the others' order.
+    fn remove(&mut self, i: usize) {
+        if !self.queued[i] {
+            return;
+        }
+        let cap = self.slots.len();
+        let mut kept = 0;
+        for k in 0..self.len {
+            let s = self.slots[(self.head + k) % cap];
+            if s as usize != i {
+                self.slots[(self.head + kept) % cap] = s;
+                kept += 1;
+            }
+        }
+        self.len = kept;
+        self.queued[i] = false;
     }
 }
 
@@ -1180,12 +1217,9 @@ impl Nav {
         };
         self.search.work = 0;
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] {
+            let (true, Some(t)) = (regs.alive[i], regs.target[i]) else {
                 self.route[i] = Route::Idle;
-                continue;
-            }
-            let Some(t) = regs.target[i] else {
-                self.route[i] = Route::Idle;
+                self.later.remove(i);
                 continue;
             };
             let d = t - self.goal[i];
@@ -1209,6 +1243,7 @@ impl Nav {
             self.goal[i] = t;
             let (from, to) = (grid.cell_at(regs.position[i]), grid.cell_at(t));
             let need = grid.need(from, to, regs.berth(units, i));
+            self.later.remove(i);
             if grid.open_cell(from)
                 && grid.open_cell(to)
                 && grid.segment_within(regs.position[i], t, need, u8::MAX, &mut self.search.work)
@@ -1284,10 +1319,12 @@ impl Nav {
         match (self.route[i], left) {
             (Route::Waypoints, 1) if self.partial[i] => self.reroute_now(i),
             (Route::Waypoints | Route::Rerouting, 0) if self.partial[i] => {
+                // Nothing left to walk: served ahead of those still walking.
+                self.later.remove(i);
                 self.route[i] = Route::Waiting;
                 self.queue.push(i);
             }
-            (Route::Waypoints, 0) => self.route[i] = Route::Idle,
+            (Route::Waypoints | Route::Rerouting, 0) => self.stop(i),
             _ => {}
         }
     }
@@ -1306,6 +1343,7 @@ impl Nav {
                 self.way[i * MAX_WAYPOINTS] = self.goal[i];
                 self.way_len[i] = 1;
                 self.way_next[i] = 0;
+                self.partial[i] = false;
             }
             Route::Waypoints | Route::Rerouting if !self.ahead(i).is_empty() => {}
             _ => return,
@@ -1315,36 +1353,52 @@ impl Nav {
 
     fn reroute_now(&mut self, i: usize) {
         self.route[i] = Route::Rerouting;
-        self.partial[i] = true;
         self.later.push(i);
     }
 
-    /// Whether a step from `from` to `to` would walk onto blocked ground.
+    /// Regiment slot `i` has no route, nor a search queued while it walks.
+    fn stop(&mut self, i: usize) {
+        self.route[i] = Route::Idle;
+        self.later.remove(i);
+    }
+
+    /// Whether a step from `from` to `to` would walk onto or across
+    /// blocked ground (a step of several cells can't jump a thin wall).
     /// Regiments already standing on blocked ground may step anywhere, so
     /// they can walk off it.
     pub(crate) fn blocks(&self, from: FxVec2, to: FxVec2) -> bool {
         self.grid.as_ref().is_some_and(|g| {
-            g.cost[g.cell_at(to) as usize] == BLOCKED && g.cost[g.cell_at(from) as usize] != BLOCKED
+            g.cost[g.cell_at(from) as usize] != BLOCKED
+                && (g.cost[g.cell_at(to) as usize] == BLOCKED
+                    || g.on_map(from)
+                        && g.on_map(to)
+                        && !g.segment_within(from, to, CLEARANCE, u8::MAX, &mut 0))
         })
     }
 
     /// Where a step from `from` toward `to` ends: `to`, unless that is
     /// blocked ground (see [`Nav::blocks`]); then the step slides along the
     /// edge, keeping only its part along x or along y (the longer first)
-    /// if that stays off it. `None` when neither does: the way is shut.
+    /// if that stays off it and is at least half the longer part. `None`
+    /// otherwise: the way is shut (a regiment heading into a wall, not
+    /// glancing off it, finds a new route rather than creep along it).
     pub(crate) fn slide(&self, from: FxVec2, to: FxVec2) -> Option<FxVec2> {
         if !self.blocks(from, to) {
             return Some(to);
         }
         let d = to - from;
-        let (along_x, along_y) = (FxVec2::new(to.x, from.y), FxVec2::new(from.x, to.y));
-        let tries = if d.x.abs() >= d.y.abs() {
+        let (ax, ay) = (d.x.abs(), d.y.abs());
+        let longer = ax.max(ay);
+        let along_x = (ax * 2 >= longer).then(|| FxVec2::new(to.x, from.y));
+        let along_y = (ay * 2 >= longer).then(|| FxVec2::new(from.x, to.y));
+        let tries = if ax >= ay {
             [along_x, along_y]
         } else {
             [along_y, along_x]
         };
         tries
             .into_iter()
+            .flatten()
             .find(|&p| p != from && !self.blocks(from, p))
     }
 
@@ -1357,7 +1411,7 @@ impl Nav {
 
     /// Regiment slot `i` was stopped by blocked ground: find a new route.
     pub(crate) fn lost(&mut self, i: usize) {
-        self.route[i] = Route::Idle;
+        self.stop(i);
     }
 
     /// Give regiment slot `i` the route it has in `from`, a world on the same
@@ -1702,11 +1756,29 @@ fn smooth(
                 continue;
             }
         }
-        if n == out.len() {
+        // A leg to the next chain cell was checked between cell centres
+        // (as a straight leg between portals may run far): where it starts
+        // or ends off-centre, at the regiment or its target, and doesn't
+        // hold there, walk it between the centres.
+        let (a, b) = (point(s, anchor), point(s, k));
+        let mut bridge = [None, None];
+        if k == anchor + 1
+            && (anchor == 0 || k == len - 1)
+            && !grid.segment_within(a, b, CLEARANCE, u8::MAX, &mut s.work)
+        {
+            let (ca, cb) = (grid.centre(s.chain[anchor]), grid.centre(s.chain[k]));
+            bridge = [(a != ca).then_some(ca), (b != cb).then_some(cb)];
+        }
+        let extra = bridge.iter().flatten().count();
+        if n + extra >= out.len() {
             partial = true;
             break;
         }
-        out[n] = point(s, k);
+        for p in bridge.into_iter().flatten() {
+            out[n] = p;
+            n += 1;
+        }
+        out[n] = b;
         n += 1;
         anchor = k;
         k += 1;

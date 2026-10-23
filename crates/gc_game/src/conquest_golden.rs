@@ -53,6 +53,8 @@ const UPGRADE_FROM: u32 = 120 * TICKS_PER_SECOND;
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
 const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
+/// How much later side 1 marches.
+const MARCH_LATER: u32 = 30 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// When the second side's chord goes up.
 const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;
@@ -542,8 +544,16 @@ impl Match {
         }
         // The soldiers march on the other side's main building (each idle
         // one, once a second), and once they have seen it through the fog,
-        // every soldier attacks it.
-        if t >= MARCH_AT && !self.sides[usize::from(p)].charged {
+        // every soldier attacks it. Side 1 sets out later, so the armies
+        // meet near its base, where side 0 sees the main building (where
+        // they met halfway, whichever won kept the other from getting
+        // there).
+        let march_at = if p == 0 {
+            MARCH_AT
+        } else {
+            MARCH_AT + MARCH_LATER
+        };
+        if t >= march_at && !self.sides[usize::from(p)].charged {
             let target = self.main_of(1 - p);
             let seen = target.is_some_and(|m| m.seen_by(p));
             if let Some(target) = target.filter(|_| seen || t.is_multiple_of(TICKS_PER_SECOND)) {

@@ -8,9 +8,9 @@ Routes now use the ground as drawn: a regiment's centre may stand on any open ce
 
 | | Before | After |
 |---|---|---|
-| `drill` (bench gate, instructions) | 6.41 G | 5.52 G (−14%) |
-| `pathing-storm` (bench gate) | 2.93 G | 2.08 G (−29%) |
-| `field-8000pt-2v2` (bench gate) | 8.69 G | 7.39 G (−15%) |
+| `drill` (bench gate, instructions) | 6.45 G | 5.58 G (−13%) |
+| `pathing-storm` (bench gate) | 2.93 G | 2.12 G (−28%) |
+| `field-8000pt-2v2` (bench gate) | 8.55 G | 7.47 G (−13%) |
 | `pathing-storm`, last route handed out | 24 ticks | 11 ticks |
 | Building the walking grid, 256-tile ridged map | 1.8 G | 0.93 G |
 | `conquest-6p`, a building going up (typical) | 11.3 ms | 7.2 ms |
