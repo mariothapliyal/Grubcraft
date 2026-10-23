@@ -1573,6 +1573,185 @@ fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
 
 var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
 
+// A soldier's rig fixes (see `rig_of` in soldiers.rs): 0 drops the whole
+// body, 1 to 3 bend the left leg (upper, lower, foot), 4 to 6 the right,
+// 7 to 9 turn chest, neck and head. Each also drops.
+const RIG_FIXES: u32 = 10u;
+var<workgroup> pose_fix: array<mat4x4<f32>, RIG_FIXES>;
+// A joint missing from the rig.
+const NO_JOINT: u32 = 255u;
+// `SoldierInstance::feet`: keep the feet as the move has them.
+const FEET_AS_POSED: u32 = 1u;
+
+fn translation(t: vec3<f32>) -> mat4x4<f32> {
+    return mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(t, 1.0),
+    );
+}
+
+// A turn by `angle` about `axis` (of unit length), right-handed.
+fn axis_angle(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    let a = axis;
+    let k = 1.0 - c;
+    return mat3x3<f32>(
+        vec3<f32>(c + a.x * a.x * k, a.y * a.x * k + a.z * s, a.z * a.x * k - a.y * s),
+        vec3<f32>(a.x * a.y * k - a.z * s, c + a.y * a.y * k, a.z * a.y * k + a.x * s),
+        vec3<f32>(a.x * a.z * k + a.y * s, a.y * a.z * k - a.x * s, c + a.z * a.z * k),
+    );
+}
+
+// The turn `r` about the point `p`.
+fn turn_about(p: vec3<f32>, r: mat3x3<f32>) -> mat4x4<f32> {
+    let m = mat4x4<f32>(vec4<f32>(r[0], 0.0), vec4<f32>(r[1], 0.0), vec4<f32>(r[2], 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+    return translation(p) * m * translation(-p);
+}
+
+fn joint_at(j: u32) -> vec3<f32> {
+    return pose_globals[j][3].xyz;
+}
+
+fn safe_acos(x: f32) -> f32 {
+    return acos(clamp(x, -1.0, 1.0));
+}
+
+// The ground where the skinning pass stands a soldier.
+fn ground_at(xz: vec2<f32>) -> f32 {
+    return max(height_at(xz), g.misc.x - 0.05);
+}
+
+// Byte `k` of `w`, a rig joint.
+fn rig_joint(w: u32, k: u32) -> u32 {
+    return (w >> (8u * k)) & 0xffu;
+}
+
+// How much a leg's foot is planted, from how high its ankle is over the
+// soldier's ground, for a leg `reach` long: a rider's or a leaping foot
+// is left alone.
+fn planted(ankle: f32, reach: f32) -> f32 {
+    return 1.0 - smoothstep(0.3 * reach, 0.6 * reach, ankle);
+}
+
+// Bend one leg (its rig word) so its foot rises by `rise` (model units, the
+// body already dropped by `drop`): the two-bone solve of hip, knee and ankle,
+// the foot keeping its own turn.
+fn bend_leg(leg: u32, first: u32, rise: f32, drop: mat4x4<f32>) {
+    if rise <= 1e-4 {
+        return;
+    }
+    let hip = (drop * vec4<f32>(joint_at(rig_joint(leg, 0u)), 1.0)).xyz;
+    let knee = (drop * vec4<f32>(joint_at(rig_joint(leg, 1u)), 1.0)).xyz;
+    let ankle = (drop * vec4<f32>(joint_at(rig_joint(leg, 2u)), 1.0)).xyz;
+    let goal = ankle + vec3<f32>(0.0, rise, 0.0);
+    let lab = length(knee - hip);
+    let lcb = length(ankle - knee);
+    if lab < 1e-5 || lcb < 1e-5 {
+        return;
+    }
+    let lat = clamp(length(goal - hip), abs(lab - lcb) + 1e-4, lab + lcb - 1e-4);
+    let ac = normalize(ankle - hip);
+    let ab = (knee - hip) / lab;
+    let at = normalize(goal - hip);
+    let ac_ab_0 = safe_acos(dot(ac, ab));
+    let ba_bc_0 = safe_acos(dot(-ab, (ankle - knee) / lcb));
+    let ac_at_0 = safe_acos(dot(ac, at));
+    let ac_ab_1 = safe_acos((lcb * lcb - lab * lab - lat * lat) / (-2.0 * lab * lat));
+    let ba_bc_1 = safe_acos((lat * lat - lab * lab - lcb * lcb) / (-2.0 * lab * lcb));
+    // The plane the leg bends in; a straight leg bends its knee forward.
+    var bend = cross(ac, ab);
+    bend = select(vec3<f32>(-1.0, 0.0, 0.0), normalize(bend), length(bend) > 1e-5);
+    let swing = cross(ac, at);
+    // Then the whole leg swings the foot onto its goal.
+    let swings = length(swing) > 1e-6;
+    let r2 = axis_angle(select(vec3<f32>(0.0, 1.0, 0.0), normalize(swing), swings), select(0.0, ac_at_0, swings));
+    let upper = turn_about(hip, r2 * axis_angle(bend, ac_ab_1 - ac_ab_0));
+    let lower = upper * turn_about(knee, axis_angle(bend, ba_bc_1 - ba_bc_0));
+    pose_fix[first] = upper * drop;
+    pose_fix[first + 1u] = lower * drop;
+    let foot = (lower * vec4<f32>(ankle, 1.0)).xyz;
+    pose_fix[first + 2u] = translation(foot - ankle) * drop;
+}
+
+// Work out the rig fixes of the soldier at instance word `i`, once the
+// joints' matrices are built: drop the body to the lower foot's ground and
+// bend the other leg up to its own, then turn chest, neck and head to look.
+fn fit_rig(i: u32, rig: vec4<u32>) {
+    let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
+    let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
+    let fallen = ((instances[i + 5u] >> 16u) & 0xffu) > 127u;
+    let lift = bitcast<f32>(instances[i + 7u]);
+    let scale = bitcast<f32>(instances[i + 8u]);
+    let extra = instances[i + 15u];
+
+    // Feet: how far each planted foot's ground is above the soldier's.
+    var rise = vec2<f32>(0.0);
+    let feet = ((extra >> 24u) & FEET_AS_POSED) == 0u && !fallen && lift == 0.0 && scale > 0.0;
+    if feet {
+        let here = ground_at(pos);
+        let left = vec2<f32>(facing.y, -facing.x);
+        for (var k = 0u; k < 2u; k++) {
+            let leg = rig[k];
+            if rig_joint(leg, 0u) == NO_JOINT {
+                continue;
+            }
+            let hip = joint_at(rig_joint(leg, 0u));
+            let knee = joint_at(rig_joint(leg, 1u));
+            let ankle = joint_at(rig_joint(leg, 2u));
+            let reach = length(knee - hip) + length(ankle - knee);
+            let xz = pos + (left * ankle.x + facing * ankle.z) * scale;
+            let dy = clamp((ground_at(xz) - here) / scale, -0.4 * reach, 0.4 * reach);
+            rise[k] = dy * planted(ankle.y, reach);
+        }
+    }
+    let drop_by = min(0.0, min(rise.x, rise.y));
+    let drop = translation(vec3<f32>(0.0, drop_by, 0.0));
+    for (var f = 0u; f < RIG_FIXES; f++) {
+        pose_fix[f] = drop;
+    }
+    if feet {
+        for (var k = 0u; k < 2u; k++) {
+            if rig_joint(rig[k], 0u) != NO_JOINT {
+                bend_leg(rig[k], 1u + 3u * k, rise[k] - drop_by, drop);
+            }
+        }
+    }
+
+    // Look: yaw about the model's up, pitch about its left, shared out over
+    // chest, neck and head.
+    let weight = f32((extra >> 16u) & 0xffu) / 255.0;
+    if weight <= 0.0 {
+        return;
+    }
+    let yaw = f32(bitcast<i32>(extra << 24u) >> 24u) / 127.0 * 1.5707964 * weight;
+    let pitch = f32(bitcast<i32>(extra << 16u) >> 24u) / 127.0 * 0.7853982 * weight;
+    var shares = vec3<f32>(0.3, 0.3, 0.4);
+    for (var k = 0u; k < 3u; k++) {
+        if rig_joint(rig.z, k) == NO_JOINT {
+            shares[k] = 0.0;
+        }
+    }
+    let total = shares.x + shares.y + shares.z;
+    if total <= 0.0 {
+        return;
+    }
+    var turned = drop;
+    for (var k = 0u; k < 3u; k++) {
+        let j = rig_joint(rig.z, k);
+        if j == NO_JOINT {
+            continue;
+        }
+        let share = shares[k] / total;
+        let r = axis_angle(vec3<f32>(0.0, 1.0, 0.0), yaw * share) * axis_angle(vec3<f32>(1.0, 0.0, 0.0), pitch * share);
+        let pivot = (turned * vec4<f32>(joint_at(j), 1.0)).xyz;
+        turned = turn_about(pivot, r) * turned;
+        pose_fix[7u + k] = turned;
+    }
+}
+
 // Build one soldier's final bone matrices, a thread per bone, into the
 // palette, where every vertex that follows a bone then reads it.
 //
@@ -1659,13 +1838,19 @@ fn cs_pose(
     for (var d = 0u; d <= deepest; d++) {
         if bone < joints && depth == d {
             if parent == 255u {
-                pose_globals[bone] = anim_matrix(fit + 1u) * local;
+                pose_globals[bone] = anim_matrix(fit + 2u) * local;
             } else {
                 pose_globals[bone] = pose_globals[parent] * local;
             }
         }
         workgroupBarrier();
     }
+    // The rig's fixes: the body dropped and the legs bent to stand on the
+    // ground, the upper body turned to look.
+    if bone == 0u {
+        fit_rig(i, anim[fit + 1u]);
+    }
+    workgroupBarrier();
     if bone > joints || bone >= bones {
         return;
     }
@@ -1678,8 +1863,9 @@ fn cs_pose(
         ));
         return;
     }
-    let post = anim_matrix(fit + 4u + bone * 3u);
-    write_palette(slot, matrix_rows(pose_globals[bone] * post));
+    let post = anim_matrix(fit + 5u + bone * 3u);
+    let fix = (joint.w >> 16u) & 0xffu;
+    write_palette(slot, matrix_rows(pose_fix[fix] * pose_globals[bone] * post));
 }
 
 // Pose one vertex of one soldier and keep it for the passes that draw it.
