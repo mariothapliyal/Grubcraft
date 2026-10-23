@@ -1,0 +1,500 @@
+//! Shared skeletons (docs/32-animation-engine.md): a skinned model's joints,
+//! and its clips stored as joint poses that every model on the same skeleton
+//! shares, instead of finished bone matrices of its own.
+//!
+//! A joint's pose is its rotation, translation and uniform scale relative to
+//! its nearest ancestor joint (a root joint's, relative to the scene). The
+//! model then needs only its fixes: `pre`, which turns the skeleton's space
+//! into the model's (its size and turn), and per bone `post`, which turns a
+//! stored vertex into that joint's rest (the inverse rest pose and the bind
+//! pose difference). The bone matrix of a frame is `pre * global * post`,
+//! which is exactly the matrix the bone rows hold for a model without a
+//! skeleton.
+
+use std::collections::HashMap;
+
+use gc_assets::anim::{
+    Act, AnimTables, FIX_FLOATS, FRAME_TEXELS, FitRecord, JointRecord, LOOPS, MASKS, Mask,
+    MoveRecord, ROOT, Role, Side, SkeletonRecord, Weapon,
+};
+use gc_assets::model::{ClipKind, ClipRecord, NAME_BYTES, POSE_ROWS};
+use glam::{Mat4, Quat, Vec3};
+
+/// A joint pose must rebuild its matrix this closely (in the source's units,
+/// against the matrix's largest entry), or the model keeps bone rows: a rig
+/// with shear or a squashed joint cannot be stored as rotation, translation
+/// and one scale.
+const FIT_TOLERANCE: f32 = 1e-3;
+/// Values are rounded to this before moves are compared, so a move copied
+/// onto several models is stored once.
+const MATCH_STEP: f32 = 1e-5;
+
+/// A skinned model's joints, in skin order (the bone order its vertices use).
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Rig {
+    pub names: Vec<String>,
+    /// The nearest ancestor that is also a joint.
+    pub parent: Vec<Option<usize>>,
+}
+
+impl Rig {
+    /// The joints `joints` (node indices) of a scene whose nodes have parents
+    /// `node_parent` and names `node_name`.
+    pub fn new(joints: &[usize], node_parent: &[Option<usize>], node_name: &[String]) -> Rig {
+        let joint_of: HashMap<usize, usize> =
+            joints.iter().enumerate().map(|(j, &n)| (n, j)).collect();
+        let parent = joints
+            .iter()
+            .map(|&n| {
+                let mut at = node_parent[n];
+                while let Some(p) = at {
+                    if let Some(&j) = joint_of.get(&p) {
+                        return Some(j);
+                    }
+                    at = node_parent[p];
+                }
+                None
+            })
+            .collect();
+        Rig {
+            names: joints.iter().map(|&n| node_name[n].clone()).collect(),
+            parent,
+        }
+    }
+
+    /// Joints between each joint and its root.
+    fn depths(&self) -> Option<Vec<u8>> {
+        let mut depth = vec![None; self.names.len()];
+        fn of(rig: &Rig, j: usize, depth: &mut [Option<u8>], guard: usize) -> Option<u8> {
+            if let Some(d) = depth[j] {
+                return Some(d);
+            }
+            if guard > rig.names.len() {
+                return None;
+            }
+            let d = match rig.parent[j] {
+                Some(p) => of(rig, p, depth, guard + 1)?.checked_add(1)?,
+                None => 0,
+            };
+            depth[j] = Some(d);
+            Some(d)
+        }
+        (0..self.names.len())
+            .map(|j| of(self, j, &mut depth, 0))
+            .collect()
+    }
+
+    /// The joints at and under `j`.
+    fn subtree(&self, j: usize) -> Vec<usize> {
+        (0..self.names.len())
+            .filter(|&k| {
+                let mut at = Some(k);
+                while let Some(a) = at {
+                    if a == j {
+                        return true;
+                    }
+                    at = self.parent[a];
+                }
+                false
+            })
+            .collect()
+    }
+}
+
+/// One joint in one frame, relative to its parent joint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct JointPose {
+    pub r: Quat,
+    pub t: Vec3,
+    pub s: f32,
+}
+
+impl JointPose {
+    fn matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(Vec3::splat(self.s), self.r, self.t)
+    }
+}
+
+/// The poses of a frame whose joints sit at `globals` (in the source's
+/// space), or `None` if one cannot be stored as rotation, translation and
+/// one scale.
+pub(crate) fn poses(rig: &Rig, globals: &[Mat4]) -> Option<Vec<JointPose>> {
+    globals
+        .iter()
+        .enumerate()
+        .map(|(j, g)| {
+            let local = match rig.parent[j] {
+                Some(p) => globals[p].inverse() * *g,
+                None => *g,
+            };
+            let (s, r, t) = local.to_scale_rotation_translation();
+            let pose = JointPose {
+                r: r.normalize(),
+                t,
+                s: (s.x + s.y + s.z) / 3.0,
+            };
+            let size = local
+                .to_cols_array()
+                .iter()
+                .fold(1.0f32, |m, v| m.max(v.abs()));
+            let error = (pose.matrix() - local)
+                .to_cols_array()
+                .iter()
+                .fold(0.0f32, |m, v| m.max(v.abs()));
+            (error <= FIT_TOLERANCE * size).then_some(pose)
+        })
+        .collect()
+}
+
+/// A clip as joint poses.
+pub(crate) struct PosedClip {
+    pub kind: ClipKind,
+    /// The source animation's name.
+    pub name: String,
+    pub frames: Vec<Vec<JointPose>>,
+}
+
+/// A model posed from a shared skeleton.
+pub(crate) struct Posed {
+    pub rig: Rig,
+    /// Skeleton space to model space.
+    pub pre: Mat4,
+    /// Per bone (the joints, then the still bone), stored vertex to the
+    /// joint's rest.
+    pub post: Vec<Mat4>,
+    pub clips: Vec<PosedClip>,
+}
+
+impl Posed {
+    /// A frame's bone matrices (stored vertex to pose, in the model's space),
+    /// as the pose pass builds them.
+    #[cfg(test)]
+    pub fn matrices(&self, frame: &[JointPose]) -> Vec<Mat4> {
+        fn global(rig: &Rig, frame: &[JointPose], j: usize) -> Mat4 {
+            let local = frame[j].matrix();
+            match rig.parent[j] {
+                Some(p) => global(rig, frame, p) * local,
+                None => local,
+            }
+        }
+        (0..frame.len())
+            .map(|j| self.pre * global(&self.rig, frame, j) * self.post[j])
+            .chain([Mat4::IDENTITY])
+            .collect()
+    }
+}
+
+/// What the engine makes of a joint, from its name (Quaternius and Mixamo
+/// rigs).
+fn role(name: &str) -> Role {
+    let n = name.to_ascii_lowercase();
+    let n = n
+        .trim_start_matches("mixamorig:")
+        .trim_start_matches("mixamorig_");
+    match n {
+        "hips" | "pelvis" => Role::Hips,
+        "abdomen" | "spine" => Role::Spine,
+        "chest" | "spine2" => Role::Chest,
+        "neck" => Role::Neck,
+        "head" => Role::Head,
+        "upperleg.l" | "leftupleg" | "thigh.l" => Role::UpperLegL,
+        "lowerleg.l" | "leftleg" | "shin.l" => Role::LowerLegL,
+        "foot.l" | "leftfoot" => Role::FootL,
+        "upperleg.r" | "rightupleg" | "thigh.r" => Role::UpperLegR,
+        "lowerleg.r" | "rightleg" | "shin.r" => Role::LowerLegR,
+        "foot.r" | "rightfoot" => Role::FootR,
+        "shoulder.l" | "leftshoulder" => Role::ShoulderL,
+        "shoulder.r" | "rightshoulder" => Role::ShoulderR,
+        _ => Role::None,
+    }
+}
+
+/// The name of the joint across the body from `name`, if it is a sided one.
+fn mirror_name(name: &str) -> Option<String> {
+    for (a, b) in [(".L", ".R"), ("_L", "_R"), (".l", ".r"), ("_l", "_r")] {
+        for (from, to) in [(a, b), (b, a)] {
+            if let Some(stem) = name.strip_suffix(from) {
+                return Some(format!("{stem}{to}"));
+            }
+        }
+    }
+    for (from, to) in [("Left", "Right"), ("Right", "Left")] {
+        if name.contains(from) {
+            return Some(name.replacen(from, to, 1));
+        }
+    }
+    None
+}
+
+/// A skeleton's records: its joints and the joints each [`Mask`] covers.
+fn skeleton_records(rig: &Rig) -> Result<(Vec<JointRecord>, [[u32; 2]; MASKS]), String> {
+    let depths = rig
+        .depths()
+        .ok_or("the joints' parents loop, or nest deeper than 255")?;
+    let roles: Vec<Role> = rig.names.iter().map(|n| role(n)).collect();
+    let find = |r: Role| roles.iter().position(|&x| x == r);
+    let mirror = |j: usize| {
+        mirror_name(&rig.names[j])
+            .and_then(|m| rig.names.iter().position(|n| *n == m))
+            .unwrap_or(j)
+    };
+    let joints = (0..rig.names.len())
+        .map(|j| JointRecord {
+            parent: rig.parent[j].map_or(ROOT, |p| p as u8),
+            depth: depths[j],
+            mirror: mirror(j) as u8,
+            role: roles[j] as u8,
+        })
+        .collect();
+    let mut masks = [[0u32; 2]; MASKS];
+    let mut set = |mask: Mask, js: &[usize]| {
+        for &j in js {
+            masks[mask as usize][j / 32] |= 1 << (j % 32);
+        }
+    };
+    set(Mask::All, &(0..rig.names.len()).collect::<Vec<_>>());
+    if let Some(hips) = find(Role::Hips) {
+        // The legs carry the hips and whatever is above them (the root that
+        // moves the whole body), so a walk under a swing still bobs.
+        let mut legs = vec![hips];
+        let mut at = rig.parent[hips];
+        while let Some(a) = at {
+            legs.push(a);
+            at = rig.parent[a];
+        }
+        for r in [Role::UpperLegL, Role::UpperLegR] {
+            if let Some(j) = find(r) {
+                legs.extend(rig.subtree(j));
+            }
+        }
+        set(Mask::Legs, &legs);
+    }
+    if let Some(j) = find(Role::Spine).or(find(Role::Chest)) {
+        set(Mask::Upper, &rig.subtree(j));
+    }
+    if let Some(j) = find(Role::Neck).or(find(Role::Head)) {
+        set(Mask::Head, &rig.subtree(j));
+    }
+    if let Some(j) = find(Role::ShoulderL) {
+        set(Mask::LeftArm, &rig.subtree(j));
+    }
+    if let Some(j) = find(Role::ShoulderR) {
+        set(Mask::RightArm, &rig.subtree(j));
+    }
+    Ok((joints, masks))
+}
+
+/// The act a plain clip kind plays.
+fn act_of(kind: ClipKind) -> Act {
+    match kind {
+        ClipKind::Idle => Act::Idle,
+        ClipKind::Walk => Act::Walk,
+        ClipKind::Run => Act::Run,
+        ClipKind::Attack | ClipKind::Attack2 => Act::Attack,
+        ClipKind::Hit => Act::Hit,
+        ClipKind::Die => Act::Death,
+        ClipKind::Cheer => Act::Cheer,
+        ClipKind::Shoot => Act::Shoot,
+        ClipKind::Block => Act::Block,
+    }
+}
+
+fn name_bytes(name: &str) -> [u8; NAME_BYTES] {
+    let mut out = [0; NAME_BYTES];
+    // Cut at a character boundary.
+    let mut end = name.len().min(NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    out[..end].copy_from_slice(&name.as_bytes()[..end]);
+    out
+}
+
+/// The three rows of a 3 × 4 matrix.
+fn rows(m: &Mat4) -> [f32; FIX_FLOATS] {
+    let mut out = [0.0; FIX_FLOATS];
+    for r in 0..3 {
+        out[r * 4..r * 4 + 4].copy_from_slice(&[
+            m.x_axis[r],
+            m.y_axis[r],
+            m.z_axis[r],
+            m.w_axis[r],
+        ]);
+    }
+    out
+}
+
+/// Builds a pack's anim tables, storing each skeleton and each move once
+/// however many models share them.
+#[derive(Default)]
+pub(crate) struct AnimBuilder {
+    skeletons: HashMap<Rig, u16>,
+    moves: HashMap<(u16, Vec<i32>), u32>,
+}
+
+impl AnimBuilder {
+    /// Add model `model`'s skeleton, moves and fixes; returns its clips.
+    pub fn add(
+        &mut self,
+        t: &mut AnimTables,
+        model: u32,
+        posed: &Posed,
+    ) -> Result<Vec<ClipRecord>, String> {
+        let skeleton = match self.skeletons.get(&posed.rig) {
+            Some(&s) => s,
+            None => {
+                let s = u16::try_from(t.skeletons.len()).map_err(|_| "too many skeletons")?;
+                let (joints, masks) = skeleton_records(&posed.rig)?;
+                t.skeletons.push(SkeletonRecord {
+                    name: name_bytes(posed.rig.names.first().map_or("", |n| n.as_str())),
+                    first_joint: t.joints.len() as u32,
+                    joints: joints.len() as u32,
+                    masks,
+                });
+                t.joints.extend(joints);
+                self.skeletons.insert(posed.rig.clone(), s);
+                s
+            }
+        };
+        t.fits.push(FitRecord {
+            model,
+            skeleton: u32::from(skeleton),
+            first_fix: t.fixes.len() as u32,
+            _pad: 0,
+        });
+        t.fixes.push(rows(&posed.pre));
+        t.fixes.extend(posed.post.iter().map(rows));
+
+        let mut clips = Vec::with_capacity(posed.clips.len());
+        for clip in &posed.clips {
+            let texels: Vec<[f32; 4]> = clip
+                .frames
+                .iter()
+                .flat_map(|frame| {
+                    let mut row = vec![[0.0; 4]; FRAME_TEXELS as usize];
+                    for (j, p) in frame.iter().enumerate() {
+                        row[j * 2] = p.r.to_array();
+                        row[j * 2 + 1] = [p.t.x, p.t.y, p.t.z, p.s];
+                    }
+                    row
+                })
+                .collect();
+            let key = (
+                skeleton,
+                texels
+                    .iter()
+                    .flatten()
+                    .map(|v| (v / MATCH_STEP).round() as i32)
+                    .collect::<Vec<_>>(),
+            );
+            let index = match self.moves.get(&key) {
+                Some(&k) => k,
+                None => {
+                    let k = t.moves.len() as u32;
+                    t.moves.push(MoveRecord {
+                        name: name_bytes(&clip.name),
+                        skeleton,
+                        kind: clip.kind as u8,
+                        act: act_of(clip.kind) as u8,
+                        weapon: Weapon::Any as u8,
+                        side: Side::Any as u8,
+                        mask: Mask::All as u8,
+                        flags: if clip.kind.loops() { LOOPS } else { 0 },
+                        first_row: (t.frames.len() / FRAME_TEXELS as usize) as u32,
+                        frames: clip.frames.len() as u32,
+                        fps: crate::SAMPLE_FPS,
+                    });
+                    t.frames.extend_from_slice(&texels);
+                    self.moves.insert(key, k);
+                    k
+                }
+            };
+            let m = &t.moves[index as usize];
+            clips.push(ClipRecord {
+                kind: clip.kind as u8,
+                source: POSE_ROWS,
+                _pad: [0; 2],
+                first_row: m.first_row,
+                frames: m.frames,
+                fps: m.fps,
+            });
+        }
+        Ok(clips)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rig(names: &[&str], parent: &[Option<usize>]) -> Rig {
+        Rig {
+            names: names.iter().map(|n| n.to_string()).collect(),
+            parent: parent.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_joint_pose_rebuilds_its_frame() {
+        let r = rig(&["Hips", "UpperLeg.L"], &[None, Some(0)]);
+        let hips = Mat4::from_scale_rotation_translation(
+            Vec3::splat(2.0),
+            Quat::from_rotation_y(0.7),
+            Vec3::new(0.0, 1.0, 0.5),
+        );
+        let leg =
+            hips * Mat4::from_rotation_translation(Quat::from_rotation_x(-0.4), Vec3::X * 0.2);
+        let p = poses(&r, &[hips, leg]).expect("plain rotations fit");
+        let rebuilt = p[0].matrix() * p[1].matrix();
+        assert!(rebuilt.abs_diff_eq(leg, 1e-5));
+    }
+
+    #[test]
+    fn a_squashed_joint_keeps_bone_rows() {
+        let r = rig(&["Body"], &[None]);
+        assert!(poses(&r, &[Mat4::from_scale(Vec3::new(1.0, 0.5, 1.0))]).is_none());
+    }
+
+    #[test]
+    fn masks_and_mirrors_follow_the_joint_names() {
+        let r = rig(
+            &[
+                "Root",
+                "Hips",
+                "Abdomen",
+                "Neck",
+                "Head",
+                "Shoulder.L",
+                "Shoulder.R",
+                "UpperLeg.L",
+                "UpperLeg.R",
+            ],
+            &[
+                None,
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(2),
+                Some(2),
+                Some(1),
+                Some(1),
+            ],
+        );
+        let (joints, masks) = skeleton_records(&r).unwrap();
+        let bits = |m: Mask| -> Vec<usize> {
+            (0..r.names.len())
+                .filter(|&j| masks[m as usize][j / 32] & (1 << (j % 32)) != 0)
+                .collect()
+        };
+        assert_eq!(bits(Mask::Legs), vec![0, 1, 7, 8]);
+        assert_eq!(bits(Mask::Upper), vec![2, 3, 4, 5, 6]);
+        assert_eq!(bits(Mask::Head), vec![3, 4]);
+        assert_eq!(bits(Mask::LeftArm), vec![5]);
+        assert_eq!(joints[5].mirror, 6);
+        assert_eq!(joints[6].mirror, 5);
+        assert_eq!(joints[4].mirror, 4);
+        assert_eq!(joints[4].depth, 4);
+        assert_eq!(joints[7].role, Role::UpperLegL as u8);
+    }
+}

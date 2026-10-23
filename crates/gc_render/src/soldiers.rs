@@ -290,7 +290,13 @@ impl ModelGpu {
     /// each rounded up to a power of two (`SKIN_VERTICES` and
     /// `PALETTE_BONES` at most). The buffers are written afresh every frame,
     /// so nothing is copied.
-    fn grow(&mut self, device: &wgpu::Device, soldiers: &SoldiersGpu, vertices: usize, bones: usize) {
+    fn grow(
+        &mut self,
+        device: &wgpu::Device,
+        soldiers: &SoldiersGpu,
+        vertices: usize,
+        bones: usize,
+    ) {
         let skin = vertices > self.skin_capacity;
         let palette = bones > self.palette_capacity;
         if skin {
@@ -1144,6 +1150,7 @@ mod tests {
             clips: &[],
             bones: &[],
             textures: &[],
+            anim: Default::default(),
         }
     }
 

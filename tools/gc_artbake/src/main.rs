@@ -34,6 +34,7 @@
 
 mod detail;
 mod manifest;
+mod rig;
 mod textures;
 
 use std::collections::HashMap;
@@ -49,7 +50,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use serde::Deserialize;
 
 /// Frames per second clips are sampled at. The shader blends between frames.
-const SAMPLE_FPS: f32 = 12.0;
+pub(crate) const SAMPLE_FPS: f32 = 12.0;
 /// How much moving a texture coordinate across the whole atlas counts,
 /// against moving a vertex across the whole model, when a textured model's
 /// smaller levels of detail collapse across texture seams.
@@ -238,6 +239,7 @@ fn run(opts: &Options) -> Result<(), String> {
 fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), String> {
     let resolve = |src: &str| opts.resolve(src);
     let mut tables = ModelTables::default();
+    let mut anim = rig::AnimBuilder::default();
     // Materials already baked, by the maps they were baked from.
     let mut materials: HashMap<String, usize> = HashMap::new();
     for m in &config.models {
@@ -277,7 +279,7 @@ fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), 
                 v.material = material as u8 + 1;
             }
         }
-        baked.append_to(&mut tables, &m.name)?;
+        baked.append_to(&mut tables, &mut anim, &m.name)?;
     }
     let mut pack = gc_assets::PackWriter::new();
     tables.write(&mut pack);
@@ -317,14 +319,22 @@ struct BakedModel {
     height: f32,
     bones: u32,
     /// Clip kind, and its frames: per frame, `bones` matrices (stored vertex
-    /// to pose).
+    /// to pose). Only stored for a model not `posed` from a skeleton.
     clips: Vec<(ClipKind, Vec<Vec<Mat4>>)>,
+    /// The model's skeleton and its clips as joint poses, unless its joints
+    /// cannot be stored that way (see `rig::poses`) or it has no skin.
+    posed: Option<rig::Posed>,
     /// Most common colours and how many vertices have each.
     palette: Vec<([u8; 3], usize, bool)>,
 }
 
 impl BakedModel {
-    fn append_to(&self, t: &mut ModelTables, name: &str) -> Result<(), String> {
+    fn append_to(
+        &self,
+        t: &mut ModelTables,
+        anim: &mut rig::AnimBuilder,
+        name: &str,
+    ) -> Result<(), String> {
         if name.len() > NAME_BYTES {
             return Err(format!("name {name:?} is longer than {NAME_BYTES} bytes"));
         }
@@ -338,7 +348,15 @@ impl BakedModel {
             t.indices.extend_from_slice(indices);
         }
         let first_clip = t.clips.len() as u32;
-        for (kind, frames) in &self.clips {
+        let bone_clips = match &self.posed {
+            Some(posed) => {
+                let clips = anim.add(&mut t.anim, t.models.len() as u32, posed)?;
+                t.clips.extend(clips);
+                &[][..]
+            }
+            None => &self.clips[..],
+        };
+        for (kind, frames) in bone_clips {
             let first_row = (t.bones.len() / BONE_TEXELS_PER_ROW as usize) as u32;
             for frame in frames {
                 let mut row = vec![[0u16; 4]; BONE_TEXELS_PER_ROW as usize];
@@ -353,7 +371,8 @@ impl BakedModel {
             }
             t.clips.push(ClipRecord {
                 kind: *kind as u8,
-                _pad: [0; 3],
+                source: gc_assets::model::BONE_ROWS,
+                _pad: [0; 2],
                 first_row,
                 frames: frames.len() as u32,
                 fps: SAMPLE_FPS,
@@ -365,7 +384,7 @@ impl BakedModel {
             vertex_count: self.verts.len() as u32,
             lods,
             first_clip,
-            clip_count: self.clips.len() as u32,
+            clip_count: t.clips.len() as u32 - first_clip,
             height: self.height,
             bones: self.bones,
         });
@@ -502,6 +521,7 @@ impl Trs {
 /// The scene's nodes: parents, rest transforms and globals.
 struct Skeleton {
     parent: Vec<Option<usize>>,
+    names: Vec<String>,
     rest: Vec<Trs>,
     /// Nodes in an order where every parent comes before its children.
     order: Vec<usize>,
@@ -523,6 +543,10 @@ impl Skeleton {
                 s: Vec3::from(s),
             });
         }
+        let names = doc
+            .nodes()
+            .map(|node| node.name().unwrap_or("").to_string())
+            .collect();
         let mut order = Vec::with_capacity(n);
         let mut stack: Vec<usize> = (0..n).filter(|&i| parent[i].is_none()).collect();
         while let Some(i) = stack.pop() {
@@ -531,6 +555,7 @@ impl Skeleton {
         }
         Skeleton {
             parent,
+            names,
             rest,
             order,
         }
@@ -885,8 +910,9 @@ fn bake_model(
             .collect()
     });
 
-    // 5. Sample the clips into bone matrices (in game space).
+    // 5. Sample the clips: each joint's place in every frame.
     let mut clips = Vec::new();
+    let mut sampled = Vec::new();
     for (kind_name, anim_name) in &cfg.clips {
         let kind = ClipKind::ALL
             .into_iter()
@@ -896,18 +922,60 @@ fn bake_model(
             .animations()
             .find(|a| a.name() == Some(anim_name.as_str()))
             .ok_or_else(|| format!("no animation named {anim_name:?}"))?;
-        let frames = sample_clip(&anim, kind, &skel, &rest_globals, &joints, get)?
-            .into_iter()
-            .map(|bones| {
-                bones
-                    .iter()
-                    .chain([&Mat4::IDENTITY])
-                    .zip(&bind_fix)
-                    .map(|(m, fix)| to_game * *m * *fix * from_game)
-                    .collect()
+        let globals = sample_clip(&anim, kind, &skel, &joints, get)?;
+        sampled.push((kind, anim_name.clone(), globals));
+    }
+    // `clips` is a map, so put them in kind order for a repeatable pack.
+    sampled.sort_by_key(|(k, _, _)| *k as u8);
+    // Every model on a skin is posed from a shared skeleton when its joints
+    // allow (`rig::poses`); otherwise, and for still models, it keeps bone
+    // rows of its own. Either way a frame's bone matrix is
+    // `to_game * global * rest_inverse * bind_fix * from_game`.
+    let rest_inverse: Vec<Mat4> = joints.iter().map(|&n| rest_globals[n].inverse()).collect();
+    let rig = rig::Rig::new(&joints, &skel.parent, &skel.names);
+    let posed_clips: Option<Vec<rig::PosedClip>> = skin.as_ref().and_then(|_| {
+        sampled
+            .iter()
+            .map(|(kind, name, frames)| {
+                Some(rig::PosedClip {
+                    kind: *kind,
+                    name: name.clone(),
+                    frames: frames
+                        .iter()
+                        .map(|g| rig::poses(&rig, g))
+                        .collect::<Option<_>>()?,
+                })
             })
-            .collect();
-        clips.push((kind, frames));
+            .collect()
+    });
+    let posed = posed_clips.map(|clips| rig::Posed {
+        rig,
+        pre: to_game,
+        post: rest_inverse
+            .iter()
+            .zip(&bind_fix)
+            .map(|(inv, fix)| *inv * *fix * from_game)
+            .chain([Mat4::IDENTITY])
+            .collect(),
+        clips,
+    });
+    {
+        for (kind, _, frames) in sampled {
+            let frames = frames
+                .into_iter()
+                .map(|globals| {
+                    globals
+                        .iter()
+                        .zip(&rest_inverse)
+                        .map(|(g, inv)| *g * *inv)
+                        .chain([Mat4::IDENTITY])
+                        .zip(&bind_fix)
+                        .map(|(m, fix)| to_game * m * *fix * from_game)
+                        .collect()
+                })
+                .collect();
+            clips.push((kind, frames));
+        }
     }
     if skin.is_none() {
         // A still model stands in one pose: one frame where nothing moves.
@@ -930,6 +998,7 @@ fn bake_model(
         height: cfg.height,
         bones: joints.len() as u32 + 1,
         clips,
+        posed,
         palette,
     })
 }
@@ -1183,12 +1252,11 @@ impl Channel {
     }
 }
 
-/// Bone matrices (rest pose to posed, in the source's space) for each frame.
+/// Each joint's global matrix (in the source's space) for each frame.
 fn sample_clip<'a>(
     anim: &gltf::Animation<'a>,
     kind: ClipKind,
     skel: &Skeleton,
-    rest_globals: &[Mat4],
     joints: &[usize],
     get: impl Clone + Fn(gltf::Buffer<'a>) -> Option<&'a [u8]>,
 ) -> Result<Vec<Vec<Mat4>>, String> {
@@ -1229,7 +1297,6 @@ fn sample_clip<'a>(
     } else {
         (duration * SAMPLE_FPS).ceil() as usize + 1
     };
-    let rest_inverse: Vec<Mat4> = joints.iter().map(|&n| rest_globals[n].inverse()).collect();
     let mut out = Vec::with_capacity(frames);
     for f in 0..frames {
         let t = (f as f32 / SAMPLE_FPS).min(duration);
@@ -1246,13 +1313,7 @@ fn sample_clip<'a>(
             }
         }
         let globals = skel.globals(&local);
-        out.push(
-            joints
-                .iter()
-                .enumerate()
-                .map(|(b, &n)| globals[n] * rest_inverse[b])
-                .collect(),
-        );
+        out.push(joints.iter().map(|&n| globals[n]).collect());
     }
     Ok(out)
 }
@@ -1380,6 +1441,38 @@ mod tests {
         ] {
             assert!(models.clip(0, kind).is_some(), "no {kind:?} clip");
         }
+    }
+
+    #[test]
+    fn the_alien_bug_is_posed_from_a_skeleton_exactly_as_its_bone_rows() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (_, _, cfg) = bake_alien_bug();
+        let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
+        let baked = bake_model(&cfg, &path, None).unwrap();
+        let posed = baked
+            .posed
+            .as_ref()
+            .expect("the bug's joints store as poses");
+        assert_eq!(posed.clips.len(), baked.clips.len());
+        for (p, (kind, frames)) in posed.clips.iter().zip(&baked.clips) {
+            assert_eq!(p.kind, *kind);
+            assert_eq!(p.frames.len(), frames.len());
+            for (pose, bones) in p.frames.iter().zip(frames) {
+                for (a, b) in posed.matrices(pose).iter().zip(bones) {
+                    assert!(a.abs_diff_eq(*b, 1e-4), "{kind:?}: {a} against {b}");
+                }
+            }
+        }
+        // The pack keeps the poses, not bone rows, and the clips name them.
+        let (_, tables, _) = bake_alien_bug();
+        assert_eq!(tables.anim.fits.len(), 1);
+        assert!(tables.bones.is_empty());
+        assert!(
+            tables
+                .clips
+                .iter()
+                .all(|c| c.source == gc_assets::model::POSE_ROWS)
+        );
     }
 
     #[test]

@@ -325,7 +325,8 @@ mod tests {
     fn loops_wrap_and_deaths_hold() {
         let clip = ClipRecord {
             kind: ClipKind::Walk as u8,
-            _pad: [0; 3],
+            source: gc_assets::model::BONE_ROWS,
+            _pad: [0; 2],
             first_row: 10,
             frames: 4,
             fps: 10.0,

@@ -18,6 +18,10 @@
 //!   each [`TEXTURE_SIZE`] square, BC7-compressed (16 bytes per 4 × 4 block
 //!   of RGBA texels) with its mips down to one block (see [`MaterialLayer`]).
 //!   Models painted in vertex colours have none.
+//!
+//! A pack may also hold shared skeletons and their moves ([`crate::anim`]);
+//! the clips of a model posed from a skeleton name rows of the joint pose
+//! table there rather than of `models/bones`.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -188,13 +192,22 @@ pub struct ModelVertex {
     pub uv: [u16; 2],
 }
 
+/// [`ClipRecord::source`]: the clip's rows are in the bone texture.
+pub const BONE_ROWS: u8 = 0;
+/// [`ClipRecord::source`]: the clip's rows are in the joint pose table of
+/// the model's skeleton ([`crate::anim`]).
+pub const POSE_ROWS: u8 = 1;
+
 /// One animation clip. 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct ClipRecord {
     pub kind: u8,
-    pub _pad: [u8; 3],
-    /// Bone texture row of the first frame.
+    /// Where `first_row` counts: [`BONE_ROWS`] (packs baked before skeletons
+    /// hold 0) or [`POSE_ROWS`].
+    pub source: u8,
+    pub _pad: [u8; 2],
+    /// Row of the first frame.
     pub first_row: u32,
     pub frames: u32,
     /// Frames per second the clip was sampled at.
@@ -220,6 +233,7 @@ pub enum ModelError {
     OutOfRange(usize),
     /// The texture table is not a whole number of materials, or too many.
     BadTextures,
+    Anim(crate::anim::AnimError),
 }
 
 impl fmt::Display for ModelError {
@@ -229,6 +243,7 @@ impl fmt::Display for ModelError {
             ModelError::Table(p, e) => write!(f, "{p}: {e}"),
             ModelError::OutOfRange(m) => write!(f, "model {m} points outside the pack's tables"),
             ModelError::BadTextures => write!(f, "model pack textures are not whole materials"),
+            ModelError::Anim(e) => write!(f, "{e}"),
         }
     }
 }
@@ -247,6 +262,8 @@ pub struct Models<'a> {
     /// Material texture blocks: [`BLOCKS_PER_LAYER`] per layer, mip by mip,
     /// each mip row by row.
     pub textures: &'a [Block],
+    /// Shared skeletons and moves; empty in packs without them.
+    pub anim: crate::anim::Anim<'a>,
 }
 
 impl<'a> Models<'a> {
@@ -256,14 +273,17 @@ impl<'a> Models<'a> {
             let entry = pack.get_path(path).ok_or(ModelError::Missing(path))?;
             read_table(MODEL_SCHEMA, entry.bytes).map_err(|e| ModelError::Table(path, e))
         }
-        let m = Models {
+        let mut m = Models {
             models: table(pack, INDEX_PATH)?,
             vertices: table(pack, VERTICES_PATH)?,
             indices: table(pack, INDICES_PATH)?,
             clips: table(pack, CLIPS_PATH)?,
             bones: table(pack, BONES_PATH)?,
             textures: table(pack, TEXTURES_PATH)?,
+            anim: Default::default(),
         };
+        m.anim = crate::anim::Anim::from_pack(pack, &m).map_err(ModelError::Anim)?;
+        let pose_rows = m.anim.frame_rows() as usize;
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
         if !m.textures.len().is_multiple_of(BLOCKS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
             return Err(ModelError::BadTextures);
@@ -307,8 +327,15 @@ impl<'a> Models<'a> {
             let Some(clips) = m.clips.get(r.first_clip as usize..clips_end) else {
                 return Err(bad);
             };
+            // A model's clips all come from one place: its skeleton's
+            // poses if it has one, else its own bone rows.
+            let (source, rows) = match m.anim.fit(k) {
+                Some(_) => (POSE_ROWS, pose_rows),
+                None => (BONE_ROWS, rows),
+            };
             for c in clips {
                 if c.kind().is_none()
+                    || c.source != source
                     || c.frames == 0
                     || c.fps.is_nan()
                     || c.fps <= 0.0
@@ -353,12 +380,13 @@ pub struct ModelTables {
     pub clips: Vec<ClipRecord>,
     pub bones: Vec<[u16; 4]>,
     pub textures: Vec<Block>,
+    pub anim: crate::anim::AnimTables,
 }
 
 impl ModelTables {
     /// Add every model of `m` after the ones already here, with its clips,
-    /// bone rows and materials (used to join the soldier pack and the
-    /// building packs into the one the game embeds).
+    /// bone rows, materials, skeletons and moves (used to join the soldier
+    /// pack and the building packs into the one the game embeds).
     pub fn append(&mut self, m: &Models<'_>) -> Result<(), ModelError> {
         if self.materials() + m.materials() > MAX_MATERIALS {
             return Err(ModelError::BadTextures);
@@ -368,9 +396,11 @@ impl ModelTables {
             self.indices.len() as u32,
             self.clips.len() as u32,
         );
-        let (rows, materials) = (
+        let (rows, pose_rows, materials, first_model) = (
             (self.bones.len() / BONE_TEXELS_PER_ROW as usize) as u32,
+            (self.anim.frames.len() / crate::anim::FRAME_TEXELS as usize) as u32,
             self.materials() as u8,
+            self.models.len() as u32,
         );
         self.models.extend(m.models.iter().map(|r| {
             let mut r = *r;
@@ -391,11 +421,16 @@ impl ModelTables {
         self.indices.extend_from_slice(m.indices);
         self.clips.extend(m.clips.iter().map(|c| {
             let mut c = *c;
-            c.first_row += rows;
+            c.first_row += if c.source == POSE_ROWS {
+                pose_rows
+            } else {
+                rows
+            };
             c
         }));
         self.bones.extend_from_slice(m.bones);
         self.textures.extend_from_slice(m.textures);
+        self.anim.append(&m.anim, first_model);
         Ok(())
     }
 
@@ -436,6 +471,7 @@ impl ModelTables {
             Kind::Table,
             &table_bytes(MODEL_SCHEMA, &self.textures),
         );
+        self.anim.write(pack);
     }
 }
 
@@ -547,13 +583,15 @@ mod tests {
             indices: alloc::vec![0, 1, 2],
             clips: alloc::vec![ClipRecord {
                 kind: ClipKind::Walk as u8,
-                _pad: [0; 3],
+                source: BONE_ROWS,
+                _pad: [0; 2],
                 first_row: 0,
                 frames: 2,
                 fps: 10.0,
             }],
             bones: alloc::vec![[0; 4]; 2 * BONE_TEXELS_PER_ROW as usize],
             textures: Vec::new(),
+            anim: Default::default(),
         }
     }
 
