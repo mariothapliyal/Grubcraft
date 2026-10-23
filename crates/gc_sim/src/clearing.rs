@@ -1,4 +1,4 @@
-//! Clearing land (Conquest, idea 22, docs/31-changing-land.md): workers
+//! Clearing land (Conquest, idea 22, docs/32-changing-land.md): workers
 //! fell woods and grub out scrub and thicket so a base can grow.
 //!
 //! A worker ordered to clear an area ([`crate::Command::Clear`]) works its

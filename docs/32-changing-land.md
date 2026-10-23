@@ -1,4 +1,4 @@
-# 31 · Changing land
+# 32 · Changing land
 
 *Design note, 2026-10-24, restart plan thread T9 ([29](29-restart-plan.md)). Covers idea 22 (clearing land to expand bases) first, and the one way the simulation changes the ground mid-match, which burning woods (idea 2), floods (idea 6) and rubble reuse later. Weather, night, terrain tactics and seasons (ideas 1, 9, 13, 7) get their own sections here as they are built.*
 

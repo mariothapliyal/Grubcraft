@@ -19,7 +19,7 @@
 //!   again of those shot at a regiment standing in one.
 //!
 //! - **Growth:** what grows on each tile, for building and clearing
-//!   ([`Growth`], docs/31-changing-land.md): scrub, woods and thicket must
+//!   ([`Growth`], docs/32-changing-land.md): scrub, woods and thicket must
 //!   be cleared before a building can rise there. Clearing changes the
 //!   tile at runtime ([`Terrain::clear`]); its cover becomes open.
 //!
@@ -78,7 +78,7 @@ impl Cover {
 }
 
 /// What grows on a tile, for building on it and clearing it
-/// (docs/31-changing-land.md).
+/// (docs/32-changing-land.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Growth {

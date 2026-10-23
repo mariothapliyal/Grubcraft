@@ -17,7 +17,7 @@
 //! trade: its caravan runs to the nearest trade post (a Trade order) and
 //! its Clerks mine only Marrow. Its third worker, once the spare building
 //! is called off, clears the overgrown ground nearest its main building (a
-//! Clear order, docs/31-changing-land.md).
+//! Clear order, docs/32-changing-land.md).
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again

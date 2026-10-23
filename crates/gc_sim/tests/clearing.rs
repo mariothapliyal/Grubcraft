@@ -1,4 +1,4 @@
-//! Clearing land (idea 22, docs/31-changing-land.md): workers clear scrub,
+//! Clearing land (idea 22, docs/32-changing-land.md): workers clear scrub,
 //! woods and thicket, buildings wait for their ground to be cleared, and
 //! cleared ground is open.
 

@@ -206,7 +206,7 @@ impl Map {
 
     /// [`Map::nav_costs`] without blocking thicket: what the simulation is
     /// given with [`Map::ground`]. It blocks thicket itself from the
-    /// growth layer until the thicket is cleared (docs/31-changing-land.md).
+    /// growth layer until the thicket is cleared (docs/32-changing-land.md).
     pub fn sim_nav_costs(&self) -> Vec<u8> {
         self.costs(false)
     }

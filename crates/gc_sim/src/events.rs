@@ -86,6 +86,13 @@ pub enum Event {
     /// A Bell Tower tolled: enemy powers can't be used near it for a while
     /// (see [`crate::towers`]).
     Tolled { structure: StructureHandle },
+    /// Regiment `by` struck a blow on a building: a melee blow, or a shot
+    /// (each volley, or each shot of a siege engine), which always lands.
+    /// The last blow on a building is told too, before it is `Fallen`.
+    Struck {
+        structure: StructureHandle,
+        by: RegimentHandle,
+    },
     /// A building was brought down (its handle is no longer live).
     Fallen { structure: StructureHandle },
     /// A worker was used up to start a building growing (the Brood's
@@ -95,7 +102,7 @@ pub enum Event {
         structure: StructureHandle,
     },
     /// The tile `(x, y)` was cleared of what grew there (`was`); it is
-    /// open ground now (docs/31-changing-land.md).
+    /// open ground now (docs/32-changing-land.md).
     Cleared { x: i32, y: i32, was: Growth },
 }
 
@@ -142,11 +149,13 @@ impl Events {
         }
     }
 
-    /// Room for two events per building too (Conquest): one falling, one
-    /// tolling; and for each regiment clearing a tile.
-    pub(crate) fn reserve(&mut self, structures: usize) {
+    /// Room for two events per building too (Conquest), one falling and
+    /// one tolling, a blow on a building by each of the `regiments`, and
+    /// one for each regiment clearing a tile.
+    pub(crate) fn reserve(&mut self, structures: usize, regiments: usize) {
         // `reserve` counts from the length, not the capacity.
-        let room = self.list.capacity() - self.list.len() + 2 * structures + self.before.len();
+        let room =
+            self.list.capacity() - self.list.len() + 2 * structures + regiments + self.before.len();
         self.list.reserve(room);
     }
 
@@ -155,11 +164,21 @@ impl Events {
         self.list.push(Event::Cleared { x, y, was });
     }
 
-    /// Tell of the bells tolled and the buildings brought down in the tick
-    /// just played.
-    pub(crate) fn fallen(&mut self, tolled: &[StructureHandle], fallen: &[StructureHandle]) {
+    /// Tell of the bells tolled, the blows struck on buildings and the
+    /// buildings brought down in the tick just played.
+    pub(crate) fn fallen(
+        &mut self,
+        tolled: &[StructureHandle],
+        struck: &[(StructureHandle, RegimentHandle)],
+        fallen: &[StructureHandle],
+    ) {
         self.list
             .extend(tolled.iter().map(|&structure| Event::Tolled { structure }));
+        self.list.extend(
+            struck
+                .iter()
+                .map(|&(structure, by)| Event::Struck { structure, by }),
+        );
         self.list
             .extend(fallen.iter().map(|&structure| Event::Fallen { structure }));
     }

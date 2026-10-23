@@ -11,7 +11,7 @@
 //!
 //! Open ground comes first: a spot on scrub, woods or thicket is taken only
 //! when no open one is found within [`OPEN_FIRST`] more rings, and then the
-//! worker clears it before building (docs/31-changing-land.md).
+//! worker clears it before building (docs/32-changing-land.md).
 
 use gc_sim::structures::{BuildingStats, Role};
 use gc_sim::{BuildingId, PlayerId, World};

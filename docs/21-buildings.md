@@ -12,7 +12,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 - **Times** are seconds at Standard tempo. The lobby's tempo setting scales them like research ([04 · Economy](04-economy.md#tempo-setting)).
 - **Size** is the footprint in tiles, across and deep. Buildings are 2×2 to 5×5. Walls are one tile thick.
-- **Ground** must be clear: a building can't rise on scrub, woods or thicket. Laying one there is allowed; the worker pays, clears the footprint first, then lays the foundation (see [31 · Changing land](31-changing-land.md)).
+- **Ground** must be clear: a building can't rise on scrub, woods or thicket. Laying one there is allowed; the worker pays, clears the footprint first, then lays the foundation (see [31 · Changing land](32-changing-land.md)).
 - **Supply** is what a building adds to the cap. Only the buildings that docs/04 lists add any. For a main building's upgrades it is the total for that tier: each tier adds 10. Every faction starts on 12; the Choir's Spire gives 4 and its two starting Resonators give the rest.
 - **Tier** is the main-building tier needed to place the building. A building's tier is never above the tier of the units it trains, so nothing has to wait for a building to train a unit its tier already allows.
 - **Tier 1 costs no Marrow.** This holds for buildings as it does for units, so a player who loses their Marrow vein can still rebuild a base.
@@ -73,6 +73,16 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 - The Clans start with 300 Grub and 5 Hands. A Farmstead (80) goes down at about 0:30 and a Dojo (150) at about 1:30.
 - Tier 2 (300 Grub, 100 Marrow, 60 s) lands around minute 5 to 6, matching the pacing target in 04.
 - The tier-2 production buildings cost 40 to 60 Marrow each. A tier-2 army therefore competes with the next tier and with elite units for the same scarce Marrow.
+
+**Sieges on screen** (drawing and sound only; `gc_game/src/siege.rs`). The simulation tells every blow on a building as `Event::Struck` (who struck it), and its fall as `Event::Fallen`. The game draws them so it is plain when troops are at a building:
+- **At the wall.** Melee regiments attacking a building step up to its walls (the model's walls, not the footprint's edge) and swing at it; the front rank swings, the ranks behind wait. A ram draws back between blows and swings in to land each one. Archers turn to the building and shoot.
+- **Shots.** Archers' volleys fly to the wall and break on it. Siege engines (Battering Ram class, Mausoleum Engine) throw a stone; artillery (rocket carts, Broodmother Bulk) throws a burning shot that trails smoke. Each shot is one the simulation struck, landing a moment after the bar drops.
+- **Hits.** Each blow shakes the building and its bar flashes white. Chips fly off where it landed, in the building's material (timber and stone, the Brood's chitin, the Choir's glowing crystal, the Concord's bone), and a heavy blow raises dust.
+- **Damage.** A finished building below 70% of its hit points smokes from the roof, with more columns as it gets worse; below 35% it burns. A building still going up doesn't, since it has few hit points yet.
+- **Collapse.** A building brought down sinks into the ground in about 2.4 s in a cloud of dust and flying chunks, then leaves a rubble heap that smoulders for 25 s and lies for 90 s.
+- **Sounds.** Blades on walls (`WallHit`), arrows thudding in, siege engines firing (`SiegeLaunch`) and landing (`SiegeImpact`), and a building coming down (`Collapse`), which carries far.
+- **Alerts.** One of your buildings struck out of view raises the same edge badge as a regiment under attack.
+- **Try it:** `grubcraft --siege` stages a siege in the sandbox: Ember Clans blades and rocket carts at a Clan Hall, archers at a Farmstead, a Battering Ram at a Watchtower and a Mausoleum Engine at a Tenement.
 
 **Sight in fog of war** (built in Conquest step 5b, `Role::sight` in `gc_sim::structures`): a main building sees 32 tiles round its walls, an outpost 28, a tower 36 (past its 32-tile reach), a wall 8, and every other building 20. Regiments see 32.
 

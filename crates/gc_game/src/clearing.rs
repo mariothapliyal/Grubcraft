@@ -1,4 +1,4 @@
-//! Clearing land as the game shows it (docs/31-changing-land.md): the area
+//! Clearing land as the game shows it (docs/32-changing-land.md): the area
 //! a left-drag chooses for the Clear order, the amber that marks overgrown
 //! ground, and which tiles lose their trees when the simulation clears
 //! them. The orders and the rules are the simulation's (`Command::Clear`,
