@@ -93,6 +93,10 @@ impl Default for Effects {
 
 /// Dust: warm tan, a little lighter than the ground it was kicked from.
 pub const DUST: [u8; 3] = [196, 172, 134];
+/// The Brood's ichor: yellow-green.
+pub const ICHOR: [u8; 3] = [150, 190, 40];
+/// The Concord's ghost-light: pale green-white.
+pub const GHOST: [u8; 3] = [150, 235, 235];
 
 impl Effects {
     pub fn new(seed: u32) -> Effects {
@@ -519,11 +523,11 @@ impl Effects {
         match style {
             HitStyle::Flesh => self.spray(pos, dir, [150, 20, 18], 7.0 * power),
             HitStyle::Ichor => {
-                self.spray(pos, dir, [150, 190, 40], 8.0 * power);
+                self.spray(pos, dir, ICHOR, 8.0 * power);
                 self.motes(pos, 0.15, [190, 230, 80], 2.0 * power);
             }
             HitStyle::Crystal => self.shards(pos, dir, 8.0 * power),
-            HitStyle::Ghost => self.motes(pos, 0.2, [150, 235, 235], 6.0 * power),
+            HitStyle::Ghost => self.motes(pos, 0.2, GHOST, 6.0 * power),
             HitStyle::Ember => {
                 self.embers(pos, 0.15, 8.0 * power);
                 self.sparks(pos, dir, 3.0 * power);

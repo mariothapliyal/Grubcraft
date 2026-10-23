@@ -15,7 +15,7 @@
 use std::f32::consts::{PI, TAU};
 
 use gc_data::Faction;
-use gc_render::{BoxInstance, Effects, Particle};
+use gc_render::{BoxInstance, Effects, GHOST, ICHOR, Particle};
 use gc_sim::structures::{Armour, Breaker};
 use gc_sim::{PlayerId, RegimentHandle, StructureHandle};
 use glam::{Vec2, Vec3};
@@ -71,8 +71,6 @@ const WALL_STEP: f32 = 2.4;
 /// Below these shares of its hit points a building smokes, and burns.
 const SMOKES_BELOW: f32 = 0.7;
 const BURNS_BELOW: f32 = 0.35;
-/// The pale green-white of the Concord's ghost-lights.
-const GHOST: [u8; 3] = [150, 235, 235];
 /// Arrows leave the bow this high (as `ARROW_HEIGHT` in the field).
 const RELEASE_HEIGHT: f32 = crate::ARROW_HEIGHT;
 
@@ -266,6 +264,12 @@ impl Look {
     fn size(&self) -> Vec2 {
         self.max - self.min
     }
+
+    /// Its footprint, in square tiles.
+    fn area(&self) -> f32 {
+        let size = self.size();
+        size.x * size.y
+    }
 }
 
 /// Who struck a blow, as the screen shows them.
@@ -332,6 +336,11 @@ pub fn stand_at(wall: &Look, pos: Vec2, facing: Vec2, lean: f32, draw_back: f32)
 /// A colour without its glow.
 fn rgb([r, g, b, _]: [u8; 4]) -> [u8; 3] {
     [r, g, b]
+}
+
+/// Point `at` on the map, `y` high: where the renderer puts a particle.
+fn up(at: Vec2, y: f32) -> Vec3 {
+    Vec3::new(at.x, y, at.y)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -616,15 +625,16 @@ impl Siege {
     fn blow_fx(&mut self, look: &Look, kind: Kind, at: Vec2, y: f32, dir: Vec2) {
         let force = kind.force();
         let back = -dir;
-        let p = Vec3::new(at.x + back.x * 0.15, y, at.y + back.y * 0.15);
-        let away = Vec3::new(back.x, 0.3, back.y);
+        let off = at + back * 0.15;
+        let p = up(off, y);
+        let away = up(back, 0.3);
         let n = force.chips as f32;
         let size = if force.big { 0.2 } else { 0.1 };
         let colours = look.stuff.colours;
         match look.stuff.style {
             Style::Crystal => self.fx.shards(p, away, n + 2.0),
             Style::Shell => {
-                self.fx.spray(p, away, [150, 190, 40], n * 0.8);
+                self.fx.spray(p, away, ICHOR, n * 0.8);
                 self.fx.chips(p, back, rgb(colours[0]), n * 0.4, size);
             }
             style => {
@@ -647,7 +657,7 @@ impl Siege {
                 let size = 0.12 + self.roll().abs() * 0.22;
                 let colour = look.stuff.colours[self.pick(3)];
                 let spin = self.roll() * 12.0;
-                self.chip(at + back * 0.15, y, vel, vy, size, colour, spin);
+                self.chip(off, y, vel, vy, size, colour, spin);
             }
         }
         let (radius, puffs) = if force.big { (0.8, 1.5) } else { (0.35, 1.0) };
@@ -713,7 +723,7 @@ impl Siege {
     /// by what it is made of, and the crash.
     fn collapse(&mut self, look: Look) {
         let centre = look.centre();
-        let area = look.size().x * look.size().y;
+        let area = look.area();
         let n = (6.0 + area / 2.0).min(16.0) as usize;
         for k in 0..n {
             let dir = Vec2::from_angle(k as f32 * 2.4 + self.roll());
@@ -725,8 +735,8 @@ impl Siege {
             let edge = look.nearest(centre + dir * 100.0);
             self.chip(edge, y, vel, vy, size, look.stuff.colours[k % 3], spin);
         }
-        let middle = Vec3::new(centre.x, look.base + look.top * 0.5, centre.y);
-        let foot = Vec3::new(centre.x, look.base, centre.y);
+        let middle = up(centre, look.base + look.top * 0.5);
+        let foot = up(centre, look.base);
         let reach = look.size().max_element().clamp(1.5, 6.0);
         let pieces = (12.0 + area).min(48.0);
         let colours = look.stuff.colours;
@@ -756,25 +766,16 @@ impl Siege {
                 self.fx.motes(middle, reach * 0.4, GHOST, 24.0);
             }
             Style::Crystal => {
-                // It shatters: shards in every direction and a flash.
+                // It shatters: shards in every direction.
                 for k in 0..6 {
-                    let dir = Vec3::new(
-                        Vec2::from_angle(k as f32 * 1.05).x,
-                        0.6,
-                        Vec2::from_angle(k as f32 * 1.05).y,
-                    );
+                    let dir = up(Vec2::from_angle(k as f32 * 1.05), 0.6);
                     self.fx.shards(middle, dir, pieces);
                 }
             }
             Style::Shell => {
                 for k in 0..4 {
-                    let a = Vec2::from_angle(k as f32 * 1.6);
-                    self.fx.spray(
-                        middle,
-                        Vec3::new(a.x, 0.7, a.y),
-                        [150, 190, 40],
-                        pieces / 3.0,
-                    );
+                    let dir = up(Vec2::from_angle(k as f32 * 1.6), 0.7);
+                    self.fx.spray(middle, dir, ICHOR, pieces / 3.0);
                 }
                 self.fx.debris(middle, rgb(colours[0]), pieces / 3.0, 1.0);
             }
@@ -785,7 +786,7 @@ impl Siege {
     /// A random point over `look`'s footprint, `y` high.
     fn over(&mut self, look: &Look, y: f32) -> Vec3 {
         let at = look.min + (Vec2::new(self.roll(), self.roll()) * 0.5 + 0.5) * look.size();
-        Vec3::new(at.x, y, at.y)
+        up(at, y)
     }
 
     /// A building going down, for the frame just played: dust rolling off
@@ -809,7 +810,7 @@ impl Siege {
                 }
                 Style::Bone => self.fx.motes(at, 0.3, GHOST, 2.0),
                 Style::Crystal => self.fx.shards(at, Vec3::Y, 3.0),
-                Style::Shell => self.fx.spray(at, Vec3::Y, [150, 190, 40], 2.0),
+                Style::Shell => self.fx.spray(at, Vec3::Y, ICHOR, 2.0),
                 Style::Stone => {}
             }
         }
@@ -831,10 +832,10 @@ impl Siege {
             };
             let roof = look.base + look.top * 0.8;
             let centre = look.centre();
-            if !visible(Vec3::new(centre.x, roof, centre.y), look.top.max(2.0)) {
+            if !visible(up(centre, roof), look.top.max(2.0)) {
                 continue;
             }
-            let area = look.size().x * look.size().y;
+            let area = look.area();
             let spots = 1 + u32::from(area >= 4.0) + u32::from(area >= 12.0);
             let fire = look.hp < BURNS_BELOW;
             let damage = (SMOKES_BELOW - look.hp) / SMOKES_BELOW;
@@ -843,7 +844,7 @@ impl Siege {
             // The second and third column only once worse hurt.
             for spot in (0..spots).filter(|&k| damage >= 0.25 * k as f32) {
                 let off = Vec2::new(hash(seed, spot, 4), hash(seed, spot, 5)) * look.size() * 0.3;
-                let at = Vec3::new(centre.x + off.x, roof, centre.y + off.y);
+                let at = up(centre + off, roof);
                 self.fx
                     .smoke(at, thick * 0.7, if fire { 0.85 } else { 0.3 }, dt);
                 if fire {
@@ -852,20 +853,18 @@ impl Siege {
                 }
             }
         }
-        for f in 0..self.falls.len() {
-            let Fall { look, born, .. } = self.falls[f];
-            let age = self.time - born - COLLAPSE_SECONDS * 0.5;
+        for f in &self.falls {
+            let age = self.time - f.born - COLLAPSE_SECONDS * 0.5;
             if !(0.0..SMOULDER_SECONDS).contains(&age) {
                 continue;
             }
-            let c = look.centre();
-            let at = Vec3::new(c.x, look.base + 0.4, c.y);
+            let at = up(f.look.centre(), f.look.base + 0.4);
             if !visible(at, 3.0) {
                 continue;
             }
             let thick = 0.7 * (1.0 - age / SMOULDER_SECONDS);
             self.fx.smoke(at, thick * 0.7, 0.8, dt);
-            if look.stuff.style == Style::Timber && age < SMOULDER_SECONDS * 0.4 {
+            if f.look.stuff.style == Style::Timber && age < SMOULDER_SECONDS * 0.4 {
                 self.fx.flames(at, 0.4, dt);
             }
         }
@@ -908,7 +907,7 @@ impl Siege {
             if t < 1.0 {
                 if s.kind == Kind::Fire {
                     let (pos, y) = s.at(0, t);
-                    self.fx.trail(Vec3::new(pos.x, y, pos.y), self.dt);
+                    self.fx.trail(up(pos, y), self.dt);
                 }
                 k += 1;
                 continue;
@@ -1116,7 +1115,7 @@ impl Siege {
         let sink = ((age - (RUBBLE_SECONDS - RUBBLE_SINK)) / RUBBLE_SINK).clamp(0.0, 1.0);
         let look = &f.look;
         let size = look.size();
-        let n = (size.x * size.y * 1.2).clamp(8.0, 30.0) as usize;
+        let n = (look.area() * 1.2).clamp(8.0, 30.0) as usize;
         for k in 0..n {
             let r = |axis| hash(f.seed, k as u32, axis) * 0.5 + 0.5;
             let at = look.min + Vec2::new(r(0), r(1)) * size;
@@ -1247,6 +1246,13 @@ mod tests {
         all
     }
 
+    /// How many of `ps` glow (fire, sparks, shards, ghost-lights).
+    fn additive(ps: &[Particle]) -> usize {
+        ps.iter()
+            .filter(|p| p.flags & gc_render::particle_flags::ADDITIVE != 0)
+            .count()
+    }
+
     #[test]
     fn a_blow_shakes_the_building_and_chips_fly_off_toward_the_attacker() {
         let mut s = Siege::new(8);
@@ -1256,12 +1262,10 @@ mod tests {
         assert!(s.flash(h) > 0.9);
         // A small blow throws splinters and dust, no chunks.
         assert!(s.chips.is_empty());
-        let made = s.take_particles();
-        assert!(made.iter().any(|p| p.shape == gc_render::Shape::Shard));
+        let made = shards(&mut s);
+        assert!(!made.is_empty());
         assert!(
-            made.iter()
-                .filter(|p| p.shape == gc_render::Shape::Shard)
-                .all(|p| p.vel.z > 0.0),
+            made.iter().all(|p| p.vel.z > 0.0),
             "back toward the attacker"
         );
         assert_eq!(
@@ -1383,11 +1387,7 @@ mod tests {
             let _ = s.take_particles();
             s.emit_damage([h].into_iter(), |_, _| true);
             let made = s.take_particles();
-            let glowing = made
-                .iter()
-                .filter(|p| p.flags & gc_render::particle_flags::ADDITIVE != 0)
-                .count();
-            (made.len(), glowing)
+            (made.len(), additive(&made))
         };
         assert_eq!(count(&mut s, 0.9), (0, 0));
         let (smoke, fire) = count(&mut s, 0.5);
@@ -1435,11 +1435,6 @@ mod tests {
             s.fallen(h);
             s.advance(0.1, flat);
             s.take_particles()
-        };
-        let additive = |ps: &[Particle]| {
-            ps.iter()
-                .filter(|p| p.flags & gc_render::particle_flags::ADDITIVE != 0)
-                .count()
         };
         let clans = fall(Faction::EmberClans, Armour::Structure);
         let stone = fall(Faction::EmberClans, Armour::Fortified);
