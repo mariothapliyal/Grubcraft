@@ -514,13 +514,14 @@ fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: ve
     if m > 0.0 {
         let turn = GROUND_TURN * GROUND_STRETCH;
         b = ground_sample(layer, turn * uv + vec2<f32>(0.31, 0.57), turn * duv_x, turn * duv_y, mean);
-        // Its tilt turns back with it.
-        b.tilt = transpose(GROUND_TURN) * b.tilt;
+        // Its tilt turns back with it (in the frame whose v runs up, which
+        // is the turn itself, not its inverse).
+        b.tilt = GROUND_TURN * b.tilt;
     }
     // Variance-preserving blend about the mean (1 for colour, 0 for tilt).
     let k = 1.0 / sqrt((1.0 - m) * (1.0 - m) + m * m);
     var r: GroundLayer;
-    r.ratio = 1.0 + (mix(a.ratio, b.ratio, m) - 1.0) * k;
+    r.ratio = max(1.0 + (mix(a.ratio, b.ratio, m) - 1.0) * k, vec3<f32>(0.0));
     r.tilt = mix(a.tilt, b.tilt, m) * k;
     return r;
 }
@@ -627,7 +628,8 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         albedo = albedo * mix(vec3<f32>(detail_l), detail.ratio, 0.35);
         // The surface, tilted by the ground's normal map (whiteout blend, the
         // map's plane being the ground's).
-        nd = normalize(vec3<f32>(n.x + detail.tilt.x, n.y, n.z + detail.tilt.y));
+        // Steeper ground takes less of it, so it cannot turn the normal over.
+        nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
     }
 
     var c: vec3<f32>;
