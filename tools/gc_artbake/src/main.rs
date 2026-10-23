@@ -990,7 +990,7 @@ fn bake_model(
     // rows of its own. Either way a frame's bone matrix is
     // `to_game * global * rest_inverse * bind_fix * from_game`.
     let rest_inverse: Vec<Mat4> = joints.iter().map(|&n| rest_globals[n].inverse()).collect();
-    let rig = rig::Rig::new(&joints, &skel.parent, &skel.names);
+    let rig = rig::Rig::new(&joints, &skel.parent, &skel.names, &rest_globals);
     let pose_frames = |frames: &[Vec<Mat4>]| -> Option<Vec<Vec<rig::JointPose>>> {
         frames.iter().map(|g| rig::poses(&rig, g)).collect()
     };

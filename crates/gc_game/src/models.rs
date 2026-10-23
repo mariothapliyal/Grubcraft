@@ -278,6 +278,49 @@ mod tests {
         }
     }
 
+    /// The clips the game picked before the move picker, best first: plain
+    /// clips must still play exactly these.
+    fn old_candidates(action: Action) -> &'static [ClipKind] {
+        use ClipKind::*;
+        match action {
+            Action::Idle => &[Idle],
+            Action::Walk => &[Walk, Run, Idle],
+            Action::Run => &[Run, Walk, Idle],
+            Action::Attack => &[Attack, Attack2, Idle],
+            Action::Attack2 => &[Attack2, Attack, Idle],
+            Action::Shoot => &[Shoot, Attack, Idle],
+            Action::Cheer => &[Cheer, Idle],
+            Action::Hit => &[Hit, Idle],
+            Action::Block => &[Block, Idle],
+        }
+    }
+
+    #[test]
+    fn the_picker_plays_the_clips_the_game_always_did() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let rows = |c: Option<MoveClip>| c.map(|c| (c.first_row, c.frames));
+        let old = |m, kinds: &[ClipKind]| {
+            kinds
+                .iter()
+                .find_map(|&k| models.clip(m, k))
+                .map(|c| (c.first_row, c.frames))
+        };
+        for m in 0..models.models.len() {
+            for a in ACTIONS {
+                assert_eq!(
+                    rows(clips.clip(m, a)),
+                    old(m, old_candidates(a)),
+                    "{m} {a:?}"
+                );
+            }
+            let own = &clips.by_model[m];
+            assert_eq!(rows(own.die), old(m, &[ClipKind::Die]));
+            assert_eq!(rows(own.parry), old(m, old_candidates(Action::Attack)));
+            assert_eq!(rows(own.stagger), old(m, old_candidates(Action::Hit)));
+        }
+    }
+
     #[test]
     fn every_model_can_stand_walk_and_fight() {
         let models = load().unwrap();

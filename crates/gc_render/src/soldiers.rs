@@ -34,6 +34,10 @@ const SKIN_GROUP: u32 = 128;
 /// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl):
 /// one per model and level of detail, buildings included.
 pub(crate) const MAX_JOBS: usize = 1023;
+/// Storage buffers the posing and skinning passes bind: the model vertices
+/// (two halves), the jobs, the skinned positions and shading, the instances,
+/// the palette and the anim tables.
+pub(crate) const POSE_STORAGE_BUFFERS: u32 = 8;
 /// Bytes of one job (`Job` in world.wgsl): the run, then where its pose goes.
 const JOB_BYTES: usize = 32;
 // One dispatch must cover every vertex, whatever the GPU.
@@ -1090,9 +1094,17 @@ pub(crate) fn upload(
         });
     // The poses straight from the pack, then the skeletons and fits after.
     let poses = 1 + m.anim.frames.len() as u64;
+    let anim_bytes = (poses + anim_head.len() as u64) * 16;
+    if anim_bytes > limits.max_storage_buffer_binding_size {
+        return Err(format!(
+            "{} MB of skeletons and moves, more than this GPU binds ({} MB)",
+            anim_bytes >> 20,
+            limits.max_storage_buffer_binding_size >> 20
+        ));
+    }
     let anim = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("skeletons and poses"),
-        size: (poses + anim_head.len() as u64) * 16,
+        size: anim_bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

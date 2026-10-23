@@ -27,17 +27,31 @@ use glam::{Mat4, Quat, Vec3};
 const FIT_TOLERANCE: f32 = 1e-3;
 
 /// A skinned model's joints, in skin order (the bone order its vertices use).
+/// Models share a skeleton, and so its moves, only when their rigs are equal:
+/// the same joints, parents and rest pose, since a move's poses carry its
+/// bones' lengths and its root the rig's own placement.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Rig {
     pub names: Vec<String>,
     /// The nearest ancestor that is also a joint.
     pub parent: Vec<Option<usize>>,
+    /// Each joint's rest relative to its parent joint (a root's, to the
+    /// scene), rounded to `REST_STEP`.
+    pub rest: Vec<[i32; 16]>,
 }
+
+/// Rest poses this close count as the same rig.
+const REST_STEP: f32 = 1e-4;
 
 impl Rig {
     /// The joints `joints` (node indices) of a scene whose nodes have parents
     /// `node_parent` and names `node_name`.
-    pub fn new(joints: &[usize], node_parent: &[Option<usize>], node_name: &[String]) -> Rig {
+    pub fn new(
+        joints: &[usize],
+        node_parent: &[Option<usize>],
+        node_name: &[String],
+        node_rest: &[Mat4],
+    ) -> Rig {
         let joint_of: HashMap<usize, usize> =
             joints.iter().enumerate().map(|(j, &n)| (n, j)).collect();
         let parent = joints
@@ -52,10 +66,24 @@ impl Rig {
                 }
                 None
             })
+            .collect::<Vec<Option<usize>>>();
+        let rest = joints
+            .iter()
+            .zip(&parent)
+            .map(|(&n, p)| {
+                let local = match p {
+                    Some(p) => node_rest[joints[*p]].inverse() * node_rest[n],
+                    None => node_rest[n],
+                };
+                local
+                    .to_cols_array()
+                    .map(|v| (v / REST_STEP).round() as i32)
+            })
             .collect();
         Rig {
             names: joints.iter().map(|&n| node_name[n].clone()).collect(),
             parent,
+            rest,
         }
     }
 
@@ -85,11 +113,16 @@ pub(crate) struct JointPose {
 }
 
 impl JointPose {
-    /// As the frames table stores it: eight half floats.
-    fn packed(&self) -> gc_assets::anim::JointPose {
-        let h = |a: f32, b: f32| u32::from(f16_bits(a)) | (u32::from(f16_bits(b)) << 16);
+    /// As the frames table stores it: eight half floats, or `None` if a
+    /// value is beyond them (or not a number).
+    fn packed(&self) -> Option<gc_assets::anim::JointPose> {
         let (r, t) = (self.r, self.t);
-        [h(r.x, r.y), h(r.z, r.w), h(t.x, t.y), h(t.z, self.s)]
+        let all = [r.x, r.y, r.z, r.w, t.x, t.y, t.z, self.s];
+        if all.iter().any(|v| !v.is_finite() || v.abs() > 65_504.0) {
+            return None;
+        }
+        let h = |a: f32, b: f32| u32::from(f16_bits(a)) | (u32::from(f16_bits(b)) << 16);
+        Some([h(r.x, r.y), h(r.z, r.w), h(t.x, t.y), h(t.z, self.s)])
     }
 
     /// Back from [`JointPose::packed`].
@@ -128,15 +161,15 @@ pub(crate) fn poses(rig: &Rig, globals: &[Mat4]) -> Option<Vec<JointPose>> {
                 t,
                 s: (s.x + s.y + s.z) / 3.0,
             };
-            let size = local
-                .to_cols_array()
-                .iter()
-                .fold(1.0f32, |m, v| m.max(v.abs()));
-            let error = (pose.matrix() - local)
-                .to_cols_array()
+            // Judge the rotation and scale part only, against its own size:
+            // the translation is kept exactly, and a long bone must not hide
+            // a squash.
+            let linear = |m: Mat4| glam::Mat3::from_mat4(m).to_cols_array();
+            let size = linear(local).iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let error = linear(pose.matrix() - local)
                 .iter()
                 .fold(0.0f32, |m, v| m.max(v.abs()));
-            (error <= FIT_TOLERANCE * size).then_some(pose)
+            (size > 0.0 && error <= FIT_TOLERANCE * size).then_some(pose)
         })
         .collect()
 }
@@ -348,8 +381,12 @@ pub(crate) struct AnimBuilder {
     skeletons: HashMap<Rig, u16>,
     /// Per skeleton, its frames so far.
     blocks: Vec<Vec<gc_assets::anim::JointPose>>,
-    /// Moves by skeleton, tags and stored frames.
-    moves: HashMap<(u16, Tags, Vec<gc_assets::anim::JointPose>), u32>,
+    /// Frames already stored, by skeleton: their first row.
+    frames: HashMap<(u16, Vec<gc_assets::anim::JointPose>), u32>,
+    /// Moves by skeleton, the plain clip kind they stand for, tags and first
+    /// row: a tagged move keeps a record of its own even on the frames of a
+    /// plain clip, so the picker's library holds it.
+    moves: HashMap<(u16, u8, Tags, u32), u32>,
 }
 
 impl AnimBuilder {
@@ -390,14 +427,25 @@ impl AnimBuilder {
         let joints = posed.rig.names.len();
         let mut clips = Vec::with_capacity(posed.clips.len());
         for clip in &posed.clips {
-            let packed: Vec<_> = clip
+            let packed = clip
                 .frames
                 .iter()
                 .flatten()
                 .map(JointPose::packed)
-                .collect();
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| format!("move {:?} is too large for half floats", clip.name))?;
             let block = &mut self.blocks[skeleton as usize];
-            let key = (skeleton, clip.tags, packed);
+            let first_row =
+                *self
+                    .frames
+                    .entry((skeleton, packed))
+                    .or_insert_with_key(|(_, packed)| {
+                        let row = (block.len() / joints) as u32;
+                        block.extend_from_slice(packed);
+                        row
+                    });
+            let kind = clip.kind.map_or(NO_KIND, |k| k as u8);
+            let key = (skeleton, kind, clip.tags, first_row);
             let index = match self.moves.get(&key) {
                 Some(&k) => k,
                 None => {
@@ -405,17 +453,16 @@ impl AnimBuilder {
                     t.moves.push(MoveRecord {
                         name: name_bytes(&clip.name),
                         skeleton,
-                        kind: clip.kind.map_or(NO_KIND, |k| k as u8),
+                        kind,
                         act: clip.tags.act as u8,
                         weapon: clip.tags.weapon as u8,
                         side: clip.tags.side as u8,
                         mask: clip.tags.mask as u8,
                         flags: clip.tags.flags,
-                        first_row: (block.len() / joints) as u32,
+                        first_row,
                         frames: clip.frames.len() as u32,
                         fps: crate::SAMPLE_FPS,
                     });
-                    block.extend_from_slice(&key.2);
                     self.moves.insert(key, k);
                     k
                 }
@@ -462,6 +509,7 @@ mod tests {
         Rig {
             names: names.iter().map(ToString::to_string).collect(),
             parent: parent.to_vec(),
+            rest: vec![[0; 16]; names.len()],
         }
     }
 
@@ -484,6 +532,47 @@ mod tests {
     fn a_squashed_joint_keeps_bone_rows() {
         let r = rig(&["Body"], &[None]);
         assert!(poses(&r, &[Mat4::from_scale(Vec3::new(1.0, 0.5, 1.0))]).is_none());
+        // A long bone does not hide a squash, nor a small rig's scale one.
+        let long = Mat4::from_scale_rotation_translation(
+            Vec3::new(1.0, 0.9, 1.0),
+            Quat::IDENTITY,
+            Vec3::new(0.0, 100.0, 0.0),
+        );
+        assert!(poses(&r, &[long]).is_none());
+        assert!(poses(&r, &[Mat4::from_scale(Vec3::new(0.01, 0.009, 0.01))]).is_none());
+        assert!(poses(&r, &[Mat4::from_scale(Vec3::splat(0.01))]).is_some());
+    }
+
+    #[test]
+    fn a_tagged_move_on_a_clips_frames_shares_them_but_keeps_its_record() {
+        let r = rig(&["Body"], &[None]);
+        let frames = vec![vec![JointPose {
+            r: Quat::IDENTITY,
+            t: Vec3::ZERO,
+            s: 1.0,
+        }]];
+        let clip = |kind: Option<ClipKind>, tags| PosedClip {
+            kind,
+            name: "Attack".into(),
+            tags,
+            frames: frames.clone(),
+        };
+        let posed = Posed {
+            rig: r,
+            pre: Mat4::IDENTITY,
+            post: vec![Mat4::IDENTITY; 2],
+            clips: vec![
+                clip(Some(ClipKind::Attack), Tags::of_kind(ClipKind::Attack)),
+                clip(None, Tags::of_kind(ClipKind::Attack)),
+            ],
+        };
+        let (mut t, mut b) = (AnimTables::default(), AnimBuilder::default());
+        assert_eq!(b.add(&mut t, 0, &posed).unwrap().len(), 1);
+        b.finish(&mut t).unwrap();
+        assert_eq!(t.moves.len(), 2);
+        assert_eq!(t.moves[1].kind, NO_KIND);
+        assert_eq!(t.moves[0].first_row, t.moves[1].first_row);
+        assert_eq!(t.frames.len(), 1);
     }
 
     #[test]

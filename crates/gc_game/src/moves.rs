@@ -105,6 +105,10 @@ pub struct Want {
     pub side: Side,
     /// Picks among equally good moves, so a regiment does not move as one.
     pub seed: u32,
+    /// A move to lay on top of the base one (an additive flinch, an arm's
+    /// swing): only layered moves of this very act, with no fallbacks. A
+    /// base move is never a layered one.
+    pub layer: bool,
 }
 
 impl Want {
@@ -114,6 +118,7 @@ impl Want {
             weapon: Weapon::Any,
             side: Side::Any,
             seed: 0,
+            layer: false,
         }
     }
 }
@@ -143,11 +148,13 @@ fn fallbacks(act: Act) -> &'static [Act] {
 }
 
 /// How well a tag fits what is wanted: the very one 2, one made for
-/// anything 1, another `None` (never picked).
+/// anything 1, another `None` (never picked). Wanting `any` takes only moves
+/// made for anything: a soldier whose weapon the fight does not name never
+/// plays a spear's parry from another model on his skeleton.
 fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     if have == want {
         Some(2)
-    } else if have == any || want == any {
+    } else if have == any {
         Some(1)
     } else {
         None
@@ -189,13 +196,18 @@ impl Moves {
     /// fallbacks that the model has a move for, then the move whose weapon
     /// and side fit best, then the seed among equals. Layered moves (an
     /// additive flinch, a move on part of the body) are only picked when
-    /// asked for by their act.
+    /// `want.layer` asks for one, and then only of its very act.
     pub fn pick(&self, model: usize, want: Want) -> Option<MoveClip> {
         let moves = self.of(model);
-        for &act in fallbacks(want.act) {
+        let acts = if want.layer {
+            core::slice::from_ref(&want.act)
+        } else {
+            fallbacks(want.act)
+        };
+        for &act in acts {
             let score = |m: &MoveClip| {
                 let layered = m.additive || m.mask != Mask::All;
-                if m.act != act || (layered && act != want.act) {
+                if m.act != act || layered != want.layer {
                     return None;
                 }
                 let w = fits(m.weapon, want.weapon, Weapon::Any)?;
@@ -246,16 +258,19 @@ mod tests {
             clip(Act::Attack, Weapon::SwordShield, Side::Left, 30),
         ]);
         let want = |weapon, side| Want {
-            act: Act::Attack,
             weapon,
             side,
-            seed: 0,
+            ..Want::new(Act::Attack)
         };
         let row = |w| m.pick(0, w).unwrap().first_row;
         assert_eq!(row(want(Weapon::Spear, Side::Left)), 20);
         assert_eq!(row(want(Weapon::Spear, Side::Right)), 10);
         assert_eq!(row(want(Weapon::TwoHanded, Side::Front)), 0);
         assert_eq!(row(want(Weapon::SwordShield, Side::Left)), 30);
+        // Naming no weapon or side takes only moves made for any.
+        assert_eq!(row(Want::new(Act::Attack)), 0);
+        let spear_only = moves(vec![clip(Act::Attack, Weapon::Spear, Side::Any, 10)]);
+        assert_eq!(spear_only.pick(0, Want::new(Act::Attack)), None);
     }
 
     #[test]
@@ -284,13 +299,21 @@ mod tests {
     }
 
     #[test]
-    fn a_flinch_is_only_played_when_asked_for() {
+    fn layered_moves_are_only_picked_as_layers() {
         let mut flinch = clip(Act::Hit, Weapon::Any, Side::Any, 30);
         flinch.additive = true;
         let m = moves(vec![flinch, clip(Act::Death, Weapon::Any, Side::Any, 0)]);
-        // A stagger falls back to Hit, but not to the layered flinch.
+        // No base move is a layered one, even of the act asked for.
         assert_eq!(m.pick(0, Want::new(Act::Stagger)), None);
-        assert_eq!(m.pick(0, Want::new(Act::Hit)).unwrap().first_row, 30);
+        assert_eq!(m.pick(0, Want::new(Act::Hit)), None);
+        let layer = |act| Want {
+            layer: true,
+            ..Want::new(act)
+        };
+        assert_eq!(m.pick(0, layer(Act::Hit)).unwrap().first_row, 30);
+        // A layer has no fallbacks, and a base move is no layer.
+        assert_eq!(m.pick(0, layer(Act::Stagger)), None);
+        assert_eq!(m.pick(0, layer(Act::Death)), None);
     }
 
     #[test]

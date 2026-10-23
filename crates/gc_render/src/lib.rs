@@ -464,6 +464,11 @@ impl Renderer {
                 return Err(InitError::Unsupported(what));
             }
         }
+        if adapter.limits().max_storage_buffers_per_shader_stage < soldiers::POSE_STORAGE_BUFFERS {
+            return Err(InitError::Unsupported(
+                "bind the eight storage buffers soldier posing needs",
+            ));
+        }
         // The HDR image at 4 bytes a pixel where the GPU can draw into that
         // format (Apple, most desktop GPUs), else 8.
         let small_hdr = adapter
@@ -490,8 +495,8 @@ impl Renderer {
                         .limits()
                         .max_storage_buffer_binding_size,
                     max_buffer_size: adapter.limits().max_buffer_size,
-                    // Five for the skinning pass (the model vertices take
-                    // two); every desktop GPU has at least eight.
+                    // Eight for posing and skinning soldiers (see
+                    // `POSE_STORAGE_BUFFERS`); every desktop GPU has them.
                     max_storage_buffers_per_shader_stage: adapter
                         .limits()
                         .max_storage_buffers_per_shader_stage,
