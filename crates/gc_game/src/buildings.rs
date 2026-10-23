@@ -52,8 +52,14 @@ const BAR_MIN: f32 = 2.0;
 const BAR_BACK: [u8; 4] = [18, 18, 18, 0];
 /// A ghost with nowhere to stand.
 const REFUSED: [u8; 4] = [210, 40, 30, 110];
+/// A ghost on overgrown ground, which the worker clears first (amber).
+const OVERGROWN: [u8; 4] = [235, 170, 40, 120];
 /// The glow on a ghost that fits.
 const GHOST_GLOW: u8 = 110;
+/// The glow of a blueprint waiting on clearing.
+const BLUEPRINT_GLOW: u8 = 70;
+/// How much of its full height a blueprint stands.
+const BLUEPRINT_HEIGHT: f32 = 0.25;
 /// A gathering spot is a low mound this tall and, while full, this wide
 /// (in tiles); it shrinks to `NODE_LEAST` percent as it runs down.
 const NODE_HEIGHT: f32 = 0.35;
@@ -1115,17 +1121,21 @@ fn bar_colour(frac: f32) -> [u8; 4] {
     }
 }
 
-/// The ghost of a building about to be placed with its north-west tile at
-/// `tile`: its full size in the side's colour, or red where it won't go.
-pub fn push_ghost(
-    stats: &BuildingStats,
-    tile: (i32, i32),
-    fits: bool,
-    colour: [u8; 3],
-    ground: impl Fn(f32, f32) -> f32,
-    out: &mut Vec<BoxInstance>,
-) {
-    let view = StructureView {
+/// How a building about to be placed sits on the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fit {
+    /// Open ground: it goes up as it is.
+    Open,
+    /// Overgrown: the worker clears the footprint first.
+    Overgrown,
+    /// It won't go here.
+    Refused,
+}
+
+/// A footprint of `width` × `depth` tiles from `tile`, as a view, for the
+/// flat shapes drawn over the ground.
+fn footprint_view(tile: (i32, i32), width: u8, depth: u8) -> StructureView {
+    StructureView {
         handle: StructureHandle {
             index: 0,
             generation: 0,
@@ -1133,18 +1143,73 @@ pub fn push_ghost(
         owner: 0,
         building: 0,
         tile,
-        width: stats.width,
-        depth: stats.depth,
+        width,
+        depth,
         hp: 1,
         max_hp: 1,
         built_percent: 100,
         upgrading: None,
         growing: false,
         seen: u8::MAX,
-    };
+    }
+}
+
+/// The ghost of a building about to be placed with its north-west tile at
+/// `tile`: its full size in the side's colour, amber where the ground must
+/// be cleared first, or red where it won't go.
+pub fn push_ghost(
+    stats: &BuildingStats,
+    tile: (i32, i32),
+    fit: Fit,
+    colour: [u8; 3],
+    ground: impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let view = footprint_view(tile, stats.width, stats.depth);
     let [r, g, b] = colour;
-    let colour = if fits { [r, g, b, GHOST_GLOW] } else { REFUSED };
+    let colour = match fit {
+        Fit::Open => [r, g, b, GHOST_GLOW],
+        Fit::Overgrown => OVERGROWN,
+        Fit::Refused => REFUSED,
+    };
     out.push(block(&view, height_of(stats.role), colour, &ground));
+}
+
+/// A flat plate over the tiles `[x, y, width, depth]`, lying on the ground
+/// in `colour` (the last number is how much it glows).
+pub fn push_plate(
+    area: [i32; 4],
+    colour: [u8; 4],
+    ground: impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let [x, y, w, d] = area;
+    let (Ok(w), Ok(d)) = (u8::try_from(w), u8::try_from(d)) else {
+        return;
+    };
+    if out.len() >= MAX_BOX_INSTANCES {
+        return;
+    }
+    out.push(block(&footprint_view((x, y), w, d), PLATE, colour, &ground));
+}
+
+/// The faint blueprint of a building paid for and waiting on its ground
+/// being cleared: its footprint, in its owner's colour.
+pub fn push_blueprint(
+    stats: &BuildingStats,
+    tile: (i32, i32),
+    colour: [u8; 3],
+    ground: impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    if out.len() >= MAX_BOX_INSTANCES {
+        return;
+    }
+    let view = footprint_view(tile, stats.width, stats.depth);
+    let [r, g, b] = colour;
+    // Low and faint, so the cleared ground still shows through.
+    let height = height_of(stats.role) * BLUEPRINT_HEIGHT;
+    out.push(block(&view, height, [r, g, b, BLUEPRINT_GLOW], &ground));
 }
 
 /// The nearest building `accept` allows that the ray from `origin` along

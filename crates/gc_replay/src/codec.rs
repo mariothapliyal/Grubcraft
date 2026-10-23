@@ -299,6 +299,18 @@ impl Writer {
                 self.var(u64::from(tile.0 as u16));
                 self.var(u64::from(tile.1 as u16));
             }
+            Command::Clear {
+                regiment,
+                tile,
+                size,
+            } => {
+                self.u8(25);
+                self.handle(regiment);
+                self.var(u64::from(tile.0 as u16));
+                self.var(u64::from(tile.1 as u16));
+                self.u8(size.0);
+                self.u8(size.1);
+            }
             Command::Construct {
                 regiment,
                 structure,
@@ -700,6 +712,11 @@ impl<'a> Reader<'a> {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
             },
+            25 => Command::Clear {
+                regiment: self.handle()?,
+                tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                size: (self.u8()?, self.u8()?),
+            },
             23 => Command::Trade {
                 regiment: self.handle()?,
                 post: self.trade_post()?,
@@ -871,6 +888,14 @@ mod tests {
                 },
                 building: 2,
                 tile: (40, -5),
+            },
+            Command::Clear {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 1,
+                },
+                tile: (12, -3),
+                size: (16, 1),
             },
             Command::Construct {
                 regiment: RegimentHandle {

@@ -235,8 +235,15 @@ impl Steward {
                 .map(Mine::at);
         }
         let reaction = s.reaction;
+        // A building waiting on its ground being cleared is still being
+        // laid, however long that takes.
+        let pledged = |l: &Lay| {
+            s.world
+                .pledged()
+                .any(|p| p == (s.party, l.building, l.tile))
+        };
         self.laying.retain(|l| {
-            s.now < l.since + reaction + LAY_TICKS
+            (s.now < l.since + reaction + LAY_TICKS || pledged(l))
                 && !look
                     .mine
                     .iter()

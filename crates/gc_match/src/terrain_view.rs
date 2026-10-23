@@ -16,17 +16,29 @@ pub fn plateau_positions(tiles: u32) -> [Vec2; START_PLATEAUS] {
 }
 
 /// The ground as the computer players read it: the walkable-ground grid
-/// plus each tile's height and where the water is, so they can pick a line
-/// beside a cliff, on a rise or behind a river.
+/// (the match's, `Map::sim_nav_costs`, with the thicket blocked as it
+/// stands at the start) plus each tile's height and where the water is, so
+/// they can pick a line beside a cliff, on a rise or behind a river.
 pub fn ai_terrain(map: &Map, nav: &[u8]) -> gc_ai::Terrain {
     let tiles = map.tiles;
+    let mut nav = nav.to_vec();
+    let per = gc_sim::nav::CELLS_PER_TILE as u32;
+    let side = tiles * per;
+    if nav.len() == (side * side) as usize {
+        for (c, cost) in nav.iter_mut().enumerate() {
+            let (cx, cy) = (c as u32 % side, c as u32 / side);
+            if map.is_thicket(((cy / per) * tiles + cx / per) as usize) {
+                *cost = gc_sim::nav::BLOCKED;
+            }
+        }
+    }
     let mut heights = Vec::with_capacity((tiles * tiles) as usize);
     for y in 0..tiles {
         for x in 0..tiles {
             heights.push(map.height_at(x as f32 + 0.5, y as f32 + 0.5));
         }
     }
-    gc_ai::Terrain::new(nav, tiles)
+    gc_ai::Terrain::new(&nav, tiles)
         .with_heights(heights, map.water_level())
         .with_cover(map.cover.clone())
 }

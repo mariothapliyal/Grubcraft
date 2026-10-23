@@ -980,7 +980,8 @@ impl Structures {
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`: on the map, on ground regiments can walk, clear of
     /// other buildings (see `Nav::footing`), and with no regiment standing
-    /// on it or node (`nodes`) within it.
+    /// on it or node (`nodes`) within it. Tiles `thicket` names may be
+    /// thicket: it is cleared first (docs/31-changing-land.md).
     pub(crate) fn check(
         &self,
         building: BuildingId,
@@ -988,13 +989,14 @@ impl Structures {
         nav: &Nav,
         regs: &Regiments,
         nodes: &[FxVec2],
+        thicket: impl Fn(i32, i32) -> bool,
     ) -> Result<(), Refusal> {
         let b = self
             .buildings
             .get(building as usize)
             .ok_or(Refusal::Unknown)?;
         let (w, d) = (i32::from(b.width), i32::from(b.depth));
-        nav.footing([tile.0, tile.1, w, d])?;
+        nav.footing([tile.0, tile.1, w, d], thicket)?;
         // No regiment's centre on ground it couldn't stand on once the
         // building is up.
         let margin = Fx::from_ratio(i32::from(CLEARANCE), CELLS_PER_TILE);

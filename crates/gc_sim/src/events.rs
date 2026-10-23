@@ -13,6 +13,7 @@ use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
 use crate::structures::StructureHandle;
+use crate::terrain::Growth;
 use crate::vision::Ambush;
 
 /// One volley, from when it is loosed until it comes down: the pool slot it
@@ -93,6 +94,9 @@ pub enum Event {
         worker: RegimentHandle,
         structure: StructureHandle,
     },
+    /// The tile `(x, y)` was cleared of what grew there (`was`); it is
+    /// open ground now (docs/31-changing-land.md).
+    Cleared { x: i32, y: i32, was: Growth },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -139,11 +143,16 @@ impl Events {
     }
 
     /// Room for two events per building too (Conquest): one falling, one
-    /// tolling.
+    /// tolling; and for each regiment clearing a tile.
     pub(crate) fn reserve(&mut self, structures: usize) {
         // `reserve` counts from the length, not the capacity.
-        let room = self.list.capacity() - self.list.len() + 2 * structures;
+        let room = self.list.capacity() - self.list.len() + 2 * structures + self.before.len();
         self.list.reserve(room);
+    }
+
+    /// Tell of the tile `(x, y)` cleared of `was`.
+    pub(crate) fn cleared(&mut self, x: i32, y: i32, was: Growth) {
+        self.list.push(Event::Cleared { x, y, was });
     }
 
     /// Tell of the bells tolled and the buildings brought down in the tick

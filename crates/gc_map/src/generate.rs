@@ -110,6 +110,7 @@ impl Map {
         map.name = format!("Seed {seed}");
         map.players = START_PLATEAUS as u8;
         map.cover = map.grow_cover(seed);
+        map.settle_growth();
         map.objects = (0..)
             .zip(plateaus(tiles))
             .map(|(owner, at)| Placed {

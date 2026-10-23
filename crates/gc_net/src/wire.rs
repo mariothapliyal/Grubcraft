@@ -333,6 +333,18 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.var(u64::from(tile.0 as u16));
             w.var(u64::from(tile.1 as u16));
         }
+        Command::Clear {
+            regiment,
+            tile,
+            size,
+        } => {
+            w.u8(25);
+            w.handle(regiment);
+            w.var(u64::from(tile.0 as u16));
+            w.var(u64::from(tile.1 as u16));
+            w.u8(size.0);
+            w.u8(size.1);
+        }
         Command::Construct {
             regiment,
             structure,
@@ -478,6 +490,11 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        25 => Command::Clear {
+            regiment: r.handle()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            size: (r.u8()?, r.u8()?),
         },
         13 => Command::Construct {
             regiment: r.handle()?,
@@ -685,6 +702,11 @@ mod tests {
                 regiment: h(4, 2),
                 building: 300,
                 tile: (-3, 4000),
+            },
+            Command::Clear {
+                regiment: h(4, 2),
+                tile: (-3, 700),
+                size: (1, 16),
             },
             Command::Construct {
                 regiment: h(1, 1),

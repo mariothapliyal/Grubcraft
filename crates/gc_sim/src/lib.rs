@@ -20,6 +20,7 @@ use alloc::vec::Vec;
 pub mod arrange;
 pub mod champions;
 pub mod chords;
+pub mod clearing;
 pub mod combat;
 pub mod conquest;
 pub mod deploy;
@@ -63,7 +64,7 @@ use structures::Work;
 pub use structures::{
     BuildingId, BuildingStats, Refusal, StructureHandle, StructureView, Structures,
 };
-pub use terrain::{Cover, Ground, Terrain};
+pub use terrain::{Cover, Ground, Growth, Terrain};
 pub use verdict::{
     EXILE_TICKS, HEART_HOLD_TICKS, HEART_REACH, HEART_UNLOCK_TICKS, HOLD_TICKS, HeartView, Verdict,
     Victories, Win,
@@ -81,7 +82,7 @@ use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 13] = [
+pub const SYSTEMS: [&str; 14] = [
     "clock",
     "random streams",
     "unit stats",
@@ -95,6 +96,7 @@ pub const SYSTEMS: [&str; 13] = [
     "structures",
     "economy",
     "production",
+    "ground",
 ];
 
 /// The simulation's rules version. Two builds with the same version play
@@ -102,7 +104,7 @@ pub const SYSTEMS: [&str; 13] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 25;
+pub const SIM_VERSION: u32 = 26;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -605,6 +607,15 @@ pub enum Command {
         building: BuildingId,
         tile: (i16, i16),
     },
+    /// Conquest: a worker clears what grows on the `size.0` × `size.1`
+    /// tiles from `tile` (north-west corner), at most
+    /// [`clearing::MAX_CLEAR_SIDE`] a side: scrub, woods and thicket (see
+    /// [`clearing`]). Refused for an area with nothing to clear.
+    Clear {
+        regiment: RegimentHandle,
+        tile: (i16, i16),
+        size: (u8, u8),
+    },
     /// Conquest: a worker helps build one of its owner's buildings, or
     /// mends it once it is up.
     Construct {
@@ -668,6 +679,7 @@ impl Command {
             | Command::Gather { .. }
             | Command::Trade { .. }
             | Command::Build { .. }
+            | Command::Clear { .. }
             | Command::Construct { .. }
             | Command::CallOff { .. }
             | Command::Train { .. }
@@ -743,10 +755,12 @@ impl World {
             combat: Combat::new(setup.capacities.regiments as usize),
             units: setup.units.iter().map(|u| u.sanitized()).collect(),
             map_tiles: setup.map_tiles,
-            nav: Nav::new(
+            // Thicket stands on the walkable grid until it is cleared.
+            nav: Nav::standing(
                 setup.nav,
                 setup.map_tiles,
                 setup.capacities.regiments as usize,
+                terrain.thicket(),
             ),
             stances,
             terrain: Arc::new(terrain),
@@ -962,6 +976,7 @@ impl World {
             tile,
             &self.nav,
             &self.regiments,
+            &self.terrain,
         )
     }
 
@@ -1004,7 +1019,34 @@ impl World {
             tile,
             &self.nav,
             &self.regiments,
+            &self.terrain,
         )
+    }
+
+    /// Whether anything grows on the tiles `[x, y, w, d]` that must be
+    /// cleared before a building goes up there (see [`clearing`]).
+    pub fn overgrown(&self, foot: [i32; 4]) -> bool {
+        conquest::overgrown(&self.terrain, foot)
+    }
+
+    /// What worker `h` is clearing, if it is clearing (Conquest only).
+    pub fn clearing_of(&self, h: RegimentHandle) -> Option<clearing::ClearingView> {
+        let c = self.conquest.as_ref()?;
+        let (area, then) = c
+            .clearing
+            .job_of(&self.regiments, self.regiments.resolve(h)?)?;
+        Some(clearing::ClearingView {
+            area,
+            then: then.map(|p| (p.building, p.tile)),
+        })
+    }
+
+    /// Every building paid for and waiting on its ground being cleared:
+    /// its owner, type and north-west tile (Conquest only).
+    pub fn pledged(&self) -> impl Iterator<Item = (PlayerId, BuildingId, (i32, i32))> + '_ {
+        (self.conquest.iter())
+            .flat_map(|c| c.clearing.pledges())
+            .map(|p| (p.owner, p.building, p.tile))
     }
 
     /// The node regiment `h` is gathering at, if any (Conquest only).
@@ -1014,8 +1056,8 @@ impl World {
     }
 
     /// `player`'s workers with nothing to do (Conquest only): standing
-    /// still, unbroken, out of melee, and gathering, building or attacking
-    /// nothing.
+    /// still, unbroken, out of melee, and gathering, building, clearing or
+    /// attacking nothing.
     pub fn idle_workers(&self, player: PlayerId) -> impl Iterator<Item = RegimentHandle> + '_ {
         self.conquest.iter().flat_map(move |c| {
             self.regiments
@@ -1029,6 +1071,7 @@ impl World {
                         && self.regiments.resolve(r.handle).is_some_and(|i| {
                             c.economy.work_of(&self.regiments, i).is_none()
                                 && c.structures.job_of(&self.regiments, i).is_none()
+                                && c.clearing.job_of(&self.regiments, i).is_none()
                         })
                 })
                 .map(|r| r.handle)
@@ -1217,6 +1260,7 @@ impl World {
                 &self.stances,
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
             );
+            self.clear_land();
             self.raise_trained();
         }
         // What powers left on regiments wears off in any world, a copy of
@@ -1440,14 +1484,23 @@ impl World {
                     return false;
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
-                usize::from(pc.player) < MAX_PARTIES
-                    && conquest
-                        .check(building, tile, &self.nav, &self.regiments)
-                        .is_ok()
-                    && conquest
-                        .structures
-                        .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
-                        .is_some()
+                if usize::from(pc.player) >= MAX_PARTIES
+                    || (conquest.check(building, tile, &self.nav, &self.regiments, &self.terrain))
+                        .is_err()
+                {
+                    return false;
+                }
+                // A finished building stands on cleared ground.
+                let b = conquest.structures.buildings()[usize::from(building)];
+                let (w, d) = (i32::from(b.width), i32::from(b.depth));
+                let foot =
+                    (tile.1..tile.1 + d).flat_map(|y| (tile.0..tile.0 + w).map(move |x| (x, y)));
+                self.change_ground(foot.collect::<Vec<_>>());
+                let conquest = self.conquest.as_mut().expect("checked above");
+                conquest
+                    .structures
+                    .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
+                    .is_some()
             }
             Command::AttackStructure {
                 regiment,
@@ -1519,7 +1572,23 @@ impl World {
                         tile,
                         &mut self.nav,
                         &mut self.regiments,
+                        &self.terrain,
                     ),
+                    _ => false,
+                }
+            }
+            Command::Clear {
+                regiment,
+                tile,
+                size,
+            } => {
+                let side = 1..=clearing::MAX_CLEAR_SIDE;
+                let (w, d) = (i32::from(size.0), i32::from(size.1));
+                let area = [i32::from(tile.0), i32::from(tile.1), w, d];
+                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                    (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) => {
+                        c.clear(&mut self.regiments, r, area, &self.terrain)
+                    }
                     _ => false,
                 }
             }
@@ -1735,6 +1804,69 @@ impl World {
     /// broken: one they can set to work.
     fn worker_of(&self, player: PlayerId, h: RegimentHandle) -> Option<usize> {
         self.regiments.standing(h, player)
+    }
+
+    /// A tick of workers clearing land (see [`clearing`]): timber paid,
+    /// the cleared tiles opened, and buildings laid on cleared footprints.
+    fn clear_land(&mut self) {
+        let Some(c) = &mut self.conquest else {
+            return;
+        };
+        c.clearing
+            .update(&mut self.regiments, &self.units, &self.terrain);
+        if c.clearing.done.is_empty() {
+            return;
+        }
+        // Taken out and put back, so the list keeps its room.
+        let done = core::mem::take(&mut c.clearing.done);
+        let mut tiles = Vec::new();
+        for d in &done {
+            if let clearing::Done::Tile { x, y, owner } = *d {
+                let timber = clearing::timber(self.terrain.growth(x, y));
+                c.economy
+                    .earn_grub(owner, timber, &self.regiments, &c.units);
+                tiles.push((x, y));
+            }
+        }
+        self.change_ground(tiles);
+        let Some(c) = &mut self.conquest else {
+            return;
+        };
+        for d in &done {
+            match *d {
+                clearing::Done::Lay { r, pledge } => {
+                    c.lay_pledged(r, pledge, &mut self.nav, &mut self.regiments, &self.terrain);
+                }
+                clearing::Done::Refund { pledge } => {
+                    c.economy.refund(pledge.owner, pledge.grub, pledge.marrow);
+                }
+                clearing::Done::Tile { .. } => {}
+            }
+        }
+        c.clearing.done = done;
+    }
+
+    /// The one way the ground changes mid-match (docs/31-changing-land.md):
+    /// nothing grows on `tiles` any more. Their cover goes, thicket stops
+    /// standing on the walkable grid, the change goes into the state hash,
+    /// and the game is told ([`Event::Cleared`]). Tiles with nothing
+    /// growing are left as they are.
+    pub(crate) fn change_ground(&mut self, tiles: Vec<(i32, i32)>) {
+        let mut thicket = Vec::new();
+        for (x, y) in tiles {
+            let Some(was) = Arc::make_mut(&mut self.terrain).clear(x, y) else {
+                continue;
+            };
+            if was == Growth::Thicket {
+                thicket.push([x, y, 1, 1]);
+            }
+            if !self.scratch {
+                self.events.cleared(x, y, was);
+            }
+        }
+        if !thicket.is_empty() {
+            self.nav.set_built_all(&thicket, false, &self.regiments);
+        }
     }
 
     /// Put the regiments that finished training this tick on the field,
@@ -2088,6 +2220,14 @@ impl World {
             "production" => {
                 if let Some(c) = &self.conquest {
                     c.production.hash_into(&c.structures, h);
+                }
+            }
+            // Ground changed mid-match and land being cleared; nothing in
+            // a Field Battle, whose ground doesn't change.
+            "ground" => {
+                if let Some(c) = &self.conquest {
+                    h.u64(self.terrain.changes());
+                    c.clearing.hash_into(&self.regiments, h);
                 }
             }
             other => unreachable!("no hash for system {other}"),
