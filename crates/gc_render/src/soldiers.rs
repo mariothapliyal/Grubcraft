@@ -29,7 +29,7 @@ pub const SKIN_VERTICES: usize = 4 << 20;
 /// Vertices the skinned buffers start with; they grow to the next power of
 /// two when a frame needs more (never shrinking), up to `SKIN_VERTICES`.
 const SKIN_START: usize = 256 << 10;
-/// Threads in a workgroup of `cs_skin` and `cs_pose`.
+/// Threads in a workgroup of `cs_skin` (`cs_pose` has one per bone).
 const SKIN_GROUP: u32 = 128;
 /// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl):
 /// one per model and level of detail, buildings included.
@@ -283,10 +283,8 @@ pub(crate) struct ModelGpu {
     pub bind_group: wgpu::BindGroup,
     /// For the skinning pass.
     pub skin_group: wgpu::BindGroup,
-    /// Per model: its levels, whether it is drawn textured, its bones, and
-    /// where its fit starts in the anim buffer (0 for a model posed from
-    /// bone rows).
-    pub levels: Vec<([Level; LODS], bool, u32, u32)>,
+    /// Per model, what the planner needs of it.
+    pub levels: Vec<ModelInfo>,
     /// Skeletons, joint poses and fixes (see [`anim_gpu`]).
     anim: wgpu::Buffer,
     /// Everything but the skinned buffers.
@@ -294,6 +292,18 @@ pub(crate) struct ModelGpu {
     /// Vertices in the skinning pass's first vertex binding (see
     /// [`vertex_split`]).
     split: u32,
+}
+
+/// What the planner needs of a model.
+#[derive(Clone, Copy, Debug)]
+pub struct ModelInfo {
+    pub levels: [Level; LODS],
+    /// Drawn with the textured pipeline.
+    pub textured: bool,
+    pub bones: u32,
+    /// Where its fit starts in the anim buffer, 0 for a model posed from
+    /// bone rows.
+    pub fit: u32,
 }
 
 impl ModelGpu {
@@ -515,8 +525,6 @@ pub(crate) struct SoldiersGpu {
     origins: Vec<u32>,
     /// Vertices the skinning pass poses this frame.
     threads: u32,
-    /// Bone matrices the pose pass builds this frame.
-    pose_threads: u32,
     /// Soldiers the pose pass poses this frame (a workgroup each).
     posed: u32,
 }
@@ -708,7 +716,6 @@ pub(crate) fn make(
         jobs: Vec::new(),
         origins: Vec::new(),
         threads: 0,
-        pose_threads: 0,
         posed: 0,
     }
 }
@@ -731,7 +738,6 @@ impl SoldiersGpu {
         self.draws.clear();
         self.jobs.clear();
         self.threads = 0;
-        self.pose_threads = 0;
         self.posed = 0;
         let Some(models) = self.models.as_ref().filter(|_| count > 0) else {
             return 0;
@@ -751,7 +757,13 @@ impl SoldiersGpu {
         }
         let mut runs = Vec::with_capacity(batches.len());
         for b in batches {
-            let Some(&(levels, textured, bones, fit)) = models.levels.get(b.model as usize) else {
+            let Some(&ModelInfo {
+                levels,
+                textured,
+                bones,
+                fit,
+            }) = models.levels.get(b.model as usize)
+            else {
                 continue;
             };
             let end = (b.first + b.count).min(count as u32);
@@ -853,7 +865,6 @@ impl SoldiersGpu {
             top = top.max(r.first as usize + r.n);
         }
         self.threads = slots as u32;
-        self.pose_threads = palette as u32;
         self.posed = posed as u32;
         if slots > 0 {
             // Room for this frame's vertices (the bind groups change with
@@ -1062,22 +1073,31 @@ pub(crate) fn upload(
         ..Default::default()
     });
     let detail = DetailGpu::new(device, queue, detail);
-    let levels_of = levels.models.iter().zip(m.models).map(|(levels, r)| {
-        let textured = textures
-            && m.vertices
-                .get(r.first_vertex as usize)
-                .is_some_and(|v| v.material > 0);
-        (*levels, textured, r.bones)
-    });
-    let (anim_data, fits) = anim_gpu(m);
-    let anim = buffer(
-        "skeletons and poses",
-        bytemuck::cast_slice(&anim_data),
-        wgpu::BufferUsages::STORAGE,
-    );
-    let levels_of = levels_of
+    let (anim_head, fits) = anim_gpu(m);
+    let levels_of = levels
+        .models
+        .iter()
+        .zip(m.models)
         .zip(fits)
-        .map(|((levels, textured, bones), fit)| (levels, textured, bones, fit));
+        .map(|((levels, r), fit)| ModelInfo {
+            levels: *levels,
+            textured: textures
+                && m.vertices
+                    .get(r.first_vertex as usize)
+                    .is_some_and(|v| v.material > 0),
+            bones: r.bones,
+            fit,
+        });
+    // The poses straight from the pack, then the skeletons and fits after.
+    let poses = 1 + m.anim.frames.len() as u64;
+    let anim = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("skeletons and poses"),
+        size: (poses + anim_head.len() as u64) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&anim, 16, bytemuck::cast_slice(m.anim.frames));
+    queue.write_buffer(&anim, poses * 16, bytemuck::cast_slice(&anim_head));
     let (skin_pos, skin_shade) = skin_buffers(device, SKIN_START);
     let palette = palette_buffer(device, PALETTE_START);
     let (bind_group, skin_group) = bind_groups(
@@ -1130,40 +1150,34 @@ pub(crate) fn upload(
     })
 }
 
-/// The anim buffer the pose pass reads (`anim` in world.wgsl), as vectors
-/// of four floats (some holding integers, bit for bit), and per model where
-/// its fit starts (0 for none):
+/// The anim buffer the pose pass reads (`anim` in world.wgsl) is vectors
+/// of four words: one unused, then every joint pose of the pack (as stored:
+/// eight half floats each), then what this returns, which starts right after
+/// them, with per model where its fit starts (0 for none):
 ///
-/// - 0: the first frame row's place.
 /// - Per skeleton, a vector per joint: its parent (255 for a root), depth,
-///   the masks it is in (one bit each) and role.
-/// - Per fitted model: its skeleton's first joint, joint count and deepest
-///   depth, then its skeleton-to-model matrix and per bone its fix, three
-///   rows each.
-/// - The joint pose rows ([`FRAME_TEXELS`](gc_assets::anim::FRAME_TEXELS)
-///   texels each).
-fn anim_gpu(m: &Models<'_>) -> (Vec<[f32; 4]>, Vec<u32>) {
-    let word = |v: [u32; 4]| v.map(f32::from_bits);
-    let mut out = vec![[0.0; 4]];
+///   the masks it is in (one bit each) and role (low byte) and mirror.
+/// - Per fitted model: its skeleton's first joint, joint count, deepest
+///   depth and first pose, then its skeleton-to-model matrix and per bone
+///   its fix, three rows of floats each.
+fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
+    let start = 1 + m.anim.frames.len() as u32;
+    let mut out = Vec::new();
     let mut joints_at = Vec::with_capacity(m.anim.skeletons.len());
     let mut deepest = Vec::with_capacity(m.anim.skeletons.len());
-    for (s, skeleton) in m.anim.skeletons.iter().enumerate() {
-        joints_at.push(out.len() as u32);
+    for s in 0..m.anim.skeletons.len() {
+        joints_at.push(start + out.len() as u32);
         let joints = m.anim.joints_of(s);
-        deepest.push(joints.iter().map(|j| u32::from(j.depth)).max().unwrap_or(0));
-        for (k, j) in joints.iter().enumerate() {
-            let masks = skeleton
-                .masks
-                .iter()
-                .enumerate()
-                .filter(|(_, bits)| bits[k / 32] & (1 << (k % 32)) != 0)
-                .fold(0u32, |acc, (mask, _)| acc | 1 << mask);
-            out.push(word([
+        // The loader has checked that the parents do not loop.
+        let depths = gc_assets::anim::depths(joints).unwrap_or_default();
+        deepest.push(depths.iter().copied().max().map_or(0, u32::from));
+        for (j, depth) in joints.iter().zip(depths) {
+            out.push([
                 u32::from(j.parent),
-                u32::from(j.depth),
-                masks,
+                u32::from(depth),
+                u32::from(j.masks),
                 u32::from(j.role) | u32::from(j.mirror) << 8,
-            ]));
+            ]);
         }
     }
     let fits = (0..m.models.len())
@@ -1171,24 +1185,21 @@ fn anim_gpu(m: &Models<'_>) -> (Vec<[f32; 4]>, Vec<u32>) {
             let Some(fit) = m.anim.fit(model) else {
                 return 0;
             };
-            let at = out.len() as u32;
+            let at = start + out.len() as u32;
             let s = fit.skeleton as usize;
-            out.push(word([
+            let skeleton = &m.anim.skeletons[s];
+            out.push([
                 joints_at[s],
-                m.anim.skeletons[s].joints,
+                skeleton.joints,
                 deepest[s],
-                0,
-            ]));
+                1 + skeleton.first_pose,
+            ]);
             let fixes =
                 &m.anim.fixes[fit.first_fix as usize..][..1 + m.models[model].bones as usize];
-            for fix in fixes {
-                out.extend(fix.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]]));
-            }
+            out.extend_from_slice(bytemuck::cast_slice::<_, [u32; 4]>(fixes));
             at
         })
         .collect();
-    out[0] = word([out.len() as u32, 0, 0, 0]);
-    out.extend_from_slice(m.anim.frames);
     (out, fits)
 }
 

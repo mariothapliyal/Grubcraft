@@ -130,6 +130,22 @@ impl ClipKind {
     pub fn loops(self) -> bool {
         !matches!(self, ClipKind::Die)
     }
+
+    /// What the clip is for, to the move picker.
+    pub fn act(self) -> crate::anim::Act {
+        use crate::anim::Act;
+        match self {
+            ClipKind::Idle => Act::Idle,
+            ClipKind::Walk => Act::Walk,
+            ClipKind::Run => Act::Run,
+            ClipKind::Attack | ClipKind::Attack2 => Act::Attack,
+            ClipKind::Hit => Act::Hit,
+            ClipKind::Die => Act::Death,
+            ClipKind::Cheer => Act::Cheer,
+            ClipKind::Shoot => Act::Shoot,
+            ClipKind::Block => Act::Block,
+        }
+    }
 }
 
 /// One model. 80 bytes.
@@ -156,9 +172,14 @@ impl ModelRecord {
     }
 
     pub fn name(&self) -> &str {
-        let len = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+        name_str(&self.name)
     }
+}
+
+/// A zero-padded UTF-8 name as text (`?` if it is not UTF-8).
+pub fn name_str(name: &[u8; NAME_BYTES]) -> &str {
+    let len = name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
+    core::str::from_utf8(&name[..len]).unwrap_or("?")
 }
 
 /// One vertex, following up to four bones. 32 bytes.
@@ -195,22 +216,14 @@ pub struct ModelVertex {
     pub uv: [u16; 2],
 }
 
-/// [`ClipRecord::source`]: the clip's rows are in the bone texture.
-pub const BONE_ROWS: u8 = 0;
-/// [`ClipRecord::source`]: the clip's rows are in the joint pose table of
-/// the model's skeleton ([`crate::anim`]).
-pub const POSE_ROWS: u8 = 1;
-
 /// One animation clip. 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct ClipRecord {
     pub kind: u8,
-    /// Where `first_row` counts: [`BONE_ROWS`] (packs baked before skeletons
-    /// hold 0) or [`POSE_ROWS`].
-    pub source: u8,
-    pub _pad: [u8; 2],
-    /// Row of the first frame.
+    pub _pad: [u8; 3],
+    /// Row of the first frame: in the bone texture, or for a model fitted to
+    /// a skeleton ([`crate::anim`]) in its skeleton's block of poses.
     pub first_row: u32,
     pub frames: u32,
     /// Frames per second the clip was sampled at.
@@ -292,9 +305,8 @@ impl<'a> Models<'a> {
             anim: Default::default(),
         };
         m.anim = crate::anim::Anim::from_pack(pack, &m).map_err(ModelError::Anim)?;
-        let pose_rows = m.anim.frame_rows() as usize;
         let rows = m.bones.len() / BONE_TEXELS_PER_ROW as usize;
-        if rows > MAX_ROWS || pose_rows > MAX_ROWS {
+        if rows > MAX_ROWS {
             return Err(ModelError::TooManyRows);
         }
         if !m.textures.len().is_multiple_of(BLOCKS_PER_MATERIAL) || m.materials() > MAX_MATERIALS {
@@ -341,13 +353,12 @@ impl<'a> Models<'a> {
             };
             // A model's clips all come from one place: its skeleton's
             // poses if it has one, else its own bone rows.
-            let (source, rows) = match m.anim.fit(k) {
-                Some(_) => (POSE_ROWS, pose_rows),
-                None => (BONE_ROWS, rows),
+            let rows = match m.anim.fit(k) {
+                Some(fit) => m.anim.skeletons[fit.skeleton as usize].rows as usize,
+                None => rows,
             };
             for c in clips {
                 if c.kind().is_none()
-                    || c.source != source
                     || c.frames == 0
                     || c.fps.is_nan()
                     || c.fps <= 0.0
@@ -374,12 +385,15 @@ impl<'a> Models<'a> {
         self.models.iter().position(|m| m.name() == name)
     }
 
+    /// A model's clips.
+    pub fn clips_of(&self, model: usize) -> &'a [ClipRecord] {
+        let r = &self.models[model];
+        &self.clips[r.first_clip as usize..(r.first_clip + r.clip_count) as usize]
+    }
+
     /// A model's clip of the given kind, if it has one.
     pub fn clip(&self, model: usize, kind: ClipKind) -> Option<&'a ClipRecord> {
-        let r = &self.models[model];
-        self.clips[r.first_clip as usize..(r.first_clip + r.clip_count) as usize]
-            .iter()
-            .find(|c| c.kind == kind as u8)
+        self.clips_of(model).iter().find(|c| c.kind == kind as u8)
     }
 }
 
@@ -408,12 +422,18 @@ impl ModelTables {
             self.indices.len() as u32,
             self.clips.len() as u32,
         );
-        let (rows, pose_rows, materials, first_model) = (
+        let (rows, materials, first_model) = (
             (self.bones.len() / BONE_TEXELS_PER_ROW as usize) as u32,
-            (self.anim.frames.len() / crate::anim::FRAME_TEXELS as usize) as u32,
             self.materials() as u8,
             self.models.len() as u32,
         );
+        // Bone rows move along; a fitted model's rows count from its
+        // skeleton's block, which moves as a whole.
+        let mut offset = alloc::vec![rows; m.clips.len()];
+        for fit in m.anim.fits {
+            let r = &m.models[fit.model as usize];
+            offset[r.first_clip as usize..(r.first_clip + r.clip_count) as usize].fill(0);
+        }
         self.models.extend(m.models.iter().map(|r| {
             let mut r = *r;
             r.first_vertex += vertices;
@@ -431,15 +451,11 @@ impl ModelTables {
             v
         }));
         self.indices.extend_from_slice(m.indices);
-        self.clips.extend(m.clips.iter().map(|c| {
-            let mut c = *c;
-            c.first_row += if c.source == POSE_ROWS {
-                pose_rows
-            } else {
-                rows
-            };
-            c
-        }));
+        self.clips
+            .extend(m.clips.iter().zip(offset).map(|(c, o)| ClipRecord {
+                first_row: c.first_row + o,
+                ..*c
+            }));
         self.bones.extend_from_slice(m.bones);
         self.textures.extend_from_slice(m.textures);
         self.anim.append(&m.anim, first_model);
@@ -595,8 +611,7 @@ mod tests {
             indices: alloc::vec![0, 1, 2],
             clips: alloc::vec![ClipRecord {
                 kind: ClipKind::Walk as u8,
-                source: BONE_ROWS,
-                _pad: [0; 2],
+                _pad: [0; 3],
                 first_row: 0,
                 frames: 2,
                 fps: 10.0,

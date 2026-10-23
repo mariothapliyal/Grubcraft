@@ -8,10 +8,12 @@
 //! - `anim/joints`: every skeleton's [`JointRecord`]s, back to back, in the
 //!   order of the bones its models' vertices name.
 //! - `anim/moves`: one [`MoveRecord`] per move, each on one skeleton.
-//! - `anim/frames`: the joint pose texture, [`FRAME_TEXELS`] texels per row,
-//!   one row per frame of every move. Each joint takes two texels of four
-//!   floats: its rotation (a unit quaternion, x y z w), then its translation
-//!   and uniform scale, both relative to its parent.
+//! - `anim/frames`: the joint poses of every frame of every move, a block
+//!   per skeleton. A frame row is one [`JointPose`] per joint of its skeleton
+//!   (eight half floats: its rotation, a unit quaternion x y z w, then its
+//!   translation and uniform scale, both relative to its parent), so a row
+//!   costs 16 bytes a joint. Rows count from the start of their skeleton's
+//!   block, which is how joining packs leaves every move's rows alone.
 //! - `anim/fits`: one [`FitRecord`] per model posed from a skeleton, sorted
 //!   by model.
 //! - `anim/fixes`: per fitted model, the matrix that turns the skeleton's
@@ -36,16 +38,26 @@ pub const FRAMES_PATH: &str = "anim/frames";
 pub const FITS_PATH: &str = "anim/fits";
 pub const FIXES_PATH: &str = "anim/fixes";
 
+/// Every anim table, in the order [`AnimTables::write`] writes them.
+const PATHS: [&str; 6] = [
+    SKELETONS_PATH,
+    JOINTS_PATH,
+    MOVES_PATH,
+    FRAMES_PATH,
+    FITS_PATH,
+    FIXES_PATH,
+];
+
 /// Most joints a skeleton may have: a model's bones, less the still one.
 pub const MAX_JOINTS: u32 = MAX_BONES;
-/// Texels in a frame row: two per joint.
-pub const FRAME_TEXELS: u32 = 2 * (MAX_JOINTS + 1);
 /// Floats in one fix (a 3 × 4 matrix, row by row).
 pub const FIX_FLOATS: usize = 12;
-/// Joint sets a move may be limited to (see [`Mask`]).
-pub const MASKS: usize = 8;
 /// No parent: a root joint.
 pub const ROOT: u8 = u8::MAX;
+
+/// One joint in one frame: the bits of eight half floats, two to a word
+/// (low half first): rotation x y, z w, translation x y, z and scale.
+pub type JointPose = [u32; 4];
 
 /// The parts of a body a layered move can play on, by joint set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -125,16 +137,18 @@ impl Role {
     }
 }
 
-/// One skeleton. 80 bytes.
+/// One skeleton. 40 bytes.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
 pub struct SkeletonRecord {
     /// Zero-padded UTF-8: the rig's name, for tools.
     pub name: [u8; NAME_BYTES],
     pub first_joint: u32,
     pub joints: u32,
-    /// Per [`Mask`], the joints it covers, one bit each (low word first).
-    pub masks: [[u32; 2]; MASKS],
+    /// Its block of the frames table: the first joint pose, and how many
+    /// rows (`joints` poses each) it holds.
+    pub first_pose: u32,
+    pub rows: u32,
 }
 
 /// One joint. 4 bytes.
@@ -143,8 +157,8 @@ pub struct SkeletonRecord {
 pub struct JointRecord {
     /// The parent joint, or [`ROOT`].
     pub parent: u8,
-    /// Joints between this one and its root (a root is 0).
-    pub depth: u8,
+    /// One bit per [`Mask`] that covers this joint (`Mask::All` always).
+    pub masks: u8,
     /// The joint that mirrors this one across the body (itself on the
     /// middle line).
     pub mirror: u8,
@@ -303,21 +317,33 @@ pub struct MoveRecord {
     pub mask: u8,
     /// [`LOOPS`], [`ADDITIVE`], [`MIRRORS`].
     pub flags: u8,
-    /// Frame texture row of the first frame.
+    /// The row of its first frame in its skeleton's block.
     pub first_row: u32,
     pub frames: u32,
     /// Frames per second the move was sampled at.
     pub fps: f32,
 }
 
+/// The tags of a move in a checked pack (the loader rejects any other).
 impl MoveRecord {
     pub fn name(&self) -> &str {
-        let len = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_BYTES);
-        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+        crate::model::name_str(&self.name)
     }
 
-    pub fn seconds(&self) -> f32 {
-        self.frames as f32 / self.fps
+    pub fn act(&self) -> Act {
+        Act::from_u8(self.act).unwrap_or(Act::Idle)
+    }
+
+    pub fn weapon(&self) -> Weapon {
+        Weapon::from_u8(self.weapon).unwrap_or(Weapon::Any)
+    }
+
+    pub fn side(&self) -> Side {
+        Side::from_u8(self.side).unwrap_or(Side::Any)
+    }
+
+    pub fn mask(&self) -> Mask {
+        Mask::from_u8(self.mask).unwrap_or(Mask::All)
     }
 
     pub fn loops(&self) -> bool {
@@ -369,8 +395,8 @@ pub struct Anim<'a> {
     pub skeletons: &'a [SkeletonRecord],
     pub joints: &'a [JointRecord],
     pub moves: &'a [MoveRecord],
-    /// Joint pose texels, four floats each, row by row.
-    pub frames: &'a [[f32; 4]],
+    /// Every skeleton's block of joint poses.
+    pub frames: &'a [JointPose],
     pub fits: &'a [FitRecord],
     pub fixes: &'a [[f32; FIX_FLOATS]],
 }
@@ -379,14 +405,6 @@ impl<'a> Anim<'a> {
     /// Read and check every table, against the pack's `models`. A pack with
     /// none of them has no skeletons (an empty `Anim`).
     pub fn from_pack(pack: &Pack<'a>, models: &Models<'_>) -> Result<Anim<'a>, AnimError> {
-        const PATHS: [&str; 6] = [
-            SKELETONS_PATH,
-            JOINTS_PATH,
-            MOVES_PATH,
-            FRAMES_PATH,
-            FITS_PATH,
-            FIXES_PATH,
-        ];
         let present = PATHS.iter().filter(|p| pack.get_path(p).is_some()).count();
         if present == 0 {
             return Ok(Anim::default());
@@ -411,30 +429,24 @@ impl<'a> Anim<'a> {
     }
 
     fn check(&self, models: &Models<'_>) -> Result<(), AnimError> {
-        let rows = self.frame_rows() as usize;
-        if self.frames.len() != rows * FRAME_TEXELS as usize {
-            return Err(AnimError::Bad("frames", 0));
-        }
         for (k, s) in self.skeletons.iter().enumerate() {
             let bad = AnimError::Bad("skeleton", k);
             let end = s.first_joint as usize + s.joints as usize;
             let Some(joints) = self.joints.get(s.first_joint as usize..end) else {
                 return Err(bad);
             };
-            if s.joints == 0 || s.joints > MAX_JOINTS {
+            let poses = s.rows as usize * s.joints as usize;
+            if s.joints == 0
+                || s.joints > MAX_JOINTS
+                || s.rows as usize > crate::model::MAX_ROWS
+                || s.first_pose as usize + poses > self.frames.len()
+                || depths(joints).is_none()
+            {
                 return Err(bad);
             }
-            // A joint is one deeper than its parent, so parents never loop
-            // and posing depth by depth reaches every parent first.
             for joint in joints {
-                let depth_ok = if joint.parent == ROOT {
-                    joint.depth == 0
-                } else {
-                    joints
-                        .get(joint.parent as usize)
-                        .is_some_and(|p| p.depth.checked_add(1) == Some(joint.depth))
-                };
-                if !depth_ok
+                if joint.masks & 1 == 0
+                    || joint.masks >> Mask::ALL.len() != 0
                     || joint.mirror as usize >= joints.len()
                     || Role::from_u8(joint.role).is_none()
                 {
@@ -452,7 +464,8 @@ impl<'a> Anim<'a> {
                 || m.frames == 0
                 || m.fps.is_nan()
                 || m.fps <= 0.0
-                || m.first_row as usize + m.frames as usize > rows
+                || m.first_row as usize + m.frames as usize
+                    > self.skeletons[m.skeleton as usize].rows as usize
             {
                 return Err(AnimError::Bad("move", k));
             }
@@ -476,11 +489,6 @@ impl<'a> Anim<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Rows in the frame texture.
-    pub fn frame_rows(&self) -> u32 {
-        self.frames.len() as u32 / FRAME_TEXELS
     }
 
     /// The fit of `model`, if it is posed from a skeleton.
@@ -508,13 +516,33 @@ impl<'a> Anim<'a> {
     }
 }
 
+/// Each joint's depth (joints between it and its root, a root 0), or `None`
+/// if a parent is not one of `joints` or the parents loop.
+pub fn depths(joints: &[JointRecord]) -> Option<Vec<u8>> {
+    joints
+        .iter()
+        .map(|j| {
+            let mut depth = 0u8;
+            let mut parent = j.parent;
+            while parent != ROOT {
+                depth += 1;
+                if depth as usize > joints.len() {
+                    return None;
+                }
+                parent = joints.get(parent as usize)?.parent;
+            }
+            Some(depth)
+        })
+        .collect()
+}
+
 /// Everything the anim tables hold, for writing them (or joining packs).
 #[derive(Default)]
 pub struct AnimTables {
     pub skeletons: Vec<SkeletonRecord>,
     pub joints: Vec<JointRecord>,
     pub moves: Vec<MoveRecord>,
-    pub frames: Vec<[f32; 4]>,
+    pub frames: Vec<JointPose>,
     pub fits: Vec<FitRecord>,
     pub fixes: Vec<[f32; FIX_FLOATS]>,
 }
@@ -522,23 +550,22 @@ pub struct AnimTables {
 impl AnimTables {
     /// Add `a`, whose fits name models counted from `first_model` here.
     pub fn append(&mut self, a: &Anim<'_>, first_model: u32) {
-        let (skeletons, joints, rows, fixes) = (
+        let (skeletons, joints, poses, fixes) = (
             self.skeletons.len() as u32,
             self.joints.len() as u32,
-            (self.frames.len() / FRAME_TEXELS as usize) as u32,
+            self.frames.len() as u32,
             self.fixes.len() as u32,
         );
-        self.skeletons.extend(a.skeletons.iter().map(|s| {
-            let mut s = *s;
-            s.first_joint += joints;
-            s
-        }));
+        self.skeletons
+            .extend(a.skeletons.iter().map(|s| SkeletonRecord {
+                first_joint: s.first_joint + joints,
+                first_pose: s.first_pose + poses,
+                ..*s
+            }));
         self.joints.extend_from_slice(a.joints);
-        self.moves.extend(a.moves.iter().map(|m| {
-            let mut m = *m;
-            m.skeleton += skeletons as u16;
-            m.first_row += rows;
-            m
+        self.moves.extend(a.moves.iter().map(|m| MoveRecord {
+            skeleton: m.skeleton + skeletons as u16,
+            ..*m
         }));
         self.frames.extend_from_slice(a.frames);
         self.fits.extend(a.fits.iter().map(|f| FitRecord {
@@ -561,35 +588,16 @@ impl AnimTables {
         if self.is_empty() {
             return;
         }
-        pack.add(
-            SKELETONS_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.skeletons),
-        );
-        pack.add(
-            JOINTS_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.joints),
-        );
-        pack.add(
-            MOVES_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.moves),
-        );
-        pack.add(
-            FRAMES_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.frames),
-        );
-        pack.add(
-            FITS_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.fits),
-        );
-        pack.add(
-            FIXES_PATH,
-            Kind::Table,
-            &table_bytes(ANIM_SCHEMA, &self.fixes),
-        );
+        let tables = [
+            table_bytes(ANIM_SCHEMA, &self.skeletons),
+            table_bytes(ANIM_SCHEMA, &self.joints),
+            table_bytes(ANIM_SCHEMA, &self.moves),
+            table_bytes(ANIM_SCHEMA, &self.frames),
+            table_bytes(ANIM_SCHEMA, &self.fits),
+            table_bytes(ANIM_SCHEMA, &self.fixes),
+        ];
+        for (path, bytes) in PATHS.into_iter().zip(&tables) {
+            pack.add(path, Kind::Table, bytes);
+        }
     }
 }

@@ -1043,7 +1043,7 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(15) var<storage, read_write> palette: array<vec4<f32>>;
 // Shared skeletons, their joint poses and each fitted model's fixes (see
 // `AnimGpu` in soldiers.rs for the layout), as vectors of four floats.
-@group(1) @binding(16) var<storage, read> anim: array<vec4<f32>>;
+@group(1) @binding(16) var<storage, read> anim: array<vec4<u32>>;
 
 fn set_vertex(i: u32) -> SetVertex {
     if i < jobs.count.z {
@@ -1179,8 +1179,6 @@ fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: b
 const INSTANCE_WORDS: u32 = 16u;
 // Layers a soldier may play on top of its base move (`PoseLayer`).
 const POSE_LAYERS: u32 = 3u;
-// Texels in a joint pose row (`FRAME_TEXELS`).
-const FRAME_TEXELS: u32 = 128u;
 // Joints a skeleton may have, plus the still bone: one posing thread each.
 const POSE_GROUP: u32 = 64u;
 // Soldiers posed along the dispatch's first dimension.
@@ -1224,9 +1222,28 @@ struct JointPose {
     ts: vec4<f32>,
 };
 
-fn joint_pose(frames_at: u32, row: u32, joint: u32) -> JointPose {
-    let at = frames_at + row * FRAME_TEXELS + joint * 2u;
-    return JointPose(anim[at], anim[at + 1u]);
+// Where a skeleton's poses start in `anim`, and its joints (a row's length).
+struct Poses {
+    at: u32,
+    joints: u32,
+};
+
+// The two half floats in `w` (low first), decoded by hand: `unpack2x16float`
+// needs a capability not every GPU has. No infinities or NaNs are stored.
+fn halves(w: vec2<u32>) -> vec4<f32> {
+    let h = vec4<u32>(w.x & 0xffffu, w.x >> 16u, w.y & 0xffffu, w.y >> 16u);
+    let sign = (h & vec4<u32>(0x8000u)) << vec4<u32>(16u);
+    let e = (h >> vec4<u32>(10u)) & vec4<u32>(0x1fu);
+    let m = h & vec4<u32>(0x3ffu);
+    let normal = bitcast<vec4<f32>>(sign | ((e + vec4<u32>(112u)) << vec4<u32>(23u)) | (m << vec4<u32>(13u)));
+    let tiny = vec4<f32>(m) * 5.9604645e-8 * select(vec4<f32>(1.0), vec4<f32>(-1.0), sign != vec4<u32>(0u));
+    return select(normal, tiny, e == vec4<u32>(0u));
+}
+
+// A joint's pose in frame `row`, from eight half floats.
+fn joint_pose(poses: Poses, row: u32, joint: u32) -> JointPose {
+    let v = anim[poses.at + row * poses.joints + joint];
+    return JointPose(halves(v.xy), halves(v.zw));
 }
 
 // Normalised blend of two rotations, the short way round.
@@ -1243,9 +1260,9 @@ fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
 }
 
 // A layer's pose of a joint, between its two frames.
-fn layer_pose(frames_at: u32, l: Layer, joint: u32) -> JointPose {
-    let a = joint_pose(frames_at, l.frames.x, joint);
-    let b = joint_pose(frames_at, l.frames.y, joint);
+fn layer_pose(poses: Poses, l: Layer, joint: u32) -> JointPose {
+    let a = joint_pose(poses, l.frames.x, joint);
+    let b = joint_pose(poses, l.frames.y, joint);
     return JointPose(quat_nlerp(a.r, b.r, l.blend), mix(a.ts, b.ts, l.blend));
 }
 
@@ -1273,9 +1290,31 @@ fn pose_matrix(p: JointPose) -> mat4x4<f32> {
     );
 }
 
-// Three rows of `anim` from `at` as a matrix.
+// Three rows of floats in `anim` from `at` as a matrix.
 fn anim_matrix(at: u32) -> mat4x4<f32> {
-    return transpose(mat4x4<f32>(anim[at], anim[at + 1u], anim[at + 2u], vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+    return transpose(mat4x4<f32>(
+        bitcast<vec4<f32>>(anim[at]),
+        bitcast<vec4<f32>>(anim[at + 1u]),
+        bitcast<vec4<f32>>(anim[at + 2u]),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    ));
+}
+
+// The job holding thread `n`, counting threads by `run.w` (skinning) or
+// soldiers by `pose.w` (posing): the last job starting at or before it.
+fn find_job(n: u32, posing: bool) -> u32 {
+    var lo = 0u;
+    var hi = jobs.count.x;
+    while hi - lo > 1u {
+        let mid = (lo + hi) / 2u;
+        let start = select(jobs.job[mid].run.w, jobs.job[mid].pose.w, posing);
+        if start <= n {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
 }
 
 fn write_palette(slot: u32, m: mat3x4<f32>) {
@@ -1290,7 +1329,7 @@ fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
     return mat3x4<f32>(t[0], t[1], t[2]);
 }
 
-var<workgroup> pose_globals: array<mat4x4<f32>, 64>;
+var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
 
 // Build one soldier's final bone matrices, a thread per bone, into the
 // palette, where every vertex that follows a bone then reads it.
@@ -1299,9 +1338,10 @@ var<workgroup> pose_globals: array<mat4x4<f32>, 64>;
 // cannot hold, an additive one, is skipped). A model fitted to a skeleton
 // mixes each joint's pose from its layers (a layer only moves the joints its
 // mask covers; an additive layer adds its change on top), builds the joints'
-// matrices parent by parent, depth by depth, and turns them into its own
-// space with its fixes: `pre * global * post`.
-@compute @workgroup_size(64)
+// matrices parent by parent, depth by depth (the roots taking the model's
+// `pre`, from the skeleton's space to its own), and ends each with its
+// bone's fix: `pre * global * post`.
+@compute @workgroup_size(POSE_GROUP)
 fn cs_pose(
     @builtin(workgroup_id) group: vec3<u32>,
     @builtin(local_invocation_index) bone: u32,
@@ -1310,17 +1350,7 @@ fn cs_pose(
     if k >= jobs.count.w {
         return;
     }
-    var lo = 0u;
-    var hi = jobs.count.x;
-    while hi - lo > 1u {
-        let mid = (lo + hi) / 2u;
-        if jobs.job[mid].pose.w <= k {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    let job = jobs.job[lo];
+    let job = jobs.job[find_job(k, true)];
     let nth = k - job.pose.w;
     let soldier = job.run.x + nth;
     let bones = job.pose.y;
@@ -1351,12 +1381,12 @@ fn cs_pose(
 
     // The fit: the skeleton's joints, how deep they nest and where its poses
     // start, then the model's fixes.
-    let head = bitcast<vec4<u32>>(anim[fit]);
+    let head = anim[fit];
     let joints_at = head.x;
     let joints = head.y;
     let deepest = head.z;
-    let frames_at = bitcast<vec4<u32>>(anim[0]).x;
-    let joint = bitcast<vec4<u32>>(anim[joints_at + min(bone, joints - 1u)]);
+    let poses = Poses(head.w, joints);
+    let joint = anim[joints_at + min(bone, joints - 1u)];
     let parent = joint.x;
     let depth = joint.y;
     let masks = joint.z;
@@ -1364,13 +1394,13 @@ fn cs_pose(
     var local = mat4x4<f32>();
     if bone < joints {
         let base = instance_layer(i, 0u);
-        var p = layer_pose(frames_at, base, bone);
+        var p = layer_pose(poses, base, bone);
         for (var l = 1u; l <= POSE_LAYERS; l++) {
             let layer = instance_layer(i, l);
             if layer.weight <= 0.0 || ((masks >> layer.mask) & 1u) == 0u {
                 continue;
             }
-            let o = layer_pose(frames_at, layer, bone);
+            let o = layer_pose(poses, layer, bone);
             if layer.additive {
                 // The layer's rows hold changes from its first frame.
                 let id = vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -1387,7 +1417,7 @@ fn cs_pose(
     for (var d = 0u; d <= deepest; d++) {
         if bone < joints && depth == d {
             if parent == 255u {
-                pose_globals[bone] = local;
+                pose_globals[bone] = anim_matrix(fit + 1u) * local;
             } else {
                 pose_globals[bone] = pose_globals[parent] * local;
             }
@@ -1406,9 +1436,8 @@ fn cs_pose(
         ));
         return;
     }
-    let pre = anim_matrix(fit + 1u);
     let post = anim_matrix(fit + 4u + bone * 3u);
-    write_palette(slot, matrix_rows(pre * pose_globals[bone] * post));
+    write_palette(slot, matrix_rows(pose_globals[bone] * post));
 }
 
 // Pose one vertex of one soldier and keep it for the passes that draw it.
@@ -1418,18 +1447,9 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     if n >= jobs.count.y {
         return;
     }
-    var lo = 0u;
-    var hi = jobs.count.x;
-    while hi - lo > 1u {
-        let mid = (lo + hi) / 2u;
-        if jobs.job[mid].run.w <= n {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    let run = jobs.job[lo].run;
-    let run_pose = jobs.job[lo].pose;
+    let job = find_job(n, false);
+    let run = jobs.job[job].run;
+    let run_pose = jobs.job[job].pose;
     let at = n - run.w;
     let soldier = run.x + at / run.z;
     let sv = set_vertex(run.y + at % run.z);

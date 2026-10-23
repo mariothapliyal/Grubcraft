@@ -111,8 +111,9 @@ struct ModelClips {
     /// In the order of `ACTIONS`, which is the enum's.
     actions: [Option<MoveClip>; ACTIONS.len()],
     die: Option<MoveClip>,
-    /// A move made for parrying or staggering, when the model has one;
-    /// otherwise a duel bends its attack and hit clips to stand in.
+    /// The picks for a duel's parry and stagger: moves made for them when
+    /// the model has them, else what the picker falls back to (an attack
+    /// raised partway, a hit).
     parry: Option<MoveClip>,
     stagger: Option<MoveClip>,
 }
@@ -128,12 +129,12 @@ impl Clips {
         let moves = Moves::new(models);
         let by_model = (0..models.models.len())
             .map(|m| {
-                let only = |act| moves.pick(m, Want::new(act)).filter(|c| c.act == act);
+                let pick = |act| moves.pick(m, Want::new(act));
                 ModelClips {
                     actions: ACTIONS.map(|a| moves.pick(m, want(a))),
-                    die: only(Act::Death),
-                    parry: only(Act::Parry),
-                    stagger: only(Act::Stagger),
+                    die: pick(Act::Death),
+                    parry: pick(Act::Parry),
+                    stagger: pick(Act::Stagger),
                 }
             })
             .collect();
@@ -191,17 +192,19 @@ impl Clips {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))
             }
-            Move::Parry(f) => match own.parry {
-                Some(parry) => standing(Some(parry.at(f))),
-                // Raise the weapon to meet the blow and recover.
-                None => standing(self.at(model, Action::Attack, PARRY_DEPTH * peak(f))),
-            },
+            Move::Parry(f) => {
+                let parry = own.parry?;
+                if parry.act == Act::Parry {
+                    standing(Some(parry.at(f)))
+                } else {
+                    // Raise the weapon to meet the blow and recover.
+                    standing(Some(parry.at(PARRY_DEPTH * peak(f))))
+                }
+            }
             // Duck behind the shield and come back up.
             Move::Block(f) => standing(self.at(model, Action::Block, BLOCK_DEPTH * peak(f))),
-            Move::Stagger(f) => match own.stagger {
-                Some(stagger) => standing(Some(stagger.at(f))),
-                None => standing(self.at(model, Action::Hit, f)),
-            },
+            // A stagger, or the hit standing in for one.
+            Move::Stagger(f) => standing(Some(own.stagger?.at(f))),
             // Fall, lie still a moment and get up: the death move played
             // forward, then back.
             Move::Down(f) => {

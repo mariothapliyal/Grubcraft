@@ -5,8 +5,8 @@
 //! plain clips. A model offers its own clips, by kind, and when fitted to a
 //! shared skeleton also that skeleton's tagged moves.
 
-use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, NO_KIND, Side, Weapon};
-use gc_assets::model::{ClipKind, Models};
+use gc_assets::anim::{Act, Mask, MoveRecord, NO_KIND, Side, Weapon};
+use gc_assets::model::{ClipRecord, Models};
 use gc_render::{LAYER_ADDITIVE, PoseLayer};
 
 use crate::models::Pose;
@@ -27,6 +27,36 @@ pub struct MoveClip {
 }
 
 impl MoveClip {
+    /// A model's own clip, as the move its kind stands for.
+    fn of_clip(c: &ClipRecord) -> Option<MoveClip> {
+        let kind = c.kind()?;
+        Some(MoveClip {
+            first_row: c.first_row,
+            frames: c.frames,
+            fps: c.fps,
+            loops: kind.loops(),
+            additive: false,
+            mask: Mask::All,
+            act: kind.act(),
+            weapon: Weapon::Any,
+            side: Side::Any,
+        })
+    }
+
+    fn of_move(r: &MoveRecord) -> MoveClip {
+        MoveClip {
+            first_row: r.first_row,
+            frames: r.frames,
+            fps: r.fps,
+            loops: r.loops(),
+            additive: r.additive(),
+            mask: r.mask(),
+            act: r.act(),
+            weapon: r.weapon(),
+            side: r.side(),
+        }
+    }
+
     /// The pose `seconds` in, round and round whether or not the move is
     /// made to loop.
     pub fn looping(&self, seconds: f32) -> Pose {
@@ -97,7 +127,8 @@ fn fallbacks(act: Act) -> &'static [Act] {
         Run => &[Run, Walk, Idle],
         Guard => &[Guard, Idle],
         Attack => &[Attack, Idle],
-        Parry => &[Parry, Block, Attack, Idle],
+        // A parry meets the blow with the weapon, as an attack raises it.
+        Parry => &[Parry, Attack, Idle],
         Block => &[Block, Parry, Idle],
         Hit => &[Hit, Idle],
         Stagger => &[Stagger, Hit, Idle],
@@ -108,21 +139,6 @@ fn fallbacks(act: Act) -> &'static [Act] {
         Shoot => &[Shoot, Attack, Idle],
         Step => &[Step, Walk, Idle],
         Flinch => &[Flinch, Hit],
-    }
-}
-
-/// The act a plain clip kind plays (for models without tagged moves).
-fn act_of(kind: ClipKind) -> Act {
-    match kind {
-        ClipKind::Idle => Act::Idle,
-        ClipKind::Walk => Act::Walk,
-        ClipKind::Run => Act::Run,
-        ClipKind::Attack | ClipKind::Attack2 => Act::Attack,
-        ClipKind::Hit => Act::Hit,
-        ClipKind::Die => Act::Death,
-        ClipKind::Cheer => Act::Cheer,
-        ClipKind::Shoot => Act::Shoot,
-        ClipKind::Block => Act::Block,
     }
 }
 
@@ -150,42 +166,13 @@ impl Moves {
     /// idle, which another model on the same rig may hold differently.
     pub fn new(models: &Models<'_>) -> Moves {
         let anim = &models.anim;
-        let by_model = models
-            .models
-            .iter()
-            .enumerate()
-            .map(|(m, r)| {
-                let own = models.clips
-                    [r.first_clip as usize..(r.first_clip + r.clip_count) as usize]
-                    .iter()
-                    .filter_map(|c| {
-                        let kind = c.kind()?;
-                        Some(MoveClip {
-                            first_row: c.first_row,
-                            frames: c.frames,
-                            fps: c.fps,
-                            loops: kind.loops(),
-                            additive: false,
-                            mask: Mask::All,
-                            act: act_of(kind),
-                            weapon: Weapon::Any,
-                            side: Side::Any,
-                        })
-                    });
+        let by_model = (0..models.models.len())
+            .map(|m| {
+                let own = models.clips_of(m).iter().filter_map(MoveClip::of_clip);
                 let library = anim.fit(m).into_iter().flat_map(|fit| {
                     anim.moves_of(fit.skeleton as usize)
                         .filter(|(_, r)| r.kind == NO_KIND)
-                        .map(|(_, r)| MoveClip {
-                            first_row: r.first_row,
-                            frames: r.frames,
-                            fps: r.fps,
-                            loops: r.flags & LOOPS != 0,
-                            additive: r.flags & ADDITIVE != 0,
-                            mask: Mask::from_u8(r.mask).unwrap_or(Mask::All),
-                            act: Act::from_u8(r.act).unwrap_or(Act::Idle),
-                            weapon: Weapon::from_u8(r.weapon).unwrap_or(Weapon::Any),
-                            side: Side::from_u8(r.side).unwrap_or(Side::Any),
-                        })
+                        .map(|(_, r)| MoveClip::of_move(r))
                 });
                 own.chain(library).collect()
             })

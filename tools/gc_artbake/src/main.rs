@@ -342,6 +342,7 @@ fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), 
         }
         baked.append_to(&mut tables, &mut anim, &m.name)?;
     }
+    anim.finish(&mut tables.anim)?;
     let mut pack = gc_assets::PackWriter::new();
     tables.write(&mut pack);
     let bytes = pack.finish();
@@ -380,7 +381,8 @@ struct BakedModel {
     height: f32,
     bones: u32,
     /// Clip kind, and its frames: per frame, `bones` matrices (stored vertex
-    /// to pose). Only stored for a model not `posed` from a skeleton.
+    /// to pose). Only made for a model not `posed` from a skeleton (and in
+    /// tests, which compare the two).
     clips: Vec<(ClipKind, Vec<Vec<Mat4>>)>,
     /// The model's skeleton and its clips as joint poses, unless its joints
     /// cannot be stored that way (see `rig::poses`) or it has no skin.
@@ -422,18 +424,15 @@ impl BakedModel {
             for frame in frames {
                 let mut row = vec![[0u16; 4]; BONE_TEXELS_PER_ROW as usize];
                 for (b, m) in frame.iter().enumerate() {
-                    // Rows of the 3 × 4 matrix: row r is (m[0][r], m[1][r], m[2][r], m[3][r]).
                     for r in 0..3 {
-                        let v = Vec4::new(m.x_axis[r], m.y_axis[r], m.z_axis[r], m.w_axis[r]);
-                        row[b * 3 + r] = v.to_array().map(f16_bits);
+                        row[b * 3 + r] = m.row(r).to_array().map(f16_bits);
                     }
                 }
                 t.bones.extend_from_slice(&row);
             }
             t.clips.push(ClipRecord {
                 kind: *kind as u8,
-                source: gc_assets::model::BONE_ROWS,
-                _pad: [0; 2],
+                _pad: [0; 3],
                 first_row,
                 frames: frames.len() as u32,
                 fps: SAMPLE_FPS,
@@ -460,7 +459,7 @@ fn report(m: &BakedModel) {
         m.verts.len(),
         tris.join(" / "),
         m.bones,
-        m.clips.len()
+        m.posed.as_ref().map_or(m.clips.len(), |p| p.clips.len())
     );
     for (c, n, team) in m.palette.iter().take(12) {
         println!(
@@ -1044,7 +1043,9 @@ fn bake_model(
             .collect(),
         clips,
     });
-    {
+    // Bone rows only for a model that cannot be posed (and in tests, which
+    // check the poses against them).
+    if posed.is_none() || cfg!(test) {
         for (kind, _, frames) in sampled {
             let frames = frames
                 .into_iter()
@@ -1548,16 +1549,24 @@ mod tests {
                 }
             }
         }
-        // The pack keeps the poses, not bone rows, and the clips name them.
+        // The pack keeps the poses, as half floats, not bone rows.
         let (_, tables, _) = bake_alien_bug();
         assert_eq!(tables.anim.fits.len(), 1);
         assert!(tables.bones.is_empty());
-        assert!(
-            tables
-                .clips
-                .iter()
-                .all(|c| c.source == gc_assets::model::POSE_ROWS)
-        );
+        let skeleton = &tables.anim.skeletons[0];
+        let joints = skeleton.joints as usize;
+        for (clip, (_, frames)) in tables.clips.iter().zip(&baked.clips) {
+            for (f, bones) in frames.iter().enumerate() {
+                let at = skeleton.first_pose as usize + (clip.first_row as usize + f) * joints;
+                let pose: Vec<rig::JointPose> = tables.anim.frames[at..at + joints]
+                    .iter()
+                    .map(rig::JointPose::unpacked)
+                    .collect();
+                for (a, b) in posed.matrices(&pose).iter().zip(bones) {
+                    assert!(a.abs_diff_eq(*b, 2e-3), "{a} against {b}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1574,9 +1583,9 @@ mod tests {
         .unwrap();
         let baked = bake_model(&cfg, &path, None).unwrap();
         let mut t = ModelTables::default();
-        baked
-            .append_to(&mut t, &mut rig::AnimBuilder::default(), "Alien Bug")
-            .unwrap();
+        let mut anim = rig::AnimBuilder::default();
+        baked.append_to(&mut t, &mut anim, "Alien Bug").unwrap();
+        anim.finish(&mut t.anim).unwrap();
         // The plain clips are still the model's four; the tagged moves are
         // only in the skeleton's moves.
         assert_eq!(t.clips.len(), 4);
@@ -1599,12 +1608,12 @@ mod tests {
         assert_eq!(flinch.flags, gc_assets::anim::ADDITIVE);
         assert_eq!(flinch.mask, gc_assets::anim::Mask::Upper as u8);
         // An additive move's first frame changes nothing.
-        let first = flinch.first_row as usize * gc_assets::anim::FRAME_TEXELS as usize;
-        for j in 0..baked.bones as usize - 1 {
-            let [x, y, z, w] = t.anim.frames[first + j * 2];
-            let [tx, ty, tz, scale] = t.anim.frames[first + j * 2 + 1];
-            assert!(x.abs() + y.abs() + z.abs() < 1e-5 && (w - 1.0).abs() < 1e-5);
-            assert!(tx.abs() + ty.abs() + tz.abs() < 1e-4 && (scale - 1.0).abs() < 1e-5);
+        let joints = t.anim.skeletons[0].joints as usize;
+        let first = flinch.first_row as usize * joints;
+        for p in &t.anim.frames[first..first + joints] {
+            let p = rig::JointPose::unpacked(p);
+            assert!(p.r.abs_diff_eq(glam::Quat::IDENTITY, 1e-3), "{p:?}");
+            assert!(p.t.length() < 1e-3 && (p.s - 1.0).abs() < 1e-3, "{p:?}");
         }
 
         cfg.moves[0].act = "Somersault".into();
