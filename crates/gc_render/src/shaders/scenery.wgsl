@@ -134,7 +134,7 @@ struct Detail {
     tilt: vec2<f32>,
 };
 
-fn detail_sample(layer: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, mean: vec3<f32>) -> Detail {
+fn scenery_sample(layer: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, mean: vec3<f32>) -> Detail {
     var r: Detail;
     r.ratio = min(textureSampleGrad(scenery_color, rock_sampler, uv, layer, dx, dy).rgb / mean, vec3<f32>(3.0));
     r.tilt = textureSampleGrad(scenery_normal, rock_sampler, uv, layer, dx, dy).xy * 2.0 - 1.0;
@@ -160,21 +160,21 @@ fn triplanar(layer: i32, mean: vec3<f32>, scale: f32, top: f32, p: vec3<f32>, nl
     var used = 0.0;
     // Facing +z or -z: the (x, y) plane.
     if w.x > 0.03 {
-        let d = detail_sample(layer, vec2<f32>(p.x, -p.y) * scale, vec2<f32>(dpx.x, -dpx.y) * scale, vec2<f32>(dpy.x, -dpy.y) * scale, mean);
+        let d = scenery_sample(layer, vec2<f32>(p.x, -p.y) * scale, vec2<f32>(dpx.x, -dpx.y) * scale, vec2<f32>(dpy.x, -dpy.y) * scale, mean);
         ratio += d.ratio * w.x;
         tilt += vec3<f32>(d.tilt.x, d.tilt.y, 0.0) * w.x;
         used += w.x;
     }
     // Facing +x or -x: the (z, y) plane.
     if w.y > 0.03 {
-        let d = detail_sample(layer, vec2<f32>(p.z, -p.y) * scale, vec2<f32>(dpx.z, -dpx.y) * scale, vec2<f32>(dpy.z, -dpy.y) * scale, mean);
+        let d = scenery_sample(layer, vec2<f32>(p.z, -p.y) * scale, vec2<f32>(dpx.z, -dpx.y) * scale, vec2<f32>(dpy.z, -dpy.y) * scale, mean);
         ratio += d.ratio * w.y;
         tilt += vec3<f32>(0.0, d.tilt.y, d.tilt.x) * w.y;
         used += w.y;
     }
     // Facing up or down: the (x, z) plane.
     if w.z > 0.03 {
-        let d = detail_sample(layer, vec2<f32>(p.x, -p.z) * scale, vec2<f32>(dpx.x, -dpx.z) * scale, vec2<f32>(dpy.x, -dpy.z) * scale, mean);
+        let d = scenery_sample(layer, vec2<f32>(p.x, -p.z) * scale, vec2<f32>(dpx.x, -dpx.z) * scale, vec2<f32>(dpy.x, -dpy.z) * scale, mean);
         ratio += d.ratio * w.z;
         tilt += vec3<f32>(d.tilt.x, 0.0, d.tilt.y) * w.z;
         used += w.z;
@@ -205,7 +205,7 @@ fn single_plane(layer: i32, mean: vec3<f32>, scale: f32, p: vec3<f32>, nl: vec3<
         dy = vec2<f32>(dpy.z, -dpy.y);
         axes = 2;
     }
-    let d = detail_sample(layer, uv * scale, dx * scale, dy * scale, mean);
+    let d = scenery_sample(layer, uv * scale, dx * scale, dy * scale, mean);
     var tilt = vec3<f32>(d.tilt.x, d.tilt.y, 0.0);
     if axes == 1 {
         tilt = vec3<f32>(d.tilt.x, 0.0, d.tilt.y);
@@ -247,7 +247,7 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
                 let up = detailed.y;
                 let clump = vnoise(in.local.xz * 3.0 + vec2<f32>(in.local.y * 2.0, 4.0));
                 let moss = smoothstep(0.45, 0.8, up) * smoothstep(0.25, 0.7, clump);
-                let moss_tex = detail_sample(2, in.local.xz * 2.0, dpx.xz * 2.0, dpy.xz * 2.0, MOSS_MEAN);
+                let moss_tex = scenery_sample(2, in.local.xz * 2.0, dpx.xz * 2.0, dpy.xz * 2.0, MOSS_MEAN);
                 albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.22, 0.34, 0.12)) * moss_tex.ratio, moss * 0.8);
             }
         } else {

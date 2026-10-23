@@ -21,7 +21,7 @@ pub const MAX_SCENERY_INSTANCES: usize = 65_536;
 /// What surface detail a piece of scenery's shader paints over its baked
 /// vertex colours (`SceneryInstance::kind`; the same numbers are in
 /// scenery.wgsl).
-pub mod detail {
+pub mod surface_kind {
     /// Nothing: bones, gathering spots, banners.
     pub const NONE: u32 = 0;
     /// Trees with broadleaf bark (and leaves): oaks, birch, willow.

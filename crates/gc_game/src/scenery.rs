@@ -16,7 +16,7 @@ use gc_assets::scenery::{Family, LODS};
 use gc_assets::{Aligned, Pack};
 use gc_map::def::Land;
 use gc_map::{Kind as Site, Map};
-use gc_render::{Cull, MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, detail};
+use gc_render::{Cull, MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 use glam::{Vec2, Vec3};
 
 /// The scenery models, baked by `tools/gc_scenebake` and embedded in the
@@ -98,7 +98,7 @@ macro_rules! catalogue {
                 family: Family::$family,
                 class: $class,
                 shadow: $shadow,
-                detail: detail::$detail,
+                detail: surface_kind::$detail,
             },)*];
         }
     };
@@ -109,7 +109,7 @@ struct Spec {
     family: Family,
     class: u8,
     shadow: bool,
-    /// The surface detail the shader paints on it (`gc_render::detail`).
+    /// The surface detail the shader paints on it (`gc_render::surface_kind`).
     detail: u32,
 }
 
@@ -194,7 +194,7 @@ impl SceneryModels {
                 class: spec.map_or(2, |m| m.class),
                 shadow: spec.is_some_and(|m| m.shadow),
                 rock: spec.is_some_and(|m| m.family == Family::Rock),
-                detail: spec.map_or(detail::NONE, |m| m.detail),
+                detail: spec.map_or(surface_kind::NONE, |m| m.detail),
                 height,
                 radius,
             });

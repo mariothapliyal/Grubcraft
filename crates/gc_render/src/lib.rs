@@ -11,6 +11,7 @@
 //! surface target and per-frame camera and instance data.
 
 mod debug_font;
+mod detail;
 mod look;
 mod overlay;
 mod post;
@@ -64,7 +65,7 @@ pub use look::{Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
-pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, detail};
+pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
 pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
@@ -1001,7 +1002,12 @@ impl Renderer {
     }
 
     /// Upload the soldier models and their bone animation texture.
-    pub fn set_models(&mut self, models: &gc_assets::model::Models<'_>) -> Result<(), String> {
+    /// `detail` is the shared surface detail layered over their textures.
+    pub fn set_models(
+        &mut self,
+        models: &gc_assets::model::Models<'_>,
+        detail: Option<&gc_assets::detail::Detail<'_>>,
+    ) -> Result<(), String> {
         let limit = self.device.limits().max_texture_dimension_2d;
         if models.bone_rows() > limit {
             return Err(format!(
@@ -1014,6 +1020,7 @@ impl Renderer {
             &self.queue,
             &self.soldiers,
             models,
+            detail,
         )?);
         Ok(())
     }
