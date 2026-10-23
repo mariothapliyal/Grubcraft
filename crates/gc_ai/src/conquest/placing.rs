@@ -71,17 +71,14 @@ pub fn spot_for(
             world
                 .pledged()
                 .filter(|p| p.0 == party)
-                .filter_map(|(_, b, tile)| {
+                .filter_map(|(_, b, tile, turn)| {
                     let b = table.get(usize::from(b))?;
                     let gap = if small && is_small(b.role) {
                         GAP
                     } else {
                         WIDE_GAP
                     };
-                    Some((
-                        [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)],
-                        gap,
-                    ))
+                    Some((b.footprint(tile, turn), gap))
                 }),
         );
     }
@@ -111,7 +108,7 @@ pub fn spot_for(
         for &(t, _) in &open {
             let grown = world.overgrown([t.0, t.1, w, d]);
             // Only the nearest overgrown spot is wanted.
-            if grown && overgrown.is_some() || world.can_lay(party, building, t).is_err() {
+            if grown && overgrown.is_some() || world.can_lay(party, building, t, 0).is_err() {
                 continue;
             }
             if !grown {

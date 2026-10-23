@@ -334,11 +334,12 @@ impl Conquest {
     }
 
     /// Whether a building of type `building` may go up with its north-west
-    /// tile at `tile` (see `Structures::check`).
+    /// tile at `tile`, turned `turn` quarter turns (see `Structures::check`).
     pub(crate) fn check(
         &self,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
@@ -347,17 +348,18 @@ impl Conquest {
         self.structures.check(
             building,
             tile,
+            turn,
             nav,
             regs,
             self.economy.node_positions(),
             thicket,
         )?;
         // Ground paid for and still being cleared is spoken for.
-        let foot = self.footprint(building, tile);
+        let foot = self.footprint(building, tile, turn);
         if self
             .clearing
             .pledges()
-            .any(|p| overlaps(foot, self.footprint(p.building, p.tile)))
+            .any(|p| overlaps(foot, self.footprint(p.building, p.tile, p.turn)))
         {
             return Err(Refusal::Built);
         }
@@ -365,27 +367,29 @@ impl Conquest {
     }
 
     /// The tiles a building of type `building` covers with its north-west
-    /// tile at `tile`, as `[x, y, width, depth]`.
-    fn footprint(&self, building: BuildingId, tile: (i32, i32)) -> [i32; 4] {
-        let b = self.structures.buildings()[usize::from(building)];
-        [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)]
+    /// tile at `tile`, turned `turn` quarter turns, as `[x, y, width, depth]`.
+    fn footprint(&self, building: BuildingId, tile: (i32, i32), turn: u8) -> [i32; 4] {
+        self.structures.buildings()[usize::from(building)].footprint(tile, turn)
     }
 
     /// Whether `player` could have a worker lay a building of type
-    /// `building` at `tile` now: placement, tier and price.
+    /// `building` at `tile`, turned `turn` quarter turns, now: placement,
+    /// tier and price.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn can_lay(
         &self,
         player: PlayerId,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
-        self.check(building, tile, nav, regs, terrain)?;
+        self.check(building, tile, turn, nav, regs, terrain)?;
         self.may_lay(player, building)?;
         let b = self.structures.buildings()[usize::from(building)];
-        let foot = self.footprint(building, tile);
+        let foot = b.footprint(tile, turn);
         if b.flags & NEEDS_POWER != 0 && !self.structures.power_reaches(player, foot) {
             return Err(Refusal::Unpowered);
         }
@@ -417,8 +421,9 @@ impl Conquest {
     }
 
     /// Worker slot `r`, `player`'s, lays a building of type `building` at
-    /// `tile`, pays for it and goes to build it. On overgrown ground it
-    /// pays now and clears the footprint first (see [`crate::clearing`]).
+    /// `tile`, turned `turn` quarter turns, pays for it and goes to build it.
+    /// On overgrown ground it pays now and clears the footprint first (see
+    /// [`crate::clearing`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay(
         &mut self,
@@ -426,19 +431,20 @@ impl Conquest {
         r: usize,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
         nav: &mut Nav,
         regs: &mut Regiments,
         terrain: &Terrain,
     ) -> bool {
         if !self.unit(regs.unit[r]).worker
             || self
-                .can_lay(player, building, tile, nav, regs, terrain)
+                .can_lay(player, building, tile, turn, nav, regs, terrain)
                 .is_err()
         {
             return false;
         }
         let b = self.structures.buildings()[usize::from(building)];
-        let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
+        let foot = b.footprint(tile, turn);
         let (grub, marrow) = (u32::from(b.cost_grub), u32::from(b.cost_marrow));
         if overgrown(terrain, foot) {
             self.stop_work(r);
@@ -447,13 +453,17 @@ impl Conquest {
                 owner: player,
                 building,
                 tile,
+                turn,
                 grub,
                 marrow,
             };
             self.clearing.start(regs, r, foot, Some(pledge));
             return true;
         }
-        let Some(h) = self.structures.found(player, building, tile, nav, regs) else {
+        let Some(h) = self
+            .structures
+            .found(player, building, tile, turn, nav, regs)
+        else {
             return false;
         };
         self.economy.spend(player, grub, marrow);
@@ -477,15 +487,19 @@ impl Conquest {
             owner,
             building,
             tile,
+            turn,
             ..
         } = pledge;
         let b = self.structures.buildings()[usize::from(building)];
-        let foot = [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)];
+        let foot = b.footprint(tile, turn);
         let powered = b.flags & NEEDS_POWER == 0 || self.structures.power_reaches(owner, foot);
         let laid = (powered
             && !overgrown(terrain, foot)
-            && self.check(building, tile, nav, regs, terrain).is_ok())
-        .then(|| self.structures.found(owner, building, tile, nav, regs))
+            && self.check(building, tile, turn, nav, regs, terrain).is_ok())
+        .then(|| {
+            self.structures
+                .found(owner, building, tile, turn, nav, regs)
+        })
         .flatten();
         match laid {
             Some(h) => {

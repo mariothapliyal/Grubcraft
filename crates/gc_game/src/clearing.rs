@@ -97,12 +97,7 @@ impl Running {
     /// How a building of `stats` at `tile` sits on the ground, given why it
     /// can't go there if it can't.
     pub fn fit_of(&self, stats: &BuildingStats, tile: (i32, i32), why: Option<&str>) -> Fit {
-        let foot = [
-            tile.0,
-            tile.1,
-            i32::from(stats.width),
-            i32::from(stats.depth),
-        ];
+        let foot = stats.footprint(tile, self.sandbox.building_turn);
         if why.is_some() {
             Fit::Refused
         } else if self.conquest_match() && self.world.overgrown(foot) {
@@ -137,11 +132,11 @@ impl Running {
                 }
             }
         }
-        for (owner, building, tile) in world.pledged() {
+        for (owner, building, tile, turn) in world.pledged() {
             let stats = self.buildings.stats.get(usize::from(building));
             if let Some(stats) = stats.filter(|_| owner == side || self.reveal_all) {
                 let colour = color_of(&self.parties, owner);
-                buildings::push_blueprint(stats, tile, colour, ground, out);
+                buildings::push_blueprint(stats, tile, turn, colour, ground, out);
             }
         }
         if matches!(self.hud.armed, Some(Armed::Clear))

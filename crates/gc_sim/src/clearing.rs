@@ -54,9 +54,9 @@ const HAND: u32 = 100;
 pub struct ClearingView {
     /// The area: north-west tile, width and depth, in tiles.
     pub area: [i32; 4],
-    /// The building (type and north-west tile) it has paid for and will
+    /// The building (type, north-west tile and quarter turns) it has paid for and will
     /// lay on the area once it is cleared, if any.
-    pub then: Option<(BuildingId, (i32, i32))>,
+    pub then: Option<(BuildingId, (i32, i32), u8)>,
 }
 
 /// A building paid for, to be laid once its footprint is cleared.
@@ -65,6 +65,7 @@ pub(crate) struct Pledge {
     pub(crate) owner: PlayerId,
     pub(crate) building: BuildingId,
     pub(crate) tile: (i32, i32),
+    pub(crate) turn: u8,
     pub(crate) grub: u32,
     pub(crate) marrow: u32,
 }
@@ -416,6 +417,7 @@ impl Clearing {
                 h.u16(p.building);
                 h.i32(p.tile.0);
                 h.i32(p.tile.1);
+                h.u8(p.turn);
             }
         }
         h.u32(self.worked.len() as u32);

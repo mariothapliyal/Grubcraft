@@ -259,12 +259,21 @@ impl Writer {
                 self.fx(radius);
             }
             Command::Ready => self.u8(7),
-            Command::SpawnStructure { building, tile } => {
-                self.u8(8);
+            Command::SpawnStructure {
+                building,
+                tile,
+                turn,
+            } => {
+                // A turned one has a tag of its own (format 26), so files
+                // from before turning read as they were.
+                self.u8(if turn == 0 { 8 } else { 25 });
                 self.var(u64::from(building));
                 // Two's complement, as the network sends it.
                 self.var(u64::from(tile.0 as u16));
                 self.var(u64::from(tile.1 as u16));
+                if turn != 0 {
+                    self.u8(turn);
+                }
             }
             Command::AttackStructure {
                 regiment,
@@ -292,19 +301,23 @@ impl Writer {
                 regiment,
                 building,
                 tile,
+                turn,
             } => {
-                self.u8(12);
+                self.u8(if turn == 0 { 12 } else { 26 });
                 self.handle(regiment);
                 self.var(u64::from(building));
                 self.var(u64::from(tile.0 as u16));
                 self.var(u64::from(tile.1 as u16));
+                if turn != 0 {
+                    self.u8(turn);
+                }
             }
             Command::Clear {
                 regiment,
                 tile,
                 size,
             } => {
-                self.u8(25);
+                self.u8(27);
                 self.handle(regiment);
                 self.var(u64::from(tile.0 as u16));
                 self.var(u64::from(tile.1 as u16));
@@ -692,9 +705,10 @@ impl<'a> Reader<'a> {
                 radius: self.fx()?,
             },
             7 => Command::Ready,
-            8 => Command::SpawnStructure {
+            tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                turn: if tag == 25 { self.u8()? } else { 0 },
             },
             9 => Command::AttackStructure {
                 regiment: self.handle()?,
@@ -707,12 +721,13 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 node: self.var_as()?,
             },
-            12 => Command::Build {
+            tag @ (12 | 26) => Command::Build {
                 regiment: self.handle()?,
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                turn: if tag == 26 { self.u8()? } else { 0 },
             },
-            25 => Command::Clear {
+            27 => Command::Clear {
                 regiment: self.handle()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 size: (self.u8()?, self.u8()?),
@@ -840,6 +855,12 @@ mod tests {
             Command::SpawnStructure {
                 building: 3,
                 tile: (-2, 140),
+                turn: 0,
+            },
+            Command::SpawnStructure {
+                building: 4,
+                tile: (12, 7),
+                turn: 3,
             },
             Command::AttackStructure {
                 regiment: RegimentHandle {
@@ -888,6 +909,16 @@ mod tests {
                 },
                 building: 2,
                 tile: (40, -5),
+                turn: 0,
+            },
+            Command::Build {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 1,
+                },
+                building: 2,
+                tile: (40, -5),
+                turn: 1,
             },
             Command::Clear {
                 regiment: RegimentHandle {

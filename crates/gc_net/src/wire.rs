@@ -283,13 +283,18 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.fx(radius);
         }
         Command::Ready => w.u8(7),
-        Command::SpawnStructure { building, tile } => {
+        Command::SpawnStructure {
+            building,
+            tile,
+            turn,
+        } => {
             w.u8(8);
             w.var(u64::from(building));
             // Two's complement, so tiles off the map's north-west edge
             // still travel (and are refused by the sim).
             w.var(u64::from(tile.0 as u16));
             w.var(u64::from(tile.1 as u16));
+            w.u8(turn);
         }
         Command::AttackStructure {
             regiment,
@@ -326,12 +331,14 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             regiment,
             building,
             tile,
+            turn,
         } => {
             w.u8(12);
             w.handle(regiment);
             w.var(u64::from(building));
             w.var(u64::from(tile.0 as u16));
             w.var(u64::from(tile.1 as u16));
+            w.u8(turn);
         }
         Command::Clear {
             regiment,
@@ -466,6 +473,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            turn: r.u8()?,
         },
         9 => Command::AttackStructure {
             regiment: r.handle()?,
@@ -490,6 +498,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            turn: r.u8()?,
         },
         25 => Command::Clear {
             regiment: r.handle()?,
@@ -669,6 +678,7 @@ mod tests {
             Command::SpawnStructure {
                 building: 40,
                 tile: (-1, 4000),
+                turn: 3,
             },
             Command::AttackStructure {
                 regiment: h(3, 1),
@@ -702,6 +712,7 @@ mod tests {
                 regiment: h(4, 2),
                 building: 300,
                 tile: (-3, 4000),
+                turn: 1,
             },
             Command::Clear {
                 regiment: h(4, 2),

@@ -249,7 +249,10 @@ impl Running {
                     self.hud.armed = None;
                 } else {
                     self.hud.armed = Some(Armed::Lay(b));
-                    self.say(format!("Where should the {} go?", self.buildings.name(b)));
+                    self.say(format!(
+                        "Where should the {} go? R or the wheel turns it",
+                        self.buildings.name(b)
+                    ));
                 }
                 return true;
             }
@@ -286,7 +289,9 @@ impl Running {
             self.say(why.into());
             return;
         }
-        let spot = buildings::centre_of(tile, stats.width, stats.depth);
+        let turn = self.sandbox.building_turn;
+        let (width, depth) = stats.size(turn);
+        let spot = buildings::centre_of(tile, width, depth);
         let regiments = &self.world.regiments;
         let Some(regiment) = self.selected_workers().min_by(|&a, &b| {
             let d = |h| {
@@ -302,6 +307,7 @@ impl Running {
             regiment,
             building,
             tile: (tile.0 as i16, tile.1 as i16),
+            turn,
         });
         if !self.input.shift {
             self.set_build_menu(false);

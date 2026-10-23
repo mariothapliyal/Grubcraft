@@ -45,6 +45,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 27: the growth layer and the Clear command (read as growth that
+///   follows the cover);
+/// - 26: turned buildings (their own tags for the build and spawn commands);
 /// - 25: the tower focus command;
 /// - 24: the buildings' 16-bit flags (read as the 8 bits they had), the
 ///   Conquest units' trade pay, the map's neutral trade posts (read as
@@ -77,11 +80,9 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 4: the deployment commands;
 /// - 3: the champions flag (read as no champions);
 /// - 2: the cover layer (read as a map with no woods or grass).
-/// - 26: the growth layer and the Clear command (read as growth that
-///   follows the cover).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 26;
+pub const FORMAT: u16 = 27;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -636,7 +637,7 @@ impl Replay {
         w.bool(self.champions);
     }
 
-    /// The growth layer, just after the map (format 26 on).
+    /// The growth layer, just after the map (format 27 on).
     fn write_growth(&self, w: &mut Writer) {
         w.bytes(&self.growth);
     }
@@ -877,7 +878,7 @@ impl Replay {
             return None;
         }
         let champions = format >= 4 && r.bool()?;
-        let growth = if format >= 26 {
+        let growth = if format >= 27 {
             r.bytes()?.to_vec()
         } else {
             Vec::new()
@@ -1544,6 +1545,7 @@ mod tests {
                             Command::SpawnStructure {
                                 building: 0,
                                 tile: (hx, if p == 0 { 8 } else { 52 }),
+                                turn: 0,
                             },
                         ));
                     }
@@ -1588,6 +1590,7 @@ mod tests {
                             regiment: worker(&world, p).unwrap(),
                             building: 1,
                             tile: (hx + 8, wy),
+                            turn: 0,
                         },
                     )),
                     401 => {

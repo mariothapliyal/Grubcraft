@@ -114,6 +114,7 @@ fn world() -> World {
         Command::SpawnStructure {
             building: HALL,
             tile: (2, 2),
+            turn: 0,
         }
     ));
     w
@@ -239,23 +240,24 @@ fn a_building_on_woods_waits_for_its_ground_to_be_cleared() {
     let mut w = world();
     let worker = spawn(&mut w, WORKER, 18, 18);
     assert!(w.overgrown([20, 20, 2, 2]));
-    assert_eq!(w.can_lay(0, HOUSE, (20, 20)), Ok(()));
+    assert_eq!(w.can_lay(0, HOUSE, (20, 20), 0), Ok(()));
     assert!(order(
         &mut w,
         Command::Build {
             regiment: worker,
             building: HOUSE,
             tile: (20, 20),
+            turn: 0,
         }
     ));
     // Paid for now, but nothing laid yet: the ground comes first.
     assert_eq!(grub(&w), START_GRUB - 60);
     assert_eq!(w.structures().unwrap().iter().count(), 1);
-    assert_eq!(w.pledged().collect::<Vec<_>>(), [(0, HOUSE, (20, 20))]);
+    assert_eq!(w.pledged().collect::<Vec<_>>(), [(0, HOUSE, (20, 20), 0)]);
     let job = w.clearing_of(worker).unwrap();
     assert_eq!(
         (job.area, job.then),
-        ([20, 20, 2, 2], Some((HOUSE, (20, 20))))
+        ([20, 20, 2, 2], Some((HOUSE, (20, 20), 0)))
     );
     let ticks = until(&mut w, 4000, |w| {
         w.structures().unwrap().iter().count() == 2
@@ -281,6 +283,7 @@ fn calling_a_building_off_before_its_ground_is_cleared_pays_it_all_back() {
             regiment: worker,
             building: HOUSE,
             tile: (21, 21),
+            turn: 0,
         }
     ));
     for _ in 0..(5 * TICKS_PER_SECOND) {
@@ -337,13 +340,14 @@ fn cleared_thicket_opens_a_way_through() {
 fn a_building_can_go_up_on_cleared_thicket() {
     let mut w = world();
     let worker = spawn(&mut w, WORKER, 40, 10);
-    assert_eq!(w.can_lay(0, HOUSE, (44, 10)), Ok(()));
+    assert_eq!(w.can_lay(0, HOUSE, (44, 10), 0), Ok(()));
     assert!(order(
         &mut w,
         Command::Build {
             regiment: worker,
             building: HOUSE,
             tile: (44, 10),
+            turn: 0,
         }
     ));
     until(&mut w, 8000, |w| {

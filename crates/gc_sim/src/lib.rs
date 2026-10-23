@@ -104,7 +104,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 26;
+pub const SIM_VERSION: u32 = 27;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -572,11 +572,13 @@ pub enum Command {
     /// every player with a zone is, or when time runs out.
     Ready,
     /// Conquest setup and sandbox: put up a finished building of the
-    /// issuing player's with its north-west tile at `tile` (see
-    /// [`structures`]). Refused where it doesn't fit.
+    /// issuing player's with its north-west tile at `tile`, turned `turn`
+    /// quarter turns clockwise (see [`structures`]). Refused where it
+    /// doesn't fit, or for a turn of [`structures::TURNS`] or more.
     SpawnStructure {
         building: BuildingId,
         tile: (i16, i16),
+        turn: u8,
     },
     /// Close with an enemy building and knock it down. In fog of war, only
     /// one the issuer's side has seen.
@@ -599,13 +601,15 @@ pub enum Command {
         post: TradePost,
     },
     /// Conquest: a worker lays the foundation of a building of type
-    /// `building` with its north-west tile at `tile`, pays for it, and
-    /// builds it (see [`structures`]). Refused where it doesn't fit, before
-    /// its owner's tier allows it, or when they can't pay.
+    /// `building` with its north-west tile at `tile`, turned `turn` quarter
+    /// turns clockwise, pays for it, and builds it (see [`structures`]).
+    /// Refused where it doesn't fit, before its owner's tier allows it,
+    /// when they can't pay, or for a turn of [`structures::TURNS`] or more.
     Build {
         regiment: RegimentHandle,
         building: BuildingId,
         tile: (i16, i16),
+        turn: u8,
     },
     /// Conquest: a worker clears what grows on the `size.0` × `size.1`
     /// tiles from `tile` (north-west corner), at most
@@ -938,15 +942,18 @@ impl World {
     }
 
     /// Whether one of `owner`'s fields of power reaches a building of type
-    /// `building` with its north-west tile at `tile` (Conquest only).
-    pub fn power_reaches(&self, owner: PlayerId, building: BuildingId, tile: (i32, i32)) -> bool {
+    /// `building` with its north-west tile at `tile`, turned `turn` quarter
+    /// turns (Conquest only).
+    pub fn power_reaches(
+        &self,
+        owner: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+    ) -> bool {
         self.structures().is_some_and(|s| {
-            s.buildings().get(usize::from(building)).is_some_and(|b| {
-                s.power_reaches(
-                    owner,
-                    [tile.0, tile.1, i32::from(b.width), i32::from(b.depth)],
-                )
-            })
+            (s.buildings().get(usize::from(building)))
+                .is_some_and(|b| s.power_reaches(owner, b.footprint(tile, turn)))
         })
     }
 
@@ -962,18 +969,20 @@ impl World {
     }
 
     /// Whether `player` could have a worker lay a building of type
-    /// `building` at `tile` now, and if not, why: the check
-    /// [`Command::Build`] makes.
+    /// `building` at `tile`, turned `turn` quarter turns, now, and if not,
+    /// why: the check [`Command::Build`] makes.
     pub fn can_lay(
         &self,
         player: PlayerId,
         building: BuildingId,
         tile: (i32, i32),
+        turn: u8,
     ) -> Result<(), Refusal> {
         self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.can_lay(
             player,
             building,
             tile,
+            turn,
             &self.nav,
             &self.regiments,
             &self.terrain,
@@ -1011,12 +1020,18 @@ impl World {
     }
 
     /// Whether a building of type `building` could go up now with its
-    /// north-west tile at `tile`, and if not, why: the check
-    /// [`Command::SpawnStructure`] makes.
-    pub fn can_build(&self, building: BuildingId, tile: (i32, i32)) -> Result<(), Refusal> {
+    /// north-west tile at `tile`, turned `turn` quarter turns, and if not,
+    /// why: the check [`Command::SpawnStructure`] makes.
+    pub fn can_build(
+        &self,
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+    ) -> Result<(), Refusal> {
         self.conquest.as_ref().ok_or(Refusal::NoBuildings)?.check(
             building,
             tile,
+            turn,
             &self.nav,
             &self.regiments,
             &self.terrain,
@@ -1037,16 +1052,16 @@ impl World {
             .job_of(&self.regiments, self.regiments.resolve(h)?)?;
         Some(clearing::ClearingView {
             area,
-            then: then.map(|p| (p.building, p.tile)),
+            then: then.map(|p| (p.building, p.tile, p.turn)),
         })
     }
 
     /// Every building paid for and waiting on its ground being cleared:
-    /// its owner, type and north-west tile (Conquest only).
-    pub fn pledged(&self) -> impl Iterator<Item = (PlayerId, BuildingId, (i32, i32))> + '_ {
+    /// its owner, type, north-west tile and quarter turns (Conquest only).
+    pub fn pledged(&self) -> impl Iterator<Item = (PlayerId, BuildingId, (i32, i32), u8)> + '_ {
         (self.conquest.iter())
             .flat_map(|c| c.clearing.pledges())
-            .map(|p| (p.owner, p.building, p.tile))
+            .map(|p| (p.owner, p.building, p.tile, p.turn))
     }
 
     /// The node regiment `h` is gathering at, if any (Conquest only).
@@ -1479,30 +1494,44 @@ impl World {
             Command::HandOver { to } => {
                 !self.is_out(pc.player) && !self.is_out(to) && self.stances.hand_over(pc.player, to)
             }
-            Command::SpawnStructure { building, tile } => {
+            Command::SpawnStructure {
+                building,
+                tile,
+                turn,
+            } => {
                 let Some(conquest) = &mut self.conquest else {
                     return false;
                 };
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 if usize::from(pc.player) >= MAX_PARTIES
-                    || (conquest.check(building, tile, &self.nav, &self.regiments, &self.terrain))
+                    || conquest
+                        .check(
+                            building,
+                            tile,
+                            turn,
+                            &self.nav,
+                            &self.regiments,
+                            &self.terrain,
+                        )
                         .is_err()
-                {
-                    return false;
-                }
-                if conquest
-                    .structures
-                    .spawn(pc.player, building, tile, &mut self.nav, &self.regiments)
-                    .is_none()
+                    || conquest
+                        .structures
+                        .spawn(
+                            pc.player,
+                            building,
+                            tile,
+                            turn,
+                            &mut self.nav,
+                            &self.regiments,
+                        )
+                        .is_none()
                 {
                     return false;
                 }
                 // A finished building stands on cleared ground.
-                let b = conquest.structures.buildings()[usize::from(building)];
-                let (w, d) = (i32::from(b.width), i32::from(b.depth));
-                let foot =
-                    (tile.1..tile.1 + d).flat_map(|y| (tile.0..tile.0 + w).map(move |x| (x, y)));
-                self.change_ground(foot);
+                let [x, y, w, d] =
+                    conquest.structures.buildings()[usize::from(building)].footprint(tile, turn);
+                self.change_ground((y..y + d).flat_map(|y| (x..x + w).map(move |x| (x, y))));
                 true
             }
             Command::AttackStructure {
@@ -1565,6 +1594,7 @@ impl World {
                 regiment,
                 building,
                 tile,
+                turn,
             } => {
                 let tile = (i32::from(tile.0), i32::from(tile.1));
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
@@ -1573,6 +1603,7 @@ impl World {
                         r,
                         building,
                         tile,
+                        turn,
                         &mut self.nav,
                         &mut self.regiments,
                         &self.terrain,
@@ -1883,10 +1914,9 @@ impl World {
     }
 
     /// Put the regiments that finished training this tick on the field,
-    /// out of the building's south side and marching to its rally point.
+    /// out of the building's front (its south side as drawn, turned with
+    /// it), facing out of it and marching to its rally point.
     fn raise_trained(&mut self) {
-        // Down the map (scenario::NORTH is up it).
-        const SOUTH: Angle = Angle(0x4000);
         let Some(conquest) = &mut self.conquest else {
             return;
         };
@@ -1896,7 +1926,7 @@ impl World {
             let spawned = self
                 .units
                 .get(usize::from(t.unit))
-                .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, SOUTH, stats));
+                .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, t.facing, stats));
             let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
                 let u = conquest.unit(t.unit);
