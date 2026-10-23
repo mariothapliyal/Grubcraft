@@ -127,6 +127,7 @@
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
 //! at several ages, to look at them.
 
+mod ambient;
 mod army_shape;
 mod buildings;
 mod camera;
@@ -185,9 +186,9 @@ use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::structures::Breaker;
 use gc_sim::{
-    BuildingId, BuildingStats, Capacities, Formation, LOOSE_DEFENCE, MatchSetup, MoraleState,
-    PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView, TIGHT_DEFENCE, UnitId,
-    UnitStats, World,
+    BuildingId, BuildingStats, Capacities, Formation, Growth, LOOSE_DEFENCE, MatchSetup,
+    MoraleState, PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView,
+    TIGHT_DEFENCE, UnitId, UnitStats, World,
 };
 use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::menu::MapPreviewKey;
@@ -317,6 +318,8 @@ const BLOCKED_LIFT: f32 = 0.1;
 /// be at the wall (the simulation lets its front rank reach about two tiles
 /// from it).
 const WALL_REACH: f32 = 3.4;
+/// How far from the tile they clear workers stand and swing, in tiles.
+const CUT_REACH: f32 = 2.4;
 /// A building `--siege` puts up: its name, where (from the camera's focus),
 /// and its attackers: unit, and how far across and south of it they start.
 type SceneBuilding = (&'static str, Vec2, &'static [(&'static str, f32, f32)]);
@@ -396,6 +399,9 @@ struct Options {
     fx: Option<fx_demo::Mode>,
     /// Open on a siege staged in the sandbox, to look at (`--siege`).
     siege: bool,
+    /// Fell the trees round the camera's focus a few seconds in
+    /// (`--fell-demo`), to look at them coming down.
+    fell_demo: bool,
     render: RendererOptions,
 }
 
@@ -421,6 +427,7 @@ fn parse_args() -> Options {
         look: gc_render::LookPreset::default(),
         fx: None,
         siege: false,
+        fell_demo: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -452,6 +459,10 @@ fn parse_args() -> Options {
             } else {
                 fx_demo::Mode::Still
             });
+            continue;
+        }
+        if flag == "--fell-demo" {
+            opts.fell_demo = true;
             continue;
         }
         if flag == "--crash-test" {
@@ -655,6 +666,8 @@ struct Running {
     /// Particles collected this frame (dust, sparks, smoke), handed to the
     /// renderer just before it draws.
     effects: effects::Field,
+    /// The living world: trees coming down as land is cleared.
+    ambient: ambient::Ambient,
     /// Spent arrows stuck in the ground and the fallen.
     arrows: field::Arrows,
     /// Blows on buildings, shots at them, and buildings coming down.
@@ -1441,6 +1454,7 @@ impl App {
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             effects: effects::Field::new(opts.fx),
+            ambient: ambient::Ambient::new(opts.fell_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
             siege_scene: None,
@@ -3146,6 +3160,20 @@ impl Running {
                         let reach = f32::from(b.width.max(b.depth)) / 2.0 + 2.0;
                         (buildings::centre_of(b.tile, b.width, b.depth), reach)
                     });
+                // Workers clearing land swing at the tile they are on.
+                let cutting = self
+                    .world
+                    .clearing_tile_of(r.handle)
+                    .filter(|_| !block.routing)
+                    .map(|tile| {
+                        let wood = self.world.terrain().growth(tile.0, tile.1) != Growth::Scrub;
+                        (
+                            tile,
+                            Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
+                            wood,
+                        )
+                    });
+                let felling = &mut self.ambient.felling;
                 self.puppets
                     .update_on(&block, r.owner, game_dt.as_secs_f32(), firm, |s| {
                         let mut s = s;
@@ -3181,8 +3209,18 @@ impl Running {
                                 s.fight.is_none() && s.speed <= 0.25 && s.pos.distance(c) <= reach
                             })
                             .map(|(c, _)| c);
+                        // At the tile they clear and still: swing at it.
+                        let chopping = cutting.filter(|&(_, c, _)| {
+                            s.fight.is_none() && s.speed <= 0.25 && s.pos.distance(c) <= CUT_REACH
+                        });
+                        let working = working.or(chopping.map(|(_, c, _)| c));
                         let facing =
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
+                        if let Some((tile, _, wood)) = chopping {
+                            felling.cutting(tile, s.pos);
+                            let tool = at + Vec3::new(facing.x * 0.5, 0.9, facing.y * 0.5);
+                            effects.chop(dt, tool, facing, wood);
+                        }
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
                             None if working.is_some() || battering.is_some() => clips
@@ -3307,7 +3345,13 @@ impl Running {
         let fx_speed = if live { SPEEDS[self.speed] } else { 0.0 } * self.effects.time_scale();
         self.renderer.set_effects_speed(fx_speed);
         let density = self.menu.settings().graphics.effects_density();
+        self.fell_demo(dt.as_secs_f32() * fx_speed);
         let heightmap = &self.heightmap;
+        self.ambient
+            .felling
+            .advance(dt.as_secs_f32() * fx_speed, &mut self.effects, |p| {
+                heightmap.height_at(p.x, p.y)
+            });
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
@@ -4104,6 +4148,7 @@ impl Running {
         });
         // A new match on the same map has all its trees again.
         self.scenery.regrow();
+        self.ambient.felling.reset();
         // Before the recorder, which hashes the world as it starts.
         if let Some(plan) = &plan {
             let done = self.world.conquest(&plan.setup());
@@ -5469,9 +5514,11 @@ impl Running {
                     turn: (facing.y.atan2(facing.x) / std::f32::consts::TAU * 256.0) as i32 as u8,
                     scale: 1.0,
                     tint,
+                    lean: 0,
                 })
             });
-        self.scenery.set_extras(nodes.chain(banners));
+        let falling = self.ambient.felling.extras(|p| ground_of(map, p));
+        self.scenery.set_extras(nodes.chain(banners).chain(falling));
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }

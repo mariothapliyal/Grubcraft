@@ -180,6 +180,14 @@ impl Clearing {
         (regs.alive[r] && regs.generation[r] == job.generation).then_some(job)
     }
 
+    /// The tile worker slot `r` is working right now: at it and clearing,
+    /// not still walking up. Read only, for the game to show the work.
+    pub(crate) fn working_tile(&self, regs: &Regiments, r: usize, side: u32) -> Option<(i32, i32)> {
+        let t = self.live(regs, r)?.at?;
+        self.worked.binary_search_by_key(&t, |w| w.0).ok()?;
+        Some(((t % side) as i32, (t / side) as i32))
+    }
+
     /// Every building paid for and waiting on its footprint being cleared.
     pub(crate) fn pledges(&self) -> impl Iterator<Item = Pledge> + '_ {
         self.job.iter().flatten().filter_map(|j| j.then)

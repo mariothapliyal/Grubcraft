@@ -583,6 +583,7 @@ pub fn node_look(n: &gc_sim::NodeView, ground: impl Fn(Vec2) -> f32) -> Extra {
         turn: (at.x * 37.0 + at.y * 91.0) as i64 as u8,
         scale: NODE_MODEL_SCALE * node_fill(n),
         tint: [shade; 3],
+        lean: 0,
     }
 }
 

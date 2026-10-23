@@ -58,10 +58,31 @@ fn gust(xz: vec2<f32>, phase: f32) -> vec2<f32> {
     return WIND_DIR * (lean + flutter) + across * (flutter * 0.8);
 }
 
+// How far an instance is tipped over about its base, toward the way it
+// faces: the second byte of `kind`, 0 (upright) to 255 (lying down), for
+// trees coming down. Radians.
+fn tip_of(kind: u32) -> f32 {
+    return f32((kind >> 8u) & 255u) * (1.5707964 / 255.0);
+}
+
+// A point (or normal) of the model's own space, tipped over by `tip` about
+// the x axis toward +z.
+fn tipped(p: vec3<f32>, tip: f32) -> vec3<f32> {
+    let s = sin(tip);
+    let c = cos(tip);
+    return vec3<f32>(p.x, p.y * c - p.z * s, p.z * c + p.y * s);
+}
+
 // Where one vertex of one instance stands, and its normal.
 fn place(v: SceneryIn) -> vec3<f32> {
     let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
+    var local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
+    let tip = tip_of(v.kind);
+    if tip > 0.0 {
+        local = tipped(local, tip);
+        // A crown lying down rests on the ground rather than in it.
+        local.y = max(local.y, 0.0);
+    }
     let flat_xz = v.at + left * local.x + v.facing * local.z;
     // The whole model stands at the height under its base; it is not draped.
     let ground = max(surface_height(v.at), g.misc.x - 0.05);
@@ -77,17 +98,22 @@ fn place(v: SceneryIn) -> vec3<f32> {
 fn vs_scenery(v: SceneryIn) -> SceneryOut {
     let world = place(v);
     let left = vec2<f32>(v.facing.y, -v.facing.x);
-    let n_xz = left * v.normal.x + v.facing * v.normal.z;
+    var nl = v.normal.xyz;
+    let tip = tip_of(v.kind);
+    if tip > 0.0 {
+        nl = tipped(nl, tip);
+    }
+    let n_xz = left * nl.x + v.facing * nl.z;
     var out: SceneryOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
     out.world = world;
-    out.normal = normalize(vec3<f32>(n_xz.x, v.normal.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
+    out.normal = normalize(vec3<f32>(n_xz.x, nl.y, n_xz.y) + vec3<f32>(0.0, 1e-4, 0.0));
     out.color = min(v.color.rgb * v.tint.rgb * 2.0, vec3<f32>(1.0));
     out.leafy = select(0.0, 1.0, v.color.a > 0.0);
     out.local = vec3<f32>(v.pos.xyz) * (v.scale / POSITION_SCALE);
     out.normal_local = v.normal.xyz;
     out.facing = v.facing;
-    out.kind = v.kind;
+    out.kind = v.kind & 255u;
     out.occ = max(v.normal.w, 0.0);
     out.leaf = smoothstep(0.0, 0.06, v.color.g - max(v.color.r, v.color.b) * 0.95);
     return out;
