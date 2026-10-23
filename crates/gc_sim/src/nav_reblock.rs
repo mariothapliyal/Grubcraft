@@ -34,10 +34,7 @@ use core::ops::Range;
 use alloc::sync::Arc;
 use gc_fixed::{Fx, FxVec2};
 
-use super::{
-    BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, Grid, Nav, Route,
-    SECTOR, Search,
-};
+use super::{BLOCKED, CELLS_PER_TILE, CLEAR_CAP, CLEARANCE, Grid, Nav, Route, SECTOR, Search};
 use crate::regiments::Regiments;
 
 /// Buildings put up or pulled down together whose footprints fit in a box
@@ -478,7 +475,13 @@ impl Grid {
         let costs: Vec<Vec<u32>> = dirty
             .iter()
             .enumerate()
-            .map(|(s, &d)| if d { self.sector_costs(search, s) } else { Vec::new() })
+            .map(|(s, &d)| {
+                if d {
+                    self.sector_costs(search, s)
+                } else {
+                    Vec::new()
+                }
+            })
             .collect();
         let (mut first, mut to, mut cost) = (
             Vec::with_capacity(nodes + 1),

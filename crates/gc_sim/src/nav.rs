@@ -213,13 +213,7 @@ impl Grid {
 
     /// Whether a route can go from `a` to `b` by way of `m` keeping `need`
     /// from blocked ground on ground costing no more than `max_cost`.
-    fn legs_keep(
-        &self,
-        [a, m, b]: [FxVec2; 3],
-        need: u8,
-        max_cost: u8,
-        work: &mut u32,
-    ) -> bool {
+    fn legs_keep(&self, [a, m, b]: [FxVec2; 3], need: u8, max_cost: u8, work: &mut u32) -> bool {
         self.segment_within(a, m, need, max_cost, work)
             && self.segment_within(m, b, need, max_cost, work)
     }
@@ -384,7 +378,10 @@ impl Grid {
         }
         while x != ex || y != ey {
             *work += 1;
-            let (tx, ty) = (i128::from(bx) * i128::from(ady), i128::from(by) * i128::from(adx));
+            let (tx, ty) = (
+                i128::from(bx) * i128::from(ady),
+                i128::from(by) * i128::from(adx),
+            );
             let step_x = sx != 0 && x != ex && (sy == 0 || y == ey || tx <= ty);
             let step_y = sy != 0 && y != ey && (sx == 0 || x == ex || ty <= tx);
             if step_x && step_y {
@@ -644,7 +641,11 @@ impl Search {
         for y in y0..y1 {
             for x in x0..x1 {
                 let c = grid.idx(x, y);
-                let w = if grid.open_cell(c) { grid.weight(c, berth) } else { 0 };
+                let w = if grid.open_cell(c) {
+                    grid.weight(c, berth)
+                } else {
+                    0
+                };
                 self.weights[((y - y0) * SECTOR + (x - x0)) as usize] = w;
             }
         }
@@ -1344,10 +1345,7 @@ impl Nav {
             return Some(to);
         }
         let d = to - from;
-        let (along_x, along_y) = (
-            FxVec2::new(to.x, from.y),
-            FxVec2::new(from.x, to.y),
-        );
+        let (along_x, along_y) = (FxVec2::new(to.x, from.y), FxVec2::new(from.x, to.y));
         let tries = if d.x.abs() >= d.y.abs() {
             [along_x, along_y]
         } else {
@@ -1506,7 +1504,16 @@ fn find(
             prev = c;
         }
     }
-    let (n, partial) = smooth(grid, s, lead, start_point, goal_point, truncated, berth, out);
+    let (n, partial) = smooth(
+        grid,
+        s,
+        lead,
+        start_point,
+        goal_point,
+        truncated,
+        berth,
+        out,
+    );
     if via_portals {
         spread_through_portals(grid, s, usize::from(lead), from, n, berth, out);
     }
@@ -1766,22 +1773,23 @@ impl Grid {
         let mut pair_first = Vec::with_capacity(2 * (self.sectors * self.sectors) as usize + 1);
         pair_first.push(0);
         let clear = &self.clear;
-        let add_run = |pairs: &mut Vec<(u32, u32)>, a: i32, b: i32, cells: &dyn Fn(i32) -> (u32, u32)| {
-            let len = b - a;
-            let pieces = (len + PORTAL_SPAN - 1) / PORTAL_SPAN;
-            for j in 0..pieces {
-                let (pa, pb) = (a + j * len / pieces, a + (j + 1) * len / pieces);
-                let middle = (pa + pb - 1) / 2;
-                let room = |t: i32| {
-                    let (u, v) = cells(t);
-                    clear[u as usize].min(clear[v as usize])
-                };
-                let best = (pa..pb)
-                    .max_by_key(|&t| (room(t), -(t - middle).abs(), -t))
-                    .unwrap_or(middle);
-                pairs.push(cells(best));
-            }
-        };
+        let add_run =
+            |pairs: &mut Vec<(u32, u32)>, a: i32, b: i32, cells: &dyn Fn(i32) -> (u32, u32)| {
+                let len = b - a;
+                let pieces = (len + PORTAL_SPAN - 1) / PORTAL_SPAN;
+                for j in 0..pieces {
+                    let (pa, pb) = (a + j * len / pieces, a + (j + 1) * len / pieces);
+                    let middle = (pa + pb - 1) / 2;
+                    let room = |t: i32| {
+                        let (u, v) = cells(t);
+                        clear[u as usize].min(clear[v as usize])
+                    };
+                    let best = (pa..pb)
+                        .max_by_key(|&t| (room(t), -(t - middle).abs(), -t))
+                        .unwrap_or(middle);
+                    pairs.push(cells(best));
+                }
+            };
         for s in 0..self.sectors * self.sectors {
             let (x0, y0, x1, y1) = self.sector_bounds(s as u32);
             // The edge to the east neighbour, then the one to the south.
@@ -1872,7 +1880,11 @@ impl Grid {
             .map(|sec| self.sector_costs(search, sec))
             .collect();
         let place = reblock::places(&self.sector_first, &self.sector_nodes, partner.len());
-        let (mut first, mut to, mut cost) = (Vec::with_capacity(partner.len() + 1), Vec::new(), Vec::new());
+        let (mut first, mut to, mut cost) = (
+            Vec::with_capacity(partner.len() + 1),
+            Vec::new(),
+            Vec::new(),
+        );
         first.push(0);
         for (u, &p) in partner.iter().enumerate() {
             self.link_across(u, p, &mut to, &mut cost);
@@ -1888,13 +1900,25 @@ impl Grid {
     /// Node `u`'s first link: to its partner `p` across the sector edge.
     fn link_across(&self, u: usize, p: u32, to: &mut Vec<u32>, cost: &mut Vec<u32>) {
         to.push(p);
-        cost.push(self.step_cost(self.node_cell[u], self.node_cell[p as usize], false, GRAPH_BERTH));
+        cost.push(self.step_cost(
+            self.node_cell[u],
+            self.node_cell[p as usize],
+            false,
+            GRAPH_BERTH,
+        ));
     }
 
     /// Node `u`'s links to the other nodes it can reach inside its sector,
     /// in their order there, from the sector's [`Grid::sector_costs`];
     /// `place` is `u`'s own place in that order.
-    fn link_within(&self, u: usize, place: u32, costs: &[u32], to: &mut Vec<u32>, cost: &mut Vec<u32>) {
+    fn link_within(
+        &self,
+        u: usize,
+        place: u32,
+        costs: &[u32],
+        to: &mut Vec<u32>,
+        cost: &mut Vec<u32>,
+    ) {
         let nodes = self.nodes_in(self.sector_of(self.node_cell[u]) as usize);
         let row = &costs[place as usize * nodes.len()..][..nodes.len()];
         for (k, (&v, &c)) in nodes.iter().zip(row).enumerate() {

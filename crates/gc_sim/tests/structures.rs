@@ -213,7 +213,10 @@ fn armies_march_through_the_gaps_between_buildings() {
             ticks < 20 * TICKS_PER_SECOND,
             "{gap}-tile gaps: took {ticks} ticks"
         );
-        assert!(narrowest <= 2, "{gap}-tile gaps: never narrowed ({narrowest})");
+        assert!(
+            narrowest <= 2,
+            "{gap}-tile gaps: never narrowed ({narrowest})"
+        );
     }
 }
 
