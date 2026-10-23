@@ -12,7 +12,8 @@ use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
 use gc_replay::ConquestRecord;
-use gc_sim::clearing::ClearStyle;
+use gc_sim::Growth::{Thicket, Woods};
+use gc_sim::clearing::{ClearStyle, clear_ticks};
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
@@ -155,11 +156,10 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
 /// the Choir shatters it (thicket as fast as woods, nothing to haul), and
 /// the Brood's Gnawers eat it (slower, and scrub feeds them too).
 pub fn clear_style(f: Faction) -> ClearStyle {
-    let standard = ClearStyle::STANDARD;
     match f {
         Faction::EmberClans => ClearStyle {
             pays: [0, 5, 8],
-            ..standard
+            ..ClearStyle::STANDARD
         },
         Faction::CarrionConcord => ClearStyle {
             pace: [50; 3],
@@ -167,8 +167,12 @@ pub fn clear_style(f: Faction) -> ClearStyle {
             burns: true,
         },
         Faction::Choir => ClearStyle {
-            // Thicket in woods' 8 s of its own 15 s.
-            pace: [100, 100, 53],
+            // Thicket in the time woods take.
+            pace: [
+                100,
+                100,
+                (clear_ticks(Woods) * 100 / clear_ticks(Thicket)) as u16,
+            ],
             pays: [0; 3],
             burns: false,
         },
@@ -567,6 +571,25 @@ mod tests {
 
     fn data() -> GameData<'static> {
         crate::data::load()
+    }
+
+    /// The clearing twists are the table in docs/32-changing-land.md, and
+    /// every faction's workers carry their own.
+    #[test]
+    fn clearing_styles_match_the_changing_land_doc() {
+        let table = [
+            (Faction::EmberClans, [100, 100, 100], [0, 5, 8], false),
+            (Faction::CarrionConcord, [50, 50, 50], [0, 0, 0], true),
+            (Faction::Choir, [100, 100, 53], [0, 0, 0], false),
+            (Faction::Brood, [150, 150, 150], [1, 3, 5], false),
+        ];
+        for (f, pace, pays, burns) in table {
+            assert_eq!(clear_style(f), ClearStyle { pace, pays, burns }, "{f:?}");
+        }
+        let data = data();
+        for (record, unit) in data.conquest_units.iter().zip(units_of(&data)) {
+            assert_eq!(unit.clearing, clear_style(record.faction()));
+        }
     }
 
     /// A fresh Conquest world on `map` for `factions`, and its plan.

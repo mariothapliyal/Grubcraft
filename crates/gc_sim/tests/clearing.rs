@@ -3,7 +3,7 @@
 //! cleared ground is open.
 
 use gc_fixed::FxVec2;
-use gc_sim::clearing::{ClearStyle, MAX_CLEAR_SIDE, clear_ticks, timber};
+use gc_sim::clearing::{ClearStyle, MAX_CLEAR_SIDE, clear_ticks};
 use gc_sim::events::Event;
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
@@ -223,7 +223,10 @@ fn felled_woods_pay_timber() {
     let worker = spawn(&mut w, WORKER, 18, 18);
     assert!(clear(&mut w, worker, (20, 20), (2, 1)));
     until(&mut w, 4000, |w| all_open(w, [20, 20, 2, 1]));
-    assert_eq!(grub(&w), START_GRUB + 2 * timber(Growth::Woods));
+    assert_eq!(
+        grub(&w),
+        START_GRUB + 2 * ClearStyle::STANDARD.pays(Growth::Woods)
+    );
     assert_eq!(w.terrain().cover(FxVec2::from_ints(20, 20)), Cover::Open);
     // The rest of the wood still stands.
     assert_eq!(w.terrain().growth(22, 20), Growth::Woods);
@@ -273,7 +276,10 @@ fn a_building_on_woods_waits_for_its_ground_to_be_cleared() {
     assert!(all_open(&w, [20, 20, 2, 2]));
     assert_eq!(w.terrain().growth(22, 20), Growth::Woods);
     // The timber, and the worker went on to build it.
-    assert_eq!(grub(&w), START_GRUB - 60 + 4 * timber(Growth::Woods));
+    assert_eq!(
+        grub(&w),
+        START_GRUB - 60 + 4 * ClearStyle::STANDARD.pays(Growth::Woods)
+    );
     assert!(w.pledged().next().is_none());
     until(&mut w, 2000, |w| {
         w.structures().unwrap().iter().all(|s| s.finished())
@@ -419,57 +425,57 @@ const WOODS: [i32; 4] = [20, 20, 2, 2];
 const THICKET: [i32; 4] = [44, 30, 2, 1];
 
 #[test]
-fn faction_twists_change_the_pace_and_the_pay() {
+fn clearing_styles_change_the_pace_and_the_pay() {
     use gc_sim::Growth::{Thicket, Woods};
     let (standard, pay, burnt) = clear_in(ClearStyle::STANDARD, WOODS);
-    assert_eq!(pay, 4 * timber(Woods));
+    assert_eq!(pay, 4 * ClearStyle::STANDARD.pays(Woods));
     assert!(!burnt);
-    // Ember Clans: more timber from each tree.
-    let clans = ClearStyle {
+    // More timber from each tree (like the Ember Clans').
+    let more = ClearStyle {
         pays: [0, 5, 8],
         ..ClearStyle::STANDARD
     };
-    let (ticks, pay, _) = clear_in(clans, WOODS);
-    assert_eq!(pay, 4 * clans.pays(Woods));
+    let (ticks, pay, _) = clear_in(more, WOODS);
+    assert_eq!(pay, 4 * more.pays(Woods));
     assert_eq!(ticks, standard);
-    // Carrion Concord: burns it, twice as fast, for nothing.
-    let concord = ClearStyle {
+    // Burning: twice as fast, for nothing (like the Concord's).
+    let burning = ClearStyle {
         pace: [50; 3],
         pays: [0; 3],
         burns: true,
     };
-    let (ticks, pay, burnt) = clear_in(concord, WOODS);
+    let (ticks, pay, burnt) = clear_in(burning, WOODS);
     assert_eq!(pay, 0);
     assert!(burnt);
     let work = 4 * clear_ticks(Woods);
     assert!(
         ticks + work / 2 < standard + work / 10,
-        "concord {ticks}, standard {standard}"
+        "burning {ticks}, standard {standard}"
     );
-    // Brood: half again as long, but pays a little even for scrub.
-    let brood = ClearStyle {
+    // Half again as long (like the Brood's).
+    let slow = ClearStyle {
         pace: [150; 3],
         pays: [1, 3, 5],
         ..ClearStyle::STANDARD
     };
-    let (ticks, _, _) = clear_in(brood, WOODS);
+    let (ticks, _, _) = clear_in(slow, WOODS);
     assert!(
         ticks > standard + work * 4 / 10,
-        "brood {ticks}, standard {standard}"
+        "slow {ticks}, standard {standard}"
     );
-    // Choir: shatters thicket in about half the time.
-    let choir = ClearStyle {
+    // Thicket in about half the time (like the Choir's).
+    let shatter = ClearStyle {
         pace: [100, 100, 53],
         pays: [0; 3],
         burns: false,
     };
-    let (slow, _, _) = clear_in(ClearStyle::STANDARD, THICKET);
-    let (fast, _, _) = clear_in(choir, THICKET);
+    let (standard_thicket, _, _) = clear_in(ClearStyle::STANDARD, THICKET);
+    let (fast, _, _) = clear_in(shatter, THICKET);
     let thicket = 2 * clear_ticks(Thicket);
     assert!(
-        fast + thicket * 4 / 10 < slow,
-        "choir {fast}, standard {slow}"
+        fast + thicket * 4 / 10 < standard_thicket,
+        "shatter {fast}, standard {standard_thicket}"
     );
     // ... but woods at the standard pace.
-    assert_eq!(clear_in(choir, WOODS).0, standard);
+    assert_eq!(clear_in(shatter, WOODS).0, standard);
 }

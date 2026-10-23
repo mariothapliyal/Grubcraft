@@ -8,7 +8,7 @@
 //! same tile share its work. A worker ordered to build on overgrown ground
 //! clears the footprint first, having paid; then it steps off the footprint
 //! and lays the foundation. Felled woods and thicket pay a little Grub
-//! ([`timber`]).
+//! ([`ClearStyle::pays`]).
 //!
 //! This module only decides which tiles are cleared in a tick
 //! ([`Clearing::cleared`]); the world changes the ground
@@ -68,13 +68,9 @@ impl ClearStyle {
         Self::index(growth).map_or(100, |i| u32::from(self.pace[i]).max(1))
     }
 
+    /// Where `growth` is in the arrays (scrub, woods, thicket follow open).
     fn index(growth: Growth) -> Option<usize> {
-        match growth {
-            Growth::Open => None,
-            Growth::Scrub => Some(0),
-            Growth::Woods => Some(1),
-            Growth::Thicket => Some(2),
-        }
+        (growth as usize).checked_sub(1)
     }
 }
 
@@ -82,12 +78,6 @@ impl Default for ClearStyle {
     fn default() -> ClearStyle {
         ClearStyle::STANDARD
     }
-}
-
-/// Grub the timber from a cleared tile of `growth` pays a worker that
-/// clears the standard way.
-pub fn timber(growth: Growth) -> u32 {
-    ClearStyle::STANDARD.pays(growth)
 }
 
 /// Tiles a worker may give up on in one order before it stops.
