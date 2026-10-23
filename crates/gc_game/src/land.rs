@@ -166,15 +166,18 @@ pub(crate) fn sources(
         let s = structures.get(f.building).filter(|s| shown(s))?;
         Some(source(LAND_CHOIR, &s, f.reach as f32, None))
     });
-    let settled = structures.iter().filter_map(|s| {
-        let kind = match table.faction(s.building)? {
-            Faction::EmberClans => LAND_CLANS,
-            Faction::CarrionConcord => LAND_CONCORD,
-            _ => return None,
-        };
-        let reach = settled_reach(table.stats.get(usize::from(s.building))?.role)?;
-        (s.finished() && shown(&s)).then(|| source(kind, &s, reach, None))
-    });
+    let settled = structures
+        .iter()
+        .filter(|s| s.finished() && shown(s))
+        .filter_map(|s| {
+            let kind = match table.faction(s.building)? {
+                Faction::EmberClans => LAND_CLANS,
+                Faction::CarrionConcord => LAND_CONCORD,
+                _ => return None,
+            };
+            let reach = settled_reach(table.stats.get(usize::from(s.building))?.role)?;
+            Some(source(kind, &s, reach, None))
+        });
     veins.chain(fields).chain(settled).collect()
 }
 
@@ -184,8 +187,10 @@ fn settled_reach(role: Role) -> Option<f32> {
     match role {
         Role::Main => Some(MAIN_REACH),
         Role::Outpost => Some(OUTPOST_REACH),
-        Role::Wall | Role::Defence => None,
-        _ => Some(OTHER_REACH),
+        Role::Housing | Role::Economy | Role::Production | Role::Tech | Role::Heroes => {
+            Some(OTHER_REACH)
+        }
+        Role::Defence | Role::Wall => None,
     }
 }
 
@@ -401,5 +406,24 @@ mod tests {
         );
         // A lost source moves it again.
         assert!(land.step(64, &[], 0.25).moved);
+    }
+
+    #[test]
+    fn where_two_lands_overlap_the_one_with_more_cover_takes_the_tile() {
+        let clans = Source {
+            kind: LAND_CLANS,
+            centre: Vec2::new(52.0, 32.0),
+            ..hive()
+        };
+        for sources in [[hive(), clans], [clans, hive()]] {
+            let mut land = Land::default();
+            land.step(64, &sources, f32::INFINITY);
+            // Each keeps the tiles by its own building, and where one's
+            // cover has thinned the other's takes over, in either order.
+            assert_eq!(texel(&land, 32, 32)[1], LAND_BROOD);
+            assert_eq!(texel(&land, 34, 32)[1], LAND_BROOD);
+            assert_eq!(texel(&land, 52, 32)[1], LAND_CLANS);
+            assert_eq!(texel(&land, 46, 32)[1], LAND_CLANS);
+        }
     }
 }
