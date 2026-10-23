@@ -25,22 +25,22 @@ struct SceneryIn {
 
 struct SceneryOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) world: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec3<f32>,
+    @location(0) @interpolate(perspective, centroid) world: vec3<f32>,
+    @location(1) @interpolate(perspective, centroid) normal: vec3<f32>,
+    @location(2) @interpolate(perspective, centroid) color: vec3<f32>,
     // 1 for leaves and blades (what moves in the wind), 0 for rocks and bases.
-    @location(3) leafy: f32,
+    @location(3) @interpolate(perspective, centroid) leafy: f32,
     // The position and normal in the model's own space (scaled to tiles, not
     // turned), which the detail textures stick to, the way the model faces,
     // and its kind.
-    @location(4) local: vec3<f32>,
-    @location(5) normal_local: vec3<f32>,
-    @location(6) facing: vec2<f32>,
+    @location(4) @interpolate(perspective, centroid) local: vec3<f32>,
+    @location(5) @interpolate(perspective, centroid) normal_local: vec3<f32>,
+    @location(6) @interpolate(perspective, centroid) facing: vec2<f32>,
     @location(7) @interpolate(flat) kind: u32,
     // How green the baked colour is, 0 (bark) to 1 (leaf), before the tint.
-    @location(8) leaf: f32,
+    @location(8) @interpolate(perspective, centroid) leaf: f32,
     // Close-range occlusion baked into the vertex, 0 (open) to 1 (shut).
-    @location(9) occ: f32,
+    @location(9) @interpolate(perspective, centroid) occ: f32,
 };
 
 // How the wind pushes things at `xz` right now: a unit-ish vector along the

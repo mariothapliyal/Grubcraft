@@ -111,8 +111,8 @@
 //! (Field Battles, replays and network matches still play on seeded maps,
 //! and switch to one);
 //! `--overlay` starts with the dev overlay shown; `--no-audio` never opens
-//! the sound card; `--no-shadows` and `--no-glow` turn off the sun's
-//! shadows and the glow around bright light; `--latency 1|2|3` sets
+//! the sound card; `--no-shadows`, `--no-glow` and `--no-aa` turn off the sun's
+//! shadows, the glow around bright light and the anti-aliasing; `--latency 1|2|3` sets
 //! frames in flight; `--render-scale F` renders at a
 //! fraction of the window's pixels; `--draw all|terrain|blocks|none` turns
 //! parts of the frame off to measure what they cost; `--lod 0..3` draws
@@ -391,6 +391,8 @@ struct Options {
     viewer: Option<String>,
     /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
     look: gc_render::LookPreset,
+    /// How far the camera starts from the ground (`--distance 14..260`).
+    distance: Option<f32>,
     /// Set off every effect at the camera's focus (`--fx-demo`, or
     /// `--fx-still` to stop time).
     fx: Option<fx_demo::Mode>,
@@ -419,6 +421,7 @@ fn parse_args() -> Options {
         showroom_clip: None,
         viewer: None,
         look: gc_render::LookPreset::default(),
+        distance: None,
         fx: None,
         siege: false,
         render: RendererOptions::default(),
@@ -464,6 +467,10 @@ fn parse_args() -> Options {
         }
         if flag == "--no-shadows" {
             opts.render.shadows = false;
+            continue;
+        }
+        if flag == "--no-aa" {
+            opts.render.msaa = 1;
             continue;
         }
         if flag == "--no-glow" {
@@ -533,6 +540,13 @@ fn parse_args() -> Options {
             "--look" => gc_render::LookPreset::from_name(&value)
                 .map(|p| opts.look = p)
                 .is_some(),
+            "--distance" => match value.parse::<f32>() {
+                Ok(v) if (camera::MIN_DISTANCE..=camera::MAX_DISTANCE).contains(&v) => {
+                    opts.distance = Some(v);
+                    true
+                }
+                _ => false,
+            },
             "--showroom-clip" => showroom::Clip::parse(&value)
                 .map(|c| opts.showroom_clip = Some(c))
                 .is_some(),
@@ -610,8 +624,8 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -622,6 +636,8 @@ struct Running {
     renderer: Renderer,
     /// The light the renderer is set to (F9 steps through them).
     look: gc_render::LookPreset,
+    /// How far the camera starts from the ground when `--distance` says.
+    start_distance: Option<f32>,
     camera: RtsCamera,
     /// Set while riding with a regiment; that camera is then the one in use.
     ride: Option<Ride>,
@@ -1424,6 +1440,7 @@ impl App {
             window,
             renderer,
             look: opts.look,
+            start_distance: opts.distance,
             camera,
             ride: None,
             heightmap,
@@ -3312,6 +3329,7 @@ impl Running {
             dt.as_secs_f32() * fx_speed,
             density,
             self.camera.focus,
+            self.camera.distance,
             |p| heightmap.height_at(p.x, p.y),
         );
         if self.effects.still() {
@@ -4318,7 +4336,8 @@ impl Running {
         let focus = set.my_start + set.my_forward * 18.0;
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.set_distance(120.0);
+        self.camera
+            .set_distance(self.start_distance.unwrap_or(120.0));
         // A joiner who starts in the north looks south, towards the enemy.
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
@@ -4391,7 +4410,8 @@ impl Running {
             });
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.set_distance(80.0);
+        self.camera
+            .set_distance(self.start_distance.unwrap_or(80.0));
     }
 
     /// Set up watching `replay`: everyone's regiments in view, the sides
@@ -4425,7 +4445,8 @@ impl Running {
         };
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
-        self.camera.set_distance(120.0);
+        self.camera
+            .set_distance(self.start_distance.unwrap_or(120.0));
         self.watching = Some(Watching {
             title: replays::title(&replay.info()),
             replay,

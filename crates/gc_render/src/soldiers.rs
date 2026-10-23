@@ -87,6 +87,26 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
     },
 ];
 
+/// What the contact shadow reads of an instance: where it stands, how high
+/// it is lifted and how big it is.
+const CONTACT_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: offset_of!(SoldierInstance, pos) as u64,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32,
+        offset: offset_of!(SoldierInstance, lift) as u64,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32,
+        offset: offset_of!(SoldierInstance, scale) as u64,
+        shader_location: 2,
+    },
+];
+
 /// The tone byte (the last of [`SoldierInstance::color`]) that leaves a
 /// soldier as painted.
 pub const TONE_NEUTRAL: u8 = 128;
@@ -415,6 +435,8 @@ pub(crate) struct SoldiersGpu {
     pub textured_pipeline: wgpu::RenderPipeline,
     /// Depth only, for the sun's shadow map; any model.
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// A soft dark patch on the ground under every soldier.
+    contact_pipeline: wgpu::RenderPipeline,
     /// Poses every soldier's vertices before the passes that draw them.
     skin_pipeline: wgpu::ComputePipeline,
     pub models_layout: wgpu::BindGroupLayout,
@@ -434,7 +456,7 @@ pub(crate) fn make(
     device: &wgpu::Device,
     world_layout: &wgpu::BindGroupLayout,
     shader: &wgpu::ShaderModule,
-    format: wgpu::TextureFormat,
+    hdr: crate::Hdr,
 ) -> SoldiersGpu {
     let materials = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -551,7 +573,7 @@ pub(crate) fn make(
                 ..Default::default()
             },
             depth_stencil: Some(target.depth_state()),
-            multisample: Default::default(),
+            multisample: target.multisample(),
             fragment: fs.map(|fs| wgpu::FragmentState {
                 module: shader,
                 entry_point: Some(fs),
@@ -579,7 +601,7 @@ pub(crate) fn make(
     let textured_pipeline = pipeline(
         "textured soldiers",
         "vs_soldier_textured",
-        crate::Target::Color(format, "fs_soldier_textured"),
+        crate::Target::Color(hdr, "fs_soldier_textured"),
         Some(wgpu::Face::Back),
         &buffers,
     );
@@ -594,10 +616,70 @@ pub(crate) fn make(
     let pipeline = pipeline(
         "soldiers",
         "vs_soldier",
-        crate::Target::Color(format, "fs_soldier"),
+        crate::Target::Color(hdr, "fs_soldier"),
         None,
         &buffers,
     );
+    // Under each soldier a quad on the ground, darkening what is below it.
+    // It needs only the instance's place, lift and size.
+    let contact_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("soldier contact shadows"),
+        bind_group_layouts: &[Some(world_layout)],
+        immediate_size: 0,
+    });
+    let contact_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("soldier contact shadows"),
+        layout: Some(&contact_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_contact"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<SoldierInstance>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &CONTACT_ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            cull_mode: None,
+            ..Default::default()
+        },
+        // Tested against the soldiers and the ground, writing nothing; a
+        // little toward the camera so the ground's coarser triangles at a
+        // distance do not cut it.
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias: wgpu::DepthBiasState {
+                constant: -4,
+                slope_scale: -2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: hdr.multisample(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_contact"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: hdr.format,
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent::OVER,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
     let instances = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("soldier instances"),
         size: (MAX_SOLDIER_INSTANCES * size_of::<SoldierInstance>()) as u64,
@@ -610,6 +692,7 @@ pub(crate) fn make(
         pipeline,
         textured_pipeline,
         shadow_pipeline,
+        contact_pipeline,
         skin_pipeline,
         models_layout,
         skin_layout,
@@ -810,6 +893,31 @@ impl SoldiersGpu {
             tris += u64::from(len / 3) * u64::from(d.end - d.first);
         }
         (calls, drawn, tris)
+    }
+}
+
+impl SoldiersGpu {
+    /// Soft dark patches on the ground under every soldier drawn, after the
+    /// soldiers (so they are hidden behind them); the number of draw calls.
+    pub fn draw_contacts(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        if self.draws.is_empty() {
+            return 0;
+        }
+        pass.set_pipeline(&self.contact_pipeline);
+        pass.set_vertex_buffer(0, self.instances.slice(..));
+        let mut calls = 0;
+        // Adjacent runs (the draws come in instance order) go in one call.
+        let mut run = self.draws[0].first..self.draws[0].first;
+        for d in &self.draws {
+            if d.first != run.end {
+                pass.draw(0..4, run.clone());
+                calls += 1;
+                run.start = d.first;
+            }
+            run.end = d.end;
+        }
+        pass.draw(0..4, run);
+        calls + 1
     }
 }
 
