@@ -29,15 +29,25 @@ pub const SKIN_VERTICES: usize = 4 << 20;
 /// Vertices the skinned buffers start with; they grow to the next power of
 /// two when a frame needs more (never shrinking), up to `SKIN_VERTICES`.
 const SKIN_START: usize = 256 << 10;
-/// Threads in a workgroup of `cs_skin`.
+/// Threads in a workgroup of `cs_skin` and `cs_pose`.
 const SKIN_GROUP: u32 = 128;
 /// Runs of soldiers one skinning pass can be told of (`Jobs` in world.wgsl):
-/// one per model and level of detail, buildings included. 1023 fills the
-/// 16 KB uniform buffer every GPU must allow.
+/// one per model and level of detail, buildings included.
 pub(crate) const MAX_JOBS: usize = 1023;
-const _: () = assert!(16 + MAX_JOBS * 16 <= 16 << 10);
+/// Bytes of one job (`Job` in world.wgsl): the run, then where its pose goes.
+const JOB_BYTES: usize = 32;
 // One dispatch must cover every vertex, whatever the GPU.
 const _: () = assert!(SKIN_VERTICES.div_ceil(SKIN_GROUP as usize) <= 65_535);
+/// Bone matrices the pose pass can build in a frame, all soldiers together:
+/// 48 bytes each, 48 MB in all, though the palette only grows as far as
+/// frames need. Soldiers past it are left out like those past
+/// `SKIN_VERTICES`.
+pub const PALETTE_BONES: usize = 1 << 20;
+/// Bone matrices the palette starts with.
+const PALETTE_START: usize = 64 << 10;
+/// Bytes of one bone matrix in the palette (three rows of four floats).
+const PALETTE_BONE_BYTES: usize = 48;
+const _: () = assert!(PALETTE_BONES.div_ceil(SKIN_GROUP as usize) <= 65_535);
 
 /// The model attributes the world pass still reads, skinning having done
 /// the rest: the team weight and material, the last two bytes of the
@@ -226,6 +236,10 @@ pub(crate) struct ModelGpu {
     skin_pos: wgpu::Buffer,
     skin_shade: wgpu::Buffer,
     skin_capacity: usize,
+    /// Every drawn soldier's bone matrices, written by the pose pass and
+    /// read by the skinning pass; `palette_capacity` bones.
+    palette: wgpu::Buffer,
+    palette_capacity: usize,
     /// What the bind groups hold besides buffers.
     bones: wgpu::TextureView,
     srgb: wgpu::TextureView,
@@ -236,8 +250,8 @@ pub(crate) struct ModelGpu {
     pub bind_group: wgpu::BindGroup,
     /// For the skinning pass.
     pub skin_group: wgpu::BindGroup,
-    /// Per model: its levels, and whether it is drawn textured.
-    pub levels: Vec<([Level; LODS], bool)>,
+    /// Per model: its levels, whether it is drawn textured, and its bones.
+    pub levels: Vec<([Level; LODS], bool, u32)>,
     /// Everything but the skinned buffers.
     fixed_bytes: u64,
     /// Vertices in the skinning pass's first vertex binding (see
@@ -247,7 +261,11 @@ pub(crate) struct ModelGpu {
 
 impl ModelGpu {
     pub fn gpu_bytes(&self) -> u64 {
-        self.fixed_bytes + self.detail.gpu_bytes() + self.skin_pos.size() + self.skin_shade.size()
+        self.fixed_bytes
+            + self.detail.gpu_bytes()
+            + self.skin_pos.size()
+            + self.skin_shade.size()
+            + self.palette.size()
     }
 
     fn parts(&self) -> Parts<'_> {
@@ -258,6 +276,7 @@ impl ModelGpu {
             jobs: &self.jobs,
             skin_pos: &self.skin_pos,
             skin_shade: &self.skin_shade,
+            palette: &self.palette,
             bones: &self.bones,
             srgb: &self.srgb,
             linear: &self.linear,
@@ -267,17 +286,35 @@ impl ModelGpu {
         }
     }
 
-    /// Hold at least `vertices` skinned vertices, rounded up to a power of
-    /// two (`SKIN_VERTICES` at most). The buffers are written afresh every
-    /// frame, so nothing is copied.
-    fn grow(&mut self, device: &wgpu::Device, soldiers: &SoldiersGpu, vertices: usize) {
-        if vertices <= self.skin_capacity {
-            return;
+    /// Hold at least `vertices` skinned vertices and `bones` palette bones,
+    /// each rounded up to a power of two (`SKIN_VERTICES` and
+    /// `PALETTE_BONES` at most). The buffers are written afresh every frame,
+    /// so nothing is copied.
+    fn grow(&mut self, device: &wgpu::Device, soldiers: &SoldiersGpu, vertices: usize, bones: usize) {
+        let skin = vertices > self.skin_capacity;
+        let palette = bones > self.palette_capacity;
+        if skin {
+            self.skin_capacity = vertices.next_power_of_two().min(SKIN_VERTICES);
+            (self.skin_pos, self.skin_shade) = skin_buffers(device, self.skin_capacity);
         }
-        self.skin_capacity = vertices.next_power_of_two().min(SKIN_VERTICES);
-        (self.skin_pos, self.skin_shade) = skin_buffers(device, self.skin_capacity);
-        (self.bind_group, self.skin_group) = bind_groups(device, soldiers, &self.parts());
+        if palette {
+            self.palette_capacity = bones.next_power_of_two().min(PALETTE_BONES);
+            self.palette = palette_buffer(device, self.palette_capacity);
+        }
+        if skin || palette {
+            (self.bind_group, self.skin_group) = bind_groups(device, soldiers, &self.parts());
+        }
     }
+}
+
+/// The pose pass's output, for `capacity` bone matrices.
+fn palette_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bone palette"),
+        size: (capacity * PALETTE_BONE_BYTES) as u64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    })
 }
 
 /// The two buffers the skinning pass writes, for `capacity` vertices.
@@ -346,6 +383,7 @@ struct Parts<'a> {
     jobs: &'a wgpu::Buffer,
     skin_pos: &'a wgpu::Buffer,
     skin_shade: &'a wgpu::Buffer,
+    palette: &'a wgpu::Buffer,
     bones: &'a wgpu::TextureView,
     srgb: &'a wgpu::TextureView,
     linear: &'a wgpu::TextureView,
@@ -404,6 +442,7 @@ fn bind_groups(
             entry(11, m.jobs),
             entry(12, m.skin_pos),
             entry(13, m.skin_shade),
+            entry(15, m.palette),
         ],
     });
     (draw, skin)
@@ -415,7 +454,9 @@ pub(crate) struct SoldiersGpu {
     pub textured_pipeline: wgpu::RenderPipeline,
     /// Depth only, for the sun's shadow map; any model.
     pub shadow_pipeline: wgpu::RenderPipeline,
-    /// Poses every soldier's vertices before the passes that draw them.
+    /// Builds every soldier's bone matrices, then poses its vertices with
+    /// them, before the passes that draw them.
+    pose_pipeline: wgpu::ComputePipeline,
     skin_pipeline: wgpu::ComputePipeline,
     pub models_layout: wgpu::BindGroupLayout,
     pub skin_layout: wgpu::BindGroupLayout,
@@ -424,10 +465,12 @@ pub(crate) struct SoldiersGpu {
     /// This frame's runs of soldiers, from `prepare`.
     draws: Vec<Draw>,
     /// Scratch for what `prepare` uploads.
-    jobs: Vec<[u32; 4]>,
+    jobs: Vec<[u32; 8]>,
     origins: Vec<u32>,
     /// Vertices the skinning pass poses this frame.
     threads: u32,
+    /// Bone matrices the pose pass builds this frame.
+    pose_threads: u32,
 }
 
 pub(crate) fn make(
@@ -501,19 +544,11 @@ pub(crate) fn make(
             },
             storage(9, compute, true),
             storage(10, compute, true),
-            wgpu::BindGroupLayoutEntry {
-                binding: 11,
-                visibility: compute,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            storage(11, compute, true),
             storage(12, compute, false),
             storage(13, compute, false),
             storage(14, compute, true),
+            storage(15, compute, false),
         ],
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -526,14 +561,18 @@ pub(crate) fn make(
         bind_group_layouts: &[Some(world_layout), Some(&skin_layout)],
         immediate_size: 0,
     });
-    let skin_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("soldier skinning"),
-        layout: Some(&skin_pipeline_layout),
-        module: shader,
-        entry_point: Some("cs_skin"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
+    let compute_pipeline = |label, entry| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&skin_pipeline_layout),
+            module: shader,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        })
+    };
+    let pose_pipeline = compute_pipeline("soldier posing", "cs_pose");
+    let skin_pipeline = compute_pipeline("soldier skinning", "cs_skin");
     let pipeline = |label, vs, target: crate::Target<'_>, cull_mode, buffers: &[_]| {
         let (targets, fs) = target.color();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -610,6 +649,7 @@ pub(crate) fn make(
         pipeline,
         textured_pipeline,
         shadow_pipeline,
+        pose_pipeline,
         skin_pipeline,
         models_layout,
         skin_layout,
@@ -619,6 +659,7 @@ pub(crate) fn make(
         jobs: Vec::new(),
         origins: Vec::new(),
         threads: 0,
+        pose_threads: 0,
     }
 }
 
@@ -640,6 +681,7 @@ impl SoldiersGpu {
         self.draws.clear();
         self.jobs.clear();
         self.threads = 0;
+        self.pose_threads = 0;
         let Some(models) = self.models.as_ref().filter(|_| count > 0) else {
             return 0;
         };
@@ -653,10 +695,11 @@ impl SoldiersGpu {
             lod: usize,
             levels: [Level; LODS],
             textured: bool,
+            bones: usize,
         }
         let mut runs = Vec::with_capacity(batches.len());
         for b in batches {
-            let Some(&(levels, textured)) = models.levels.get(b.model as usize) else {
+            let Some(&(levels, textured, bones)) = models.levels.get(b.model as usize) else {
                 continue;
             };
             let end = (b.first + b.count).min(count as u32);
@@ -670,6 +713,7 @@ impl SoldiersGpu {
                 lod: (b.lod as usize).min(LODS - 1),
                 levels,
                 textured,
+                bones: bones as usize,
             });
         }
         // Each instance has one origin, so runs must not share instances.
@@ -695,21 +739,27 @@ impl SoldiersGpu {
                 total += need(r);
             }
         }
+        // Then cut soldiers from the back until both the vertices and the
+        // bone matrices fit.
+        let mut bones: usize = runs.iter().map(|r| r.bones * r.n).sum();
         let mut left_out = 0;
         for r in runs.iter_mut().rev() {
-            if total <= SKIN_VERTICES {
+            if total <= SKIN_VERTICES && bones <= PALETTE_BONES {
                 break;
             }
             let len = r.levels[r.lod].len as usize;
-            let cut = (total - SKIN_VERTICES).div_ceil(len).min(r.n);
+            let cut = (total.saturating_sub(SKIN_VERTICES).div_ceil(len))
+                .max(bones.saturating_sub(PALETTE_BONES).div_ceil(r.bones))
+                .min(r.n);
             r.n -= cut;
             total -= cut * len;
+            bones -= cut * r.bones;
             left_out += cut;
         }
         // A job per run, as many as the pack's models and levels can make
         // (`set_models` checks that the shader's table holds them).
         debug_assert!(runs.len() <= MAX_JOBS, "more soldier batches than jobs");
-        let (mut slots, mut top) = (0, 0);
+        let (mut slots, mut palette, mut top) = (0, 0, 0);
         for (k, r) in runs.iter().enumerate() {
             if k >= MAX_JOBS {
                 left_out += r.n;
@@ -727,8 +777,16 @@ impl SoldiersGpu {
                 self.origins[r.first as usize + i] =
                     (slots as u32 + i as u32 * level.len).wrapping_sub(level.first);
             }
-            self.jobs
-                .push([r.first, level.first, level.len, slots as u32]);
+            self.jobs.push([
+                r.first,
+                level.first,
+                level.len,
+                slots as u32,
+                palette as u32,
+                r.bones as u32,
+                0,
+                0,
+            ]);
             self.draws.push(Draw {
                 first: r.first,
                 end: r.first + r.n as u32,
@@ -737,18 +795,25 @@ impl SoldiersGpu {
                 textured: r.textured,
             });
             slots += r.n * level.len as usize;
+            palette += r.n * r.bones;
             top = top.max(r.first as usize + r.n);
         }
         self.threads = slots as u32;
+        self.pose_threads = palette as u32;
         if slots > 0 {
             // Room for this frame's vertices (the bind groups change with
             // the buffers, so the borrow is taken afresh).
             if let Some(mut models) = self.models.take() {
-                models.grow(device, self, slots);
+                models.grow(device, self, slots, palette);
                 self.models = Some(models);
             }
             let models = self.models.as_ref().expect("models were just put back");
-            let header = [self.jobs.len() as u32, self.threads, models.split, 0];
+            let header = [
+                self.jobs.len() as u32,
+                self.threads,
+                models.split,
+                self.pose_threads,
+            ];
             queue.write_buffer(&models.jobs, 0, bytemuck::bytes_of(&header));
             queue.write_buffer(&models.jobs, 16, bytemuck::cast_slice(&self.jobs));
             queue.write_buffer(
@@ -760,8 +825,9 @@ impl SoldiersGpu {
         left_out
     }
 
-    /// Pose the planned soldiers' vertices. `world` is the camera's bind
-    /// group, which holds the terrain the soldiers stand on.
+    /// Build the planned soldiers' bone matrices, then pose their vertices
+    /// with them. `world` is the camera's bind group, which holds the
+    /// terrain the soldiers stand on.
     pub fn skin(&self, encoder: &mut wgpu::CommandEncoder, world: &wgpu::BindGroup) {
         let Some(models) = self.models.as_ref().filter(|_| self.threads > 0) else {
             return;
@@ -770,9 +836,13 @@ impl SoldiersGpu {
             label: Some("skin soldiers"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&self.skin_pipeline);
         pass.set_bind_group(0, world, &[]);
         pass.set_bind_group(1, &models.skin_group, &[]);
+        // Each dispatch is its own usage scope, so the skinning dispatch
+        // sees the palette the posing one wrote.
+        pass.set_pipeline(&self.pose_pipeline);
+        pass.dispatch_workgroups(self.pose_threads.div_ceil(SKIN_GROUP), 1, 1);
+        pass.set_pipeline(&self.skin_pipeline);
         pass.dispatch_workgroups(self.threads.div_ceil(SKIN_GROUP), 1, 1);
     }
 
@@ -873,8 +943,8 @@ pub(crate) fn upload(
     );
     let jobs = empty(
         "skin jobs",
-        16 + MAX_JOBS * 16,
-        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        16 + MAX_JOBS * JOB_BYTES,
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     );
     let rows = m.bone_rows().max(1);
     let size = wgpu::Extent3d {
@@ -942,9 +1012,10 @@ pub(crate) fn upload(
             && m.vertices
                 .get(r.first_vertex as usize)
                 .is_some_and(|v| v.material > 0);
-        (*levels, textured)
+        (*levels, textured, r.bones)
     });
     let (skin_pos, skin_shade) = skin_buffers(device, SKIN_START);
+    let palette = palette_buffer(device, PALETTE_START);
     let (bind_group, skin_group) = bind_groups(
         device,
         soldiers,
@@ -955,6 +1026,7 @@ pub(crate) fn upload(
             jobs: &jobs,
             skin_pos: &skin_pos,
             skin_shade: &skin_shade,
+            palette: &palette,
             bones: &view,
             srgb: &srgb_view,
             linear: &linear_view,
@@ -977,6 +1049,8 @@ pub(crate) fn upload(
         skin_pos,
         skin_shade,
         skin_capacity: SKIN_START,
+        palette,
+        palette_capacity: PALETTE_START,
         bones: view,
         srgb: srgb_view,
         linear: linear_view,

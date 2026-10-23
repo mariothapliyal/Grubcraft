@@ -1033,11 +1033,14 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(8) var bones: texture_2d<f32>;
 @group(1) @binding(9) var<storage, read> set_vertices: array<SetVertex>;
 @group(1) @binding(10) var<storage, read> instances: array<u32>;
-@group(1) @binding(11) var<uniform> jobs: Jobs;
+@group(1) @binding(11) var<storage, read> jobs: Jobs;
 @group(1) @binding(12) var<storage, read_write> out_pos: array<f32>;
 @group(1) @binding(13) var<storage, read_write> out_shade: array<u32>;
 // The model vertices past `jobs.count.z`, when a GPU binds too few at once.
 @group(1) @binding(14) var<storage, read> set_vertices_hi: array<SetVertex>;
+// Every drawn soldier's final bone matrices (three rows of four floats a
+// bone), written by `cs_pose` and read by `cs_skin`.
+@group(1) @binding(15) var<storage, read_write> palette: array<vec4<f32>>;
 
 fn set_vertex(i: u32) -> SetVertex {
     if i < jobs.count.z {
@@ -1060,19 +1063,22 @@ struct SetVertex {
     uv: u32,
 };
 
-// A run of soldiers of one model at one level of detail: their first
+// A run of soldiers of one model at one level of detail. `run`: their first
 // instance, the first vertex of the level's vertices and how many there are,
-// and the first output slot. Thread `n` of the pass belongs to the last job
-// whose slot is at or before it.
+// and the first output slot. `pose`: the first palette entry of the run's
+// first soldier (which is also its first posing thread) and the model's
+// bones, each soldier having that many entries. Thread `n` of a pass belongs
+// to the last job whose slot (or palette entry) is at or before it.
 struct Job {
     run: vec4<u32>,
+    pose: vec4<u32>,
 };
 
 struct Jobs {
-    // x: jobs, y: threads, z: model vertices in `set_vertices` (the rest
-    // are in `set_vertices_hi`)
+    // x: jobs, y: skinning threads, z: model vertices in `set_vertices`
+    // (the rest are in `set_vertices_hi`), w: posing threads
     count: vec4<u32>,
-    job: array<Job, 1023>,
+    job: array<Job>,
 };
 
 struct SoldierIn {
@@ -1128,6 +1134,11 @@ fn tone_mul(tone: f32) -> vec3<f32> {
     return (1.0 + 0.08 * tone) * (1.0 + tone * vec3<f32>(0.04, 0.015, -0.03));
 }
 
+// One bone's final matrix rows from the palette.
+fn palette_bone(slot: u32) -> mat3x4<f32> {
+    return mat3x4<f32>(palette[slot * 3u], palette[slot * 3u + 1u], palette[slot * 3u + 2u]);
+}
+
 fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
     return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
 }
@@ -1159,6 +1170,38 @@ fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: b
     return vec3<f32>(xz.x, l.y, xz.y);
 }
 
+// Build one bone of one soldier's final matrix: the instance's two frames
+// blended. Every vertex that follows the bone then reads it from the palette.
+@compute @workgroup_size(128)
+fn cs_pose(@builtin(global_invocation_id) id: vec3<u32>) {
+    let n = id.x;
+    if n >= jobs.count.w {
+        return;
+    }
+    var lo = 0u;
+    var hi = jobs.count.x;
+    while hi - lo > 1u {
+        let mid = (lo + hi) / 2u;
+        if jobs.job[mid].pose.x <= n {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let job = jobs.job[lo];
+    let at = n - job.pose.x;
+    let bones = job.pose.y;
+    let soldier = job.run.x + at / bones;
+    let bone = at % bones;
+    let i = soldier * 9u;
+    let frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
+    let t = f32(instances[i + 5u] & 0xffu) / 255.0;
+    let m = bone_rows(frames, bone, t);
+    palette[n * 3u] = m[0];
+    palette[n * 3u + 1u] = m[1];
+    palette[n * 3u + 2u] = m[2];
+}
+
 // Pose one vertex of one soldier and keep it for the passes that draw it.
 @compute @workgroup_size(128)
 fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -1177,6 +1220,7 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     let run = jobs.job[lo].run;
+    let run_pose = jobs.job[lo].pose;
     let at = n - run.w;
     let soldier = run.x + at / run.z;
     let sv = set_vertex(run.y + at % run.z);
@@ -1185,11 +1229,9 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = soldier * 9u;
     let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
     let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
-    let frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
     let flags = instances[i + 5u];
     let lift = bitcast<f32>(instances[i + 7u]);
     let scale = bitcast<f32>(instances[i + 8u]);
-    let t = f32(flags & 0xffu) / 255.0;
     let fallen = ((flags >> 16u) & 0xffu) > 127u;
 
     let p = vec4<f32>(
@@ -1201,13 +1243,14 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         1.0,
     );
     // Most vertices follow one or two bones; stop at the first empty slot.
-    var m = bone_rows(frames, sv.bones & 0xffu, t) * (f32(sv.weights & 0xffu) / 255.0);
+    let base = run_pose.x + (soldier - run.x) * run_pose.y;
+    var m = palette_bone(base + (sv.bones & 0xffu)) * (f32(sv.weights & 0xffu) / 255.0);
     for (var b = 1u; b < 4u; b++) {
         let w = f32((sv.weights >> (8u * b)) & 0xffu) / 255.0;
         if w <= 0.0 {
             break;
         }
-        m += bone_rows(frames, (sv.bones >> (8u * b)) & 0xffu, t) * w;
+        m += palette_bone(base + ((sv.bones >> (8u * b)) & 0xffu)) * w;
     }
     var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
     if fallen {
