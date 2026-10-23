@@ -11,7 +11,7 @@
 
 use gc_map::Map;
 use gc_map::def::Land;
-use gc_render::{KNOBS, LandAir, Look, LookPreset};
+use gc_render::{KNOBS, Knob, LandAir, Look, LookPreset};
 use glam::Vec2;
 
 /// How each land changes the air, in `Land::ALL` order. Meadow, the ground
@@ -84,10 +84,14 @@ const REACH_MIN: f32 = 20.0;
 const REACH_MAX: f32 = 70.0;
 /// Seconds the air takes to cross most of the way to a new land's.
 const SETTLE: f32 = 2.5;
+/// How many steps a knob moves with Shift held, as in the sandbox's tuner.
+const FAST: f32 = 10.0;
 
 /// The light of a match.
 pub struct Atmosphere {
     preset: LookPreset,
+    /// A look every match opens with (`--look`), in place of its own.
+    look_flag: Option<LookPreset>,
     /// How much of the camera's surroundings each land fills, eased; `None`
     /// until the first frame of a match, which starts there.
     shares: Option<[f32; Land::ALL.len()]>,
@@ -104,30 +108,28 @@ struct Tuning {
     selected: usize,
     /// How far each knob has been moved from the look underneath it.
     deltas: [f32; KNOBS.len()],
-    /// The look the knobs act on, as last drawn, for the panel to read.
-    base: Look,
+    /// The look as last drawn, knobs and all, for the panel to read.
+    shown: Look,
 }
 
 impl Atmosphere {
-    pub fn new(preset: LookPreset) -> Atmosphere {
+    /// `look` lights every match in place of its own (`--look`), and
+    /// `air` is one land's air everywhere (`--air`).
+    pub fn new(look: Option<LookPreset>, air: Option<Land>) -> Atmosphere {
         Atmosphere {
-            preset,
+            preset: look.unwrap_or_default(),
+            look_flag: look,
             shares: None,
-            forced: None,
+            forced: air,
             tuning: Tuning::default(),
         }
     }
 
-    /// Light the match with `preset`, and let the air start right in the
-    /// lands where the camera is.
+    /// Light a new match with `preset` (unless `--look` said otherwise),
+    /// and let the air start right in the lands where the camera is.
     pub fn start(&mut self, preset: LookPreset) {
-        self.preset = preset;
+        self.preset = self.look_flag.unwrap_or(preset);
         self.shares = None;
-    }
-
-    /// Use `land`'s air everywhere, or the lands round the camera's.
-    pub fn force_air(&mut self, land: Option<Land>) {
-        self.forced = land;
     }
 
     /// F9: the next prepared look.
@@ -160,8 +162,8 @@ impl Atmosphere {
         if clarity {
             look = look.clear();
         }
-        self.tuning.base = look;
-        look.tuned(&self.tuning.deltas)
+        self.tuning.shown = look.tuned(&self.tuning.deltas);
+        self.tuning.shown
     }
 
     pub fn panel_open(&self) -> bool {
@@ -180,7 +182,7 @@ impl Atmosphere {
             TuneKey::Down => t.selected = (t.selected + 1) % KNOBS.len(),
             TuneKey::Less | TuneKey::More => {
                 let sign = if key == TuneKey::More { 1.0 } else { -1.0 };
-                let step = KNOBS[t.selected].step * if fast { 5.0 } else { 1.0 };
+                let step = KNOBS[t.selected].step * if fast { FAST } else { 1.0 };
                 t.deltas[t.selected] += sign * step;
             }
             TuneKey::Land => {
@@ -211,8 +213,7 @@ impl Atmosphere {
                 ""
             },
         );
-        for (i, (knob, &d)) in KNOBS.iter().zip(&t.deltas).enumerate() {
-            let value = (knob.get)(&t.base) + d;
+        for (i, (knob, value, d)) in self.knobs().enumerate() {
             let mark = if i == t.selected { '>' } else { ' ' };
             let moved = if d == 0.0 {
                 String::new()
@@ -222,28 +223,37 @@ impl Atmosphere {
             text.push_str(&format!("{mark} {:<18} {value:>8.4}{moved}\n", knob.name));
         }
         text.push_str(
-            "Up Down choose   Left Right change (Shift: 5x)   L force a land's air\n\
+            "Up Down choose   Left Right change (Shift: 10x)   L force a land's air\n\
              Backspace reset (Shift: all)   Enter write values to the log",
         );
         text
     }
 
     /// The tuned values, one line each, for the log: what to tell whoever
-    /// is making the look.
+    /// is making the look, with how far each was moved by hand.
     pub fn values(&self) -> String {
-        let t = &self.tuning;
+        let air = self
+            .forced
+            .map_or("the lands round the camera".to_string(), |l| {
+                format!("{l:?}")
+            });
         let mut lines = vec![format!(
-            "light tuning on {} (land's air included):",
+            "light tuning on {} in {air}'s air (air and Clarity included):",
             self.preset.name()
         )];
-        for (knob, &d) in KNOBS.iter().zip(&t.deltas) {
-            lines.push(format!(
-                "  {:<18} {:.4}",
-                knob.name,
-                (knob.get)(&t.base) + d
-            ));
+        for (knob, value, d) in self.knobs() {
+            lines.push(format!("  {:<18} {value:.4}  (moved {d:+.4})", knob.name));
         }
         lines.join("\n")
+    }
+
+    /// Every knob, its value on screen and how far it has been moved.
+    fn knobs(&self) -> impl Iterator<Item = (&'static Knob, f32, f32)> + '_ {
+        let t = &self.tuning;
+        KNOBS
+            .iter()
+            .zip(t.deltas)
+            .map(|(knob, d)| (knob, (knob.get)(&t.shown), d))
     }
 }
 
@@ -263,10 +273,6 @@ pub enum TuneKey {
 /// over the camera's surroundings, the middle counting most.
 fn land_shares(map: &Map, focus: Vec2, distance: f32) -> [f32; Land::ALL.len()] {
     let mut shares = [0.0; Land::ALL.len()];
-    if map.land.is_empty() {
-        shares[0] = 1.0;
-        return shares;
-    }
     let reach = (distance * REACH).clamp(REACH_MIN, REACH_MAX);
     let last = (map.tiles as i32 - 1).max(0);
     let mut total = 0.0;
@@ -344,7 +350,7 @@ mod tests {
     #[test]
     fn the_look_settles_toward_a_new_land_and_starts_there() {
         let map = split(Land::Meadow, Land::Waste);
-        let mut atmosphere = Atmosphere::new(LookPreset::GoldenHour);
+        let mut atmosphere = Atmosphere::new(None, None);
         let west = atmosphere.look(0.0, &map, Vec2::new(8.0, 32.0), 20.0, false);
         let at_once = atmosphere.look(0.0, &map, Vec2::new(56.0, 32.0), 20.0, false);
         assert_eq!(west, at_once, "no time has passed");
@@ -362,7 +368,7 @@ mod tests {
     fn clarity_is_plain_light_in_every_land() {
         let map = split(Land::Highland, Land::Waste);
         for preset in LookPreset::ALL {
-            let mut atmosphere = Atmosphere::new(preset);
+            let mut atmosphere = Atmosphere::new(Some(preset), None);
             let look = atmosphere.look(0.0, &map, Vec2::new(8.0, 32.0), 40.0, true);
             assert_eq!((look.vignette, look.grain), (0.0, 0.0), "{}", preset.name());
         }
@@ -371,7 +377,7 @@ mod tests {
     #[test]
     fn the_panel_moves_one_knob_and_resets() {
         let map = split(Land::Meadow, Land::Meadow);
-        let mut atmosphere = Atmosphere::new(LookPreset::GoldenHour);
+        let mut atmosphere = Atmosphere::new(None, None);
         let focus = Vec2::new(30.0, 30.0);
         let plain = atmosphere.look(0.0, &map, focus, 40.0, false);
         // Down to Sun heading (second), then four steps up, one fast.

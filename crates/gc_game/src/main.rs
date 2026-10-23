@@ -648,8 +648,6 @@ struct Running {
     /// The light the renderer is set to: the look of the match (F9 steps
     /// through them) in the air of the lands, Clarity and the tuning panel.
     atmosphere: atmosphere::Atmosphere,
-    /// `--look`, which overrides the lobby's time of day.
-    look_flag: Option<gc_render::LookPreset>,
     /// How far the camera starts from the ground when `--distance` says.
     start_distance: Option<f32>,
     camera: RtsCamera,
@@ -1244,7 +1242,6 @@ impl App {
                 opts.render,
             ))
         })?;
-        renderer.set_look(opts.look.unwrap_or_default().look());
         self.memory_timeline.mark("gpu device + pipelines");
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
@@ -1454,12 +1451,7 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
-            atmosphere: {
-                let mut atmosphere = atmosphere::Atmosphere::new(opts.look.unwrap_or_default());
-                atmosphere.force_air(opts.air);
-                atmosphere
-            },
-            look_flag: opts.look,
+            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air),
             start_distance: opts.distance,
             camera,
             ride: None,
@@ -1893,6 +1885,8 @@ impl ApplicationHandler for App {
                         KeyCode::F9 if down && !event.repeat => r.atmosphere.next_preset(),
                         KeyCode::F10 if down && !event.repeat => {
                             r.atmosphere.toggle_panel();
+                            // The panel takes the arrow keys while it is open.
+                            r.input.arrows = [false; 4];
                             r.sandbox.dirty = true;
                         }
                         KeyCode::KeyC if down && !event.repeat => {
@@ -4265,8 +4259,7 @@ impl Running {
             MatchKind::Battle(start) => start.settings.time_of_day,
             MatchKind::Sandbox { .. } | MatchKind::Replay(_) => Default::default(),
         };
-        self.atmosphere
-            .start(self.look_flag.unwrap_or_else(|| preset_of(time_of_day)));
+        self.atmosphere.start(preset_of(time_of_day));
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;

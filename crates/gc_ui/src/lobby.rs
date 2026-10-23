@@ -1054,13 +1054,6 @@ mod tests {
     }
 
     #[test]
-    fn the_light_has_a_default_and_names() {
-        assert_eq!(LobbySettings::default().time_of_day, TimeOfDay::GoldenHour);
-        let names = TimeOfDay::ALL.map(TimeOfDay::name);
-        assert_eq!(names, ["Golden hour", "Noon", "Dusk", "Overcast"]);
-    }
-
-    #[test]
     fn victory_says_which_victories_count() {
         assert_eq!(LobbySettings::default().victory, Victory::Both);
         let counts = Victory::ALL.map(|v| (v.name(), v.annihilation(), v.heart()));

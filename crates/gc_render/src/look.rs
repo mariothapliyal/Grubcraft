@@ -261,8 +261,12 @@ impl Look {
     /// scaled by `air`, whatever the light (golden hour, noon, dusk) the
     /// look began as.
     pub fn in_air(&self, air: &LandAir) -> Look {
-        let shift = |c: [f32; 3], d: [f32; 3]| [0, 1, 2].map(|k| (c[k] + d[k]).clamp(0.0, 1.0));
-        let scale = |c: [f32; 3], m: [f32; 3]| [0, 1, 2].map(|k| c[k] * m[k]);
+        let shift = |c: [f32; 3], d: [f32; 3]| {
+            (Vec3::from(c) + Vec3::from(d))
+                .clamp(Vec3::ZERO, Vec3::ONE)
+                .into()
+        };
+        let scale = |c: [f32; 3], m: [f32; 3]| (Vec3::from(c) * Vec3::from(m)).into();
         Look {
             sun_color: scale(self.sun_color, air.sun),
             fog: shift(self.fog, air.fog),
@@ -296,8 +300,8 @@ impl Look {
     }
 
     /// This look with each tuning knob moved by its entry in `deltas`
-    /// ([`KNOBS`] order; missing entries are 0).
-    pub fn tuned(&self, deltas: &[f32]) -> Look {
+    /// ([`KNOBS`] order).
+    pub fn tuned(&self, deltas: &[f32; KNOBS.len()]) -> Look {
         let mut look = *self;
         for (knob, &d) in KNOBS.iter().zip(deltas) {
             if d != 0.0 {
@@ -353,9 +357,9 @@ impl LandAir {
     };
 
     /// This air toward `b`, `t` of the way.
-    pub fn lerp(&self, b: &LandAir, t: f32) -> LandAir {
+    fn lerp(&self, b: &LandAir, t: f32) -> LandAir {
         let f = |x: f32, y: f32| x + (y - x) * t;
-        let c = |x: [f32; 3], y: [f32; 3]| [0, 1, 2].map(|k| f(x[k], y[k]));
+        let c = |x: [f32; 3], y: [f32; 3]| Vec3::from(x).lerp(Vec3::from(y), t).into();
         LandAir {
             fog: c(self.fog, b.fog),
             haze: c(self.haze, b.haze),
@@ -417,12 +421,24 @@ fn aim_sun(l: &mut Look, height: f32, heading: f32) {
 }
 
 fn strength(c: [f32; 3]) -> f32 {
-    c[0].max(c[1]).max(c[2])
+    Vec3::from(c).max_element()
 }
 
 fn scaled(c: [f32; 3], to: f32) -> [f32; 3] {
     let k = to.max(0.0) / strength(c).max(1e-4);
     c.map(|v| v * k)
+}
+
+/// A knob that is one plain number of the look, never below `min`.
+macro_rules! field_knob {
+    ($name:literal, $step:literal, $field:ident, $min:literal) => {
+        Knob {
+            name: $name,
+            step: $step,
+            get: |l| l.$field,
+            set: |l, v| l.$field = v.max($min),
+        }
+    };
 }
 
 /// Every knob of the tuning panel, in the order it lists them.
@@ -451,72 +467,17 @@ pub const KNOBS: [Knob; 16] = [
         get: |l| strength(l.sky_ambient),
         set: |l, v| l.sky_ambient = scaled(l.sky_ambient, v),
     },
-    Knob {
-        name: "Exposure",
-        step: 0.02,
-        get: |l| l.exposure,
-        set: |l, v| l.exposure = v.max(0.1),
-    },
-    Knob {
-        name: "Contrast",
-        step: 0.02,
-        get: |l| l.contrast,
-        set: |l, v| l.contrast = v.max(0.2),
-    },
-    Knob {
-        name: "Saturation",
-        step: 0.03,
-        get: |l| l.saturation,
-        set: |l, v| l.saturation = v.max(0.0),
-    },
-    Knob {
-        name: "Vignette",
-        step: 0.03,
-        get: |l| l.vignette,
-        set: |l, v| l.vignette = v.max(0.0),
-    },
-    Knob {
-        name: "Film grain",
-        step: 0.005,
-        get: |l| l.grain,
-        set: |l, v| l.grain = v.max(0.0),
-    },
-    Knob {
-        name: "Air thickness",
-        step: 0.0002,
-        get: |l| l.fog_density,
-        set: |l, v| l.fog_density = v.max(0.0),
-    },
-    Knob {
-        name: "Air hugs ground",
-        step: 0.005,
-        get: |l| l.fog_falloff,
-        set: |l, v| l.fog_falloff = v.max(0.0),
-    },
-    Knob {
-        name: "Rim light",
-        step: 0.05,
-        get: |l| l.rim,
-        set: |l, v| l.rim = v.max(0.0),
-    },
-    Knob {
-        name: "Leaf glow",
-        step: 0.05,
-        get: |l| l.foliage_glow,
-        set: |l, v| l.foliage_glow = v.max(0.0),
-    },
-    Knob {
-        name: "Cloud shadows",
-        step: 0.05,
-        get: |l| l.cloud_shadows,
-        set: |l, v| l.cloud_shadows = v.max(0.0),
-    },
-    Knob {
-        name: "Valley shade",
-        step: 0.05,
-        get: |l| l.ground_occlusion,
-        set: |l, v| l.ground_occlusion = v.max(0.0),
-    },
+    field_knob!("Exposure", 0.02, exposure, 0.1),
+    field_knob!("Contrast", 0.02, contrast, 0.2),
+    field_knob!("Saturation", 0.03, saturation, 0.0),
+    field_knob!("Vignette", 0.03, vignette, 0.0),
+    field_knob!("Film grain", 0.005, grain, 0.0),
+    field_knob!("Air thickness", 0.0002, fog_density, 0.0),
+    field_knob!("Air hugs ground", 0.005, fog_falloff, 0.0),
+    field_knob!("Rim light", 0.05, rim, 0.0),
+    field_knob!("Leaf glow", 0.05, foliage_glow, 0.0),
+    field_knob!("Cloud shadows", 0.05, cloud_shadows, 0.0),
+    field_knob!("Valley shade", 0.05, ground_occlusion, 0.0),
     Knob {
         name: "Warmth",
         step: 0.01,
@@ -704,7 +665,6 @@ mod tests {
     #[test]
     fn knobs_move_what_they_name() {
         let look = LookPreset::GoldenHour.look();
-        assert_eq!(look.tuned(&[]), look);
         let none = [0.0; KNOBS.len()];
         assert_eq!(look.tuned(&none), look);
         for (i, knob) in KNOBS.iter().enumerate() {
