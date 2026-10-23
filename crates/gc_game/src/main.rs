@@ -128,6 +128,7 @@
 //! at several ages, to look at them.
 
 mod army_shape;
+mod atmosphere;
 mod buildings;
 mod camera;
 mod clearing;
@@ -390,8 +391,11 @@ struct Options {
     /// Open the unit viewer at start (`--viewer`): on this unit, or the
     /// first one for "start".
     viewer: Option<String>,
-    /// The light and grade to open with (`--look golden-hour`); F9 cycles it.
-    look: gc_render::LookPreset,
+    /// The light and grade every match opens with (`--look golden-hour`), in
+    /// place of the lobby's time of day; F9 cycles it.
+    look: Option<gc_render::LookPreset>,
+    /// A land whose air lights the whole map (`--air waste`).
+    air: Option<gc_map::def::Land>,
     /// How far the camera starts from the ground (`--distance 14..260`).
     distance: Option<f32>,
     /// Set off every effect at the camera's focus (`--fx-demo`, or
@@ -421,7 +425,8 @@ fn parse_args() -> Options {
         showroom: None,
         showroom_clip: None,
         viewer: None,
-        look: gc_render::LookPreset::default(),
+        look: None,
+        air: None,
         distance: None,
         fx: None,
         siege: false,
@@ -539,7 +544,12 @@ fn parse_args() -> Options {
                 true
             }
             "--look" => gc_render::LookPreset::from_name(&value)
-                .map(|p| opts.look = p)
+                .map(|p| opts.look = Some(p))
+                .is_some(),
+            "--air" => gc_map::def::Land::ALL
+                .into_iter()
+                .find(|l| format!("{l:?}").eq_ignore_ascii_case(value.trim()))
+                .map(|l| opts.air = Some(l))
                 .is_some(),
             "--distance" => match value.parse::<f32>() {
                 Ok(v) if (camera::MIN_DISTANCE..=camera::MAX_DISTANCE).contains(&v) => {
@@ -626,7 +636,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -635,8 +645,11 @@ fn usage() -> ! {
 struct Running {
     window: Arc<Window>,
     renderer: Renderer,
-    /// The light the renderer is set to (F9 steps through them).
-    look: gc_render::LookPreset,
+    /// The light the renderer is set to: the look of the match (F9 steps
+    /// through them) in the air of the lands, Clarity and the tuning panel.
+    atmosphere: atmosphere::Atmosphere,
+    /// `--look`, which overrides the lobby's time of day.
+    look_flag: Option<gc_render::LookPreset>,
     /// How far the camera starts from the ground when `--distance` says.
     start_distance: Option<f32>,
     camera: RtsCamera,
@@ -1231,7 +1244,7 @@ impl App {
                 opts.render,
             ))
         })?;
-        renderer.set_look(opts.look.look());
+        renderer.set_look(opts.look.unwrap_or_default().look());
         self.memory_timeline.mark("gpu device + pipelines");
         // The game opens on the map a two-player battle from a new lobby
         // would be on, or on one opened with `--map`.
@@ -1441,7 +1454,12 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
-            look: opts.look,
+            atmosphere: {
+                let mut atmosphere = atmosphere::Atmosphere::new(opts.look.unwrap_or_default());
+                atmosphere.force_air(opts.air);
+                atmosphere
+            },
+            look_flag: opts.look,
             start_distance: opts.distance,
             camera,
             ride: None,
@@ -1786,6 +1804,10 @@ impl ApplicationHandler for App {
                         r.power_press(slot);
                         return;
                     }
+                    // The tuning panel keeps the arrow keys while it is open.
+                    if down && r.atmosphere.panel_open() && r.light_key(code, r.input.shift) {
+                        return;
+                    }
                     match code {
                         KeyCode::ArrowUp => r.input.arrows[0] = down,
                         KeyCode::ArrowDown => r.input.arrows[1] = down,
@@ -1868,9 +1890,10 @@ impl ApplicationHandler for App {
                         // F1 finds an idle worker while there is one to find,
                         // and otherwise opens the Marshal's Scroll (like H).
                         KeyCode::F1 if down && !event.repeat => r.f1_key(),
-                        KeyCode::F9 if down && !event.repeat => {
-                            r.look = r.look.next();
-                            r.renderer.set_look(r.look.look());
+                        KeyCode::F9 if down && !event.repeat => r.atmosphere.next_preset(),
+                        KeyCode::F10 if down && !event.repeat => {
+                            r.atmosphere.toggle_panel();
+                            r.sandbox.dirty = true;
                         }
                         KeyCode::KeyC if down && !event.repeat => {
                             r.sandbox.credits = !r.sandbox.credits;
@@ -3375,6 +3398,14 @@ impl Running {
             }
             None => (self.camera.focus, self.camera.distance),
         };
+        let look = self.atmosphere.look(
+            dt.as_secs_f32(),
+            heightmap,
+            view_focus,
+            view_distance,
+            self.menu.settings().clarity,
+        );
+        self.renderer.set_look(look);
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
@@ -4229,6 +4260,13 @@ impl Running {
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
         self.land.reset();
+        // The lobby's time of day lights the match, unless `--look` says.
+        let time_of_day = match &kind {
+            MatchKind::Battle(start) => start.settings.time_of_day,
+            MatchKind::Sandbox { .. } | MatchKind::Replay(_) => Default::default(),
+        };
+        self.atmosphere
+            .start(self.look_flag.unwrap_or_else(|| preset_of(time_of_day)));
         self.parties = sandbox_parties();
         self.battle = None;
         self.speed = NORMAL_SPEED;
@@ -5176,6 +5214,12 @@ impl Running {
             }
             text.push_str(&lens::panel(&lenses, |p| party_name(&self.parties, p)));
         }
+        if self.atmosphere.panel_open() && !self.menu_open {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&self.atmosphere.panel_text());
+        }
         if let Some(dev) = dev {
             if !text.is_empty() {
                 text.push('\n');
@@ -5969,6 +6013,28 @@ impl Running {
         self.say("Shift+R reloads data/units.ron in a build made with --features dev.".into());
     }
 
+    /// A key while the light tuning panel is open; true when it took it.
+    fn light_key(&mut self, code: KeyCode, fast: bool) -> bool {
+        use atmosphere::TuneKey;
+        let key = match code {
+            KeyCode::ArrowUp => TuneKey::Up,
+            KeyCode::ArrowDown => TuneKey::Down,
+            KeyCode::ArrowLeft => TuneKey::Less,
+            KeyCode::ArrowRight => TuneKey::More,
+            KeyCode::Backspace | KeyCode::Delete => TuneKey::Reset,
+            KeyCode::KeyL => TuneKey::Land,
+            KeyCode::Enter | KeyCode::NumpadEnter => {
+                logln!("grubcraft: {}", self.atmosphere.values());
+                self.say("The tuned light is in the log.".into());
+                return true;
+            }
+            _ => return false,
+        };
+        self.atmosphere.tune_key(key, fast);
+        self.sandbox.dirty = true;
+        true
+    }
+
     /// Show a line in the sandbox panel for a few seconds.
     fn say(&mut self, message: String) {
         logln!("grubcraft: {message}");
@@ -6241,6 +6307,17 @@ impl From<MapPreviewKey> for MapKey {
             }),
             MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
         }
+    }
+}
+
+/// The prepared look a lobby's time of day stands for.
+fn preset_of(time_of_day: gc_ui::lobby::TimeOfDay) -> gc_render::LookPreset {
+    use gc_ui::lobby::TimeOfDay;
+    match time_of_day {
+        TimeOfDay::GoldenHour => gc_render::LookPreset::GoldenHour,
+        TimeOfDay::Noon => gc_render::LookPreset::Noon,
+        TimeOfDay::Dusk => gc_render::LookPreset::Dusk,
+        TimeOfDay::Overcast => gc_render::LookPreset::Overcast,
     }
 }
 
