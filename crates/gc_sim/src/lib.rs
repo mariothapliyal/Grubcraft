@@ -105,7 +105,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 28;
+pub const SIM_VERSION: u32 = 29;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -1542,7 +1542,7 @@ impl World {
                 // A finished building stands on cleared ground.
                 let [x, y, w, d] =
                     conquest.structures.buildings()[usize::from(building)].footprint(tile, turn);
-                self.change_ground((y..y + d).flat_map(|y| (x..x + w).map(move |x| (x, y))));
+                self.change_ground((y..y + d).flat_map(|y| (x..x + w).map(move |x| (x, y, false))));
                 true
             }
             Command::AttackStructure {
@@ -1866,7 +1866,7 @@ impl World {
             return;
         };
         c.clearing
-            .update(&mut self.regiments, &self.units, &self.terrain);
+            .update(&mut self.regiments, &self.units, &c.units, &self.terrain);
         if c.clearing.done.is_empty() {
             return;
         }
@@ -1874,14 +1874,12 @@ impl World {
         // tiles change the ground together, before any building is laid.
         let done = core::mem::take(&mut c.clearing.done);
         for d in &done {
-            if let clearing::Done::Tile { x, y, owner } = *d {
-                let timber = clearing::timber(self.terrain.growth(x, y));
-                c.economy
-                    .earn_grub(owner, timber, &self.regiments, &c.units);
+            if let clearing::Done::Tile { owner, pays, .. } = *d {
+                c.economy.earn_grub(owner, pays, &self.regiments, &c.units);
             }
         }
         self.change_ground(done.iter().filter_map(|d| match *d {
-            clearing::Done::Tile { x, y, .. } => Some((x, y)),
+            clearing::Done::Tile { x, y, burnt, .. } => Some((x, y, burnt)),
             _ => None,
         }));
         for d in &done {
@@ -1909,9 +1907,9 @@ impl World {
     /// standing on the walkable grid, the change goes into the state hash,
     /// and the game is told ([`Event::Cleared`]). Tiles with nothing
     /// growing are left as they are.
-    pub(crate) fn change_ground(&mut self, tiles: impl IntoIterator<Item = (i32, i32)>) {
+    pub(crate) fn change_ground(&mut self, tiles: impl IntoIterator<Item = (i32, i32, bool)>) {
         let mut thicket = Vec::new();
-        for (x, y) in tiles {
+        for (x, y, burnt) in tiles {
             // Nothing to change (and no copy of a shared terrain made)
             // where nothing grows.
             if self.terrain.growth(x, y) == Growth::Open {
@@ -1924,7 +1922,7 @@ impl World {
                 thicket.push([x, y, 1, 1]);
             }
             if !self.scratch {
-                self.events.cleared(x, y, was);
+                self.events.cleared(x, y, was, burnt);
             }
         }
         if !thicket.is_empty() {

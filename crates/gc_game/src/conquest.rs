@@ -12,6 +12,7 @@ use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::{Kind, Map};
 use gc_replay::ConquestRecord;
+use gc_sim::clearing::ClearStyle;
 use gc_sim::economy::{SEEP_GRUB, VEIN_MARROW};
 use gc_sim::structures::Breaker;
 use gc_sim::{
@@ -144,6 +145,38 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
         trade_base: u.trade_base,
         trade_tenths: u.trade_tenths,
         cannot_bank: 0,
+        clearing: clear_style(u.faction()),
+    }
+}
+
+/// How faction `f`'s workers clear land (docs/32-changing-land.md): the
+/// Ember Clans fell and haul (timber pays half again as much, rounded up),
+/// the Concord burns it (twice as fast, nothing to haul, scorched ground),
+/// the Choir shatters it (thicket as fast as woods, nothing to haul), and
+/// the Brood's Gnawers eat it (slower, and scrub feeds them too).
+pub fn clear_style(f: Faction) -> ClearStyle {
+    let standard = ClearStyle::STANDARD;
+    match f {
+        Faction::EmberClans => ClearStyle {
+            pays: [0, 5, 8],
+            ..standard
+        },
+        Faction::CarrionConcord => ClearStyle {
+            pace: [50; 3],
+            pays: [0; 3],
+            burns: true,
+        },
+        Faction::Choir => ClearStyle {
+            // Thicket in woods' 8 s of its own 15 s.
+            pace: [100, 100, 53],
+            pays: [0; 3],
+            burns: false,
+        },
+        Faction::Brood => ClearStyle {
+            pace: [150; 3],
+            pays: [1, 3, 5],
+            burns: false,
+        },
     }
 }
 

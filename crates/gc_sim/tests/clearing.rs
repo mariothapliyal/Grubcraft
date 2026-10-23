@@ -3,7 +3,8 @@
 //! cleared ground is open.
 
 use gc_fixed::FxVec2;
-use gc_sim::clearing::{MAX_CLEAR_SIDE, clear_ticks, timber};
+use gc_sim::clearing::{ClearStyle, MAX_CLEAR_SIDE, clear_ticks, timber};
+use gc_sim::events::Event;
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, Role};
@@ -41,6 +42,11 @@ fn ground() -> (Vec<u8>, Vec<u8>) {
 }
 
 fn world() -> World {
+    world_with(ClearStyle::STANDARD)
+}
+
+/// The test world, its workers clearing in `style` (a faction's twist).
+fn world_with(style: ClearStyle) -> World {
     let side = (MAP as i32 * CELLS_PER_TILE) as usize;
     let nav = vec![1u8; side * side];
     let (cover, growth) = ground();
@@ -100,6 +106,7 @@ fn world() -> World {
                 worker: true,
                 supply: 1,
                 tier: 1,
+                clearing: style,
                 ..ConquestUnit::default()
             },
             ConquestUnit::default(),
@@ -374,4 +381,95 @@ fn clearing_plays_the_same_every_time_and_shows_in_the_hash() {
     };
     assert_eq!(play(true), play(true));
     assert_ne!(play(true), play(false));
+}
+
+/// Ticks for one worker to clear `area` in `style`, with the grub it earned
+/// and whether the ground was reported burnt.
+fn clear_in(style: ClearStyle, area: [i32; 4]) -> (u32, u32, bool) {
+    let mut w = world_with(style);
+    let [x, y, wide, deep] = area;
+    let worker = spawn(&mut w, WORKER, x - 1, y - 1);
+    assert!(clear(
+        &mut w,
+        worker,
+        (x as i16, y as i16),
+        (wide as u8, deep as u8)
+    ));
+    let mut burnt = None;
+    let mut ticks = 0;
+    while !all_open(&w, area) {
+        ticks += 1;
+        assert!(ticks < 20_000, "not cleared");
+        w.tick(&[]);
+        for e in w.events() {
+            if let Event::Cleared { burnt: b, .. } = *e {
+                assert!(burnt.is_none_or(|was| was == b), "mixed burns");
+                burnt = Some(b);
+            }
+        }
+    }
+    (
+        ticks,
+        grub(&w) - START_GRUB,
+        burnt.expect("no Cleared events"),
+    )
+}
+
+const WOODS: [i32; 4] = [20, 20, 2, 2];
+const THICKET: [i32; 4] = [44, 30, 2, 1];
+
+#[test]
+fn faction_twists_change_the_pace_and_the_pay() {
+    use gc_sim::Growth::{Thicket, Woods};
+    let (standard, pay, burnt) = clear_in(ClearStyle::STANDARD, WOODS);
+    assert_eq!(pay, 4 * timber(Woods));
+    assert!(!burnt);
+    // Ember Clans: more timber from each tree.
+    let clans = ClearStyle {
+        pays: [0, 5, 8],
+        ..ClearStyle::STANDARD
+    };
+    let (ticks, pay, _) = clear_in(clans, WOODS);
+    assert_eq!(pay, 4 * clans.pays(Woods));
+    assert_eq!(ticks, standard);
+    // Carrion Concord: burns it, twice as fast, for nothing.
+    let concord = ClearStyle {
+        pace: [50; 3],
+        pays: [0; 3],
+        burns: true,
+    };
+    let (ticks, pay, burnt) = clear_in(concord, WOODS);
+    assert_eq!(pay, 0);
+    assert!(burnt);
+    let work = 4 * clear_ticks(Woods);
+    assert!(
+        ticks + work / 2 < standard + work / 10,
+        "concord {ticks}, standard {standard}"
+    );
+    // Brood: half again as long, but pays a little even for scrub.
+    let brood = ClearStyle {
+        pace: [150; 3],
+        pays: [1, 3, 5],
+        ..ClearStyle::STANDARD
+    };
+    let (ticks, _, _) = clear_in(brood, WOODS);
+    assert!(
+        ticks > standard + work * 4 / 10,
+        "brood {ticks}, standard {standard}"
+    );
+    // Choir: shatters thicket in about half the time.
+    let choir = ClearStyle {
+        pace: [100, 100, 53],
+        pays: [0; 3],
+        burns: false,
+    };
+    let (slow, _, _) = clear_in(ClearStyle::STANDARD, THICKET);
+    let (fast, _, _) = clear_in(choir, THICKET);
+    let thicket = 2 * clear_ticks(Thicket);
+    assert!(
+        fast + thicket * 4 / 10 < slow,
+        "choir {fast}, standard {slow}"
+    );
+    // ... but woods at the standard pace.
+    assert_eq!(clear_in(choir, WOODS).0, standard);
 }
