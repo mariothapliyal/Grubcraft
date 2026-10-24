@@ -800,9 +800,14 @@ impl Siege {
             return;
         };
         let topple = topples(look.role).then(|| {
-            // Along the last blow; with none told, any way by the seed.
-            (self.jolt_of(structure))
-                .and_then(|j| j.dir.try_normalize())
+            // Along the shot still in flight that brought it down, else the
+            // last blow; with none told, any way by the seed.
+            let shot = (self.shots.iter())
+                .filter(|s| s.structure == structure)
+                .max_by(|a, b| a.born.total_cmp(&b.born))
+                .map(|s| s.dir);
+            (shot.or_else(|| self.jolt_of(structure).map(|j| j.dir)))
+                .and_then(Vec2::try_normalize)
                 .unwrap_or_else(|| Vec2::from_angle(hash(self.seed, 0, 0) * PI))
         });
         self.forget(structure);
@@ -1606,6 +1611,10 @@ mod tests {
             .expect("toppling")
             .way;
         assert!(way.dot(along) > 0.99, "falls the way the blow went");
+        assert!(
+            way.y < -0.99,
+            "north, away from the attacker in the south: {way}"
+        );
         assert_eq!(
             s.sinking().filter(|f| f.way == Vec2::ZERO).count(),
             1,
