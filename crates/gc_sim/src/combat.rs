@@ -1161,7 +1161,11 @@ impl Combat {
                         // strike at once, as long weapons do when a foe
                         // comes at their points.)
                         let (mine, theirs) = (
-                            units[regs.unit[i] as usize].charge_bonus,
+                            terrain.charge_bonus(
+                                units[regs.unit[i] as usize].charge_bonus,
+                                regs.position[i],
+                                regs.position[j],
+                            ),
                             units[regs.unit[j] as usize].charge_bonus,
                         );
                         regs.charge[j] = CHARGE_TICKS;
@@ -1179,7 +1183,10 @@ impl Combat {
                         // driven back from it, and the charger strikes the
                         // men it knocks aside at once. (Routers are only
                         // run down.)
-                        let ploughed = if regs.morale_state[j].broken() {
+                        // Up onto high ground, it hits home too slowly to
+                        // plough in.
+                        let uphill = terrain.downhill(regs.position[j], regs.position[i]);
+                        let ploughed = if regs.morale_state[j].broken() || uphill {
                             0
                         } else {
                             ploughs(regs, units, i, j, front())

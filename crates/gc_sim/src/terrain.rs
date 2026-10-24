@@ -23,8 +23,8 @@
 //!   per tile of height it climbs per tile, at most [`CLIMB_SLOW_MAX`]; a
 //!   charge hitting home from high ground lands [`CHARGE_DOWNHILL_PERCENT`]
 //!   as hard, and one up onto high ground [`CHARGE_UPHILL_PERCENT`].
-//! - **Footing:** each tile is firm or soft ([`Footing`]): mud, bog and wet
-//!   meadow. A regiment in soft ground marches at [`SOFT_SPEED_PERCENT`]
+//! - **Footing:** each tile is firm or soft ([`Footing`]): bog and wet
+//!   woodland. A regiment in soft ground marches at [`SOFT_SPEED_PERCENT`]
 //!   ([`SOFT_HEAVY_SPEED_PERCENT`] for heavy troops), and nobody charges out
 //!   of it or into it ([`Terrain::bears_charge`]).
 //!
@@ -85,7 +85,7 @@ pub const SOFT_HEAVY_SPEED_PERCENT: i32 = 60;
 pub enum Footing {
     /// Ground that bears a charge.
     Firm = 0,
-    /// Mud, bog and wet meadow: slow going, and no charges.
+    /// Bog and wet woodland (mud): slow going, and no charges.
     Soft = 1,
 }
 
@@ -95,7 +95,12 @@ impl Footing {
     /// The sim, the replay and the map all keep the layer by this rule.
     pub fn layer(footing: &[u8], tiles: u32) -> &[u8] {
         let n = tiles as usize * tiles as usize;
-        if n > 0 && footing.len() == n && footing.iter().any(|&f| f != 0) {
+        if n > 0
+            && footing.len() == n
+            && footing
+                .iter()
+                .any(|&f| Footing::from_u8(f) != Footing::Firm)
+        {
             footing
         } else {
             &[]
@@ -382,30 +387,34 @@ impl Terrain {
     /// Pace kept climbing from `p` a tile along `heading`, percent (100 on
     /// the level or going down).
     pub fn climb_percent(&self, p: FxVec2, heading: FxVec2) -> i32 {
-        self.climb_from(self.height(p), p, heading)
-    }
-
-    /// [`Terrain::climb_percent`] from ground `here` high.
-    fn climb_from(&self, here: i32, p: FxVec2, heading: FxVec2) -> i32 {
-        if self.tiles == 0 || heading == FxVec2::ZERO {
+        // A step along the heading long enough to reach the next tile along
+        // its main axis, so a diagonal climb is seen as a straight one is.
+        let most = heading.x.abs().max(heading.y.abs());
+        if self.tiles == 0 || most == Fx::ZERO {
             return 100;
         }
-        let rise = self.height(p + heading) - here;
+        let ahead = FxVec2::new(heading.x / most, heading.y / most);
+        let rise = self.height(p + ahead) - self.height(p);
         let slow = rise.max(0) * CLIMB_SLOW_PERCENT / HEIGHT_UNITS as i32;
         100 - slow.min(CLIMB_SLOW_MAX)
+    }
+
+    /// Whether `p` is on a slope that slows a climb: one that rises a
+    /// quarter of a tile or more to a neighbouring tile.
+    pub fn on_slope(&self, p: FxVec2) -> bool {
+        let here = self.height(p);
+        self.tiles != 0
+            && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(x, y)| {
+                self.height(p + FxVec2::from_ints(x, y)) - here >= HEIGHT_UNITS as i32 / 4
+            })
     }
 
     /// The charge bonus `bonus` of a regiment at `from` hitting home on one
     /// at `to`: more from high ground, less up onto it.
     pub fn charge_bonus(&self, bonus: u8, from: FxVec2, to: FxVec2) -> u8 {
-        let drop = if self.tiles == 0 {
-            0
-        } else {
-            self.height(from) - self.height(to)
-        };
-        let percent = if drop >= HIGH_GROUND {
+        let percent = if self.downhill(from, to) {
             CHARGE_DOWNHILL_PERCENT
-        } else if drop <= -HIGH_GROUND {
+        } else if self.downhill(to, from) {
             CHARGE_UPHILL_PERCENT
         } else {
             return bonus;
@@ -471,8 +480,7 @@ impl Terrain {
     /// the climb.
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
         let heavy = mass == Mass::Heavy;
-        let here = self.height(p);
-        let wading = if self.tiles != 0 && here < i32::from(self.water_level) {
+        let wading = if self.wet(p) {
             WADING_SPEED_PERCENT
         } else {
             100
@@ -487,7 +495,7 @@ impl Terrain {
             true => SOFT_SPEED_PERCENT,
             false => 100,
         };
-        let climb = self.climb_from(here, p, heading);
+        let climb = self.climb_percent(p, heading);
         let percents = [wading, woods, soft, climb];
         if percents == [100; 4] {
             return step;

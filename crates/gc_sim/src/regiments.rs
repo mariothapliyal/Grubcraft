@@ -1092,7 +1092,11 @@ impl Regiments {
                     nav.lost(i);
                     continue;
                 }
-                if self.falling_back[i] == 0 {
+                // A run-up is made on ground that bears a charge: wading or
+                // slogging through mud starts it again.
+                if !terrain.bears_charge(self.position[i]) {
+                    self.run_up[i] = 0;
+                } else if self.falling_back[i] == 0 {
                     self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
                 }
             } else if let Some(want) = self.target_facing[i] {

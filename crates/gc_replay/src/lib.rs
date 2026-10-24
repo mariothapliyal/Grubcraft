@@ -878,17 +878,9 @@ impl Replay {
             heights.push(prev);
         }
         let water_level = r.var_as()?;
-        let cover = if format >= 3 {
-            r.bytes()?.to_vec()
-        } else {
-            Vec::new()
-        };
-        if !cover.is_empty() && cover.len() != (map_tiles as usize).pow(2) {
-            return None;
-        }
-        let champions = format >= 4 && r.bool()?;
-        // A tile layer written from `since` on: empty, or one byte a tile.
-        let mut layer = |since: u16| -> Option<Vec<u8>> {
+        // A tile layer written from format `since` on: empty, or one byte a
+        // tile.
+        let layer = |r: &mut Reader, since: u16| -> Option<Vec<u8>> {
             let bytes = if format >= since {
                 r.bytes()?.to_vec()
             } else {
@@ -896,8 +888,10 @@ impl Replay {
             };
             (bytes.is_empty() || bytes.len() == (map_tiles as usize).pow(2)).then_some(bytes)
         };
-        let growth = layer(27)?;
-        let footing = layer(30)?;
+        let cover = layer(r, 3)?;
+        let champions = format >= 4 && r.bool()?;
+        let growth = layer(r, 27)?;
+        let footing = layer(r, 30)?;
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {

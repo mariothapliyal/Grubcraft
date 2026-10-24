@@ -517,8 +517,12 @@ impl Running {
             if n == 0 {
                 (unit, icon) = (Some(r.unit), this);
                 color = crate::color_of(&self.parties, r.owner);
-                ground = ground_word(self.world.terrain(), r.position, r.facing, r.moving);
+                ground = ground_word(self.world.terrain(), r.position);
             } else {
+                // Shown only when every selected regiment shares it.
+                if ground_word(self.world.terrain(), r.position) != ground {
+                    ground = "";
+                }
                 same &= unit == Some(r.unit);
                 same_icon &= icon == this;
             }
@@ -1728,23 +1732,17 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     }
 }
 
-/// What the ground at `p` does to a regiment facing `facing` (and marching,
-/// if `moving`), in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
+/// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
-fn ground_word(
-    terrain: &gc_sim::Terrain,
-    p: gc_fixed::FxVec2,
-    facing: gc_fixed::Angle,
-    moving: bool,
-) -> &'static str {
+fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {
         "In a ford: slow, no charges"
     } else if terrain.soft(p) {
         "In mud: slow, no charges"
-    } else if moving && terrain.climb_percent(p, facing.to_vec()) < 100 {
-        "Climbing: slower"
     } else if terrain.cover(p) == gc_sim::Cover::Wood {
         "In woods: slower"
+    } else if terrain.on_slope(p) {
+        "On a slope: slower uphill"
     } else {
         ""
     }
