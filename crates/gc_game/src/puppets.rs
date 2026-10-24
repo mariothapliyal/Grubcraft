@@ -809,8 +809,25 @@ impl Duel {
     /// Whether champion `side` has won and is cheering, once his kill has
     /// played out.
     fn cheering(&self, side: usize) -> bool {
+        self.won(side) && self.now >= self.challenge.ends() as f32 + self.tail()
+    }
+
+    /// Whether champion `side` wins the duel.
+    fn won(&self, side: usize) -> bool {
         self.challenge.winner == Some(side as u8)
-            && self.now >= self.challenge.ends() as f32 + self.tail()
+    }
+
+    /// Seconds until the duel's last blow lands (negative after).
+    fn blow_in(&self) -> f32 {
+        (self.challenge.ends() as f32 - self.now) / TICKS_PER_SECOND as f32
+    }
+
+    /// The matched kill the duel ends in, once it has begun: which, its
+    /// timing and how far through it the two are (1 and on once played).
+    fn kill_begun(&self) -> Option<(u16, KillTiming, f32)> {
+        let (pair, k) = self.kill.filter(|_| self.challenge.abandoned.is_none())?;
+        let at = k.contact - self.blow_in() / k.seconds;
+        (at >= 0.0).then_some((pair, k, at))
     }
 
     /// The matched kill the duel ends in, while it plays: which, its timing
@@ -818,10 +835,7 @@ impl Duel {
     /// It starts its contact's share of its length before the killing blow
     /// lands, so the blow meets the man as the simulation has it.
     fn killing(&self) -> Option<(u16, KillTiming, f32)> {
-        let (pair, k) = self.kill.filter(|_| self.challenge.abandoned.is_none())?;
-        let length = k.seconds * TICKS_PER_SECOND as f32;
-        let at = (self.now - self.challenge.ends() as f32) / length + k.contact;
-        (0.0..1.0).contains(&at).then_some((pair, k, at))
+        self.kill_begun().filter(|&(_, _, at)| at < 1.0)
     }
 
     /// Ticks the winner's matched kill plays on after its blow lands.
@@ -834,7 +848,11 @@ impl Duel {
     /// Champion `side`'s half of the matched kill, while it plays.
     fn kill_move(&self, side: usize) -> Option<Move> {
         let (pair, _, at) = self.killing()?;
-        Some(if self.challenge.winner == Some(side as u8) {
+        // Not without the man who plays the other half.
+        if self.champion[1 - side] == NONE {
+            return None;
+        }
+        Some(if self.won(side) {
             Move::Kill { pair, at }
         } else {
             Move::Killed { pair, at }
@@ -1403,10 +1421,13 @@ impl Puppets {
         let toward_b = (b - a).normalize_or(Vec2::Y);
         let half = toward_b * (DUEL_GAP / 2.0);
         let stand = [d.spot - half, d.spot + half];
-        match d.killing() {
-            Some((_, k, _)) if d.challenge.winner == Some(side as u8) => {
-                let them = stand[1 - side];
-                them + (stand[side] - them).normalize_or(-toward_b) * k.reach
+        match d.kill_begun() {
+            Some((_, k, _)) if d.won(side) => {
+                let them = match d.champion[1 - side] {
+                    NONE => stand[1 - side],
+                    other => self.pos[other as usize],
+                };
+                them + (stand[side] - them).normalize_or(half * (2.0 * side as f32 - 1.0)) * k.reach
             }
             _ => stand[side],
         }
@@ -1818,9 +1839,9 @@ impl Puppets {
             // its reach the same way.
             let warp = match (champion, acting) {
                 (Some((d, side)), _) => d
-                    .killing()
-                    .filter(|_| d.challenge.winner == Some(side as u8))
-                    .map(|(_, k, at)| (self.stance(&d, side), (k.contact - at) * k.seconds)),
+                    .kill_begun()
+                    .filter(|_| d.won(side))
+                    .map(|_| (self.stance(&d, side), d.blow_in())),
                 (None, Some((Act::Kill, f))) if self.killing[i].front => {
                     let kill = self.killing[i];
                     let exact = kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap;
@@ -1868,11 +1889,27 @@ impl Puppets {
                     self.drift[r] * LEAD
                 };
                 let push = pull * (SPRING * SPRING) - (v - carry) * (2.0 * DAMPING * SPRING);
-                self.vel[i] = (v + push.clamp_length_max(accel) * dt).clamp_length_max(top);
-                self.pos[i] += self.vel[i] * dt;
+                // Warped, he covers the rest of the way to his blow's
+                // distance in his share of the time left until it lands, and
+                // holds there as he follows through: his feet keep the pace.
+                match warp {
+                    Some((exact, left)) if left <= dt => {
+                        self.pos[i] = exact;
+                        self.vel[i] = Vec2::ZERO;
+                    }
+                    Some((exact, left)) => {
+                        self.vel[i] = (exact - self.pos[i]) / left;
+                        self.pos[i] += self.vel[i] * dt;
+                    }
+                    None => {
+                        self.vel[i] = (v + push.clamp_length_max(accel) * dt).clamp_length_max(top);
+                        self.pos[i] += self.vel[i] * dt;
+                    }
+                }
                 // Face your man, or where you walk when it's more than a
-                // shuffle, else the regiment's way; lie still when down.
-                let walking = self.vel[i].length() > 0.6 && dist > 0.4;
+                // shuffle, else the regiment's way; lie still when down. A
+                // man warped onto his blow faces his man.
+                let walking = warp.is_none() && self.vel[i].length() > 0.6 && dist > 0.4;
                 let look = match foe {
                     _ if down => self.facing[i],
                     Some(f) if !walking => (f - self.pos[i]).normalize_or(block.facing),
@@ -1888,19 +1925,6 @@ impl Puppets {
                     look
                 };
                 self.facing[i] = turn_toward(self.facing[i], look, TURN_RATE * dt);
-                // The rest of the way to his blow's distance, in his share
-                // of the time left until it lands, and held there as he
-                // follows through: his feet keep the pace.
-                if let Some((exact, left)) = warp {
-                    if left <= dt {
-                        self.pos[i] = exact;
-                        self.vel[i] = Vec2::ZERO;
-                    } else {
-                        let step = (exact - self.pos[i]) * (dt / left);
-                        self.pos[i] += step;
-                        self.vel[i] = step / dt;
-                    }
-                }
             }
             let speed = if fresh { 0.0 } else { self.vel[i].length() };
             let mut pos = self.pos[i];
@@ -1957,7 +1981,12 @@ impl Puppets {
                 let lunge = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
-            } else if speed < 0.15 && !block.routing && champion.is_none() && held.is_none() && !killing {
+            } else if speed < 0.15
+                && !block.routing
+                && champion.is_none()
+                && held.is_none()
+                && !killing
+            {
                 // At rest: shift weight and glance about; restlessly, waiting
                 // to fight.
                 let p = unit_hash(block.handle, k, 6) * tau;
@@ -2053,11 +2082,10 @@ impl Puppets {
             } else if slain.is_some() {
                 // The other champion's last blow has landed, as their matched
                 // kill's has if they play one: he lies as its half goes on.
-                match self.duel.and_then(|d| Some((d.killing()?, d))) {
-                    Some(((pair, _, _), d)) => {
+                match self.duel.and_then(|d| Some((d.killing()?.0, d.blow_in()))) {
+                    Some((pair, blow_in)) => {
                         paired = Some(pair);
-                        let since = (d.now - d.challenge.ends() as f32) / TICKS_PER_SECOND as f32;
-                        Some(-since.max(0.0))
+                        Some(blow_in)
                     }
                     None => Some(0.0),
                 }
@@ -3769,7 +3797,7 @@ mod tests {
         }
         // He stepped back to the kill's reach as he wound up.
         let apart = last[0].pos.distance(last[1].pos);
-        assert!((apart - KILL.reach).abs() < 0.25, "{apart}");
+        assert!((apart - KILL.reach).abs() < 0.02, "{apart}");
         // The loser falls as the blow lands, playing on the kill's half.
         b.models -= 1;
         let out = step(&mut p, &a, &b, now);
@@ -3790,6 +3818,9 @@ mod tests {
         }
         let out = step(&mut p, &a, &b, now + tick);
         assert_eq!(out[x].fight, Some(Move::Cheer));
+        // And cheers where he stands, not walking back up to the body.
+        let body = p.corpses().next().expect("the loser lies").pos;
+        assert!((out[x].pos.distance(body) - KILL.reach).abs() < 0.05);
     }
 
     #[test]
