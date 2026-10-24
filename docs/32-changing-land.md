@@ -27,11 +27,21 @@ Tall grass in an open meadow stays buildable: it is trampled flat, not grubbed o
 
 ### What a cleared tile becomes
 
-Open ground. Nobody hides there any more, troops no longer slow down in it, arrows are no longer caught by its trees, and cleared thicket can be walked through. The tile keeps its habitat (`Map.habitat`), so the ground thread (T8) draws a felled old-growth tile as a glade with stumps and loam and cut scrub as rough grass. The loam is built ([35](35-ground-marks.md)); stumps are not yet. Ambient life (T11, [34](34-ambient-life.md)) draws the workers felling and grubbing: workers swing at the tile, its trees tip over away from them and are hauled off, and bushes are torn up.
+Open ground. Nobody hides there any more, troops no longer slow down in it, arrows are no longer caught by its trees, and cleared thicket can be walked through. The tile keeps its habitat (`Map.habitat`), so the ground thread (T8) draws a felled old-growth tile as a glade with stumps and loam and cut scrub as rough grass. The loam ([35](35-ground-marks.md)) and the stumps ([25](25-scenery-models.md#stumps)) are built. Ambient life (T11, [34](34-ambient-life.md)) draws the workers felling and grubbing: workers swing at the tile, its trees tip over away from them and are hauled off, and bushes are torn up.
 
 ### Faction twists
 
-Mario chose all four as proposed (2026-10-24); they are built after the shared rules: the **Ember Clans** fell and haul (timber pays half again as much); the **Concord** burns it (twice as fast, no timber, leaves scorched ground that stays open); the **Choir** shatters it with resonance (thicket as fast as woods, no timber); **Brood** Gnawers eat it (scrub and woods feed them: Grub instead of timber, but slower). The first build gave every faction the same rules above.
+Mario chose all four as proposed (2026-10-24). **Built (2026-10-24):** each Conquest unit carries a `ClearStyle` (`gc_sim::clearing`): a pace for scrub, woods and thicket (100 is the standard time, 50 twice as fast), the Grub each pays, and whether it burns. The game sets it from the faction (`gc_game::conquest::clear_style`); the sim knows no factions. Workers of different styles can share one area; each works at its own pace and the tile pays what the worker who finishes it pays.
+
+| Faction | How they clear | Pace (scrub, woods, thicket) | Grub (scrub, woods, thicket) |
+|---|---|---|---|
+| Standard | fell and grub out | 100, 100, 100 | 0, 3, 5 |
+| **Ember Clans** | fell and haul: more timber | 100, 100, 100 | 0, 5, 8 |
+| **Carrion Concord** | burn it: twice as fast, no timber, leaves scorched ground (`Event::Cleared { burnt: true }`) that is open like any other | 50, 50, 50 | 0, 0, 0 |
+| **Choir** | shatter it with resonance: thicket as fast as woods, no timber | 100, 100, 53 | 0, 0, 0 |
+| **Brood** | Gnawers eat it: slower, but even scrub feeds them | 150, 150, 150 | 1, 3, 5 |
+
+Burning is a look only, reported on the event so the ground can be drawn scorched (the ground thread's to draw; not drawn yet). It lives only in the event, so a scorched look that must survive a replay seek or a rejoin will need it kept on the terrain too. The style is hashed with each Conquest unit and stored in replays from `FORMAT` 30 (older files read the standard style). `SIM_VERSION` 31.
 
 ### Computer players
 

@@ -121,8 +121,8 @@
 //! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
 //! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die|march` holds one clip instead (`march`
-//! walks with the attack on the upper body);
+//! idle|walk|attack|shoot|cheer|die|march|look` holds one clip instead (`march`
+//! walks with the attack on the upper body, `look` idles looking round);
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model; `--fx-demo` sets off every particle
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
@@ -667,7 +667,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -3404,6 +3404,13 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
+                        // Knocked down, his feet go where the fall puts them.
+                        let feet = match s.fight {
+                            Some(puppets::Move::Down(f)) => {
+                                models::feet_as_posed(models::down_depth(f))
+                            }
+                            _ => 0,
+                        };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: facing.to_array(),
@@ -3412,6 +3419,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: 0.0,
                             scale: look.scale,
+                            feet,
                             ..Default::default()
                         });
                     },
@@ -5068,6 +5076,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: -0.5 * c.sink,
                             scale: look.scale,
+                            feet: models::dying_feet(c.age),
                             ..Default::default()
                         });
                         continue;
@@ -5945,8 +5954,20 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
-        self.scenery
-            .set_extras(nodes.chain(banners).chain(falling).chain(fallen));
+        let stumps = (!self.commander)
+            .then(|| {
+                let reach = scenery::stump_reach(distance);
+                self.scars.stumps(focus, reach, |p| ground_of(map, p))
+            })
+            .into_iter()
+            .flatten();
+        self.scenery.set_extras(
+            nodes
+                .chain(banners)
+                .chain(falling)
+                .chain(fallen)
+                .chain(stumps),
+        );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
     }

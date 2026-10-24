@@ -215,6 +215,7 @@ impl Running {
                     .felling
                     .clear(tile, scenery.standing(tile), tall);
             }
+            self.scars.stumps_left(self.scenery.standing(tile));
             self.scenery.fell(std::iter::once(tile));
         }
         self.scars.felled(self.world.events(), self.heightmap.tiles);
@@ -261,11 +262,13 @@ mod tests {
                 x: 3,
                 y: 4,
                 was: Growth::Woods,
+                burnt: false,
             },
             Event::Cleared {
                 x: 5,
                 y: 6,
                 was: Growth::Scrub,
+                burnt: true,
             },
         ];
         assert_eq!(cleared(&events).collect::<Vec<_>>(), [(3, 4), (5, 6)]);
