@@ -67,10 +67,14 @@ use look::rgba;
 pub use look::{KNOBS, Knob, LandAir, Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
+pub use post::Cinema;
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
-pub use soldiers::{MAX_SOLDIER_INSTANCES, SoldierBatch, SoldierInstance, TONE_NEUTRAL};
+pub use soldiers::{
+    FEET_AS_POSED, LAYER_ADDITIVE, MAX_SOLDIER_INSTANCES, POSE_LAYERS, PoseLayer, SoldierBatch,
+    SoldierInstance, TONE_NEUTRAL,
+};
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 use shadows::{SHADOW_BIAS, SHADOW_FORMAT, SHADOW_SIZE};
 /// The colour a frame with nothing drawn shows, in sRGB.
@@ -116,6 +120,12 @@ pub struct Terrain<'a> {
     /// between lands are soft.
     pub tint: &'a [[u8; 4]],
     pub tint_side: u32,
+    /// How each tile's ground looks, row by row, `size - 1` over
+    /// `samples_per_tile` tiles a side: red, green and blue multiply the
+    /// grass (128 leaves it as it is, 255 doubles it; blended between tiles),
+    /// and alpha is one of the `GROUND_*` patterns drawn over it (0 for none).
+    /// Empty for none.
+    pub look: &'a [[u8; 4]],
 }
 
 /// One shaded box draped on the terrain: a soldier, a ground marker or an
@@ -143,6 +153,36 @@ pub const LAND_BROOD: u8 = 1;
 pub const LAND_CLANS: u8 = 2;
 pub const LAND_CHOIR: u8 = 3;
 pub const LAND_CONCORD: u8 = 4;
+
+/// The patterns a tile's ground look (`Terrain::look`) can ask for in its
+/// alpha byte, by the name the shader's `GROUND_*` carries. They are drawn over
+/// the grass where the tile is, with ragged edges.
+pub const GROUND_CLASSES: [(&str, u8); 12] = [
+    ("BOG", GROUND_BOG),
+    ("MUD", GROUND_MUD),
+    ("DAMP", GROUND_DAMP),
+    ("FLOWERS", GROUND_FLOWERS),
+    ("HEATHER", GROUND_HEATHER),
+    ("GRAVEL", GROUND_GRAVEL),
+    ("CRUST", GROUND_CRUST),
+    ("RIPPLE", GROUND_RIPPLE),
+    ("STRAW", GROUND_STRAW),
+    ("LITTER", GROUND_LITTER),
+    ("BONE", GROUND_BONE),
+    ("MOSS", GROUND_MOSS),
+];
+pub const GROUND_BOG: u8 = 1;
+pub const GROUND_MUD: u8 = 2;
+pub const GROUND_DAMP: u8 = 3;
+pub const GROUND_FLOWERS: u8 = 4;
+pub const GROUND_HEATHER: u8 = 5;
+pub const GROUND_GRAVEL: u8 = 6;
+pub const GROUND_CRUST: u8 = 7;
+pub const GROUND_RIPPLE: u8 = 8;
+pub const GROUND_STRAW: u8 = 9;
+pub const GROUND_LITTER: u8 = 10;
+pub const GROUND_BONE: u8 = 11;
+pub const GROUND_MOSS: u8 = 12;
 
 /// How the renderer is set up. The draw switches exist to measure what each
 /// part of the frame costs on real machines.
@@ -372,6 +412,8 @@ pub struct Renderer {
     /// effects were paused or slowed for (see [`Renderer::set_effects_speed`]).
     fx_time: f32,
     fx_speed: f32,
+    /// The picture's shake and letterbox bars (see [`Cinema`]).
+    cinema: Cinema,
     last_frame_time: Option<f32>,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
@@ -471,6 +513,11 @@ impl Renderer {
                 return Err(InitError::Unsupported(what));
             }
         }
+        if adapter.limits().max_storage_buffers_per_shader_stage < soldiers::POSE_STORAGE_BUFFERS {
+            return Err(InitError::Unsupported(
+                "bind the eight storage buffers soldier posing needs",
+            ));
+        }
         // The HDR image at 4 bytes a pixel where the GPU can draw into that
         // format (Apple, most desktop GPUs), else 8.
         let small_hdr = adapter
@@ -497,8 +544,8 @@ impl Renderer {
                         .limits()
                         .max_storage_buffer_binding_size,
                     max_buffer_size: adapter.limits().max_buffer_size,
-                    // Five for the skinning pass (the model vertices take
-                    // two); every desktop GPU has at least eight.
+                    // Eight for posing and skinning soldiers (see
+                    // `POSE_STORAGE_BUFFERS`); every desktop GPU has them.
                     max_storage_buffers_per_shader_stage: adapter
                         .limits()
                         .max_storage_buffers_per_shader_stage,
@@ -741,6 +788,16 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 17,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 18,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -1003,6 +1060,7 @@ impl Renderer {
             particles,
             fx_time: 0.0,
             fx_speed: 1.0,
+            cinema: Cinema::default(),
             last_frame_time: None,
             ui,
         })
@@ -1026,6 +1084,12 @@ impl Renderer {
             .lock()
             .map(|mut m| std::mem::take(&mut m.pending))
             .unwrap_or_default()
+    }
+
+    /// Shake the picture and draw letterbox bars, from the next frame on
+    /// (the HUD stays still and clear of the bars).
+    pub fn set_cinema(&mut self, cinema: Cinema) {
+        self.cinema = cinema;
     }
 
     /// Light and grade the world as `look` says, from the next frame on.
@@ -1316,6 +1380,23 @@ impl Renderer {
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
+        // The ground's look by tile; a single neutral texel when there is
+        // none, which the shader reads as nothing to look up.
+        let (look_side, look): (u32, &[[u8; 4]]) = if t.look.is_empty() {
+            (1, &[[128, 128, 128, 0]])
+        } else {
+            assert_eq!(t.look.len(), (tiles * tiles) as usize);
+            (tiles, t.look)
+        };
+        let look_map = self.tile_map("ground look", wgpu::TextureFormat::Rgba8Unorm, look_side);
+        Self::write_tile_map(
+            &self.queue,
+            &look_map,
+            look_side,
+            4,
+            bytemuck::cast_slice(look),
+        );
+        let look_view = look_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("world"),
@@ -1393,6 +1474,10 @@ impl Renderer {
                         binding: 17,
                         resource: wgpu::BindingResource::TextureView(&scar_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 18,
+                        resource: wgpu::BindingResource::TextureView(&look_view),
+                    },
                 ],
             })
         };
@@ -1417,6 +1502,7 @@ impl Renderer {
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
             + u64::from(tiles * tiles) * (1 + 4 + 4)
+            + u64::from(look_side * look_side) * 4
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {
@@ -1647,7 +1733,7 @@ impl Renderer {
             sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
         };
         self.post
-            .write_grade(&self.queue, &look, frame.time_seconds);
+            .write_grade(&self.queue, &look, frame.time_seconds, &self.cinema);
         // With nothing to draw the frame is a bare clear: no uploads and no
         // depth buffer, to measure the floor cost of presenting.
         let bare = !self.options.draw_terrain && !self.options.draw_blocks;
@@ -2574,7 +2660,7 @@ mod tests {
     #[test]
     fn regiment_instance_layout_is_stable() {
         assert_eq!(size_of::<BoxInstance>(), 36);
-        assert_eq!(size_of::<SoldierInstance>(), 36);
+        assert_eq!(size_of::<SoldierInstance>(), 64);
     }
 
     #[test]

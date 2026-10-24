@@ -100,6 +100,9 @@ const HIGHLIGHT: f32 = 1.6;
 // How the ground has been marked (Renderer::set_scars), one texel a tile: r
 // felled, g scorched, b worn by marching and fighting.
 @group(0) @binding(17) var scar_map: texture_2d<f32>;
+// How each tile's ground looks (Terrain::look), one texel a tile: rgb multiplies
+// the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
+@group(0) @binding(18) var ground_look: texture_2d<f32>;
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -612,6 +615,118 @@ fn ground_layer(layer: i32, mean: vec3<f32>, p: vec2<f32>, dx: vec2<f32>, dy: ve
     return r;
 }
 
+// ---------------------------------------------------------------- habitat ground
+//
+// What a habitat's ground is like, past the colour it gives the grass: bog
+// with pools of black water, mud, flowers in a meadow, heather, gravel, crazed
+// crust, ripples of bone dust, and so on. Worked out from the position alone;
+// the map decides where (`Terrain::look`). Fine detail fades with `px`, the
+// tiles a pixel covers.
+
+struct Habitat {
+    albedo: vec3<f32>,
+    // 0 none, 1 covers the ground.
+    k: f32,
+    // 0 dry, 1 standing water: glossy.
+    wet: f32,
+};
+
+fn habitat_ground(pattern: u32, xz: vec2<f32>, px: f32) -> Habitat {
+    var r = Habitat(vec3<f32>(0.0), 0.0, 0.0);
+    let fine = 1.0 - smoothstep(0.08, 0.2, px);
+    switch pattern {
+        case GROUND_BOG: {
+            // Hummocks of dark peat between pools of black water.
+            let pool = smoothstep(0.5, 0.62, fbm(xz * 0.3 + vec2<f32>(11.0, 4.0)));
+            let peat = srgb_to_linear(vec3<f32>(0.2, 0.15, 0.1)) * (0.7 + 0.6 * nz(xz * 1.9));
+            r.albedo = mix(peat, srgb_to_linear(vec3<f32>(0.08, 0.12, 0.13)), pool);
+            r.k = mix(0.6, 0.92, pool);
+            r.wet = pool;
+        }
+        case GROUND_MUD: {
+            // Trampled, sodden mud in patches.
+            let m = smoothstep(0.45, 0.65, fbm(xz * 0.45 + vec2<f32>(2.0, 19.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.24, 0.19, 0.11)) * (0.8 + 0.4 * nz(xz * 2.0));
+            r.k = m * 0.7;
+            r.wet = m * 0.6;
+        }
+        case GROUND_DAMP: {
+            let m = smoothstep(0.5, 0.7, fbm(xz * 0.4 + vec2<f32>(8.0, 3.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.2, 0.26, 0.13));
+            r.k = m * 0.4;
+            r.wet = m * 0.25;
+        }
+        case GROUND_FLOWERS: {
+            // Drifts of flowers: one in the middle of each cell of a grain
+            // two thirds of a tile, in the half that fall in a drift, over a
+            // faint wash of colour.
+            let grain = xz * 1.6;
+            let cell = floor(grain);
+            let drift = smoothstep(0.3, 0.55, fbm(xz * 0.25 + vec2<f32>(14.0, 6.0)));
+            let pick = hash2(cell + vec2<f32>(5.0, 1.0));
+            var petal = srgb_to_linear(vec3<f32>(0.95, 0.85, 0.2));
+            if pick > 0.66 {
+                petal = srgb_to_linear(vec3<f32>(0.95, 0.93, 0.88));
+            } else if pick > 0.33 {
+                petal = srgb_to_linear(vec3<f32>(0.82, 0.4, 0.66));
+            }
+            let off = (vec2<f32>(hash2(cell + vec2<f32>(3.0, 9.0)), hash2(cell + vec2<f32>(13.0, 2.0))) - 0.5) * 0.4;
+            let bloom = 1.0 - smoothstep(0.1, 0.22, length(fract(grain) - 0.5 - off));
+            r.albedo = petal;
+            r.k = max(bloom * step(0.4, hash2(cell)) * (0.5 + 0.5 * fine), drift * 0.12) * (0.4 + 0.6 * drift);
+        }
+        case GROUND_HEATHER: {
+            let patch_ = smoothstep(0.45, 0.65, fbm(xz * 0.35 + vec2<f32>(4.0, 13.0)));
+            let purple = srgb_to_linear(vec3<f32>(0.42, 0.22, 0.4));
+            let dry = srgb_to_linear(vec3<f32>(0.5, 0.42, 0.25));
+            r.albedo = mix(dry, purple, patch_);
+            r.k = 0.35 + 0.4 * patch_;
+        }
+        case GROUND_GRAVEL: {
+            let stone = srgb_to_linear(vec3<f32>(0.5, 0.46, 0.4));
+            let pebble = 0.6 + 0.8 * nz(xz * 3.1);
+            r.albedo = stone * pebble * mix(1.0, 0.7, step(0.7, nz(xz * 7.0)) * fine);
+            r.k = 0.8;
+        }
+        case GROUND_CRUST: {
+            // Pale crust crazed with dark cracks.
+            let crack = crease(xz * 0.9 + vec2<f32>(6.0, 2.0), 0.075) * (0.5 + 0.5 * fine);
+            let crust = srgb_to_linear(vec3<f32>(0.62, 0.56, 0.45)) * (0.85 + 0.3 * nz(xz * 1.7));
+            r.albedo = mix(crust, srgb_to_linear(vec3<f32>(0.2, 0.17, 0.13)), crack);
+            r.k = 0.85;
+        }
+        case GROUND_RIPPLE: {
+            // Bone dust combed into ripples by the wind.
+            let rip = 0.5 + 0.5 * sin(dot(xz, vec2<f32>(0.8, 0.6)) * 5.0 + 3.0 * fbm(xz * 0.25));
+            r.albedo = srgb_to_linear(vec3<f32>(0.78, 0.74, 0.62)) * (0.85 + 0.2 * mix(0.5, rip, fine));
+            r.k = 0.8;
+        }
+        case GROUND_STRAW: {
+            let m = smoothstep(0.35, 0.6, fbm(xz * 0.3 + vec2<f32>(9.0, 5.0)));
+            r.albedo = srgb_to_linear(vec3<f32>(0.6, 0.52, 0.3)) * (0.85 + 0.3 * nz(xz * 1.5));
+            r.k = m * 0.65;
+        }
+        case GROUND_LITTER: {
+            // Leaf litter and moss under the trees.
+            let litter = smoothstep(0.42, 0.62, fbm(xz * 0.6 + vec2<f32>(1.0, 7.0)));
+            let moss = smoothstep(0.55, 0.75, fbm(xz * 0.4 + vec2<f32>(17.0, 3.0)));
+            let leaf = srgb_to_linear(vec3<f32>(0.3, 0.2, 0.1)) * (0.8 + 0.4 * nz(xz * 2.4));
+            r.albedo = mix(leaf, srgb_to_linear(vec3<f32>(0.14, 0.24, 0.1)), moss);
+            r.k = max(litter * 0.45, moss * 0.5);
+        }
+        case GROUND_BONE: {
+            r.albedo = srgb_to_linear(vec3<f32>(0.78, 0.74, 0.62)) * (0.8 + 0.3 * nz(xz * 2.5));
+            r.k = 0.7;
+        }
+        case GROUND_MOSS: {
+            r.albedo = srgb_to_linear(vec3<f32>(0.12, 0.3, 0.12));
+            r.k = smoothstep(0.4, 0.65, fbm(xz * 0.5 + vec2<f32>(5.0, 21.0))) * 0.55;
+        }
+        default: {}
+    }
+    return r;
+}
+
 // ---------------------------------------------------------------- faction lands
 //
 // Where a faction's land has spread, the ground is that faction's. Each land is
@@ -844,6 +959,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let tint = textureSampleLevel(ground_tint, soft_sampler, (xz + wobble * 10.0) / tiles, 0.0);
         grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
     }
+    // The habitat's own grass colour, its borders wobbled the same way. A map
+    // without habitats has a single neutral texel, and nothing to look up.
+    let look_tiles = f32(textureDimensions(ground_look).x);
+    let has_look = textureDimensions(ground_look).x > 1u;
+    var look_at = xz;
+    if has_look {
+        let look_wobble = (vec2<f32>(vnoise(xz * 0.3), vnoise(xz * 0.3 + vec2<f32>(23.0, 5.0))) - 0.5) * 2.6
+            + (vec2<f32>(vnoise(xz * 1.1), vnoise(xz * 1.1 + vec2<f32>(7.0, 31.0))) - 0.5) * 0.8;
+        // Kept to the map: the sampler repeats.
+        look_at = clamp(xz + look_wobble, vec2<f32>(0.5), vec2<f32>(look_tiles - 0.5));
+        let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
+        grass = grass * look_mult * (255.0 / 128.0);
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     let grass_in = smoothstep(0.16, 0.26, h);
@@ -873,6 +1001,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // dirt fringe are soil's), the small scale put on the palette. Fully
     // rock ground has none of it.
     var nd = n;
+    var wet = 0.0;
     if rock < 1.0 {
         let grassy = grass_in * (1.0 - dry_in) * (1.0 - fringe * 0.7);
         let m = ground_blend(xz);
@@ -893,6 +1022,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
         nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
+
+        // The habitat's ground over it: bog pools, flowers, gravel and the
+        // like, the pattern the tile's own (a nearest lookup), its edge ragged
+        // by the wobble.
+        if has_look {
+            let tile = vec2<i32>(look_at);
+            let pattern = u32(textureLoad(ground_look, tile, 0).a * 255.0 + 0.5);
+            if pattern > 0u {
+                let hg = habitat_ground(pattern, xz, max(length(dpx.xz), length(dpy.xz)));
+                albedo = mix(albedo, hg.albedo, hg.k);
+                wet = hg.wet;
+            }
+        }
     }
 
     // Marks on the ground (and none on rock): worn tracks of bare dirt where
@@ -911,6 +1053,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.05, 0.045, 0.04)) * grit, burnt);
+        wet = wet * (1.0 - max(worn, max(felled, burnt)));
         // Turned earth lies in clods.
         let clod = vec2<f32>(vnoise(xz * 3.3) - 0.5, vnoise(xz * 3.3 + vec2<f32>(6.0, 2.0)) - 0.5);
         nd = normalize(nd + vec3<f32>(clod.x, 0.0, clod.y) * 0.45 * max(felled, worn * 0.5));
@@ -929,10 +1072,16 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let l = faction_land(xz, land.r, land.b * 255.0 / 4.0, max(length(dpx.xz), length(dpy.xz)));
         let k = l.cover * keep;
         albedo = mix(albedo, l.albedo, k);
+        wet = wet * (1.0 - k);
         nd = normalize(nd + vec3<f32>(l.tilt.x, 0.0, l.tilt.y) * keep);
         land_glow = l.glow * keep;
         land_rough = mix(1.0, l.rough, k);
         landed = k > 0.0;
+    }
+    // Standing water shines.
+    if wet > 0.0 {
+        land_rough = min(land_rough, mix(1.0, 0.25, wet));
+        landed = true;
     }
 
     var c: vec3<f32>;
@@ -1052,7 +1201,7 @@ fn block_vertex(
     let xz = pos + right * (corner.x * size.x) + fwd * (corner.z * size.z);
     // Drape over the terrain: each column sits on the ground beneath it.
     // A negative height is drawn as positive (see `vs_block_shadow`).
-    let ground = max(height_at(xz), g.misc.x - 0.05);
+    let ground = ground_at(xz);
     let world = vec3<f32>(xz.x, ground + lift + corner.y * abs(size.y), xz.y);
     var out: BlockOut;
     out.clip = g.view_proj * vec4<f32>(world, 1.0);
@@ -1126,11 +1275,17 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(8) var bones: texture_2d<f32>;
 @group(1) @binding(9) var<storage, read> set_vertices: array<SetVertex>;
 @group(1) @binding(10) var<storage, read> instances: array<u32>;
-@group(1) @binding(11) var<uniform> jobs: Jobs;
+@group(1) @binding(11) var<storage, read> jobs: Jobs;
 @group(1) @binding(12) var<storage, read_write> out_pos: array<f32>;
 @group(1) @binding(13) var<storage, read_write> out_shade: array<u32>;
 // The model vertices past `jobs.count.z`, when a GPU binds too few at once.
 @group(1) @binding(14) var<storage, read> set_vertices_hi: array<SetVertex>;
+// Every drawn soldier's final bone matrices (three rows of four floats a
+// bone), written by `cs_pose` and read by `cs_skin`.
+@group(1) @binding(15) var<storage, read_write> palette: array<vec4<f32>>;
+// Shared skeletons, their joint poses and each fitted model's fixes (see
+// `AnimGpu` in soldiers.rs for the layout), as vectors of four floats.
+@group(1) @binding(16) var<storage, read> anim: array<vec4<u32>>;
 
 fn set_vertex(i: u32) -> SetVertex {
     if i < jobs.count.z {
@@ -1153,19 +1308,24 @@ struct SetVertex {
     uv: u32,
 };
 
-// A run of soldiers of one model at one level of detail: their first
+// A run of soldiers of one model at one level of detail. `run`: their first
 // instance, the first vertex of the level's vertices and how many there are,
-// and the first output slot. Thread `n` of the pass belongs to the last job
-// whose slot is at or before it.
+// and the first output slot. `pose`: the first palette entry of the run's
+// first soldier, the model's bones (each soldier has that many entries),
+// where the model's fit starts in `anim` (0 for a model posed from bone
+// rows), and the run's first soldier counted over the frame. A skinning
+// thread belongs to the last job whose slot is at or before it, a posing
+// workgroup to the last whose first soldier is.
 struct Job {
     run: vec4<u32>,
+    pose: vec4<u32>,
 };
 
 struct Jobs {
-    // x: jobs, y: threads, z: model vertices in `set_vertices` (the rest
-    // are in `set_vertices_hi`)
+    // x: jobs, y: skinning threads, z: model vertices in `set_vertices`
+    // (the rest are in `set_vertices_hi`), w: soldiers posed
     count: vec4<u32>,
-    job: array<Job, 1023>,
+    job: array<Job>,
 };
 
 struct SoldierIn {
@@ -1221,6 +1381,11 @@ fn tone_mul(tone: f32) -> vec3<f32> {
     return (1.0 + 0.08 * tone) * (1.0 + tone * vec3<f32>(0.04, 0.015, -0.03));
 }
 
+// One bone's final matrix rows from the palette.
+fn palette_bone(slot: u32) -> mat3x4<f32> {
+    return mat3x4<f32>(palette[slot * 3u], palette[slot * 3u + 1u], palette[slot * 3u + 2u]);
+}
+
 fn bone_texel(row: u32, bone: u32, r: u32) -> vec4<f32> {
     return textureLoad(bones, vec2<i32>(i32(bone * 3u + r), i32(row)), 0);
 }
@@ -1252,6 +1417,499 @@ fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: b
     return vec3<f32>(xz.x, l.y, xz.y);
 }
 
+// Words in a `SoldierInstance`.
+const INSTANCE_WORDS: u32 = 16u;
+// Layers a soldier may play on top of its base move (`PoseLayer`).
+const POSE_LAYERS: u32 = 3u;
+// Joints a skeleton may have, plus the still bone: one posing thread each.
+const POSE_GROUP: u32 = 64u;
+// Soldiers posed along the dispatch's first dimension.
+const POSE_ROW: u32 = 256u;
+
+// One layer of a soldier's pose: two frame rows, the blend between them and
+// how much of the layer shows, on which joints and how.
+struct Layer {
+    frames: vec2<u32>,
+    blend: f32,
+    weight: f32,
+    mask: u32,
+    additive: bool,
+};
+
+// Layer `k` of the instance at word `i`: 0 is the base move (its weight is
+// one), then `POSE_LAYERS` more.
+fn instance_layer(i: u32, k: u32) -> Layer {
+    var l: Layer;
+    if k == 0u {
+        l.frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
+        l.blend = f32(instances[i + 5u] & 0xffu) / 255.0;
+        l.weight = 1.0;
+        l.mask = 0u;
+        l.additive = false;
+        return l;
+    }
+    let at = i + 9u + (k - 1u) * 2u;
+    let info = instances[at + 1u];
+    l.frames = vec2<u32>(instances[at] & 0xffffu, instances[at] >> 16u);
+    l.blend = f32(info & 0xffu) / 255.0;
+    l.weight = f32((info >> 8u) & 0xffu) / 255.0;
+    l.mask = (info >> 16u) & 0xffu;
+    l.additive = ((info >> 24u) & 1u) != 0u;
+    return l;
+}
+
+// A joint's pose: rotation, then translation and scale.
+struct JointPose {
+    r: vec4<f32>,
+    ts: vec4<f32>,
+};
+
+// Where a skeleton's poses start in `anim`, and its joints (a row's length).
+struct Poses {
+    at: u32,
+    joints: u32,
+};
+
+// The two half floats in `w` (low first), decoded by hand: `unpack2x16float`
+// needs a capability not every GPU has. No infinities or NaNs are stored.
+fn halves(w: vec2<u32>) -> vec4<f32> {
+    let h = vec4<u32>(w.x & 0xffffu, w.x >> 16u, w.y & 0xffffu, w.y >> 16u);
+    let sign = (h & vec4<u32>(0x8000u)) << vec4<u32>(16u);
+    let e = (h >> vec4<u32>(10u)) & vec4<u32>(0x1fu);
+    let m = h & vec4<u32>(0x3ffu);
+    let normal = bitcast<vec4<f32>>(sign | ((e + vec4<u32>(112u)) << vec4<u32>(23u)) | (m << vec4<u32>(13u)));
+    let tiny = vec4<f32>(m) * 5.9604645e-8 * select(vec4<f32>(1.0), vec4<f32>(-1.0), sign != vec4<u32>(0u));
+    return select(normal, tiny, e == vec4<u32>(0u));
+}
+
+// A joint's pose in frame `row`, from eight half floats.
+fn joint_pose(poses: Poses, row: u32, joint: u32) -> JointPose {
+    let v = anim[poses.at + row * poses.joints + joint];
+    return JointPose(halves(v.xy), halves(v.zw));
+}
+
+// Normalised blend of two rotations, the short way round.
+fn quat_nlerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
+    let b2 = select(b, -b, dot(a, b) < 0.0);
+    return normalize(mix(a, b2, t));
+}
+
+fn quat_mul(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz),
+        a.w * b.w - dot(a.xyz, b.xyz),
+    );
+}
+
+// A layer's pose of a joint, between its two frames.
+fn layer_pose(poses: Poses, l: Layer, joint: u32) -> JointPose {
+    let a = joint_pose(poses, l.frames.x, joint);
+    let b = joint_pose(poses, l.frames.y, joint);
+    return JointPose(quat_nlerp(a.r, b.r, l.blend), mix(a.ts, b.ts, l.blend));
+}
+
+// Rotation, translation and uniform scale as a matrix.
+fn pose_matrix(p: JointPose) -> mat4x4<f32> {
+    let q = p.r;
+    let s = p.ts.w;
+    let x2 = q.x + q.x;
+    let y2 = q.y + q.y;
+    let z2 = q.z + q.z;
+    let xx = q.x * x2;
+    let yy = q.y * y2;
+    let zz = q.z * z2;
+    let xy = q.x * y2;
+    let xz = q.x * z2;
+    let yz = q.y * z2;
+    let wx = q.w * x2;
+    let wy = q.w * y2;
+    let wz = q.w * z2;
+    return mat4x4<f32>(
+        vec4<f32>(1.0 - (yy + zz), xy + wz, xz - wy, 0.0) * s,
+        vec4<f32>(xy - wz, 1.0 - (xx + zz), yz + wx, 0.0) * s,
+        vec4<f32>(xz + wy, yz - wx, 1.0 - (xx + yy), 0.0) * s,
+        vec4<f32>(p.ts.xyz, 1.0),
+    );
+}
+
+// Three rows of floats in `anim` from `at` as a matrix.
+fn anim_matrix(at: u32) -> mat4x4<f32> {
+    return transpose(mat4x4<f32>(
+        bitcast<vec4<f32>>(anim[at]),
+        bitcast<vec4<f32>>(anim[at + 1u]),
+        bitcast<vec4<f32>>(anim[at + 2u]),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    ));
+}
+
+// The job holding thread `n`, counting threads by `run.w` (skinning) or
+// soldiers by `pose.w` (posing): the last job starting at or before it.
+fn find_job(n: u32, posing: bool) -> u32 {
+    var lo = 0u;
+    var hi = jobs.count.x;
+    while hi - lo > 1u {
+        let mid = (lo + hi) / 2u;
+        let start = select(jobs.job[mid].run.w, jobs.job[mid].pose.w, posing);
+        if start <= n {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn write_palette(slot: u32, m: mat3x4<f32>) {
+    palette[slot * 3u] = m[0];
+    palette[slot * 3u + 1u] = m[1];
+    palette[slot * 3u + 2u] = m[2];
+}
+
+// The rows of a matrix (as `bone_rows` returns them).
+fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
+    let t = transpose(m);
+    return mat3x4<f32>(t[0], t[1], t[2]);
+}
+
+var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
+
+// A soldier's rig fixes (see `rig_of` in soldiers.rs): 0 drops the whole
+// body, 1 to 3 bend the left leg (upper, lower, foot), 4 to 6 the right,
+// 7 to 9 turn chest, neck and head. Each also drops.
+const RIG_FIXES: u32 = 10u;
+var<workgroup> pose_fix: array<mat4x4<f32>, RIG_FIXES>;
+// A joint missing from the rig.
+const NO_JOINT: u32 = 255u;
+
+fn translation(t: vec3<f32>) -> mat4x4<f32> {
+    return mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(t, 1.0),
+    );
+}
+
+// A turn by `angle` about `axis` (of unit length), right-handed.
+fn axis_angle(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    let a = axis;
+    let k = 1.0 - c;
+    return mat3x3<f32>(
+        vec3<f32>(c + a.x * a.x * k, a.y * a.x * k + a.z * s, a.z * a.x * k - a.y * s),
+        vec3<f32>(a.x * a.y * k - a.z * s, c + a.y * a.y * k, a.z * a.y * k + a.x * s),
+        vec3<f32>(a.x * a.z * k + a.y * s, a.y * a.z * k - a.x * s, c + a.z * a.z * k),
+    );
+}
+
+// The turn `r` about the point `p`.
+fn turn_about(p: vec3<f32>, r: mat3x3<f32>) -> mat4x4<f32> {
+    return mat4x4<f32>(vec4<f32>(r[0], 0.0), vec4<f32>(r[1], 0.0), vec4<f32>(r[2], 0.0), vec4<f32>(p - r * p, 1.0));
+}
+
+// The shortest turn taking direction `u` onto `w` (both of unit length).
+fn turn_onto(u: vec3<f32>, w: vec3<f32>) -> mat3x3<f32> {
+    let axis = cross(u, w);
+    let sine = length(axis);
+    return axis_angle(select(vec3<f32>(0.0, 1.0, 0.0), axis / sine, sine > 1e-7), atan2(sine, dot(u, w)));
+}
+
+// Where a soldier looks: yaw about the model's up, then pitch about its left.
+fn look_turn(yaw: f32, pitch: f32) -> mat3x3<f32> {
+    return axis_angle(vec3<f32>(0.0, 1.0, 0.0), yaw) * axis_angle(vec3<f32>(1.0, 0.0, 0.0), pitch);
+}
+
+fn joint_at(j: u32) -> vec3<f32> {
+    return pose_globals[j][3].xyz;
+}
+
+// The ground where the skinning pass stands a soldier: the terrain, or just
+// under the water line.
+fn ground_at(xz: vec2<f32>) -> f32 {
+    return max(height_at(xz), g.misc.x - 0.05);
+}
+
+// Byte `k` of `w`, a rig joint.
+fn rig_joint(w: u32, k: u32) -> u32 {
+    return (w >> (8u * k)) & 0xffu;
+}
+
+// How much a leg's foot is planted, from how high its ankle is over the
+// soldier's ground, for a leg `reach` long: a rider's or a leaping foot
+// is left alone.
+fn planted(ankle: f32, reach: f32) -> f32 {
+    return 1.0 - smoothstep(0.3 * reach, 0.6 * reach, ankle);
+}
+
+// How much of foot IK the soldier at instance word `i` takes (0 for none):
+// none for a rig without legs, a model laid flat, lifted or sinking, or as
+// much as `SoldierInstance::feet` keeps the feet as posed.
+fn feet_weight(i: u32, rig: vec4<u32>) -> f32 {
+    let fallen = ((instances[i + 5u] >> 16u) & 0xffu) > 127u;
+    let lift = bitcast<f32>(instances[i + 7u]);
+    let scale = bitcast<f32>(instances[i + 8u]);
+    let legs = rig_joint(rig.x, 0u) != NO_JOINT;
+    let on = legs && !fallen && lift == 0.0 && scale > 0.0;
+    return select(0.0, 1.0 - f32(instances[i + 15u] >> 24u) / 255.0, on);
+}
+
+// How much the soldier at instance word `i` looks round.
+fn look_weight(i: u32) -> f32 {
+    return f32((instances[i + 15u] >> 16u) & 0xffu) / 255.0;
+}
+
+// Bend one leg (its rig word) so its foot rises by `rise` (model units, the
+// body already dropped by `drop`), with the knee always forward: turn the
+// knee until hip and foot are as far apart as hip and goal, then swing the
+// leg at the hip onto the goal. The foot keeps its own turn.
+fn bend_leg(leg: u32, first: u32, rise_by: f32, drop: mat4x4<f32>) {
+    let hip = (drop * vec4<f32>(joint_at(rig_joint(leg, 0u)), 1.0)).xyz;
+    let knee = (drop * vec4<f32>(joint_at(rig_joint(leg, 1u)), 1.0)).xyz;
+    let ankle = (drop * vec4<f32>(joint_at(rig_joint(leg, 2u)), 1.0)).xyz;
+    let thigh = knee - hip;
+    let shin = ankle - knee;
+    let lab = length(thigh);
+    let lcb = length(shin);
+    let reach = lab + lcb;
+    let rise = min(rise_by, 0.4 * reach);
+    if rise <= 1e-4 || lab < 1e-5 || lcb < 1e-5 || length(ankle - hip) < 1e-5 {
+        return;
+    }
+    let goal = ankle + vec3<f32>(0.0, rise, 0.0);
+    let lat = clamp(length(goal - hip), max(abs(lab - lcb) + 1e-4, 0.25 * reach), reach - 1e-4);
+    // The knee's hinge: the leg's own bending plane while the knee is
+    // forward of the hip-to-foot line, else across the leg, so a straight or
+    // overstraightened knee bends forward.
+    let ac = normalize(ankle - hip);
+    let across = normalize(cross(ac, vec3<f32>(0.0, 0.0, 1.0)) + vec3<f32>(-1e-6, 0.0, 0.0));
+    let plane = cross(ac, thigh / lab);
+    let hinge = select(across, normalize(plane), dot(plane, across) > 0.05);
+    // The knee's turn: |thigh + R(t) shin| = lat, solved as
+    // p cos t + q sin t = c, taking the root nearest the plain bend.
+    let along = dot(shin, hinge) * hinge;
+    let flat = shin - along;
+    let p = dot(thigh, flat);
+    let q = dot(thigh, cross(hinge, flat));
+    let c = 0.5 * (lat * lat - lab * lab - lcb * lcb) - dot(thigh, along);
+    let m = max(length(vec2<f32>(p, q)), 1e-9);
+    let phi = atan2(q, p);
+    let spread = acos(clamp(c / m, -1.0, 1.0));
+    let inner = acos(clamp((lab * lab + lcb * lcb - lat * lat) / (2.0 * lab * lcb), -1.0, 1.0));
+    let now = atan2(dot(cross(thigh, shin), hinge), dot(thigh, shin));
+    let guess = -(3.1415927 - inner) - now;
+    let wrap_a = phi + spread - guess;
+    let wrap_b = phi - spread - guess;
+    let da = abs(atan2(sin(wrap_a), cos(wrap_a)));
+    let db = abs(atan2(sin(wrap_b), cos(wrap_b)));
+    let turn = select(phi - spread, phi + spread, da < db);
+    let knee_turn = turn_about(knee, axis_angle(hinge, turn));
+    let bent = (knee_turn * vec4<f32>(ankle, 1.0)).xyz;
+    let upper = turn_about(hip, turn_onto(normalize(bent - hip), normalize(goal - hip)));
+    let lower = upper * knee_turn;
+    pose_fix[first] = upper * drop;
+    pose_fix[first + 1u] = lower * drop;
+    let foot = (lower * vec4<f32>(ankle, 1.0)).xyz;
+    pose_fix[first + 2u] = translation(foot - ankle) * drop;
+}
+
+// Work out the rig fixes of the soldier at instance word `i`, once the
+// joints' matrices are built: drop the body to the lower foot's ground (never
+// raising it) and bend the legs up to their own, then turn chest, neck and
+// head to look.
+fn fit_rig(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
+    let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
+    let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
+    let scale = bitcast<f32>(instances[i + 8u]);
+    let extra = instances[i + 15u];
+
+    // Feet: how far each planted foot's ground is above the soldier's.
+    var rise = vec2<f32>(0.0);
+    if feet > 0.0 {
+        let here = ground_at(pos);
+        let left = vec2<f32>(facing.y, -facing.x);
+        for (var k = 0u; k < 2u; k++) {
+            let leg = rig[k];
+            let hip = joint_at(rig_joint(leg, 0u));
+            let knee = joint_at(rig_joint(leg, 1u));
+            let ankle = joint_at(rig_joint(leg, 2u));
+            let reach = length(knee - hip) + length(ankle - knee);
+            let xz = pos + (left * ankle.x + facing * ankle.z) * scale;
+            let dy = clamp((ground_at(xz) - here) / scale, -0.4 * reach, 0.4 * reach);
+            rise[k] = dy * planted(ankle.y, reach) * feet;
+        }
+    }
+    let drop_by = min(0.0, min(rise.x, rise.y));
+    let drop = translation(vec3<f32>(0.0, drop_by, 0.0));
+    for (var f = 0u; f < RIG_FIXES; f++) {
+        pose_fix[f] = drop;
+    }
+    if feet > 0.0 {
+        for (var k = 0u; k < 2u; k++) {
+            bend_leg(rig[k], 1u + 3u * k, rise[k] - drop_by, drop);
+        }
+    }
+
+    // Look: shared out over chest, neck and head, each turning by its share
+    // more than the one below, so the head ends looking as asked.
+    if look <= 0.0 {
+        return;
+    }
+    let yaw = f32(bitcast<i32>(extra << 24u) >> 24u) / 127.0 * 1.5707964 * look;
+    let pitch = f32(bitcast<i32>(extra << 16u) >> 24u) / 127.0 * 0.7853982 * look;
+    var shares = vec3<f32>(0.3, 0.3, 0.4);
+    for (var k = 0u; k < 3u; k++) {
+        if rig_joint(rig.z, k) == NO_JOINT {
+            shares[k] = 0.0;
+        }
+    }
+    let total = shares.x + shares.y + shares.z;
+    if total <= 0.0 {
+        return;
+    }
+    var turned = drop;
+    var done = 0.0;
+    var was = look_turn(0.0, 0.0);
+    for (var k = 0u; k < 3u; k++) {
+        let j = rig_joint(rig.z, k);
+        if j == NO_JOINT {
+            continue;
+        }
+        done += shares[k] / total;
+        let now = look_turn(yaw * done, pitch * done);
+        let pivot = (turned * vec4<f32>(joint_at(j), 1.0)).xyz;
+        turned = turn_about(pivot, now * transpose(was)) * turned;
+        was = now;
+        pose_fix[7u + k] = turned;
+    }
+}
+
+// Build one soldier's final bone matrices, a thread per bone, into the
+// palette, where every vertex that follows a bone then reads it.
+//
+// A model posed from bone rows blends its layers' matrices (a layer it
+// cannot hold, an additive one, is skipped). A model fitted to a skeleton
+// mixes each joint's pose from its layers (a layer only moves the joints its
+// mask covers; an additive layer adds its change on top), builds the joints'
+// matrices parent by parent, depth by depth (the roots taking the model's
+// `pre`, from the skeleton's space to its own), and ends each with its
+// bone's fix: `pre * global * post`.
+@compute @workgroup_size(POSE_GROUP)
+fn cs_pose(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) bone: u32,
+) {
+    let k = group.y * POSE_ROW + group.x;
+    if k >= jobs.count.w {
+        return;
+    }
+    let job = jobs.job[find_job(k, true)];
+    let nth = k - job.pose.w;
+    let soldier = job.run.x + nth;
+    let bones = job.pose.y;
+    let slot = job.pose.x + nth * bones + bone;
+    let i = soldier * INSTANCE_WORDS;
+    let fit = job.pose.z;
+
+    if fit == 0u {
+        if bone >= bones {
+            return;
+        }
+        let base = instance_layer(i, 0u);
+        var m = bone_rows(base.frames, bone, base.blend);
+        for (var l = 1u; l <= POSE_LAYERS; l++) {
+            let layer = instance_layer(i, l);
+            if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
+                let o = bone_rows(layer.frames, bone, layer.blend);
+                m = mat3x4<f32>(
+                    mix(m[0], o[0], layer.weight),
+                    mix(m[1], o[1], layer.weight),
+                    mix(m[2], o[2], layer.weight),
+                );
+            }
+        }
+        write_palette(slot, m);
+        return;
+    }
+
+    // The fit: the skeleton's joints, how deep they nest and where its poses
+    // start, then the model's fixes.
+    let head = anim[fit];
+    let joints_at = head.x;
+    let joints = head.y;
+    let deepest = head.z;
+    let poses = Poses(head.w, joints);
+    let joint = anim[joints_at + min(bone, joints - 1u)];
+    let parent = joint.x;
+    let depth = joint.y;
+    let masks = joint.z;
+
+    var local = mat4x4<f32>();
+    if bone < joints {
+        let base = instance_layer(i, 0u);
+        var p = layer_pose(poses, base, bone);
+        for (var l = 1u; l <= POSE_LAYERS; l++) {
+            let layer = instance_layer(i, l);
+            if layer.weight <= 0.0 || ((masks >> layer.mask) & 1u) == 0u {
+                continue;
+            }
+            let o = layer_pose(poses, layer, bone);
+            if layer.additive {
+                // The layer's rows hold changes from its first frame.
+                let id = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                p.r = normalize(quat_mul(quat_nlerp(id, o.r, layer.weight), p.r));
+                p.ts = vec4<f32>(p.ts.xyz + o.ts.xyz * layer.weight, p.ts.w * mix(1.0, o.ts.w, layer.weight));
+            } else {
+                p.r = quat_nlerp(p.r, o.r, layer.weight);
+                p.ts = mix(p.ts, o.ts, layer.weight);
+            }
+        }
+        local = pose_matrix(p);
+    }
+    // Parents before children: one depth at a time.
+    for (var d = 0u; d <= deepest; d++) {
+        if bone < joints && depth == d {
+            if parent == 255u {
+                pose_globals[bone] = anim_matrix(fit + 2u) * local;
+            } else {
+                pose_globals[bone] = pose_globals[parent] * local;
+            }
+        }
+        workgroupBarrier();
+    }
+    // The rig's fixes: the body dropped and the legs bent to stand on the
+    // ground, the upper body turned to look. Whether there are any is the
+    // same for the whole workgroup.
+    let rig = anim[fit + 1u];
+    let feet = feet_weight(i, rig);
+    let look = look_weight(i);
+    let rigged = feet > 0.0 || look > 0.0;
+    if rigged {
+        if bone == 0u {
+            fit_rig(i, rig, feet, look);
+        }
+        workgroupBarrier();
+    }
+    if bone > joints || bone >= bones {
+        return;
+    }
+    if bone == joints {
+        // The still bone never moves, but drops with the body.
+        var still = translation(vec3<f32>(0.0));
+        if rigged {
+            still = pose_fix[0];
+        }
+        write_palette(slot, matrix_rows(still));
+        return;
+    }
+    let post = anim_matrix(fit + 5u + bone * 3u);
+    var global = pose_globals[bone];
+    if rigged {
+        global = pose_fix[(joint.w >> 16u) & 0xffu] * global;
+    }
+    write_palette(slot, matrix_rows(global * post));
+}
+
 // Pose one vertex of one soldier and keep it for the passes that draw it.
 @compute @workgroup_size(128)
 fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -1259,30 +1917,20 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     if n >= jobs.count.y {
         return;
     }
-    var lo = 0u;
-    var hi = jobs.count.x;
-    while hi - lo > 1u {
-        let mid = (lo + hi) / 2u;
-        if jobs.job[mid].run.w <= n {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    let run = jobs.job[lo].run;
+    let job = find_job(n, false);
+    let run = jobs.job[job].run;
+    let run_pose = jobs.job[job].pose;
     let at = n - run.w;
     let soldier = run.x + at / run.z;
     let sv = set_vertex(run.y + at % run.z);
 
-    // The instance (`SoldierInstance`), nine words.
-    let i = soldier * 9u;
+    // The instance (`SoldierInstance`).
+    let i = soldier * INSTANCE_WORDS;
     let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
     let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
-    let frames = vec2<u32>(instances[i + 4u] & 0xffffu, instances[i + 4u] >> 16u);
     let flags = instances[i + 5u];
     let lift = bitcast<f32>(instances[i + 7u]);
     let scale = bitcast<f32>(instances[i + 8u]);
-    let t = f32(flags & 0xffu) / 255.0;
     let fallen = ((flags >> 16u) & 0xffu) > 127u;
 
     let p = vec4<f32>(
@@ -1294,13 +1942,14 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         1.0,
     );
     // Most vertices follow one or two bones; stop at the first empty slot.
-    var m = bone_rows(frames, sv.bones & 0xffu, t) * (f32(sv.weights & 0xffu) / 255.0);
+    let base = run_pose.x + (soldier - run.x) * run_pose.y;
+    var m = palette_bone(base + (sv.bones & 0xffu)) * (f32(sv.weights & 0xffu) / 255.0);
     for (var b = 1u; b < 4u; b++) {
         let w = f32((sv.weights >> (8u * b)) & 0xffu) / 255.0;
         if w <= 0.0 {
             break;
         }
-        m += bone_rows(frames, (sv.bones >> (8u * b)) & 0xffu, t) * w;
+        m += palette_bone(base + ((sv.bones >> (8u * b)) & 0xffu)) * w;
     }
     var local = vec3<f32>(dot(m[0], p), dot(m[1], p), dot(m[2], p)) * scale;
     if fallen {
@@ -1309,7 +1958,7 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let left = vec2<f32>(facing.y, -facing.x);
     let xz = pos + left * local.x + facing * local.z;
-    let ground = max(height_at(pos), g.misc.x - 0.05);
+    let ground = ground_at(pos);
     let world = vec3<f32>(xz.x, ground + lift + local.y, xz.y);
     let normal = normalize(model_dir_to_world(
         m,
@@ -1459,7 +2108,7 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
         in.team_color * min(grey * 1.25, 1.2) * tone_mul(in.tone / 3.0),
         a.a,
     );
-    // Surface detail over the baked atlas: the class's grain at its own
+    // Surface detail over the baked atlas: the pattern's grain at its own
     // repeat, which shades the colour, leans the normal, shifts the roughness
     // and darkens the cavities. Mips fade it to nothing with distance.
     var nxy = b.xy * 2.0 - 1.0;

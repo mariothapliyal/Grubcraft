@@ -121,7 +121,8 @@
 //! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
 //! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die` holds one clip instead;
+//! idle|walk|attack|shoot|cheer|die|march|look` holds one clip instead (`march`
+//! walks with the attack on the upper body, `look` idles looking round);
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model; `--fx-demo` sets off every particle
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
@@ -133,6 +134,7 @@ mod army_shape;
 mod atmosphere;
 mod buildings;
 mod camera;
+mod cinema;
 mod clearing;
 mod conquest;
 mod conquest_ai;
@@ -150,6 +152,7 @@ mod fog;
 mod fx_demo;
 #[cfg(test)]
 mod goldens;
+mod ground_look;
 mod land;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
@@ -157,6 +160,7 @@ mod hud;
 mod lens;
 mod map_preview;
 mod models;
+mod moves;
 mod online;
 mod profile;
 mod puppets;
@@ -655,7 +659,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die] [--viewer NAME|start] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -667,6 +671,10 @@ struct Running {
     /// The light the renderer is set to: the look of the match (F9 steps
     /// through them) in the air of the lands, Clarity and the tuning panel.
     atmosphere: atmosphere::Atmosphere,
+    /// The picture's screen shake and letterbox bars.
+    cinema: cinema::Cinema,
+    /// Whether the deployment was still going last frame, to see a battle begin.
+    was_deploying: bool,
     /// How far the camera starts from the ground when `--distance` says.
     start_distance: Option<f32>,
     camera: RtsCamera,
@@ -1477,6 +1485,8 @@ impl App {
             window,
             renderer,
             atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air),
+            cinema: cinema::Cinema::default(),
+            was_deploying: false,
             start_distance: opts.distance,
             camera,
             ride: None,
@@ -3340,6 +3350,13 @@ impl Running {
                         let Some((pose, flat)) = pose else {
                             return;
                         };
+                        // Knocked down, his feet go where the fall puts them.
+                        let feet = match s.fight {
+                            Some(puppets::Move::Down(f)) => {
+                                models::feet_as_posed(models::down_depth(f))
+                            }
+                            _ => 0,
+                        };
                         buckets[model * LODS + lod].push(SoldierInstance {
                             pos: s.pos.to_array(),
                             facing: facing.to_array(),
@@ -3348,6 +3365,8 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: 0.0,
                             scale: look.scale,
+                            feet,
+                            ..Default::default()
                         });
                     },
                 );
@@ -3501,18 +3520,7 @@ impl Running {
             |p| heightmap.height_at(p.x, p.y),
             |tile| scenery.occupied_at(tile),
         );
-        // The motes (and the demo) follow the view in use: where the
-        // bird's-eye camera looks, or a little ahead of a ride.
-        let (view_focus, view_distance) = match &self.ride {
-            Some(ride) => {
-                let (eye, forward) = (ride.camera.eye(), ride.camera.forward());
-                (
-                    Vec2::new(eye.x + forward.x * 8.0, eye.z + forward.z * 8.0),
-                    camera::MIN_DISTANCE,
-                )
-            }
-            None => (self.camera.focus, self.camera.distance),
-        };
+        let (view_focus, view_distance) = self.view_focus();
         let look = self.atmosphere.look(
             dt.as_secs_f32(),
             heightmap,
@@ -3521,6 +3529,24 @@ impl Running {
             self.menu.settings().clarity,
         );
         self.renderer.set_look(look);
+        // A battle that has just begun draws the bars; blows shook the screen
+        // as they came in. Still while paused or behind the menu.
+        // A rejoining player's catch-up replays old fights in a rush: they
+        // neither shake the screen nor open a battle that began long ago.
+        let deploying = self.world.deploying();
+        if self.online.is_some() && self.menu.net().catching_up() {
+            self.cinema.reset();
+        } else if self.was_deploying && !deploying && self.match_started {
+            self.cinema.battle_begins();
+        }
+        self.was_deploying = deploying;
+        let settings = self.menu.settings();
+        let picture = self.cinema.frame(
+            if live { dt.as_secs_f32() } else { 0.0 },
+            settings.reduced_shake,
+            !settings.clarity,
+        );
+        self.renderer.set_cinema(picture);
         // Pollen, fireflies, leaves and whirlwinds, where the land has them;
         // not behind the menu or in the unit viewer, where nobody is looking
         // at the field.
@@ -4423,6 +4449,8 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.cinema.reset();
+        self.was_deploying = false;
         self.land.reset();
         // The lobby's time of day lights the match, unless `--look` says.
         let time_of_day = match &kind {
@@ -4986,6 +5014,8 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: -0.5 * c.sink,
                             scale: look.scale,
+                            feet: models::dying_feet(c.age),
+                            ..Default::default()
                         });
                         continue;
                     }
@@ -5054,6 +5084,7 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
+        let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -5102,6 +5133,15 @@ impl Running {
                         let p = from_fx_vec(r.position).lerp(from_fx_vec(f.position), 0.5);
                         let ground = self.heightmap.height_at(p.x, p.y);
                         self.effects.charge_hit(glam::Vec3::new(p.x, ground, p.y));
+                        self.cinema.blow(p, focus, distance, cinema::CHARGE_HIT);
+                    }
+                }
+                Event::Ambush(a) => {
+                    // Your own regiments are always seen by you.
+                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, a.victim);
+                    if let (true, Some(r)) = (seen, self.world.regiments.get(a.victim)) {
+                        self.cinema
+                            .blow(from_fx_vec(r.position), focus, distance, cinema::AMBUSH);
                     }
                 }
                 Event::Struck { structure, by } => {
@@ -5122,9 +5162,13 @@ impl Running {
                 // Nor is its fall, unless the blow that felled it was.
                 Event::Fallen { structure } => {
                     let side = self.sandbox.side;
-                    let friendly = (self.siege.look(structure))
-                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    let look = self.siege.look(structure);
+                    let friendly = look.is_some_and(|l| !self.world.hostile(side, l.owner));
                     if self.reveal_all || friendly || shown.contains(&structure) {
+                        if let Some(l) = look {
+                            self.cinema
+                                .blow(l.centre(), focus, distance, cinema::BUILDING_FELL);
+                        }
                         self.siege.fallen(structure);
                     } else {
                         self.siege.forget(structure);
@@ -6014,6 +6058,7 @@ impl Running {
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: fall.lift,
                     scale: 1.0,
+                    ..Default::default()
                 });
             }
         }
@@ -6037,6 +6082,7 @@ impl Running {
                         color: [r, g, b, gc_render::TONE_NEUTRAL],
                         lift,
                         scale: 1.0,
+                        ..Default::default()
                     });
                 }
             }
@@ -6066,6 +6112,7 @@ impl Running {
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
+                    ..Default::default()
                 });
             }
         }
@@ -6257,6 +6304,21 @@ impl Running {
         self.atmosphere.tune_key(key, fast);
         self.sandbox.dirty = true;
         true
+    }
+
+    /// Where the view in use is looking and how far it is from the ground:
+    /// the bird's-eye camera's focus, or a little ahead of a ride.
+    fn view_focus(&self) -> (Vec2, f32) {
+        match &self.ride {
+            Some(ride) => {
+                let (eye, forward) = (ride.camera.eye(), ride.camera.forward());
+                (
+                    Vec2::new(eye.x + forward.x * 8.0, eye.z + forward.z * 8.0),
+                    camera::MIN_DISTANCE,
+                )
+            }
+            None => (self.camera.focus, self.camera.distance),
+        }
     }
 
     /// Show a line in the sandbox panel for a few seconds.
@@ -6623,6 +6685,7 @@ fn set_terrain(renderer: &mut gc_render::Renderer, map: &Map) {
         cliff: &map.cliff_cells(),
         tint: &tint,
         tint_side,
+        look: &ground_look::ground_look(map),
     });
 }
 
