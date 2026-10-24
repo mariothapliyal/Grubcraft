@@ -82,12 +82,14 @@ fn a_mind_marches_its_troops_out_of_burning_woods() {
     }));
     let mut burned = false;
     let mut fled = false;
+    let mut out_of_it = false;
     for _ in 0..60 * gc_sim::TICKS_PER_SECOND {
         world.tick(&out);
         out.clear();
         if world.regiments.get(spears).is_none() {
             break;
         };
+        out_of_it |= fled && !world.in_fire(spears);
         burned |= world.in_fire(spears);
         minds.tick(&world, &mut out);
         fled |= burned
@@ -98,4 +100,5 @@ fn a_mind_marches_its_troops_out_of_burning_woods() {
     }
     assert!(burned, "the fire reached the spears");
     assert!(fled, "the mind sent them out of it");
+    assert!(out_of_it, "and they got out alive");
 }

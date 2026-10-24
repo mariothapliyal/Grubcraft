@@ -2966,6 +2966,14 @@ impl Running {
     /// E: set the woods beside each selected regiment alight (the sim
     /// refuses those with none in reach; docs/32-changing-land.md).
     fn burn_woods(&mut self) {
+        if self.world.deploying() {
+            self.say("Fire can't be set until the battle begins".into());
+            return;
+        }
+        if !self.world.weather_lets_fire() {
+            self.say("Too wet to burn: the ground must dry first".into());
+            return;
+        }
         let before = self.human_orders.len();
         for &regiment in &self.selected {
             if self.world.regiments.owner(regiment).is_some() {
@@ -2979,7 +2987,9 @@ impl Running {
             return;
         }
         self.ui_sound(sounds::UiSound::Move);
-        self.say("Fire set to the woods beside them: it spreads with the wind".into());
+        self.say(
+            "Burning the woods beside them, where there are any: fire spreads with the wind".into(),
+        );
     }
 
     /// X: light the selection's torches, or, if they all burn already, put
@@ -4036,11 +4046,15 @@ impl Running {
             let fire_dt = dt.as_secs_f32() * fx_speed;
             let centre = |b: &gc_sim::Burn| Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
             let near: Vec<_> = (self.world.fires().iter())
-                .filter(|b| centre(b).distance_squared(view_focus) <= view_distance * view_distance)
+                .filter(|b| {
+                    centre(b).distance_squared(view_focus) <= view_distance * view_distance
+                        && (reveal || fog.sees_tile((b.x, b.y)))
+                })
                 .collect();
-            let every = near.len().div_ceil(MOST_FIRES_DRAWN).max(1);
-            for b in near.into_iter().step_by(every) {
-                if !(reveal || fog.sees_tile((b.x, b.y))) {
+            // Thinned by a hash of the tile, so a big fire shows no stripes.
+            let every = near.len().div_ceil(MOST_FIRES_DRAWN).max(1) as i32;
+            for b in near {
+                if (b.x * 7 + b.y * 13).rem_euclid(every) != 0 {
                     continue;
                 }
                 let at = centre(b);

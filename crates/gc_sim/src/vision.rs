@@ -623,12 +623,13 @@ impl Vision {
         self.revealed[i] = 0;
         self.off_guard[i] = 0;
         self.was_engaged[i] = false;
+        // A slot's last regiment's fire is not its own.
+        self.in_fire[i] = false;
+        self.fire_lit[i] = false;
         // Placed in the dark in the open, it is in plain view as placed.
         let in_open = self.spotting(regs, units, terrain, i).0.is_none();
         self.lit[i] = false;
         self.dark_only[i] = false;
-        self.in_fire[i] = false;
-        self.fire_lit[i] = false;
         self.from_dark[i] = false;
         let friends = self
             .allies

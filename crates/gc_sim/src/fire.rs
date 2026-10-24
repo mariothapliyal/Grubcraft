@@ -103,8 +103,8 @@ pub(crate) struct Fires {
     /// Tiles that caught this tick, for [`crate::events::Event::Kindled`]
     /// (the world tells and clears them).
     pub(crate) kindled: Vec<(i32, i32)>,
-    /// Tiles that burned out this tick, for the ground change (the world
-    /// clears them).
+    /// Tiles that burned out this tick, by row then column, for the ground
+    /// change (the world clears them).
     pub(crate) burnt: Vec<(i32, i32)>,
 }
 
@@ -116,6 +116,14 @@ impl Fires {
             ever: false,
             kindled: Vec::new(),
             burnt: Vec::new(),
+        }
+    }
+
+    /// Put out the fire on tile `(x, y)`, if it burns: the ground there
+    /// changed under it (cleared by workers).
+    pub(crate) fn put_out(&mut self, x: i32, y: i32) {
+        if let Ok(at) = self.find(x, y) {
+            self.burning.remove(at);
         }
     }
 
@@ -280,7 +288,12 @@ impl Fires {
                 let (x, y) = (b.x + dx, b.y + dy);
                 let growth = terrain.growth(x, y);
                 let base = catch_permille(growth);
-                if base == 0 || self.is_burning(x, y) {
+                // A tile that burned out this tick is open ground already,
+                // though the ground change comes after.
+                let burnt = (self.burnt)
+                    .binary_search_by_key(&(y, x), |&(x, y)| (y, x))
+                    .is_ok();
+                if base == 0 || burnt || self.is_burning(x, y) {
                     continue;
                 }
                 let chance = base * wind_percent(wind, dx, dy) / 100 * dry / u32::from(DAMP_WET);
@@ -344,6 +357,8 @@ impl Fires {
             h.u32(b.x as u32);
             h.u32(b.y as u32);
             h.u16(b.left);
+            h.u16(b.total);
+            h.u8(b.growth as u8);
         }
     }
 }

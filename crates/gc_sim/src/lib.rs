@@ -2288,6 +2288,9 @@ impl World {
             if !self.scratch {
                 self.events.cleared(x, y, was, burnt);
             }
+            // Nothing is left to burn there (cleared by workers; a tile
+            // that burned out is out of the fires already).
+            self.fires.put_out(x, y);
         }
         if !thicket.is_empty() {
             self.nav.set_built_all(&thicket, false, &self.regiments);

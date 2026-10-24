@@ -236,3 +236,26 @@ fn fire_lights_the_night_round_it() {
     assert!(w.fires().iter().any(|b| b.x >= 27), "the fire spread east");
     assert!(w.sees(0, enemy));
 }
+
+#[test]
+fn a_tile_burns_once_and_never_on_open_ground() {
+    let cover = woods(10, 50, 10, 50);
+    let mut w = world(&cover, Sky::STILL);
+    let a = spawn(&mut w, 0, 30, 51, NORTH);
+    run(&mut w, SECOND);
+    assert!(burn(&mut w, 0, a));
+    let mut kindled = std::collections::HashMap::new();
+    for _ in 0..200 * SECOND {
+        w.tick(&[]);
+        for e in w.events() {
+            if let Event::Kindled { x, y } = *e {
+                *kindled.entry((x, y)).or_insert(0) += 1;
+            }
+        }
+        for b in w.fires() {
+            assert_ne!(w.terrain().growth(b.x, b.y), Growth::Open, "{b:?}");
+        }
+    }
+    assert!(kindled.len() > 100, "{} tiles caught", kindled.len());
+    assert!(kindled.values().all(|&n| n == 1));
+}

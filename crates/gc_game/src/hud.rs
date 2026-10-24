@@ -860,7 +860,7 @@ impl Running {
         grid[SLOT_BRACE].state = ready(has_orders && has_spears);
         grid[SLOT_FALL_BACK].state = ready(has_orders);
         grid[SLOT_TORCHES].state = ready(has_orders);
-        let burnable = has_orders && self.world.weather_lets_fire();
+        let burnable = has_orders && !self.world.deploying() && self.world.weather_lets_fire();
         grid[SLOT_BURN].state = ready(burnable);
         if has_orders && !burnable {
             grid[SLOT_BURN].tip = "Too wet to burn: the ground must dry first.";
