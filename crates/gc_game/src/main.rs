@@ -3485,8 +3485,12 @@ impl Running {
         self.renderer.set_look(look);
         // A battle that has just begun draws the bars; blows shook the screen
         // as they came in. Still while paused or behind the menu.
+        // A rejoining player's catch-up replays old fights in a rush: they
+        // neither shake the screen nor open a battle that began long ago.
         let deploying = self.world.deploying();
-        if self.was_deploying && !deploying && self.match_started {
+        if self.online.is_some() && self.menu.net().catching_up() {
+            self.cinema.reset();
+        } else if self.was_deploying && !deploying && self.match_started {
             self.cinema.battle_begins();
         }
         self.was_deploying = deploying;
@@ -5002,6 +5006,7 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
+        let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -5037,18 +5042,13 @@ impl Running {
                         let p = from_fx_vec(r.position).lerp(from_fx_vec(f.position), 0.5);
                         let ground = self.heightmap.height_at(p.x, p.y);
                         self.effects.charge_hit(glam::Vec3::new(p.x, ground, p.y));
-                        let (focus, distance) = self.view_focus();
                         self.cinema.blow(p, focus, distance, cinema::CHARGE_HIT);
                     }
                 }
                 Event::Ambush(a) => {
-                    let sprung = self.world.regiments.get(a.victim).filter(|r| {
-                        self.reveal_all
-                            || self.world.sees(self.sandbox.side, a.victim)
-                            || r.owner == self.sandbox.side
-                    });
-                    if let Some(r) = sprung {
-                        let (focus, distance) = self.view_focus();
+                    // Your own regiments are always seen by you.
+                    let seen = self.reveal_all || self.world.sees(self.sandbox.side, a.victim);
+                    if let (true, Some(r)) = (seen, self.world.regiments.get(a.victim)) {
                         self.cinema
                             .blow(from_fx_vec(r.position), focus, distance, cinema::AMBUSH);
                     }
@@ -5071,11 +5071,10 @@ impl Running {
                 // Nor is its fall, unless the blow that felled it was.
                 Event::Fallen { structure } => {
                     let side = self.sandbox.side;
-                    let friendly = (self.siege.look(structure))
-                        .is_some_and(|l| !self.world.hostile(side, l.owner));
+                    let look = self.siege.look(structure);
+                    let friendly = look.is_some_and(|l| !self.world.hostile(side, l.owner));
                     if self.reveal_all || friendly || shown.contains(&structure) {
-                        if let Some(l) = self.siege.look(structure) {
-                            let (focus, distance) = self.view_focus();
+                        if let Some(l) = look {
                             self.cinema
                                 .blow(l.centre(), focus, distance, cinema::BUILDING_FELL);
                         }

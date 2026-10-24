@@ -9,6 +9,7 @@ use gc_render::Cinema as Frame;
 use glam::Vec2;
 
 use crate::camera::DEFAULT_DISTANCE;
+use crate::land::smooth;
 
 /// How fast the shake dies away, in full shakes a second.
 const DECAY: f32 = 1.5;
@@ -69,7 +70,11 @@ impl Cinema {
     /// player who asked for no screen shake (Reduced screen shake);
     /// `bars` is whether bars may show (not with Clarity).
     pub fn frame(&mut self, dt: f32, still: bool, bars: bool) -> Frame {
-        self.clock += dt;
+        // The wobble's clock only runs while there is a shake to wobble, so
+        // it stays small.
+        if self.trauma > 0.0 {
+            self.clock += dt;
+        }
         self.trauma = (self.trauma - DECAY * dt).max(0.0);
         let shake = if still {
             [0.0; 2]
@@ -109,13 +114,9 @@ fn wobble(t: f32, phase: f32) -> f32 {
 
 /// How tall each bar is `age` seconds after they began to slide in.
 fn bar_height(age: f32) -> f32 {
-    let ease = |x: f32| {
-        let x = x.clamp(0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
-    };
-    let slid_in = ease(age / BAR_IN);
-    let slid_out = ease((age - BAR_IN - BAR_HOLD) / BAR_OUT);
-    BAR_HEIGHT * (slid_in - slid_out).max(0.0)
+    let slid_in = smooth(0.0, BAR_IN, age);
+    let slid_out = smooth(BAR_IN + BAR_HOLD, BAR_IN + BAR_HOLD + BAR_OUT, age);
+    BAR_HEIGHT * (slid_in - slid_out)
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ pub struct Cinema {
 }
 
 /// The tallest each letterbox bar may be.
-pub const MAX_BARS: f32 = 0.2;
+const MAX_BARS: f32 = 0.2;
 
 /// What the composite grades the frame with (`Grade` in `post.wgsl`).
 #[repr(C)]

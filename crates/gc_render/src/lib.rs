@@ -67,7 +67,7 @@ use look::rgba;
 pub use look::{KNOBS, Knob, LandAir, Look, LookPreset};
 pub use overlay::{MAX_OVERLAY_CHARS, UiQuad};
 pub use particles::{MAX_PARTICLES, Particle, Shape, flags as particle_flags};
-pub use post::{Cinema, MAX_BARS};
+pub use post::Cinema;
 /// Most quads one frame of menu UI may draw.
 pub const MAX_UI_QUADS: usize = 8192;
 pub use scenery::{MAX_SCENERY_INSTANCES, SceneryBatch, SceneryInstance, surface_kind};
