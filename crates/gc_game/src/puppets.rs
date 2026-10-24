@@ -24,6 +24,7 @@ use gc_sim::formation::MAX_MODELS;
 use gc_sim::{Challenge, General, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 use std::collections::HashMap;
+use std::f32::consts::FRAC_PI_2;
 
 use crate::models::down_depth;
 
@@ -60,6 +61,22 @@ const LEAD: f32 = 0.6;
 /// in radians.
 const SWAY: f32 = 0.025;
 const GLANCE: f32 = 0.22;
+/// How long, and from how far, men turn their heads to a comrade falling
+/// beside them (seconds, tiles), how long the turn takes to come and to go,
+/// and how far down they look at him (radians).
+const FALL_GLANCE_SECONDS: f32 = 1.2;
+const FALL_GLANCE_REACH: f32 = 2.5;
+const FALL_GLANCE_IN: f32 = 0.15;
+const FALL_GLANCE_OUT: f32 = 0.5;
+const FALL_GLANCE_DOWN: f32 = 0.2;
+/// How far a blow taken snaps a man's head back (radians, by what it did
+/// to him) and turns it aside, and when through the move it is furthest.
+const FLINCH_STAGGER: f32 = 0.45;
+const FLINCH_BLOCK: f32 = 0.22;
+const FLINCH_PARRY: f32 = 0.14;
+const FLINCH_ASIDE: f32 = 0.25;
+const FLINCH_PEAK: f32 = 0.15;
+const FLINCH_ENDS: f32 = 0.6;
 /// Duel pairs: a front-rank soldier looks for an enemy within this reach, in
 /// tiles, and keeps him until he is this far away.
 const DUEL_REACH: f32 = 2.6;
@@ -391,6 +408,21 @@ pub struct Soldier {
     pub stoop: f32,
     /// How high above the ground he stands: on a wall top, else 0.
     pub lift: f32,
+    /// Where he turns his head (and chest) on top of his move, for the
+    /// detail near the camera: a flinch from a blow, or a look at a comrade
+    /// falling beside him.
+    pub head: Option<Head>,
+}
+
+/// A turn of a soldier's upper body on top of his move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Head {
+    /// Radians toward his left.
+    pub yaw: f32,
+    /// Radians down (negative: back).
+    pub pitch: f32,
+    /// How much of it shows, 0 to 1.
+    pub weight: f32,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -512,6 +544,24 @@ const STOOP_OUT: f32 = 0.25;
 /// through his killing blow.
 fn stoop(f: f32) -> f32 {
     (f / STOOP_IN).min((1.0 - f) / STOOP_OUT).clamp(0.0, 1.0)
+}
+
+/// How a man flinches from a blow he is taking (his move `fight`): his head
+/// snaps back and aside, furthest early on, and comes back as he recovers.
+/// `aside` (-1 to 1) picks which way.
+fn flinch(fight: Option<Move>, aside: f32) -> Option<Head> {
+    let (back, f) = match fight? {
+        Move::Stagger(f) => (FLINCH_STAGGER, f),
+        Move::Block(f) => (FLINCH_BLOCK, f),
+        Move::Parry(f) => (FLINCH_PARRY, f),
+        _ => return None,
+    };
+    let weight = (f / FLINCH_PEAK).min((FLINCH_ENDS - f) / (FLINCH_ENDS - FLINCH_PEAK));
+    (weight > 0.0).then_some(Head {
+        yaw: FLINCH_ASIDE * aside,
+        pitch: -back,
+        weight: weight.min(1.0),
+    })
 }
 
 /// What a blow did to a soldier, or the killing blow he is dealing, which
@@ -948,6 +998,9 @@ pub struct Puppets {
     /// Per regiment, how high its soldiers stand in their block at the
     /// head of a ladder (0: not on one), set by [`Puppets::stand_on_ladder`].
     ladder: Vec<f32>,
+    /// Per regiment, where and when its last man fell (or will, as the blow
+    /// lands), for the men beside him to look.
+    last_fall: Vec<(Vec2, f32)>,
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
@@ -1003,6 +1056,7 @@ impl Puppets {
             wall: vec![Vec::new(); regiment_capacity],
             ladder: vec![0.0; regiment_capacity],
             lift: vec![0.0; regiment_capacity * SLOTS],
+            last_fall: vec![(Vec2::ZERO, f32::NEG_INFINITY); regiment_capacity],
             duel: None,
             duel_over: None,
             generals: Vec::with_capacity(gc_sim::MAX_PARTIES),
@@ -1734,6 +1788,7 @@ impl Puppets {
             self.told[r * SLOTS..(r + 1) * SLOTS].fill(None);
             self.filled[r * SLOTS..(r + 1) * SLOTS].fill(self.time);
             self.lift[r * SLOTS..(r + 1) * SLOTS].fill(0.0);
+            self.last_fall[r] = (Vec2::ZERO, f32::NEG_INFINITY);
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -2038,6 +2093,27 @@ impl Puppets {
                     _ => 0.0,
                 },
                 lift: self.lift[i],
+                head: flinch(fight, 2.0 * phase - 1.0).or_else(|| {
+                    // Not fighting, he looks at a comrade falling beside him.
+                    let (at, fell) = self.last_fall[r];
+                    let since = self.time - fell;
+                    let to = at - pos;
+                    let near = to.length_squared() < FALL_GLANCE_REACH * FALL_GLANCE_REACH;
+                    let weight = (since / FALL_GLANCE_IN)
+                        .min((FALL_GLANCE_SECONDS - since) / FALL_GLANCE_OUT)
+                        .min(1.0);
+                    let left = Vec2::new(facing.y, -facing.x);
+                    (fight.is_none() && near && weight > 0.0 && to.length_squared() > 0.01).then(
+                        || Head {
+                            yaw: to
+                                .dot(left)
+                                .atan2(to.dot(facing))
+                                .clamp(-FRAC_PI_2, FRAC_PI_2),
+                            pitch: FALL_GLANCE_DOWN,
+                            weight,
+                        },
+                    )
+                }),
             });
         }
     }
@@ -2206,6 +2282,7 @@ impl Puppets {
                 pair: paired,
             };
             self.lay(fallen);
+            self.last_fall[r] = (fallen.pos, fell);
             if blow_in.is_some() {
                 self.impact(fell, killer, victim, Hit::Killed);
             }
@@ -3147,6 +3224,51 @@ mod tests {
         assert!((killed.dir.length() - 1.0).abs() < 1e-3);
         // `melee_pair` stands the man struck south of his killer.
         assert!(killed.dir.y < 0.0, "{:?}", killed.dir);
+    }
+
+    #[test]
+    fn a_blow_taken_snaps_the_head_back_and_it_comes_back() {
+        let at = |f| flinch(Some(Move::Stagger(f)), 1.0);
+        let peak = at(FLINCH_PEAK).unwrap();
+        assert!(peak.pitch < 0.0 && peak.yaw > 0.0 && peak.weight == 1.0);
+        assert!(at(0.05).unwrap().weight < 1.0);
+        assert_eq!(at(FLINCH_ENDS), None);
+        // A blow caught hurts less than one taken.
+        let block = flinch(Some(Move::Block(FLINCH_PEAK)), 1.0).unwrap();
+        assert!(block.pitch > peak.pitch);
+        assert_eq!(flinch(Some(Move::Guard), 1.0), None);
+        assert_eq!(flinch(None, 1.0), None);
+    }
+
+    #[test]
+    fn men_turn_their_heads_to_a_comrade_falling_beside_them() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..120 {
+            frame(&mut p, &a, &b);
+        }
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let (at, fell) = p.last_fall[1];
+        assert!(fell.is_finite());
+        // Once he is down, the men not fighting look at him, turned his way.
+        p.advance((fell - p.time).max(0.0) + 0.3);
+        let mut looked = 0;
+        p.update(&b, 1, FRAME, |s| {
+            if let Some(h) = s.head.filter(|_| s.fight.is_none()) {
+                let left = Vec2::new(s.facing.y, -s.facing.x);
+                let to = at - s.pos;
+                assert!(h.yaw * to.dot(left) >= 0.0, "{h:?}");
+                assert!(h.pitch > 0.0 && h.weight > 0.0);
+                looked += 1;
+            }
+        });
+        assert!(looked > 0);
+        // And look away again.
+        p.advance(FALL_GLANCE_SECONDS);
+        p.update(&b, 1, FRAME, |s| {
+            assert!(s.fight.is_some() || s.head.is_none(), "{:?}", s.head);
+        });
     }
 
     #[test]
