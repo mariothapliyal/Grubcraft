@@ -180,7 +180,7 @@ Stage 5 is the rain half of usable rivers: long, heavy rain swells them, so the 
 
 ### Shared state
 
-- `World::flood()` gives whether the fords are shut and the ford tiles, and `Terrain::rise` how far the water has risen; `World::swept` whether a regiment is caught in one. The flood is hashed with the ground only while the water is up, so a dry match hashes as before. The rise is `Terrain::rise`, so rehearsal worlds raise and lower the water as the match does; they keep the fords shut or open as they found them, since they share the match's walkable grid. No new command: `SIM_VERSION` 45, replay format and net protocol unchanged.
+- `World::flood()` gives whether the fords are shut and the ford tiles, and `Terrain::rise` how far the water has risen; `World::swept` whether a regiment is caught in one. The flood is hashed with the ground only while the water is up, so a dry match hashes as before. The rise is `Terrain::rise`, so rehearsal worlds raise and lower the water as the match does; they keep the fords shut or open as they found them, since they share the match's walkable grid. No new command: `SIM_VERSION` 46 (45 went to the wall twists), replay format and net protocol unchanged.
 - **Goldens.** `field-flood-1v1` is a big battle in a downpour on the river map: the fords shut at 3:11. `field-night-rain-1v1`'s rain now raises the river too.
 - **Not yet:** the game's own sums of the ground (the cursor's aim, banners and standards, arrows lost in water) still use the old water line, so they sit up to three tenths of a tile under a flood; the computer players don't plan round shut fords (the routes do: a march across one stops at the bank), and snow melt, lakes overflowing and floods that leave mud behind come later.
 
