@@ -3328,8 +3328,12 @@ impl Running {
                     });
                 // Where the trees should fall from: the regiment's centre,
                 // whether or not its soldiers are on screen.
+                let clearing_style = (self.units.factions.get(usize::from(r.unit)))
+                    .map_or(ambient::felling::Style::Fell, |&f| {
+                        ambient::felling::Style::of(f)
+                    });
                 if let Some((tile, _, _)) = cutting {
-                    self.ambient.felling.cutting(tile, pos);
+                    self.ambient.felling.cutting(tile, pos, clearing_style);
                 }
                 self.puppets.update_on(
                     &block,
@@ -3378,9 +3382,10 @@ impl Running {
                         let working = working.or(chopping.map(|(_, c, _)| c));
                         let facing =
                             working.map_or(s.facing, |c| (c - s.pos).normalize_or(s.facing));
-                        if let Some((_, _, wood)) = chopping {
+                        if let Some((_, c, wood)) = chopping {
                             let tool = at + Vec3::new(facing.x * 0.5, 0.9, facing.y * 0.5);
-                            effects.chop(fx_dt, tool, facing, wood);
+                            let target = Vec3::new(c.x, heightmap.height_at(c.x, c.y), c.y);
+                            effects.chop(fx_dt, tool, facing, wood, clearing_style, target);
                         }
                         let pose = match s.fight {
                             Some(fight) => clips.fight(model, fight, seconds),
