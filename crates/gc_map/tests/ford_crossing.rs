@@ -67,6 +67,8 @@ impl Field {
             teams: &[],
             ground: self.map.ground(),
             champions: false,
+            sky: gc_sim::Sky::STILL,
+            generals: true,
         })
     }
 

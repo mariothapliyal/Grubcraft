@@ -20,6 +20,8 @@ fn world() -> World {
         teams: &[0, 1],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
     })
 }
 
@@ -119,6 +121,8 @@ fn an_ally_handed_the_army_places_it_in_its_owners_zone() {
         teams: &[0, 1, 0],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let stats = w.tick(&[
         pc(0, zone(100, 140)),

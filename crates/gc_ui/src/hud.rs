@@ -219,6 +219,8 @@ pub struct Selection<'a> {
     /// What the ground does to them ("In mud: slow, no charges"); empty on
     /// plain ground.
     pub ground: &'a str,
+    /// The side's general rides with one of them (docs/37-commander.md).
+    pub general: bool,
     /// The army shapes to choose from, as a row of chips along the tray's top
     /// edge. Empty for none, and the row only shows for two or more
     /// regiments.
@@ -249,6 +251,9 @@ pub struct StatusStrip<'a> {
     pub paused: bool,
     /// Match time.
     pub clock_secs: Option<u32>,
+    /// What the weather or the dark does to the fight, e.g. "Fog: sight
+    /// 40%"; empty in clear daylight.
+    pub sky: &'a str,
 }
 
 /// One key and what it does, for the Marshal's Scroll.
@@ -925,6 +930,9 @@ impl Hud {
                 theme::INK,
             );
         }
+        if !st.sky.is_empty() {
+            chip(draw, &mut right, Icon::None, st.sky, theme::INK);
+        }
         if !st.speed.is_empty() || st.paused {
             let (icon, text) = if st.paused {
                 (Icon::Pause, "paused")
@@ -1405,6 +1413,16 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
             1,
             muted_ink(),
             &fit(&format!("Formation: {}", s.formation), chars),
+        );
+        y += 16;
+    }
+    if s.general {
+        draw.text_bold(
+            x,
+            y,
+            1,
+            theme::MADDER,
+            &fit("Your general rides here: guard him", chars),
         );
         y += 16;
     }
@@ -2697,6 +2715,7 @@ mod tests {
             state: CardState::Steady,
             formation: "Line",
             ground: "In mud: slow, no charges",
+            general: false,
             shapes: &[],
         }
     }

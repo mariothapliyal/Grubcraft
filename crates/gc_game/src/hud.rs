@@ -515,6 +515,12 @@ impl Running {
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
+        let mut general = false;
+        let led = self
+            .world
+            .generals()
+            .find(|g| g.party == side && g.fell.is_none())
+            .map(|g| g.regiment);
         for &h in &self.selected {
             let Some(r) = self.world.regiments.get(h).filter(|r| r.owner == side) else {
                 continue;
@@ -534,6 +540,7 @@ impl Running {
                 same_icon &= icon == this;
             }
             n += 1;
+            general |= led == Some(h);
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
@@ -566,6 +573,7 @@ impl Running {
                 _ => "",
             },
             ground,
+            general,
             shapes: &[],
         };
         Some((name, selection))
@@ -708,6 +716,7 @@ impl Running {
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
+        let sky = sky_word(&self.world);
         let status = StatusStrip {
             mode,
             side: &side_name,
@@ -715,6 +724,7 @@ impl Running {
             speed: &speed,
             paused: self.paused,
             clock_secs: Some(tick / gc_sim::TICKS_PER_SECOND),
+            sky: &sky,
         };
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
@@ -1744,6 +1754,35 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     } else {
         Icon::Sword
     }
+}
+
+/// What the sky does to the fight now, for the top bar: empty in clear
+/// daylight, else what cuts sight and range (and slows the march), e.g.
+/// "Fog: sight 40%" or "Night: sight 45%" (docs/32-changing-land.md).
+fn sky_word(world: &gc_sim::World) -> String {
+    let air = world.air();
+    if air == gc_sim::Air::CLEAR {
+        return String::new();
+    }
+    let weather = world.weather();
+    let falling = match weather.kind {
+        _ if weather.strength == 0 => None,
+        gc_sim::WeatherKind::Clear => None,
+        gc_sim::WeatherKind::Rain => Some("Rain"),
+        gc_sim::WeatherKind::Snow => Some("Snow"),
+        gc_sim::WeatherKind::Fog => Some("Fog"),
+    };
+    let dark = world.daylight().dark();
+    let name = match (falling, dark) {
+        (Some(w), true) => format!("{w} at night"),
+        (Some(w), false) => w.to_string(),
+        (None, _) => "Night".to_string(),
+    };
+    let mut word = format!("{name}: sight {}%", air.sight_percent);
+    if air.march_percent < 100 {
+        word += &format!(", march {}%", air.march_percent);
+    }
+    word
 }
 
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side

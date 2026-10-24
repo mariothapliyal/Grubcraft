@@ -51,6 +51,8 @@ fn run(preset: Preset) {
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
     });
     let spawns: Vec<PlayerCommand> = ARMY
         .iter()

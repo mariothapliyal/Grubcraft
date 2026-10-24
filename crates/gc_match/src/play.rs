@@ -78,6 +78,7 @@ impl Match {
     ) -> (Match, Vec<PlayerCommand>) {
         let nav = map.sim_nav_costs();
         let teams: Vec<u8> = setup.players.iter().map(|s| s.team).collect();
+        let sky = crate::battle::sky_of(&setup.settings, seed);
         let match_setup = MatchSetup {
             seed,
             capacities: Capacities::default(),
@@ -87,6 +88,8 @@ impl Match {
             teams: &teams,
             ground: map.ground(),
             champions: champions_allowed(setup),
+            sky: sky.sky(),
+            generals: true,
         };
         let world = World::new(&match_setup);
         let recorder = record.map(|note| Recorder::new(&match_setup, &world, note));

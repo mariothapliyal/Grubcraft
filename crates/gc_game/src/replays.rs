@@ -289,6 +289,8 @@ mod tests {
             teams: &[0, 1],
             ground: gc_sim::Ground::FLAT,
             champions: false,
+            sky: gc_sim::Sky::STILL,
+            generals: true,
         };
         let world = gc_sim::World::new(&setup);
         let mut rec = gc_replay::Recorder::new(&setup, &world, "test");

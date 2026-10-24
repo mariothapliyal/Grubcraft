@@ -6,7 +6,9 @@ use gc_ai::army::{self, Preset};
 use gc_ai::perception::{fx, to_fx_vec, v2};
 use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
 use gc_fixed::Fx;
+use gc_replay::SkyRecord;
 use gc_sim::champions::{HEART, Outcome};
+use gc_sim::generals::{PANIC, PANIC_FAR, SPEECH};
 use gc_sim::{
     Challenge, Command, HEART_HOLD_TICKS, PlayerCommand, PlayerId, TICKS_PER_SECOND, UnitStats,
     Win, World,
@@ -14,6 +16,7 @@ use gc_sim::{
 use gc_ui::Settings;
 use gc_ui::lobby::{
     COLORS, GameMode, LobbySettings, MAX_ARMY, MatchStart, PLAYER_COLORS, Slot, SlotKind,
+    TimeOfDay, WeatherSetting,
 };
 use glam::Vec2;
 
@@ -30,6 +33,53 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
         && setup.settings.champions
         && setup.players.iter().any(|s| s.kind == SlotKind::Ai)
 }
+
+/// The sky a lobby match is played under, from the lobby's time of day and
+/// weather (docs/32-changing-land.md, "Weather and the time of day"):
+/// every machine makes the same one from the same settings and seed. Its
+/// clock runs from the lobby's time.
+pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
+    use gc_sim::sky::{DAY_TICKS, Season, at_hour, changing};
+    use gc_sim::{Spell, Weather, WeatherKind};
+    let (hour, minute) = settings.time_of_day.hour();
+    let overcast = settings.time_of_day == TimeOfDay::Overcast;
+    let all_match = |kind, strength, cloud: u8, wind| {
+        vec![Spell {
+            at: 0,
+            weather: Weather {
+                kind,
+                strength,
+                cloud: if overcast { cloud.max(220) } else { cloud },
+                wind,
+            },
+        }]
+    };
+    let spells = match settings.weather {
+        WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
+        WeatherSetting::Fair => Vec::new(),
+        WeatherSetting::Changing => {
+            let mut spells = changing(seed, Season::Wet, SKY_TICKS);
+            if overcast {
+                for s in &mut spells {
+                    s.weather.cloud = s.weather.cloud.max(220);
+                }
+            }
+            spells
+        }
+        WeatherSetting::Rain => all_match(WeatherKind::Rain, 200, 230, (10, 4)),
+        WeatherSetting::Snow => all_match(WeatherKind::Snow, 180, 220, (6, 2)),
+        WeatherSetting::Fog => all_match(WeatherKind::Fog, 220, 160, (2, 0)),
+    };
+    SkyRecord {
+        start: at_hour(hour, minute),
+        day_ticks: DAY_TICKS,
+        runs: true,
+        spells,
+    }
+}
+
+/// Changing weather is drawn for matches up to this long.
+const SKY_TICKS: u32 = 4 * 60 * 60 * TICKS_PER_SECOND;
 
 /// The champions' result stays on screen this long after the duel ends.
 const NEWS_TICKS: u32 = 8 * TICKS_PER_SECOND;
@@ -316,6 +366,11 @@ pub struct Battle {
     pub champions: Option<String>,
     /// The state of the duel that news tells.
     heard: Option<Outcome>,
+    /// What the generals have just done: a speech, or a fall (see
+    /// [`gc_sim::generals`]), while it is news.
+    pub generals: Option<String>,
+    /// The news of each side's general that `generals` tells.
+    mustered: u32,
     /// Conquest: who is running out of time to lay a main building, and
     /// who holds the Titan's Heart.
     pub throne: Option<String>,
@@ -332,6 +387,8 @@ impl Battle {
             won: None,
             champions: None,
             heard: None,
+            generals: None,
+            mustered: 0,
             throne: None,
             looked: None,
         }
@@ -371,6 +428,22 @@ impl Battle {
         }
         self.heard = heard;
         self.champions = duel.map(|(c, o)| champion_news(c, o, world, parties, unit_names));
+        true
+    }
+
+    /// Follow the generals: a speech is news for a few seconds, a fall for
+    /// a few more. Returns true when the news changed.
+    pub fn muster(&mut self, world: &World, parties: &[Party]) -> bool {
+        let now = world.tick_count();
+        // Two bits a side: what is news of its general.
+        let key = world.generals().fold(0u32, |k, g| {
+            k | (general_news_of(g, now) as u32) << (2 * u32::from(g.party))
+        });
+        if key == self.mustered {
+            return false;
+        }
+        self.mustered = key;
+        self.generals = general_news(world, parties, self.me);
         true
     }
 
@@ -454,6 +527,57 @@ fn throne_news(world: &World, parties: &[Party], me: Option<PlayerId>) -> Option
             None => {}
         }
     }
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// How long a general's speech is news.
+const SPEECH_NEWS_TICKS: u32 = 6 * TICKS_PER_SECOND;
+/// How long a general's fall is news.
+const FALL_NEWS_TICKS: u32 = 8 * TICKS_PER_SECOND;
+
+/// What is news of general `g` at tick `now`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GeneralNews {
+    None = 0,
+    Spoke = 1,
+    Fell = 2,
+}
+
+fn general_news_of(g: &gc_sim::General, now: u32) -> GeneralNews {
+    let recent = |t: Option<u32>, ticks: u32| t.is_some_and(|t| now <= t + ticks);
+    if recent(g.fell, FALL_NEWS_TICKS) {
+        GeneralNews::Fell
+    } else if g.fell.is_none() && recent(g.spoke, SPEECH_NEWS_TICKS) {
+        GeneralNews::Spoke
+    } else {
+        GeneralNews::None
+    }
+}
+
+/// A line for each general who has just spoken or fallen, as `me` hears it
+/// (nobody, watching a replay).
+fn general_news(world: &World, parties: &[Party], me: Option<PlayerId>) -> Option<String> {
+    let now = world.tick_count();
+    let lines: Vec<String> = world
+        .generals()
+        .filter_map(|g| {
+            let mine = Some(g.party) == me;
+            let name = party_name(parties, g.party);
+            match (general_news_of(g, now), mine) {
+                (GeneralNews::Fell, true) => Some(format!(
+                    "YOUR GENERAL HAS FALLEN  your regiments near him lose heart (-{PANIC} morale), the rest -{PANIC_FAR}"
+                )),
+                (GeneralNews::Fell, false) => Some(format!(
+                    "GENERAL  {name}'s general has fallen! Their regiments near him lose heart (-{PANIC} morale)"
+                )),
+                (GeneralNews::Spoke, true) => Some(format!(
+                    "GENERAL  Your general rallies your army (+{SPEECH} morale near him)"
+                )),
+                (GeneralNews::Spoke, false) => Some(format!("GENERAL  {name}'s general rallies his army")),
+                (GeneralNews::None, _) => None,
+            }
+        })
+        .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
@@ -717,6 +841,8 @@ pub(crate) mod tests {
                 teams: &teams,
                 ground: heightmap.ground(),
                 champions: false,
+                sky: gc_sim::Sky::STILL,
+                generals: true,
             });
             let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();
@@ -815,6 +941,8 @@ pub(crate) mod tests {
                 teams: &teams,
                 ground: heightmap.ground(),
                 champions: false,
+                sky: gc_sim::Sky::STILL,
+                generals: true,
             });
             let mut minds = Minds::new(ai_terrain(&heightmap, &nav));
             let mut out = Vec::new();

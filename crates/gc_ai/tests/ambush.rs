@@ -117,6 +117,8 @@ fn world(cover: &[u8]) -> World {
             footing: &[],
         },
         champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
     })
 }
 

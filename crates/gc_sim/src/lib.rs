@@ -29,6 +29,7 @@ pub mod events;
 pub mod fork;
 pub mod formation;
 pub mod gates;
+pub mod generals;
 mod hash;
 pub mod honor;
 pub mod larvae;
@@ -39,6 +40,7 @@ pub mod powers;
 pub mod production;
 mod regiments;
 pub mod scenario;
+pub mod sky;
 pub mod stances;
 mod state;
 pub mod structures;
@@ -55,6 +57,7 @@ pub use conquest::{ConquestSetup, ConquestUnit};
 pub use economy::{Bank, Economy, NodeSetup, NodeView, Resource, TradePost};
 pub use events::Shooter;
 pub use fork::Standing;
+pub use generals::General;
 pub use hash::StateHasher;
 pub use morale::MoraleState;
 use powers::Cast;
@@ -79,12 +82,15 @@ use deploy::{Deployment, Zone};
 use events::Events;
 use formation::MAX_MODELS;
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
+use generals::Generals;
 use nav::Nav;
+use sky::SkyState;
+pub use sky::{Air, Daylight, Sky, Spell, Weather, WeatherKind};
 use vision::Vision;
 
 /// The parts of the simulation's state, in the order [`World::state_hash`]
 /// hashes them and [`World::system_hashes`] lists them.
-pub const SYSTEMS: [&str; 14] = [
+pub const SYSTEMS: [&str; 15] = [
     "clock",
     "random streams",
     "unit stats",
@@ -95,6 +101,7 @@ pub const SYSTEMS: [&str; 14] = [
     "deployment",
     "verdict",
     "champions",
+    "generals",
     "structures",
     "economy",
     "production",
@@ -106,7 +113,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 35;
+pub const SIM_VERSION: u32 = 37;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -529,6 +536,13 @@ pub struct MatchSetup<'a> {
     /// [`champions`]): the lobby's option, for battles with a computer
     /// player.
     pub champions: bool,
+    /// Where the clock starts and what the weather does (see [`sky`]).
+    /// [`Sky::STILL`] is a fair afternoon that never moves on.
+    pub sky: Sky<'a>,
+    /// Whether each side's general rides with it (see [`generals`]):
+    /// every Field Battle has them (Conquest takes them off); tests of
+    /// other morale rules leave them out.
+    pub generals: bool,
 }
 
 /// A player's order. The only way anything outside the sim changes the sim.
@@ -771,6 +785,9 @@ pub struct World {
     deploy: Deployment,
     /// Only in matches that allow champions.
     champions: Option<Champions>,
+    /// Field Battles' generals (see [`generals`]); not in Conquest or in a
+    /// rehearsal.
+    generals: Option<Generals>,
     /// Who holds the field, and who won (see [`verdict`]).
     judge: verdict::Judge,
     /// A scratch copy (see [`World::scratch`]), the only kind that may be
@@ -782,6 +799,8 @@ pub struct World {
     /// Conquest only: the buildings and the economy (see
     /// [`World::conquest`]).
     conquest: Option<Conquest>,
+    /// The weather and the time of day (see [`sky`]).
+    sky: SkyState,
     pub regiments: Regiments,
 }
 
@@ -817,12 +836,43 @@ impl World {
                     Pcg32::new(setup.seed, streams::EVENTS),
                 )
             }),
+            generals: setup.generals.then(Generals::new),
             judge: verdict::Judge::default(),
             events: Events::new(setup.capacities.regiments as usize),
             scratch: false,
             conquest: None,
+            sky: SkyState::new(&setup.sky),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
+        .with_air()
+    }
+
+    /// Tell the systems that see, shoot and march what the sky lets them.
+    fn with_air(mut self) -> World {
+        self.set_air();
+        self
+    }
+
+    fn set_air(&mut self) {
+        let air = self.sky.air();
+        self.combat.set_air(air);
+        self.vision.set_air(air);
+    }
+
+    /// The weather now (see [`sky`]), for drawing it.
+    pub fn weather(&self) -> Weather {
+        self.sky.weather()
+    }
+
+    /// The time of day now (see [`sky`]).
+    pub fn daylight(&self) -> Daylight {
+        self.sky.daylight(self.tick)
+    }
+
+    /// What the sky does in play now: how far troops see and shoot, and how
+    /// fast they march.
+    pub fn air(&self) -> Air {
+        self.sky.air()
     }
 
     /// Make this a Conquest match: buildings and the economy. Only
@@ -833,6 +883,8 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
+        // Conquest's commanders will be its heroes.
+        self.generals = None;
         self.events
             .reserve(setup.structures as usize, self.regiments.capacity());
         // A match played for a victory is won only that way; the sandbox's
@@ -1294,6 +1346,10 @@ impl World {
             }
         }
         self.events.clear();
+        // The sky moves on even while the armies deploy.
+        if self.sky.tick(self.tick) {
+            self.set_air();
+        }
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();
@@ -1353,6 +1409,7 @@ impl World {
                 &mut self.nav,
                 &self.stances,
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
+                self.sky.air(),
             );
             self.clear_land();
             self.raise_trained();
@@ -1360,6 +1417,16 @@ impl World {
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.
         self.regiments.wear_powers();
+        if let Some(generals) = &mut self.generals {
+            generals.update(
+                &mut self.regiments,
+                &self.combat,
+                &self.units,
+                &self.stances,
+                &self.vision,
+                self.tick,
+            );
+        }
         morale::update(
             &mut self.regiments,
             &self.combat,
@@ -2199,7 +2266,7 @@ impl World {
         for i in (0..regs.alive.len()).filter(|&i| regs.alive[i] && friend(regs.owner[i])) {
             out.push(round(
                 combat::Block::of(regs, &self.units, i),
-                vision::SIGHT,
+                self.vision.sight(),
             ));
         }
         let posts = self.vision.posts().filter(|&(owner, ..)| friend(owner));
@@ -2330,7 +2397,10 @@ impl World {
     /// hashes a world.
     fn hash_system(&self, system: usize, h: &mut StateHasher) {
         match SYSTEMS[system] {
-            "clock" => h.u32(self.tick),
+            "clock" => {
+                h.u32(self.tick);
+                self.sky.hash_into(h);
+            }
             "random streams" => {
                 for rng in [&self.rng, &self.combat_rng] {
                     let (state, inc) = rng.raw_state();
@@ -2353,6 +2423,12 @@ impl World {
             "vision" => self.vision.hash_into(&self.regiments, h),
             "deployment" => self.deploy.hash_into(h),
             "verdict" => self.judge.hash_into(h),
+            // Not in Conquest.
+            "generals" => {
+                if let Some(generals) = &self.generals {
+                    generals.hash_into(h);
+                }
+            }
             // Only in matches that allow champions, so other worlds hash as
             // they did before champions existed.
             "champions" => {
@@ -2393,6 +2469,12 @@ impl World {
     pub fn challenge(&self) -> Option<&Challenge> {
         self.champions.as_ref()?.challenge()
     }
+
+    /// Each side's general, once picked (see [`generals`]): none in
+    /// Conquest.
+    pub fn generals(&self) -> impl Iterator<Item = &General> {
+        self.generals.iter().flat_map(Generals::iter)
+    }
 }
 
 /// Random substream ids, so adding draws in one system never shifts another.
@@ -2400,6 +2482,8 @@ pub mod streams {
     pub const WORLD: u64 = 1;
     pub const COMBAT: u64 = 2;
     pub const EVENTS: u64 = 3;
+    /// Only for drawing a match's changing weather (see [`crate::sky::changing`]).
+    pub const SKY: u64 = 4;
 }
 
 /// Slot `i` was just sent somewhere: if its block would hang over the
