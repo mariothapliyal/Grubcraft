@@ -119,6 +119,8 @@ pub struct Seen {
     /// No enemy sees it (in cover, unspotted). Always false for enemies a
     /// mind sees, of course.
     pub hidden: bool,
+    /// Torches lit (they burn only in the dark).
+    pub torches: bool,
 }
 
 impl Seen {
@@ -213,7 +215,13 @@ pub struct Perception {
     memory: Vec<(Seen, u32)>,
     /// What the sky does to the fight now: `units` are read under it.
     pub air: Air,
+    /// Enemies hidden only by the dark ([`World::in_dark`]), as and when
+    /// last heard ([`Perception::capture_for`] only).
+    heard: Vec<(Seen, u32)>,
 }
+
+/// How often a mind hears again where an enemy hidden in the dark is.
+pub const HEARD_TICKS: u32 = 10 * TICKS_PER_SECOND;
 
 /// How long a mind counts an enemy it has lost sight of, in ticks
 /// ([`Perception::remembered`]); where it was last seen is kept for longer.
@@ -265,8 +273,25 @@ impl Perception {
         self.regiments.clear();
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);
+        let now = self.tick;
+        let mut heard = std::mem::take(&mut self.heard);
+        let was_heard = heard.len();
         for r in world.regiments.iter() {
-            if party.is_some_and(|p| !world.sees(p, r.handle)) {
+            // In the dark an enemy is heard, not seen: where it was when last
+            // heard, every [`HEARD_TICKS`].
+            let sees = party.is_none_or(|p| world.sees(p, r.handle));
+            let in_dark = !sees && world.in_dark(r.handle);
+            if !sees && !in_dark {
+                continue;
+            }
+            if in_dark
+                && let Some(&(old, at)) = heard[..was_heard]
+                    .iter()
+                    .find(|(h, at)| h.handle == r.handle && now < at + HEARD_TICKS)
+            {
+                self.by_index[r.handle.index as usize] = self.regiments.len() as u32;
+                self.regiments.push(old);
+                heard.push((old, at));
                 continue;
             }
             let stats = &self.units[r.unit as usize].stats;
@@ -290,8 +315,14 @@ impl Perception {
                 morale: r.morale,
                 morale_points: r.morale_points,
                 hidden: world.hidden(r.handle),
+                torches: r.torches,
             });
+            if in_dark {
+                heard.push((*self.regiments.last().expect("just pushed"), now));
+            }
         }
+        heard.drain(..was_heard);
+        self.heard = heard;
         match party {
             Some(p) => self.remember(world, p),
             None => self.memory.clear(),
