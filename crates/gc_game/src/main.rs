@@ -123,8 +123,9 @@
 //! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
 //! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die|march|look` holds one clip instead (`march`
-//! walks with the attack on the upper body, `look` idles looking round);
+//! idle|walk|attack|shoot|cheer|die|march|look|kill` holds one clip instead (`march`
+//! walks with the attack on the upper body, `look` idles looking round, `kill`
+//! plays a half of a matched kill over and over);
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model; `--fx-demo` sets off every particle
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
@@ -753,7 +754,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -1001,6 +1002,8 @@ struct Art {
     /// The villagers' models, by `ambient::villagers::Kind`, if the pack
     /// has them all.
     folk: Option<[usize; 4]>,
+    /// The ox cart of the caravans between hamlets, if the pack has it.
+    cart: Option<usize>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1448,6 +1451,7 @@ impl App {
                 .into_iter()
                 .collect::<Option<Vec<_>>>()
                 .and_then(|v| v.try_into().ok()),
+            cart: models.by_name("Oxcart"),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -2320,6 +2324,16 @@ impl Running {
                     .flatten();
                 // A tower picks its target; it has nothing to rally.
                 if drag.is_none() && self.tower_right_click(body, plain) {
+                    self.input.right_down = None;
+                    return;
+                }
+                // Your own wall, with regiments that can man it selected
+                // (an enemy at the click is attacked instead).
+                if drag.is_none()
+                    && body.is_none()
+                    && plain.and_then(|p| self.enemy_at(p)).is_none()
+                    && self.man_right_click(plain)
+                {
                     self.input.right_down = None;
                     return;
                 }
@@ -3270,6 +3284,12 @@ impl Running {
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
+            // Marks of a regiment on a wall sit on the wall top.
+            let up = if r.on_wall {
+                self.puppets.wall_top(r.handle)
+            } else {
+                0.0
+            };
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
             if seen
@@ -3286,7 +3306,7 @@ impl Running {
                     } else {
                         [255, 40, 20, 255]
                     },
-                    lift: 0.0,
+                    lift: up,
                 });
             }
             let block = Block {
@@ -3308,6 +3328,11 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            // Manning a wall, the soldiers stand on its tiles.
+            if r.on_wall || self.puppets.on_wall(r.handle) {
+                let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
+                self.puppets.stand_on_wall(r.handle, slots);
+            }
             // How workers clear a tile, and where its trees should fall from
             // (the regiment's centre, when the viewer sees it; else straight
             // as they stood), whether or not they are on screen.
@@ -3445,7 +3470,7 @@ impl Running {
                     facing: facing.to_array(),
                     size: BANNER_SIZE,
                     color,
-                    lift: BANNER_LIFT,
+                    lift: BANNER_LIFT + up,
                 });
             }
             let model = self.units.models.get(r.unit as usize).copied().flatten();
@@ -3459,6 +3484,12 @@ impl Running {
                 // Torches burn only in the dark.
                 let dark = self.world.air().dark;
                 let torchlit = r.torches && dark;
+                // The tuning panel's multipliers (F10).
+                let (torch_light, torch_flames, brood_glow) = (
+                    self.atmosphere.extra(atmosphere::Extra::TorchLight),
+                    self.atmosphere.extra(atmosphere::Extra::TorchFlames),
+                    self.atmosphere.extra(atmosphere::Extra::BroodGlow),
+                );
                 let brood =
                     self.units.factions.get(usize::from(r.unit)) == Some(&gc_ai::Faction::Brood);
                 let effects = &mut self.effects;
@@ -3468,9 +3499,19 @@ impl Running {
                 // the brighter light) is a faint lime one.
                 let light = if torchlit {
                     let count = ((width / TORCH_LIGHT_SPACING).ceil() as i32).clamp(1, 3);
-                    Some((TORCH_FIRE, TORCH_LIGHT_RADIUS, TORCH_LIGHT_STRENGTH, count))
+                    Some((
+                        TORCH_FIRE,
+                        TORCH_LIGHT_RADIUS,
+                        TORCH_LIGHT_STRENGTH * torch_light,
+                        count,
+                    ))
                 } else if brood && dark {
-                    Some((GRUB_LIME, GRUB_LIGHT_RADIUS, GRUB_LIGHT_STRENGTH, 1))
+                    Some((
+                        GRUB_LIME,
+                        GRUB_LIGHT_RADIUS,
+                        GRUB_LIGHT_STRENGTH * brood_glow,
+                        1,
+                    ))
                 } else {
                     None
                 };
@@ -3566,7 +3607,7 @@ impl Running {
                             }
                         }
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
-                        let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
+                        let at = glam::Vec3::new(s.pos.x, ground + s.lift, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
@@ -3578,7 +3619,7 @@ impl Running {
                                 ground + height * TORCH_HEIGHT,
                                 s.pos.y + s.facing.x * 0.12,
                             );
-                            effects.torch(hand, fx_dt);
+                            effects.torch(hand, fx_dt * torch_flames);
                         }
                         let look = models::look(s.look);
                         let ([wr, wg, wb], tone) = aftermath::worn([cr, cg, cb], look.tone, dirt);
@@ -3646,7 +3687,7 @@ impl Running {
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
                             color,
-                            lift: 0.0,
+                            lift: s.lift,
                             scale,
                             feet,
                             // Finishing a man on the ground, he bends over
@@ -3673,7 +3714,7 @@ impl Running {
                         facing: s.facing.to_array(),
                         size,
                         color,
-                        lift: 0.0,
+                        lift: s.lift,
                     });
                 });
         }
@@ -3942,10 +3983,9 @@ impl Running {
             let showing = !self.menu_open
                 && self.viewer.is_none()
                 && !self.commander
-                && self
-                    .art
-                    .as_ref()
-                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some() || a.folk.is_some());
+                && self.art.as_ref().is_some_and(|a| {
+                    a.deer.is_some() || a.dove.is_some() || a.folk.is_some() || a.cart.is_some()
+                });
             if showing {
                 // Deer and doves stand on ground no building or tree covers, keep away
                 // from buildings, and bolt or fly from the soldiers the viewer sees
@@ -4005,34 +4045,42 @@ impl Running {
                     tame,
                     &threats,
                 );
+                let eyes = ambient::villagers::Eyes {
+                    armies: &threats,
+                    fights: &fights,
+                };
                 self.ambient.villagers.advance(
                     step,
                     view_focus,
                     view_distance,
                     &self.ambient.hamlets,
-                    ambient::villagers::Eyes {
-                        armies: &threats,
-                        fights: &fights,
-                    },
+                    eyes,
                     |t| scenery.occupied_at(t),
                 );
+                self.ambient
+                    .caravans
+                    .advance(step, view_focus, view_distance, eyes, |t| {
+                        scenery.occupied_at(t)
+                    });
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
                 self.ambient.villagers.hush();
+                self.ambient.caravans.hush();
             }
         }
         let struck = self.atmosphere.take_strike();
         // The thunder that arrives is heard even with the flash out of
         // sight, but not while paused, behind the offline menu or in the
         // unit viewer.
+        let thunder_volume = self.atmosphere.extra(atmosphere::Extra::ThunderVolume);
         while let Some(loud) = self.atmosphere.take_thunder() {
             if let Some(sounds) = &self.sounds
                 && self.viewer.is_none()
                 && !self.paused
                 && !(self.menu_open && self.online.is_none())
             {
-                sounds.thunder(loud);
+                sounds.thunder(loud, thunder_volume);
             }
         }
         // Rain and snow, the one weather clearing and the one coming in;
@@ -5030,6 +5078,7 @@ impl Running {
         self.ambient.birds.clear();
         self.ambient.villagers.clear();
         self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
+        self.ambient.caravans = ambient::Caravans::new(&self.heightmap, &self.ambient.hamlets);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6914,6 +6963,54 @@ impl Running {
                 art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: v.pos.to_array(),
                     facing: v.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: 1.0,
+                    ..Default::default()
+                });
+            }
+        }
+        {
+            use ambient::caravans::Piece;
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for c in self.ambient.caravans.seen() {
+                let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let model = match c.piece {
+                    Piece::Cart => art.cart,
+                    Piece::Drover => art
+                        .folk
+                        .map(|f| f[ambient::villagers::Kind::Farmer.index()]),
+                    Piece::Porter => art
+                        .folk
+                        .map(|f| f[ambient::villagers::Kind::Porter.index()]),
+                };
+                let Some(model) = model else {
+                    continue;
+                };
+                // A drover with no cart to lead is not drawn.
+                if c.piece == Piece::Drover && art.cart.is_none() {
+                    continue;
+                }
+                let foot = Vec3::new(c.pos.x, ground(c.pos.x, c.pos.y), c.pos.y);
+                let Some(lod) = art.view.place(art.heights[model], foot) else {
+                    continue;
+                };
+                let (action, rate) = if c.moving {
+                    (Action::Walk, c.rate)
+                } else {
+                    (Action::Idle, 1.0)
+                };
+                let Some(pose) = art.clips.pose(model, action, (time + c.phase) * rate) else {
+                    continue;
+                };
+                art.buckets[model * LODS + lod].push(SoldierInstance {
+                    pos: c.pos.to_array(),
+                    facing: c.facing.to_array(),
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
