@@ -244,18 +244,23 @@ impl Climate {
 /// `seed`: a new spell every three to six minutes, a little over a third
 /// of them clear. Every peer draws the same ones from the same seed.
 pub fn changing(seed: u64, climate: Climate, ticks: u32) -> Vec<Spell> {
-    draw_spells(seed, ticks, |_| climate)
+    draw_spells(seed, ticks, 0, |_| climate)
 }
 
 /// [`changing`] weather that follows a year of seasons `year_ticks` long:
-/// each spell has the climate of the season it begins in.
+/// each spell has the climate of the season it begins in, and a new
+/// season always starts a new spell, so no season's weather runs into the
+/// next. With no seasons (`year_ticks` 0), the same as [`changing`] in a
+/// [`Climate::Wet`].
 pub fn seasonal(seed: u64, year_ticks: u32, ticks: u32) -> Vec<Spell> {
-    draw_spells(seed, ticks, |at| {
+    draw_spells(seed, ticks, year_ticks / 4, |at| {
         season_at(year_ticks, at).map_or(Climate::Wet, |s| s.season.climate())
     })
 }
 
-fn draw_spells(seed: u64, ticks: u32, climate: impl Fn(u32) -> Climate) -> Vec<Spell> {
+/// Spells for `ticks`, a new one at least every `season` ticks from the
+/// start when that isn't 0.
+fn draw_spells(seed: u64, ticks: u32, season: u32, climate: impl Fn(u32) -> Climate) -> Vec<Spell> {
     let mut rng = Pcg32::new(seed, crate::streams::SKY);
     let minute = 60 * TICKS_PER_SECOND;
     let mut spells = Vec::new();
@@ -291,7 +296,11 @@ fn draw_spells(seed: u64, ticks: u32, climate: impl Fn(u32) -> Climate) -> Vec<S
                 wind,
             },
         });
-        at = at.saturating_add(3 * minute + rng.next_u32() % (3 * minute));
+        let next = at.saturating_add(3 * minute + rng.next_u32() % (3 * minute));
+        at = match season {
+            0 => next,
+            _ => next.min((at / season + 1).saturating_mul(season)),
+        };
     }
     spells
 }

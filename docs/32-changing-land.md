@@ -202,15 +202,15 @@ Stage 6 turns the year in Conquest: spring, summer, autumn and winter come round
 | Autumn | Misty: fog and rain as often as clear sky (30% clear, 35% fog) | gathered 1.25 times as fast: the harvest | as usual | |
 | Winter | Cold: snow, fog and clear (no rain) | gathered at three quarters the speed | spreads half as often | the shallows freeze |
 
-- **Weather.** With Changing weather the spells are drawn as before (`seasonal`, a new spell every three to six minutes from the match seed), each with its season's mix (`Climate`). With fixed weather the seasons change everything else but not the sky. A match with no seasons draws exactly the old spells (`Climate::Wet`).
-- **Grub.** Workers fill a load of Grub, and Choir nodes tune one, at the season's speed (`Season::grub_percent`, applied with the tempo). Marrow, caravans and the Brood's corpse-eating don't follow the seasons.
+- **Weather.** With Changing weather the spells are drawn as before (`seasonal`, a new spell every three to six minutes from the match seed), each with its season's mix (`Climate`), and a new season always starts a new spell, so no season's rain or snow runs into the next. With fixed weather the seasons change everything else but not the sky. A match with no seasons draws exactly the old spells (`Climate::Wet`).
+- **Grub.** Workers fill a load of Grub, and Choir nodes tune one, at the season's speed (`Season::grub_percent`, applied with the tempo). Grub piles a destroyed caravan dropped are gathered at the season's speed too; Marrow, caravan deliveries and the Brood's corpse-eating don't follow the seasons.
 - **Fire.** Each spreading roll's chance is scaled by `Season::fire_percent`.
 - **Ice.** In the winter, while no flood is up, the water is frozen (`Terrain::frozen`): `Terrain::wet` is false, so troops in the shallows and fords march and fight as on dry ground. It thaws when the spring comes or the water rises; the walkable grid doesn't change, so deep water stays impassable.
 
 ### Seeing it
 
-- The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The Quick Start's Gather step says autumn brings more Grub and winter less. The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
-- **Not yet:** the computer players don't plan by the season (stocking up before winter, crossing the ice), and the land's look doesn't change with it yet.
+- The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
+- **Not yet:** routes still price frozen fords as wading ground (the walkable grid doesn't change), and the computer players' own reading of the ground still sees the ice as water, so they don't plan by the season (stocking up before winter, crossing the ice); the land's look doesn't change with it yet.
 - No golden changes: goldens have no seasons, and the version stays `SIM_VERSION` 46.
 
 ## The one ground change

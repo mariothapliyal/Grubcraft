@@ -8107,10 +8107,10 @@ fn drawn_position(
 fn season_news(season: gc_sim::sky::Season) -> &'static str {
     use gc_sim::sky::Season;
     match season {
-        Season::Spring => "Spring: the ice melts and the showers come back",
+        Season::Spring => "Spring: Grub comes in as usual again, and any ice thaws",
         Season::Summer => "Summer: the woods are dry and catch fire easily",
         Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
-        Season::Winter => "Winter: the shallows freeze over, and Grub comes in slower",
+        Season::Winter => "Winter: Grub comes in slower, and the shallows freeze unless in flood",
     }
 }
 

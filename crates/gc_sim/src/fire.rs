@@ -288,7 +288,8 @@ impl Fires {
         }
         // Damp ground and rain or snow falling hold it back in step.
         // So does the season (the summer's dry woods catch more).
-        let dry = u32::from(DAMP_WET - wet) * (255 - falling.min(255)) / 255 * season_percent / 100;
+        let dry =
+            u32::from(DAMP_WET - wet) * (255 - falling.min(255)) * season_percent / (255 * 100);
         if dry == 0 {
             return;
         }

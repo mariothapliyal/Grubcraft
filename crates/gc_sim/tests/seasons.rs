@@ -59,6 +59,16 @@ fn the_weather_follows_the_seasons() {
         summer > 50 && summer > spring,
         "summer {summer}, spring {spring}"
     );
+    // A new season starts a new spell: no season's weather runs on.
+    let short = 4 * 8 * MINUTE;
+    let spells = seasonal(7, short, 4 * short);
+    for quarter in 0..16 {
+        assert!(
+            spells.iter().any(|s| s.at == quarter * short / 4),
+            "{quarter}"
+        );
+    }
+    assert!(spells.windows(2).all(|w| w[0].at < w[1].at));
     // The autumn is the foggiest.
     let fog = |s| share(&of(s), WeatherKind::Fog);
     assert!(fog(Season::Autumn) > fog(Season::Spring));

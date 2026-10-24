@@ -63,7 +63,7 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
         WeatherSetting::Fair => Vec::new(),
         WeatherSetting::Changing => {
-            // With no seasons, the old changing weather.
+            // With no seasons (`year_ticks` 0), the old wet weather.
             let mut spells = seasonal(seed, year_ticks, SKY_TICKS);
             if overcast {
                 for s in &mut spells {
