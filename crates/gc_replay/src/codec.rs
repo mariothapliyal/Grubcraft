@@ -373,6 +373,19 @@ impl Writer {
                 self.u8(21);
                 self.u8(to);
             }
+            Command::BuildWall {
+                regiment,
+                building,
+                from,
+                to,
+            } => {
+                self.u8(29);
+                self.handle(regiment);
+                self.var(u64::from(building));
+                for v in [from.0, from.1, to.0, to.1] {
+                    self.var(u64::from(v as u16));
+                }
+            }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
                 self.structure(structure);
@@ -658,7 +671,7 @@ impl<'a> Reader<'a> {
             u.trade_tenths = self.var_as()?;
             u.cannot_bank = self.var_as()?;
         }
-        if format >= 29 {
+        if format >= 30 {
             for i in 0..3 {
                 u.clearing.pace[i] = self.var_as()?;
                 u.clearing.pays[i] = self.u8()?;
@@ -783,6 +796,12 @@ impl<'a> Reader<'a> {
                 on: self.bool()?,
             },
             21 => Command::HandOver { to: self.u8()? },
+            29 => Command::BuildWall {
+                regiment: self.handle()?,
+                building: self.var_as()?,
+                from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
             28 => Command::SetGate {
                 structure: self.structure()?,
                 mode: gc_sim::gates::GateMode::from_u8(self.u8()?)?,
@@ -972,6 +991,15 @@ mod tests {
                     generation: 2,
                 },
                 mode: gc_sim::gates::GateMode::Open,
+            },
+            Command::BuildWall {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 1,
+                },
+                building: 2,
+                from: (40, -5),
+                to: (12, 3),
             },
             Command::FocusTower {
                 structure: StructureHandle {

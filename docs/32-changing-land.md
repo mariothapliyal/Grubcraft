@@ -41,7 +41,7 @@ Mario chose all four as proposed (2026-10-24). **Built (2026-10-24):** each Conq
 | **Choir** | shatter it with resonance: thicket as fast as woods, no timber | 100, 100, 53 | 0, 0, 0 |
 | **Brood** | Gnawers eat it: slower, but even scrub feeds them | 150, 150, 150 | 1, 3, 5 |
 
-Burning is a look only, reported on the event so the ground can be drawn scorched (the ground thread's to draw; not drawn yet). It lives only in the event, so a scorched look that must survive a replay seek or a rejoin will need it kept on the terrain too. The style is hashed with each Conquest unit and stored in replays from `FORMAT` 29 (older files read the standard style). `SIM_VERSION` 30.
+Burning is a look only, reported on the event so the ground can be drawn scorched (the ground thread's to draw; not drawn yet). It lives only in the event, so a scorched look that must survive a replay seek or a rejoin will need it kept on the terrain too. The style is hashed with each Conquest unit and stored in replays from `FORMAT` 30 (older files read the standard style). `SIM_VERSION` 31.
 
 ### Computer players
 
@@ -56,7 +56,7 @@ A computer player prefers open spots for a new building; when only overgrown gro
 - **Mud.** Each tile is firm or soft (`gc_sim::Footing`, the new `Ground::footing` layer). Soft ground is peat bog and alder carr (wet woodland) on a grown map, about a tenth of it, and fen on a painted one (`Map::settle_footing`). Troops in it march at 75% pace (heavy troops 60%), on top of any woods. Nobody starts a charge in mud or water, and nobody charges a regiment standing in either (`Terrain::bears_charge`): horses bog down. A run-up is only built on ground that bears a charge, so cavalry leaving a bog needs a fresh run-up. Charging into a ford was allowed before; it no longer is.
 - **Seeing it.** The selection panel says what the ground under the regiment does: "In a ford: slow, no charges", "In mud: slow, no charges", "In woods: slower" or "On a slope: slower uphill" (shown for a group only when every regiment in it shares it). On the ground, bog and carr are fen (reeds and pools); sedge is fen too but firm, so the ground thread (T8) is asked to draw soft tiles visibly muddier than the rest of the fen. The Quick Start's Command step and the Cavalry class say to charge downhill and keep out of mud.
 
-The footing layer is stored in replays from `FORMAT` 30 (older files read firm ground) and is part of the online map check. `SIM_VERSION` 31.
+The footing layer is stored in replays from `FORMAT` 31 (older files read firm ground) and is part of the online map check. `SIM_VERSION` 32.
 
 **Later:**
 - Rain makes ground soft (idea 1). The footing layer is where it will write.
