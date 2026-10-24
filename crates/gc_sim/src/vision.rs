@@ -199,6 +199,11 @@ pub(crate) struct Vision {
     /// Per slot, as of the last update: hidden from its enemies by the
     /// dark alone, not by cover.
     dark_only: Vec<bool>,
+    /// Per slot: the dark, not cover, last hid it from its enemies: lost
+    /// in the dark out of their sight, and not in cover since. Kept while
+    /// seen or lit, so a charge out of the dark that torchlight shows at
+    /// the last is still one (see [`Vision::springs`]).
+    from_dark: Vec<bool>,
     /// Any slot is lit (as of the last update).
     any_lit: bool,
     /// The furthest any post sees a lit regiment (see `post_sight`).
@@ -259,6 +264,7 @@ impl Vision {
             post_radius: Fx::ZERO,
             lit: Vec::new(),
             dark_only: Vec::new(),
+            from_dark: Vec::new(),
             any_lit: false,
             post_lit_sight: Fx::ZERO,
         };
@@ -278,6 +284,7 @@ impl Vision {
         self.was_engaged = vec![false; capacity];
         self.lit = vec![false; capacity];
         self.dark_only = vec![false; capacity];
+        self.from_dark = vec![false; capacity];
         self.ambushes = Vec::with_capacity(MAX_AMBUSHES);
     }
 
@@ -322,9 +329,13 @@ impl Vision {
     }
 
     /// Whether `party` counts the regiment in slot `i`, owned by `owner`,
-    /// as facing it on the field: it sees it, or only the dark hides it.
+    /// as facing it on the field: it sees it, or only the dark hides it
+    /// (in fog of war, only within its sight).
     pub(crate) fn faces(&self, party: PlayerId, i: usize, owner: PlayerId) -> bool {
-        self.sees(party, i, owner) || self.in_dark(i)
+        self.sees(party, i, owner)
+            || (self.in_dark(i)
+                && (!self.fog
+                    || (party as usize) < PARTIES && self.in_sight[i] & (1 << party) != 0))
     }
 
     /// Whether the regiment in slot `i` is hidden from its enemies by the
@@ -510,6 +521,11 @@ impl Vision {
                 }
                 _ => (u8::MAX, u8::MAX),
             };
+            if shade.is_some() {
+                self.from_dark[i] = false;
+            } else if night.is_some() && near & !friends == 0 {
+                self.from_dark[i] = true;
+            }
             let direct = if cover.is_some() {
                 friends | near
             } else {
@@ -599,6 +615,7 @@ impl Vision {
         let in_open = self.spotting(regs, units, terrain, i).0.is_none();
         self.lit[i] = false;
         self.dark_only[i] = false;
+        self.from_dark[i] = false;
         let friends = self
             .allies
             .get(regs.owner[i] as usize)
@@ -642,6 +659,7 @@ impl Vision {
         self.lit[i] = from.lit[i];
         self.any_lit |= from.lit[i];
         self.dark_only[i] = from.dark_only[i];
+        self.from_dark[i] = from.from_dark[i];
         if self.fog && from.fog {
             self.in_sight[i] = from.in_sight[i];
             self.sight_linger[k..k + PARTIES].copy_from_slice(&from.sight_linger[k..k + PARTIES]);
@@ -656,15 +674,15 @@ impl Vision {
     }
 
     /// Whether regiment `i` springs an ambush on regiment `j` as it shoots
-    /// or closes with it: `j`'s side first saw it only just now. Not on a
-    /// regiment with torches lit, which sees what comes at it; nor in the
-    /// dark when `i`'s side has only just seen `j` too, as both stumble on
-    /// each other.
+    /// or closes with it: `j`'s side first saw it only just now. Out of the
+    /// dark (hidden by it alone), not on a regiment with torches lit, which
+    /// sees what comes at it, nor when `i`'s side has only just seen `j`
+    /// too, as both stumble on each other.
     fn springs(&self, regs: &Regiments, i: usize, j: usize) -> bool {
         if !self.surprises(i, regs.owner[j]) {
             return false;
         }
-        if !self.air.dark {
+        if !self.from_dark[i] {
             return true;
         }
         !regs.torches[j] && !self.surprises(j, regs.owner[i])
@@ -971,9 +989,9 @@ impl Vision {
             h.u8(self.off_guard[i]);
             h.u8(u8::from(self.was_engaged[i]));
             // Read by the next tick's combat (and by `hidden`).
-            if self.lit[i] || self.dark_only[i] {
-                h.u8(u8::from(self.lit[i]) | u8::from(self.dark_only[i]) << 1);
-            }
+            h.u8(u8::from(self.lit[i])
+                | u8::from(self.dark_only[i]) << 1
+                | u8::from(self.from_dark[i]) << 2);
             if self.fog {
                 h.u8(self.in_sight[i]);
                 for k in i * PARTIES..(i + 1) * PARTIES {

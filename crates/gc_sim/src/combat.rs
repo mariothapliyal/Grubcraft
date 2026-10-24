@@ -1257,7 +1257,12 @@ impl Combat {
             // waits there rather than walking into the block.
             let waits =
                 parted(regs, &self.blocks, i, j) && self.blocks[i].touches(&self.blocks[j], REACH);
-            if waits || (range.raw() > 0 && to.length() <= range) {
+            // A target only heard in the dark is closed with until it is
+            // seen, however far the bows reach.
+            let shootable = range.raw() > 0
+                && to.length() <= range
+                && vision.sees(regs.owner[i], j, regs.owner[j]);
+            if waits || shootable {
                 regs.target[i] = None;
                 regs.target_facing[i] = Some(Angle::of_vec(to));
             } else {

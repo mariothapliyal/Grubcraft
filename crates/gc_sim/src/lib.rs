@@ -2449,14 +2449,16 @@ impl World {
         out.extend(posts.map(|(_, block, sight)| round(block, sight)));
     }
 
-    /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always
-    /// true on a map with no cover and no fog of war, and for a party's own
-    /// and its allies' regiments; false for a regiment that is gone.
-    /// While deploying, no enemy regiment is seen.
     /// Whether `party` may go after regiment `h`: it sees it, or only the
-    /// dark hides it (an army is heard in the dark, see [`vision`]).
+    /// dark hides it from it (an army is heard in the dark, but not through
+    /// fog of war; see [`vision`]).
     pub fn faces(&self, party: PlayerId, h: RegimentHandle) -> bool {
-        self.sees(party, h) || self.in_dark(h)
+        self.sees(party, h)
+            || (!self.deploying()
+                && self
+                    .regiments
+                    .resolve(h)
+                    .is_some_and(|i| self.vision.faces(party, i, self.regiments.owner[i])))
     }
 
     /// Whether regiment `h` is hidden from its enemies by the dark alone,
@@ -2469,6 +2471,10 @@ impl World {
                 .is_some_and(|i| self.vision.in_dark(i))
     }
 
+    /// Whether `party`'s side can see regiment `h` (see [`vision`]). Always
+    /// true on a map with no cover and no fog of war, and for a party's own
+    /// and its allies' regiments; false for a regiment that is gone.
+    /// While deploying, no enemy regiment is seen.
     pub fn sees(&self, party: PlayerId, h: RegimentHandle) -> bool {
         self.regiments.resolve(h).is_some_and(|i| {
             let owner = self.regiments.owner[i];

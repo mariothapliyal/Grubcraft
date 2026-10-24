@@ -116,7 +116,7 @@ const TIPS: [&str; GRID_SLOTS] = [
     "A hero ability. Needs a hero.",
     "A hero's ultimate. Needs a hero.",
     "Spears and pikes brace against a charge. Press again to stand.",
-    "Light torches at night: seen from afar, but they see further and can't be ambushed. Press again to put them out.",
+    "Light torches at night: seen from afar, but they see further and can't be ambushed out of the dark. Press again to put them out.",
     "Run at full pace, tiring as you go. Not in the game yet.",
     "Back out of the fight in good order, taking one parting blow.",
 ];
@@ -856,6 +856,7 @@ impl Running {
         });
         grid[SLOT_BRACE].state = ready(has_orders && has_spears);
         grid[SLOT_FALL_BACK].state = ready(has_orders);
+        grid[SLOT_TORCHES].state = ready(has_orders);
         // A hero's abilities take the A, S, D and F slots.
         if let Some(h) = &hero {
             for (i, a) in h.abilities.iter().enumerate() {

@@ -179,13 +179,14 @@ fn archers_shoot_a_lit_target_from_their_day_range() {
     assert!(shot(true));
 }
 
-/// Cavalry in a wood charges spears standing just outside it at night;
-/// `torches` are lit on the spears themselves, on a friend beside them
-/// (whose light falls on them), or on neither. Returns whether an ambush
-/// was sprung.
-fn ambush_at_night(torches: Option<bool>) -> bool {
-    let mut w = world(&woods(10, 30, 10, 30), NIGHT);
-    let cav = spawn(&mut w, 1, CAVALRY, 20, 24, SOUTH);
+/// Cavalry charges spears at night, from a wood or out of the dark of
+/// the open (sixteen tiles off); `torches` are lit on the spears
+/// themselves, on a friend beside them (whose light falls on them), or on
+/// neither. Returns whether an ambush was sprung.
+fn ambush_at_night(wood: bool, torches: Option<bool>) -> bool {
+    let cover = if wood { woods(10, 30, 10, 30) } else { open() };
+    let mut w = world(&cover, NIGHT);
+    let cav = spawn(&mut w, 1, CAVALRY, 20, if wood { 24 } else { 20 }, SOUTH);
     let spears = spawn(&mut w, 0, SPEARS, 20, 36, NORTH);
     let friend = spawn(&mut w, 0, SPEARS, 30, 40, NORTH);
     match torches {
@@ -214,14 +215,17 @@ fn ambush_at_night(torches: Option<bool>) -> bool {
 }
 
 #[test]
-fn torches_guard_their_bearers_against_ambush_but_not_those_in_their_light() {
-    // Lit by a friend's torches, the spears are seen from the wood long
-    // before the charge: it takes them by surprise.
-    assert!(ambush_at_night(Some(false)));
-    // With torches of their own, they see what comes at them.
-    assert!(!ambush_at_night(Some(true)));
-    // In the dark, each side stumbles on the other: no ambush either way.
-    assert!(!ambush_at_night(None));
+fn torches_guard_their_bearers_against_ambush_out_of_the_dark() {
+    // Out of the dark: spears lit by a friend's torches are seen long
+    // before the charge, so it takes them by surprise; with torches of
+    // their own they see what comes at them; dark, each side stumbles on
+    // the other, and nobody is surprised.
+    assert!(ambush_at_night(false, Some(false)));
+    assert!(!ambush_at_night(false, Some(true)));
+    assert!(!ambush_at_night(false, None));
+    // A charge out of a wood takes them by surprise, torches or not.
+    assert!(ambush_at_night(true, Some(true)));
+    assert!(ambush_at_night(true, None));
 }
 
 #[test]

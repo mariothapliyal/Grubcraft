@@ -279,7 +279,7 @@ impl Perception {
             // In the dark an enemy is heard, not seen: where it was when last
             // heard, every [`HEARD_TICKS`].
             let sees = party.is_none_or(|p| world.sees(p, r.handle));
-            let in_dark = !sees && world.in_dark(r.handle);
+            let in_dark = !sees && party.is_some_and(|p| world.faces(p, r.handle));
             if !sees && !in_dark {
                 continue;
             }
@@ -362,10 +362,9 @@ impl Perception {
     fn remember(&mut self, world: &World, party: PlayerId) {
         let now = self.tick;
         for r in &self.regiments {
-            // One heard in the dark is not seen.
-            let heard = (self.heard.get(r.handle.index as usize))
-                .is_some_and(|h| h.is_some_and(|(s, _)| s.handle == r.handle));
-            if !self.stances.hostile(party, r.owner) || heard {
+            // One heard in the dark counts as known now too, so it isn't
+            // also counted where it was last seen.
+            if !self.stances.hostile(party, r.owner) {
                 continue;
             }
             match self.memory.iter_mut().find(|(m, _)| m.handle == r.handle) {
