@@ -3609,10 +3609,14 @@ impl Running {
         // shafts are for the ride camera, where the sky is in view.
         let plain = settings.clarity;
         let riding = self.ride.is_some();
-        let tilt = f32::from(u8::from(settings.tilt_shift && !plain && !riding));
+        let tilt = if settings.tilt_shift && !plain && !riding && self.viewer.is_none() {
+            1.0
+        } else {
+            0.0
+        };
         let shafts =
             (riding && !plain && settings.graphics != gc_ui::settings::GraphicsPreset::Battery)
-                .then(|| cinema::sun_shafts(self.active_camera().view_proj(), look.sun_dir()))
+                .then(|| cinema::sun_shafts(view_proj, look.sun_dir()))
                 .flatten();
         let picture = gc_render::Cinema {
             tilt,

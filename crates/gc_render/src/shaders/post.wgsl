@@ -140,10 +140,10 @@ const SHAFT_HIGH: f32 = 2.2;
 fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     // The picture, shaken: zoomed in about the middle and moved.
     let uv = (in.uv - 0.5) / grade.camera.z + 0.5 + grade.camera.xy;
-    var c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
+    var c: vec3<f32>;
     // Tilt-shift: out of focus toward the top and bottom edges, so the
     // battlefield looks like a table of miniatures. The centre stays sharp.
-    let blur = grade.focus.x * smoothstep(0.18, 0.5, abs(in.uv.y - TILT_CENTRE));
+    let blur = grade.focus.x * smoothstep(0.12, 0.4, abs(in.uv.y - TILT_CENTRE));
     if blur > 0.03 {
         let texel = 1.0 / vec2<f32>(textureDimensions(src));
         var acc = vec3<f32>(0.0);
@@ -153,6 +153,8 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
             acc += textureSampleLevel(src, src_sampler, uv + vec2<f32>(cos(a), sin(a)) * r * texel, 0.0).rgb;
         }
         c = acc / f32(TILT_TAPS);
+    } else {
+        c = textureSampleLevel(src, src_sampler, uv, 0.0).rgb;
     }
     if BLOOM_STRENGTH > 0.0 {
         c += textureSampleLevel(bloom, src_sampler, uv, 0.0).rgb * BLOOM_STRENGTH;
@@ -160,14 +162,17 @@ fn fs_composite(in: Fullscreen) -> @location(0) vec4<f32> {
     // Sun shafts: march from here toward the sun, gathering the bright sky
     // seen through gaps (what is in the way is dark and gathers nothing).
     if grade.focus.y > 0.0 {
-        let step = (grade.focus.zw - in.uv) * (SHAFT_REACH / f32(SHAFT_STEPS));
+        let step = (grade.focus.zw - uv) * (SHAFT_REACH / f32(SHAFT_STEPS));
         var p = uv;
         var w = 1.0;
         var shaft = vec3<f32>(0.0);
         for (var i = 0; i < SHAFT_STEPS; i++) {
             p += step;
             let s = textureSampleLevel(src, src_sampler, p, 0.0).rgb;
-            shaft += s * smoothstep(SHAFT_LOW, SHAFT_HIGH, dot(s, LUMA)) * w;
+            // Past the edge of the picture there is nothing to gather (the
+            // edge texel would smear down the screen).
+            let inside = f32(all(p == clamp(p, vec2<f32>(0.0), vec2<f32>(1.0))));
+            shaft += s * smoothstep(SHAFT_LOW, SHAFT_HIGH, dot(s, LUMA)) * w * inside;
             w *= SHAFT_FADE;
         }
         c += shaft / f32(SHAFT_STEPS) * grade.focus.y * grade.light_tint.rgb;

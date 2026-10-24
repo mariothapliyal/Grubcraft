@@ -381,3 +381,14 @@ impl PostGpu {
         (t.levels.len() * 2 - 1) as u32
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shader's `Grade` is six vec4s; the buffer must match it.
+    #[test]
+    fn the_grade_uniform_matches_the_shaders() {
+        assert_eq!(size_of::<Grade>(), 96);
+    }
+}

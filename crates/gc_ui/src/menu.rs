@@ -1571,7 +1571,7 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::INK_MUTED,
-            "Name, colour, faction, UI scale, Clarity, Tilt-shift, shake and Master and Music volume work now.",
+            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, shake, Master, Music.",
         );
         ui.label(
             panel.x + 24,
@@ -2251,10 +2251,14 @@ mod tests {
         assert!(!h.menu.settings().clarity);
         h.click("Clarity: plain light, no grain");
         assert!(h.menu.settings().clarity);
+        // Tilt-shift is off until asked for, and is saved.
+        assert!(!h.menu.settings().tilt_shift);
+        h.click("Tilt-shift: soft top and bottom");
+        assert!(h.menu.settings().tilt_shift);
         h.click("Back");
         assert_eq!(h.menu.screen(), Screen::Main);
         let saved = Settings::load(&path);
-        assert!(saved.larger_text && saved.clarity);
+        assert!(saved.larger_text && saved.clarity && saved.tilt_shift);
         assert_eq!(saved.ui_scale, h.menu.settings().ui_scale);
         let _ = std::fs::remove_dir_all(dir);
     }

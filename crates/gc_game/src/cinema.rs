@@ -134,7 +134,7 @@ pub fn sun_shafts(view_proj: Mat4, sun: Vec3) -> Option<([f32; 2], f32)> {
     let ndc = Vec2::new(clip.x, clip.y) / clip.w;
     let uv = Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     let off = (uv - Vec2::splat(0.5)).abs().max_element();
-    let strength = SHAFTS * (1.0 - smooth(0.5, 1.2, off));
+    let strength = SHAFTS * (1.0 - smooth(0.5, 0.9, off));
     (strength > 0.0).then_some((uv.to_array(), strength))
 }
 
@@ -247,8 +247,11 @@ mod tests {
         assert!(strength > SHAFTS * 0.95);
         // Behind the camera: none.
         assert!(sun_shafts(proj, Vec3::new(0.0, 0.3, 1.0).normalize()).is_none());
-        // Far off to the side but in front: faint or none.
+        // Far off to the side but in front: none.
         let side = sun_shafts(proj, Vec3::new(1.0, 0.1, -0.3).normalize());
-        assert!(side.is_none_or(|(_, s)| s < SHAFTS * 0.5));
+        assert!(side.is_none());
+        // Just off the edge of the screen: fading.
+        let edge = sun_shafts(proj, Vec3::new(1.0, 0.0, -1.0).normalize());
+        assert!(edge.is_some_and(|(_, s)| s > 0.0 && s < SHAFTS), "{edge:?}");
     }
 }
