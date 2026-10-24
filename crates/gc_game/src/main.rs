@@ -1640,8 +1640,21 @@ impl App {
             }
             if let Some(path) = &opts.watch {
                 match gc_replay::Replay::load(path) {
-                    Ok(replay) => r.start_match(MatchKind::Replay(Box::new(replay))),
-                    Err(e) => logln!("grubcraft: can't open {}: {e}", path.display()),
+                    Ok(replay) => {
+                        match replays::unplayable(&replay.info(), &r.unit_types(), r.capacities) {
+                            None => r.start_match(MatchKind::Replay(Box::new(replay))),
+                            Some(why) => {
+                                logln!("grubcraft: can't watch {}: {why}", path.display());
+                                r.menu.tell(why);
+                                r.open_menu();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        logln!("grubcraft: can't open {}: {e}", path.display());
+                        r.menu.tell(format!("Can't open that replay: {e}"));
+                        r.open_menu();
+                    }
                 }
             }
             if let Some(choice) = opts.conquest {
@@ -3582,7 +3595,7 @@ impl Running {
             if live { dt.as_secs_f32() } else { 0.0 },
             settings.reduced_shake,
             !settings.clarity,
-            self.watching.is_some() && self.director.filming(),
+            self.watching.is_some() && self.director.is_on(),
         );
         self.renderer.set_cinema(picture);
         // Pollen, fireflies, leaves and whirlwinds, where the land has them;
@@ -4488,6 +4501,7 @@ impl Running {
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
         self.cinema.reset();
+        self.director.stop();
         self.was_deploying = false;
         self.land.reset();
         // The lobby's time of day lights the match, unless `--look` says.
@@ -5143,7 +5157,7 @@ impl Running {
                     }
                 }
                 Event::Losses { regiment, lost }
-                    if self.world.regiments.get(regiment).is_some() =>
+                    if self.director.is_on() && self.world.regiments.get(regiment).is_some() =>
                 {
                     let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
                     if let (true, Some(r)) = (seen, self.world.regiments.get(regiment)) {
@@ -5157,7 +5171,7 @@ impl Running {
                     regiment,
                     to: MoraleState::Routing,
                     ..
-                } => {
+                } if self.director.is_on() => {
                     let seen = self.reveal_all || self.world.sees(self.sandbox.side, regiment);
                     if let (true, Some(r)) = (seen, self.world.regiments.get(regiment)) {
                         self.director.note(from_fx_vec(r.position), director::ROUT);
@@ -5364,13 +5378,10 @@ impl Running {
             return;
         }
         if self.director.is_on() && !self.menu_open {
-            if self.ride.is_some() {
-                self.director.stop();
-            } else {
-                let (world, side, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
-                self.director
-                    .step(dt, &mut self.camera, || see_the_field(world, side, reveal));
-            }
+            // (Riding stops it: `toggle_ride`.)
+            let (world, side, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
+            self.director
+                .step(dt, &mut self.camera, || see_the_field(world, side, reveal));
         }
         if self.menu_open && !self.match_started {
             // A slow sway behind the main menu.
@@ -6378,8 +6389,6 @@ impl Running {
         true
     }
 
-    /// Where the view in use is looking and how far it is from the ground:
-    /// the bird's-eye camera's focus, or a little ahead of a ride.
     /// How fast the director slows a replay for a big moment; a live match
     /// always runs at its own pace.
     fn film_pace(&self) -> f32 {
@@ -6390,6 +6399,8 @@ impl Running {
         }
     }
 
+    /// Where the view in use is looking and how far it is from the ground:
+    /// the bird's-eye camera's focus, or a little ahead of a ride.
     fn view_focus(&self) -> (Vec2, f32) {
         match &self.ride {
             Some(ride) => {

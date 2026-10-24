@@ -50,11 +50,17 @@ const SLOW_PACE: f32 = 0.35;
 const SLOW_TIME: f32 = 1.6;
 const SLOW_COOLDOWN: f32 = 8.0;
 /// How far the camera may differ from where the director put it before the
-/// player is taken to have moved it.
-const MOVED: f32 = 0.05;
+/// player is taken to have moved it: only rounding, since nothing else
+/// moves the camera between two frames.
+const MOVED: f32 = 1e-4;
+/// A blow within this many tiles of a spot of heat joins it, so a long fight
+/// is one spot and not thousands, and the heat never grows past the cap.
+const MERGE: f32 = 4.0;
+const MOST_HEAT: f32 = 12.0;
+const MAX_SPOTS: usize = 128;
 
 /// How hot each kind of moment is.
-pub const CHARGE_HIT: f32 = 3.0;
+pub const CHARGE_HIT: f32 = 3.6;
 pub const AMBUSH: f32 = 4.0;
 pub const BUILDING_FELL: f32 = 4.0;
 pub const ROUT: f32 = 2.0;
@@ -119,7 +125,18 @@ impl Director {
         if !self.on || heat.is_nan() || heat <= 0.0 {
             return;
         }
-        self.heat.push(Hot { at, heat });
+        let near = (self.heat.iter()).position(|h| h.at.distance_squared(at) <= MERGE * MERGE);
+        if let Some(i) = near {
+            self.heat[i].heat = (self.heat[i].heat + heat).min(MOST_HEAT);
+        } else if self.heat.len() < MAX_SPOTS {
+            self.heat.push(Hot { at, heat });
+        } else if let Some(coolest) =
+            (self.heat.iter_mut()).min_by(|a, b| a.heat.total_cmp(&b.heat))
+            && coolest.heat < heat
+        {
+            // Full: only a blow hotter than the coolest spot is worth a place.
+            *coolest = Hot { at, heat };
+        }
         if heat >= BIG && self.slow_left <= 0.0 && self.cooldown <= 0.0 {
             self.slow_left = SLOW_TIME;
             self.cooldown = SLOW_COOLDOWN;
@@ -138,11 +155,6 @@ impl Director {
         1.0 - (1.0 - SLOW_PACE) * ease
     }
 
-    /// Whether the camera is the director's alone, with bars to show it.
-    pub fn filming(&self) -> bool {
-        self.on
-    }
-
     /// Frame the action for a frame `dt` seconds long. `look` is called now
     /// and then for where the regiments in melee are and where every
     /// regiment is (only those the viewer sees). Turns itself off, leaving the camera
@@ -158,8 +170,8 @@ impl Director {
         }
         if let Some((focus, distance, yaw)) = self.left
             && (focus.distance(camera.focus) > MOVED
-                || (distance - camera.distance).abs() > MOVED * 10.0
-                || (yaw - camera.yaw).abs() > MOVED * 0.2)
+                || (distance - camera.distance).abs() > MOVED
+                || (yaw - camera.yaw).abs() > MOVED)
         {
             self.stop();
             return;
@@ -172,11 +184,13 @@ impl Director {
         let cool = (-dt / HEAT_LIFE).exp();
         self.heat.iter_mut().for_each(|h| h.heat *= cool);
         self.heat.retain(|h| h.heat > COLD);
-        if self.since_scene >= SCENE_EVERY {
+        // Choosing between fights is the costly part: only now and then.
+        let choose = self.since_scene >= SCENE_EVERY;
+        if choose {
             self.since_scene = 0.0;
             (self.melee, self.everyone) = look();
         }
-        self.frame_the_hottest();
+        self.frame_the_hottest(choose);
         let k = 1.0 - (-dt * FOLLOW).exp();
         camera.focus += (self.goal - camera.focus) * k;
         camera.focus = camera.focus.clamp(Vec2::ZERO, Vec2::splat(camera.map_size));
@@ -186,50 +200,52 @@ impl Director {
         self.left = Some((camera.focus, camera.distance, camera.yaw));
     }
 
-    /// Choose what to frame: stay with the cluster the goal is in, unless
-    /// another is clearly hotter and the dwell is over.
-    fn frame_the_hottest(&mut self) {
-        let points = || {
+    /// Frame the cluster the goal is in, and when `choose`, first move to
+    /// another that is clearly hotter if the dwell is over.
+    fn frame_the_hottest(&mut self, choose: bool) {
+        // Candidates are the fights; with none, wherever regiments stand.
+        let fights = || {
             (self.heat.iter().map(|h| (h.at, h.heat)))
                 .chain(self.melee.iter().map(|&at| (at, ENGAGED)))
-                .chain(self.everyone.iter().map(|&at| (at, PRESENT)))
         };
+        let points = || fights().chain(self.everyone.iter().map(|&at| (at, PRESENT)));
         let warmth = |at: Vec2| {
-            points()
-                .filter(|(p, _)| p.distance(at) <= CLUSTER)
+            (points().filter(|(p, _)| p.distance_squared(at) <= CLUSTER * CLUSTER))
                 .map(|(_, w)| w)
                 .sum::<f32>()
         };
-        let hottest = points()
-            .map(|(at, _)| (at, warmth(at)))
-            .max_by(|a, b| a.1.total_cmp(&b.1));
-        let Some((best, best_warmth)) = hottest else {
+        let mut centre = self.goal;
+        if choose && self.since_switch >= DWELL {
+            let candidates: Vec<Vec2> = match fights().next() {
+                Some(_) => fights().map(|(at, _)| at).collect(),
+                None => self.everyone.clone(),
+            };
+            let best = (candidates.into_iter())
+                .map(|at| (at, warmth(at)))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((at, hot)) = best
+                && (hot > warmth(self.goal) * HOTTER || warmth(self.goal) <= 0.0)
+            {
+                self.since_switch = 0.0;
+                centre = at;
+            }
+        }
+        // Frame the weighted middle of the cluster, and how far it spreads.
+        let (mut sum, mut weight, mut seen) = (Vec2::ZERO, 0.0, Vec::new());
+        for (at, w) in points().filter(|(p, _)| p.distance_squared(centre) <= CLUSTER * CLUSTER) {
+            sum += at * w;
+            weight += w;
+            seen.push(at);
+        }
+        if weight <= 0.0 {
             // Nobody in sight: hold the view, wide.
             self.distance = WIDEST;
             return;
-        };
-        let here = warmth(self.goal);
-        let centre = if self.since_switch >= DWELL && best_warmth > here * HOTTER {
-            self.since_switch = 0.0;
-            best
-        } else if here > 0.0 {
-            self.goal
-        } else {
-            best
-        };
-        // Frame the weighted middle of the cluster, and how far it spreads.
-        let (mut sum, mut weight) = (Vec2::ZERO, 0.0);
-        for (at, w) in points().filter(|(p, _)| p.distance(centre) <= CLUSTER) {
-            sum += at * w;
-            weight += w;
-        }
-        if weight <= 0.0 {
-            return;
         }
         self.goal = sum / weight;
-        let spread = points()
-            .filter(|(p, _)| p.distance(centre) <= CLUSTER)
-            .map(|(p, _)| p.distance(self.goal))
+        let spread = seen
+            .iter()
+            .map(|p| p.distance(self.goal))
             .fold(0.0, f32::max);
         self.distance = (spread * ROOM + ROOM_FLOOR).clamp(CLOSEST, WIDEST);
     }
@@ -340,5 +356,45 @@ mod tests {
         d.start(&cam);
         d.note(Vec2::ZERO, 1.0);
         assert_eq!(d.pace(), 1.0);
+    }
+
+    #[test]
+    fn a_slow_turn_of_the_view_still_takes_it_back() {
+        let mut cam = camera_at(Vec2::new(100.0, 100.0));
+        let mut d = Director::default();
+        d.start(&cam);
+        run(&mut d, &mut cam, 2.0, &[Vec2::new(150.0, 150.0)]);
+        // One frame of a held turn key at 144 fps.
+        cam.rotate(0.007);
+        run(&mut d, &mut cam, 0.1, &[Vec2::new(150.0, 150.0)]);
+        assert!(!d.is_on());
+    }
+
+    #[test]
+    fn a_long_fight_is_one_spot_of_heat_and_the_list_has_a_cap() {
+        let cam = camera_at(Vec2::ZERO);
+        let mut d = Director::default();
+        d.start(&cam);
+        for i in 0..5000 {
+            d.note(Vec2::new(100.0 + (i % 3) as f32, 100.0), 0.2);
+        }
+        assert_eq!(d.heat.len(), 1);
+        assert!(d.heat[0].heat <= MOST_HEAT);
+        for i in 0..5000 {
+            d.note(
+                Vec2::new(10.0 * i as f32, 10.0 * i as f32),
+                0.5 + (i % 7) as f32,
+            );
+        }
+        assert!(d.heat.len() <= MAX_SPOTS);
+    }
+
+    #[test]
+    fn a_charge_hitting_home_is_a_big_moment() {
+        let cam = camera_at(Vec2::ZERO);
+        let mut d = Director::default();
+        d.start(&cam);
+        d.note(Vec2::ZERO, CHARGE_HIT);
+        assert!(d.slow_left > 0.0);
     }
 }
