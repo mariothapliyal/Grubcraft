@@ -5944,8 +5944,7 @@ impl Running {
                         // The nearest foe by takes the standard.
                         let world = &self.world;
                         let victor = (world.regiments.iter())
-                            .filter(|f| f.owner != owner && world.hostile(f.owner, owner))
-                            .filter(|f| !world.is_worker(f.handle))
+                            .filter(|f| world.hostile(f.owner, owner) && !world.is_worker(f.handle))
                             .map(|f| (f.handle, from_fx_vec(f.position).distance(at)))
                             .filter(|&(_, d)| d <= aftermath::TAKE_RADIUS)
                             .min_by(|a, b| a.1.total_cmp(&b.1))

@@ -223,12 +223,9 @@ impl Aftermath {
     /// Regiment `winner` takes a standard of `tint`'s colour; past three, its
     /// oldest is put away.
     fn take(&mut self, winner: RegimentHandle, tint: [u8; 3]) {
-        let held = |t: &&Trophy| t.winner == winner;
-        if self.trophies.iter().filter(held).count() >= TROPHIES_PER_REGIMENT
-            && let Some(i) = (self.trophies.iter().enumerate())
-                .filter(|(_, t)| held(t))
-                .max_by(|a, b| a.1.age.total_cmp(&b.1.age))
-                .map(|(i, _)| i)
+        let held = || (self.trophies.iter().enumerate()).filter(|(_, t)| t.winner == winner);
+        if held().count() >= TROPHIES_PER_REGIMENT
+            && let Some((i, _)) = held().max_by(|a, b| a.1.age.total_cmp(&b.1.age))
         {
             self.trophies.swap_remove(i);
         }
@@ -301,11 +298,11 @@ impl Aftermath {
         self.trophies.iter().enumerate().filter_map(move |(i, t)| {
             let (centre, facing) = pose(t.winner)?;
             // Where it stands among the carrier's others, oldest to the left.
-            let mine = |(_, o): &(usize, &Trophy)| o.winner == t.winner;
-            let older = |&(j, o): &(usize, &Trophy)| o.age > t.age || (o.age == t.age && j < i);
-            let all = || self.trophies.iter().enumerate().filter(mine);
-            let (older, count) = (all().filter(older).count(), all().count());
-            let side = (older as f32 - (count as f32 - 1.0) / 2.0) * TROPHY_APART;
+            let mine = || (self.trophies.iter().enumerate()).filter(|(_, o)| o.winner == t.winner);
+            let rank = (mine())
+                .filter(|&(j, o)| o.age > t.age || (o.age == t.age && j < i))
+                .count();
+            let side = (rank as f32 - (mine().count() as f32 - 1.0) / 2.0) * TROPHY_APART;
             let at = centre - facing * TROPHY_BEHIND + facing.perp() * side;
             let turn = scenery::turn_of(facing);
             Some(Extra {
