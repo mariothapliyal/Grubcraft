@@ -1735,7 +1735,7 @@ mod tests {
             .unwrap();
         let duration = anim
             .channels()
-            .filter_map(|c| c.reader(get).read_inputs().and_then(|t| t.last()))
+            .filter_map(|c| c.reader(get).read_inputs().and_then(Iterator::last))
             .fold(0.0, f32::max);
         let sample = |c| sample_clip(&anim, Some, false, c, &skel, &joints, get);
         let plain = sample(None).unwrap();

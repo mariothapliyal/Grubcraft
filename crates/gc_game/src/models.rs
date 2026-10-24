@@ -130,7 +130,10 @@ impl Clips {
         let by_model = (0..models.models.len())
             .map(|m| {
                 // A model that names what it holds plays the moves made for it.
-                let weapon = models.anim.fit(m).map_or(Weapon::Any, |f| f.weapon());
+                let weapon = models
+                    .anim
+                    .fit(m)
+                    .map_or(Weapon::Any, gc_assets::anim::FitRecord::weapon);
                 let pick = |act| {
                     moves.pick(
                         m,
@@ -340,7 +343,10 @@ mod tests {
         // A model that names what it holds may play moves made for it
         // instead (see `weapon_moves_are_played_by_the_models_holding_them`).
         let made_for = |m: usize, c: Option<MoveClip>| {
-            let weapon = models.anim.fit(m).map_or(Weapon::Any, |f| f.weapon());
+            let weapon = models
+                .anim
+                .fit(m)
+                .map_or(Weapon::Any, gc_assets::anim::FitRecord::weapon);
             weapon != Weapon::Any && c.is_some_and(|c| c.weapon == weapon)
         };
         for m in 0..models.models.len() {
