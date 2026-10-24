@@ -493,6 +493,36 @@ mod tests {
     }
 
     #[test]
+    fn katana_and_spear_men_have_matched_kills_on_any_man() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let kill = |killer, victim| clips.kill_pair(by(killer), by(victim), 0);
+        for (killer, weapon) in [
+            ("Katana Samurai", Weapon::TwoHanded),
+            ("The Ronin", Weapon::TwoHanded),
+            ("Yari Ashigaru", Weapon::Spear),
+        ] {
+            for victim in ["Yari Ashigaru", "Katana Samurai", "Oni-Bound"] {
+                let p = kill(killer, victim).unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!((p.kill.act, p.kill.weapon), (Act::Kill, weapon));
+                assert_eq!(p.killed.act, Act::Killed);
+                assert_eq!(p.kill.frames, p.killed.frames);
+                // A man's length apart for a katana, a spear's for a spear.
+                assert!((0.8..4.5).contains(&p.reach), "{killer}: {}", p.reach);
+            }
+        }
+        // The two katana kills both come up as the seed varies.
+        let rows: std::collections::BTreeSet<u32> = (0..8)
+            .map(|seed| clips.kill_pair(by("Katana Samurai"), by("Yari Ashigaru"), seed))
+            .map(|p| p.unwrap().kill.first_row)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // A kanabo has none made for it.
+        assert_eq!(kill("Oni-Bound", "Yari Ashigaru"), None);
+    }
+
+    #[test]
     fn every_model_can_stand_walk_and_fight() {
         let models = load().unwrap();
         let clips = Clips::new(&models);
