@@ -3282,6 +3282,7 @@ impl Running {
             let hm = &self.heightmap;
             self.siege
                 .set_density(self.menu.settings().graphics.effects_density());
+            self.effects.set_full_blood(self.menu.settings().full_blood);
             // Behind the menu its time stands still, as the particles' do.
             let siege_dt = if self.menu_open && self.online.is_none() {
                 0.0

@@ -1568,6 +1568,11 @@ impl<N: Network> Menu<N> {
             "Tilt-shift: soft top and bottom",
             &mut s.tilt_shift,
         );
+        ui.toggle(
+            st.next(row),
+            "Full blood: heavier wounds",
+            &mut s.full_blood,
+        );
 
         // Right column: audio and accessibility.
         let mut st = Stack {
@@ -2294,10 +2299,14 @@ mod tests {
         assert!(!h.menu.settings().tilt_shift);
         h.click("Tilt-shift: soft top and bottom");
         assert!(h.menu.settings().tilt_shift);
+        // Blood is stylised until Full blood is asked for, and is saved.
+        assert!(!h.menu.settings().full_blood);
+        h.click("Full blood: heavier wounds");
+        assert!(h.menu.settings().full_blood);
         h.click("Back");
         assert_eq!(h.menu.screen(), Screen::Main);
         let saved = Settings::load(&path);
-        assert!(saved.larger_text && saved.clarity && saved.tilt_shift);
+        assert!(saved.larger_text && saved.clarity && saved.tilt_shift && saved.full_blood);
         assert_eq!(saved.ui_scale, h.menu.settings().ui_scale);
         let _ = std::fs::remove_dir_all(dir);
     }

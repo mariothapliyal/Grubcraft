@@ -15,6 +15,13 @@ use crate::puppets::Hit;
 /// walk, more at a run.
 const FOOTSTEP_RATE: f32 = 0.25;
 const FOOTSTEP_RATE_PER_SPEED: f32 = 0.3;
+/// Full blood: the dark spray thrown low from a wound (flesh, ichor), its
+/// size for each point of a blow's weight, and the factor on the usual
+/// wound spray.
+const FULL_BLOOD: [u8; 3] = [92, 8, 8];
+const FULL_ICHOR: [u8; 3] = [86, 120, 20];
+const FULL_BLOOD_DROPS: f32 = 5.0;
+const FULL_BLOOD_POWER: f32 = 1.8;
 /// Splinters off a shield that took a blow.
 const SHIELD_WOOD: [u8; 3] = [130, 96, 60];
 /// Light motes show when the camera is nearer than this many tiles, fading
@@ -73,6 +80,8 @@ const SPORE: [u8; 3] = [196, 214, 150];
 pub struct Field {
     fx: Effects,
     demo: Option<Demo>,
+    /// The Settings' Full blood: heavier, darker wounds for flesh and ichor.
+    full_blood: bool,
 }
 
 impl Field {
@@ -80,7 +89,14 @@ impl Field {
         Field {
             fx: Effects::default(),
             demo: demo.map(Demo::new),
+            full_blood: false,
         }
+    }
+
+    /// Whether wounds are drawn full (the Settings' Full blood) or
+    /// stylised, the default.
+    pub fn set_full_blood(&mut self, full: bool) {
+        self.full_blood = full;
     }
 
     /// Whether the renderer should forget its particles before each frame's
@@ -127,9 +143,33 @@ impl Field {
     /// A soldier at `pos` (his chest, over the ground) took a blow of kind
     /// `hit` travelling along `dir`: sparks when it rang on a weapon or
     /// shield, else his side's wound (`style`), more for a heavy blow and
-    /// most for a killing one. `armoured` has his armour ring too.
+    /// most for a killing one. `armoured` has his armour ring too. With Full
+    /// blood, the wounds of flesh and ichor are about twice as heavy and
+    /// throw a second, darker spray low toward the ground.
     pub fn blow(&mut self, pos: Vec3, dir: Vec2, hit: Hit, style: HitStyle, armoured: bool) {
         let along = Vec3::new(dir.x, 0.15, dir.y);
+        let weight = match hit {
+            Hit::Wounded => 1.0,
+            Hit::Crushed => 1.6,
+            Hit::Killed => 2.2,
+            Hit::Parried | Hit::Blocked => 0.0,
+        };
+        if self.full_blood && weight > 0.0 && matches!(style, HitStyle::Flesh | HitStyle::Ichor) {
+            let dark = if style == HitStyle::Flesh {
+                FULL_BLOOD
+            } else {
+                FULL_ICHOR
+            };
+            let low = Vec3::new(dir.x * 0.4, -0.25, dir.y * 0.4);
+            self.fx
+                .spray(pos - Vec3::Y * 0.2, low, dark, FULL_BLOOD_DROPS * weight);
+            self.fx
+                .hit(pos, along, style, armoured, weight * FULL_BLOOD_POWER);
+            if hit != Hit::Wounded {
+                self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.5, 2.0, DUST);
+            }
+            return;
+        }
         match hit {
             Hit::Parried => self.fx.sparks(pos, along, 5.0),
             Hit::Blocked => {
@@ -471,6 +511,31 @@ mod tests {
         }
         assert!(made(Hit::Killed, HitStyle::Flesh) > made(Hit::Wounded, HitStyle::Flesh));
         assert!(made(Hit::Wounded, HitStyle::Ichor) > 0);
+    }
+
+    #[test]
+    fn full_blood_makes_flesh_and_ichor_wounds_heavier_and_leaves_the_rest() {
+        let made = |full, hit, style| {
+            let mut f = Field::new(None);
+            f.set_full_blood(full);
+            f.blow(Vec3::new(5.0, 1.0, 5.0), Vec2::X, hit, style, false);
+            f.frame(0.0, 1.0, Vec2::ZERO, 40.0, |_| 0.0).len()
+        };
+        for style in [HitStyle::Flesh, HitStyle::Ichor] {
+            assert!(made(true, Hit::Wounded, style) > made(false, Hit::Wounded, style));
+            assert!(made(true, Hit::Killed, style) > made(false, Hit::Killed, style));
+        }
+        for style in [HitStyle::Crystal, HitStyle::Ghost] {
+            assert_eq!(
+                made(true, Hit::Killed, style),
+                made(false, Hit::Killed, style)
+            );
+        }
+        // Sparks off a parry have no blood in them.
+        assert_eq!(
+            made(true, Hit::Parried, HitStyle::Flesh),
+            made(false, Hit::Parried, HitStyle::Flesh)
+        );
     }
 
     fn motes(distance: f32) -> usize {
