@@ -1362,26 +1362,22 @@ impl Renderer {
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
-        // The ground's look by tile: neutral and patternless without one.
-        let look_map = self.tile_map("ground look", wgpu::TextureFormat::Rgba8Unorm, tiles);
-        if t.look.is_empty() {
-            Self::write_tile_map(
-                &self.queue,
-                &look_map,
-                tiles,
-                4,
-                &[128, 128, 128, 0].repeat((tiles * tiles) as usize),
-            );
+        // The ground's look by tile; a single neutral texel when there is
+        // none, which the shader reads as nothing to look up.
+        let (look_side, look): (u32, &[[u8; 4]]) = if t.look.is_empty() {
+            (1, &[[128, 128, 128, 0]])
         } else {
             assert_eq!(t.look.len(), (tiles * tiles) as usize);
-            Self::write_tile_map(
-                &self.queue,
-                &look_map,
-                tiles,
-                4,
-                bytemuck::cast_slice(t.look),
-            );
-        }
+            (tiles, t.look)
+        };
+        let look_map = self.tile_map("ground look", wgpu::TextureFormat::Rgba8Unorm, look_side);
+        Self::write_tile_map(
+            &self.queue,
+            &look_map,
+            look_side,
+            4,
+            bytemuck::cast_slice(look),
+        );
         let look_view = look_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1487,7 +1483,8 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles) * (1 + 4 + 4 + 4)
+            + u64::from(tiles * tiles) * (1 + 4 + 4)
+            + u64::from(look_side * look_side) * 4
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {

@@ -20,7 +20,8 @@ when the map is loaded, four bytes a tile (`Terrain::look`):
 
 A map with no habitats (painted maps, the sandbox) hands over nothing and
 keeps the plain ground. `gc_render` uploads the grid as an `Rgba8Unorm`
-texture (`ground_look`, binding 18, a tile each, 2.4 MB on a 768 map).
+texture (`ground_look`, binding 18, a tile each, 2.4 MB on a 768 map; one
+texel for a map with none).
 
 In the terrain shader the colour is read with a bilinear fetch, so the grass
 shifts gently from habitat to habitat, and the pattern is read from the
@@ -44,11 +45,11 @@ land still shows on top, and none of it shows on rock.
 | Alder carr | dark | mud, glossy where wet |
 | Peat bog | dark | hummocks of peat between pools of black water, glossy |
 | Heather moor | greyed | purple heather over dry grass |
-| Scree, bare rock | grey | gravel and pebbles |
+| Scree, bare rock | plain | grey gravel and pebbles |
 | Tree line | dim | leaf litter and moss |
-| Cracked flat | pale | crust crazed with dark cracks |
-| Bone drift | pale | ripples of bone dust |
-| Rib field | pale | pale bone dust |
+| Cracked flat | plain | pale crust crazed with dark cracks |
+| Bone drift | plain | pale ripples of bone dust |
+| Rib field | plain | pale bone dust |
 | Dying grass | straw | patches of straw |
 
 Standing water (the bog's pools, the mud) is drawn glossy: the same shine the
@@ -59,15 +60,16 @@ sky a little when the light is low.
 
 The terrain tactics work ([32](32-changing-land.md), idea 13) will make peat
 bog and alder carr soft footing (troops slowed, charges stopped), while sedge
-tussock stays firm. The two soft habitats are exactly the two with dark,
-wet-looking patterns, and sedge is drawn plain and dry, so players can see
+tussock stays firm. The two soft habitats are the two with the darkest, wettest
+patterns (bog pools, mud; wet meadow has only a faint damp), and sedge is drawn plain and dry, so players can see
 where cavalry will bog down. When `Map::footing` lands, `ground_look` can take
 its soft tiles for the same pattern on painted fens.
 
 ## Cost
 
-One more texture binding and one fetch (bilinear) and one load a pixel on
-ground, plus a pattern worked out from the position on tiles that have one (a
+A map without habitats gets a one-texel texture and the shader skips all of
+it. Otherwise one more texture binding, four noise reads for the wobble, one
+bilinear fetch and one load a pixel on ground, plus a pattern worked out from the position on tiles that have one (a
 few noise reads; fbm costs four). The soldiers' pipeline layout is now 18
 sampled textures, which the raised device limit allows
 ([35](35-ground-marks.md#cost)).

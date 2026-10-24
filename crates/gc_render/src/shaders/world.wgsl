@@ -959,13 +959,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let tint = textureSampleLevel(ground_tint, soft_sampler, (xz + wobble * 10.0) / tiles, 0.0);
         grass = mix(grass, srgb_to_linear(tint.rgb), tint.a);
     }
-    // The habitat's own grass colour, its borders wobbled the same way.
+    // The habitat's own grass colour, its borders wobbled the same way. A map
+    // without habitats has a single neutral texel, and nothing to look up.
     let look_tiles = f32(textureDimensions(ground_look).x);
-    let look_wobble = (vec2<f32>(vnoise(xz * 0.3), vnoise(xz * 0.3 + vec2<f32>(23.0, 5.0))) - 0.5) * 2.6
-        + (vec2<f32>(vnoise(xz * 1.1), vnoise(xz * 1.1 + vec2<f32>(7.0, 31.0))) - 0.5) * 0.8;
-    let look_at = xz + look_wobble;
-    let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
-    grass = grass * look_mult * (255.0 / 128.0);
+    let has_look = textureDimensions(ground_look).x > 1u;
+    var look_at = xz;
+    if has_look {
+        let look_wobble = (vec2<f32>(vnoise(xz * 0.3), vnoise(xz * 0.3 + vec2<f32>(23.0, 5.0))) - 0.5) * 2.6
+            + (vec2<f32>(vnoise(xz * 1.1), vnoise(xz * 1.1 + vec2<f32>(7.0, 31.0))) - 0.5) * 0.8;
+        // Kept to the map: the sampler repeats.
+        look_at = clamp(xz + look_wobble, vec2<f32>(0.5), vec2<f32>(look_tiles - 0.5));
+        let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
+        grass = grass * look_mult * (255.0 / 128.0);
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     let grass_in = smoothstep(0.16, 0.26, h);
@@ -995,6 +1001,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // dirt fringe are soil's), the small scale put on the palette. Fully
     // rock ground has none of it.
     var nd = n;
+    var wet = 0.0;
     if rock < 1.0 {
         let grassy = grass_in * (1.0 - dry_in) * (1.0 - fringe * 0.7);
         let m = ground_blend(xz);
@@ -1015,19 +1022,18 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // map's plane being the ground's).
         // Steeper ground takes less of it, so it cannot turn the normal over.
         nd = normalize(vec3<f32>(n.x + detail.tilt.x * n.y, n.y, n.z + detail.tilt.y * n.y));
-    }
 
-    // The habitat's ground over it: bog pools, flowers, gravel and the like.
-    // (A nearest lookup: the pattern is the tile's, its edge ragged by the wobble.)
-    var wet = 0.0;
-    if rock < 1.0 {
-        let tile = vec2<i32>(clamp(look_at, vec2<f32>(0.0), vec2<f32>(look_tiles - 1.0)));
-        let pattern = u32(textureLoad(ground_look, tile, 0).a * 255.0 + 0.5);
-        if pattern > 0u {
-            let hg = habitat_ground(pattern, xz, max(length(dpx.xz), length(dpy.xz)));
-            let keep = 1.0 - rock;
-            albedo = mix(albedo, hg.albedo, hg.k * keep);
-            wet = hg.wet * keep;
+        // The habitat's ground over it: bog pools, flowers, gravel and the
+        // like, the pattern the tile's own (a nearest lookup), its edge ragged
+        // by the wobble.
+        if has_look {
+            let tile = vec2<i32>(look_at);
+            let pattern = u32(textureLoad(ground_look, tile, 0).a * 255.0 + 0.5);
+            if pattern > 0u {
+                let hg = habitat_ground(pattern, xz, max(length(dpx.xz), length(dpy.xz)));
+                albedo = mix(albedo, hg.albedo, hg.k);
+                wet = hg.wet;
+            }
         }
     }
 
@@ -1047,6 +1053,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.37, 0.29, 0.18)) * grit, worn * 0.85);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.27, 0.17, 0.1)) * grit, felled);
         albedo = mix(albedo, srgb_to_linear(vec3<f32>(0.05, 0.045, 0.04)) * grit, burnt);
+        wet = wet * (1.0 - max(worn, max(felled, burnt)));
         // Turned earth lies in clods.
         let clod = vec2<f32>(vnoise(xz * 3.3) - 0.5, vnoise(xz * 3.3 + vec2<f32>(6.0, 2.0)) - 0.5);
         nd = normalize(nd + vec3<f32>(clod.x, 0.0, clod.y) * 0.45 * max(felled, worn * 0.5));
@@ -1065,6 +1072,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let l = faction_land(xz, land.r, land.b * 255.0 / 4.0, max(length(dpx.xz), length(dpy.xz)));
         let k = l.cover * keep;
         albedo = mix(albedo, l.albedo, k);
+        wet = wet * (1.0 - k);
         nd = normalize(nd + vec3<f32>(l.tilt.x, 0.0, l.tilt.y) * keep);
         land_glow = l.glow * keep;
         land_rough = mix(1.0, l.rough, k);
@@ -1259,7 +1267,7 @@ fn fs_block(in: BlockOut) -> @location(0) vec4<f32> {
 @group(1) @binding(4) var<storage, read> skin_shade: array<u32>;
 @group(1) @binding(5) var<storage, read> skin_origin: array<u32>;
 // The shared surface detail: two layers (albedo and cavity, relief) per
-// pattern, repeating (`DetailClass` in gc_assets/src/detail.rs).
+// class, repeating (`DetailClass` in gc_assets/src/detail.rs).
 @group(1) @binding(6) var detail_array: texture_2d_array<f32>;
 @group(1) @binding(7) var detail_sampler: sampler;
 
@@ -1573,7 +1581,7 @@ const DETAIL_TILES = array<f32, 15>(
 // is averaged to grey, so it is skipped.
 const DETAIL_FOOTPRINT: f32 = 32.0 / 256.0;
 
-// The two layers of a detail pattern (albedo and cavity, relief) at `duv`.
+// The two layers of a detail class (albedo and cavity, relief) at `duv`.
 struct DetailSample {
     albedo: vec4<f32>,
     relief: vec4<f32>,

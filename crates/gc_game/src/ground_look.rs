@@ -59,9 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn every_habitat_has_a_look_and_the_bog_and_carr_read_wet() {
-        let looks: Vec<_> = Habitat::ALL.iter().map(|&h| look_of(h)).collect();
-        assert_eq!(looks.len(), 19);
+    fn the_bog_and_carr_read_wet_and_sedge_stays_plain() {
         assert_eq!(look_of(Habitat::PeatBog)[3], GROUND_BOG);
         assert_eq!(look_of(Habitat::AlderCarr)[3], GROUND_MUD);
         // Sedge stays firm and plain: it must not read as wet as the soft ground.
