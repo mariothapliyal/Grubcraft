@@ -682,7 +682,8 @@ impl Vision {
         if !self.surprises(i, regs.owner[j]) {
             return false;
         }
-        if !self.from_dark[i] {
+        // By day (dawn included) only cover hides, and torches don't burn.
+        if !self.from_dark[i] || !self.air.dark {
             return true;
         }
         !regs.torches[j] && !self.surprises(j, regs.owner[i])
