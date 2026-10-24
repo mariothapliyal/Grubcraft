@@ -131,7 +131,7 @@ Each stage is playable on its own.
 
 **Measured (2026-10-23, release build).** A 768 map builds in about 2.1 to 2.4 seconds (`grown_load_time`, run by hand, on a machine busy with other builds), inside the 3-second target. `every_grown_map_passes_the_checker` builds each wildness at 256, 512 and 768 for four seeds (36 maps) and runs them through `gc_mapcheck`'s checks. All pass, and none needed a reroll; the test allows a reroll for one map in five, as the lobby rerolls a map whose starts aren't joined. `cargo run -p gc_mapcheck -- gen Land-Wild 512 SEED OUT.ron` (or `Land-Plains`, `Land-Mixed`) writes a grown map. Screenshots are in the project files under `screenshots/living-land/`.
 
-**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2 (built, below); fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4 (the habitat ground is built, [36](36-habitat-ground.md); scenery by habitat is not).
+**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2 (built, below); fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4 (the habitat ground is built, [36](36-habitat-ground.md); scenery by habitat is: stump, fallen log, alder, sedge tussock and scree scatter are built and placed by habitat, see [25](25-scenery-models.md#habitat-dressing)).
 
 ## Stage 2 as built
 
