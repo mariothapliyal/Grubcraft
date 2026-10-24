@@ -9,7 +9,7 @@ use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
 
 use crate::moves::{MoveClip, Moves, Want};
-use crate::puppets::Move;
+use crate::puppets::{KillTiming, Kills, Move};
 
 static PACK: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/models.pak")));
 
@@ -123,10 +123,6 @@ struct ModelClips {
 /// attack): started at once and played at one speed, they meet `contact` of
 /// the way through. A kill is longer than a swing, since the victim falls
 /// and lies still in it; its own length is `frames / fps`.
-#[allow(
-    dead_code,
-    reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
-)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KillPair {
     pub kill: MoveClip,
@@ -149,6 +145,9 @@ struct KillFor {
     fit: u32,
     pair: KillPair,
 }
+
+/// The most matched kills one pair of unit types keeps to pick among.
+const MAX_KILLS: u32 = 8;
 
 /// How far a victim's size may be from the killer's for a kill made for two
 /// men of one size to still meet.
@@ -238,10 +237,6 @@ impl Clips {
     /// `seed` picks among the kills that fit best (made for the killer's
     /// weapon before made for any). The fight asks for kills only through
     /// here, so how pairs are stored can change without touching it.
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will play matched kills with it (docs/28, stage 5)"
-    )]
     pub fn kill_pair(
         &self,
         killer_model: usize,
@@ -259,6 +254,41 @@ impl Clips {
         let kills = self.kills.get(killer_model)?;
         let score = |k: &KillFor| (k.victim == victim).then_some(k.fit);
         crate::moves::best_by_seed(kills, score, seed).map(|k| k.pair)
+    }
+
+    /// Every matched kill between the unit types whose models are `units`,
+    /// for the puppets to time, and their moves under the same indices for
+    /// drawing them.
+    pub fn kills_of(&self, units: &[Option<usize>]) -> (Kills, Vec<KillPair>) {
+        let (mut kills, mut pairs) = (Kills::default(), Vec::new());
+        let mut timing = Vec::new();
+        for (k, killer) in units.iter().enumerate() {
+            let Some(killer) = *killer else { continue };
+            if self.kills.get(killer).is_none_or(Vec::is_empty) {
+                continue;
+            }
+            for (v, &victim) in units.iter().enumerate() {
+                // Each seed picks one of the best kills, round and round.
+                let first = pairs.len();
+                for seed in 0..MAX_KILLS {
+                    let Some(pair) = victim.and_then(|v| self.kill_pair(killer, v, seed)) else {
+                        break;
+                    };
+                    if pairs[first..].contains(&pair) {
+                        break;
+                    }
+                    pairs.push(pair);
+                }
+                timing.clear();
+                timing.extend(pairs[first..].iter().map(|p| KillTiming {
+                    seconds: p.kill.frames as f32 / p.kill.fps,
+                    contact: p.contact,
+                    reach: p.reach,
+                }));
+                kills.add(k as u16, v as u16, &timing);
+            }
+        }
+        (kills, pairs)
     }
 
     /// The move `model` plays for `action`.
@@ -308,6 +338,9 @@ impl Clips {
         match fight {
             Move::Guard => standing(self.pose(model, Action::Idle, seconds)),
             Move::Cheer => standing(self.pose(model, Action::Cheer, seconds)),
+            // A matched kill is drawn from its own moves (`Clips::kills_of`);
+            // without them, the attack.
+            Move::Kill { at, .. } => standing(self.at(model, Action::Attack, at)),
             Move::Swing { at, alt } => {
                 let attack = if alt { Action::Attack2 } else { Action::Attack };
                 standing(self.at(model, attack, at))
@@ -570,6 +603,36 @@ mod tests {
         // but half as big again, is too big for a kill made for two men.
         assert_eq!(kill("Oni-Bound", "Yari Ashigaru"), None);
         assert_eq!(kill("Katana Samurai", "Oni-Bound"), None);
+    }
+
+    #[test]
+    fn unit_types_get_their_matched_kills_by_index() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name);
+        // Unit types 0 to 3: a katana man, a spearman, an Oni-Bound, and a
+        // type with no model.
+        let units = [
+            by("Katana Samurai"),
+            by("Yari Ashigaru"),
+            by("Oni-Bound"),
+            None,
+        ];
+        let (kills, pairs) = clips.kills_of(&units);
+        // Both katana kills are there to pick, under their indices.
+        let rows: std::collections::BTreeSet<u32> = (0..10)
+            .filter_map(|n| kills.pick(0, 1, n as f32 / 10.0))
+            .map(|k| pairs[usize::from(k)].kill.first_row)
+            .collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let seeded = |seed| clips.kill_pair(units[0].unwrap(), units[1].unwrap(), seed);
+        assert!((0..2).all(|seed| rows.contains(&seeded(seed).unwrap().kill.first_row)));
+        assert!(kills.pick(1, 0, 0.5).is_some());
+        assert!(kills.pick(1, 1, 0.5).is_some());
+        // None on or by the Oni-Bound, or a type without a model.
+        for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
+            assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
+        }
     }
 
     #[test]
