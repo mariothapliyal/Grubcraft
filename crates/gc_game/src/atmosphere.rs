@@ -224,6 +224,9 @@ struct Storm {
     age: Option<f32>,
     /// A flash began since the picture last asked.
     struck: bool,
+    /// Thunder on its way (seconds left, how loud), and what has arrived.
+    rolling: Vec<(f32, f32)>,
+    heard: Vec<f32>,
     rng: u32,
 }
 
@@ -233,18 +236,24 @@ impl Storm {
             next: 0.0,
             age: None,
             struck: false,
+            rolling: Vec::new(),
+            heard: Vec::new(),
             rng: 0x9E37_79B9,
         };
         storm.next = storm.gap();
         storm
     }
 
-    /// Seconds to the next flash.
-    fn gap(&mut self) -> f32 {
+    fn unit(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
         self.rng ^= self.rng << 5;
-        let unit = (self.rng >> 8) as f32 / (1u32 << 24) as f32;
+        (self.rng >> 8) as f32 / (1u32 << 24) as f32
+    }
+
+    /// Seconds to the next flash.
+    fn gap(&mut self) -> f32 {
+        let unit = self.unit();
         STRIKE_GAP.0 + (STRIKE_GAP.1 - STRIKE_GAP.0) * unit
     }
 
@@ -258,8 +267,23 @@ impl Storm {
                 self.age = Some(0.0);
                 self.struck = true;
                 self.next = self.gap();
+                // The further the stroke, the later and the softer its thunder.
+                let far = self.unit();
+                self.rolling.push((
+                    THUNDER_LAG.0 + (THUNDER_LAG.1 - THUNDER_LAG.0) * far,
+                    1.0 - 0.55 * far,
+                ));
             }
         }
+        for (left, _) in &mut self.rolling {
+            *left -= dt;
+        }
+        self.rolling.retain(|&(left, loud)| {
+            if left <= 0.0 {
+                self.heard.push(loud);
+            }
+            left > 0.0
+        });
         let Some(age) = self.age.as_mut() else {
             return 0.0;
         };
@@ -271,6 +295,9 @@ impl Storm {
         level
     }
 }
+
+/// Seconds from a flash to its thunder, nearest and furthest stroke.
+const THUNDER_LAG: (f32, f32) = (0.3, 3.0);
 
 /// Seconds a flash lasts, a sharp stroke and a dimmer one after it.
 const BOLT_LENGTH: f32 = 1.0;
@@ -289,13 +316,38 @@ fn bolt(age: f32) -> f32 {
     stroke(age, 1.0).max(stroke(age - 0.22, 0.6))
 }
 
+/// A number of the picture that is not part of the look (the panel lists
+/// these under the look's knobs): a multiplier that starts at 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extra {
+    ThunderVolume,
+    TorchLight,
+    TorchFlames,
+    BroodGlow,
+}
+
+/// The extras of the tuning panel, in `Extra` order: name and how much a
+/// key press moves it. Each runs from 0 (off) to `EXTRA_MOST` times.
+const EXTRAS: [(&str, f32); 4] = [
+    ("Thunder volume", 0.1),
+    ("Torch light", 0.1),
+    ("Torch flames", 0.1),
+    ("Brood glow", 0.1),
+];
+const EXTRA_MOST: f32 = 3.0;
+// `Extra` indexes `EXTRAS`: the last variant must be the last row.
+const _: () = assert!(Extra::BroodGlow as usize + 1 == EXTRAS.len());
+
 /// The tuning panel's state.
 #[derive(Default)]
 struct Tuning {
     open: bool,
+    /// The knob chosen: the look's [`KNOBS`], then the [`EXTRAS`].
     selected: usize,
     /// How far each knob has been moved from the look underneath it.
     deltas: [f32; KNOBS.len()],
+    /// How far each extra has been moved from 1.
+    extras: [f32; EXTRAS.len()],
     /// The look the knobs act on (the land's air and Clarity in), and the
     /// look as last drawn, knobs and all, for the panel to read.
     under: Look,
@@ -431,6 +483,13 @@ impl Atmosphere {
         std::mem::take(&mut self.storm.struck)
     }
 
+    /// The next thunder that has reached the viewer since this was last
+    /// called, how loud (0 to 1): it follows each flash by a moment, the
+    /// later and softer the further the stroke.
+    pub fn take_thunder(&mut self) -> Option<f32> {
+        self.storm.heard.pop()
+    }
+
     /// The weather that is clearing as the new one comes in, with how much
     /// of it is left (clear, and nothing, when none is).
     pub fn leaving(&self) -> (Weather, f32) {
@@ -557,6 +616,11 @@ impl Atmosphere {
             .in_weather(self.weather, self.fade * share);
         look.wet = self.soaked * share;
         look.snow = self.settled * share;
+        // The sky shows the simulation's whole cover as well as the cloud a
+        // fall brings (the larger, so rain coming in never thins the banks), and
+        // stars show only through what is left clear.
+        look.cloud = look.cloud.max(cloud * share);
+        look.stars *= 1.0 - look.cloud;
         if clarity {
             look = look.clear();
         }
@@ -576,10 +640,19 @@ impl Atmosphere {
 
     /// A key of the tuning panel (`fast` is Shift).
     pub fn tune_key(&mut self, key: TuneKey, fast: bool) {
+        const ROWS: usize = KNOBS.len() + EXTRAS.len();
         let t = &mut self.tuning;
         match key {
-            TuneKey::Up => t.selected = (t.selected + KNOBS.len() - 1) % KNOBS.len(),
-            TuneKey::Down => t.selected = (t.selected + 1) % KNOBS.len(),
+            TuneKey::Up => t.selected = (t.selected + ROWS - 1) % ROWS,
+            TuneKey::Down => t.selected = (t.selected + 1) % ROWS,
+            TuneKey::Less | TuneKey::More if t.selected >= KNOBS.len() => {
+                let sign = if key == TuneKey::More { 1.0 } else { -1.0 };
+                let i = t.selected - KNOBS.len();
+                let step = EXTRAS[i].1 * if fast { FAST } else { 1.0 };
+                // Rounded to the thousandth, so steps up and down return to 1 exactly.
+                let moved = ((t.extras[i] + sign * step) * 1000.0).round() / 1000.0;
+                t.extras[i] = moved.clamp(-1.0, EXTRA_MOST - 1.0);
+            }
             TuneKey::Less | TuneKey::More => {
                 let sign = if key == TuneKey::More { 1.0 } else { -1.0 };
                 let knob = &KNOBS[t.selected];
@@ -599,7 +672,11 @@ impl Atmosphere {
                 let next = self.forced.map_or(0, |l| l as usize + 1);
                 self.forced = Land::ALL.get(next).copied();
             }
-            TuneKey::Reset if fast => t.deltas = [0.0; KNOBS.len()],
+            TuneKey::Reset if fast => {
+                t.deltas = [0.0; KNOBS.len()];
+                t.extras = [0.0; EXTRAS.len()];
+            }
+            TuneKey::Reset if t.selected >= KNOBS.len() => t.extras[t.selected - KNOBS.len()] = 0.0,
             TuneKey::Reset => t.deltas[t.selected] = 0.0,
         }
     }
@@ -617,7 +694,7 @@ impl Atmosphere {
                 .map_or("the air of the land round the camera".to_string(), |l| {
                     format!("{l:?} air everywhere")
                 }),
-            if t.deltas.iter().any(|&d| d != 0.0) {
+            if self.moved_by_hand() {
                 ", moved by hand"
             } else {
                 ""
@@ -631,6 +708,20 @@ impl Atmosphere {
                 format!("  ({d:+.4})")
             };
             text.push_str(&format!("{mark} {:<18} {value:>8.4}{moved}\n", knob.name));
+        }
+        for (i, (name, _)) in EXTRAS.iter().enumerate() {
+            let mark = if KNOBS.len() + i == t.selected {
+                '>'
+            } else {
+                ' '
+            };
+            let d = t.extras[i];
+            let moved = if d == 0.0 {
+                String::new()
+            } else {
+                format!("  ({d:+.4})")
+            };
+            text.push_str(&format!("{mark} {name:<18} {:>8.4}{moved}\n", 1.0 + d));
         }
         text.push_str(
             "Up Down choose   Left Right change (Shift: 10x)   L force a land's air\n\
@@ -655,7 +746,22 @@ impl Atmosphere {
         for (knob, value, d) in self.knobs() {
             lines.push(format!("  {:<18} {value:.4}  (moved {d:+.4})", knob.name));
         }
+        for (i, (name, _)) in EXTRAS.iter().enumerate() {
+            let d = self.tuning.extras[i];
+            lines.push(format!("  {name:<18} {:.4}  (moved {d:+.4})", 1.0 + d));
+        }
         lines.join("\n")
+    }
+
+    /// What the panel has set an extra to: a multiplier, 1 unless moved.
+    pub fn extra(&self, which: Extra) -> f32 {
+        1.0 + self.tuning.extras[which as usize]
+    }
+
+    /// Whether any knob or extra has been moved.
+    fn moved_by_hand(&self) -> bool {
+        let t = &self.tuning;
+        t.deltas.iter().chain(&t.extras).any(|&d| d != 0.0)
     }
 
     /// ", in rain" (or snow, fog), with how much has come in, or nothing
@@ -988,6 +1094,32 @@ mod tests {
     }
 
     #[test]
+    fn the_sky_shows_the_simulations_cloud_and_a_clear_night_its_stars() {
+        use gc_sim::WeatherKind;
+        let look = |kind, strength, cloud, hour| {
+            let mut atmosphere = Atmosphere::new(None, None);
+            atmosphere.follow(sim_sky(kind, strength, cloud, hour));
+            for _ in 0..300 {
+                frame(&mut atmosphere, 0.1);
+            }
+            frame(&mut atmosphere, 0.1)
+        };
+        let clear_night = look(WeatherKind::Clear, 0, 0, 23);
+        assert!(clear_night.stars > 0.95 && clear_night.cloud == 0.0);
+        assert_eq!(look(WeatherKind::Clear, 0, 0, 12).stars, 0.0);
+        // Cloud cover shows and puts the stars out; a rainy night has none.
+        let cloudy = look(WeatherKind::Clear, 0, 200, 23);
+        assert!((cloudy.cloud - 200.0 / 255.0).abs() < 1e-3 && cloudy.stars < 0.3);
+        let rain = look(WeatherKind::Rain, 255, 0, 23);
+        assert!(rain.stars < 0.1 && rain.cloud > 0.9);
+        // Light rain under heavy cloud keeps the whole cover: it never thins.
+        let drizzle = look(WeatherKind::Rain, 90, 200, 23);
+        assert!(drizzle.cloud >= 200.0 / 255.0 - 1e-3 && drizzle.stars < 0.1);
+        // The lobby's Overcast is heavy cloud over a noon.
+        assert!(look(WeatherKind::Clear, 0, 230, 12).cloud > 0.85);
+    }
+
+    #[test]
     fn mist_is_thickest_at_dawn_and_gone_at_noon() {
         assert_eq!(mist_at(0.0), mist_at(24.0));
         assert!(mist_at(6.0) > mist_at(8.5) && mist_at(8.5) > mist_at(10.5));
@@ -1088,6 +1220,73 @@ mod tests {
         for _ in 0..1200 {
             frame(&mut dry, 0.05);
             assert!(!dry.take_strike());
+        }
+    }
+
+    #[test]
+    fn the_extras_start_at_one_move_within_their_limits_and_reset() {
+        let mut atmosphere = Atmosphere::new(None, None);
+        assert_eq!(atmosphere.extra(Extra::TorchLight), 1.0);
+        // Down past the look's knobs to the first extra, then up and down.
+        for _ in 0..KNOBS.len() {
+            atmosphere.tune_key(TuneKey::Down, false);
+        }
+        atmosphere.tune_key(TuneKey::More, false);
+        assert!((atmosphere.extra(Extra::ThunderVolume) - 1.1).abs() < 1e-5);
+        assert!(atmosphere.panel_text().contains("moved by hand"));
+        assert!(atmosphere.panel_text().contains("Thunder volume"));
+        for _ in 0..100 {
+            atmosphere.tune_key(TuneKey::More, true);
+        }
+        assert_eq!(atmosphere.extra(Extra::ThunderVolume), EXTRA_MOST);
+        for _ in 0..100 {
+            atmosphere.tune_key(TuneKey::Less, true);
+        }
+        assert_eq!(atmosphere.extra(Extra::ThunderVolume), 0.0);
+        assert_eq!(
+            atmosphere.extra(Extra::TorchLight),
+            1.0,
+            "only the chosen one moved"
+        );
+        atmosphere.tune_key(TuneKey::Reset, false);
+        assert_eq!(atmosphere.extra(Extra::ThunderVolume), 1.0);
+        assert!(!atmosphere.panel_text().contains("moved by hand"));
+        // Wrapping round from the top lands on the last extra.
+        let mut wrapped = Atmosphere::new(None, None);
+        wrapped.tune_key(TuneKey::Up, false);
+        wrapped.tune_key(TuneKey::More, false);
+        assert!((wrapped.extra(Extra::BroodGlow) - 1.1).abs() < 1e-5);
+        assert!(wrapped.values().contains("Brood glow"));
+    }
+
+    #[test]
+    fn thunder_follows_each_flash_later_and_softer_the_further_it_is() {
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Rain));
+        let (mut strikes, mut claps) = (0, 0);
+        let mut loudest = 0.0f32;
+        let mut softest = 1.0f32;
+        for _ in 0..2400 {
+            frame(&mut atmosphere, 0.05);
+            strikes += usize::from(atmosphere.take_strike());
+            while let Some(loud) = atmosphere.take_thunder() {
+                assert!((0.44..=1.0).contains(&loud), "{loud}");
+                (loudest, softest) = (loudest.max(loud), softest.min(loud));
+                claps += 1;
+            }
+        }
+        // Near strokes and far ones both happen over two minutes.
+        assert!(loudest - softest > 0.15, "{loudest} {softest}");
+        // Two minutes of storm: every flash but the last few seconds' has
+        // been answered, and nothing is answered twice.
+        assert!(
+            claps <= strikes && claps + 1 >= strikes,
+            "{strikes} {claps}"
+        );
+        assert!(atmosphere.take_thunder().is_none());
+        let mut dry = Atmosphere::new(None, None);
+        for _ in 0..1200 {
+            frame(&mut dry, 0.05);
+            assert!(dry.take_thunder().is_none());
         }
     }
 
@@ -1344,6 +1543,9 @@ mod tests {
         atmosphere.tune_key(TuneKey::More, false);
         atmosphere.tune_key(TuneKey::Reset, true);
         assert_eq!(atmosphere.look(0.0, &map, focus, 40.0, false), plain);
-        assert_eq!(atmosphere.panel_text().lines().count(), KNOBS.len() + 4);
+        assert_eq!(
+            atmosphere.panel_text().lines().count(),
+            KNOBS.len() + EXTRAS.len() + 4
+        );
     }
 }
