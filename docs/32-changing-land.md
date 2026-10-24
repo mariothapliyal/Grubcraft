@@ -154,11 +154,11 @@ Fire is the first change to the ground that happens in a Field Battle as well as
 - **Burns.** Once a second a regiment whose block touches burning tiles loses 4 hit points for each, up to six tiles (24 a second, about three soldiers), from the back ranks forward, and 3 morale points (a regiment that never routs keeps its morale). Losses to fire count as any other.
 - **Seen.** A regiment touching fire is never hidden, by cover or the dark.
 - **Firelight.** In the dark, burning tiles light the ground round them as torches do: a regiment within `TORCH_LIGHT` (10 tiles) of one is lit (stage 3b, above), so it is seen and shot from as far as by day.
-- **Computer players.** A mind moves its regiments out of fire: a regiment touching a burning tile that isn't fighting marches away from the fire's middle, 8 tiles, once a second. Minds don't set fires yet.
+- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Minds don't set fires yet, and in Conquest they don't yet march out of them.
 
 ### Shared state
 
-- `World::fires()` lists the burning tiles as (column, row, growth, ticks left, ticks in all), for the flames, smoke and their light; `Event::Kindled { x, y }` tells when a tile catches, and `Event::Cleared { burnt: true }` when it burns out. `RegimentView::in_fire` says a regiment touches fire.
+- `World::fires()` lists the burning tiles as (column, row, growth, ticks left, ticks in all), for the flames, smoke and their light; `Event::Kindled { x, y }` tells when a tile catches, and `Event::Cleared { burnt: true }` when it burns out. `World::in_fire` says a regiment touches fire (vision works it out from the fires each tick, so it is not hashed).
 - The fires are hashed with the ground (only once a fire has been lit). `Command::Burn` is replay tag 37 (`FORMAT` 39) and wire tag 35 (`PROTOCOL` 32); `SIM_VERSION` 42. Rehearsal worlds burn as the match does (they copy its fires).
 - **Golden.** `field-fire-1v1` is the woods map in a dry wind: every 20 seconds the Carrion Concord sets fire to the woods beside its regiments, the fire runs downwind, and both computer players march their troops out of it.
 - **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings, lightning strikes and the computer players setting fires of their own come later.

@@ -278,6 +278,9 @@ fn ground_of(map: &Map, p: Vec2) -> f32 {
 /// point is a poor guide.
 const RIDE_PICK_MARGIN: f32 = 0.5;
 const RIDE_PICK_HEIGHT: f32 = 3.0;
+/// The most burning tiles drawn ablaze at once: across a bigger fire,
+/// every so many (each also lights the ground).
+const MOST_FIRES_DRAWN: usize = 96;
 /// Thickness of the ground plate drawn under a selected regiment.
 const PLATE_HEIGHT: f32 = 0.05;
 /// The command grid's keys, slot by slot (`gc_ui::hud::GRID_KEYS`).
@@ -2963,19 +2966,17 @@ impl Running {
     /// E: set the woods beside each selected regiment alight (the sim
     /// refuses those with none in reach; docs/32-changing-land.md).
     fn burn_woods(&mut self) {
-        let mine: Vec<_> = self
-            .selected
-            .iter()
-            .filter_map(|&h| self.world.regiments.get(h))
-            .collect();
-        if mine.is_empty() {
-            return;
+        let before = self.human_orders.len();
+        for &regiment in &self.selected {
+            if self.world.regiments.owner(regiment).is_some() {
+                self.human_orders.push(PlayerCommand {
+                    player: self.sandbox.side,
+                    command: gc_sim::Command::Burn { regiment },
+                });
+            }
         }
-        for r in &mine {
-            self.human_orders.push(PlayerCommand {
-                player: self.sandbox.side,
-                command: gc_sim::Command::Burn { regiment: r.handle },
-            });
+        if self.human_orders.len() == before {
+            return;
         }
         self.ui_sound(sounds::UiSound::Move);
         self.say("Fire set to the woods beside them: it spreads with the wind".into());
@@ -4026,17 +4027,23 @@ impl Running {
                 );
             }
         }
-        // Woods on fire (the sim's burning tiles): a blaze on each the
-        // viewer sees, near enough to matter; its flames light the ground.
-        if fx_speed > 0.0 {
+        // Woods on fire (the sim's burning tiles): a blaze on those the
+        // viewer sees, near enough to matter, at most `MOST_FIRES_DRAWN` of
+        // them (every so many across a big fire); its flames light the
+        // ground.
+        if fx_speed > 0.0 && !self.world.fires().is_empty() {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             let fire_dt = dt.as_secs_f32() * fx_speed;
-            for b in self.world.fires() {
-                let at = Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
-                if at.distance(view_focus) > view_distance || !(reveal || fog.sees_tile((b.x, b.y)))
-                {
+            let centre = |b: &gc_sim::Burn| Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
+            let near: Vec<_> = (self.world.fires().iter())
+                .filter(|b| centre(b).distance_squared(view_focus) <= view_distance * view_distance)
+                .collect();
+            let every = near.len().div_ceil(MOST_FIRES_DRAWN).max(1);
+            for b in near.into_iter().step_by(every) {
+                if !(reveal || fog.sees_tile((b.x, b.y))) {
                     continue;
                 }
+                let at = centre(b);
                 let tall = match b.growth {
                     gc_sim::Growth::Scrub => 0.8,
                     gc_sim::Growth::Thicket => 3.0,

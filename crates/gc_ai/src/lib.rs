@@ -59,8 +59,56 @@ pub use crate::terrain::Terrain;
 /// How far a regiment caught in burning woods marches away from the fire,
 /// in tiles.
 const FLEE_FIRE: f32 = 8.0;
-/// A regiment sent out of a fire isn't sent again for this long.
-const FLEE_AGAIN_TICKS: u32 = 5 * gc_sim::TICKS_PER_SECOND;
+/// The priority of marching out of a fire: before anything else.
+const FLEE_PRIORITY: u8 = u8::MAX;
+
+/// Each of `party`'s regiments that stands in burning woods, and isn't
+/// fighting, marches [`FLEE_FIRE`] tiles away from the fire's middle round
+/// it, before anything else it was to do (docs/32-changing-land.md,
+/// "Woods that burn").
+fn flee_fire(view: &Perception, world: &World, party: PlayerId, wants: &mut Vec<Want>) {
+    let fires = world.fires();
+    if fires.is_empty() {
+        return;
+    }
+    for r in view.regiments.iter().filter(|r| r.owner == party) {
+        if !r.in_fire || r.engaged || r.broken() {
+            continue;
+        }
+        // The middle of the fire near it: the rows in reach (the fires
+        // are sorted by row), then the tiles within reach.
+        let reach = r.width.max(r.depth) + 4.0;
+        let low = (r.pos.y - reach).floor() as i32;
+        let from = fires.partition_point(|b| b.y < low);
+        let (mut sum, mut n) = (Vec2::ZERO, 0.0);
+        for b in fires[from..]
+            .iter()
+            .take_while(|b| b.y as f32 <= r.pos.y + reach)
+        {
+            let at = Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
+            if at.distance_squared(r.pos) <= reach * reach {
+                sum += at;
+                n += 1.0;
+            }
+        }
+        let away = if n > 0.0 {
+            (r.pos - sum / n).normalize_or(-r.facing)
+        } else {
+            -r.facing
+        };
+        wants.retain(|w| w.regiment != r.handle);
+        wants.push(Want {
+            regiment: r.handle,
+            act: orders::Act::Move {
+                to: r.pos + away * FLEE_FIRE,
+                facing: None,
+                pace: 0.0,
+            },
+            priority: FLEE_PRIORITY,
+            group: 0,
+        });
+    }
+}
 
 /// How to set up a mind.
 #[derive(Clone, Copy, Debug)]
@@ -92,9 +140,6 @@ pub struct Mind {
     /// The last torches order given to each regiment, by pool index, so
     /// one still on its way isn't given again.
     torches_given: Vec<Option<(gc_sim::RegimentHandle, bool)>>,
-    /// The last tick each regiment (by slot) was sent out of a fire, so it
-    /// isn't sent again before it has had time to go.
-    fled_fire: Vec<Option<(gc_sim::RegimentHandle, u32)>>,
     /// What its side sees, with the enemies it remembers (on a map with
     /// cover).
     sight: Perception,
@@ -159,7 +204,6 @@ impl Mind {
             next_slip: 0,
             wants: Vec::new(),
             torches_given: Vec::new(),
-            fled_fire: Vec::new(),
             sight: Perception::new(),
             round: None,
             // Rounds start on a beat of their own too, so several Warlords
@@ -285,7 +329,6 @@ impl Mind {
             };
             realm.tick(world, ctx, out);
             self.torches(view);
-            self.flee_fire(view, world);
             self.orders.release(view.tick, out);
             return;
         }
@@ -306,10 +349,10 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             self.captain.think(&mut ctx, &mut self.wants);
+            flee_fire(view, world, self.party, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
         self.torches(view);
-        self.flee_fire(view, world);
         self.orders.release(view.tick, out);
     }
 
@@ -342,59 +385,6 @@ impl Mind {
                 break;
             }
             self.torches_given[slot] = Some((r.handle, lit));
-        }
-    }
-
-    /// Once a second, after its other orders: march each of its regiments
-    /// that stands in burning woods, and isn't fighting, [`FLEE_FIRE`]
-    /// tiles away from the fire's middle round it (docs/32-changing-land.md,
-    /// "Woods that burn"). Not again for [`FLEE_AGAIN_TICKS`].
-    fn flee_fire(&mut self, view: &Perception, world: &World) {
-        if !view.tick.is_multiple_of(gc_sim::TICKS_PER_SECOND) || world.fires().is_empty() {
-            return;
-        }
-        for r in view.regiments.iter().filter(|r| r.owner == self.party) {
-            if !r.in_fire || r.engaged || r.broken() {
-                continue;
-            }
-            let slot = r.handle.index as usize;
-            if self.fled_fire.len() <= slot {
-                self.fled_fire.resize(slot + 1, None);
-            }
-            if self.fled_fire[slot]
-                .is_some_and(|(h, t)| h == r.handle && view.tick < t + FLEE_AGAIN_TICKS)
-            {
-                continue;
-            }
-            // The middle of the fire near it.
-            let reach = r.width.max(r.depth) + 4.0;
-            let (mut sum, mut n) = (Vec2::ZERO, 0.0);
-            for b in world.fires() {
-                let at = Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
-                if at.distance(r.pos) <= reach {
-                    sum += at;
-                    n += 1.0;
-                }
-            }
-            let away = if n > 0.0 {
-                (r.pos - sum / n).normalize_or(-r.facing)
-            } else {
-                -r.facing
-            };
-            let target = r.pos + away * FLEE_FIRE;
-            if !self.orders.give(
-                view.tick,
-                Command::MoveTo {
-                    regiment: r.handle,
-                    target: perception::to_fx_vec(target),
-                    facing: None,
-                    files: 0,
-                    pace: gc_fixed::Fx::ZERO,
-                },
-            ) {
-                break;
-            }
-            self.fled_fire[slot] = Some((r.handle, view.tick));
         }
     }
 

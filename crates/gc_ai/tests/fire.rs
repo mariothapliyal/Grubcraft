@@ -85,10 +85,10 @@ fn a_mind_marches_its_troops_out_of_burning_woods() {
     for _ in 0..60 * gc_sim::TICKS_PER_SECOND {
         world.tick(&out);
         out.clear();
-        let Some(r) = world.regiments.get(spears) else {
+        if world.regiments.get(spears).is_none() {
             break;
         };
-        burned |= r.in_fire;
+        burned |= world.in_fire(spears);
         minds.tick(&world, &mut out);
         fled |= burned
             && out.iter().any(

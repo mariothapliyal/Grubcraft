@@ -209,7 +209,7 @@ fn fire_burns_the_troops_in_it_and_shows_them() {
     let full = hp(&w, a);
     assert!(burn(&mut w, 0, a));
     run(&mut w, 3 * SECOND);
-    assert!(w.regiments.get(a).unwrap().in_fire);
+    assert!(w.in_fire(a));
     assert!(!w.hidden(a));
     assert!(hp(&w, a) < full);
 }
@@ -225,7 +225,7 @@ fn fire_lights_the_night_round_it() {
     assert!(w.air().dark);
     // A torch-less enemy in the open, a few tiles off the wood, and too
     // far from the spears to be seen in the dark.
-    let spears = spawn(&mut w, 0, 25, 50, NORTH);
+    let _spears = spawn(&mut w, 0, 25, 50, NORTH);
     let enemy = spawn(&mut w, 1, 37, 22, SOUTH);
     let firer = spawn(&mut w, 0, 25, 31, NORTH);
     run(&mut w, 5 * SECOND);
@@ -233,7 +233,6 @@ fn fire_lights_the_night_round_it() {
     assert!(burn(&mut w, 0, firer));
     // Once it has spread to the wood's east edge, its light shows them.
     run(&mut w, 30 * SECOND);
-    let _ = spears;
     assert!(w.fires().iter().any(|b| b.x >= 27), "the fire spread east");
     assert!(w.sees(0, enemy));
 }

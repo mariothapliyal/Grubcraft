@@ -272,12 +272,6 @@ regiment_fields! {
     braced: bool = false,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
-    /// Burning tiles its block touches, as of the fires' last look (once
-    /// a second, see [`crate::fire`]): it burns, and is never hidden.
-    in_fire: u8 = 0,
-    /// Within a fire's light, as of the fires' last look: in the dark it
-    /// is lit as by torches.
-    fire_lit: bool = false,
     /// Ticks left of pulling out of a fight in good order (see
     /// [`Regiments::fall_back`]); 0 when not falling back. It starts at
     /// [`FALL_BACK_TICKS`](crate::combat::FALL_BACK_TICKS) for the tick the
@@ -985,7 +979,6 @@ impl Regiments {
             general: self.general[i],
             braced: self.braced[i],
             torches: self.torches[i],
-            in_fire: self.in_fire[i] > 0,
             falling_back: self.falling_back[i] > 0,
         }
     }
@@ -1231,8 +1224,6 @@ pub struct RegimentView {
     /// Torches lit (see [`Command::Torches`](crate::Command::Torches)):
     /// they burn only in the dark.
     pub torches: bool,
-    /// Touching burning tiles (see [`crate::fire`]): it burns.
-    pub in_fire: bool,
     /// Pulling out of a fight in good order (see [`Regiments::fall_back`]).
     pub falling_back: bool,
     /// Ticks left of being driven back by a charge that ploughed into its

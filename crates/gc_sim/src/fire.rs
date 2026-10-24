@@ -7,12 +7,14 @@
 
 use alloc::vec::Vec;
 
-use gc_fixed::{Fx, FxVec2};
+use gc_fixed::Fx;
 
 use crate::combat::Block;
 use crate::hash::StateHasher;
+use crate::nav::DIRS;
 use crate::regiments::Regiments;
 use crate::sky::{WET_FULL, Weather, WeatherKind};
+use crate::structures::footprint_centre;
 use crate::terrain::{Growth, Terrain};
 use crate::{TICKS_PER_SECOND, UnitStats, morale};
 
@@ -83,16 +85,11 @@ impl Burn {
     fn key(&self) -> (i32, i32) {
         (self.y, self.x)
     }
+}
 
-    /// The tile as a block, for touching regiments.
-    fn block(&self) -> Block {
-        let half = Fx::HALF;
-        Block::square(
-            FxVec2::new(Fx::from_int(self.x) + half, Fx::from_int(self.y) + half),
-            half,
-            half,
-        )
-    }
+/// Tile `(x, y)` as a block, for touching regiments.
+fn tile_block(x: i32, y: i32) -> Block {
+    Block::square(footprint_centre([x, y, 1, 1]), Fx::HALF, Fx::HALF)
 }
 
 /// The fires of a match.
@@ -106,6 +103,9 @@ pub(crate) struct Fires {
     /// Tiles that caught this tick, for [`crate::events::Event::Kindled`]
     /// (the world tells and clears them).
     pub(crate) kindled: Vec<(i32, i32)>,
+    /// Tiles that burned out this tick, for the ground change (the world
+    /// clears them).
+    pub(crate) burnt: Vec<(i32, i32)>,
 }
 
 impl Fires {
@@ -115,6 +115,7 @@ impl Fires {
             burning: Vec::new(),
             ever: false,
             kindled: Vec::new(),
+            burnt: Vec::new(),
         }
     }
 
@@ -133,6 +134,32 @@ impl Fires {
 
     pub(crate) fn is_burning(&self, x: i32, y: i32) -> bool {
         self.find(x, y).is_ok()
+    }
+
+    /// The burning tiles within `gap` of `block`, edge to edge: how many
+    /// it touches (gap zero), and whether any is within `gap`. Looks only
+    /// at the rows and columns in reach.
+    pub(crate) fn near(&self, block: &Block, gap: Fx) -> (u32, bool) {
+        if self.burning.is_empty() {
+            return (0, false);
+        }
+        let r = (block.radius() + gap + Fx::ONE).ceil_int();
+        let (cx, cy) = (block.centre.x.floor_int(), block.centre.y.floor_int());
+        let (mut touched, mut within) = (0, false);
+        for y in cy - r..=cy + r {
+            let from = self.burning.partition_point(|b| b.key() < (y, cx - r));
+            for b in self.burning[from..]
+                .iter()
+                .take_while(|b| b.key() <= (y, cx + r))
+            {
+                let tile = tile_block(b.x, b.y);
+                if block.touches(&tile, Fx::ZERO) {
+                    touched += 1;
+                }
+                within = within || block.touches(&tile, gap);
+            }
+        }
+        (touched, within)
     }
 
     /// Set tile `(x, y)` alight if anything burnable grows there and it
@@ -172,27 +199,19 @@ impl Fires {
         i: usize,
     ) -> Option<(i32, i32)> {
         let b = Block::of(regs, units, i);
-        let reach = b.radius() + Fx::ONE;
-        let (c, r) = (b.centre, reach.ceil_int());
-        let (cx, cy) = (c.x.floor_int(), c.y.floor_int());
-        let mut best: Option<(Fx, (i32, i32))> = None;
+        let r = (b.radius() + Fx::ONE).ceil_int();
+        let (cx, cy) = (b.centre.x.floor_int(), b.centre.y.floor_int());
+        let mut best: Option<(u64, (i32, i32))> = None;
         for y in cy - r..=cy + r {
             for x in cx - r..=cx + r {
                 if terrain.growth(x, y) == Growth::Open || self.is_burning(x, y) {
                     continue;
                 }
-                let tile = Burn {
-                    x,
-                    y,
-                    growth: Growth::Open,
-                    left: 0,
-                    total: 0,
-                }
-                .block();
+                let tile = tile_block(x, y);
                 if !b.touches(&tile, Fx::ONE) {
                     continue;
                 }
-                let d = (tile.centre - c).length();
+                let d = (tile.centre - b.centre).length_sq_raw();
                 if best.is_none_or(|(e, _)| d < e) {
                     best = Some((d, (x, y)));
                 }
@@ -201,10 +220,9 @@ impl Fires {
         best.map(|(_, t)| t)
     }
 
-    /// One tick of the fires: each burns down (faster in rain or snow);
-    /// once a second they spread and burn the regiments touching them.
-    /// Returns the tiles that burned out this tick, to go through the
-    /// ground change as burnt.
+    /// One tick of the fires: each burns down (faster in rain or snow),
+    /// and those that burn out go to [`Fires::burnt`]; once a second they
+    /// spread and burn the regiments touching them.
     pub(crate) fn update(
         &mut self,
         tick: u32,
@@ -213,16 +231,11 @@ impl Fires {
         wet: u16,
         regs: &mut Regiments,
         units: &[UnitStats],
-    ) -> Vec<(i32, i32)> {
-        let second = tick.is_multiple_of(TICKS_PER_SECOND);
+    ) {
         if self.burning.is_empty() {
-            if second && self.ever {
-                // The last fire is out: nobody stands in one.
-                regs.in_fire.fill(0);
-                regs.fire_lit.fill(false);
-            }
-            return Vec::new();
+            return;
         }
+        let second = tick.is_multiple_of(TICKS_PER_SECOND);
         // Rain or snow falling burns tiles out faster, up to twice.
         let falling = match weather.kind {
             WeatherKind::Rain | WeatherKind::Snow => u32::from(weather.strength),
@@ -233,11 +246,11 @@ impl Fires {
         } else {
             0
         };
-        let mut out = Vec::new();
+        let burnt = &mut self.burnt;
         self.burning.retain_mut(|b| {
             b.left = b.left.saturating_sub(1 + extra);
             if b.left == 0 {
-                out.push((b.x, b.y));
+                burnt.push((b.x, b.y));
             }
             b.left > 0
         });
@@ -245,45 +258,55 @@ impl Fires {
             self.spread(tick, terrain, weather.wind, falling, wet);
             self.burn_troops(regs, units);
         }
-        out
     }
 
     /// Fire next door may set each burnable tile alight.
     fn spread(&mut self, tick: u32, terrain: &Terrain, wind: (i8, i8), falling: u32, wet: u16) {
-        if wet >= DAMP_WET {
+        let room = MAX_FIRES.saturating_sub(self.burning.len());
+        if wet >= DAMP_WET || room == 0 {
             return;
         }
         // Damp ground and rain or snow falling hold it back in step.
         let dry = u32::from(DAMP_WET - wet) * (255 - falling.min(255)) / 255;
-        let mut caught: Vec<(i32, i32)> = Vec::new();
+        if dry == 0 {
+            return;
+        }
+        let mut caught: Vec<Burn> = Vec::new();
         for b in &self.burning {
             if b.total - b.left < SPREAD_AFTER {
                 continue;
             }
-            for (dx, dy) in [
-                (-1, -1),
-                (0, -1),
-                (1, -1),
-                (-1, 0),
-                (1, 0),
-                (-1, 1),
-                (0, 1),
-                (1, 1),
-            ] {
+            for (dx, dy) in DIRS {
                 let (x, y) = (b.x + dx, b.y + dy);
-                let base = catch_permille(terrain.growth(x, y));
-                if base == 0 || self.is_burning(x, y) || caught.contains(&(x, y)) {
+                let growth = terrain.growth(x, y);
+                let base = catch_permille(growth);
+                if base == 0 || self.is_burning(x, y) {
                     continue;
                 }
                 let chance = base * wind_percent(wind, dx, dy) / 100 * dry / u32::from(DAMP_WET);
                 if self.roll(tick, b.x, b.y, x, y) % 1000 < chance {
-                    caught.push((x, y));
+                    let total = burn_ticks(growth);
+                    caught.push(Burn {
+                        x,
+                        y,
+                        growth,
+                        left: total,
+                        total,
+                    });
                 }
             }
         }
-        for (x, y) in caught {
-            self.kindle(terrain, x, y);
+        // Each tile once, and only as many as there is room for, in tile
+        // order so every peer keeps the same ones.
+        caught.sort_unstable_by_key(Burn::key);
+        caught.dedup_by_key(|b| b.key());
+        caught.truncate(room);
+        if caught.is_empty() {
+            return;
         }
+        self.kindled.extend(caught.iter().map(|b| (b.x, b.y)));
+        self.burning.extend(caught);
+        self.burning.sort_unstable_by_key(Burn::key);
     }
 
     /// A roll for fire spreading from one tile to another this tick: a
@@ -301,49 +324,21 @@ impl Fires {
     }
 
     /// Each regiment touching burning tiles takes [`BURN_HP`] for each (up
-    /// to [`MAX_BURNS`]) and loses [`BURN_MORALE`]; each within
-    /// [`crate::vision::TORCH_LIGHT`] of one stands in its light.
+    /// to [`MAX_BURNS`]) and loses [`BURN_MORALE`].
     fn burn_troops(&self, regs: &mut Regiments, units: &[UnitStats]) {
-        let light = crate::vision::TORCH_LIGHT;
         for i in 0..regs.alive.len() {
-            regs.in_fire[i] = 0;
-            regs.fire_lit[i] = false;
             if !regs.alive[i] || regs.models[i] == 0 {
                 continue;
             }
-            let block = Block::of(regs, units, i);
-            let near = block.radius() + light + Fx::ONE;
-            let (c, r) = (block.centre, near.ceil_int());
-            let (lo, hi) = (c.y.floor_int() - r, c.y.floor_int() + r);
-            // Sorted by row: only the rows in reach.
-            let from = self.burning.partition_point(|b| b.y < lo);
-            let (mut touched, mut lit) = (0u32, false);
-            for b in self.burning[from..].iter().take_while(|b| b.y <= hi) {
-                if (b.x - c.x.floor_int()).abs() > r {
-                    continue;
-                }
-                let tile = b.block();
-                if block.touches(&tile, Fx::ZERO) {
-                    touched += 1;
-                    lit = true;
-                } else if !lit && block.touches(&tile, light) {
-                    lit = true;
-                }
+            let (touched, _) = self.near(&Block::of(regs, units, i), Fx::ZERO);
+            if touched > 0 {
+                regs.take_damage(i, BURN_HP * touched.min(MAX_BURNS));
+                morale::shift(regs, i, -BURN_MORALE);
             }
-            regs.fire_lit[i] = lit;
-            if touched == 0 {
-                continue;
-            }
-            regs.in_fire[i] = touched.min(255) as u8;
-            regs.take_damage(i, BURN_HP * touched.min(MAX_BURNS));
-            morale::shift(regs, i, -BURN_MORALE);
         }
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
-        if !self.ever {
-            return;
-        }
         h.u32(self.burning.len() as u32);
         for b in &self.burning {
             h.u32(b.x as u32);

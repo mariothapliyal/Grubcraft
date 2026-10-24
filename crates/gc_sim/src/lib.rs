@@ -1588,6 +1588,7 @@ impl World {
             &self.units,
             &self.stances,
             &self.terrain,
+            &self.fires,
             self.conquest.as_mut().map(|c| &mut c.structures),
             self.tick,
         );
@@ -1781,15 +1782,11 @@ impl World {
                     if self.stances.can_command(pc.player, self.regiments.owner[i])
                         && self.regiments.engaged[i].is_none()
                         && !self.regiments.morale_state[i].broken()
-                        && self.sky.wet() < fire::DAMP_WET =>
+                        && self.weather_lets_fire() =>
                 {
-                    match self
-                        .fires
+                    self.fires
                         .tinder(&self.terrain, &self.regiments, &self.units, i)
-                    {
-                        Some((x, y)) => self.fires.kindle(&self.terrain, x, y),
-                        None => false,
-                    }
+                        .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y))
                 }
                 _ => false,
             },
@@ -2451,6 +2448,14 @@ impl World {
         self.sky.wet() < fire::DAMP_WET
     }
 
+    /// Whether `regiment` touches burning woods (see [`fire`]): it burns,
+    /// and is never hidden.
+    pub fn in_fire(&self, regiment: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(regiment)
+            .is_some_and(|i| self.vision.in_fire(i))
+    }
+
     /// The tiles burning now, by row then column (see [`fire`]).
     pub fn fires(&self) -> &[Burn] {
         self.fires.burning()
@@ -2460,7 +2465,7 @@ impl World {
     /// so those the fire kills fall with the rest): the tiles that burn out
     /// go through the ground change as burnt.
     fn burn(&mut self) {
-        let out = self.fires.update(
+        self.fires.update(
             self.tick,
             &self.terrain,
             self.sky.weather(),
@@ -2474,8 +2479,12 @@ impl World {
             }
         }
         self.fires.kindled.clear();
-        if !out.is_empty() {
-            self.change_ground(out.into_iter().map(|(x, y)| (x, y, true)));
+        if !self.fires.burnt.is_empty() {
+            let burnt = core::mem::take(&mut self.fires.burnt);
+            self.change_ground(burnt.iter().map(|&(x, y)| (x, y, true)));
+            // Put back, so the list keeps its room.
+            self.fires.burnt = burnt;
+            self.fires.burnt.clear();
         }
     }
 
@@ -2722,14 +2731,15 @@ impl World {
                 if self.terrain.soaked() > 0 {
                     h.u32(self.terrain.soaked());
                 }
-                if let Some(c) = &self.conquest {
+                // Changed only by clearing (in Conquest) and fire (once one
+                // has been lit), so other matches hash as before.
+                if self.conquest.is_some() || self.fires.ever() {
                     h.u64(self.terrain.changes());
+                }
+                if let Some(c) = &self.conquest {
                     c.clearing.hash_into(&self.regiments, h);
                 }
-                // Only once a fire has been lit, so other matches hash as
-                // before fires.
                 if self.fires.ever() {
-                    h.u64(self.terrain.changes());
                     self.fires.hash_into(h);
                 }
             }

@@ -316,7 +316,7 @@ impl Perception {
                 morale_points: r.morale_points,
                 hidden: world.hidden(r.handle),
                 torches: r.torches,
-                in_fire: r.in_fire,
+                in_fire: world.in_fire(r.handle),
             });
             self.heard[slot] = in_dark.then(|| (*self.regiments.last().expect("just pushed"), now));
         }
