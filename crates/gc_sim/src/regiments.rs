@@ -833,11 +833,6 @@ impl Regiments {
         core::mem::replace(&mut self.torches[i], lit) != lit
     }
 
-    /// Whether the regiment in slot `i` has its torches lit.
-    pub(crate) fn torches(&self, i: usize) -> bool {
-        self.torches[i]
-    }
-
     /// Set (or lift) a regiment's spears against a charge: it halts where
     /// it stands, and a charge into its front loses its bonus and runs
     /// onto the points instead (see [`crate::combat::Combat::before_move`]).

@@ -215,9 +215,9 @@ pub struct Perception {
     memory: Vec<(Seen, u32)>,
     /// What the sky does to the fight now: `units` are read under it.
     pub air: Air,
-    /// Enemies hidden only by the dark ([`World::in_dark`]), as and when
-    /// last heard ([`Perception::capture_for`] only).
-    heard: Vec<(Seen, u32)>,
+    /// By pool index: an enemy hidden only by the dark ([`World::in_dark`]),
+    /// as and when last heard ([`Perception::capture_for`] only).
+    heard: Vec<Option<(Seen, u32)>>,
 }
 
 /// How often a mind hears again where an enemy hidden in the dark is.
@@ -274,8 +274,7 @@ impl Perception {
         self.by_index.clear();
         self.by_index.resize(world.regiments.capacity(), NONE);
         let now = self.tick;
-        let mut heard = std::mem::take(&mut self.heard);
-        let was_heard = heard.len();
+        self.heard.resize(world.regiments.capacity(), None);
         for r in world.regiments.iter() {
             // In the dark an enemy is heard, not seen: where it was when last
             // heard, every [`HEARD_TICKS`].
@@ -284,14 +283,13 @@ impl Perception {
             if !sees && !in_dark {
                 continue;
             }
+            let slot = r.handle.index as usize;
             if in_dark
-                && let Some(&(old, at)) = heard[..was_heard]
-                    .iter()
-                    .find(|(h, at)| h.handle == r.handle && now < at + HEARD_TICKS)
+                && let Some((old, _)) = self.heard[slot]
+                    .filter(|(h, at)| h.handle == r.handle && now < at + HEARD_TICKS)
             {
-                self.by_index[r.handle.index as usize] = self.regiments.len() as u32;
+                self.by_index[slot] = self.regiments.len() as u32;
                 self.regiments.push(old);
-                heard.push((old, at));
                 continue;
             }
             let stats = &self.units[r.unit as usize].stats;
@@ -317,12 +315,8 @@ impl Perception {
                 hidden: world.hidden(r.handle),
                 torches: r.torches,
             });
-            if in_dark {
-                heard.push((*self.regiments.last().expect("just pushed"), now));
-            }
+            self.heard[slot] = in_dark.then(|| (*self.regiments.last().expect("just pushed"), now));
         }
-        heard.drain(..was_heard);
-        self.heard = heard;
         match party {
             Some(p) => self.remember(world, p),
             None => self.memory.clear(),
@@ -368,7 +362,10 @@ impl Perception {
     fn remember(&mut self, world: &World, party: PlayerId) {
         let now = self.tick;
         for r in &self.regiments {
-            if !self.stances.hostile(party, r.owner) {
+            // One heard in the dark is not seen.
+            let heard = (self.heard.get(r.handle.index as usize))
+                .is_some_and(|h| h.is_some_and(|(s, _)| s.handle == r.handle));
+            if !self.stances.hostile(party, r.owner) || heard {
                 continue;
             }
             match self.memory.iter_mut().find(|(m, _)| m.handle == r.handle) {

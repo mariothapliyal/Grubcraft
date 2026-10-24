@@ -257,7 +257,7 @@ impl Mind {
         world: &World,
         out: &mut Vec<PlayerCommand>,
     ) {
-        self.torches(view, out);
+        self.torches(view);
         if let Some(realm) = &mut self.realm {
             let ctx = captain::Ctx {
                 view,
@@ -270,6 +270,7 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             realm.tick(world, ctx, out);
+            self.orders.release(view.tick, out);
             return;
         }
         if self.knobs.rehearse {
@@ -298,20 +299,23 @@ impl Mind {
     /// regiments that are fighting (they are seen anyway, and the light
     /// shows what is near), and put out every other's, so the rest march
     /// unseen (docs/32-changing-land.md, stage 3b).
-    fn torches(&self, view: &Perception, out: &mut Vec<PlayerCommand>) {
+    fn torches(&mut self, view: &Perception) {
         if !view.air.dark || !view.tick.is_multiple_of(gc_sim::TICKS_PER_SECOND) {
             return;
         }
         for r in view.regiments.iter().filter(|r| r.owner == self.party) {
             let lit = r.engaged && view.unit(r).class != Class::Ranged;
-            if r.torches != lit {
-                out.push(PlayerCommand {
-                    player: self.party,
-                    command: Command::Torches {
+            // Each costs an order, as a person's would.
+            if r.torches != lit
+                && !self.orders.give(
+                    view.tick,
+                    Command::Torches {
                         regiment: r.handle,
                         lit,
                     },
-                });
+                )
+            {
+                break;
             }
         }
     }
