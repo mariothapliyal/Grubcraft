@@ -167,6 +167,8 @@ const STALE: f32 = 0.5;
 const TOLD_KEEP: f32 = 1.5;
 /// No partner.
 const NONE: u32 = u32::MAX;
+/// [`Puppets::general`] of a regiment without one.
+const NO_GENERAL: u8 = u8::MAX;
 
 /// A general's speech (see [`Puppets::generals`]): he holds his weapon up
 /// this long, and his men cheer in turn, each for [`CHEER_TURN`] seconds,
@@ -651,6 +653,11 @@ const THROW_TURNED: Vec2 = Vec2::new(-0.809_017, 0.587_785);
 /// A killer holds his follow-through this long, in seconds, before he
 /// looks for a new man.
 const KILL_HOLD: f32 = 0.3;
+/// A general takes the killing blow of a man of his own regiment who kills
+/// within this many tiles of him, stepping through the ranks to deal it,
+/// and brandishes his weapon this many seconds after.
+const HERO_REACH: f32 = 2.5;
+const HERO_BRANDISH: f32 = 1.0;
 /// How far through a swing a held follow-through stands: its last frame.
 const HELD: f32 = 0.999;
 
@@ -1040,6 +1047,11 @@ pub struct Puppets {
     last_fall: Vec<(Vec2, f32)>,
     /// Per puppet, where he looks (see [`Soldier::head`]), eased.
     glance: Vec<Head>,
+    /// Per regiment, the slot its general stands in, or `NO_GENERAL`.
+    general: Vec<u8>,
+    /// Per puppet, until when he brandishes his weapon over a man he
+    /// killed (a general's flourish).
+    brandish: Vec<f32>,
     duel: Option<Duel>,
     /// The tick the duel the puppets are done with was called.
     duel_over: Option<u32>,
@@ -1097,6 +1109,8 @@ impl Puppets {
             lift: vec![0.0; regiment_capacity * SLOTS],
             last_fall: vec![(Vec2::ZERO, f32::NEG_INFINITY); regiment_capacity],
             glance: vec![Head::default(); regiment_capacity * SLOTS],
+            general: vec![NO_GENERAL; regiment_capacity],
+            brandish: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             duel: None,
             duel_over: None,
             generals: Vec::with_capacity(gc_sim::MAX_PARTIES),
@@ -1775,6 +1789,21 @@ impl Puppets {
     }
 
     /// How many of regiment `r`'s soldiers stand in its front rank.
+    /// The general who takes `killer`'s killing blow on `victim`: his
+    /// regiment's, standing within [`HERO_REACH`] of the man and free to
+    /// strike.
+    fn hero_for(&self, killer: usize, victim: usize) -> Option<usize> {
+        let kr = killer / SLOTS;
+        let g = usize::from(self.general[kr]);
+        let gi = kr * SLOTS + g;
+        (g < usize::from(self.models[kr])
+            && gi != killer
+            && self.acting(gi).is_none()
+            && self.champion_of(kr).is_none_or(|(.., c)| c != gi)
+            && self.pos[gi].distance_squared(self.pos[victim]) <= HERO_REACH * HERO_REACH)
+            .then_some(gi)
+    }
+
     fn front(&self, r: usize) -> usize {
         (self.files[r] as usize).min(self.models[r] as usize)
     }
@@ -1830,6 +1859,7 @@ impl Puppets {
             self.lift[r * SLOTS..(r + 1) * SLOTS].fill(0.0);
             self.last_fall[r] = (Vec2::ZERO, f32::NEG_INFINITY);
             self.glance[r * SLOTS..(r + 1) * SLOTS].fill(Head::default());
+            self.brandish[r * SLOTS..(r + 1) * SLOTS].fill(f32::NEG_INFINITY);
             for k in 0..SLOTS {
                 self.looks[r * SLOTS + k] = look_of(block.handle, k);
             }
@@ -1875,6 +1905,7 @@ impl Puppets {
         };
         let champion_here = self.champion_of(r);
         let general = block.general.map(usize::from);
+        self.general[r] = block.general.unwrap_or(NO_GENERAL);
         let heed = if block.engaged || block.routing {
             Heed::default()
         } else {
@@ -1971,7 +2002,8 @@ impl Puppets {
             };
             let target = match (champion, foe) {
                 (Some((d, side)), _) => self.stance(&d, side),
-                _ if down => self.pos[i],
+                // Down, or brandishing over his man, he stays where he is.
+                _ if down || self.brandish[i] > self.time => self.pos[i],
                 _ if warp.is_some() => warp.map_or(slot, |(exact, _)| exact),
                 (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
@@ -2081,6 +2113,8 @@ impl Puppets {
                 }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
                 (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
+                // A general brandishes his weapon over the man he killed.
+                _ if self.brandish[i] > self.time => Some(Move::Cheer),
                 (_, Some((at, beat))) => Some(Move::Swing {
                     at,
                     alt: beat as i32 % 2 != 0,
@@ -2221,6 +2255,11 @@ impl Puppets {
                 (None, Some((.., by))) if by != NONE => by as usize,
                 _ => self.partner[victim] as usize,
             };
+            // His general, near, takes the blow from his man.
+            let hero = (slain.is_none() && killer != NONE as usize)
+                .then(|| self.hero_for(killer, victim))
+                .flatten();
+            let killer = hero.unwrap_or(killer);
             // The matched kill he falls to, if his killer starts one now.
             let mut paired = None;
             // Knocked off his feet and down: he dies where he lies, and his
@@ -2266,13 +2305,16 @@ impl Puppets {
                         let kr = killer / SLOTS;
                         let apart = self.pos[killer].distance(self.pos[victim]);
                         let salt = self.time.to_bits() ^ 16;
-                        let pair = (!lying && killer % SLOTS < self.front(kr))
+                        let front = hero.is_some() || killer % SLOTS < self.front(kr);
+                        let pair = (!lying && front)
                             .then(|| {
                                 let roll = unit_hash(block.handle, pick, salt);
                                 self.kills.pick(self.unit[kr], block.unit, roll)
                             })
                             .flatten()
-                            .filter(|&(_, k)| (apart - k.reach).abs() <= DUEL_LEASH);
+                            .filter(|&(_, k)| {
+                                hero.is_some() || (apart - k.reach).abs() <= DUEL_LEASH
+                            });
                         let gap = match pair {
                             Some((_, k)) => k.reach,
                             None if lying => FINISH_GAP,
@@ -2283,8 +2325,12 @@ impl Puppets {
                             gap,
                             pair,
                             finish: lying,
-                            front: killer % SLOTS < self.front(kr),
+                            front,
                         };
+                        if hero.is_some() {
+                            let length = pair.map_or(Act::Kill.seconds(), |(_, k)| k.seconds);
+                            self.brandish[killer] = self.time + length + HERO_BRANDISH;
+                        }
                         paired = pair.map(|(id, _)| id);
                         Some(self.kill_lands_in(killer, 0.0))
                     }
@@ -2353,6 +2399,8 @@ impl Puppets {
             self.reeling[last] = f32::NEG_INFINITY;
             self.looks[victim] = self.looks[last];
             self.glance[victim] = self.glance[last];
+            self.brandish[victim] = self.brandish[last];
+            self.brandish[last] = f32::NEG_INFINITY;
             // Whoever steps into the gap finds a new man, so the blows he
             // struck from the last slot are done with.
             // Blows told on whoever stood in either slot are not his.
@@ -3368,6 +3416,58 @@ mod tests {
         p.update(&b, 1, FRAME, |s| {
             assert!(s.fight.is_some() || s.head.is_none(), "{:?}", s.head);
         });
+    }
+
+    #[test]
+    fn a_general_steps_through_to_deal_a_killing_blow_and_brandishes() {
+        let mut p = Puppets::new(2, 4);
+        let (mut a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        a.general = Some(5);
+        for _ in 0..120 {
+            frame(&mut p, &a, &b);
+        }
+        let near = (0..4)
+            .map(|k| SLOTS + k)
+            .filter(|&v| p.pos[5].distance(p.pos[v]) <= HERO_REACH);
+        assert!(
+            near.count() > 0,
+            "the general stands within reach of their front"
+        );
+        // A man of his falls to them; the general deals the blow if near.
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let (at, fell) = p.last_fall[1];
+        assert!(
+            p.pos[5].distance(at) <= HERO_REACH,
+            "this seed's man falls near him"
+        );
+        assert!(
+            matches!(p.acting(5), Some((Act::Kill, _))),
+            "{:?}",
+            p.act[5]
+        );
+        assert!(p.killing[5].front, "warped from the second rank");
+        assert!((0..4).all(|k| !matches!(p.acting(k), Some((Act::Kill, _)))));
+        // He reaches his blow's distance as it lands, then brandishes.
+        while p.time < fell {
+            frame(&mut p, &a, &b);
+        }
+        let gap = p.killing[5].gap;
+        assert!(
+            (p.pos[5].distance(at) - gap).abs() < 0.05,
+            "{} vs {gap}",
+            p.pos[5].distance(at)
+        );
+        let mut cheered = false;
+        for _ in 0..((Act::Kill.seconds() + HERO_BRANDISH) / FRAME) as usize {
+            p.advance(FRAME);
+            p.pair(|x, y| x != y);
+            p.update(&a, 0, FRAME, |s| {
+                cheered |= s.general && s.fight == Some(Move::Cheer);
+            });
+            p.update(&b, 1, FRAME, |_| {});
+        }
+        assert!(cheered);
     }
 
     #[test]
