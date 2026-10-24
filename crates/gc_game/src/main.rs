@@ -5501,7 +5501,7 @@ impl Running {
                             frames: pose.rows,
                             flags: models::pose_flags(pose, 0, flat),
                             color: [wr, wg, wb, tone],
-                            lift: -0.5 * c.sink,
+                            lift: c.lift - 0.5 * c.sink,
                             scale: look.scale,
                             feet: models::dying_feet(c.age),
                             ..Default::default()
