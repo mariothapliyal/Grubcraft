@@ -7227,7 +7227,7 @@ impl Running {
                     // Tipped over toward its way, which the model reads in
                     // its own space (turned to face south, as drawn).
                     flags[2] = (fall.tip * 255.0).round() as u8;
-                    flags[3] = scenery::fall_of(scenery::turn_of(glam::Vec2::Y), fall.way);
+                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
                 }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),

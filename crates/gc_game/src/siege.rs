@@ -53,6 +53,7 @@ const COLLAPSE_SECONDS: f32 = 2.4;
 /// A wall or tower topples over the first part of it, this share, then
 /// sinks (the sinking starts a little before it lies down).
 const TOPPLE_SHARE: f32 = 0.6;
+const SINK_FROM: f32 = TOPPLE_SHARE * 0.9;
 /// Its rubble lies this long, smoulders for the first part of it, and
 /// sinks away over the last part.
 const RUBBLE_SECONDS: f32 = 90.0;
@@ -800,10 +801,9 @@ impl Siege {
         };
         let topple = topples(look.role).then(|| {
             // Along the last blow; with none told, any way by the seed.
-            let along = self.jolt_of(structure).map_or(Vec2::ZERO, |j| j.dir);
-            along
-                .try_normalize()
-                .unwrap_or_else(|| Vec2::from_angle((self.seed >> 8) as f32 / 16_777_216.0 * TAU))
+            (self.jolt_of(structure))
+                .and_then(|j| j.dir.try_normalize())
+                .unwrap_or_else(|| Vec2::from_angle(hash(self.seed, 0, 0) * PI))
         });
         self.forget(structure);
         let due = (self.shots.iter())
@@ -1155,10 +1155,9 @@ impl Siege {
             let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
             let (down, tip) = match f.topple {
                 Some(_) => {
-                    let sink_from = TOPPLE_SHARE * 0.9;
                     let u = (t / TOPPLE_SHARE).min(1.0);
                     (
-                        smooth(((t - sink_from) / (1.0 - sink_from)).clamp(0.0, 1.0)),
+                        smooth(((t - SINK_FROM) / (1.0 - SINK_FROM)).clamp(0.0, 1.0)),
                         u * u,
                     )
                 }
