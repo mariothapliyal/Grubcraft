@@ -1528,6 +1528,11 @@ impl<N: Network> Menu<N> {
             "Clarity: plain light, no grain",
             &mut s.clarity,
         );
+        ui.toggle(
+            st.next(row),
+            "Tilt-shift: soft top and bottom",
+            &mut s.tilt_shift,
+        );
 
         // Right column: audio and accessibility.
         let mut st = Stack {
@@ -1566,7 +1571,7 @@ impl<N: Network> Menu<N> {
             note_y,
             1,
             theme::INK_MUTED,
-            "Name, colour, faction, UI scale, Clarity, and Master and Music volume work now.",
+            "Name, colour, faction, UI scale, Clarity, Tilt-shift, shake and Master and Music volume work now.",
         );
         ui.label(
             panel.x + 24,
