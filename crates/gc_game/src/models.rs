@@ -831,12 +831,14 @@ mod tests {
             (katana.strike.act, katana.strike.weapon),
             (Act::Finish, Weapon::TwoHanded)
         );
-        // The puppets time a man's finishers by his first: they share a
-        // length.
+        // The puppets time and place a man's finishers by his first: they
+        // share a length and a reach, and none is drawn aside, which the
+        // puppets leave out.
         for m in 0..models.models.len() {
-            let lengths: Vec<f32> = (0..4)
+            let lengths: Vec<(f32, f32)> = (0..4)
                 .filter_map(|seed| clips.finisher(m, seed))
-                .map(|f| f.strike.seconds())
+                .inspect(|f| assert!(f.aside.abs() < 0.05, "model {m}: {f:?}"))
+                .map(|f| (f.strike.seconds(), f.reach))
                 .collect();
             assert!(
                 lengths.windows(2).all(|w| w[0] == w[1]),
