@@ -108,6 +108,8 @@ struct Trophy {
     tint: [u8; 3],
     /// Seconds since it was taken.
     age: f32,
+    /// Counts the trophies taken, so equal ages still have an order.
+    seq: u32,
 }
 
 /// The crows over a battlefield.
@@ -135,6 +137,8 @@ struct Seen {
 pub struct Aftermath {
     standards: Vec<Standard>,
     trophies: Vec<Trophy>,
+    /// Trophies taken so far (see [`Trophy::seq`]).
+    taken: u32,
     flocks: Vec<Flock>,
     /// Per regiment slot.
     seen: Vec<Option<Seen>>,
@@ -223,12 +227,18 @@ impl Aftermath {
     /// Regiment `winner` takes a standard of `tint`'s colour; past three, its
     /// oldest is put away.
     fn take(&mut self, winner: RegimentHandle, tint: [u8; 3]) {
-        let held = || (self.trophies.iter().enumerate()).filter(|(_, t)| t.winner == winner);
+        let held = || {
+            self.trophies
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.winner == winner)
+        };
         if held().count() >= TROPHIES_PER_REGIMENT
-            && let Some((i, _)) = held().max_by(|a, b| a.1.age.total_cmp(&b.1.age))
+            && let Some((i, _)) = held().min_by_key(|(_, t)| t.seq)
         {
-            self.trophies.swap_remove(i);
+            self.trophies.remove(i);
         }
+        self.taken = self.taken.wrapping_add(1);
         push_oldest(
             &mut self.trophies,
             MAX_TROPHIES,
@@ -236,6 +246,7 @@ impl Aftermath {
                 winner,
                 tint,
                 age: 0.0,
+                seq: self.taken,
             },
             |t| t.age,
         );
@@ -295,13 +306,11 @@ impl Aftermath {
         pose: impl Fn(RegimentHandle) -> Option<(Vec2, Vec2)> + 'a,
         ground: impl Fn(Vec2) -> f32 + 'a,
     ) -> impl Iterator<Item = Extra> + 'a {
-        self.trophies.iter().enumerate().filter_map(move |(i, t)| {
+        self.trophies.iter().filter_map(move |t| {
             let (centre, facing) = pose(t.winner)?;
             // Where it stands among the carrier's others, oldest to the left.
-            let mine = || (self.trophies.iter().enumerate()).filter(|(_, o)| o.winner == t.winner);
-            let rank = (mine())
-                .filter(|&(j, o)| o.age > t.age || (o.age == t.age && j < i))
-                .count();
+            let mine = || self.trophies.iter().filter(|o| o.winner == t.winner);
+            let rank = mine().filter(|o| o.seq < t.seq).count();
             let side = (rank as f32 - (mine().count() as f32 - 1.0) / 2.0) * TROPHY_APART;
             let at = centre - facing * TROPHY_BEHIND + facing.perp() * side;
             let turn = scenery::turn_of(facing);
@@ -309,7 +318,7 @@ impl Aftermath {
                 model: Model::BannerShattered,
                 at: Vec3::new(at.x, ground(at), at.y),
                 turn,
-                scale: 0.8,
+                scale: 0.8 * ((TROPHY_SECONDS - t.age) / STANDARD_FADE).clamp(0.0, 1.0),
                 tint: t.tint.map(|c| c / 2),
                 phase: turn,
                 lean: 0,
@@ -538,35 +547,39 @@ mod tests {
     #[test]
     fn a_victor_by_takes_the_standard_and_carries_it_in_the_rear() {
         let mut a = Aftermath::default();
-        let fell = |a: &mut Aftermath, n| {
-            a.wiped(
-                handle(n),
-                Vec2::new(30.0, 30.0),
-                Vec2::X,
-                [200, 40, 40],
-                8,
-                Some(handle(9)),
-            );
+        let fell = |a: &mut Aftermath, n: u32, tint: [u8; 3]| {
+            let (at, facing) = (Vec2::new(30.0, 30.0), Vec2::X);
+            a.wiped(handle(n), at, facing, tint, 8, Some(handle(9)));
         };
-        fell(&mut a, 1);
-        assert_eq!(a.standards(flat).count(), 0, "nothing is left on the field");
         let pose = |h: RegimentHandle| (h == handle(9)).then_some((Vec2::new(50.0, 40.0), Vec2::X));
+        fell(&mut a, 1, [200, 40, 40]);
+        assert_eq!(a.standards(flat).count(), 0, "nothing is left on the field");
         let carried: Vec<_> = a.trophies(pose, flat).collect();
         assert_eq!(carried.len(), 1);
         assert_eq!(carried[0].model, Model::BannerShattered);
         assert!(carried[0].at.x < 50.0, "behind the centre");
         assert_eq!(carried[0].at.z, 40.0, "and in the middle of the rank");
-        // A carrier that is gone or unseen shows nothing.
+        // A carrier that is gone, unseen or another one shows nothing.
         assert_eq!(a.trophies(|_| None, flat).count(), 0);
-        // At most three, side by side; the oldest is put away for the fourth.
-        for n in 2..=4 {
-            fell(&mut a, n);
+        assert_eq!(
+            a.trophies(|h| (h == handle(8)).then_some((Vec2::ZERO, Vec2::X)), flat)
+                .count(),
+            0
+        );
+        // At most three, side by side, the oldest to the left; the first is
+        // put away for the fourth, though all were taken in the same tick.
+        for (n, red) in [(2, 100), (3, 150), (4, 250)] {
+            fell(&mut a, n, [red, 0, 0]);
         }
-        let four: Vec<_> = a.trophies(pose, flat).collect();
-        assert_eq!(four.len(), TROPHIES_PER_REGIMENT);
-        let mut zs: Vec<f32> = four.iter().map(|e| e.at.z).collect();
-        zs.sort_by(f32::total_cmp);
-        assert!(zs[0] < zs[1] && zs[1] < zs[2]);
+        let mut row: Vec<_> = a.trophies(pose, flat).collect();
+        assert_eq!(row.len(), TROPHIES_PER_REGIMENT);
+        row.sort_by(|p, q| p.at.z.total_cmp(&q.at.z));
+        let reds: Vec<u8> = row.iter().map(|e| e.tint[0]).collect();
+        assert_eq!(
+            reds,
+            [50, 75, 125],
+            "the first (200) is gone, the rest in order"
+        );
         // And in the end put away.
         a.advance(TROPHY_SECONDS + 1.0, std::iter::empty());
         assert_eq!(a.trophies(pose, flat).count(), 0);
