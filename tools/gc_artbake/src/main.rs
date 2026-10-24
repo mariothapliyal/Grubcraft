@@ -107,6 +107,13 @@ struct ModelConfig {
     team_hue: Option<(f32, f32, f32)>,
     /// Clip kind (`Idle`, `Walk`, ...) to the glTF animation's name.
     clips: HashMap<String, String>,
+    /// For a model's own attack clips (`Attack`, `Attack2`), the second its
+    /// blow lands: the clip is retimed so it falls at
+    /// [`BLOW_AT`](gc_assets::anim::BLOW_AT), as a tagged attack's
+    /// `contact` is, so a duel's blows land on the beat. For the models whose
+    /// rigs are their own, with no fight library to play.
+    #[serde(default)]
+    contacts: HashMap<String, f32>,
     /// Triangle budgets for each level of detail, from full to fewest.
     lod_triangles: [usize; LODS],
     /// Painted texture maps, for models whose detail is in textures rather
@@ -1085,10 +1092,21 @@ fn bake_model(
     // 5. Sample the clips: each joint's place in every frame.
     let mut clips = Vec::new();
     let mut sampled = Vec::new();
+    if let Some(kind) = cfg
+        .contacts
+        .keys()
+        .find(|&k| !cfg.clips.contains_key(k) || !matches!(k.as_str(), "Attack" | "Attack2"))
+    {
+        return Err(format!(
+            "contacts: {kind:?} is not one of the model's attack clips"
+        ));
+    }
     for (kind_name, anim_name) in &cfg.clips {
         let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
         let anim = anim_named(doc, anim_name)?;
-        let globals = sample_clip(&anim, Some, kind.loops(), None, &skel, &joints, get)?;
+        let contact = cfg.contacts.get(kind_name).copied();
+        let globals = sample_clip(&anim, Some, kind.loops(), contact, &skel, &joints, get)
+            .map_err(|e| format!("clip {kind_name}: {e}"))?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -1866,6 +1884,13 @@ mod tests {
     /// The Alien Bug's pack with `moves` (a RON list) tagged on it: the
     /// pack's bytes, or why it would not bake.
     fn bake_bug_with(moves: &str) -> (Result<Vec<u8>, String>, ModelTables, ModelConfig) {
+        bake_bug(|m| m.moves = ron::from_str(moves).unwrap())
+    }
+
+    /// The Alien Bug's pack with its config changed by `change`.
+    fn bake_bug(
+        change: impl FnOnce(&mut ModelConfig),
+    ) -> (Result<Vec<u8>, String>, ModelTables, ModelConfig) {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let opts = Options {
             config: root.join("assets-src/models.ron"),
@@ -1890,7 +1915,7 @@ mod tests {
             )])"#,
         )
         .unwrap();
-        config.models[0].moves = ron::from_str(moves).unwrap();
+        change(&mut config.models[0]);
         let (bytes, tables) = match bake_pack(&config, &opts) {
             Ok((bytes, tables)) => (Ok(bytes), tables),
             Err(e) => (Err(e), ModelTables::default()),
@@ -2078,6 +2103,35 @@ mod tests {
         assert!(near(&moved[0], &plain[0]) && near(&moved[n - 1], &plain[n - 1]));
         let late = sample_clip(&anim, Some, false, Some(100.0), &skel, &joints, get);
         assert!(late.is_err());
+    }
+
+    #[test]
+    fn a_models_own_attack_clip_is_retimed_by_its_contact() {
+        let bake = |contacts: &[(&str, f32)]| {
+            bake_bug(|m| {
+                m.contacts = contacts.iter().map(|&(k, c)| (k.to_string(), c)).collect();
+            })
+            .0
+        };
+        let plain = bake(&[]).unwrap();
+        let timed = bake(&[("Attack", 0.2)]).unwrap();
+        assert_ne!(plain, timed, "the clip is sampled anew");
+        assert_eq!(plain.len(), timed.len(), "and keeps its frames");
+        assert!(
+            bake(&[("Idle", 0.2)])
+                .unwrap_err()
+                .contains("not one of the model's attack")
+        );
+        assert!(
+            bake(&[("Shoot", 0.2)])
+                .unwrap_err()
+                .contains("not one of the model's attack")
+        );
+        assert!(
+            bake(&[("Attack2", 100.0)])
+                .unwrap_err()
+                .contains("clip Attack2")
+        );
     }
 
     #[test]
