@@ -11,7 +11,7 @@
 
 use gc_map::Map;
 use gc_map::def::Land;
-use gc_render::{KNOBS, Knob, LandAir, Look, LookPreset};
+use gc_render::{KNOBS, Knob, LandAir, Look, LookPreset, Weather};
 use glam::Vec2;
 
 /// How each land changes the air, in `Land::ALL` order. Meadow, the ground
@@ -86,6 +86,8 @@ const REACH_MAX: f32 = 70.0;
 const SETTLE: f32 = 2.5;
 /// How many steps a knob moves with Shift held, as in the sandbox's tuner.
 const FAST: f32 = 10.0;
+/// Seconds for weather to settle in (or clear), as a time constant.
+const WEATHER_SETTLE: f32 = 3.0;
 
 /// The light of a match.
 pub struct Atmosphere {
@@ -98,6 +100,11 @@ pub struct Atmosphere {
     /// A land whose air is used everywhere (`--air`, or L in the tuning
     /// panel), to see or tune one land's look wherever the camera is.
     forced: Option<Land>,
+    /// The weather over the match, and how much of it has come in (eased,
+    /// 0 to 1).
+    weather: Weather,
+    weather_flag: Option<Weather>,
+    fade: f32,
     tuning: Tuning,
 }
 
@@ -123,8 +130,38 @@ impl Atmosphere {
             look_flag: look,
             shares: None,
             forced: air,
+            weather: Weather::Clear,
+            weather_flag: None,
+            fade: 0.0,
             tuning: Tuning::default(),
         }
+    }
+
+    /// Every match opens in this weather (`--weather`).
+    pub fn with_weather(mut self, weather: Option<Weather>) -> Atmosphere {
+        self.weather_flag = weather;
+        self.start_weather();
+        self
+    }
+
+    fn start_weather(&mut self) {
+        self.weather = self.weather_flag.unwrap_or_default();
+        self.fade = if self.weather == Weather::Clear {
+            0.0
+        } else {
+            1.0
+        };
+    }
+
+    /// F12: the next weather; it comes in over a few seconds.
+    pub fn next_weather(&mut self) {
+        self.weather = self.weather.next();
+        self.fade = 0.0;
+    }
+
+    /// The weather and how much of it there is now.
+    pub fn weather(&self) -> (Weather, f32) {
+        (self.weather, self.fade)
     }
 
     /// Light a new match with `preset` (unless `--look` said otherwise),
@@ -132,6 +169,7 @@ impl Atmosphere {
     pub fn start(&mut self, preset: LookPreset) {
         self.preset = self.look_flag.unwrap_or(preset);
         self.shares = None;
+        self.start_weather();
     }
 
     /// F9: the next prepared look.
@@ -160,7 +198,15 @@ impl Atmosphere {
             }
             none => *none.insert(target),
         };
-        let mut look = self.preset.look().in_air(&LandAir::mixed(&AIRS, &shares));
+        if self.weather != Weather::Clear {
+            let k = 1.0 - (-dt.max(0.0) / WEATHER_SETTLE).exp();
+            self.fade += (1.0 - self.fade) * k;
+        }
+        let mut look = self
+            .preset
+            .look()
+            .in_air(&LandAir::mixed(&AIRS, &shares))
+            .in_weather(self.weather, self.fade);
         if clarity {
             look = look.clear();
         }
@@ -374,6 +420,50 @@ mod tests {
         atmosphere.start(LookPreset::GoldenHour);
         let fresh = atmosphere.look(0.0, &map, Vec2::new(56.0, 32.0), 20.0, false);
         assert!((fresh.haze[2] - later.haze[2]).abs() < 0.02);
+    }
+
+    #[test]
+    fn weather_comes_in_over_a_few_seconds_and_a_new_match_starts_clear() {
+        let map = split(Land::Meadow, Land::Meadow);
+        let mut atmosphere = Atmosphere::new(None, None);
+        let clear = atmosphere.look(0.0, &map, Vec2::new(10.0, 10.0), 40.0, false);
+        atmosphere.next_weather();
+        assert_eq!(atmosphere.weather(), (Weather::Rain, 0.0));
+        let mut last = clear.fog_density;
+        for _ in 0..4 {
+            let look = atmosphere.look(1.0, &map, Vec2::new(10.0, 10.0), 40.0, false);
+            assert!(look.fog_density > last, "the air thickens each second");
+            last = look.fog_density;
+        }
+        let (weather, amount) = atmosphere.weather();
+        assert_eq!(weather, Weather::Rain);
+        assert!(amount > 0.7 && amount < 1.0, "{amount}");
+        atmosphere.start(LookPreset::GoldenHour);
+        assert_eq!(atmosphere.weather(), (Weather::Clear, 0.0));
+    }
+
+    #[test]
+    fn a_weather_flag_opens_every_match_in_full_weather() {
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Snow));
+        assert_eq!(atmosphere.weather(), (Weather::Snow, 1.0));
+        atmosphere.next_weather();
+        atmosphere.start(LookPreset::Noon);
+        assert_eq!(atmosphere.weather(), (Weather::Snow, 1.0));
+    }
+
+    #[test]
+    fn weather_cycles_back_to_clear_and_clarity_keeps_it() {
+        let map = split(Land::Meadow, Land::Meadow);
+        let mut atmosphere = Atmosphere::new(None, None).with_weather(Some(Weather::Fog));
+        let foggy = atmosphere.look(1.0, &map, Vec2::new(10.0, 10.0), 40.0, true);
+        let clear_sky =
+            Atmosphere::new(None, None).look(1.0, &map, Vec2::new(10.0, 10.0), 40.0, true);
+        assert!(foggy.fog_density > clear_sky.fog_density * 3.0);
+        assert_eq!(foggy.vignette, 0.0, "Clarity still plain");
+        for _ in 0..Weather::ALL.len() {
+            atmosphere.next_weather();
+        }
+        assert_eq!(atmosphere.weather().0, Weather::Fog);
     }
 
     #[test]
