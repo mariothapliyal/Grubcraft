@@ -1795,14 +1795,29 @@ impl Puppets {
                     Some((Act::Kill, f)) if self.kill_lands_in(killer, f) > 0.0 => {
                         Some(self.kill_lands_in(killer, f))
                     }
+                    // He is playing out a matched kill that has landed:
+                    // this man just drops, rather than cut it short.
+                    Some((Act::Kill, _)) if self.pair_of(killer).is_some() => None,
                     _ => {
                         self.act[killer] = (Act::Kill, self.time);
                         // He steps in to strike where his man stands, at
                         // the distance the two keep, or the matched kill's
-                        // reach when they play one.
-                        let mine = self.unit[killer / SLOTS];
-                        let pair =
-                            (self.kills).pick(mine, block.unit, unit_hash(block.handle, pick, 16));
+                        // reach when they play one: only a man of the front
+                        // rank, who can close to that reach from where he
+                        // stands (one behind strikes from his place).
+                        let kr = killer / SLOTS;
+                        let apart = self.pos[killer].distance(self.pos[victim]);
+                        let salt = self.time.to_bits() ^ 16;
+                        let pair = (self.kills)
+                            .pick(
+                                self.unit[kr],
+                                block.unit,
+                                unit_hash(block.handle, pick, salt),
+                            )
+                            .filter(|&(_, k)| {
+                                killer % SLOTS < self.front(kr)
+                                    && (apart - k.reach).abs() <= DUEL_LEASH
+                            });
                         let gap = pair.map_or(
                             (self.fighter[killer / SLOTS].gap() + block.fighter.gap()) / 2.0,
                             |(_, k)| k.reach,
@@ -2838,10 +2853,7 @@ mod tests {
             contact: 0.2,
             reach: 1.2,
         };
-        let mut p = Puppets::new(2, 4);
-        let mut kills = Kills::new(vec![KILL]);
-        kills.add(0, 0, &[0]);
-        p.set_kills(kills);
+        let mut p = with_a_kill(KILL);
         let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
         for _ in 0..30 {
             frame(&mut p, &a, &b);
@@ -2891,6 +2903,59 @@ mod tests {
         assert_eq!(lies.pos, stood.pos);
         let apart = lies.pos.distance(at_contact);
         assert!((apart - KILL.reach).abs() < 0.35, "{apart}");
+    }
+
+    /// Puppets whose men (unit 0) all play one matched kill on each other.
+    fn with_a_kill(kill: KillTiming) -> Puppets {
+        let mut p = Puppets::new(2, 4);
+        let mut kills = Kills::new(vec![kill]);
+        kills.add(0, 0, &[0]);
+        p.set_kills(kills);
+        p
+    }
+
+    #[test]
+    fn a_matched_kill_is_played_out_and_only_from_the_front_rank() {
+        const KILL: KillTiming = KillTiming {
+            seconds: 1.8,
+            contact: 0.2,
+            reach: 1.2,
+        };
+        let mut p = with_a_kill(KILL);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        // A man of the second rank strikes the blow: his own swing, from
+        // his place.
+        let rear = 5;
+        assert!(rear >= p.front(0));
+        p.slain.push((b.handle, 0, rear as u32));
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        assert_eq!(p.act[rear].0, Act::Kill);
+        assert_eq!(p.killing[rear].pair, None);
+        assert_eq!(p.corpses().last().unwrap().kill, None);
+        // A front-rank man plays the kill; a man who falls to him once it
+        // has landed just drops, and he plays it out.
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
+        let started = p.act[k].1;
+        assert!(p.pair_of(k).is_some());
+        while p.time - started < KILL.contact * KILL.seconds + 0.1 {
+            frame(&mut p, &a, &b);
+        }
+        let next = p.partner[k];
+        assert_ne!(next, NONE, "he has a new man");
+        p.slain
+            .push((b.handle, (next as usize % SLOTS) as u8, k as u32));
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let dropped = p.corpses().last().unwrap();
+        assert!(dropped.age >= 0.0 && dropped.kill.is_none(), "{dropped:?}");
+        assert_eq!(p.act[k].1, started);
+        assert!(p.pair_of(k).is_some());
     }
 
     #[test]
