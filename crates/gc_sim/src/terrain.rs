@@ -260,6 +260,9 @@ pub struct Terrain {
     /// The rubble of buildings brought down: tile index and ticks left,
     /// sorted by index. Soft ground until it settles.
     rubble: Vec<(u32, u16)>,
+    /// How many times a tile has come to be rubble or stopped being, so
+    /// readers of the soft ground know when to look again.
+    rubble_moves: u32,
     /// Map edge in tiles, which the rubble is indexed by (`tiles` is 0 on
     /// flat ground).
     side: i32,
@@ -325,7 +328,8 @@ impl Terrain {
             soak: Arc::from([]),
             soak_need: Arc::from([]),
             soaked: 0,
-            rubble: Vec::new(),
+            rubble: Vec::with_capacity(64),
+            rubble_moves: 0,
             side: map_tiles as i32,
             rise: 0,
             changes: 0,
@@ -467,7 +471,10 @@ impl Terrain {
                 let i = i as u32;
                 match self.rubble.binary_search_by_key(&i, |&(t, _)| t) {
                     Ok(at) => self.rubble[at].1 = RUBBLE_TICKS,
-                    Err(at) => self.rubble.insert(at, (i, RUBBLE_TICKS)),
+                    Err(at) => {
+                        self.rubble.insert(at, (i, RUBBLE_TICKS));
+                        self.rubble_moves = self.rubble_moves.wrapping_add(1);
+                    }
                 }
             }
         }
@@ -475,16 +482,26 @@ impl Terrain {
 
     /// One tick on: rubble settles, and firm ground it was.
     pub(crate) fn settle_rubble(&mut self) {
+        let before = self.rubble.len();
         self.rubble.retain_mut(|(_, left)| {
             *left -= 1;
             *left > 0
         });
+        if self.rubble.len() != before {
+            self.rubble_moves = self.rubble_moves.wrapping_add(1);
+        }
     }
 
     /// The rubble lying now: tile index and ticks left, by index. Empty
     /// until a building falls.
     pub fn rubble(&self) -> &[(u32, u16)] {
         &self.rubble
+    }
+
+    /// A count that changes whenever a tile comes to be rubble or stops
+    /// being (with [`Terrain::soaked`], what changes the soft ground).
+    pub fn rubble_moves(&self) -> u32 {
+        self.rubble_moves
     }
 
     /// Whether the tile `p` is on is rubble (see [`Terrain::rubble`]).

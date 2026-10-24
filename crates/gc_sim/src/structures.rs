@@ -775,7 +775,7 @@ impl Structures {
             siege_gap: vec![Fx::ZERO; regiments],
             siege_stalls: vec![0; regiments],
             fallen: Vec::with_capacity(n),
-            rubble: Vec::new(),
+            rubble: Vec::with_capacity(8),
             struck: Vec::with_capacity(regiments),
             consumed: Vec::with_capacity(regiments),
             climbed: Vec::with_capacity(regiments),
