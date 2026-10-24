@@ -245,6 +245,9 @@ const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
 /// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
 const GENERAL_SCALE: f32 = 1.15;
+/// How far a man finishing one on the ground bends his chest and head down
+/// to him, as `SoldierInstance::look` pitches (127 is an eighth of a turn).
+const FINISH_PITCH: i8 = 110;
 const GENERAL_LIGHT: f32 = 0.35;
 
 /// The colour a general is drawn in: his side's, lightened, with his own
@@ -3646,6 +3649,10 @@ impl Running {
                             lift: 0.0,
                             scale,
                             feet,
+                            // Finishing a man on the ground, he bends over
+                            // him to strike down.
+                            look: [0, (s.stoop * f32::from(FINISH_PITCH)) as i8],
+                            look_weight: (s.stoop * 255.0) as u8,
                             ..Default::default()
                         });
                     },
@@ -5548,14 +5555,16 @@ impl Running {
                 // The victim's half of the matched kill he fell to, or the
                 // death clip, held on its last frame; models without one lie
                 // down in their idle pose once the blow lands.
-                if let Some((pose, flat)) = art.clips.death(model, c.age, c.kill) {
+                // One killed lying down lies as he was, at the end of it.
+                let age = if c.lying { f32::INFINITY } else { c.age };
+                if let Some((pose, flat)) = art.clips.death(model, age, c.kill) {
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
                     let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;
                     };
                     // Still standing, waiting for the blow, he is a man.
                     let lod = lod
-                        + if c.age >= 0.0 && art.view.force.is_none() {
+                        + if (c.age >= 0.0 || c.lying) && art.view.force.is_none() {
                             CORPSE_LOD_BIAS
                         } else {
                             0
@@ -5574,7 +5583,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: c.lift - 0.5 * c.sink,
                             scale: look.scale,
-                            feet: models::dying_feet(c.age),
+                            feet: models::dying_feet(age),
                             ..Default::default()
                         });
                         continue;

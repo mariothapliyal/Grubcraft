@@ -25,6 +25,8 @@ use gc_sim::{Challenge, General, Mass, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 use std::collections::HashMap;
 
+use crate::models::down_depth;
+
 const SLOTS: usize = MAX_MODELS as usize;
 /// How far a soldier may stand from its exact slot, in tiles, so ranks don't
 /// look ruled with a straight edge.
@@ -355,6 +357,9 @@ pub struct Soldier {
     pub look: u8,
     /// His side's general (see [`gc_sim::generals`]), drawn to stand out.
     pub general: bool,
+    /// How far he bends to strike down at a man lying at his feet (a
+    /// finisher), 0 (not at all) to 1.
+    pub stoop: f32,
 }
 
 /// A dueling soldier's move, with how far through it he is (0 to 1).
@@ -443,6 +448,9 @@ struct Killing {
     gap: f32,
     /// The matched kill the two play, if any, and its timing.
     pair: Option<(u16, KillTiming)>,
+    /// Finishing a man lying at his feet: he stands over him and strikes
+    /// down.
+    finish: bool,
 }
 
 impl Killing {
@@ -450,7 +458,22 @@ impl Killing {
         spot: Vec2::ZERO,
         gap: 0.0,
         pair: None,
+        finish: false,
     };
+}
+
+/// A man finishing one knocked down stands this far from him, in tiles,
+/// over his body.
+const FINISH_GAP: f32 = 0.55;
+/// He bends to it over this share of his killing blow, and straightens
+/// over this last share.
+const STOOP_IN: f32 = 0.3;
+const STOOP_OUT: f32 = 0.25;
+
+/// How far a man finishing one on the ground bends to it, `f` of the way
+/// through his killing blow.
+fn stoop(f: f32) -> f32 {
+    (f / STOOP_IN).min((1.0 - f) / STOOP_OUT).clamp(0.0, 1.0)
 }
 
 /// What a blow did to a soldier, or the killing blow he is dealing, which
@@ -525,8 +548,9 @@ struct Fallen {
     unit: u16,
     /// His player in the low bits, above [`RECOIL_SHIFT`] how hard the
     /// blow that killed him drove him back: 0 for none (arrows, and men who
-    /// simply drop), 1 for a blow, 2 for a heavier man's; or [`THROWN`]
-    /// for a man thrown by it, and [`SPIN_LEFT`] for which way he turns.
+    /// simply drop), 1 for a blow, 2 for a heavier man's, [`FINISHED`] for
+    /// one finished where he lay; or [`THROWN`] for a man thrown by it, and
+    /// [`SPIN_LEFT`] for which way he turns.
     owner: u8,
     look: u8,
     /// The matched kill he fell to, if any.
@@ -539,6 +563,9 @@ const RECOIL_SHIFT: u32 = 4;
 /// lands a way off, turned over; and the bit for turning to his left.
 const THROWN: u8 = 1 << 6;
 const SPIN_LEFT: u8 = 1 << 7;
+/// [`Fallen::owner`]'s recoil step for a man killed lying down, knocked
+/// off his feet: he lies as he was, and isn't driven anywhere.
+const FINISHED: u8 = 3 << RECOIL_SHIFT;
 
 /// How far through `seconds` `age` is, eased out: 0 before, 1 after.
 fn ease_out(age: f32, seconds: f32) -> f32 {
@@ -558,7 +585,7 @@ impl Fallen {
     fn pose(&self, age: f32) -> (Vec2, Vec2, f32) {
         if self.owner & THROWN == 0 {
             let steps = (self.owner >> RECOIL_SHIFT) & 3;
-            if steps == 0 || age <= 0.0 {
+            if steps == 0 || self.lying() || age <= 0.0 {
                 return (self.pos, self.facing, 0.0);
             }
             let back = RECOIL * f32::from(steps) * ease_out(age, RECOIL_SECONDS);
@@ -581,6 +608,11 @@ impl Fallen {
             Vec2::new(turn.x, -turn.y)
         };
         (pos, turn.rotate(self.facing), lift)
+    }
+
+    /// Whether he was killed lying down (see [`FINISHED`]).
+    fn lying(&self) -> bool {
+        self.owner & (THROWN | FINISHED) == FINISHED
     }
 
     /// Where he comes to rest.
@@ -607,6 +639,9 @@ pub struct Corpse {
     /// How far it has sunk into the ground, from 0 (lying on it) to 1 (gone),
     /// once it is the oldest on a full field and makes room for a new one.
     pub sink: f32,
+    /// Killed lying down, knocked off his feet: he lies as he was, in the
+    /// last of his death move.
+    pub lying: bool,
     /// The matched kill he fell to (as for [`Move::Kill`]): he plays its
     /// victim's half, which starts with his killer's, `age` + its contact
     /// seconds ago. `None` for his own death.
@@ -1769,6 +1804,10 @@ impl Puppets {
                 phase,
                 look: self.looks[i],
                 general: general == Some(k),
+                stoop: match acting {
+                    Some((Act::Kill, f)) if self.killing[i].finish => stoop(f),
+                    _ => 0.0,
+                },
             });
         }
     }
@@ -1828,6 +1867,9 @@ impl Puppets {
             };
             // The matched kill he falls to, if his killer starts one now.
             let mut paired = None;
+            // Knocked off his feet and down: he dies where he lies, and his
+            // killer stands over him to finish him.
+            let lying = matches!(self.acting(victim), Some((Act::Down, f)) if down_depth(f) > 0.5);
             let blow_in = if killer == NONE as usize {
                 None
             } else if slain.is_some() {
@@ -1863,17 +1905,20 @@ impl Puppets {
                                 unit_hash(block.handle, pick, salt),
                             )
                             .filter(|&(_, k)| {
-                                killer % SLOTS < self.front(kr)
+                                !lying
+                                    && killer % SLOTS < self.front(kr)
                                     && (apart - k.reach).abs() <= DUEL_LEASH
                             });
-                        let gap = pair.map_or(
-                            (self.fighter[killer / SLOTS].gap() + block.fighter.gap()) / 2.0,
-                            |(_, k)| k.reach,
-                        );
+                        let gap = match pair {
+                            Some((_, k)) => k.reach,
+                            None if lying => FINISH_GAP,
+                            None => (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
+                        };
                         self.killing[killer] = Killing {
                             spot: self.pos[victim],
                             gap,
                             pair,
+                            finish: lying,
                         };
                         paired = pair.map(|(id, _)| id);
                         Some(self.kill_lands_in(killer, 0.0))
@@ -1881,6 +1926,7 @@ impl Puppets {
                 }
             };
             let (fell, facing) = match blow_in {
+                Some(wait) if lying => (self.time + wait, self.facing[victim]),
                 Some(wait) => (
                     self.time + wait,
                     (self.pos[killer] - self.pos[victim]).normalize_or(self.facing[victim]),
@@ -1891,6 +1937,7 @@ impl Puppets {
             // and a much heavier man's or a charge's throws him; a matched
             // kill plays his fall itself.
             let driven = match blow_in {
+                _ if lying => FINISHED,
                 _ if paired.is_some() => 0,
                 Some(_) => {
                     let kr = killer / SLOTS;
@@ -1988,6 +2035,7 @@ impl Puppets {
                 age,
                 sink,
                 kill: f.pair,
+                lying: f.lying(),
             }
         };
         self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(
@@ -3095,6 +3143,44 @@ mod tests {
             );
             assert!((lies.facing.length() - 1.0).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn a_man_killed_on_the_ground_is_finished_where_he_lies() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        // Knocked down, and lying still a moment later.
+        let k = (0..4).find(|&k| p.partner[k] != NONE).expect("a pair");
+        let down = p.partner[k] as usize;
+        p.suffer(down, k, Act::Down);
+        while !matches!(p.acting(down), Some((Act::Down, f)) if down_depth(f) >= 1.0) {
+            p.advance(FRAME);
+        }
+        let (lay, facing) = (p.pos[down], p.facing[down]);
+        p.slain.push((b.handle, (down % SLOTS) as u8, k as u32));
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        // His killer stands over him to strike down at him...
+        assert_eq!(p.act[k].0, Act::Kill);
+        assert!(p.killing[k].finish && p.killing[k].gap == FINISH_GAP);
+        let lies = p.corpses().last().unwrap();
+        assert!(lies.lying && lies.age < 0.0, "{lies:?}");
+        let mut stooped = 0.0_f32;
+        while p.corpses().last().unwrap().age < 1.0 {
+            p.advance(FRAME);
+            p.pair(|x, y| x != y);
+            p.update(&a, 0, FRAME, |s| stooped = stooped.max(s.stoop));
+            p.update(&b, 1, FRAME, |_| {});
+        }
+        assert!(stooped > 0.99, "{stooped}");
+        // ...and he lies as he was, not driven or turned.
+        let lies = p.corpses().last().unwrap();
+        assert!(lies.lying);
+        assert!(lies.pos.distance(lay) < 0.2, "{lies:?} {lay}");
+        assert_eq!(lies.facing, facing);
     }
 
     #[test]
