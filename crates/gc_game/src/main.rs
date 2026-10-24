@@ -3474,8 +3474,8 @@ impl Running {
                 };
                 let centre = look.centre();
                 let at = Vec3::new(centre.x, look.base + look.top * 0.5, centre.y);
-                if (reveal || fog.sees_tile((centre.x as i32, centre.y as i32)))
-                    && cull.sees(at, look.top + 6.0)
+                if cull.on_screen(at, look.top + 6.0)
+                    && (reveal || fog.sees_tile((centre.x.floor() as i32, centre.y.floor() as i32)))
                 {
                     ambient::bases::emit(
                         look,

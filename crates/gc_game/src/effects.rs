@@ -141,9 +141,10 @@ impl Field {
         self.fx.smoke(pos, size, 0.05, dt);
     }
 
-    /// A lit window or lantern at `pos`, for `dt` seconds.
-    pub fn lamp(&mut self, pos: Vec3, colour: [u8; 3], size: f32, dt: f32) {
-        self.fx.lamp(pos, colour, size, dt);
+    /// A lit window or lantern at `pos`, at `level` of full brightness, for
+    /// `dt` seconds.
+    pub fn lamp(&mut self, pos: Vec3, colour: [u8; 3], size: f32, level: f32, dt: f32) {
+        self.fx.lamp(pos, colour, size, level, dt);
     }
 
     /// Floating lights of `colour` over `pos`, `amount` of them.

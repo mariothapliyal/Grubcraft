@@ -6,7 +6,7 @@
 //! simulation's buildings and hashed nowhere.
 
 use gc_sim::structures::Role;
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use crate::effects::Field;
 use crate::siege::{Look, SMOKES_BELOW, Style};
@@ -20,8 +20,14 @@ const SPORE: [u8; 3] = [214, 204, 116];
 /// distance, and fade out from `LAMPS_NEAR`.
 const LAMPS_NEAR: f32 = 35.0;
 const LAMPS_FAR: f32 = 75.0;
-/// Smoke and drifting lights can be seen farther.
+/// Smoke and drifting lights can be seen farther; past `SMALL_FAR` only the
+/// big buildings make any, so a crowded town doesn't flood the particles.
 pub const REACH: f32 = 110.0;
+const SMALL_FAR: f32 = 60.0;
+/// The most effects time one frame makes smoke and light for, in seconds.
+const MOST_DT: f32 = 0.25;
+/// How far outside its walls a lamp hangs, in tiles.
+const OUTSIDE: f32 = 0.1;
 
 /// Whether a building of this role is lived or worked in.
 fn lived_in(role: Role) -> bool {
@@ -46,6 +52,8 @@ fn hash(look: &Look, salt: u32) -> f32 {
 /// can see. `dt` is the effects time since the last frame, `dusk` how dark
 /// the light is (0 by day to 1), `distance` how far the camera is.
 pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
+    // A long frame makes no more than a quarter second of smoke and light.
+    let dt = dt.min(MOST_DT);
     if !look.finished || look.hp < SMOKES_BELOW || !lived_in(look.role) {
         return;
     }
@@ -53,6 +61,9 @@ pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
     let centre = look.centre();
     let size = look.max - look.min;
     let big = matches!(look.role, Role::Main | Role::Outpost);
+    if distance > SMALL_FAR && !big {
+        return;
+    }
     let on = |up: f32, along: f32, across: f32| {
         Vec3::new(
             centre.x + (along - 0.5) * size.x * 0.8,
@@ -98,15 +109,18 @@ pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
     if glow * fade > 0.0 {
         for k in 0..lamps {
             let (a, b) = (hash(look, 10 + 2 * k), hash(look, 11 + 2 * k));
-            // On the walls: pick a side, then a place along it.
-            let (along, across) = match (a * 4.0) as u32 {
-                0 => (b, 0.0),
-                1 => (b, 1.0),
-                2 => (0.0, b),
-                _ => (1.0, b),
+            // On the walls: pick a side, then a place along it, just outside.
+            let along = (b - 0.5) * 0.8;
+            let out = size / 2.0 + Vec2::splat(OUTSIDE);
+            let (dx, dz) = match (a * 4.0) as u32 {
+                0 => (along * size.x, -out.y),
+                1 => (along * size.x, out.y),
+                2 => (-out.x, along * size.y),
+                _ => (out.x, along * size.y),
             };
             let height = look.top * (0.3 + 0.3 * hash(look, 20 + k));
-            fx.lamp(on(height, along, across), colour, 0.13, dt * glow * fade);
+            let at = Vec3::new(centre.x + dx, look.base + height, centre.y + dz);
+            fx.lamp(at, colour, 0.13, glow * fade, dt);
         }
     }
 }
@@ -117,7 +131,6 @@ mod tests {
     use crate::siege::stuff;
     use gc_data::Faction;
     use gc_sim::structures::Armour;
-    use glam::Vec2;
 
     fn look(faction: Faction, role: Role, finished: bool, hp: f32) -> Look {
         Look {
@@ -176,10 +189,39 @@ mod tests {
 
     #[test]
     fn windows_fade_with_distance_but_the_smoke_does_not() {
-        let house = look(Faction::EmberClans, Role::Housing, true, 1.0);
+        let house = look(Faction::EmberClans, Role::Main, true, 1.0);
         let near = made(&house, 1.0, 20.0, 10.0);
         let far = made(&house, 1.0, LAMPS_FAR, 10.0);
         assert!(far > 0 && far < near, "{far} {near}");
+    }
+
+    #[test]
+    fn lamps_hang_outside_the_walls() {
+        let hall = look(Faction::EmberClans, Role::Main, true, 1.0);
+        let mut fx = Field::new(None);
+        // Dusk, near, a second of frames; the smoke is above the roof, so
+        // anything low and glowing is a lamp.
+        for _ in 0..30 {
+            emit(&hall, 1.0 / 30.0, 1.0, 20.0, &mut fx);
+        }
+        let made = fx.frame(0.0, 1.0, Vec2::ZERO, 200.0, |_| 0.0);
+        let lamps: Vec<_> = made.iter().filter(|p| p.pos.y < hall.top * 0.65).collect();
+        assert!(!lamps.is_empty());
+        for p in lamps {
+            let inside = p.pos.x > hall.min.x
+                && p.pos.x < hall.max.x
+                && p.pos.z > hall.min.y
+                && p.pos.z < hall.max.y;
+            assert!(!inside, "{:?}", p.pos);
+        }
+    }
+
+    #[test]
+    fn far_off_only_the_big_buildings_smoke() {
+        let house = look(Faction::EmberClans, Role::Housing, true, 1.0);
+        let hall = look(Faction::EmberClans, Role::Main, true, 1.0);
+        assert_eq!(made(&house, 0.0, SMALL_FAR + 5.0, 5.0), 0);
+        assert!(made(&hall, 0.0, SMALL_FAR + 5.0, 5.0) > 0);
     }
 
     #[test]

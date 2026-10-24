@@ -81,9 +81,9 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 
 ### What a player sees
 
-- **Ember Clans** (and any timber or stone building): a finished hall or outpost smokes from two chimneys, a kitchen or forge from one thicker column, a house from one thin wisp. At dusk one to three windows or lanterns light up warm orange, more on bigger buildings.
-- **Carrion Concord**: green ghost-lights drift up over each finished building, with green lamps at dusk. **Shard Choir**: cyan resonance motes and glowing windows that shine a little even by day and brighten at dusk. **Brood**: pale spores breathing out of each, with dim lamps at dusk.
-- Only finished, undamaged buildings that the viewer can see (a building under 70 % hit points smokes the siege way instead, [doc 26](26-fortifications.md)); not walls or towers; not in the menu or the unit viewer. The smoke shows out to 110 tiles of camera distance; windows fade out between 35 and 75, where they would be under a pixel.
+- **Ember Clans** (and any timber or stone building): a finished hall or outpost smokes from two chimneys, a kitchen or forge from one thicker column, a house from one thin wisp. At dusk one to three lanterns glow warm orange on the outside of the walls, more on bigger buildings.
+- **Carrion Concord**: green ghost-lights drift up over each finished building, with green lamps at dusk. **Shard Choir**: cyan resonance motes and glowing windows that shine a little even by day and brighten at dusk. **Brood**: pale spores breathing out of each, with pale lamps at dusk.
+- Only finished, undamaged buildings that the viewer can see (a building under 70 % hit points smokes the siege way instead, [doc 26](26-fortifications.md)); not walls or towers; not in the menu or the unit viewer. The smoke shows out to 110 tiles of camera distance (past 60 only halls and outposts make any, so a crowded town cannot flood the particles); lamps fade out between 35 and 75, where they would be under a pixel.
 
 ### How it works
 
@@ -93,4 +93,4 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 
 ### Not yet (stage 3b)
 
-- Workers and porters walking between a base's buildings, log piles and stacked supplies, carts on the road from a seep to its granary, forge sparks, and window light that really is a model glow (the lights are particles for now, so they sit on the walls rather than in the windows' own frames).
+- Workers and porters walking between a base's buildings, log piles and stacked supplies, carts on the road from a seep to its granary, forge sparks, and window light that really is a model glow (the lights are particles hung just outside the walls for now, not in the windows' own frames).
