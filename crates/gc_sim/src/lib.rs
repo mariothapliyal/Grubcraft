@@ -105,7 +105,7 @@ pub const SYSTEMS: [&str; 14] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 28;
+pub const SIM_VERSION: u32 = 29;
 
 /// Simulation ticks per second. One lockstep turn equals one tick.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -266,6 +266,25 @@ impl Formation {
     pub fn pace_percent(self) -> i32 {
         match self {
             Formation::ShieldWall => SHIELD_WALL_PACE_PERCENT,
+            _ => 100,
+        }
+    }
+
+    /// Whether this formation stands in close order on the side it is hit
+    /// from: a shield wall guards its front only.
+    pub fn close_on(self, front: bool) -> bool {
+        self.close() && (front || self != Formation::ShieldWall)
+    }
+
+    /// Percent of their weight its ranks put against a charge on their
+    /// front (docs/05-combat.md, "Charges that plough in"): close order
+    /// half again, gaps a third less. Nobody braces a side, so any order
+    /// holds a flank or rear alike.
+    pub fn hold_percent(self, front: bool) -> u64 {
+        match self {
+            _ if !front => 100,
+            f if f.close() => 150,
+            Formation::Loose => 67,
             _ => 100,
         }
     }
@@ -468,8 +487,8 @@ impl UnitStats {
     pub fn melee_defence_in(&self, formation: Formation, front: bool, still: bool) -> i32 {
         i32::from(self.melee_defence)
             + match formation {
-                Formation::ShieldWall if !front => 0,
-                f if f.close() => TIGHT_DEFENCE + self.discipline_bonus(still),
+                f if f.close_on(front) => TIGHT_DEFENCE + self.discipline_bonus(still),
+                Formation::ShieldWall => 0,
                 Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
                 _ => 0,
             }
@@ -1065,6 +1084,17 @@ impl World {
             area,
             then: then.map(|p| (p.building, p.tile, p.turn)),
         })
+    }
+
+    /// The tile worker `h` is clearing, once work has begun on it and
+    /// unless the worker is fighting (Conquest only). The game shows the
+    /// felling with it, and checks the worker is at the tile; nothing in
+    /// the simulation reads it.
+    pub fn clearing_tile_of(&self, h: RegimentHandle) -> Option<(i32, i32)> {
+        let c = self.conquest.as_ref()?;
+        let side = self.terrain.growth_side();
+        c.clearing
+            .working_tile(&self.regiments, self.regiments.resolve(h)?, side)
     }
 
     /// Every building paid for and waiting on its ground being cleared:
