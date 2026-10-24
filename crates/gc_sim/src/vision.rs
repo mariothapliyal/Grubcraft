@@ -736,7 +736,11 @@ impl Vision {
         terrain: &Terrain,
         i: usize,
     ) -> (Option<Fx>, Option<Fx>) {
-        if regs.engaged[i].is_some() || self.revealed[i] > 0 || (self.air.dark && regs.torches[i]) {
+        if regs.engaged[i].is_some()
+            || self.revealed[i] > 0
+            || regs.in_fire[i] > 0
+            || (self.air.dark && regs.torches[i])
+        {
             return (None, None);
         }
         let b = Block::of(regs, units, i);
@@ -782,6 +786,13 @@ impl Vision {
         self.any_lit = false;
         if !self.air.dark {
             return;
+        }
+        // In a fire's light (see [`crate::fire`]).
+        for b in 0..regs.alive.len() {
+            if regs.alive[b] && regs.fire_lit[b] {
+                self.lit[b] = true;
+                self.any_lit = true;
+            }
         }
         let at = placement!(regs, stances);
         let lit = &mut self.lit;

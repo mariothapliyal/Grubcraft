@@ -2050,6 +2050,7 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
                         KeyCode::KeyX if grid_key => r.battle_press(hud::SLOT_TORCHES),
+                        KeyCode::KeyE if grid_key => r.battle_press(hud::SLOT_BURN),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
                         KeyCode::Space if grid_key => r.jump_to_alert(),
                         // F1 finds an idle worker while there is one to find,
@@ -2957,6 +2958,27 @@ impl Running {
         } else {
             "Spears lifted".into()
         });
+    }
+
+    /// E: set the woods beside each selected regiment alight (the sim
+    /// refuses those with none in reach; docs/32-changing-land.md).
+    fn burn_woods(&mut self) {
+        let mine: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        for r in &mine {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Burn { regiment: r.handle },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say("Fire set to the woods beside them: it spreads with the wind".into());
     }
 
     /// X: light the selection's torches, or, if they all burn already, put
@@ -4002,6 +4024,27 @@ impl Running {
                     view_distance,
                     |p| heightmap.height_at(p.x, p.y).max(water),
                 );
+            }
+        }
+        // Woods on fire (the sim's burning tiles): a blaze on each the
+        // viewer sees, near enough to matter; its flames light the ground.
+        if fx_speed > 0.0 {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let fire_dt = dt.as_secs_f32() * fx_speed;
+            for b in self.world.fires() {
+                let at = Vec2::new(b.x as f32 + 0.5, b.y as f32 + 0.5);
+                if at.distance(view_focus) > view_distance || !(reveal || fog.sees_tile((b.x, b.y)))
+                {
+                    continue;
+                }
+                let tall = match b.growth {
+                    gc_sim::Growth::Scrub => 0.8,
+                    gc_sim::Growth::Thicket => 3.0,
+                    _ => 2.4,
+                };
+                let ground = heightmap.height_at(at.x, at.y);
+                self.effects
+                    .blaze(glam::Vec3::new(at.x, ground, at.y), tall, fire_dt);
             }
         }
         let particles = self.effects.frame(
