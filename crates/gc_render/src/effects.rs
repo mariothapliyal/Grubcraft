@@ -583,7 +583,8 @@ impl Effects {
                 }
                 Weather::Snow => {
                     let fall = self.rng.between(1.1, 1.9);
-                    let top = self.rng.between(0.4, 1.0) * FALL_HEIGHT;
+                    // Gone before the ring's longest life (8 s) cuts it short.
+                    let top = (self.rng.between(0.4, 1.0) * FALL_HEIGHT).min(fall * 7.4);
                     self.out.push(Particle {
                         pos: Vec3::new(at.x, low + top, at.y),
                         vel: Vec3::new(
@@ -756,7 +757,7 @@ mod tests {
                 let end = p.pos.y + p.vel.y * p.life;
                 assert!(end >= 3.0, "{weather:?}: ends at {end}");
                 assert!(p.pos.y <= 3.0 + FALL_HEIGHT);
-                assert!(p.life > 0.0);
+                assert!(p.life > 0.0 && p.life <= 8.0, "{weather:?}: {}", p.life);
                 // Inside the disc it was asked for.
                 assert!(Vec2::new(p.pos.x, p.pos.z).distance(Vec2::new(50.0, 50.0)) <= 10.01);
             }

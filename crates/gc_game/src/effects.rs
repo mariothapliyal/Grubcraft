@@ -26,11 +26,13 @@ const MOTES_MOST: f32 = 40.0;
 /// Rain and snow: drops or flakes a second for each tile of ground under
 /// the fall, the most a second, and how wide it falls round the camera's
 /// focus (nearest and farthest radius, in tiles).
-const RAIN_PER_TILE: f32 = 1.2;
-const RAIN_MOST: f32 = 2400.0;
+const RAIN_PER_TILE: f32 = 0.8;
+const RAIN_MOST: f32 = 1200.0;
 const SNOW_PER_TILE: f32 = 0.25;
-const SNOW_MOST: f32 = 500.0;
+const SNOW_MOST: f32 = 350.0;
 const FALL_RADIUS: (f32, f32) = (14.0, 60.0);
+/// The camera heights between which the fall fades out.
+const FALL_FADE: (f32, f32) = (110.0, 175.0);
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 /// Fresh-cut wood, and leaves and torn scrub.
@@ -227,8 +229,11 @@ impl Field {
             Weather::Snow => (SNOW_PER_TILE, SNOW_MOST),
             _ => (RAIN_PER_TILE, RAIN_MOST),
         };
+        // Seen from high up the streaks are under a pixel wide, so the fall
+        // thins out with the camera's height and is gone in Commander View.
+        let near = 1.0 - ((distance - FALL_FADE.0) / (FALL_FADE.1 - FALL_FADE.0)).clamp(0.0, 1.0);
         let radius = (distance * 0.5).clamp(FALL_RADIUS.0, FALL_RADIUS.1);
-        let rate = (per_tile * std::f32::consts::PI * radius * radius).min(most) * amount;
+        let rate = (per_tile * std::f32::consts::PI * radius * radius).min(most) * amount * near;
         self.fx.set_density(density);
         self.fx
             .precipitation(weather, focus, radius, rate * dt.min(0.25), ground);
@@ -323,9 +328,15 @@ mod tests {
         let light = fall(Weather::Rain, 0.3, 40.0);
         let heavy = fall(Weather::Rain, 1.0, 40.0);
         assert!(light < heavy);
-        // The widest fall is capped, so a battle's own effects keep room.
-        assert!(fall(Weather::Rain, 1.0, 260.0) <= RAIN_MOST as usize + 60);
-        assert!(fall(Weather::Snow, 1.0, 260.0) <= SNOW_MOST as usize + 20);
+        // The widest fall is capped, so a battle's own effects keep room in
+        // the ring: everything together spawns under 4,000 a second, which
+        // the ring holds for its longest life (8 seconds).
+        assert!(fall(Weather::Rain, 1.0, 100.0) <= RAIN_MOST as usize + 60);
+        assert!(fall(Weather::Snow, 1.0, 100.0) <= SNOW_MOST as usize + 20);
+        assert!(RAIN_MOST + 400.0 < gc_render::MAX_PARTICLES as f32 / 8.0);
+        // High up, in Commander View, there is none.
+        assert_eq!(fall(Weather::Rain, 1.0, 180.0), 0);
+        assert!(fall(Weather::Rain, 1.0, 140.0) < fall(Weather::Rain, 1.0, 100.0));
     }
 
     #[test]

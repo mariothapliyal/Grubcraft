@@ -25,8 +25,10 @@ pub enum LookPreset {
     Storm,
     /// The sun just above the hills: violet shade, an orange sky.
     Dusk,
-    /// Moonlight: deep blue shade and a dark sky. Lit places (lamps,
-    /// torches, fires) stand out; the rest is dim but readable.
+    /// Moonlight: deep blue shade and a dark sky, the moon low enough that
+    /// the game's own "it is dark" test (the sun below 0.3 high) lights
+    /// the lamps and sends out fireflies. Lit places stand out; the rest is
+    /// dim but readable.
     Night,
 }
 
@@ -162,7 +164,7 @@ impl LookPreset {
                 ..GOLDEN_HOUR
             },
             LookPreset::Night => Look {
-                sun: [-0.45, 0.55, -0.55],
+                sun: [-0.80, 0.18, -0.50],
                 sun_color: [0.34, 0.44, 0.74],
                 sky_ambient: [0.05, 0.065, 0.14],
                 ground_ambient: [0.022, 0.026, 0.05],
@@ -744,6 +746,14 @@ mod tests {
         for p in LookPreset::ALL {
             assert!(p.look().sun_dir().y > 0.05, "{}", p.name());
         }
+    }
+
+    #[test]
+    fn the_moon_is_low_so_the_game_knows_it_is_dark() {
+        // The ambient touches and lit windows read the sun's height; the
+        // threshold is `ambient::touches::DUSK_AT`.
+        assert!(LookPreset::Night.look().sun_dir().y < 0.25);
+        assert!(LookPreset::Noon.look().sun_dir().y > 0.5);
     }
 
     #[test]

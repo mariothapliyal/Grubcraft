@@ -1969,7 +1969,10 @@ impl ApplicationHandler for App {
                             r.atmosphere.next_preset();
                             r.sandbox.dirty = true;
                         }
-                        KeyCode::F12 if down && !event.repeat => r.atmosphere.next_weather(),
+                        KeyCode::F12 if down && !event.repeat => {
+                            r.atmosphere.next_weather();
+                            r.sandbox.dirty = true;
+                        }
                         KeyCode::F10 if down && !event.repeat => {
                             r.atmosphere.toggle_panel();
                             // The panel takes the arrow keys while it is open.
@@ -3702,19 +3705,27 @@ impl Running {
                 |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
             );
         }
-        self.effects.weather(
-            dt.as_secs_f32() * fx_speed,
-            density
-                * if self.menu.settings().clarity {
-                    0.4
-                } else {
-                    1.0
-                },
-            self.atmosphere.weather(),
-            view_focus,
-            view_distance,
-            |p| heightmap.height_at(p.x, p.y),
-        );
+        // Rain and snow, the one weather clearing and the one coming in;
+        // nobody is looking at the field behind the menu or in the unit
+        // viewer.
+        if self.viewer.is_none() && !(self.menu_open && self.online.is_none()) {
+            let thin = if self.menu.settings().clarity {
+                0.4
+            } else {
+                1.0
+            };
+            let water = heightmap.water_level();
+            for sky in [self.atmosphere.leaving(), self.atmosphere.weather()] {
+                self.effects.weather(
+                    dt.as_secs_f32() * fx_speed,
+                    density * thin,
+                    sky,
+                    view_focus,
+                    view_distance,
+                    |p| heightmap.height_at(p.x, p.y).max(water),
+                );
+            }
+        }
         let particles = self.effects.frame(
             dt.as_secs_f32() * fx_speed,
             density,
