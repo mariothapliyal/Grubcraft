@@ -1811,6 +1811,19 @@ impl Puppets {
                     look
                 };
                 self.facing[i] = turn_toward(self.facing[i], look, TURN_RATE * dt);
+                // Motion warping: a man of the front rank dealing a killing
+                // blow is drawn onto the distance it needs from where his
+                // man stood, arriving as it lands, and holds there as he
+                // follows through, so the blow meets its man.
+                if let Some((Act::Kill, f)) =
+                    acting.filter(|_| k < files as usize && champion.is_none())
+                {
+                    let kill = self.killing[i];
+                    let exact = kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap;
+                    let left = self.kill_lands_in(i, f);
+                    let share = if left > dt { dt / left } else { 1.0 };
+                    self.pos[i] = self.pos[i].lerp(exact, share);
+                }
             }
             let speed = if fresh { 0.0 } else { self.vel[i].length() };
             let mut pos = self.pos[i];
@@ -1857,7 +1870,7 @@ impl Puppets {
                 _ => None,
             };
             let reeling = acting.is_some_and(|(act, _)| act.reels());
-            if let Some(beat) = beat.filter(|_| !reeling) {
+            if let Some(beat) = beat.filter(|_| !reeling && !killing) {
                 // The pair shares a rhythm, half a round apart: one steps in
                 // to swing as the other gives ground.
                 pos += facing * DUEL_STEP * (beat.fract() * tau).sin();
@@ -3156,7 +3169,7 @@ mod tests {
         let lies = p.corpses().next().unwrap();
         assert_eq!(lies.pos, stood.pos);
         let apart = lies.pos.distance(at_contact);
-        assert!((apart - KILL.reach).abs() < 0.35, "{apart}");
+        assert!((apart - KILL.reach).abs() < 0.01, "{apart}");
     }
 
     /// Puppets whose men (unit 0) all play one matched kill on each other.
@@ -3326,7 +3339,7 @@ mod tests {
         assert!(lies.pos.distance(lay) < 0.2, "{lies:?} {lay}");
         assert_eq!(lies.facing, facing);
         // He closed in to stand over him.
-        assert!((closest - FINISH_GAP).abs() < 0.2, "{closest}");
+        assert!((closest - FINISH_GAP).abs() < 0.01, "{closest}");
     }
 
     #[test]
