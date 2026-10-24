@@ -123,9 +123,9 @@
 //! `assets-src/models.ron` and `assets-src/buildings/*.ron`; `all` is every
 //! soldier, `buildings` every building stage) in a row on an empty field under a fixed camera,
 //! cycling through idle, walk, attack and death, and `--showroom-clip
-//! idle|walk|attack|shoot|cheer|die|march|look|kill` holds one clip instead (`march`
+//! idle|walk|attack|shoot|cheer|die|march|look|kill|finish` holds one clip instead (`march`
 //! walks with the attack on the upper body, `look` idles looking round, `kill`
-//! plays a half of a matched kill over and over);
+//! plays a half of a matched kill over and over, `finish` a finisher);
 //! `--viewer NAME|start` opens the Unit viewer (main menu) on the named unit,
 //! or on the first unit with a model; `--fx-demo` sets off every particle
 //! effect at the camera's focus in slow motion, and `--fx-still` freezes them
@@ -246,6 +246,9 @@ const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
 /// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
 const GENERAL_SCALE: f32 = 1.15;
+/// How far a man finishing one on the ground bends his chest and head down
+/// to him, as `SoldierInstance::look` pitches (127 is an eighth of a turn).
+const FINISH_PITCH: i8 = 110;
 const GENERAL_LIGHT: f32 = 0.35;
 
 /// The colour a general is drawn in: his side's, lightened, with his own
@@ -257,6 +260,9 @@ fn general_colour([r, g, b]: [u8; 3], tone: u8) -> [u8; 4] {
 /// Soldiers drawn at least this many pixels tall use levels of detail 0, 1
 /// and 2; smaller ones the last.
 const LOD_PIXELS: [f32; LODS - 1] = [100.0, 40.0, 16.0];
+/// Screen pixels over which head turns and flinches fade in above the
+/// nearest level of detail.
+const HEAD_FADE_PIXELS: f32 = 30.0;
 /// Commander View: past this camera distance soldiers give way to one
 /// banner block per regiment, and come back below the second distance.
 const COMMANDER_IN: f32 = 175.0;
@@ -754,7 +760,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -1004,6 +1010,9 @@ struct Art {
     folk: Option<[usize; 4]>,
     /// The ox cart of the caravans between hamlets, if the pack has it.
     cart: Option<usize>,
+    /// The insects' models, by `ambient::insects::Kind`, if the pack has
+    /// them all.
+    insects: Option<[usize; 3]>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1017,6 +1026,19 @@ struct Art {
 fn lod_for(height: f32, depth: f32, pixel_scale: f32) -> usize {
     let pixels = height * pixel_scale / depth.max(1.0);
     LOD_PIXELS.iter().take_while(|&&p| pixels < p).count()
+}
+
+/// `angle` radians as a look's i8, where 127 is `full`.
+fn look_angle(angle: f32, full: f32) -> i8 {
+    (angle / full * 127.0).round().clamp(-127.0, 127.0) as i8
+}
+
+/// How much of the detail kept for soldiers near the camera (head turns and
+/// flinches) shows on one `height` tiles tall at `depth`: none below the
+/// nearest level of detail, fading in over [`HEAD_FADE_PIXELS`] above it.
+fn head_detail(height: f32, depth: f32, pixel_scale: f32) -> f32 {
+    let pixels = height * pixel_scale / depth.max(1.0);
+    ((pixels - LOD_PIXELS[0]) / HEAD_FADE_PIXELS).clamp(0.0, 1.0)
 }
 
 /// What choosing a level of detail needs from a frame's camera.
@@ -1038,6 +1060,16 @@ impl LodView {
         self.force.unwrap_or_else(|| {
             lod_for(height, (pos - self.eye).dot(self.forward), self.pixel_scale)
         })
+    }
+
+    /// How much near-camera detail shows on a model `height` tiles tall at
+    /// `pos` (see [`head_detail`]); all of it at a forced level (the
+    /// caller draws it at the nearest only).
+    fn detail(&self, height: f32, pos: glam::Vec3) -> f32 {
+        match self.force {
+            Some(_) => 1.0,
+            None => head_detail(height, (pos - self.eye).dot(self.forward), self.pixel_scale),
+        }
     }
 
     /// The level for a model `height` tiles tall standing at `pos`, or none
@@ -1452,6 +1484,11 @@ impl App {
                 .collect::<Option<Vec<_>>>()
                 .and_then(|v| v.try_into().ok()),
             cart: models.by_name("Oxcart"),
+            insects: ambient::insects::Kind::ALL
+                .map(|k| models.by_name(k.model()))
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .and_then(|v| v.try_into().ok()),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -2325,6 +2362,26 @@ impl Running {
                     .flatten();
                 // A tower picks its target; it has nothing to rally.
                 if drag.is_none() && self.tower_right_click(body, plain) {
+                    self.input.right_down = None;
+                    return;
+                }
+                // Your own wall, with regiments that can man it selected
+                // (an enemy at the click is attacked instead).
+                if drag.is_none()
+                    && body.is_none()
+                    && plain.and_then(|p| self.enemy_at(p)).is_none()
+                    && self.man_right_click(plain)
+                {
+                    self.input.right_down = None;
+                    return;
+                }
+                // An enemy's raised wall: the regiments that can climb it do
+                // (Ctrl+right-click besieges it instead).
+                if drag.is_none()
+                    && body.is_none()
+                    && plain.and_then(|p| self.enemy_at(p)).is_none()
+                    && self.climb_right_click()
+                {
                     self.input.right_down = None;
                     return;
                 }
@@ -3254,6 +3311,7 @@ impl Running {
         if !viewing {
             self.push_building_models();
             self.push_crows();
+            self.push_creatures();
         }
         self.mark_shooting();
         if viewing {
@@ -3304,6 +3362,12 @@ impl Running {
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
+            // Marks of a regiment on a wall sit on the wall top.
+            let up = if r.on_wall {
+                self.puppets.wall_top(r.handle)
+            } else {
+                0.0
+            };
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
             if seen
@@ -3320,7 +3384,7 @@ impl Running {
                     } else {
                         [255, 40, 20, 255]
                     },
-                    lift: 0.0,
+                    lift: up,
                 });
             }
             let block = Block {
@@ -3342,6 +3406,22 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            // Manning a wall, the soldiers stand on its tiles.
+            // At the head of a ladder they stand in their block, lifted to
+            // the wall top, with ladders against the wall below them.
+            let ladder = r
+                .climber
+                .then(|| buildings::ladder_props(&self.world, &self.buildings, r.handle, pos))
+                .flatten();
+            if let Some((_, _, top)) = ladder {
+                self.puppets.stand_on_ladder(r.handle, top);
+            } else if r.on_wall
+                || self.puppets.on_wall(r.handle)
+                || self.puppets.on_ladder(r.handle)
+            {
+                let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
+                self.puppets.stand_on_wall(r.handle, slots);
+            }
             // How workers clear a tile, and where its trees should fall from
             // (the regiment's centre, when the viewer sees it; else straight
             // as they stood), whether or not they are on screen.
@@ -3351,6 +3431,17 @@ impl Running {
                 let tile_centre = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
                 let from = if seen { pos } else { tile_centre };
                 self.ambient.felling.cutting(tile, from, clearing_style);
+            }
+            if let (true, Some((spots, facing, top))) = (seen, ladder) {
+                for at in spots {
+                    self.instances.push(BoxInstance {
+                        pos: at.to_array(),
+                        facing: facing.to_array(),
+                        size: [0.5, top + 0.2, 0.1],
+                        color: [120, 84, 48, 255],
+                        lift: 0.0,
+                    });
+                }
             }
             if !seen {
                 self.puppets.update_on(
@@ -3479,7 +3570,7 @@ impl Running {
                     facing: facing.to_array(),
                     size: BANNER_SIZE,
                     color,
-                    lift: BANNER_LIFT,
+                    lift: BANNER_LIFT + up,
                 });
             }
             let model = self.units.models.get(r.unit as usize).copied().flatten();
@@ -3600,6 +3691,8 @@ impl Running {
                     firm(r.owner),
                     |s| {
                         let mut s = s;
+                        // His head turns are from the way the puppets face him.
+                        let puppet_facing = s.facing;
                         // At the wall: the ranks step up to it, and the front
                         // one swings.
                         let mut battering = None;
@@ -3616,7 +3709,7 @@ impl Running {
                             }
                         }
                         let ground = heightmap.height_at(s.pos.x, s.pos.y);
-                        let at = glam::Vec3::new(s.pos.x, ground, s.pos.y);
+                        let at = glam::Vec3::new(s.pos.x, ground + s.lift, s.pos.y);
                         let Some(lod) = view.place(height, at) else {
                             return;
                         };
@@ -3682,6 +3775,22 @@ impl Running {
                             }
                             _ => 0,
                         };
+                        // Finishing a man on the ground, he bends over him
+                        // to strike down; else, near the camera, he flinches
+                        // or turns his head (not when turned here to a wall,
+                        // a tool or a stand on a wall top).
+                        let (turn, turn_weight) = match s.head {
+                            _ if s.stoop > 0.0 => ([0, FINISH_PITCH], s.stoop),
+                            Some(h) if lod == 0 && facing.dot(puppet_facing) > 0.99 => (
+                                [
+                                    look_angle(h.yaw, std::f32::consts::FRAC_PI_2),
+                                    look_angle(h.pitch, std::f32::consts::FRAC_PI_4),
+                                ],
+                                view.detail(height, at),
+                            ),
+                            _ => ([0, 0], 0.0),
+                        };
+                        let turn_weight = (turn_weight * 255.0) as u8;
                         let (color, scale) = if s.general {
                             (
                                 general_colour([wr, wg, wb], tone),
@@ -3696,9 +3805,11 @@ impl Running {
                             frames: pose.rows,
                             flags: models::pose_flags(pose, highlight, flat),
                             color,
-                            lift: 0.0,
+                            lift: s.lift,
                             scale,
                             feet,
+                            look: turn,
+                            look_weight: turn_weight,
                             ..Default::default()
                         });
                     },
@@ -3719,7 +3830,7 @@ impl Running {
                         facing: s.facing.to_array(),
                         size,
                         color,
-                        lift: 0.0,
+                        lift: s.lift,
                     });
                 });
         }
@@ -3930,6 +4041,21 @@ impl Running {
                 |tile| reveal || fog.sees_tile(tile),
                 &mut self.effects,
             );
+        }
+        // Insects follow the effects clock, which stops while paused, so they
+        // hang where they are; behind the menu, in the unit viewer and in
+        // Commander View they are not drawn.
+        if !self.menu_open && self.viewer.is_none() && !self.commander {
+            self.ambient.insects.advance(
+                self.puppets.time(),
+                view_focus,
+                view_distance,
+                look.sun_dir().y,
+                density,
+                &self.heightmap,
+            );
+        } else {
+            self.ambient.insects.hush();
         }
         // Smoke from hearths and lit windows on the buildings the viewer
         // sees, near enough to show.
@@ -5640,14 +5766,16 @@ impl Running {
                 // The victim's half of the matched kill he fell to, or the
                 // death clip, held on its last frame; models without one lie
                 // down in their idle pose once the blow lands.
-                if let Some((pose, flat)) = art.clips.death(model, c.age, c.kill) {
+                // One killed lying down lies as he was, at the end of it.
+                let age = if c.lying { f32::INFINITY } else { c.age };
+                if let Some((pose, flat)) = art.clips.death(model, age, c.kill) {
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
                     let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;
                     };
                     // Still standing, waiting for the blow, he is a man.
                     let lod = lod
-                        + if c.age >= 0.0 && art.view.force.is_none() {
+                        + if age >= 0.0 && art.view.force.is_none() {
                             CORPSE_LOD_BIAS
                         } else {
                             0
@@ -5666,7 +5794,7 @@ impl Running {
                             color: [wr, wg, wb, tone],
                             lift: c.lift - 0.5 * c.sink,
                             scale: look.scale,
-                            feet: models::dying_feet(c.age),
+                            feet: models::dying_feet(age),
                             ..Default::default()
                         });
                         continue;
@@ -6824,91 +6952,18 @@ impl Running {
         }
     }
 
-    /// Every standing building that has models, at its construction
-    /// stage, shaken by the blows on it, the crews on tier upgrades, and
-    /// fallen buildings sinking (after `Art::begin`).
-    fn push_building_models(&mut self) {
-        let picked = self.picked_structure();
-        let (Some(art), Some(structures)) = (&mut self.art, self.world.structures()) else {
+    /// The living things of the ambient pass that are on the ground and in
+    /// the air: deer, insects, doves, the villagers of the hamlets and the
+    /// caravans between them, as soldier instances. In every kind of match
+    /// that makes them (the hamlets are Conquest's; the rest are on any
+    /// land).
+    fn push_creatures(&mut self) {
+        let Some(art) = &mut self.art else {
             return;
         };
         let hm = &self.heightmap;
-        // As the skinning shader clamps it, so the lift lands where meant.
         let ground = |x, z| hm.drawn_height(x, z);
-        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
-        for fall in self.siege.sinking() {
-            let height = art.looks.top(fall.model);
-            let at = Vec3::new(fall.pos.x, ground(fall.pos.x, fall.pos.y), fall.pos.y);
-            let still = art.clips.pose(fall.model, Action::Idle, time);
-            if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                let [r, g, b] = fall.colour;
-                art.buckets[fall.model * LODS + lod].push(SoldierInstance {
-                    pos: fall.pos.to_array(),
-                    facing: [0.0, 1.0],
-                    frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
-                    color: [r, g, b, gc_render::TONE_NEUTRAL],
-                    lift: fall.lift,
-                    scale: 1.0,
-                    ..Default::default()
-                });
-            }
-        }
-        for s in structures.iter().filter(|s| shown(s)) {
-            let [r, g, b] = color_of(&self.parties, s.owner);
-            if let Some(model) = art.looks.model_of(&s) {
-                let (centre, top, lift) = buildings::model_spot(&s, &ground);
-                let (shake, rise) = self.siege.jolt(s.handle);
-                let (centre, lift) = (centre + shake, lift + rise);
-                let at = Vec3::new(centre.x, top, centre.y);
-                let still = art.clips.pose(model, Action::Idle, time);
-                let height = art.looks.top(model);
-                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                    art.buckets[model * LODS + lod].push(SoldierInstance {
-                        pos: centre.to_array(),
-                        // The door, on the model's +z, faces south unturned.
-                        facing: buildings::facing_of(s.turn).to_array(),
-                        frames: pose.rows,
-                        flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, gc_render::TONE_NEUTRAL],
-                        lift,
-                        scale: 1.0,
-                        ..Default::default()
-                    });
-                }
-            }
-            let Some(worker) = art.looks.crew_of(&s) else {
-                continue;
-            };
-            let centre = buildings::centre_of(s.tile, s.width, s.depth);
-            for (k, (at, facing)) in buildings::crew_spots(centre, s.width, s.depth)
-                .into_iter()
-                .enumerate()
-            {
-                let foot = Vec3::new(at.x, ground(at.x, at.y), at.y);
-                let Some(lod) = art.view.place(art.heights[worker], foot) else {
-                    continue;
-                };
-                let Some(pose) = art
-                    .clips
-                    .pose(worker, swing(k % 2 == 0), time + k as f32 * 0.37)
-                else {
-                    continue;
-                };
-                art.buckets[worker * LODS + lod].push(SoldierInstance {
-                    pos: at.to_array(),
-                    facing: facing.to_array(),
-                    frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
-                    color: [r, g, b, gc_render::TONE_NEUTRAL],
-                    lift: 0.0,
-                    scale: 1.0,
-                    ..Default::default()
-                });
-            }
-        }
         if let Some(deer) = art.deer {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             for d in self.ambient.wildlife.seen() {
@@ -6937,6 +6992,38 @@ impl Running {
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: d.scale,
+                    ..Default::default()
+                });
+            }
+        }
+        if let Some(bugs) = art.insects {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for i in self.ambient.insects.seen() {
+                let tile = (i.pos.x.floor() as i32, i.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let model = bugs[i.kind.index()];
+                let foot = Vec3::new(i.pos.x, ground(i.pos.x, i.pos.y) + i.alt, i.pos.y);
+                let Some(lod) = art.view.place(art.heights[model] * i.scale, foot) else {
+                    continue;
+                };
+                let (action, rate) = if i.beating {
+                    (Action::Cheer, i.kind.beat_rate())
+                } else {
+                    (Action::Idle, 1.0)
+                };
+                let Some(pose) = art.clips.pose(model, action, (time + i.phase) * rate) else {
+                    continue;
+                };
+                art.buckets[model * LODS + lod].push(SoldierInstance {
+                    pos: i.pos.to_array(),
+                    facing: i.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: i.alt,
+                    scale: i.scale,
                     ..Default::default()
                 });
             }
@@ -7048,6 +7135,93 @@ impl Running {
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: 1.0,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    /// Every standing building that has models, at its construction
+    /// stage, shaken by the blows on it, the crews on tier upgrades, and
+    /// fallen buildings sinking (after `Art::begin`).
+    fn push_building_models(&mut self) {
+        let picked = self.picked_structure();
+        let (Some(art), Some(structures)) = (&mut self.art, self.world.structures()) else {
+            return;
+        };
+        let hm = &self.heightmap;
+        // As the skinning shader clamps it, so the lift lands where meant.
+        let ground = |x, z| hm.drawn_height(x, z);
+        let shown = buildings::shown_to(self.sandbox.side, self.reveal_all);
+        let time = self.puppets.time();
+        for fall in self.siege.sinking() {
+            let height = art.looks.top(fall.model);
+            let at = Vec3::new(fall.pos.x, ground(fall.pos.x, fall.pos.y), fall.pos.y);
+            let still = art.clips.pose(fall.model, Action::Idle, time);
+            if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                let [r, g, b] = fall.colour;
+                art.buckets[fall.model * LODS + lod].push(SoldierInstance {
+                    pos: fall.pos.to_array(),
+                    facing: [0.0, 1.0],
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
+                    lift: fall.lift,
+                    scale: 1.0,
+                    ..Default::default()
+                });
+            }
+        }
+        for s in structures.iter().filter(|s| shown(s)) {
+            let [r, g, b] = color_of(&self.parties, s.owner);
+            if let Some(model) = art.looks.model_of(&s) {
+                let (centre, top, lift) = buildings::model_spot(&s, &ground);
+                let (shake, rise) = self.siege.jolt(s.handle);
+                let (centre, lift) = (centre + shake, lift + rise);
+                let at = Vec3::new(centre.x, top, centre.y);
+                let still = art.clips.pose(model, Action::Idle, time);
+                let height = art.looks.top(model);
+                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                    art.buckets[model * LODS + lod].push(SoldierInstance {
+                        pos: centre.to_array(),
+                        // The door, on the model's +z, faces south unturned.
+                        facing: buildings::facing_of(s.turn).to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                }
+            }
+            let Some(worker) = art.looks.crew_of(&s) else {
+                continue;
+            };
+            let centre = buildings::centre_of(s.tile, s.width, s.depth);
+            for (k, (at, facing)) in buildings::crew_spots(centre, s.width, s.depth)
+                .into_iter()
+                .enumerate()
+            {
+                let foot = Vec3::new(at.x, ground(at.x, at.y), at.y);
+                let Some(lod) = art.view.place(art.heights[worker], foot) else {
+                    continue;
+                };
+                let Some(pose) = art
+                    .clips
+                    .pose(worker, swing(k % 2 == 0), time + k as f32 * 0.37)
+                else {
+                    continue;
+                };
+                art.buckets[worker * LODS + lod].push(SoldierInstance {
+                    pos: at.to_array(),
+                    facing: facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
                     ..Default::default()
@@ -7986,6 +8160,24 @@ mod lod_tests {
         assert_eq!(lod_for(50.0, 0.0, 1.0), lod_for(50.0, 1.0, 1.0));
         assert_eq!(lod_for(100.0, 0.25, 1.0), 0);
         assert_eq!(lod_for(39.0, 0.001, 1.0), lod_for(39.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn head_turns_fade_in_above_the_nearest_level() {
+        assert_eq!(head_detail(LOD_PIXELS[0], 1.0, 1.0), 0.0);
+        assert_eq!(head_detail(LOD_PIXELS[0] - 1.0, 1.0, 1.0), 0.0);
+        let half = head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS / 2.0, 1.0, 1.0);
+        assert!((half - 0.5).abs() < 1e-4);
+        assert_eq!(head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS, 1.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn look_angles_fill_the_byte_and_stop_at_its_ends() {
+        assert_eq!(
+            look_angle(std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2),
+            127
+        );
+        assert_eq!(look_angle(-9.0, 1.0), -127);
     }
 
     #[test]

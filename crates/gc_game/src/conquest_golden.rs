@@ -35,7 +35,7 @@ use gc_sim::gates::GateMode;
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
     BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
-    RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
+    RegimentHandle, RegimentView, Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
@@ -247,6 +247,16 @@ struct Side {
     /// Whether, once the plans were built too, its waller raised the wall
     /// a level.
     raised: bool,
+    /// Whether, once the wall was raised and before the march, a soldier
+    /// was sent to man it, and whether one stood on it.
+    manning: bool,
+    manned: bool,
+    /// The most workers it had at once (raids kill some later).
+    workers: usize,
+    /// The soldier it sent up the other side's raised wall on ladders,
+    /// once on the march and in sight of it, and whether it got up.
+    climber: Option<RegimentHandle>,
+    climbed: bool,
 }
 
 /// The Clans' Shrine and their three built Edicts, as the first side plays
@@ -378,6 +388,11 @@ impl Match {
                 self.script(p, &mut out);
             }
             let stats = self.rec.tick(&mut self.world, &out);
+            for p in 0..2u8 {
+                let n = self.count(p, self.kits[usize::from(p)].worker);
+                let side = &mut self.sides[usize::from(p)];
+                side.workers = side.workers.max(n);
+            }
             // The script only gives orders that can be carried out.
             assert_eq!(
                 stats.commands_rejected,
@@ -644,8 +659,10 @@ impl Match {
             let seen = target.is_some_and(|m| m.seen_by(p));
             if let Some(target) = target.filter(|_| seen || t.is_multiple_of(TICKS_PER_SECOND)) {
                 // Routers take no orders.
+                let climber = self.sides[usize::from(p)].climber;
                 let fighters = (self.world.regiments.iter()).filter(|r| {
                     r.owner == p
+                        && Some(r.handle) != climber
                         && r.unit == k.fighter
                         && k.fighter != k.worker
                         && !r.morale.broken()
@@ -668,6 +685,9 @@ impl Match {
                 }
             }
             self.sides[usize::from(p)].charged = seen || target.is_none();
+        }
+        if t >= march_at {
+            self.ladder(p, out);
         }
         self.tower(p, out);
         self.gate(p, out);
@@ -794,6 +814,71 @@ impl Match {
         up.map_or_else(Vec::new, |up| self.own(p, Some(up)))
     }
 
+    /// Side `p`'s wall is raised, and its army hasn't set out yet: an idle
+    /// soldier mans it (the march brings it down again).
+    fn man(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let march_at = if p == 0 {
+            MARCH_AT
+        } else {
+            MARCH_AT + MARCH_LATER
+        };
+        if self.world.tick_count() >= march_at {
+            return;
+        }
+        let fighter = self.kits[usize::from(p)].fighter;
+        let Some(&tile) = self.raised_walls(p).first() else {
+            return;
+        };
+        let soldier = (self.world.regiments.iter()).find(|r| {
+            r.owner == p
+                && r.unit == fighter
+                && !r.moving
+                && !r.engaged
+                && self.world.man_check(r.handle, tile.handle).is_ok()
+        });
+        if let Some(r) = soldier {
+            out.push(PlayerCommand {
+                player: p,
+                command: Command::ManWall {
+                    regiment: r.handle,
+                    structure: tile.handle,
+                },
+            });
+            self.sides[usize::from(p)].manning = true;
+        }
+    }
+
+    /// Side `p`'s army is on the march: the first of its soldiers that can
+    /// climbs the other side's raised wall on ladders, once seen.
+    fn ladder(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
+        let side = self.sides[usize::from(p)];
+        if let Some(c) = side.climber {
+            let up = (self.world.regiments.iter()).any(|r| r.handle == c && r.on_wall);
+            self.sides[usize::from(p)].climbed |= up;
+            return;
+        }
+        let fighter = self.kits[usize::from(p)].fighter;
+        let walls = self.raised_walls(1 - p);
+        let pick = (self.world.regiments.iter())
+            .filter(|r| r.owner == p && r.unit == fighter && !r.engaged)
+            .find_map(|r| {
+                let tile = walls
+                    .iter()
+                    .find(|t| self.world.climb_check(r.handle, t.handle).is_ok())?;
+                Some((r.handle, tile.handle))
+            });
+        if let Some((regiment, structure)) = pick {
+            out.push(PlayerCommand {
+                player: p,
+                command: Command::Climb {
+                    regiment,
+                    structure,
+                },
+            });
+            self.sides[usize::from(p)].climber = Some(regiment);
+        }
+    }
+
     /// Side `p`'s wall and its plans are up: waller `w` raises the stretch
     /// a level, if it can (a grown wall grows up with no worker).
     fn raise(
@@ -842,7 +927,11 @@ impl Match {
                 self.plan(p, b, w, out);
             } else if side.planned && !side.raised && !self.walling(p, w) {
                 self.raise(p, b, w, out);
+            } else if side.raised && !side.manning && !self.walling(p, w) {
+                self.man(p, out);
             }
+            let on_wall = |r: RegimentView| r.owner == p && r.on_wall;
+            self.sides[usize::from(p)].manned |= self.world.regiments.iter().any(on_wall);
             return;
         }
         if self.world.tick_count() < WALL_AT || !side.called_off {
@@ -1232,7 +1321,8 @@ mod tests {
                 m.count(p, k.fighter) >= 3,
                 "side {p} trained soldiers: {k:?}"
             );
-            assert!(m.count(p, k.worker) >= 4, "side {p} trained workers: {k:?}");
+            let most = m.sides[usize::from(p)].workers;
+            assert!(most >= 4, "side {p} trained workers: {k:?}");
             assert!(bank.grub + bank.marrow > 0 || start.0 > 0, "side {p}");
             let main = m.main_of(p).expect("its main building stands");
             if let Some(keep) = k.keep {
@@ -1277,6 +1367,11 @@ mod tests {
             );
         }
         assert!(m.sides.iter().any(|s| s.raised), "a side raised its wall");
+        assert!(m.sides.iter().any(|s| s.manned), "a side manned its wall");
+        assert!(
+            m.sides.iter().any(|s| s.climbed),
+            "a side climbed the other's wall"
+        );
         assert_eq!(m.sides[1].powers, 3, "side 1 used its powers");
         assert_eq!(m.sides[0].edicts, 3, "side 0 used its Edicts");
         assert!(m.own(0, Some(m.kits[0].barracks)).is_empty(), "removed");

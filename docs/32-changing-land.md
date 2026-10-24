@@ -159,7 +159,7 @@ Fire is the first change to the ground that happens in a Field Battle as well as
 ### Shared state
 
 - `World::fires()` lists the burning tiles as (column, row, growth, ticks left, ticks in all), for the flames, smoke and their light; `Event::Kindled { x, y }` tells when a tile catches, and `Event::Cleared { burnt: true }` when it burns out. `World::in_fire` says a regiment touches fire (vision works it out from the fires each tick, so it is not hashed).
-- The fires are hashed with the ground (only once a fire has been lit). `Command::Burn` is replay tag 37 (`FORMAT` 39) and wire tag 35 (`PROTOCOL` 32); `SIM_VERSION` 42. Rehearsal worlds burn as the match does (they copy its fires).
+- The fires are hashed with the ground (only once a fire has been lit). `Command::Burn` is replay tag 39 (`FORMAT` 41) and wire tag 37 (`PROTOCOL` 34); `SIM_VERSION` 44 (42 and 43 went to the walls). Rehearsal worlds burn as the match does (they copy its fires).
 - **Golden.** `field-fire-1v1` is the woods map in a dry wind: every 20 seconds the Carrion Concord sets fire to the woods beside its regiments, the fire runs downwind, and both computer players march their troops out of it.
 - **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings, lightning strikes and the computer players setting fires of their own come later.
 

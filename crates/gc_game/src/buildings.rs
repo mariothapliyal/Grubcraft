@@ -1782,6 +1782,52 @@ pub fn tile_for(at: Vec2, width: u8, depth: u8) -> (i32, i32) {
     )
 }
 
+/// How high above the ground a man stands on a wall drawn with `look`:
+/// its top, and the coping on it if it has one.
+pub fn wall_stand_height(look: WallLook) -> f32 {
+    look.height + look.cap.map_or(0.0, |_| COPING_HEIGHT)
+}
+
+/// The places regiment `h`'s soldiers stand on the wall it is manning
+/// (see [`World::wall_tiles`]): tile centres, with how high each top is.
+/// Empty unless it is on a wall.
+pub fn wall_slots<'a>(
+    world: &'a World,
+    table: &'a Table,
+    h: gc_sim::RegimentHandle,
+) -> impl Iterator<Item = crate::puppets::WallSlot> + 'a {
+    let structures = world.structures();
+    world
+        .wall_tiles(h)
+        .iter()
+        .filter_map(move |&t| structures?.get(t))
+        .map(move |s| crate::puppets::WallSlot {
+            centre: centre_of(s.tile, s.width, s.depth),
+            lift: wall_stand_height(table.wall_look(s.building, s.open)),
+        })
+}
+
+/// Where the three ladders against the wall tile regiment `h` climbs go:
+/// centre, facing (into the wall) and across unit vector, with the height
+/// of the wall there. `from` is where the regiment stands.
+pub fn ladder_props(
+    world: &World,
+    table: &Table,
+    h: gc_sim::RegimentHandle,
+    from: Vec2,
+) -> Option<([Vec2; 3], Vec2, f32)> {
+    let slot = wall_slots(world, table, h).next()?;
+    let out = (from - slot.centre).try_normalize()?;
+    let facing = -out;
+    let across = Vec2::new(-facing.y, facing.x);
+    let at = slot.centre + out * 0.52;
+    Some((
+        [at - across * 0.9, at, at + across * 0.9],
+        facing,
+        slot.lift,
+    ))
+}
+
 /// A refusal in the panel's words.
 pub fn why(refusal: Refusal) -> &'static str {
     match refusal {
@@ -1802,12 +1848,23 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Overgrown => "Clear the ground there first.",
         Refusal::NoRoom => "There's no room on the map for more buildings.",
         Refusal::NoVeins => "It grows only where your root-veins reach.",
+        Refusal::NoWalkway => "Raise the wall a level first: only a walkway can be manned.",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn men_stand_on_the_coping_of_a_raised_wall() {
+        let plain = wall_look(Some(Faction::EmberClans), 0, 1, false);
+        let raised = wall_look(Some(Faction::EmberClans), 0, 2, false);
+        assert_eq!(wall_stand_height(plain), plain.height);
+        assert!(raised.cap.is_some());
+        assert_eq!(wall_stand_height(raised), raised.height + COPING_HEIGHT);
+        assert!(wall_stand_height(raised) > wall_stand_height(plain));
+    }
 
     #[test]
     fn each_faction_wall_has_its_own_look() {

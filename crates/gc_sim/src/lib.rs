@@ -34,6 +34,7 @@ pub mod generals;
 mod hash;
 pub mod honor;
 pub mod larvae;
+pub mod manning;
 pub mod morale;
 pub mod nav;
 pub mod power;
@@ -116,7 +117,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 42;
+pub const SIM_VERSION: u32 = 44;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -759,6 +760,21 @@ pub enum Command {
     /// Conquest: one of the issuer's workers works the issuer's plans (see
     /// [`blueprints`]) until given another order.
     WorkPlan { regiment: RegimentHandle },
+    /// Conquest: a regiment of foot or archers mans the issuer's wall of
+    /// level 2 or 3 at tile `structure`: it climbs at the nearest stair and
+    /// holds the walkway until given another order (see [`manning`]).
+    ManWall {
+        regiment: RegimentHandle,
+        structure: StructureHandle,
+    },
+    /// Conquest: a regiment of foot or archers climbs an enemy's wall of
+    /// level 2 or 3 at tile `structure` on ladders: it fights whoever
+    /// holds that tile from the ladder head, then takes the wall (see
+    /// [`manning`]).
+    Climb {
+        regiment: RegimentHandle,
+        structure: StructureHandle,
+    },
 }
 
 impl Command {
@@ -794,6 +810,8 @@ impl Command {
             | Command::PlanWall { .. }
             | Command::DropPlan { .. }
             | Command::WorkPlan { .. }
+            | Command::ManWall { .. }
+            | Command::Climb { .. }
             | Command::Rally { .. }
             | Command::HandOver { .. } => true,
             Command::SpawnRegiment { .. }
@@ -1211,6 +1229,53 @@ impl World {
             )
     }
 
+    /// Whether regiment `r` may man wall tile `h` (see
+    /// [`Command::ManWall`]), or why not.
+    pub fn man_check(&self, r: RegimentHandle, h: StructureHandle) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        let i = self.regiments.resolve(r).ok_or(Refusal::Unknown)?;
+        c.man_check(self.regiments.owner[i], i, &self.regiments, h)
+            .map(|_| ())
+    }
+
+    /// Whether regiment `r` may climb enemy wall tile `h` on ladders (see
+    /// [`Command::Climb`]), or why not.
+    pub fn climb_check(&self, r: RegimentHandle, h: StructureHandle) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        let i = self.regiments.resolve(r).ok_or(Refusal::Unknown)?;
+        if !self.may_assault(self.regiments.owner[i], h) {
+            return Err(Refusal::Unknown);
+        }
+        c.climb_check(i, &self.regiments, h).map(|_| ())
+    }
+
+    /// Whether `player`'s regiments may assault building `h`: an enemy's,
+    /// and in fog of war only one their side has seen.
+    fn may_assault(&self, player: PlayerId, h: StructureHandle) -> bool {
+        let Some(s) = self.conquest.as_ref().map(|c| &c.structures) else {
+            return false;
+        };
+        s.owner(h)
+            .is_some_and(|enemy| self.stances.hostile(player, enemy))
+            && s.get(h).is_some_and(|v| v.seen_by(player))
+    }
+
+    /// Whether regiment `h` stands on a wall (see [`manning`]).
+    pub fn on_wall(&self, h: RegimentHandle) -> bool {
+        self.regiments
+            .resolve(h)
+            .is_some_and(|i| self.regiments.on_wall[i])
+    }
+
+    /// The wall tiles regiment `h` holds, in the order its soldiers stand
+    /// on them (soldier `k` on tile `k` modulo their number); empty unless
+    /// it is on a wall.
+    pub fn wall_tiles(&self, h: RegimentHandle) -> &[StructureHandle] {
+        self.conquest
+            .as_ref()
+            .map_or(&[], |c| c.manning.tiles_of(h))
+    }
+
     /// What raising `player`'s wall tile `h` a level would do: the next
     /// level, how many tiles it raises and what that costs, or why it
     /// can't (see [`Command::RaiseWall`]). A side that can't pay gets
@@ -1468,6 +1533,10 @@ impl World {
             } else {
                 stats.commands_rejected += 1;
             }
+        }
+        // Regiments on the walls given other orders come down first.
+        if let Some(c) = &mut self.conquest {
+            c.release_held(&mut self.regiments, &self.units, &self.nav);
         }
         self.events.clear();
         // The sky moves on even while the armies deploy.
@@ -1749,6 +1818,7 @@ impl World {
                 regiment,
                 formation,
             } => match self.regiments.owner(regiment) {
+                _ if self.on_wall(regiment) => false,
                 Some(owner) if self.stances.can_command(pc.player, owner) => self
                     .regiments
                     .set_formation(regiment, formation, &self.units),
@@ -1766,6 +1836,8 @@ impl World {
                 _ => false,
             },
             Command::Brace { regiment, on } => match self.regiments.owner(regiment) {
+                // The wall holds a regiment on it in its rank.
+                _ if self.on_wall(regiment) => false,
                 Some(owner) if self.stances.can_command(pc.player, owner) => {
                     self.regiments.brace(regiment, on, &self.units)
                 }
@@ -1844,29 +1916,19 @@ impl World {
                 regiment,
                 structure,
             } => {
-                let Some(conquest) = &mut self.conquest else {
+                let r = self.regiments.resolve(regiment).filter(|&r| {
+                    self.stances.can_command(pc.player, self.regiments.owner[r])
+                        && self.may_assault(self.regiments.owner[r], structure)
+                        && !self.regiments.morale_state[r].broken()
+                });
+                let (Some(r), Some(conquest)) = (r, &mut self.conquest) else {
                     return false;
                 };
-                match (
-                    self.regiments.resolve(regiment),
-                    conquest.structures.owner(structure),
-                ) {
-                    (Some(r), Some(enemy))
-                        if self.stances.can_command(pc.player, self.regiments.owner[r])
-                            && self.stances.hostile(self.regiments.owner[r], enemy)
-                            && !self.regiments.morale_state[r].broken()
-                            // In fog of war, only a building its side has seen.
-                            && (conquest.structures.get(structure))
-                                .is_some_and(|s| s.seen_by(self.regiments.owner[r])) =>
-                    {
-                        conquest.stop_work(r);
-                        conquest
-                            .structures
-                            .besiege(&mut self.regiments, r, structure);
-                        true
-                    }
-                    _ => false,
-                }
+                conquest.stop_work(r);
+                conquest
+                    .structures
+                    .besiege(&mut self.regiments, r, structure);
+                true
             }
             Command::Gather { regiment, node } => {
                 let Some(conquest) = &mut self.conquest else {
@@ -1967,6 +2029,41 @@ impl World {
             }),
             Command::DropPlan { from, to } => (self.conquest.as_mut())
                 .is_some_and(|c| c.drop_plan(pc.player, tile(from), tile(to))),
+            Command::ManWall {
+                regiment,
+                structure,
+            } => {
+                let Some(conquest) = &mut self.conquest else {
+                    return false;
+                };
+                match self.regiments.resolve(regiment) {
+                    Some(r) if self.stances.can_command(pc.player, self.regiments.owner[r]) => {
+                        let owner = self.regiments.owner[r];
+                        conquest.man_wall(
+                            owner,
+                            r,
+                            structure,
+                            &mut self.regiments,
+                            &self.units,
+                            &self.nav,
+                        )
+                    }
+                    _ => false,
+                }
+            }
+            Command::Climb {
+                regiment,
+                structure,
+            } => {
+                let r = self.regiments.resolve(regiment).filter(|&r| {
+                    self.stances.can_command(pc.player, self.regiments.owner[r])
+                        && self.may_assault(self.regiments.owner[r], structure)
+                });
+                let (Some(r), Some(conquest)) = (r, &mut self.conquest) else {
+                    return false;
+                };
+                conquest.climb_wall(r, structure, &mut self.regiments, &self.units, &self.nav)
+            }
             Command::WorkPlan { regiment } => {
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
                     (Some(r), Some(c)) => c.work_plans(pc.player, r, &self.regiments),

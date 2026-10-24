@@ -45,7 +45,10 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 39: the burn command (tag 37; nothing to read in older files);
+/// - 41: the burn command (tag 39; nothing to read in older files);
+/// - 40: ladders (the climb command, tag 38);
+/// - 39: manning the walls (tag 37), and whether a Conquest unit mans
+///   walls (read as not in older files);
 /// - 38: the torches command (tag 36; nothing to read in older files);
 /// - 37: raising walls a level (tags 34 and 35; nothing to read in older files);
 /// - 36: the blueprint commands (tags 31 to 33; nothing to read in older files);
@@ -94,7 +97,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 39;
+pub const FORMAT: u16 = 41;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

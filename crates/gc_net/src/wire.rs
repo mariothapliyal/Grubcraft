@@ -431,6 +431,22 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(31);
             w.handle(regiment);
         }
+        Command::ManWall {
+            regiment,
+            structure,
+        } => {
+            w.u8(35);
+            w.handle(regiment);
+            w.structure(structure);
+        }
+        Command::Climb {
+            regiment,
+            structure,
+        } => {
+            w.u8(36);
+            w.handle(regiment);
+            w.structure(structure);
+        }
         Command::RaiseWall {
             structure,
             regiment,
@@ -448,7 +464,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.bool(lit);
         }
         Command::Burn { regiment } => {
-            w.u8(35);
+            w.u8(37);
             w.handle(regiment);
         }
         Command::SetGate { structure, mode } => {
@@ -613,6 +629,14 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         31 => Command::WorkPlan {
             regiment: r.handle()?,
         },
+        35 => Command::ManWall {
+            regiment: r.handle()?,
+            structure: r.structure()?,
+        },
+        36 => Command::Climb {
+            regiment: r.handle()?,
+            structure: r.structure()?,
+        },
         tag @ (32 | 33) => Command::RaiseWall {
             structure: r.structure()?,
             regiment: if tag == 32 { Some(r.handle()?) } else { None },
@@ -621,7 +645,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             lit: r.bool()?,
         },
-        35 => Command::Burn {
+        37 => Command::Burn {
             regiment: r.handle()?,
         },
         26 => Command::SetGate {
@@ -894,6 +918,20 @@ mod tests {
                 to: (5, 2),
             },
             Command::WorkPlan { regiment: h(6, 2) },
+            Command::Climb {
+                regiment: h(9, 1),
+                structure: StructureHandle {
+                    index: 34,
+                    generation: 3,
+                },
+            },
+            Command::ManWall {
+                regiment: h(8, 3),
+                structure: StructureHandle {
+                    index: 33,
+                    generation: 2,
+                },
+            },
             Command::RaiseWall {
                 structure: StructureHandle {
                     index: 30,

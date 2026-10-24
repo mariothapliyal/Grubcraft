@@ -179,6 +179,7 @@ impl Writer {
         self.bool(u.consumed);
         self.bool(u.burrows);
         self.bool(u.builds_only);
+        self.bool(u.mans_walls);
         self.var(u64::from(u.trade_base));
         self.var(u64::from(u.trade_tenths));
         self.var(u64::from(u.cannot_bank));
@@ -375,7 +376,7 @@ impl Writer {
                 self.bool(lit);
             }
             Command::Burn { regiment } => {
-                self.u8(37);
+                self.u8(39);
                 self.handle(regiment);
             }
             Command::HandOver { to } => {
@@ -434,6 +435,22 @@ impl Writer {
             Command::WorkPlan { regiment } => {
                 self.u8(33);
                 self.handle(regiment);
+            }
+            Command::ManWall {
+                regiment,
+                structure,
+            } => {
+                self.u8(37);
+                self.handle(regiment);
+                self.structure(structure);
+            }
+            Command::Climb {
+                regiment,
+                structure,
+            } => {
+                self.u8(38);
+                self.handle(regiment);
+                self.structure(structure);
             }
             Command::SetGate { structure, mode } => {
                 self.u8(28);
@@ -715,6 +732,9 @@ impl<'a> Reader<'a> {
         if format >= 19 {
             u.builds_only = self.bool()?;
         }
+        if format >= 39 {
+            u.mans_walls = self.bool()?;
+        }
         if format >= 24 {
             u.trade_base = self.var_as()?;
             u.trade_tenths = self.var_as()?;
@@ -849,7 +869,7 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 lit: self.bool()?,
             },
-            37 => Command::Burn {
+            39 => Command::Burn {
                 regiment: self.handle()?,
             },
             tag @ (29 | 30) => Command::BuildWall {
@@ -873,6 +893,14 @@ impl<'a> Reader<'a> {
             },
             33 => Command::WorkPlan {
                 regiment: self.handle()?,
+            },
+            37 => Command::ManWall {
+                regiment: self.handle()?,
+                structure: self.structure()?,
+            },
+            38 => Command::Climb {
+                regiment: self.handle()?,
+                structure: self.structure()?,
             },
             tag @ (34 | 35) => Command::RaiseWall {
                 structure: self.structure()?,
@@ -1130,6 +1158,26 @@ mod tests {
                 regiment: RegimentHandle {
                     index: 9,
                     generation: 3,
+                },
+            },
+            Command::Climb {
+                regiment: RegimentHandle {
+                    index: 5,
+                    generation: 1,
+                },
+                structure: StructureHandle {
+                    index: 13,
+                    generation: 4,
+                },
+            },
+            Command::ManWall {
+                regiment: RegimentHandle {
+                    index: 4,
+                    generation: 2,
+                },
+                structure: StructureHandle {
+                    index: 12,
+                    generation: 5,
                 },
             },
             Command::FocusTower {

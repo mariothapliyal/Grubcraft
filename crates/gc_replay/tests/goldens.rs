@@ -88,9 +88,11 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::WorkPlan { .. } => "WorkPlan",
         Command::RaiseWall { .. } => "RaiseWall",
         Command::Torches { .. } => "Torches",
+        Command::ManWall { .. } => "ManWall",
+        Command::Climb { .. } => "Climb",
         Command::Burn { .. } => "Burn",
     };
-    const KINDS: [&str; 34] = [
+    const KINDS: [&str; 36] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -124,6 +126,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "WorkPlan",
         "RaiseWall",
         "Torches",
+        "ManWall",
+        "Climb",
         "Burn",
     ];
     let seen: BTreeSet<&str> = goldens()
@@ -150,20 +154,20 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    42,
+    44,
     &[
-        ("conquest-ribcage-1v1", 0x4bce141884f114ce),
-        ("field-1v1", 0x94c7d6a57d042e2b),
-        ("field-2v2", 0x1737e6c270982a03),
-        ("field-8000pt-2v2", 0x0ee65ee14805c27d),
-        ("field-brace-1v1", 0x800a7bd097ba93f1),
-        ("field-champions-1v1", 0xcd480d0964755b8b),
-        ("field-deploy-1v1", 0x80166e4bbe15d4a0),
-        ("field-fire-1v1", 0xc1858e2cba7866fc),
-        ("field-handover-2v2", 0x71a9fc6adcdd6956),
-        ("field-night-rain-1v1", 0x662f502878db1b5e),
-        ("field-woods-1v1", 0xe3a5cfdb5db03e6b),
-        ("sandbox-tuning", 0x970fc1d5c875e9de),
+        ("conquest-ribcage-1v1", 0x29ea5ab0f98414db),
+        ("field-1v1", 0x54d7d27490e6b12d),
+        ("field-2v2", 0xaeeb16d940bd5ea0),
+        ("field-8000pt-2v2", 0x2b634f2e04187d27),
+        ("field-brace-1v1", 0x1cc96939fe6ed5ba),
+        ("field-champions-1v1", 0x71fb034345431419),
+        ("field-deploy-1v1", 0xf08454cf43688d5a),
+        ("field-fire-1v1", 0x125897a6b8a9267d),
+        ("field-handover-2v2", 0x29917dd8a6b33492),
+        ("field-night-rain-1v1", 0xac3ce4b30848110e),
+        ("field-woods-1v1", 0x7883098bea412015),
+        ("sandbox-tuning", 0x0bb36f38673462ba),
     ],
 );
 
