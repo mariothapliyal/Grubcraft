@@ -40,7 +40,7 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
 /// clock runs from the lobby's time. A Conquest match with seasons turns
 /// through the year ("Seasons"), and its changing weather follows them.
 pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
-    use gc_sim::sky::{Climate, DAY_TICKS, at_hour, changing, seasonal};
+    use gc_sim::sky::{DAY_TICKS, at_hour, seasonal};
     use gc_sim::{Spell, Weather, WeatherKind};
     let (hour, minute) = settings.time_of_day.hour();
     let overcast = settings.time_of_day == TimeOfDay::Overcast;
@@ -63,11 +63,8 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
         WeatherSetting::Fair => Vec::new(),
         WeatherSetting::Changing => {
-            let mut spells = if year_ticks > 0 {
-                seasonal(seed, year_ticks, SKY_TICKS)
-            } else {
-                changing(seed, Climate::Wet, SKY_TICKS)
-            };
+            // With no seasons, the old changing weather.
+            let mut spells = seasonal(seed, year_ticks, SKY_TICKS);
             if overcast {
                 for s in &mut spells {
                     s.weather.cloud = s.weather.cloud.max(220);

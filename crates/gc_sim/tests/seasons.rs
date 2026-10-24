@@ -112,8 +112,14 @@ fn the_winter_freezes_the_shallows_and_the_spring_thaws_them() {
     assert!(w.terrain().wet(ford));
     let mut froze = None;
     let mut thawed = None;
+    let mut told = Vec::new();
     while w.tick_count() < YEAR + 10 * SECOND {
         w.tick(&[]);
+        for e in w.events() {
+            if let gc_sim::events::Event::Season { season } = *e {
+                told.push((season, w.tick_count() / MINUTE));
+            }
+        }
         match (froze, w.terrain().frozen()) {
             (None, true) => froze = Some(w.tick_count()),
             (Some(_), false) if thawed.is_none() => thawed = Some(w.tick_count()),
@@ -132,4 +138,14 @@ fn the_winter_freezes_the_shallows_and_the_spring_thaws_them() {
     );
     assert!((YEAR..=YEAR + SECOND).contains(&thawed), "{thawed}");
     assert!(w.terrain().wet(ford));
+    // Each new season is told of once, the first spring not.
+    assert_eq!(
+        told,
+        [
+            (Season::Summer, 1),
+            (Season::Autumn, 2),
+            (Season::Winter, 3),
+            (Season::Spring, 4)
+        ]
+    );
 }

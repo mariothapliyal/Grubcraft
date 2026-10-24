@@ -209,7 +209,7 @@ Stage 6 turns the year in Conquest: spring, summer, autumn and winter come round
 
 ### Seeing it
 
-- The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings. The Quick Start's Gather step says autumn brings more Grub and winter less. The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
+- The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The Quick Start's Gather step says autumn brings more Grub and winter less. The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
 - **Not yet:** the computer players don't plan by the season (stocking up before winter, crossing the ice), and the land's look doesn't change with it yet.
 - No golden changes: goldens have no seasons, and the version stays `SIM_VERSION` 46.
 

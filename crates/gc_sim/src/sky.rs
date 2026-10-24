@@ -120,13 +120,12 @@ impl Default for Sky<'static> {
 
 /// The seasons of a year (docs/32-changing-land.md, "Seasons"), in the
 /// order they come: a match with seasons starts in the spring.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Season {
-    Spring = 0,
-    Summer = 1,
-    Autumn = 2,
-    Winter = 3,
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
 }
 
 impl Season {
@@ -137,12 +136,13 @@ impl Season {
         Season::Winter,
     ];
 
-    pub fn name(self) -> &'static str {
+    /// Its name and what it does, in a word, for the top bar.
+    pub fn chip(self) -> &'static str {
         match self {
             Season::Spring => "Spring",
-            Season::Summer => "Summer",
-            Season::Autumn => "Autumn",
-            Season::Winter => "Winter",
+            Season::Summer => "Summer: dry",
+            Season::Autumn => "Autumn: harvest",
+            Season::Winter => "Winter: frost",
         }
     }
 

@@ -5881,6 +5881,7 @@ impl Running {
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
         let mut flooded = None;
+        let mut news = None;
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -6013,6 +6014,7 @@ impl Running {
                     }
                 }
                 Event::Flooded { closed } => flooded = Some(closed),
+                Event::Season { season } => news = Some(season_news(season)),
                 _ => {}
             }
         }
@@ -6021,12 +6023,8 @@ impl Running {
             Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
             None => {}
         }
-        // A new season, after the first spring.
-        if let Some(s) = self.world.season()
-            && s.into == 0
-            && (s.year, s.season) != (0, gc_sim::sky::Season::Spring)
-        {
-            self.say(season_news(s.season).into());
+        if let Some(news) = news {
+            self.say(news.into());
         }
         for b in self.world.blows() {
             self.puppets.struck(b);

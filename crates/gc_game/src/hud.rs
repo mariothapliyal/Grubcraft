@@ -1781,14 +1781,7 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 /// The season, and what it does, for the top bar
 /// (docs/32-changing-land.md, "Seasons"); empty with no seasons.
 fn season_word(world: &gc_sim::World) -> &'static str {
-    use gc_sim::sky::Season;
-    match world.season().map(|s| s.season) {
-        None => "",
-        Some(Season::Spring) => "Spring",
-        Some(Season::Summer) => "Summer: dry",
-        Some(Season::Autumn) => "Autumn: harvest",
-        Some(Season::Winter) => "Winter: frost",
-    }
+    world.season().map_or("", |s| s.season.chip())
 }
 
 /// What the sky does to the fight now, for the top bar: empty in clear
