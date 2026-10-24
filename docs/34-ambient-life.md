@@ -138,4 +138,4 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Scorched ground under a burnt tile and the stump left by a burnt tree (ground and stumps are the ground-texture thread's; the `burnt` flag is on the event for it), burnt trunks lying instead of crumbling, and the Ember Clans' hauling carts.
+- Burnt trunks lying instead of crumbling, and the Ember Clans' hauling carts. (The scorched ground and charred stumps a burnt tile leaves are the ground thread's, [35](35-ground-marks.md).)
