@@ -390,39 +390,49 @@ pub struct KillTiming {
     pub reach: f32,
 }
 
-/// The matched kills each pair of unit types can play, as indices into one
-/// table of [`KillTiming`]s.
+/// The matched kills each pair of unit types can play, by their index in
+/// one table of [`KillTiming`]s.
 #[derive(Default)]
 pub struct Kills {
     timing: Vec<KillTiming>,
-    /// Per (killer's unit, victim's unit), the first of its kills and how
-    /// many there are.
-    by_units: HashMap<(u16, u16), (u16, u16)>,
+    /// The indices each pair of unit types picks among, in runs.
+    choices: Vec<u16>,
+    /// Per (killer's unit, victim's unit), where its run of choices starts
+    /// and how long it is.
+    by_units: HashMap<(u16, u16), (u32, u16)>,
 }
 
 impl Kills {
-    /// Add the kills a man of unit `killer` can play on one of unit
-    /// `victim`: they take the next indices, in order.
-    pub fn add(&mut self, killer: u16, victim: u16, kills: &[KillTiming]) {
-        if kills.is_empty() {
-            return;
+    /// No unit types play any of the kills `timing` holds, yet.
+    pub fn new(timing: Vec<KillTiming>) -> Kills {
+        Kills {
+            timing,
+            ..Kills::default()
         }
-        let first = self.timing.len() as u16;
-        self.timing.extend_from_slice(kills);
-        self.by_units
-            .insert((killer, victim), (first, kills.len() as u16));
+    }
+
+    /// A man of unit `killer` may play the kills `ids` on one of unit
+    /// `victim`.
+    pub fn add(&mut self, killer: u16, victim: u16, ids: &[u16]) {
+        let Ok(n) = u16::try_from(ids.len()) else {
+            return;
+        };
+        if n > 0 {
+            let first = self.choices.len() as u32;
+            self.choices.extend_from_slice(ids);
+            self.by_units.insert((killer, victim), (first, n));
+        }
     }
 
     /// The kill `roll` (0 to 1) picks for a man of `killer` on one of
     /// `victim`, if they have any.
-    pub(crate) fn pick(&self, killer: u16, victim: u16, roll: f32) -> Option<u16> {
+    pub(crate) fn pick(&self, killer: u16, victim: u16, roll: f32) -> Option<(u16, KillTiming)> {
         let &(first, n) = self.by_units.get(&(killer, victim))?;
-        Some(first + ((roll * f32::from(n)) as u16).min(n - 1))
+        let nth = ((roll * f32::from(n)) as u16).min(n - 1);
+        let id = self.choices[first as usize + usize::from(nth)];
+        Some((id, *self.timing.get(usize::from(id))?))
     }
 }
-
-/// No matched kill (see [`Killing::pair`]).
-const NO_PAIR: u16 = u16::MAX;
 
 /// A killing blow a puppet is dealing (while his act is [`Act::Kill`]).
 #[derive(Clone, Copy, Debug)]
@@ -431,15 +441,15 @@ struct Killing {
     /// whoever fills the gap, this far from it.
     spot: Vec2,
     gap: f32,
-    /// The matched kill the two play, or [`NO_PAIR`] for his own swing.
-    pair: u16,
+    /// The matched kill the two play, if any, and its timing.
+    pair: Option<(u16, KillTiming)>,
 }
 
 impl Killing {
     const NONE: Killing = Killing {
         spot: Vec2::ZERO,
         gap: 0.0,
-        pair: NO_PAIR,
+        pair: None,
     };
 }
 
@@ -506,8 +516,8 @@ struct Fallen {
     /// simply drop), 1 for a blow, 2 and 3 for a heavier man's.
     owner: u8,
     look: u8,
-    /// The matched kill he fell to, or [`NO_PAIR`].
-    pair: u16,
+    /// The matched kill he fell to, if any.
+    pair: Option<u16>,
 }
 
 const RECOIL_SHIFT: u32 = 4;
@@ -987,7 +997,7 @@ impl Puppets {
                 unit: self.unit[r],
                 owner: self.player[r],
                 look: self.looks[base + k],
-                pair: NO_PAIR,
+                pair: None,
             };
             self.lay(fallen);
             self.lodge(h, k, &fallen);
@@ -1234,11 +1244,11 @@ impl Puppets {
 
     /// The matched kill puppet `i` is playing, if he is dealing a killing
     /// blow with one.
-    fn pair_of(&self, i: usize) -> Option<KillTiming> {
-        (self.act[i].0 == Act::Kill)
-            .then(|| self.kills.timing.get(usize::from(self.killing[i].pair)))
-            .flatten()
-            .copied()
+    fn pair_of(&self, i: usize) -> Option<(u16, KillTiming)> {
+        if self.act[i].0 != Act::Kill {
+            return None;
+        }
+        self.killing[i].pair
     }
 
     /// Seconds until puppet `i`'s killing blow, `f` of the way through,
@@ -1246,7 +1256,7 @@ impl Puppets {
     /// and may be struck, or strike again.
     fn kill_lands_in(&self, i: usize, f: f32) -> f32 {
         match self.pair_of(i) {
-            Some(k) => (k.contact - f) * k.seconds,
+            Some((_, k)) => (k.contact - f) * k.seconds,
             None => (BLOW_AT - kill_swing(f)) * SWING_SECONDS,
         }
     }
@@ -1258,7 +1268,7 @@ impl Puppets {
         if act == Act::None {
             return None;
         }
-        let seconds = self.pair_of(i).map_or(act.seconds(), |k| k.seconds);
+        let seconds = self.pair_of(i).map_or(act.seconds(), |(_, k)| k.seconds);
         let f = (self.time - at) / seconds;
         (0.0..1.0).contains(&f).then_some((act, f))
     }
@@ -1659,13 +1669,12 @@ impl Puppets {
                 dueling || champion.is_some() && self.pos[i].distance_squared(target) < 0.25;
             let fight = match (acting, swing) {
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
-                (Some((Act::Kill, f)), _) if self.pair_of(i).is_some() => Some(Move::Kill {
-                    pair: self.killing[i].pair,
-                    at: f,
-                }),
-                (Some((Act::Kill, f)), _) => Some(Move::Swing {
-                    at: kill_swing(f),
-                    alt: false,
+                (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
+                    Some((pair, _)) => Move::Kill { pair, at: f },
+                    None => Move::Swing {
+                        at: kill_swing(f),
+                        alt: false,
+                    },
                 }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
                 (Some((Act::Stagger, f)), _) => Some(Move::Stagger(f)),
@@ -1770,7 +1779,7 @@ impl Puppets {
                 _ => self.partner[victim] as usize,
             };
             // The matched kill he falls to, if his killer starts one now.
-            let mut paired = NO_PAIR;
+            let mut paired = None;
             let blow_in = if killer == NONE as usize {
                 None
             } else if slain.is_some() {
@@ -1792,18 +1801,18 @@ impl Puppets {
                         // the distance the two keep, or the matched kill's
                         // reach when they play one.
                         let mine = self.unit[killer / SLOTS];
-                        let pair = (self.kills)
-                            .pick(mine, block.unit, unit_hash(block.handle, pick, 16))
-                            .unwrap_or(NO_PAIR);
+                        let pair =
+                            (self.kills).pick(mine, block.unit, unit_hash(block.handle, pick, 16));
+                        let gap = pair.map_or(
+                            (self.fighter[killer / SLOTS].gap() + block.fighter.gap()) / 2.0,
+                            |(_, k)| k.reach,
+                        );
                         self.killing[killer] = Killing {
                             spot: self.pos[victim],
-                            gap: (self.fighter[killer / SLOTS].gap() + block.fighter.gap()) / 2.0,
+                            gap,
                             pair,
                         };
-                        if let Some(k) = self.pair_of(killer) {
-                            self.killing[killer].gap = k.reach;
-                            paired = pair;
-                        }
+                        paired = pair.map(|(id, _)| id);
                         Some(self.kill_lands_in(killer, 0.0))
                     }
                 }
@@ -1818,7 +1827,7 @@ impl Puppets {
             // A blow drives him back as he falls, a heavier man's further;
             // a matched kill plays his fall itself.
             let recoil = match blow_in {
-                _ if paired != NO_PAIR => 0,
+                _ if paired.is_some() => 0,
                 Some(_) => {
                     let (me, them) = (self.fighter[killer / SLOTS], self.fighter[r]);
                     1 + me.outweighs(&them, true).min(2.0) as u8
@@ -1901,7 +1910,7 @@ impl Puppets {
             look: f.look,
             age: self.time - f.fell,
             sink,
-            kill: (f.pair != NO_PAIR).then_some(f.pair),
+            kill: f.pair,
         };
         self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(
             self.sinking
@@ -2830,8 +2839,8 @@ mod tests {
             reach: 1.2,
         };
         let mut p = Puppets::new(2, 4);
-        let mut kills = Kills::default();
-        kills.add(0, 0, &[KILL]);
+        let mut kills = Kills::new(vec![KILL]);
+        kills.add(0, 0, &[0]);
         p.set_kills(kills);
         let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
         for _ in 0..30 {
@@ -2842,7 +2851,8 @@ mod tests {
         let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
         // He stands at the kill's reach, and the two start their halves at
         // once: the blow lands as the victim's half reaches its contact.
-        assert_eq!((p.killing[k].pair, p.killing[k].gap), (0, KILL.reach));
+        assert_eq!(p.killing[k].pair, Some((0, KILL)));
+        assert_eq!(p.killing[k].gap, KILL.reach);
         let stood = p.corpses().next().unwrap();
         assert_eq!(stood.kill, Some(0));
         let lands = KILL.contact * KILL.seconds;

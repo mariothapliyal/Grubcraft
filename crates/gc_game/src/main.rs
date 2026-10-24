@@ -774,9 +774,6 @@ struct Running {
     alpha: f32,
     instances: Vec<BoxInstance>,
     puppets: Puppets,
-    /// The matched kills the puppets play, by the index they give
-    /// (`puppets::Move::Kill`), for the current unit types.
-    kill_pairs: Vec<models::KillPair>,
     /// Particles collected this frame (dust, sparks, smoke), handed to the
     /// renderer just before it draws.
     effects: effects::Field,
@@ -1600,7 +1597,6 @@ impl App {
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
-            kill_pairs: Vec::new(),
             effects: effects::Field::new(opts.fx),
             lights: lights::Lights::default(),
             ambient: ambient::Ambient::new(opts.fell_demo, opts.hamlet_demo),
@@ -3398,7 +3394,6 @@ impl Running {
                 let buckets = &mut art.buckets;
                 let heightmap = &self.heightmap;
                 let clips = &art.clips;
-                let kill_pairs = &self.kill_pairs;
                 let time = self.puppets.time();
                 let highlight = if selected { 70 } else { 0 };
                 let effects = &mut self.effects;
@@ -3502,10 +3497,6 @@ impl Running {
                             effects.chop(fx_dt, tool, facing, wood, clearing_style, target);
                         }
                         let pose = match s.fight {
-                            Some(fight @ puppets::Move::Kill { pair, at }) => kill_pairs
-                                .get(usize::from(pair))
-                                .map(|p| (p.kill.at(at), false))
-                                .or_else(|| clips.fight(model, fight, seconds)),
                             Some(fight) => clips.fight(model, fight, seconds),
                             None if working.is_some() || battering.is_some() => clips
                                 .pose(model, swing(s.phase < 0.5), seconds)
@@ -4959,9 +4950,8 @@ impl Running {
     fn fresh_puppets(&mut self) {
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         if let Some(art) = &self.art {
-            let (kills, pairs) = art.clips.kills_of(&self.units.models);
-            self.puppets.set_kills(kills);
-            self.kill_pairs = pairs;
+            self.puppets
+                .set_kills(art.clips.kills_of(&self.units.models));
         }
     }
 
@@ -5442,15 +5432,7 @@ impl Running {
                 // The victim's half of the matched kill he fell to, or the
                 // death clip, held on its last frame; models without one lie
                 // down in their idle pose once the blow lands.
-                let killed = c.kill.and_then(|k| self.kill_pairs.get(usize::from(k)));
-                let pose = match killed {
-                    Some(pair) => {
-                        let seconds = pair.killed.frames as f32 / pair.killed.fps;
-                        Some((pair.killed.at(c.age / seconds + pair.contact), false))
-                    }
-                    None => art.clips.death(model, c.age),
-                };
-                if let Some((pose, flat)) = pose {
+                if let Some((pose, flat)) = art.clips.death(model, c.age, c.kill) {
                     let at = glam::Vec3::new(c.pos.x, ground, c.pos.y);
                     let Some(lod) = art.view.place(art.heights[model], at) else {
                         continue;
