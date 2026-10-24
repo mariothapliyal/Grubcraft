@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::Act;
+use gc_assets::anim::{Act, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -129,9 +129,19 @@ impl Clips {
         let moves = Moves::new(models);
         let by_model = (0..models.models.len())
             .map(|m| {
-                let pick = |act| moves.pick(m, Want::new(act));
+                // A model that names what it holds plays the moves made for it.
+                let weapon = models.anim.fit(m).map_or(Weapon::Any, |f| f.weapon());
+                let pick = |act| {
+                    moves.pick(
+                        m,
+                        Want {
+                            weapon,
+                            ..Want::new(act)
+                        },
+                    )
+                };
                 ModelClips {
-                    actions: ACTIONS.map(|a| moves.pick(m, want(a))),
+                    actions: ACTIONS.map(|a| moves.pick(m, Want { weapon, ..want(a) })),
                     die: pick(Act::Death),
                     parry: pick(Act::Parry),
                     stagger: pick(Act::Stagger),
@@ -327,19 +337,52 @@ mod tests {
                 .find_map(|&k| models.clip(m, k))
                 .map(|c| (c.first_row, c.frames))
         };
+        // A model that names what it holds may play moves made for it
+        // instead (see `weapon_moves_are_played_by_the_models_holding_them`).
+        let made_for = |m: usize, c: Option<MoveClip>| {
+            let weapon = models.anim.fit(m).map_or(Weapon::Any, |f| f.weapon());
+            weapon != Weapon::Any && c.is_some_and(|c| c.weapon == weapon)
+        };
         for m in 0..models.models.len() {
             for a in ACTIONS {
-                assert_eq!(
-                    rows(clips.clip(m, a)),
-                    old(m, old_candidates(a)),
-                    "{m} {a:?}"
-                );
+                let c = clips.clip(m, a);
+                if !made_for(m, c) {
+                    assert_eq!(rows(c), old(m, old_candidates(a)), "{m} {a:?}");
+                }
             }
             let own = &clips.by_model[m];
             assert_eq!(rows(own.die), old(m, &[ClipKind::Die]));
-            assert_eq!(rows(own.parry), old(m, old_candidates(Action::Attack)));
+            if !made_for(m, own.parry) {
+                assert_eq!(rows(own.parry), old(m, old_candidates(Action::Attack)));
+            }
             assert_eq!(rows(own.stagger), old(m, old_candidates(Action::Hit)));
         }
+    }
+
+    #[test]
+    fn weapon_moves_are_played_by_the_models_holding_them() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let weapon = |name, a| clips.clip(by(name), a).map(|c| (c.act, c.weapon));
+        // The Ember men's fight library: katana and spear moves.
+        let katana = Some((Act::Attack, Weapon::TwoHanded));
+        assert_eq!(weapon("Katana Samurai", Action::Attack), katana);
+        assert_eq!(weapon("The Ronin", Action::Attack), katana);
+        let spear = Some((Act::Attack, Weapon::Spear));
+        assert_eq!(weapon("Yari Ashigaru", Action::Attack), spear);
+        let parry = clips.by_model[by("Yari Ashigaru")].parry.unwrap();
+        assert_eq!((parry.act, parry.weapon), (Act::Parry, Weapon::Spear));
+        // Walking is still the model's own clip, and a kanabo, with no moves
+        // made for it, keeps the Oni-Bound's own attack.
+        assert_eq!(
+            weapon("Katana Samurai", Action::Walk),
+            Some((Act::Walk, Weapon::Any))
+        );
+        assert_eq!(
+            weapon("Oni-Bound", Action::Attack),
+            Some((Act::Attack, Weapon::Any))
+        );
     }
 
     #[test]

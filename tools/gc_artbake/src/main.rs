@@ -127,6 +127,12 @@ struct ModelConfig {
     /// are the model's own animations.
     #[serde(default)]
     moves_from: Option<String>,
+    /// What the model holds, named as in `gc_assets::anim::Weapon`
+    /// ("TwoHanded" for a katana): the picker then prefers the skeleton's
+    /// moves made for that weapon over the plain clips. Only for a model
+    /// posed from a shared skeleton.
+    #[serde(default)]
+    weapon: Option<String>,
 }
 
 /// One tagged move: a glTF animation and what it is for. Tags are named as
@@ -150,6 +156,11 @@ struct MoveConfig {
     /// once and hold. Written `loops: Some(true)`.
     #[serde(default)]
     loops: Option<bool>,
+    /// For an attack, the seconds into the animation where its blow lands:
+    /// the move is then retimed so its blow lands at
+    /// `gc_assets::anim::BLOW_AT` of it, where the game's swing lands one.
+    #[serde(default)]
+    contact: Option<f32>,
 }
 
 fn any() -> String {
@@ -995,7 +1006,7 @@ fn bake_model(
     for (kind_name, anim_name) in &cfg.clips {
         let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
         let anim = doc.animations().nth(find(doc, anim_name)?).unwrap();
-        let globals = sample_clip(&anim, own, kind.loops(), &skel, &joints, get)?;
+        let globals = sample_clip(&anim, own, kind.loops(), None, &skel, &joints, get)?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -1035,17 +1046,21 @@ fn bake_model(
             for m in &cfg.moves {
                 let tags = m.tags()?;
                 let loops = tags.flags & gc_assets::anim::LOOPS != 0;
+                if m.contact.is_some() && tags.act != gc_assets::anim::Act::Attack {
+                    return Err(format!("move {:?}: contact is only for attacks", m.anim));
+                }
+                let contact = m.contact;
                 let globals = match &library {
                     Some((lib, to_model)) => {
                         let anim = lib.doc.animations().nth(find(&lib.doc, &m.anim)?).unwrap();
                         let get =
                             |b: gltf::Buffer<'_>| lib.buffers.get(b.index()).map(Vec::as_slice);
                         let node = |n: usize| to_model.get(&n).copied();
-                        sample_clip(&anim, node, loops, &skel, &joints, get)?
+                        sample_clip(&anim, node, loops, contact, &skel, &joints, get)?
                     }
                     None => {
                         let anim = doc.animations().nth(find(doc, &m.anim)?).unwrap();
-                        sample_clip(&anim, own, loops, &skel, &joints, get)?
+                        sample_clip(&anim, own, loops, contact, &skel, &joints, get)?
                     }
                 };
                 let mut frames = pose_frames(&globals)
@@ -1067,6 +1082,15 @@ fn bake_model(
         }
         None => None,
     };
+    let weapon = match &cfg.weapon {
+        Some(w) if posed_clips.is_none() => {
+            return Err(format!(
+                "weapon {w:?} needs a model posed from a shared skeleton"
+            ));
+        }
+        Some(w) => named(&gc_assets::anim::Weapon::ALL, w, "weapon")?,
+        None => gc_assets::anim::Weapon::Any,
+    };
     let posed = posed_clips.map(|clips| rig::Posed {
         rig,
         pre: to_game,
@@ -1077,6 +1101,7 @@ fn bake_model(
             .chain([Mat4::IDENTITY])
             .collect(),
         clips,
+        weapon,
     });
     // Bone rows only for a model that cannot be posed (and in tests, which
     // check the poses against them).
@@ -1412,11 +1437,14 @@ fn same_rig(
 
 /// Each joint's global matrix (in the source's space) for each frame.
 /// `node` gives the skeleton's node an animated node stands for (none: the
-/// channel is skipped).
+/// channel is skipped). With `contact` (seconds into the animation), time
+/// is stretched on either side of it so it falls at
+/// [`BLOW_AT`](gc_assets::anim::BLOW_AT) of the clip.
 fn sample_clip<'a>(
     anim: &gltf::Animation<'a>,
     node: impl Fn(usize) -> Option<usize>,
     loops: bool,
+    contact: Option<f32>,
     skel: &Skeleton,
     joints: &[usize],
     get: impl Clone + Fn(gltf::Buffer<'a>) -> Option<&'a [u8]>,
@@ -1461,9 +1489,28 @@ fn sample_clip<'a>(
     } else {
         (duration * SAMPLE_FPS).ceil() as usize + 1
     };
+    if let Some(c) = contact
+        && !(c > 0.0 && c < duration)
+    {
+        return Err(format!(
+            "contact {c} s is outside the animation ({duration} s)"
+        ));
+    }
+    let retime = |t: f32| match contact {
+        Some(c) => {
+            use gc_assets::anim::BLOW_AT;
+            let u = t / duration;
+            if u <= BLOW_AT {
+                u / BLOW_AT * c
+            } else {
+                c + (u - BLOW_AT) / (1.0 - BLOW_AT) * (duration - c)
+            }
+        }
+        None => t,
+    };
     let mut out = Vec::with_capacity(frames);
     for f in 0..frames {
-        let t = (f as f32 / SAMPLE_FPS).min(duration);
+        let t = retime((f as f32 / SAMPLE_FPS).min(duration));
         let mut local = skel.rest.clone();
         for ch in &channels {
             let (a, b, x) = ch.locate(t);
@@ -1664,6 +1711,44 @@ mod tests {
                 assert!(x.abs_diff_eq(y, 1e-6));
             }
         }
+    }
+
+    #[test]
+    fn an_attack_is_retimed_so_its_blow_lands_where_the_swing_lands_one() {
+        use gc_assets::anim::BLOW_AT;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = load(&root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb")).unwrap();
+        let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(Vec::as_slice);
+        let skel = Skeleton::new(&src.doc);
+        let joints: Vec<usize> = src
+            .doc
+            .skins()
+            .next()
+            .unwrap()
+            .joints()
+            .map(|j| j.index())
+            .collect();
+        let anim = src
+            .doc
+            .animations()
+            .find(|a| a.name() == Some("Attack.000"))
+            .unwrap();
+        let duration = anim
+            .channels()
+            .filter_map(|c| c.reader(get).read_inputs().and_then(|t| t.last()))
+            .fold(0.0, f32::max);
+        let sample = |c| sample_clip(&anim, Some, false, c, &skel, &joints, get);
+        let plain = sample(None).unwrap();
+        // A blow already at BLOW_AT changes nothing; one elsewhere moves the
+        // middle but keeps the ends.
+        let same = sample(Some(duration * BLOW_AT)).unwrap();
+        let moved = sample(Some(duration * 0.2)).unwrap();
+        let near = |a: &[Mat4], b: &[Mat4]| a.iter().zip(b).all(|(x, y)| x.abs_diff_eq(*y, 1e-4));
+        assert_eq!(plain.len(), moved.len());
+        assert!(plain.iter().zip(&same).all(|(a, b)| near(a, b)));
+        assert!(near(&plain[0], &moved[0]) && near(plain.last().unwrap(), moved.last().unwrap()));
+        assert!(!plain.iter().zip(&moved).all(|(a, b)| near(a, b)));
+        assert!(sample(Some(duration + 1.0)).is_err());
     }
 
     #[test]
