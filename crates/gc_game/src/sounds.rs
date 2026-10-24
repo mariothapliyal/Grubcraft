@@ -74,6 +74,7 @@ const RAIN_LEVEL: f32 = 0.9;
 /// loudest, and how much of the bed a dead calm leaves.
 const GALE: f32 = 2.0;
 const WIND_LULL: f32 = 0.7;
+const WIND_GUST: f32 = 0.6;
 /// Fog and snow muffle every sound by up to this much at full strength.
 const FOG_MUFFLE: f32 = 0.35;
 const SNOW_MUFFLE: f32 = 0.2;
@@ -269,7 +270,8 @@ struct Probe {
     wood: bool,
     /// Height above the sea level of the map, in tiles.
     height: f32,
-    /// Which land's habitat it is, 0 to [`LAND_COUNT`].
+    /// Which land's habitat it is, 0 to [`LAND_COUNT`] (more: none, off the
+    /// map).
     land: u8,
 }
 
@@ -316,7 +318,9 @@ fn land_mix(probe: impl Fn(Vec2) -> Probe, focus: Vec2, right: Vec2, radius: f32
             let side = offset.dot(right);
             all += w;
             height += w * p.height;
-            lands[usize::from(p.land).min(LAND_COUNT - 1)] += w;
+            if let Some(share) = lands.get_mut(usize::from(p.land)) {
+                *share += w;
+            }
             if p.wet {
                 wet += w;
                 wet_side += w * side;
@@ -368,6 +372,9 @@ fn zoom_hush(distance: f32) -> f32 {
     (1.15 - distance / BED_ZOOM_FAR).clamp(BED_ZOOM_FLOOR, 1.0)
 }
 
+/// Steps a bed's level is told in.
+const BED_STEPS: f32 = 50.0;
+
 /// The beds as last sent to the mixer, in coarse steps, so a bed that has
 /// not changed audibly costs no message.
 #[derive(Default)]
@@ -378,7 +385,7 @@ impl BedsSent {
     /// (and is noted as sent if so).
     fn changed(&mut self, bed: usize, mix: BedMix) -> bool {
         let q = |v: f32, steps: f32| (v.clamp(-1.0, 1.0) * steps).round() as i16;
-        let now = [q(mix.level, 50.0), q(mix.pan, 25.0), q(mix.dull, 25.0)];
+        let now = [q(mix.level, BED_STEPS), q(mix.pan, 25.0), q(mix.dull, 25.0)];
         if self.0[bed] == Some(now) {
             return false;
         }
@@ -630,6 +637,12 @@ impl Sounds {
 
     /// Set a bed, unless it is already (about) what it was last set to.
     fn set_bed(&mut self, bed: usize, mix: BedMix) {
+        // A level too small to be a step is silence, so the bed really stops.
+        let mix = if mix.level < 0.5 / BED_STEPS {
+            BedMix { level: 0.0, ..mix }
+        } else {
+            mix
+        };
         if self.beds.changed(bed, mix) {
             self.audio.set_bed(bed, mix.level, mix.pan, mix.dull);
         }
@@ -781,7 +794,7 @@ impl Sounds {
         }
         let hush = zoom_hush(zoom);
         let land = self.land;
-        let wind_gain = WIND_LULL + (1.0 - WIND_LULL) * (self.gale / GALE).min(1.0) * 2.0;
+        let wind_gain = WIND_LULL + WIND_GUST * (self.gale / GALE).min(1.0);
         let water = if world.flood().closed() {
             land.water.scaled(FLOOD_SURGE)
         } else {
@@ -829,7 +842,7 @@ impl Sounds {
                     height: terrain.height(at) as f32 / gc_sim::terrain::HEIGHT_UNITS as f32,
                     land: map
                         .and_then(|m| crate::ambient::insects::habitat_at(m, p))
-                        .map_or(0, |h| land_slot(h.land())),
+                        .map_or(u8::MAX, |h| land_slot(h.land())),
                 }
             },
             self.focus,
@@ -937,13 +950,15 @@ impl Sounds {
                 Event::Kindled { x, y } => {
                     // A tile catching is heard where it burns, a few at a
                     // time.
-                    if self
-                        .kindled_at
-                        .is_none_or(|at| tick.wrapping_sub(at) >= KINDLE_EVERY)
+                    let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    if heard
+                        && self.in_earshot(at, 1.0)
+                        && self
+                            .kindled_at
+                            .is_none_or(|last| tick.wrapping_sub(last) >= KINDLE_EVERY)
                     {
                         self.kindled_at = Some(tick);
-                        self.hushed = !heard;
-                        let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                        self.hushed = false;
                         self.play_at(SoundId::Kindle, at, 0.7, 1.0, PRI_MORALE);
                     }
                 }

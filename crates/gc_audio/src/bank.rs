@@ -244,7 +244,9 @@ impl SoundId {
     /// Whether this is an ambient bed: a loop the mixer plays continuously
     /// at a level it is told, not a one-shot.
     pub fn is_bed(self) -> bool {
-        SoundId::BEDS.contains(&self)
+        let id = self as u8;
+        (SoundId::BedWind as u8..=SoundId::BedBattle as u8).contains(&id)
+            || (SoundId::BedMeadow as u8..=SoundId::BedFire as u8).contains(&id)
     }
 
     /// The battle cry of a faction (0 Ember Clans, 1 Brood, 2 Shard Choir,

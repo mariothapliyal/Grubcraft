@@ -388,13 +388,15 @@ fn bed_highland() -> Buf {
         howl * (0.15 + 0.85 * g * g) * 2.6
     });
     let mut buf = bed_buf(samples);
-    // A whistle in the gusts: whole cycles per loop so it joins.
+    // A whistle in the gusts: a tone with a slow +-25 Hz waver, whole cycles
+    // per loop so it joins.
     let f = 880.0;
     buf.at(
         0.0,
         |t, _| {
             let g = (gust[((t * rate) as usize) % len] + 1.0) * 0.5;
-            (TAU * (f + 25.0 * (TAU * 0.5 * t).sin()) * t).sin() * g.powi(3) * 0.05
+            let phase = TAU * f * t - 50.0 * (TAU * 0.5 * t).cos();
+            phase.sin() * g.powi(3) * 0.05
         },
         BED_SECONDS,
         93,

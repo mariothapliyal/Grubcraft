@@ -8,5 +8,5 @@ manifest = 1
 baker = gc_sfx 1
 clips = 55
 sources = synthesised; battle cries from assets-src/voices
-bank = 1d8dea75c58c0ec5bb6a955320f3235b
+bank = 21cd288f6ebd50c43b2876a16a8d42c3
 bank_bytes = 1481106
