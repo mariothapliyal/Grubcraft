@@ -475,13 +475,10 @@ impl Terrain {
 
     /// One tick on: rubble settles, and firm ground it was.
     pub(crate) fn settle_rubble(&mut self) {
-        if self.rubble.is_empty() {
-            return;
-        }
-        for (_, left) in &mut self.rubble {
+        self.rubble.retain_mut(|(_, left)| {
             *left -= 1;
-        }
-        self.rubble.retain(|&(_, left)| left > 0);
+            *left > 0
+        });
     }
 
     /// The rubble lying now: tile index and ticks left, by index. Empty
@@ -492,11 +489,11 @@ impl Terrain {
 
     /// Whether the tile `p` is on is rubble (see [`Terrain::rubble`]).
     pub fn rubbled(&self, p: FxVec2) -> bool {
-        if self.rubble.is_empty() {
-            return false;
-        }
-        let i = index_in(self.side, p.x.floor_int(), p.y.floor_int());
-        i.is_some_and(|i| {
+        self.rubbled_at(p.x.floor_int(), p.y.floor_int())
+    }
+
+    fn rubbled_at(&self, x: i32, y: i32) -> bool {
+        index_in(self.side, x, y).is_some_and(|i| {
             self.rubble
                 .binary_search_by_key(&(i as u32), |&(t, _)| t)
                 .is_ok()
@@ -593,7 +590,7 @@ impl Terrain {
         let (x, y) = (p.x.floor_int(), p.y.floor_int());
         let made = index_in(self.footing_tiles, x, y)
             .map_or(Footing::Firm, |i| Footing::from_u8(self.footing[i]));
-        if made == Footing::Firm && (self.soaked_at(x, y) || self.rubbled(p)) {
+        if made == Footing::Firm && (self.soaked_at(x, y) || self.rubbled_at(x, y)) {
             Footing::Soft
         } else {
             made

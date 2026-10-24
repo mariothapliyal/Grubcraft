@@ -2900,7 +2900,7 @@ impl World {
                 // Rubble lying where buildings fell (none until one does).
                 for &(i, left) in self.terrain.rubble() {
                     h.u32(i);
-                    h.u32(u32::from(left));
+                    h.u16(left);
                 }
                 // Changed only by clearing (in Conquest) and fire (once one
                 // has been lit), so other matches hash as before.
