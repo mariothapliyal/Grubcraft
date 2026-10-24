@@ -148,6 +148,7 @@ mod fog;
 mod fx_demo;
 #[cfg(test)]
 mod goldens;
+mod ground_look;
 mod land;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
@@ -6457,6 +6458,7 @@ fn set_terrain(renderer: &mut gc_render::Renderer, map: &Map) {
         cliff: &map.cliff_cells(),
         tint: &tint,
         tint_side,
+        look: &ground_look::ground_look(map),
     });
 }
 

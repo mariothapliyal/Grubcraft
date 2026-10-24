@@ -116,6 +116,12 @@ pub struct Terrain<'a> {
     /// between lands are soft.
     pub tint: &'a [[u8; 4]],
     pub tint_side: u32,
+    /// How each tile's ground looks, row by row, `size - 1` over
+    /// `samples_per_tile` tiles a side: red, green and blue multiply the
+    /// grass (128 leaves it as it is, 255 doubles it; blended between tiles),
+    /// and alpha is one of the `GROUND_*` patterns drawn over it (0 for none).
+    /// Empty for none.
+    pub look: &'a [[u8; 4]],
 }
 
 /// One shaded box draped on the terrain: a soldier, a ground marker or an
@@ -143,6 +149,36 @@ pub const LAND_BROOD: u8 = 1;
 pub const LAND_CLANS: u8 = 2;
 pub const LAND_CHOIR: u8 = 3;
 pub const LAND_CONCORD: u8 = 4;
+
+/// The patterns a tile's ground look (`Terrain::look`) can ask for in its
+/// alpha byte, by the name the shader's `GROUND_*` carries. They are drawn over
+/// the grass where the tile is, with ragged edges.
+pub const GROUND_CLASSES: [(&str, u8); 12] = [
+    ("BOG", GROUND_BOG),
+    ("MUD", GROUND_MUD),
+    ("DAMP", GROUND_DAMP),
+    ("FLOWERS", GROUND_FLOWERS),
+    ("HEATHER", GROUND_HEATHER),
+    ("GRAVEL", GROUND_GRAVEL),
+    ("CRUST", GROUND_CRUST),
+    ("RIPPLE", GROUND_RIPPLE),
+    ("STRAW", GROUND_STRAW),
+    ("LITTER", GROUND_LITTER),
+    ("BONE", GROUND_BONE),
+    ("MOSS", GROUND_MOSS),
+];
+pub const GROUND_BOG: u8 = 1;
+pub const GROUND_MUD: u8 = 2;
+pub const GROUND_DAMP: u8 = 3;
+pub const GROUND_FLOWERS: u8 = 4;
+pub const GROUND_HEATHER: u8 = 5;
+pub const GROUND_GRAVEL: u8 = 6;
+pub const GROUND_CRUST: u8 = 7;
+pub const GROUND_RIPPLE: u8 = 8;
+pub const GROUND_STRAW: u8 = 9;
+pub const GROUND_LITTER: u8 = 10;
+pub const GROUND_BONE: u8 = 11;
+pub const GROUND_MOSS: u8 = 12;
 
 /// How the renderer is set up. The draw switches exist to measure what each
 /// part of the frame costs on real machines.
@@ -749,6 +785,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1316,6 +1362,27 @@ impl Renderer {
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
+        // The ground's look by tile: neutral and patternless without one.
+        let look_map = self.tile_map("ground look", wgpu::TextureFormat::Rgba8Unorm, tiles);
+        if t.look.is_empty() {
+            Self::write_tile_map(
+                &self.queue,
+                &look_map,
+                tiles,
+                4,
+                &[128, 128, 128, 0].repeat((tiles * tiles) as usize),
+            );
+        } else {
+            assert_eq!(t.look.len(), (tiles * tiles) as usize);
+            Self::write_tile_map(
+                &self.queue,
+                &look_map,
+                tiles,
+                4,
+                bytemuck::cast_slice(t.look),
+            );
+        }
+        let look_view = look_map.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = |globals: &wgpu::Buffer, shadow_map| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("world"),
@@ -1393,6 +1460,10 @@ impl Renderer {
                         binding: 17,
                         resource: wgpu::BindingResource::TextureView(&scar_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 18,
+                        resource: wgpu::BindingResource::TextureView(&look_view),
+                    },
                 ],
             })
         };
@@ -1416,7 +1487,7 @@ impl Renderer {
         self.chunk_levels = vec![0; chunk_count as usize];
         self.terrain_gpu_bytes = t.heights.len() as u64 * 2
             + u64::from(tint_side * tint_side) * 4
-            + u64::from(tiles * tiles) * (1 + 4 + 4)
+            + u64::from(tiles * tiles) * (1 + 4 + 4 + 4)
             + u64::from(mask_side * mask_side)
             + u64::from(occlusion_side * occlusion_side);
         self.terrain = Some(TerrainGpu {
