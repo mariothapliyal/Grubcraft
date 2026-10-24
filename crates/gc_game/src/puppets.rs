@@ -482,6 +482,9 @@ struct Killing {
     /// Finishing a man lying at his feet: he stands over him and strikes
     /// down.
     finish: bool,
+    /// He was in the front rank when it began, and is drawn onto its
+    /// distance (motion warping); one behind strikes from his place.
+    front: bool,
 }
 
 impl Killing {
@@ -490,15 +493,13 @@ impl Killing {
         gap: 0.0,
         pair: None,
         finish: false,
+        front: false,
     };
 }
 
 /// A man finishing one knocked down stands this far from him, in tiles,
 /// over his body.
 const FINISH_GAP: f32 = 0.55;
-/// He may step this much further from his place in the ranks to get there,
-/// in tiles, than a man fighting one standing.
-const FINISH_STRIDE: f32 = 0.6;
 /// He bends to it over this share of his killing blow, and straightens
 /// over this last share.
 const STOOP_IN: f32 = 0.3;
@@ -1749,9 +1750,17 @@ impl Puppets {
                 None => (j != NONE && !block.routing).then(|| self.pos[j as usize]),
             };
             let down = matches!(acting, Some((Act::Down, _)));
+            // Motion warping: a man of the front rank dealing a killing blow
+            // makes for the distance it needs from where his man stood,
+            // whatever his leash from his place, and gets there as it lands.
+            let warp = (killing && self.killing[i].front && champion.is_none()).then(|| {
+                let kill = self.killing[i];
+                kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap
+            });
             let target = match (champion, foe) {
                 (Some((d, side)), _) => self.stance(&d, side),
                 _ if down => self.pos[i],
+                _ if warp.is_some() => warp.unwrap_or(slot),
                 (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
                     let gap = if killing {
@@ -1760,10 +1769,7 @@ impl Puppets {
                         (block.fighter.gap() + self.fighter[j as usize / SLOTS].gap()) / 2.0
                     };
                     let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
-                    let mut leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
-                    if killing && self.killing[i].finish {
-                        leash += FINISH_STRIDE;
-                    }
+                    let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
                     slot + (spot - slot).clamp_length_max(leash)
                 }
                 (None, None) => slot,
@@ -1811,18 +1817,19 @@ impl Puppets {
                     look
                 };
                 self.facing[i] = turn_toward(self.facing[i], look, TURN_RATE * dt);
-                // Motion warping: a man of the front rank dealing a killing
-                // blow is drawn onto the distance it needs from where his
-                // man stood, arriving as it lands, and holds there as he
-                // follows through, so the blow meets its man.
-                if let Some((Act::Kill, f)) =
-                    acting.filter(|_| k < files as usize && champion.is_none())
-                {
-                    let kill = self.killing[i];
-                    let exact = kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap;
+                // The rest of the way to his blow's distance, in his share
+                // of the time left until it lands, and held there as he
+                // follows through: his feet keep the pace.
+                if let (Some(exact), Some((_, f))) = (warp, acting) {
                     let left = self.kill_lands_in(i, f);
-                    let share = if left > dt { dt / left } else { 1.0 };
-                    self.pos[i] = self.pos[i].lerp(exact, share);
+                    if left <= dt {
+                        self.pos[i] = exact;
+                        self.vel[i] = Vec2::ZERO;
+                    } else {
+                        let step = (exact - self.pos[i]) * (dt / left);
+                        self.pos[i] += step;
+                        self.vel[i] = step / dt;
+                    }
                 }
             }
             let speed = if fresh { 0.0 } else { self.vel[i].length() };
@@ -1878,7 +1885,7 @@ impl Puppets {
                 let lunge = unit_hash(block.handle, k, 4);
                 let swing = ((self.time * LUNGE_RATE + lunge) * tau).sin();
                 pos += facing * LUNGE * swing.max(0.0);
-            } else if speed < 0.15 && !block.routing && champion.is_none() && held.is_none() {
+            } else if speed < 0.15 && !block.routing && champion.is_none() && held.is_none() && !killing {
                 // At rest: shift weight and glance about; restlessly, waiting
                 // to fight.
                 let p = unit_hash(block.handle, k, 6) * tau;
@@ -2018,6 +2025,7 @@ impl Puppets {
                             gap,
                             pair,
                             finish: lying,
+                            front: killer % SLOTS < self.front(kr),
                         };
                         paired = pair.map(|(id, _)| id);
                         Some(self.kill_lands_in(killer, 0.0))
@@ -3324,13 +3332,15 @@ mod tests {
         assert!(p.killing[k].finish && p.killing[k].gap == FINISH_GAP);
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying && lies.age < 0.0, "{lies:?}");
-        let (mut stooped, mut closest) = (0.0_f32, f32::INFINITY);
+        let (mut stooped, mut landed) = (0.0_f32, None);
         while p.corpses().last().unwrap().age < 1.0 {
             p.advance(FRAME);
             p.pair(|x, y| x != y);
             p.update(&a, 0, FRAME, |s| stooped = stooped.max(s.stoop));
             p.update(&b, 1, FRAME, |_| {});
-            closest = closest.min(p.pos[k].distance(lay));
+            if p.corpses().last().unwrap().age >= 0.0 {
+                landed.get_or_insert(p.pos[k].distance(lay));
+            }
         }
         assert!(stooped > 0.99, "{stooped}");
         // ...and he lies as he was, not driven or turned.
@@ -3338,8 +3348,44 @@ mod tests {
         assert!(lies.lying);
         assert!(lies.pos.distance(lay) < 0.2, "{lies:?} {lay}");
         assert_eq!(lies.facing, facing);
-        // He closed in to stand over him.
-        assert!((closest - FINISH_GAP).abs() < 0.01, "{closest}");
+        // He stood over him as the blow landed.
+        let landed = landed.unwrap();
+        assert!((landed - FINISH_GAP).abs() < 0.01, "{landed}");
+    }
+
+    #[test]
+    fn a_killer_is_warped_onto_his_blow_even_beyond_his_leash() {
+        let mut p = Puppets::new(2, 4);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        for _ in 0..30 {
+            frame(&mut p, &a, &b);
+        }
+        b.models -= 1;
+        frame(&mut p, &a, &b);
+        let k = (0..4).find(|&k| p.act[k].0 == Act::Kill).expect("a killer");
+        // His man stood further off than his leash lets him go.
+        let spot = p.pos[k] + Vec2::new(0.0, -3.0);
+        p.killing[k].spot = spot;
+        let gap = p.killing[k].gap;
+        let lands = p.kill_lands_in(k, 0.0);
+        let (mut t, mut at_blow, mut held) = (0.0, None, Vec::new());
+        while t < Act::Kill.seconds() - 2.0 * FRAME {
+            p.advance(FRAME);
+            t += FRAME;
+            p.pair(|x, y| x != y);
+            let mut men = Vec::new();
+            p.update(&a, 0, FRAME, |s| men.push(s));
+            p.update(&b, 1, FRAME, |_| {});
+            let his = men[k];
+            if t >= lands {
+                at_blow.get_or_insert(his.pos.distance(spot));
+                held.push(his.speed);
+            }
+        }
+        let at_blow = at_blow.unwrap();
+        assert!((at_blow - gap).abs() < 0.01, "{at_blow} vs {gap}");
+        // Held there, standing, as he follows through.
+        assert!(held.iter().skip(1).all(|&v| v < 0.15), "{held:?}");
     }
 
     #[test]
