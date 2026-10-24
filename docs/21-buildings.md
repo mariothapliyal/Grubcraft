@@ -40,7 +40,7 @@ Each building has four models, and the game shows one of them from the building'
 
 - **Upgrades** of a main building have only `#3` and the finished look. For the first half of an upgrade the game shows the old tier, and for the second half the upgrade's `#3`.
 - **Workers** on a building going up, or being mended, turn to face it and play their attack clips as work. An upgrade has no builders, so three of that faction's workers (Ember Hands, Concord Ledger Clerks, Choir Tuners or Brood Gnawers) are drawn working at the walls. This is drawing only.
-- **Packs.** Each faction's buildings are baked into `assets/buildings/<faction>.pak` from `assets-src/buildings/<faction>.ron`. GitHub refuses files over 100 MB and the soldier pack is 86 MB, so they are separate. The build script joins the soldier pack and every building pack into one pack in the build directory, which the executable embeds. CI checks each building pack against its manifest, as it does the soldier pack. The Ember Clans' buildings are split over `ember.pak` (halls and town) and `ember-defences.pak` (shrine, forge, tower and walls). A finished look may reach 0.45 tiles past its footprint and a construction look's scaffolding 0.6 (the `building_models_dress_buildings` test).
+- **Packs.** Each faction's buildings are baked into `assets/buildings/<faction>.pak` from `assets-src/buildings/<faction>.ron`. GitHub refuses files over 100 MB and the soldier pack is 80 MB, so they are separate. The build script joins the soldier pack and every building pack into one pack in the build directory, which the executable embeds. CI checks each building pack against its manifest, as it does the soldier pack. The Ember Clans' buildings are split over `ember.pak` (halls and town) and `ember-defences.pak` (shrine, forge, tower and walls). A finished look may reach 0.45 tiles past its footprint and a construction look's scaffolding 0.6 (the `building_models_dress_buildings` test).
 - **Budgets** (finished look, full detail, in triangles): main buildings and upgrades 18,000; outposts 14,000; 3×3 to 5×5 buildings 10,000; 2×2 towers and small pieces 6,000; walls and gates 2,500. Each has three smaller levels of detail. All four looks of a building share one 512 × 512 material, baked at 1024.
 - **How each faction builds:**
   - **Ember Clans:** raw-timber pole scaffolding, and stone and log piles.
@@ -122,6 +122,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |
 | Spine Mound | 1 | 100 / 0 | 35 s | 900 | Living | 2×2 |  | Flings spines at ground and air. Range 30, 1 × 10 damage every 2 s. |
 | Queen's Chamber | 1 | 140 / 0 | 45 s | 1,100 | Living | 3×3 |  | Hatches and revives heroes. |
+| Resin Ridge | 1 | 8 / 0 a tile | 5 s a tile | 200 a tile | Living | 1×1, drawn as a line | Line, Grown | Grown by the Hive along its root-veins, every tile at once, with no Gnawer ([26](26-fortifications.md#drawn-walls)). Heals on the veins and withers off them. |
 
 ## Choir
 
@@ -137,6 +138,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |
 | Bell Tower | 1 | 150 / 0 | 40 s | 900 | Fortified | 2×2 |  | A beam that hits ground and air. Every 20 s it tolls, silencing enemy abilities within 10 tiles for 5 s. Range 30, 1 × 10 damage every 2 s. |
 | Sanctum of Echoes | 1 | 150 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Builds and restores heroes. |
+| Light Curtain | 1 | 10 / 0 a tile | 3 s a tile | 180 a tile | Fortified | 1×1, drawn as a line | Line, Pass, Needs power | A wall of light drawn inside your power ([26](26-fortifications.md#drawn-walls)). Your own troops walk through it; it drops for everyone without power. |
 
 ## Carrion Concord
 
@@ -153,3 +155,4 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Lantern Spire | 2 | 160 / 50 | 55 s | 1,000 | Structure | 3×3 |  | Trains Lantern Wraiths. |
 | Tollgate | 1 | 140 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub. Range 30, 2 × 5 damage every 2 s. |
 | Vault of Names | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes. |
+| Bone Fence | 1 | 12 / 0 a tile | 4 s a tile | 300 a tile | Fortified | 1×1, drawn as a line | Line | Bone stakes and chain, drawn at any angle ([26](26-fortifications.md#drawn-walls)). Blocks movement. |
