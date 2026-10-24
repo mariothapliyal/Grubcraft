@@ -45,7 +45,9 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 31: the footing layer (read as firm ground everywhere);
+/// - 33: the footing layer (read as firm ground everywhere);
+/// - 32: grown walls (a build-wall command with no worker);
+/// - 31: not used;
 /// - 30: the Conquest units' clearing styles (read as the standard one);
 /// - 29: drawn walls (the build-wall command);
 /// - 28: gates (the set-gate command);
@@ -86,7 +88,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 31;
+pub const FORMAT: u16 = 33;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -646,7 +648,7 @@ impl Replay {
     }
 
     /// The growth layer, just after the map (format 27 on), then the
-    /// footing (format 31 on).
+    /// footing (format 33 on).
     fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
@@ -892,7 +894,7 @@ impl Replay {
         let cover = layer(r, 3)?;
         let champions = format >= 4 && r.bool()?;
         let growth = layer(r, 27)?;
-        let footing = layer(r, 31)?;
+        let footing = layer(r, 33)?;
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {
