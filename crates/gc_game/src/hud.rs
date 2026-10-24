@@ -726,6 +726,7 @@ impl Running {
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
         let sky = sky_word(&self.world);
+        let season = season_word(&self.world);
         let status = StatusStrip {
             mode,
             side: &side_name,
@@ -734,6 +735,7 @@ impl Running {
             paused: self.paused,
             clock_secs: Some(tick / gc_sim::TICKS_PER_SECOND),
             sky: &sky,
+            season,
         };
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
@@ -1773,6 +1775,19 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
         Icon::Spear
     } else {
         Icon::Sword
+    }
+}
+
+/// The season, and what it does, for the top bar
+/// (docs/32-changing-land.md, "Seasons"); empty with no seasons.
+fn season_word(world: &gc_sim::World) -> &'static str {
+    use gc_sim::sky::Season;
+    match world.season().map(|s| s.season) {
+        None => "",
+        Some(Season::Spring) => "Spring",
+        Some(Season::Summer) => "Summer: dry",
+        Some(Season::Autumn) => "Autumn: harvest",
+        Some(Season::Winter) => "Winter: frost",
     }
 }
 

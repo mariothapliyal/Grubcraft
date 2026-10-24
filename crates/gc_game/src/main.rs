@@ -6021,6 +6021,13 @@ impl Running {
             Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
             None => {}
         }
+        // A new season, after the first spring.
+        if let Some(s) = self.world.season()
+            && s.into == 0
+            && (s.year, s.season) != (0, gc_sim::sky::Season::Spring)
+        {
+            self.say(season_news(s.season).into());
+        }
         for b in self.world.blows() {
             self.puppets.struck(b);
         }
@@ -8094,6 +8101,18 @@ fn drawn_position(
     match prev_positions[r.handle.index as usize] {
         Some((h, prev, _)) if h == r.handle => prev.lerp(cur, alpha),
         _ => cur,
+    }
+}
+
+/// What a new season brings, for the message line
+/// (docs/32-changing-land.md, "Seasons").
+fn season_news(season: gc_sim::sky::Season) -> &'static str {
+    use gc_sim::sky::Season;
+    match season {
+        Season::Spring => "Spring: the ice melts and the showers come back",
+        Season::Summer => "Summer: the woods are dry and catch fire easily",
+        Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
+        Season::Winter => "Winter: the shallows freeze over, and Grub comes in slower",
     }
 }
 

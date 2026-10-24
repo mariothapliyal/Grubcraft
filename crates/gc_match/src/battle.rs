@@ -37,12 +37,17 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
 /// The sky a lobby match is played under, from the lobby's time of day and
 /// weather (docs/32-changing-land.md, "Weather and the time of day"):
 /// every machine makes the same one from the same settings and seed. Its
-/// clock runs from the lobby's time.
+/// clock runs from the lobby's time. A Conquest match with seasons turns
+/// through the year ("Seasons"), and its changing weather follows them.
 pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
-    use gc_sim::sky::{DAY_TICKS, Season, at_hour, changing};
+    use gc_sim::sky::{Climate, DAY_TICKS, at_hour, changing, seasonal};
     use gc_sim::{Spell, Weather, WeatherKind};
     let (hour, minute) = settings.time_of_day.hour();
     let overcast = settings.time_of_day == TimeOfDay::Overcast;
+    let year_ticks = match settings.seasons.season_minutes() {
+        Some(minutes) if settings.mode == GameMode::Conquest => 4 * minutes * 60 * TICKS_PER_SECOND,
+        _ => 0,
+    };
     let all_match = |kind, strength, cloud: u8, wind| {
         vec![Spell {
             at: 0,
@@ -58,7 +63,11 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
         WeatherSetting::Fair => Vec::new(),
         WeatherSetting::Changing => {
-            let mut spells = changing(seed, Season::Wet, SKY_TICKS);
+            let mut spells = if year_ticks > 0 {
+                seasonal(seed, year_ticks, SKY_TICKS)
+            } else {
+                changing(seed, Climate::Wet, SKY_TICKS)
+            };
             if overcast {
                 for s in &mut spells {
                     s.weather.cloud = s.weather.cloud.max(220);
@@ -75,6 +84,7 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         day_ticks: DAY_TICKS,
         runs: true,
         spells,
+        year_ticks,
     }
 }
 

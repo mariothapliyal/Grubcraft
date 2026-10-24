@@ -100,6 +100,10 @@ pub(crate) struct Fires {
     burning: Vec<Burn>,
     /// Whether a fire was ever lit: until then the fires hash as nothing.
     ever: bool,
+    /// Percent of the usual chance to spread, for the season (see
+    /// [`crate::sky::Season::fire_percent`]): follows the match's tick, so
+    /// it isn't hashed.
+    pub(crate) season_percent: u32,
     /// Tiles that caught this tick, for [`crate::events::Event::Kindled`]
     /// (the world tells and clears them).
     pub(crate) kindled: Vec<(i32, i32)>,
@@ -114,6 +118,7 @@ impl Fires {
             seed,
             burning: Vec::new(),
             ever: false,
+            season_percent: 100,
             kindled: Vec::new(),
             burnt: Vec::new(),
         }
@@ -296,7 +301,9 @@ impl Fires {
                 if base == 0 || burnt || self.is_burning(x, y) {
                     continue;
                 }
-                let chance = base * wind_percent(wind, dx, dy) / 100 * dry / u32::from(DAMP_WET);
+                let chance = base * wind_percent(wind, dx, dy) / 100 * self.season_percent / 100
+                    * dry
+                    / u32::from(DAMP_WET);
                 if self.roll(tick, b.x, b.y, x, y) % 1000 < chance {
                     let total = burn_ticks(growth);
                     caught.push(Burn {

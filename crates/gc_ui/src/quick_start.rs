@@ -23,7 +23,7 @@ const STEPS: [Step; 5] = [
     Step {
         title: "Gather",
         scene: gather,
-        text: "Select your workers and right-click a gold Grub seep. They haul it back to your hall. Keep every worker busy.",
+        text: "Select your workers and right-click a gold Grub seep. They haul it back to your hall. Autumn brings more, winter less.",
     },
     Step {
         title: "Build",
