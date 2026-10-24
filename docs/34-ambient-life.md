@@ -102,8 +102,8 @@ Stages 2 and 3 can interleave; stage 4 waits for the animation engine's model fo
 ### What a player sees
 
 - Each finished, visible hall, outpost, workplace, barracks, tech building or heroes' building has one worker of its faction who now and then walks to another building of the same owner within 16 tiles, stands at its door for four to thirteen seconds, and walks home. They use the faction's own worker model with the ordinary walk and idle clips, in the owner's colour.
-- They are a picture. They cannot be selected or hurt, cost no supply, block nobody, and are not in the replay or the network. A trip is only taken along a straight way that stays on dry ground, off steep slopes, out of tiles with trees, and a quarter tile clear of every building and wall; otherwise the worker stays put and tries again later.
-- Only buildings the viewer sees, on screen and within 60 tiles of the camera focus, have walkers. A walker whose home goes out of view is forgotten after three seconds, so an unwatched base costs nothing; at most 160 walk at once.
+- They are a picture. They cannot be selected or hurt, cost no supply, block nobody, and are not in the replay or the network. A trip, out or home, is only taken along a straight way that stays on dry ground, off steep slopes, out of tiles with trees (rocks are not checked; they mostly stand on slopes), and a quarter tile clear of every building and wall; otherwise the worker stays put and tries again later. A building that goes up in a walker's way, or against his door, makes him vanish rather than walk through it (he comes back at his door once it is clear).
+- Only buildings the viewer sees, on screen and within 60 tiles of the camera focus, have walkers. A walker whose home goes out of view or is destroyed is forgotten at once, so an unwatched base costs nothing; at most 160 walk at once. A door with a building against it gets no walker.
 
 ### How it works
 

@@ -6194,7 +6194,10 @@ impl Running {
         let mut homes = Vec::new();
         for s in (self.world.structures().into_iter()).flat_map(gc_sim::Structures::iter) {
             let centre = buildings::centre_of(s.tile, s.width, s.depth);
-            if !shown(&s) || centre.distance(focus) > ambient::walkers::REACH {
+            if !shown(&s)
+                || centre.distance(focus)
+                    > ambient::walkers::REACH + ambient::walkers::OBSTACLE_MARGIN
+            {
                 continue;
             }
             let half = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
@@ -6210,7 +6213,7 @@ impl Running {
             let done = s.finished() && on_screen;
             let worker = art.looks.worker_of(s.building);
             homes.push(ambient::walkers::Home {
-                id: s.handle.index | u32::from(s.handle.generation) << 24,
+                id: u64::from(s.handle.index) | u64::from(s.handle.generation) << 32,
                 owner: s.owner,
                 lives: done
                     && matches!(

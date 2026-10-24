@@ -15,6 +15,9 @@ use glam::Vec2;
 /// be for them to walk on it.
 pub const REACH: f32 = 60.0;
 pub const DOOR: f32 = 0.5;
+/// How far past `REACH` buildings are still listed as obstacles, so one
+/// that juts into the disc from beyond it is not walked through, in tiles.
+pub const OBSTACLE_MARGIN: f32 = 12.0;
 pub const SHORE: f32 = 0.05;
 /// How fast a walker goes, in tiles a second, and how far from his own door
 /// he will go.
@@ -25,8 +28,6 @@ const FAR: f32 = 16.0;
 const STAY: (f32, f32) = (4.0, 9.0);
 /// How far a walker's path keeps clear of walls, in tiles.
 const CLEAR: f32 = 0.25;
-/// A walker is forgotten when his home has been out of view this long.
-const FORGET: f32 = 3.0;
 /// Walkers kept at once, at most.
 pub const MOST: usize = 160;
 /// How far apart the ground is looked at along a path, in tiles, and the
@@ -39,7 +40,7 @@ const STEEPEST: f32 = 0.3;
 pub struct Home {
     /// A number that stays with the building (its handle's index and
     /// generation).
-    pub id: u32,
+    pub id: u64,
     pub owner: u8,
     /// Whether a walker lives here (a hall or a workplace).
     pub lives: bool,
@@ -80,8 +81,9 @@ struct Walker {
     facing: Vec2,
     owner: u8,
     worker: usize,
-    /// Where he is going, if on a trip.
+    /// Where he is going, if on a trip, and the way he faces on arriving.
     to: Option<Vec2>,
+    arrive: Vec2,
     /// Whether the trip in hand goes out (else home).
     outbound: bool,
     /// Whether he waits at a door away from home.
@@ -89,12 +91,11 @@ struct Walker {
     /// Seconds he stands still before the next trip.
     wait: f32,
     phase: f32,
-    unseen: f32,
 }
 
 #[derive(Default)]
 pub struct Walkers {
-    walkers: HashMap<u32, Walker>,
+    walkers: HashMap<u64, Walker>,
     rng: u32,
 }
 
@@ -145,7 +146,7 @@ impl Walkers {
         let mut last = a;
         for k in 1..=steps {
             let p = a.lerp(b, k as f32 / steps as f32);
-            if !walkable(p) || climb(last, p) > STEEPEST || homes.iter().any(|h| h.blocks(p)) {
+            if homes.iter().any(|h| h.blocks(p)) || !walkable(p) || climb(last, p) > STEEPEST {
                 return false;
             }
             last = p;
@@ -153,15 +154,15 @@ impl Walkers {
         true
     }
 
-    /// A door for a walker from `home` to go to: another building of his
-    /// owner within [`FAR`], by a clear way.
+    /// A door for a walker from `home` to go to, and the way to face there:
+    /// another building of his owner within [`FAR`], by a clear way.
     fn pick(
         &mut self,
         home: &Home,
         homes: &[Home],
         walkable: &impl Fn(Vec2) -> bool,
         climb: &impl Fn(Vec2, Vec2) -> f32,
-    ) -> Option<Vec2> {
+    ) -> Option<(Vec2, Vec2)> {
         let near: Vec<&Home> = homes
             .iter()
             .filter(|h| h.visit && h.id != home.id && h.owner == home.owner)
@@ -174,14 +175,16 @@ impl Walkers {
         let first = (self.unit() * near.len() as f32) as usize;
         (0..near.len())
             .map(|k| near[(first + k) % near.len()])
-            .map(|h| h.door)
-            .find(|&d| Self::clear_way(home.door, d, homes, walkable, climb))
+            .find(|h| Self::clear_way(home.door, h.door, homes, walkable, climb))
+            .map(|h| (h.door, (h.centre - h.door).normalize_or(Vec2::Y)))
     }
 
     /// Move the walkers on by `dt` seconds of effects time. `homes` are the
     /// buildings the viewer sees now; `walkable` says whether the ground is
     /// dry and not too rough at a point, and `climb` how much it rises from
-    /// one point to the next.
+    /// one point to the next. A walker whose home is not in `homes` (out of
+    /// view, destroyed) is forgotten at once, and so is one a building has
+    /// been put in the way of.
     pub fn advance(
         &mut self,
         dt: f32,
@@ -190,52 +193,61 @@ impl Walkers {
         climb: impl Fn(Vec2, Vec2) -> f32,
     ) {
         let dt = dt.min(0.25);
-        let index: HashMap<u32, usize> = homes.iter().enumerate().map(|(i, h)| (h.id, i)).collect();
-        self.walkers.retain(|id, w| {
-            if index.contains_key(id) {
-                w.unseen = 0.0;
-            } else {
-                w.unseen += dt;
-            }
-            w.unseen < FORGET
-        });
+        let index: HashMap<u64, usize> = (homes.iter().enumerate())
+            .filter(|(_, h)| h.lives)
+            .map(|(i, h)| (h.id, i))
+            .collect();
+        self.walkers.retain(|id, _| index.contains_key(id));
         for h in homes.iter().filter(|h| h.lives) {
             if self.walkers.len() >= MOST {
                 break;
             }
-            if !self.walkers.contains_key(&h.id) {
+            // A door with a building against it is no way out.
+            if !self.walkers.contains_key(&h.id)
+                && !homes.iter().any(|o| o.id != h.id && o.blocks(h.door))
+            {
                 let (wait, phase) = (self.stay(), self.unit());
+                let facing = (h.door - h.centre).normalize_or(Vec2::Y);
                 self.walkers.insert(
                     h.id,
                     Walker {
                         pos: h.door,
-                        facing: (h.door - h.centre).normalize_or(Vec2::Y),
+                        facing,
                         owner: h.owner,
                         worker: h.worker,
                         to: None,
+                        arrive: facing,
                         outbound: false,
                         away: false,
                         wait,
                         phase,
-                        unseen: 0.0,
                     },
                 );
             }
         }
-        let ids: Vec<u32> = self.walkers.keys().copied().collect();
+        let ids: Vec<u64> = self.walkers.keys().copied().collect();
         for id in ids {
-            let Some(&hi) = index.get(&id) else { continue };
-            let home = homes[hi];
+            let home = homes[index[&id]];
             let mut w = self.walkers[&id];
             match w.to {
                 None => {
                     w.wait -= dt;
                     if w.wait <= 0.0 {
                         if w.away {
-                            w.to = Some(home.door);
-                            w.outbound = false;
-                        } else if let Some(d) = self.pick(&home, homes, &walkable, &climb) {
-                            w.to = Some(d);
+                            if Self::clear_way(w.pos, home.door, homes, &walkable, &climb) {
+                                w.to = Some(home.door);
+                                w.arrive = (home.door - home.centre).normalize_or(Vec2::Y);
+                                w.outbound = false;
+                            } else {
+                                // Shut in by a building put up meanwhile.
+                                self.walkers.remove(&id);
+                                continue;
+                            }
+                        } else if let Some((door, face)) =
+                            self.pick(&home, homes, &walkable, &climb)
+                        {
+                            w.to = Some(door);
+                            w.arrive = face;
                             w.outbound = true;
                         } else {
                             w.wait = STAY.0;
@@ -250,10 +262,14 @@ impl Walkers {
                         w.to = None;
                         w.away = w.outbound;
                         w.wait = self.stay();
-                        // Standing at a door he faces the building.
+                        w.facing = w.arrive;
                     } else {
                         w.facing = way.normalize_or(w.facing);
                         w.pos += w.facing * step;
+                        if homes.iter().any(|h| h.blocks(w.pos)) {
+                            self.walkers.remove(&id);
+                            continue;
+                        }
                     }
                 }
             }
@@ -266,7 +282,7 @@ impl Walkers {
 mod tests {
     use super::*;
 
-    fn home(id: u32, x: f32, lives: bool) -> Home {
+    fn home(id: u64, x: f32, lives: bool) -> Home {
         Home {
             id,
             owner: 0,
@@ -342,7 +358,43 @@ mod tests {
         let homes = [home(1, 10.0, true), home(2, 16.0, false)];
         let mut w = Walkers::default();
         run(&mut w, &homes, 1.0);
-        run(&mut w, &[], FORGET + 1.0);
+        run(&mut w, &[homes[1]], 0.05);
+        assert_eq!(w.seen().count(), 0);
+    }
+
+    #[test]
+    fn a_building_put_in_his_way_does_not_trap_him() {
+        let homes = [home(1, 10.0, true), home(2, 16.0, false)];
+        let mut w = Walkers::default();
+        let mut blocked = false;
+        for _ in 0..(200.0 * 20.0) as usize {
+            let mut now = homes.to_vec();
+            // Once he is standing at the far door, wall in the way back.
+            if (w.seen().next()).is_some_and(|s| s.pos.distance(homes[1].door) < 0.1) {
+                blocked = true;
+                let mut wall = home(3, 13.0, false);
+                wall.half = Vec2::new(0.5, 5.0);
+                wall.visit = false;
+                now.push(wall);
+            }
+            run(&mut w, &now, 0.05);
+            if let Some(s) = w.seen().next() {
+                assert!(!now.iter().any(|h| h.id == 3 && h.blocks(s.pos)));
+            }
+            if blocked && w.seen().count() == 0 {
+                break;
+            }
+        }
+        assert!(blocked);
+    }
+
+    #[test]
+    fn a_door_with_a_building_against_it_gets_no_walker() {
+        let mut next = home(2, 10.0, false);
+        next.half = Vec2::new(3.0, 1.0);
+        next.centre = Vec2::new(10.0, 12.5);
+        let mut w = Walkers::default();
+        run(&mut w, &[home(1, 10.0, true), next], 1.0);
         assert_eq!(w.seen().count(), 0);
     }
 
