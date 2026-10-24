@@ -164,6 +164,18 @@ pub(crate) fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     }
 }
 
+/// Of the `items` that `score` takes, one of those scoring best, picked by
+/// `seed` among them.
+pub(crate) fn best_by_seed<T>(
+    items: &[T],
+    score: impl Fn(&T) -> Option<u32>,
+    seed: u32,
+) -> Option<&T> {
+    let best = items.iter().filter_map(&score).max()?;
+    let top = || items.iter().filter(|i| score(i) == Some(best));
+    top().nth(seed as usize % top().count())
+}
+
 /// Every model's moves, looked up once.
 pub struct Moves {
     by_model: Vec<Vec<MoveClip>>,
@@ -217,12 +229,9 @@ impl Moves {
                 let s = fits(m.side, want.side, Side::Any)?;
                 Some(w * 3 + s)
             };
-            let Some(best) = moves.iter().filter_map(score).max() else {
-                continue;
-            };
-            let top = || moves.iter().filter(move |m| score(m) == Some(best));
-            let n = top().count();
-            return top().nth(want.seed as usize % n).copied();
+            if let Some(m) = best_by_seed(moves, score, want.seed) {
+                return Some(*m);
+            }
         }
         None
     }

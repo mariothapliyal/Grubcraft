@@ -42,7 +42,8 @@ pub const FITS_PATH: &str = "anim/fits";
 pub const FIXES_PATH: &str = "anim/fixes";
 pub const PAIRS_PATH: &str = "anim/pairs";
 
-/// Every anim table, in the order [`AnimTables::write`] writes them.
+/// The anim tables that come all together, in the order
+/// [`AnimTables::write`] writes them (`anim/pairs` may follow).
 const PATHS: [&str; 6] = [
     SKELETONS_PATH,
     JOINTS_PATH,
@@ -391,17 +392,21 @@ pub struct FitRecord {
 }
 
 /// A matched kill: the killer's half (an [`Act::Kill`] move) and the
-/// victim's ([`Act::Killed`]), as long as each other and landing their
-/// contact on the same frame. 16 bytes.
+/// victim's ([`Act::Killed`]), as long as each other, sampled alike and
+/// meeting at `contact`. Unlike an attack a kill is not retimed, so it
+/// plays as made. 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct PairRecord {
     pub kill: u32,
     pub killed: u32,
-    /// How far apart the two men stand, origin to origin, in tiles, the
-    /// victim facing the killer.
+    /// How far apart the two men stand, origin to origin, the victim facing
+    /// the killer, in the skeleton's space (the killer's size, from his
+    /// first fix, turns it into tiles).
     pub reach: f32,
-    pub _pad: u32,
+    /// How far through both halves (0 to 1, as `MoveClip::at` counts) the
+    /// blow lands.
+    pub contact: f32,
 }
 
 impl FitRecord {
@@ -415,8 +420,8 @@ pub enum AnimError {
     Table(&'static str, TableError),
     /// Some tables are there and some are not.
     Partial,
-    /// A skeleton, joint, move or fit points outside its tables or breaks
-    /// their rules.
+    /// A skeleton, joint, move, fit or pair points outside its tables or
+    /// breaks their rules.
     Bad(&'static str, usize),
 }
 
@@ -471,7 +476,8 @@ impl<'a> Anim<'a> {
             fits: table(pack, FITS_PATH)?,
             fixes: table(pack, FIXES_PATH)?,
             pairs: match pack.get_path(PAIRS_PATH) {
-                Some(_) => table(pack, PAIRS_PATH)?,
+                Some(entry) => read_table(ANIM_SCHEMA, entry.bytes)
+                    .map_err(|e| AnimError::Table(PAIRS_PATH, e))?,
                 None => &[],
             },
         };
@@ -546,19 +552,23 @@ impl<'a> Anim<'a> {
             else {
                 return Err(AnimError::Bad("pair", k));
             };
-            if kill.frames != killed.frames || !(p.reach.is_finite() && p.reach > 0.0) {
+            if kill.frames != killed.frames
+                || kill.fps != killed.fps
+                || !(p.reach.is_finite() && p.reach > 0.0)
+                || !(p.contact > 0.0 && p.contact < 1.0)
+            {
                 return Err(AnimError::Bad("pair", k));
             }
         }
         Ok(())
     }
 
-    /// The fit of `model`, if it is posed from a skeleton.
     /// What model `model` holds: [`Weapon::Any`] unless its fit names one.
     pub fn weapon_of(&self, model: usize) -> Weapon {
         self.fit(model).map_or(Weapon::Any, FitRecord::weapon)
     }
 
+    /// The fit of `model`, if it is posed from a skeleton.
     pub fn fit(&self, model: usize) -> Option<&'a FitRecord> {
         let k = self
             .fits

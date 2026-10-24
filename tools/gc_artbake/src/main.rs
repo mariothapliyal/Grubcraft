@@ -217,8 +217,11 @@ impl MoveConfig {
                 self.anim
             ));
         }
-        let reach_ok = self.reach.is_some_and(|r| r.is_finite() && r > 0.0);
-        if (act == Act::Kill) != self.reach.is_some() || self.reach.is_some() && !reach_ok {
+        let reach_ok = match (act == Act::Kill, self.reach) {
+            (true, Some(r)) => r.is_finite() && r > 0.0,
+            (killer, reach) => !killer && reach.is_none(),
+        };
+        if !reach_ok {
             return Err(format!(
                 "move {:?}: the killer's half, and only it, has a reach above 0",
                 self.anim
@@ -1093,9 +1096,32 @@ fn bake_model(
                 let tags = m.tags()?;
                 let loops = tags.flags & gc_assets::anim::LOOPS != 0;
                 let anim = anim_named(&moves_src.doc, &m.anim)?;
-                let globals = sample_clip(
-                    &anim, moves_node, loops, m.contact, &skel, &joints, moves_get,
-                )?;
+                // A kill plays as made (its pair records where it meets);
+                // an attack is retimed so its blow lands at BLOW_AT.
+                let kill = matches!(
+                    tags.act,
+                    gc_assets::anim::Act::Kill | gc_assets::anim::Act::Killed
+                );
+                let retime = if kill { None } else { m.contact };
+                let globals =
+                    sample_clip(&anim, moves_node, loops, retime, &skel, &joints, moves_get)?;
+                let pair = match (&m.pair, m.contact) {
+                    (Some(name), Some(contact)) => {
+                        let share = contact * SAMPLE_FPS / (globals.len() - 1).max(1) as f32;
+                        if !(share > 0.0 && share < 1.0) {
+                            return Err(format!(
+                                "move {:?}: contact {contact} s is outside the animation",
+                                m.anim
+                            ));
+                        }
+                        Some(rig::PairHalf {
+                            name: name.clone(),
+                            reach: m.reach,
+                            contact: share,
+                        })
+                    }
+                    _ => None,
+                };
                 let mut frames = pose_frames(&globals)
                     .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
                 if m.additive {
@@ -1106,10 +1132,7 @@ fn bake_model(
                     name: m.anim.clone(),
                     tags,
                     frames,
-                    pair: m.pair.clone().map(|name| rig::PairHalf {
-                        name,
-                        reach: m.reach,
-                    }),
+                    pair,
                 });
             }
             Some(posed)
@@ -1685,7 +1708,7 @@ mod tests {
     }
 
     #[test]
-    fn the_halves_of_a_kill_are_paired_with_their_reach_in_tiles() {
+    fn the_halves_of_a_kill_are_paired_and_played_as_made() {
         use gc_assets::anim::Act;
         let half = |act: &str, extra: &str| {
             format!(
@@ -1693,11 +1716,11 @@ mod tests {
             )
         };
         let both = format!(
-            "[{}, {}]",
+            r#"[{}, {}, (anim: "Attack.000", act: "Hit")]"#,
             half("Kill", ", reach: Some(2.0)"),
             half("Killed", "")
         );
-        let (bytes, tables, _) = bake_bug_with(&both);
+        let (bytes, _, _) = bake_bug_with(&both);
         let pack = gc_assets::Pack::parse(bytes.as_ref().unwrap()).unwrap();
         let models = gc_assets::model::Models::from_pack(&pack).unwrap();
         let anim = &models.anim;
@@ -1705,15 +1728,16 @@ mod tests {
         let p = anim.pairs[0];
         assert_eq!(anim.moves[p.kill as usize].act(), Act::Kill);
         assert_eq!(anim.moves[p.killed as usize].act(), Act::Killed);
-        // Reach is sized with the model: the length of its fix's first axis.
-        let pre = tables.anim.fixes[anim.fit(0).unwrap().first_fix as usize];
-        let scale = (pre[0] * pre[0] + pre[4] * pre[4] + pre[8] * pre[8]).sqrt();
-        assert!(
-            (p.reach - 2.0 * scale).abs() < 1e-5,
-            "{} vs {}",
-            p.reach,
-            2.0 * scale
-        );
+        // Reach stays in the skeleton's space, which the game sizes with
+        // the killer; a kill is not retimed, so its frames are those of an
+        // untimed move on the same animation (stored once), and it meets
+        // where its contact says.
+        assert_eq!(p.reach, 2.0);
+        let kill = anim.moves[p.kill as usize];
+        let hit = anim.moves.iter().find(|m| m.act() == Act::Hit).unwrap();
+        assert_eq!((kill.first_row, kill.frames), (hit.first_row, hit.frames));
+        let share = 0.2 * SAMPLE_FPS / (kill.frames - 1) as f32;
+        assert!((p.contact - share).abs() < 1e-6, "{} vs {share}", p.contact);
 
         // A pack without kills has no pairs table at all.
         let (plain, _, _) = bake_bug_with("[]");
@@ -1730,6 +1754,9 @@ mod tests {
         let long = r#"(anim: "Idle", act: "Killed", contact: Some(0.2), pair: Some("Bite"))"#;
         let e = err(format!("[{}, {long}]", half("Kill", ", reach: Some(2.0)")));
         assert!(e.contains("differ in length"), "{e}");
+        let late = r#"(anim: "Attack.000", act: "Killed", contact: Some(0.3), pair: Some("Bite"))"#;
+        let e = err(format!("[{}, {late}]", half("Kill", ", reach: Some(2.0)")));
+        assert!(e.contains("differ in contact"), "{e}");
         assert!(err(format!("[{}]", half("Kill", ""))).contains("reach"));
         assert!(err(format!("[{}]", half("Killed", ", reach: Some(1.0)"))).contains("reach"));
         let unpaired =

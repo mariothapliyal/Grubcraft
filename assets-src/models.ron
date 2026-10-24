@@ -71,9 +71,9 @@
                 (anim: "F_Spear_Guard", act: "Idle", weapon: "Spear"),
                 (anim: "F_Spear_Thrust", act: "Attack", weapon: "Spear", contact: Some(0.333)),
                 (anim: "F_Spear_Parry", act: "Parry", weapon: "Spear"),
-                // Single cuts joined with their recoveries, guard to guard.
+                // A single cut joined with its recovery, guard to guard: a
+                // katana man's second blow.
                 (anim: "F_Katana_Cut_A", act: "Attack", weapon: "TwoHanded", contact: Some(0.4)),
-                (anim: "F_Katana_Cut_B", act: "Attack", weapon: "TwoHanded", contact: Some(0.467)),
                 // Matched kills (docs/33, stage 5): each pair made together in
                 // Blender, the victim `reach` metres in front of the killer.
                 (anim: "K_Katana_Thrust_Kill", act: "Kill", weapon: "TwoHanded", contact: Some(0.467), pair: Some("Katana_Thrust"), reach: Some(1.538)),
@@ -82,10 +82,6 @@
                 (anim: "K_Katana_Cut_Killed", act: "Killed", contact: Some(0.4), pair: Some("Katana_Cut")),
                 (anim: "K_Spear_Thrust_Kill", act: "Kill", weapon: "Spear", contact: Some(0.333), pair: Some("Spear_Thrust"), reach: Some(3.754)),
                 (anim: "K_Spear_Thrust_Killed", act: "Killed", contact: Some(0.333), pair: Some("Spear_Thrust")),
-                // The library's hits and death, for any man on the rig.
-                (anim: "F_Hit_Chest", act: "Hit"),
-                (anim: "F_Hit_Head", act: "Hit"),
-                (anim: "F_Death01", act: "Death"),
             ],
         ),
         (

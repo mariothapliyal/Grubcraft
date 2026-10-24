@@ -215,8 +215,10 @@ pub(crate) struct PosedClip {
 #[derive(Clone, Debug)]
 pub(crate) struct PairHalf {
     pub name: String,
-    /// The killer's half's reach, in skeleton space.
+    /// The killer's half's reach, in skeleton space; none for the victim's.
     pub reach: Option<f32>,
+    /// How far through the move (0 to 1, by frames) the blow lands.
+    pub contact: f32,
 }
 
 /// Turn `frames` into changes from the first frame, as an additive move is
@@ -403,12 +405,12 @@ pub(crate) struct AnimBuilder {
     pairs: BTreeMap<(u16, String), Halves>,
 }
 
-/// The halves of a matched kill found so far.
+/// The halves of a matched kill found so far: each one's move and contact.
 #[derive(Default)]
 struct Halves {
-    /// The killer's move and its reach in tiles.
     kill: Option<(u32, f32)>,
-    killed: Option<u32>,
+    killed: Option<(u32, f32)>,
+    reach: Option<f32>,
 }
 
 impl AnimBuilder {
@@ -491,7 +493,7 @@ impl AnimBuilder {
                 }
             };
             if let Some(half) = &clip.pair {
-                self.add_half(skeleton, half, index, clip.tags.act, &posed.pre)?;
+                self.add_half(skeleton, half, index)?;
             }
             // A move only the picker finds is not one of the model's clips.
             let Some(kind) = clip.kind else {
@@ -511,28 +513,22 @@ impl AnimBuilder {
 
     /// Note move `index` as a half of kill `half` on `skeleton`; models
     /// sharing the skeleton may name the same half again, but never another.
-    fn add_half(
-        &mut self,
-        skeleton: u16,
-        half: &PairHalf,
-        index: u32,
-        act: Act,
-        pre: &Mat4,
-    ) -> Result<(), String> {
+    fn add_half(&mut self, skeleton: u16, half: &PairHalf, index: u32) -> Result<(), String> {
         let entry = self.pairs.entry((skeleton, half.name.clone())).or_default();
         let clash = |what| format!("pair {:?} has two {what} halves", half.name);
-        if act == Act::Kill {
-            // The model is sized from skeleton space by `pre`.
-            let reach = half.reach.ok_or("a killer's half needs its reach")?
-                * pre.x_axis.truncate().length();
-            match entry.kill {
-                Some(had) if had != (index, reach) => return Err(clash("killer's")),
-                _ => entry.kill = Some((index, reach)),
-            }
-        } else {
-            match entry.killed {
-                Some(had) if had != index => return Err(clash("victim's")),
-                _ => entry.killed = Some(index),
+        let this = (index, half.contact);
+        let (slot, what) = match half.reach {
+            Some(_) => (&mut entry.kill, "killer's"),
+            None => (&mut entry.killed, "victim's"),
+        };
+        match slot {
+            Some(had) if *had != this => return Err(clash(what)),
+            _ => *slot = Some(this),
+        }
+        if let Some(reach) = half.reach {
+            match entry.reach {
+                Some(had) if had != reach => return Err(clash("killer's")),
+                _ => entry.reach = Some(reach),
             }
         }
         Ok(())
@@ -542,17 +538,22 @@ impl AnimBuilder {
     /// of each kill.
     pub fn finish(self, t: &mut AnimTables) -> Result<(), String> {
         for ((_, name), halves) in &self.pairs {
-            let (Some((kill, reach)), Some(killed)) = (halves.kill, halves.killed) else {
+            let (Some((kill, contact)), Some((killed, theirs)), Some(reach)) =
+                (halves.kill, halves.killed, halves.reach)
+            else {
                 return Err(format!("pair {name:?} lacks a half"));
             };
             if t.moves[kill as usize].frames != t.moves[killed as usize].frames {
                 return Err(format!("pair {name:?}: its halves differ in length"));
             }
+            if contact != theirs {
+                return Err(format!("pair {name:?}: its halves differ in contact"));
+            }
             t.pairs.push(PairRecord {
                 kill,
                 killed,
                 reach,
-                _pad: 0,
+                contact,
             });
         }
         for (s, block) in t.skeletons.iter_mut().zip(self.blocks) {
