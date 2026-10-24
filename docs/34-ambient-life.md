@@ -132,7 +132,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### How it works
 
-- `Felling::cutting(tile, from, style)` records the style of the regiment seen at a tile; `Felling::clear(tile, burnt, ...)` picks it up (a burnt tile is `Burn` whoever cleared it; with no cutter seen it is `Fell`). Each `Down` keeps its style; `pose` and `tint` give the lean, scale and colour by age, and `advance` makes the effects: `Field::blaze`, `ash_down`, `shatter`, `gnawed`, and the old `tree_down` and `bush_up` for the felled. `Field::chop` takes the style for what workers do at the tile.
+- `Felling::cutting(tile, from, style)` records the style of the regiment seen at a tile; `Felling::clear(tile, burnt, ...)` picks it up (a burnt tile is `Burn` whoever cleared it; with no cutter registered it is `Fell`). Every clearing regiment is registered each frame, in Commander View and out of the viewer's sight too, so the style is never lost; a regiment the viewer cannot see gives no direction, so trees fall as they stood and the picture gives nothing away. A cutter is kept 1.5 s after it was last registered. Each `Down` keeps its style; `pose` and `tint` give the lean, scale and colour by age, and `advance` makes the effects: `Field::blaze`, `ash_down`, `shatter`, `gnawed`, and the old `tree_down` and `bush_up` for the felled. `Field::chop` takes the style for what workers do at the tile.
 - At most 48 burning trees get flames in a frame; the rest only char, so a burnt wood cannot flood the particles. Nothing is added to the sim, the replay or the network.
 - `--fell-demo` now clears the four corners of the wood each faction's way (fell, burn, shatter, gnaw) so they can be looked at side by side.
 

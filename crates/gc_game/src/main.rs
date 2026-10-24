@@ -3140,6 +3140,16 @@ impl Running {
                 ploughed_by: r.ploughed_by,
                 fighter: fighter_of(stats, &r),
             };
+            // How workers clear a tile, and where its trees should fall from
+            // (the regiment's centre, when the viewer sees it; else straight
+            // as they stood), whether or not they are on screen.
+            let clearing_style = (self.units.factions.get(usize::from(r.unit)))
+                .map_or(ambient::Style::Fell, |&f| ambient::Style::of(f));
+            if let Some(tile) = (self.world.clearing_tile_of(r.handle)).filter(|_| !block.routing) {
+                let tile_centre = Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5);
+                let from = if seen { pos } else { tile_centre };
+                self.ambient.felling.cutting(tile, from, clearing_style);
+            }
             if !seen {
                 self.puppets.update_on(
                     &block,
@@ -3326,15 +3336,6 @@ impl Running {
                             wood,
                         )
                     });
-                // Where the trees should fall from: the regiment's centre,
-                // whether or not its soldiers are on screen.
-                let clearing_style = (self.units.factions.get(usize::from(r.unit)))
-                    .map_or(ambient::felling::Style::Fell, |&f| {
-                        ambient::felling::Style::of(f)
-                    });
-                if let Some((tile, _, _)) = cutting {
-                    self.ambient.felling.cutting(tile, pos, clearing_style);
-                }
                 self.puppets.update_on(
                     &block,
                     r.owner,

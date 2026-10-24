@@ -43,7 +43,7 @@ const CRYSTAL: [f32; 3] = [150.0, 235.0, 255.0];
 /// the oldest.
 const MOST_DOWN: usize = 512;
 /// A cutter not seen for this long (seconds) has stopped.
-const CUTTER_SEEN: f32 = 0.6;
+const CUTTER_SEEN: f32 = 1.5;
 /// How far a tree's fall strays from straight away from its cutter, in
 /// 256ths of a turn either way.
 const STRAY: f32 = 20.0;
@@ -274,25 +274,21 @@ impl Felling {
         let clock = self.clock;
         self.cutters.retain(|c| clock - c.seen < CUTTER_SEEN);
         let mut blazing = 0;
-        for d in &mut self.down {
+        // Newest first, so a crowd of fires lights the trees that have only
+        // just caught before the ones crumbling.
+        for d in self.down.iter_mut().rev() {
             let age = d.age(clock);
-            let tall = d.height * d.stood.scale;
             let at = d.stood.at;
             let foot = Vec3::new(at.x, ground(at), at.y);
+            let alive = (0.0..d.lasts()).contains(&age);
             match d.style {
-                Style::Fell => {}
-                Style::Burn => {
-                    if (0.0..d.lasts()).contains(&age) && blazing < MOST_BLAZING {
-                        blazing += 1;
-                        fx.blaze(foot, tall, dt);
-                    }
+                Style::Burn if alive && blazing < MOST_BLAZING => {
+                    blazing += 1;
+                    // As tall as it is now, as it crumbles.
+                    fx.blaze(foot, d.height * d.pose(age).1, dt);
                 }
-                Style::Gnaw => {
-                    if (0.0..d.lasts()).contains(&age) {
-                        fx.gnawed(foot, tall, dt);
-                    }
-                }
-                Style::Shatter => {}
+                Style::Gnaw if alive => fx.gnawed(foot, d.height * d.pose(age).1, dt),
+                _ => {}
             }
             // The one thing each does when it is over (a felled tree: when
             // it lands, a bush: halfway up).
@@ -305,6 +301,7 @@ impl Felling {
                 continue;
             }
             d.landed = true;
+            let tall = d.height * d.stood.scale;
             match (d.style, d.stood.tree) {
                 (Style::Fell, true) => {
                     let at = at + facing_of(d.way) * (tall * CROWN_REACH);
