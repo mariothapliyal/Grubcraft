@@ -1057,10 +1057,11 @@ impl LodView {
     }
 
     /// How much near-camera detail shows on a model `height` tiles tall at
-    /// `pos` (see [`head_detail`]); all of it at a forced nearest level.
+    /// `pos` (see [`head_detail`]); all of it at a forced level (the
+    /// caller draws it at the nearest only).
     fn detail(&self, height: f32, pos: glam::Vec3) -> f32 {
         match self.force {
-            Some(lod) => f32::from(u8::from(lod == 0)),
+            Some(_) => 1.0,
             None => head_detail(height, (pos - self.eye).dot(self.forward), self.pixel_scale),
         }
     }
@@ -3648,6 +3649,8 @@ impl Running {
                     firm(r.owner),
                     |s| {
                         let mut s = s;
+                        // His head turns are from the way the puppets face him.
+                        let puppet_facing = s.facing;
                         // At the wall: the ranks step up to it, and the front
                         // one swings.
                         let mut battering = None;
@@ -3732,15 +3735,16 @@ impl Running {
                         };
                         // Finishing a man on the ground, he bends over him
                         // to strike down; else, near the camera, he flinches
-                        // or turns his head.
+                        // or turns his head (not when turned here to a wall,
+                        // a tool or a stand on a wall top).
                         let (turn, turn_weight) = match s.head {
                             _ if s.stoop > 0.0 => ([0, FINISH_PITCH], s.stoop),
-                            Some(h) if lod == 0 => (
+                            Some(h) if lod == 0 && facing.dot(puppet_facing) > 0.99 => (
                                 [
                                     look_angle(h.yaw, std::f32::consts::FRAC_PI_2),
                                     look_angle(h.pitch, std::f32::consts::FRAC_PI_4),
                                 ],
-                                h.weight * view.detail(height, at),
+                                view.detail(height, at),
                             ),
                             _ => ([0, 0], 0.0),
                         };
@@ -8031,6 +8035,10 @@ mod lod_tests {
         let half = head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS / 2.0, 1.0, 1.0);
         assert!((half - 0.5).abs() < 1e-4);
         assert_eq!(head_detail(LOD_PIXELS[0] + HEAD_FADE_PIXELS, 1.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn look_angles_fill_the_byte_and_stop_at_its_ends() {
         assert_eq!(
             look_angle(std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2),
             127
