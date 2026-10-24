@@ -120,6 +120,13 @@ struct ModelConfig {
     /// by every model on that skeleton.
     #[serde(default)]
     moves: Vec<MoveConfig>,
+    /// A glTF holding the tagged moves' animations, when they are kept
+    /// apart from the model (a fight library): it must carry the model's
+    /// very rig, every joint of the same name in the same rest pose, and its
+    /// animations play on the model's joints by name. Left out, the moves
+    /// are the model's own animations.
+    #[serde(default)]
+    moves_from: Option<String>,
 }
 
 /// One tagged move: a glTF animation and what it is for. Tags are named as
@@ -315,7 +322,11 @@ fn bake_pack(config: &Config, opts: &Options) -> Result<(Vec<u8>, ModelTables), 
             }
             None => None,
         };
-        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0))
+        let library = match &m.moves_from {
+            Some(src) => Some(resolve(src).map_err(|e| format!("{}: {e}", m.name))?),
+            None => None,
+        };
+        let mut baked = bake_model(m, &path, albedo.as_ref().map(|a| &a.0), library.as_deref())
             .map_err(|e| format!("{} ({}): {e}", m.name, path.display()))?;
         if opts.report {
             report(&baked);
@@ -638,6 +649,7 @@ fn bake_model(
     cfg: &ModelConfig,
     path: &Path,
     albedo: Option<&Image>,
+    library: Option<&Path>,
 ) -> Result<BakedModel, String> {
     let src = load(path)?;
     let doc = &src.doc;
@@ -972,15 +984,18 @@ fn bake_model(
 
     // 5. Sample the clips: each joint's place in every frame.
     let mut clips = Vec::new();
-    let find = |name: &str| {
+    let find = |doc: &gltf::Document, name: &str| {
         doc.animations()
             .find(|a| a.name() == Some(name))
             .ok_or_else(|| format!("no animation named {name:?}"))
+            .map(|a| a.index())
     };
+    let own = |n: usize| Some(n);
     let mut sampled = Vec::new();
     for (kind_name, anim_name) in &cfg.clips {
         let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
-        let globals = sample_clip(&find(anim_name)?, kind.loops(), &skel, &joints, get)?;
+        let anim = doc.animations().nth(find(doc, anim_name)?).unwrap();
+        let globals = sample_clip(&anim, own, kind.loops(), &skel, &joints, get)?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -1007,12 +1022,32 @@ fn bake_model(
             })
             .collect()
     });
+    let library = library
+        .map(|p| -> Result<_, String> {
+            let lib = load(p).map_err(|e| format!("moves_from {}: {e}", p.display()))?;
+            let to_model = same_rig(&skel, &joints, &Skeleton::new(&lib.doc))
+                .map_err(|e| format!("moves_from {}: {e}", p.display()))?;
+            Ok((lib, to_model))
+        })
+        .transpose()?;
     let posed_clips = match posed_clips {
         Some(mut posed) => {
             for m in &cfg.moves {
                 let tags = m.tags()?;
                 let loops = tags.flags & gc_assets::anim::LOOPS != 0;
-                let globals = sample_clip(&find(&m.anim)?, loops, &skel, &joints, get)?;
+                let globals = match &library {
+                    Some((lib, to_model)) => {
+                        let anim = lib.doc.animations().nth(find(&lib.doc, &m.anim)?).unwrap();
+                        let get =
+                            |b: gltf::Buffer<'_>| lib.buffers.get(b.index()).map(Vec::as_slice);
+                        let node = |n: usize| to_model.get(&n).copied();
+                        sample_clip(&anim, node, loops, &skel, &joints, get)?
+                    }
+                    None => {
+                        let anim = doc.animations().nth(find(doc, &m.anim)?).unwrap();
+                        sample_clip(&anim, own, loops, &skel, &joints, get)?
+                    }
+                };
                 let mut frames = pose_frames(&globals)
                     .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
                 if m.additive {
@@ -1338,9 +1373,49 @@ impl Channel {
     }
 }
 
+/// For a move library on a model's rig: each library node that is one of
+/// the model's joints, by name, to that joint's node. Every joint must be
+/// there, under a parent of the same name and in the same rest pose, or
+/// its moves would not fit the model.
+fn same_rig(
+    skel: &Skeleton,
+    joints: &[usize],
+    lib: &Skeleton,
+) -> Result<HashMap<usize, usize>, String> {
+    let by_name: HashMap<&str, usize> = lib
+        .names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
+    let mut to_model = HashMap::new();
+    for &j in joints {
+        let name = &skel.names[j];
+        let &l = by_name
+            .get(name.as_str())
+            .ok_or_else(|| format!("no joint {name:?}"))?;
+        let parent = |s: &Skeleton, n: usize| s.parent[n].map(|p| s.names[p].clone());
+        if parent(skel, j) != parent(lib, l) {
+            return Err(format!("joint {name:?} hangs from another parent"));
+        }
+        let (a, b) = (skel.rest[j], lib.rest[l]);
+        let near = a.t.abs_diff_eq(b.t, 1e-4 * (1.0 + a.t.length()))
+            && a.r.dot(b.r).abs() > 1.0 - 1e-6
+            && a.s.abs_diff_eq(b.s, 1e-4);
+        if !near {
+            return Err(format!("joint {name:?} rests in another pose"));
+        }
+        to_model.insert(l, j);
+    }
+    Ok(to_model)
+}
+
 /// Each joint's global matrix (in the source's space) for each frame.
+/// `node` gives the skeleton's node an animated node stands for (none: the
+/// channel is skipped).
 fn sample_clip<'a>(
     anim: &gltf::Animation<'a>,
+    node: impl Fn(usize) -> Option<usize>,
     loops: bool,
     skel: &Skeleton,
     joints: &[usize],
@@ -1350,6 +1425,9 @@ fn sample_clip<'a>(
     let mut channels = Vec::new();
     let mut duration: f32 = 0.0;
     for ch in anim.channels() {
+        let Some(target) = node(ch.target().node().index()) else {
+            continue;
+        };
         let reader = ch.reader(get.clone());
         let times: Vec<f32> = reader
             .read_inputs()
@@ -1369,7 +1447,7 @@ fn sample_clip<'a>(
         duration = duration.max(*times.last().unwrap());
         let interp = ch.sampler().interpolation();
         channels.push(Channel {
-            node: ch.target().node().index(),
+            node: target,
             times,
             keys,
             step: interp == gltf::animation::Interpolation::Step,
@@ -1534,7 +1612,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let (_, _, cfg) = bake_alien_bug();
         let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
-        let baked = bake_model(&cfg, &path, None).unwrap();
+        let baked = bake_model(&cfg, &path, None, None).unwrap();
         let posed = baked
             .posed
             .as_ref()
@@ -1570,6 +1648,55 @@ mod tests {
     }
 
     #[test]
+    fn moves_from_a_library_on_the_same_rig_match_the_models_own() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
+        let (_, _, mut cfg) = bake_alien_bug();
+        cfg.moves = ron::from_str(r#"[(anim: "Attack.001", act: "Parry")]"#).unwrap();
+        let own = bake_model(&cfg, &path, None, None).unwrap();
+        let from = bake_model(&cfg, &path, None, Some(&path)).unwrap();
+        let (own, from) = (own.posed.unwrap(), from.posed.unwrap());
+        let (a, b) = (own.clips.last().unwrap(), from.clips.last().unwrap());
+        assert_eq!(a.name, b.name);
+        assert_eq!(a.frames.len(), b.frames.len());
+        for (pa, pb) in a.frames.iter().zip(&b.frames) {
+            for (x, y) in own.matrices(pa).iter().zip(from.matrices(pb)) {
+                assert!(x.abs_diff_eq(y, 1e-6));
+            }
+        }
+    }
+
+    #[test]
+    fn a_library_on_another_rig_is_refused() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = load(&root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb")).unwrap();
+        let skel = Skeleton::new(&src.doc);
+        let joints: Vec<usize> = src
+            .doc
+            .skins()
+            .next()
+            .unwrap()
+            .joints()
+            .map(|j| j.index())
+            .collect();
+        assert_eq!(same_rig(&skel, &joints, &skel).unwrap().len(), joints.len());
+        let mut turned = Skeleton::new(&src.doc);
+        turned.rest[joints[1]].r = Quat::from_rotation_y(0.3) * turned.rest[joints[1]].r;
+        assert!(
+            same_rig(&skel, &joints, &turned)
+                .unwrap_err()
+                .contains("another pose")
+        );
+        let mut renamed = Skeleton::new(&src.doc);
+        renamed.names[joints[2]] = "Elsewhere".into();
+        assert!(
+            same_rig(&skel, &joints, &renamed)
+                .unwrap_err()
+                .contains("no joint")
+        );
+    }
+
+    #[test]
     fn tagged_moves_are_stored_for_the_picker_and_additive_ones_as_changes() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let path = root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb");
@@ -1581,7 +1708,7 @@ mod tests {
             ]"#,
         )
         .unwrap();
-        let baked = bake_model(&cfg, &path, None).unwrap();
+        let baked = bake_model(&cfg, &path, None, None).unwrap();
         let mut t = ModelTables::default();
         let mut anim = rig::AnimBuilder::default();
         baked.append_to(&mut t, &mut anim, "Alien Bug").unwrap();
@@ -1617,7 +1744,7 @@ mod tests {
         }
 
         cfg.moves[0].act = "Somersault".into();
-        let err = bake_model(&cfg, &path, None).err().unwrap();
+        let err = bake_model(&cfg, &path, None, None).err().unwrap();
         assert!(err.contains("unknown act"), "{err}");
     }
 
