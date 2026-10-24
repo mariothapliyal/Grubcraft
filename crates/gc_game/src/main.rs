@@ -3282,7 +3282,6 @@ impl Running {
             let hm = &self.heightmap;
             self.siege
                 .set_density(self.menu.settings().graphics.effects_density());
-            self.effects.set_full_blood(self.menu.settings().full_blood);
             // Behind the menu its time stands still, as the particles' do.
             let siege_dt = if self.menu_open && self.online.is_none() {
                 0.0
@@ -6031,6 +6030,7 @@ impl Running {
     /// the last frame, those the camera sees (the fog hides the rest, as it
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
+        self.effects.set_full_blood(self.menu.settings().full_blood);
         let hm = &self.heightmap;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);

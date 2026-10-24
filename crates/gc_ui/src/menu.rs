@@ -1568,11 +1568,6 @@ impl<N: Network> Menu<N> {
             "Tilt-shift: soft top and bottom",
             &mut s.tilt_shift,
         );
-        ui.toggle(
-            st.next(row),
-            "Full blood: heavier wounds",
-            &mut s.full_blood,
-        );
 
         // Right column: audio and accessibility.
         let mut st = Stack {
@@ -1604,18 +1599,23 @@ impl<N: Network> Menu<N> {
         ui.toggle(st.next(row), "Larger text", &mut s.larger_text);
         ui.toggle(st.next(row), "Reduced screen shake", &mut s.reduced_shake);
         ui.toggle(st.next(row), "Contextual hints", &mut s.hints);
+        ui.toggle(
+            st.next(row),
+            "Full blood: heavier wounds",
+            &mut s.full_blood,
+        );
 
-        let note_y = panel.bottom() - 52 - 44;
+        let note_y = panel.bottom() - 52 - 36;
         ui.label(
             panel.x + 24,
             note_y,
             1,
             theme::INK_MUTED,
-            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, shake, Master, Music.",
+            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, Full blood, shake, Master, Music.",
         );
         ui.label(
             panel.x + 24,
-            note_y + 18,
+            note_y + 16,
             1,
             theme::INK_MUTED,
             "The other audio, graphics and accessibility choices are saved for later.",

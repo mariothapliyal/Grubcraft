@@ -143,48 +143,49 @@ impl Field {
     /// A soldier at `pos` (his chest, over the ground) took a blow of kind
     /// `hit` travelling along `dir`: sparks when it rang on a weapon or
     /// shield, else his side's wound (`style`), more for a heavy blow and
-    /// most for a killing one. `armoured` has his armour ring too. With Full
-    /// blood, the wounds of flesh and ichor are about twice as heavy and
-    /// throw a second, darker spray low toward the ground.
+    /// most for a killing one. `armoured` has his armour ring too.
     pub fn blow(&mut self, pos: Vec3, dir: Vec2, hit: Hit, style: HitStyle, armoured: bool) {
         let along = Vec3::new(dir.x, 0.15, dir.y);
-        let weight = match hit {
-            Hit::Wounded => 1.0,
-            Hit::Crushed => 1.6,
-            Hit::Killed => 2.2,
-            Hit::Parried | Hit::Blocked => 0.0,
-        };
-        if self.full_blood && weight > 0.0 && matches!(style, HitStyle::Flesh | HitStyle::Ichor) {
-            let dark = if style == HitStyle::Flesh {
-                FULL_BLOOD
-            } else {
-                FULL_ICHOR
-            };
-            let low = Vec3::new(dir.x * 0.4, -0.25, dir.y * 0.4);
-            self.fx
-                .spray(pos - Vec3::Y * 0.2, low, dark, FULL_BLOOD_DROPS * weight);
-            self.fx
-                .hit(pos, along, style, armoured, weight * FULL_BLOOD_POWER);
-            if hit != Hit::Wounded {
-                self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.5, 2.0, DUST);
-            }
-            return;
-        }
         match hit {
             Hit::Parried => self.fx.sparks(pos, along, 5.0),
             Hit::Blocked => {
                 self.fx.sparks(pos, along, 2.0);
                 self.fx.chips(pos, -dir, SHIELD_WOOD, 3.0, 0.04);
             }
-            Hit::Wounded => self.fx.hit(pos, along, style, armoured, 1.0),
+            Hit::Wounded => self.wound(pos, dir, style, armoured, 1.0),
             Hit::Crushed => {
-                self.fx.hit(pos, along, style, armoured, 1.6);
+                self.wound(pos, dir, style, armoured, 1.6);
                 self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.5, 2.0, DUST);
             }
             Hit::Killed => {
-                self.fx.hit(pos, along, style, armoured, 2.2);
+                self.wound(pos, dir, style, armoured, 2.2);
                 self.fx.dust_cloud(pos - Vec3::Y * 0.5, 0.6, 2.0, DUST);
             }
+        }
+    }
+
+    /// A wound of `power` (as `Effects::hit`). With Full blood, the wounds of
+    /// flesh and ichor are about twice as heavy and throw a second, darker
+    /// spray low toward the ground.
+    fn wound(&mut self, pos: Vec3, dir: Vec2, style: HitStyle, armoured: bool, power: f32) {
+        let dark = match style {
+            HitStyle::Flesh if self.full_blood => Some(FULL_BLOOD),
+            HitStyle::Ichor if self.full_blood => Some(FULL_ICHOR),
+            _ => None,
+        };
+        let along = Vec3::new(dir.x, 0.15, dir.y);
+        let Some(dark) = dark else {
+            self.fx.hit(pos, along, style, armoured, power);
+            return;
+        };
+        let low = Vec3::new(dir.x * 0.4, -0.25, dir.y * 0.4);
+        self.fx
+            .spray(pos - Vec3::Y * 0.2, low, dark, FULL_BLOOD_DROPS * power);
+        // The armour's sparks are the same size either way.
+        self.fx
+            .hit(pos, along, style, false, power * FULL_BLOOD_POWER);
+        if armoured {
+            self.fx.sparks(pos, along, 6.0 * power);
         }
     }
 
@@ -515,12 +516,13 @@ mod tests {
 
     #[test]
     fn full_blood_makes_flesh_and_ichor_wounds_heavier_and_leaves_the_rest() {
-        let made = |full, hit, style| {
+        let made_in = |full, hit, style, armoured| {
             let mut f = Field::new(None);
             f.set_full_blood(full);
-            f.blow(Vec3::new(5.0, 1.0, 5.0), Vec2::X, hit, style, false);
+            f.blow(Vec3::new(5.0, 1.0, 5.0), Vec2::X, hit, style, armoured);
             f.frame(0.0, 1.0, Vec2::ZERO, 40.0, |_| 0.0).len()
         };
+        let made = |full, hit, style| made_in(full, hit, style, false);
         for style in [HitStyle::Flesh, HitStyle::Ichor] {
             assert!(made(true, Hit::Wounded, style) > made(false, Hit::Wounded, style));
             assert!(made(true, Hit::Killed, style) > made(false, Hit::Killed, style));
@@ -536,6 +538,18 @@ mod tests {
             made(true, Hit::Parried, HitStyle::Flesh),
             made(false, Hit::Parried, HitStyle::Flesh)
         );
+        // The sparks off armour are the same size either way.
+        let sparks = |full| {
+            made_in(full, Hit::Wounded, HitStyle::Flesh, true)
+                - made_in(full, Hit::Wounded, HitStyle::Flesh, false)
+        };
+        assert_eq!(sparks(true), sparks(false));
+        // And a killing blow's dust puff is not smaller than before.
+        let dust = |full| {
+            made_in(full, Hit::Killed, HitStyle::Flesh, false)
+                - made_in(full, Hit::Wounded, HitStyle::Flesh, false)
+        };
+        assert!(dust(true) >= dust(false));
     }
 
     fn motes(distance: f32) -> usize {
