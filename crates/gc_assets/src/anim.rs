@@ -20,6 +20,9 @@
 //!   space into the model's (its size and turn), then one per bone that turns
 //!   the model's stored vertices into that bone's rest (its bind pose
 //!   difference), each the three rows of a 3 × 4 matrix.
+//! - `anim/pairs`, optional even beside the others: one [`PairRecord`] per
+//!   matched kill, the two halves of one move made for two men. A pack with
+//!   no kills leaves it out.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -37,6 +40,7 @@ pub const MOVES_PATH: &str = "anim/moves";
 pub const FRAMES_PATH: &str = "anim/frames";
 pub const FITS_PATH: &str = "anim/fits";
 pub const FIXES_PATH: &str = "anim/fixes";
+pub const PAIRS_PATH: &str = "anim/pairs";
 
 /// Every anim table, in the order [`AnimTables::write`] writes them.
 const PATHS: [&str; 6] = [
@@ -386,6 +390,20 @@ pub struct FitRecord {
     pub _pad: [u8; 3],
 }
 
+/// A matched kill: the killer's half (an [`Act::Kill`] move) and the
+/// victim's ([`Act::Killed`]), as long as each other and landing their
+/// contact on the same frame. 16 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub struct PairRecord {
+    pub kill: u32,
+    pub killed: u32,
+    /// How far apart the two men stand, origin to origin, in tiles, the
+    /// victim facing the killer.
+    pub reach: f32,
+    pub _pad: u32,
+}
+
 impl FitRecord {
     pub fn weapon(&self) -> Weapon {
         Weapon::from_u8(self.weapon).unwrap_or(Weapon::Any)
@@ -424,6 +442,7 @@ pub struct Anim<'a> {
     pub frames: &'a [JointPose],
     pub fits: &'a [FitRecord],
     pub fixes: &'a [[f32; FIX_FLOATS]],
+    pub pairs: &'a [PairRecord],
 }
 
 impl<'a> Anim<'a> {
@@ -432,7 +451,10 @@ impl<'a> Anim<'a> {
     pub fn from_pack(pack: &Pack<'a>, models: &Models<'_>) -> Result<Anim<'a>, AnimError> {
         let present = PATHS.iter().filter(|p| pack.get_path(p).is_some()).count();
         if present == 0 {
-            return Ok(Anim::default());
+            return match pack.get_path(PAIRS_PATH) {
+                Some(_) => Err(AnimError::Partial),
+                None => Ok(Anim::default()),
+            };
         }
         if present < PATHS.len() {
             return Err(AnimError::Partial);
@@ -448,6 +470,10 @@ impl<'a> Anim<'a> {
             frames: table(pack, FRAMES_PATH)?,
             fits: table(pack, FITS_PATH)?,
             fixes: table(pack, FIXES_PATH)?,
+            pairs: match pack.get_path(PAIRS_PATH) {
+                Some(_) => table(pack, PAIRS_PATH)?,
+                None => &[],
+            },
         };
         a.check(models)?;
         Ok(a)
@@ -514,6 +540,16 @@ impl<'a> Anim<'a> {
                 return Err(bad);
             }
         }
+        for (k, p) in self.pairs.iter().enumerate() {
+            let half = |m: u32, act: Act| self.moves.get(m as usize).filter(|r| r.act() == act);
+            let (Some(kill), Some(killed)) = (half(p.kill, Act::Kill), half(p.killed, Act::Killed))
+            else {
+                return Err(AnimError::Bad("pair", k));
+            };
+            if kill.frames != killed.frames || !(p.reach.is_finite() && p.reach > 0.0) {
+                return Err(AnimError::Bad("pair", k));
+            }
+        }
         Ok(())
     }
 
@@ -576,16 +612,18 @@ pub struct AnimTables {
     pub frames: Vec<JointPose>,
     pub fits: Vec<FitRecord>,
     pub fixes: Vec<[f32; FIX_FLOATS]>,
+    pub pairs: Vec<PairRecord>,
 }
 
 impl AnimTables {
     /// Add `a`, whose fits name models counted from `first_model` here.
     pub fn append(&mut self, a: &Anim<'_>, first_model: u32) {
-        let (skeletons, joints, poses, fixes) = (
+        let (skeletons, joints, poses, fixes, moves) = (
             self.skeletons.len() as u32,
             self.joints.len() as u32,
             self.frames.len() as u32,
             self.fixes.len() as u32,
+            self.moves.len() as u32,
         );
         self.skeletons
             .extend(a.skeletons.iter().map(|s| SkeletonRecord {
@@ -606,6 +644,11 @@ impl AnimTables {
             ..*f
         }));
         self.fixes.extend_from_slice(a.fixes);
+        self.pairs.extend(a.pairs.iter().map(|p| PairRecord {
+            kill: p.kill + moves,
+            killed: p.killed + moves,
+            ..*p
+        }));
     }
 
     pub fn is_empty(&self) -> bool {
@@ -629,6 +672,13 @@ impl AnimTables {
         ];
         for (path, bytes) in PATHS.into_iter().zip(&tables) {
             pack.add(path, Kind::Table, bytes);
+        }
+        if !self.pairs.is_empty() {
+            pack.add(
+                PAIRS_PATH,
+                Kind::Table,
+                &table_bytes(ANIM_SCHEMA, &self.pairs),
+            );
         }
     }
 }

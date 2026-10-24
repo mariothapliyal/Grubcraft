@@ -11,11 +11,11 @@
 //! which is exactly the matrix the bone rows hold for a model without a
 //! skeleton.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use gc_assets::anim::{
-    Act, AnimTables, FIX_FLOATS, FitRecord, JointRecord, LOOPS, Mask, MoveRecord, NO_KIND, ROOT,
-    Role, Side, SkeletonRecord, Weapon,
+    Act, AnimTables, FIX_FLOATS, FitRecord, JointRecord, LOOPS, Mask, MoveRecord, NO_KIND,
+    PairRecord, ROOT, Role, Side, SkeletonRecord, Weapon,
 };
 use gc_assets::model::{ClipKind, ClipRecord, MAX_ROWS, NAME_BYTES, f16_bits};
 use glam::{Mat4, Quat, Vec3};
@@ -207,6 +207,16 @@ pub(crate) struct PosedClip {
     pub name: String,
     pub tags: Tags,
     pub frames: Vec<Vec<JointPose>>,
+    /// For a half of a matched kill, which pair it belongs to.
+    pub pair: Option<PairHalf>,
+}
+
+/// A half of a matched kill, as its model's config names it.
+#[derive(Clone, Debug)]
+pub(crate) struct PairHalf {
+    pub name: String,
+    /// The killer's half's reach, in skeleton space.
+    pub reach: Option<f32>,
 }
 
 /// Turn `frames` into changes from the first frame, as an additive move is
@@ -389,6 +399,16 @@ pub(crate) struct AnimBuilder {
     /// row: a tagged move keeps a record of its own even on the frames of a
     /// plain clip, so the picker's library holds it.
     moves: HashMap<(u16, u8, Tags, u32), u32>,
+    /// Matched kills by skeleton and pair name.
+    pairs: BTreeMap<(u16, String), Halves>,
+}
+
+/// The halves of a matched kill found so far.
+#[derive(Default)]
+struct Halves {
+    /// The killer's move and its reach in tiles.
+    kill: Option<(u32, f32)>,
+    killed: Option<u32>,
 }
 
 impl AnimBuilder {
@@ -470,6 +490,9 @@ impl AnimBuilder {
                     k
                 }
             };
+            if let Some(half) = &clip.pair {
+                self.add_half(skeleton, half, index, clip.tags.act, &posed.pre)?;
+            }
             // A move only the picker finds is not one of the model's clips.
             let Some(kind) = clip.kind else {
                 continue;
@@ -486,8 +509,52 @@ impl AnimBuilder {
         Ok(clips)
     }
 
-    /// Lay every skeleton's block of frames out in `t`.
+    /// Note move `index` as a half of kill `half` on `skeleton`; models
+    /// sharing the skeleton may name the same half again, but never another.
+    fn add_half(
+        &mut self,
+        skeleton: u16,
+        half: &PairHalf,
+        index: u32,
+        act: Act,
+        pre: &Mat4,
+    ) -> Result<(), String> {
+        let entry = self.pairs.entry((skeleton, half.name.clone())).or_default();
+        let clash = |what| format!("pair {:?} has two {what} halves", half.name);
+        if act == Act::Kill {
+            // The model is sized from skeleton space by `pre`.
+            let reach = half.reach.ok_or("a killer's half needs its reach")?
+                * pre.x_axis.truncate().length();
+            match entry.kill {
+                Some(had) if had != (index, reach) => return Err(clash("killer's")),
+                _ => entry.kill = Some((index, reach)),
+            }
+        } else {
+            match entry.killed {
+                Some(had) if had != index => return Err(clash("victim's")),
+                _ => entry.killed = Some(index),
+            }
+        }
+        Ok(())
+    }
+
+    /// Lay every skeleton's block of frames out in `t`, and pair the halves
+    /// of each kill.
     pub fn finish(self, t: &mut AnimTables) -> Result<(), String> {
+        for ((_, name), halves) in &self.pairs {
+            let (Some((kill, reach)), Some(killed)) = (halves.kill, halves.killed) else {
+                return Err(format!("pair {name:?} lacks a half"));
+            };
+            if t.moves[kill as usize].frames != t.moves[killed as usize].frames {
+                return Err(format!("pair {name:?}: its halves differ in length"));
+            }
+            t.pairs.push(PairRecord {
+                kill,
+                killed,
+                reach,
+                _pad: 0,
+            });
+        }
         for (s, block) in t.skeletons.iter_mut().zip(self.blocks) {
             s.first_pose = t.frames.len() as u32;
             s.rows = (block.len() / s.joints as usize) as u32;
@@ -559,6 +626,7 @@ mod tests {
             name: "Attack".into(),
             tags,
             frames: frames.clone(),
+            pair: None,
         };
         let posed = Posed {
             rig: r,

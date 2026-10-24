@@ -43,7 +43,7 @@ impl MoveClip {
         })
     }
 
-    fn of_move(r: &MoveRecord) -> MoveClip {
+    pub(crate) fn of_move(r: &MoveRecord) -> MoveClip {
         MoveClip {
             first_row: r.first_row,
             frames: r.frames,
@@ -154,7 +154,7 @@ fn fallbacks(act: Act) -> &'static [Act] {
 /// anything 1, another `None` (never picked). Wanting `any` takes only moves
 /// made for anything: a soldier whose weapon the fight does not name never
 /// plays a spear's parry from another model on his skeleton.
-fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
+pub(crate) fn fits<T: PartialEq>(have: T, want: T, any: T) -> Option<u32> {
     if have == want {
         Some(2)
     } else if have == any {
