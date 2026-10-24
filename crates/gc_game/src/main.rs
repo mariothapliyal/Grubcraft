@@ -167,6 +167,7 @@ mod online;
 mod profile;
 mod puppets;
 mod replays;
+mod ring_tool;
 mod roster;
 mod sandbox;
 mod scars;
@@ -417,6 +418,10 @@ struct Options {
     showroom: Option<Vec<usize>>,
     /// Open this recorded battle at once, as a film (`--watch FILE`).
     watch: Option<std::path::PathBuf>,
+    /// The time of day and the sky a `--battle` or `--conquest` is played
+    /// in, as the lobby would set them (`--time-of-day`, `--sky`).
+    time_of_day: Option<gc_ui::lobby::TimeOfDay>,
+    sky: Option<gc_ui::lobby::WeatherSetting>,
     showroom_clip: Option<showroom::Clip>,
     /// Open the unit viewer at start (`--viewer`): on this unit, or the
     /// first one for "start".
@@ -452,6 +457,8 @@ fn parse_args() -> Options {
         menu: None,
         audio: true,
         battle: None,
+        time_of_day: None,
+        sky: None,
         conquest: None,
         host: false,
         join: None,
@@ -590,6 +597,20 @@ fn parse_args() -> Options {
                 opts.viewer = Some(value.trim().to_string());
                 true
             }
+            "--time-of-day" => by_name(
+                &gc_ui::lobby::TimeOfDay::ALL,
+                gc_ui::lobby::TimeOfDay::name,
+                &value,
+            )
+            .map(|t| opts.time_of_day = Some(t))
+            .is_some(),
+            "--sky" => by_name(
+                &gc_ui::lobby::WeatherSetting::ALL,
+                gc_ui::lobby::WeatherSetting::name,
+                &value,
+            )
+            .map(|w| opts.sky = Some(w))
+            .is_some(),
             "--look" => gc_render::LookPreset::from_name(&value)
                 .map(|p| opts.look = Some(p))
                 .is_some(),
@@ -686,7 +707,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -1665,7 +1686,8 @@ impl App {
                 }
             }
             if let Some(level) = opts.battle {
-                let setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                let mut setup = battle::quick_battle(level, r.menu.settings(), opts.seed);
+                opts.set_sky(&mut setup);
                 r.start_match(MatchKind::Battle(setup));
             }
             if let Some(path) = &opts.watch {
@@ -1688,7 +1710,8 @@ impl App {
                 }
             }
             if let Some(choice) = opts.conquest {
-                let setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
+                let mut setup = conquest::quick_conquest(choice, r.menu.settings(), opts.seed);
+                opts.set_sky(&mut setup);
                 r.start_match(MatchKind::Battle(setup));
             }
             if opts.siege {
@@ -1891,6 +1914,18 @@ impl ApplicationHandler for App {
                         if down && !event.repeat {
                             r.say(why.into());
                         }
+                        return;
+                    }
+                    // The wall tool owns B (blueprints), O (the ring) and Enter
+                    // while it is armed, ahead of the build menu's B and the
+                    // army shape's O.
+                    if down
+                        && !event.repeat
+                        && !r.input.shift
+                        && !r.input.command
+                        && !r.input.alt
+                        && r.wall_key(code)
+                    {
                         return;
                     }
                     // A building's card or the build menu owns the grid's keys;
@@ -3054,6 +3089,7 @@ impl Running {
             self.push_placement_ghost();
             self.push_building_ghost();
             self.push_wall_ghost();
+            self.push_plan_ghosts();
             self.push_clearing_marks();
             self.push_power_aim();
             let hm = &self.heightmap;
@@ -3629,6 +3665,7 @@ impl Running {
             |tile| scenery.occupied_at(tile),
         );
         let (view_focus, view_distance) = self.view_focus();
+        self.atmosphere.follow(atmosphere::SkyView::of(&self.world));
         let look = self.atmosphere.look(
             dt.as_secs_f32(),
             heightmap,
@@ -7126,6 +7163,30 @@ impl From<MapPreviewKey> for MapKey {
             MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
         }
     }
+}
+
+impl Options {
+    /// The lobby's time of day and sky that `--time-of-day` and `--sky`
+    /// chose, in a quick match's settings.
+    fn set_sky(&self, setup: &mut MatchStart) {
+        if let Some(t) = self.time_of_day {
+            setup.settings.time_of_day = t;
+        }
+        if let Some(w) = self.sky {
+            setup.settings.weather = w;
+        }
+    }
+}
+
+/// The thing in `all` whose name is `text`, ignoring case, spaces and dashes.
+fn by_name<T: Copy>(all: &[T], name: fn(T) -> &'static str, text: &str) -> Option<T> {
+    let key = |s: &str| {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+            .collect::<String>()
+    };
+    all.iter().copied().find(|&t| key(name(t)) == key(text))
 }
 
 /// The prepared look a lobby's time of day stands for.
