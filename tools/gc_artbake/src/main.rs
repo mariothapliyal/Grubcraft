@@ -183,6 +183,9 @@ impl MoveConfig {
     fn tags(&self) -> Result<rig::Tags, String> {
         use gc_assets::anim::{ADDITIVE, Act, LOOPS, Mask, Side, Weapon};
         let act = named(&Act::ALL, &self.act, "act")?;
+        if self.contact.is_some() && act != Act::Attack {
+            return Err(format!("move {:?}: contact is only for attacks", self.anim));
+        }
         let loops = self
             .loops
             .unwrap_or(matches!(act, Act::Idle | Act::Walk | Act::Run | Act::Guard));
@@ -995,18 +998,11 @@ fn bake_model(
 
     // 5. Sample the clips: each joint's place in every frame.
     let mut clips = Vec::new();
-    let find = |doc: &gltf::Document, name: &str| {
-        doc.animations()
-            .find(|a| a.name() == Some(name))
-            .ok_or_else(|| format!("no animation named {name:?}"))
-            .map(|a| a.index())
-    };
-    let own = |n: usize| Some(n);
     let mut sampled = Vec::new();
     for (kind_name, anim_name) in &cfg.clips {
         let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
-        let anim = doc.animations().nth(find(doc, anim_name)?).unwrap();
-        let globals = sample_clip(&anim, own, kind.loops(), None, &skel, &joints, get)?;
+        let anim = anim_named(doc, anim_name)?;
+        let globals = sample_clip(&anim, Some, kind.loops(), None, &skel, &joints, get)?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -1033,36 +1029,31 @@ fn bake_model(
             })
             .collect()
     });
+    // Tagged moves come from the model's own glTF, or from a library on its
+    // rig with its nodes mapped onto the model's joints.
     let library = library
         .map(|p| -> Result<_, String> {
             let lib = load(p).map_err(|e| format!("moves_from {}: {e}", p.display()))?;
-            let to_model = same_rig(&skel, &joints, &Skeleton::new(&lib.doc))
+            let to_model = same_rig(&rig, &joints, &Skeleton::new(&lib.doc))
                 .map_err(|e| format!("moves_from {}: {e}", p.display()))?;
             Ok((lib, to_model))
         })
         .transpose()?;
+    let (moves_src, to_model) = match &library {
+        Some((lib, to_model)) => (lib, Some(to_model)),
+        None => (&src, None),
+    };
+    let moves_get = |b: gltf::Buffer<'_>| moves_src.buffers.get(b.index()).map(Vec::as_slice);
+    let moves_node = |n: usize| to_model.map_or(Some(n), |m| m.get(&n).copied());
     let posed_clips = match posed_clips {
         Some(mut posed) => {
             for m in &cfg.moves {
                 let tags = m.tags()?;
                 let loops = tags.flags & gc_assets::anim::LOOPS != 0;
-                if m.contact.is_some() && tags.act != gc_assets::anim::Act::Attack {
-                    return Err(format!("move {:?}: contact is only for attacks", m.anim));
-                }
-                let contact = m.contact;
-                let globals = match &library {
-                    Some((lib, to_model)) => {
-                        let anim = lib.doc.animations().nth(find(&lib.doc, &m.anim)?).unwrap();
-                        let get =
-                            |b: gltf::Buffer<'_>| lib.buffers.get(b.index()).map(Vec::as_slice);
-                        let node = |n: usize| to_model.get(&n).copied();
-                        sample_clip(&anim, node, loops, contact, &skel, &joints, get)?
-                    }
-                    None => {
-                        let anim = doc.animations().nth(find(doc, &m.anim)?).unwrap();
-                        sample_clip(&anim, own, loops, contact, &skel, &joints, get)?
-                    }
-                };
+                let anim = anim_named(&moves_src.doc, &m.anim)?;
+                let globals = sample_clip(
+                    &anim, moves_node, loops, m.contact, &skel, &joints, moves_get,
+                )?;
                 let mut frames = pose_frames(&globals)
                     .ok_or_else(|| format!("move {:?} squashes or shears a joint", m.anim))?;
                 if m.additive {
@@ -1398,41 +1389,48 @@ impl Channel {
     }
 }
 
-/// For a move library on a model's rig: each library node that is one of
-/// the model's joints, by name, to that joint's node. Every joint must be
-/// there, under a parent of the same name and in the same rest pose, or
-/// its moves would not fit the model.
+/// The animation named `name`.
+fn anim_named<'a>(doc: &'a gltf::Document, name: &str) -> Result<gltf::Animation<'a>, String> {
+    doc.animations()
+        .find(|a| a.name() == Some(name))
+        .ok_or_else(|| format!("no animation named {name:?}"))
+}
+
+/// For a move library on a model's rig (`model`, whose joints are the nodes
+/// `joints`): each library node that is one of its joints, by name, to that
+/// joint's node. The library's rig must equal the model's, as models sharing
+/// a skeleton do (`rig::Rig`), or its moves would not fit the model.
 fn same_rig(
-    skel: &Skeleton,
+    model: &rig::Rig,
     joints: &[usize],
     lib: &Skeleton,
 ) -> Result<HashMap<usize, usize>, String> {
-    let by_name: HashMap<&str, usize> = lib
+    let mut by_name: HashMap<&str, usize> = HashMap::new();
+    for (i, n) in lib.names.iter().enumerate() {
+        if by_name.insert(n.as_str(), i).is_some() && model.names.contains(n) {
+            return Err(format!("two nodes are named {n:?}"));
+        }
+    }
+    let lib_joints = model
         .names
         .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
-        .collect();
-    let mut to_model = HashMap::new();
-    for &j in joints {
-        let name = &skel.names[j];
-        let &l = by_name
-            .get(name.as_str())
-            .ok_or_else(|| format!("no joint {name:?}"))?;
-        let parent = |s: &Skeleton, n: usize| s.parent[n].map(|p| s.names[p].clone());
-        if parent(skel, j) != parent(lib, l) {
-            return Err(format!("joint {name:?} hangs from another parent"));
-        }
-        let (a, b) = (skel.rest[j], lib.rest[l]);
-        let near = a.t.abs_diff_eq(b.t, 1e-4 * (1.0 + a.t.length()))
-            && a.r.dot(b.r).abs() > 1.0 - 1e-6
-            && a.s.abs_diff_eq(b.s, 1e-4);
-        if !near {
-            return Err(format!("joint {name:?} rests in another pose"));
-        }
-        to_model.insert(l, j);
+        .map(|n| {
+            by_name
+                .get(n.as_str())
+                .copied()
+                .ok_or_else(|| format!("no joint {n:?}"))
+        })
+        .collect::<Result<Vec<usize>, String>>()?;
+    let lib_rig = rig::Rig::new(
+        &lib_joints,
+        &lib.parent,
+        &lib.names,
+        &lib.globals(&lib.rest),
+    );
+    if lib_rig != *model {
+        return Err("its rig is not the model's (parents or rest pose differ)".into());
     }
-    Ok(to_model)
+    Ok(lib_joints.into_iter().zip(joints.iter().copied()).collect())
 }
 
 /// Each joint's global matrix (in the source's space) for each frame.
@@ -1496,21 +1494,24 @@ fn sample_clip<'a>(
             "contact {c} s is outside the animation ({duration} s)"
         ));
     }
-    let retime = |t: f32| match contact {
+    // A frame's time in the animation. Retimed, frame `f` is the share `u`
+    // of the clip the game plays it at (`MoveClip::at`), and the share
+    // BLOW_AT falls on the contact.
+    let time_of = |f: usize| match contact {
         Some(c) => {
             use gc_assets::anim::BLOW_AT;
-            let u = t / duration;
+            let u = f as f32 / if loops { frames } else { frames - 1 } as f32;
             if u <= BLOW_AT {
                 u / BLOW_AT * c
             } else {
                 c + (u - BLOW_AT) / (1.0 - BLOW_AT) * (duration - c)
             }
         }
-        None => t,
+        None => (f as f32 / SAMPLE_FPS).min(duration),
     };
     let mut out = Vec::with_capacity(frames);
     for f in 0..frames {
-        let t = retime((f as f32 / SAMPLE_FPS).min(duration));
+        let t = time_of(f);
         let mut local = skel.rest.clone();
         for ch in &channels {
             let (a, b, x) = ch.locate(t);
@@ -1713,71 +1714,69 @@ mod tests {
         }
     }
 
+    /// The repo's CC0 Alien Bug: its source, nodes, skin joints and rig.
+    fn bug_rig() -> (Source, Skeleton, Vec<usize>, rig::Rig) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = load(&root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb")).unwrap();
+        let skel = Skeleton::new(&src.doc);
+        let skin = src.doc.skins().next().unwrap();
+        let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
+        let rig = rig::Rig::new(
+            &joints,
+            &skel.parent,
+            &skel.names,
+            &skel.globals(&skel.rest),
+        );
+        (src, skel, joints, rig)
+    }
+
     #[test]
     fn an_attack_is_retimed_so_its_blow_lands_where_the_swing_lands_one() {
         use gc_assets::anim::BLOW_AT;
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let src = load(&root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb")).unwrap();
+        let (src, skel, joints, _) = bug_rig();
         let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(Vec::as_slice);
-        let skel = Skeleton::new(&src.doc);
-        let joints: Vec<usize> = src
-            .doc
-            .skins()
-            .next()
-            .unwrap()
-            .joints()
-            .map(|j| j.index())
-            .collect();
-        let anim = src
-            .doc
-            .animations()
-            .find(|a| a.name() == Some("Attack.000"))
-            .unwrap();
-        let duration = anim
-            .channels()
-            .filter_map(|c| c.reader(get).read_inputs().and_then(Iterator::last))
-            .fold(0.0, f32::max);
-        let sample = |c| sample_clip(&anim, Some, false, c, &skel, &joints, get);
-        let plain = sample(None).unwrap();
-        // A blow already at BLOW_AT changes nothing; one elsewhere moves the
-        // middle but keeps the ends.
-        let same = sample(Some(duration * BLOW_AT)).unwrap();
-        let moved = sample(Some(duration * 0.2)).unwrap();
+        let anim = anim_named(&src.doc, "Attack.000").unwrap();
+        let sample = |c| sample_clip(&anim, Some, false, c, &skel, &joints, get).unwrap();
+        let plain = sample(None);
+        let n = plain.len();
+        // Put the blow on the plain clip's frame 2: retimed, the frame the
+        // game plays at BLOW_AT of the move shows it, and the ends stay.
+        let at = (BLOW_AT * (n - 1) as f32).floor() as usize;
+        let contact = 2.0 / SAMPLE_FPS * BLOW_AT * (n - 1) as f32 / at as f32;
+        let moved = sample(Some(contact));
         let near = |a: &[Mat4], b: &[Mat4]| a.iter().zip(b).all(|(x, y)| x.abs_diff_eq(*y, 1e-4));
-        assert_eq!(plain.len(), moved.len());
-        assert!(plain.iter().zip(&same).all(|(a, b)| near(a, b)));
-        assert!(near(&plain[0], &moved[0]) && near(plain.last().unwrap(), moved.last().unwrap()));
-        assert!(!plain.iter().zip(&moved).all(|(a, b)| near(a, b)));
-        assert!(sample(Some(duration + 1.0)).is_err());
+        assert_eq!(moved.len(), n);
+        assert!(near(&moved[at], &plain[2]));
+        assert!(near(&moved[0], &plain[0]) && near(&moved[n - 1], &plain[n - 1]));
+        let late = sample_clip(&anim, Some, false, Some(100.0), &skel, &joints, get);
+        assert!(late.is_err());
     }
 
     #[test]
     fn a_library_on_another_rig_is_refused() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let src = load(&root.join("assets-src/cc0/alien-bug-cdmir/alien-bug.glb")).unwrap();
-        let skel = Skeleton::new(&src.doc);
-        let joints: Vec<usize> = src
-            .doc
-            .skins()
-            .next()
-            .unwrap()
-            .joints()
-            .map(|j| j.index())
-            .collect();
-        assert_eq!(same_rig(&skel, &joints, &skel).unwrap().len(), joints.len());
-        let mut turned = Skeleton::new(&src.doc);
+        let (_, skel, joints, rig) = bug_rig();
+        let to_model = same_rig(&rig, &joints, &skel).unwrap();
+        assert!(joints.iter().all(|j| to_model[j] == *j));
+        let mut turned = Skeleton::new(&bug_rig().0.doc);
         turned.rest[joints[1]].r = Quat::from_rotation_y(0.3) * turned.rest[joints[1]].r;
         assert!(
-            same_rig(&skel, &joints, &turned)
+            same_rig(&rig, &joints, &turned)
                 .unwrap_err()
-                .contains("another pose")
+                .contains("rest pose")
         );
-        let mut renamed = Skeleton::new(&src.doc);
+        let mut renamed = Skeleton::new(&bug_rig().0.doc);
         renamed.names[joints[2]] = "Elsewhere".into();
         assert!(
-            same_rig(&skel, &joints, &renamed)
+            same_rig(&rig, &joints, &renamed)
                 .unwrap_err()
                 .contains("no joint")
+        );
+        let mut twice = Skeleton::new(&bug_rig().0.doc);
+        twice.names[joints[3]] = twice.names[joints[2]].clone();
+        assert!(
+            same_rig(&rig, &joints, &twice)
+                .unwrap_err()
+                .contains("two nodes")
         );
     }
 

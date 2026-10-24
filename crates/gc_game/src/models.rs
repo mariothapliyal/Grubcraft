@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::{Act, Weapon};
+use gc_assets::anim::Act;
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -130,24 +130,13 @@ impl Clips {
         let by_model = (0..models.models.len())
             .map(|m| {
                 // A model that names what it holds plays the moves made for it.
-                let weapon = models
-                    .anim
-                    .fit(m)
-                    .map_or(Weapon::Any, gc_assets::anim::FitRecord::weapon);
-                let pick = |act| {
-                    moves.pick(
-                        m,
-                        Want {
-                            weapon,
-                            ..Want::new(act)
-                        },
-                    )
-                };
+                let weapon = models.anim.weapon_of(m);
+                let pick = |w: Want| moves.pick(m, Want { weapon, ..w });
                 ModelClips {
-                    actions: ACTIONS.map(|a| moves.pick(m, Want { weapon, ..want(a) })),
-                    die: pick(Act::Death),
-                    parry: pick(Act::Parry),
-                    stagger: pick(Act::Stagger),
+                    actions: ACTIONS.map(|a| pick(want(a))),
+                    die: pick(Want::new(Act::Death)),
+                    parry: pick(Want::new(Act::Parry)),
+                    stagger: pick(Want::new(Act::Stagger)),
                 }
             })
             .collect();
@@ -281,6 +270,7 @@ fn peak(f: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gc_assets::anim::Weapon;
     use gc_assets::model::ClipKind;
 
     #[test]
@@ -343,10 +333,7 @@ mod tests {
         // A model that names what it holds may play moves made for it
         // instead (see `weapon_moves_are_played_by_the_models_holding_them`).
         let made_for = |m: usize, c: Option<MoveClip>| {
-            let weapon = models
-                .anim
-                .fit(m)
-                .map_or(Weapon::Any, gc_assets::anim::FitRecord::weapon);
+            let weapon = models.anim.weapon_of(m);
             weapon != Weapon::Any && c.is_some_and(|c| c.weapon == weapon)
         };
         for m in 0..models.models.len() {
