@@ -1142,16 +1142,14 @@ impl Combat {
             if let Some(j) = best {
                 if !was_engaged {
                     // Hitting home at speed after a run-up is a charge, but
-                    // nobody charges out of a river, through mud (out of it
-                    // or into it), from behind a shield wall, or while
-                    // pushing through friends. A fight ends
-                    // any march.
+                    // nobody charges out of a river or mud, or into either,
+                    // from behind a shield wall, or while pushing through
+                    // friends. A fight ends any march.
                     let charging = regs.target[i].is_some()
                         && regs.run_up[i] >= RUN_UP_TICKS
                         && regs.pace[i].raw() * 4 >= regs.speed[i].raw() * 3
-                        && !terrain.wet(regs.position[i])
-                        && !terrain.soft(regs.position[i])
-                        && !terrain.soft(regs.position[j])
+                        && terrain.bears_charge(regs.position[i])
+                        && terrain.bears_charge(regs.position[j])
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
                     let front = || self.blocks[j].side_facing(me.centre) == Side::Front;

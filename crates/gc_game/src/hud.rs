@@ -1729,7 +1729,7 @@ fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
 }
 
 /// What the ground at `p` does to a regiment facing `facing` (and marching,
-/// if `moving`), in a few words for the selection panel: the readable side
+/// if `moving`), in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(
     terrain: &gc_sim::Terrain,
@@ -1738,13 +1738,13 @@ fn ground_word(
     moving: bool,
 ) -> &'static str {
     if terrain.wet(p) {
-        "in a ford: slow, no charges"
+        "In a ford: slow, no charges"
     } else if terrain.soft(p) {
-        "in mud: slow, no charges"
+        "In mud: slow, no charges"
     } else if moving && terrain.climb_percent(p, facing.to_vec()) < 100 {
-        "climbing: slower"
+        "Climbing: slower"
     } else if terrain.cover(p) == gc_sim::Cover::Wood {
-        "in woods: slower"
+        "In woods: slower"
     } else {
         ""
     }

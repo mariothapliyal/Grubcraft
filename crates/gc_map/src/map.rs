@@ -192,19 +192,20 @@ impl Map {
         use crate::grown::Habitat;
         let wet = [Habitat::AlderCarr as u8, Habitat::PeatBog as u8];
         let n = (self.tiles * self.tiles) as usize;
-        let soft = |i: usize| {
-            if self.habitat.len() == n {
-                wet.contains(&self.habitat[i])
-            } else {
-                self.land.len() == n && self.land[i] == crate::def::Land::Fen as u8
-            }
+        let soft: Vec<bool> = if self.habitat.len() == n {
+            self.habitat.iter().map(|h| wet.contains(h)).collect()
+        } else if self.land.len() == n {
+            (self.land.iter())
+                .map(|&l| l == crate::def::Land::Fen as u8)
+                .collect()
+        } else {
+            Vec::new()
         };
-        self.footing = (0..n)
-            .map(|i| if soft(i) { gc_sim::Footing::Soft } else { gc_sim::Footing::Firm } as u8)
-            .collect();
-        if self.footing.iter().all(|&f| f == 0) {
-            self.footing.clear();
-        }
+        let footing = soft
+            .iter()
+            .map(|&s| u8::from(s) * gc_sim::Footing::Soft as u8)
+            .collect::<Vec<_>>();
+        self.footing = gc_sim::Footing::layer(&footing, self.tiles).to_vec();
     }
 
     /// The ground the simulation plays on: tile heights, the water line,

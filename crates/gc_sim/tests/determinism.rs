@@ -31,9 +31,9 @@ const GOLDEN_RIBS: [(u32, u64); 4] = [
 /// fords change the fighting.
 const GOLDEN_GROUND: [(u32, u64); 4] = [
     (600, 0x601e_4aaf_a23d_fd51),
-    (1200, 0xa89c_9608_ec84_74b3),
-    (1800, 0x915f_b864_3c99_62e7),
-    (2400, 0x753d_a1f0_f7af_07d7),
+    (1200, 0x9752_d655_35a0_7a6b),
+    (1800, 0xd76e_031d_a5af_5260),
+    (2400, 0xb924_f2f3_ace6_5062),
 ];
 
 /// Terraces a little under a tile high, every 16 tiles, crossed by shallow

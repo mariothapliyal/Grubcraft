@@ -9,7 +9,7 @@
 //!   far above its target shoots [`DOWNHILL_RANGE_PERCENT`] as far.
 //! - **Fords:** a regiment whose centre is in water wades at
 //!   [`WADING_SPEED_PERCENT`] of its pace, takes [`WADING_DAMAGE_PERCENT`]
-//!   melee damage, and can't charge.
+//!   melee damage, and can't charge or be charged.
 //!
 //! - **Cover:** each tile is open, tall grass or wood ([`Cover`]).
 //! - **Woods:** a regiment whose centre is in a wood marches at
@@ -26,7 +26,7 @@
 //! - **Footing:** each tile is firm or soft ([`Footing`]): mud, bog and wet
 //!   meadow. A regiment in soft ground marches at [`SOFT_SPEED_PERCENT`]
 //!   ([`SOFT_HEAVY_SPEED_PERCENT`] for heavy troops), and nobody charges out
-//!   of it or into it.
+//!   of it or into it ([`Terrain::bears_charge`]).
 //!
 //! - **Growth:** what grows on each tile, for building and clearing
 //!   ([`Growth`], docs/32-changing-land.md): scrub, woods and thicket must
@@ -90,6 +90,18 @@ pub enum Footing {
 }
 
 impl Footing {
+    /// `footing` as a layer for a map `tiles` a side: itself when it has one
+    /// byte per tile and any soft ground, else empty (firm everywhere).
+    /// The sim, the replay and the map all keep the layer by this rule.
+    pub fn layer(footing: &[u8], tiles: u32) -> &[u8] {
+        let n = tiles as usize * tiles as usize;
+        if n > 0 && footing.len() == n && footing.iter().any(|&f| f != 0) {
+            footing
+        } else {
+            &[]
+        }
+    }
+
     /// The footing a byte stands for (anything unknown is firm).
     pub fn from_u8(v: u8) -> Footing {
         match v {
@@ -207,6 +219,12 @@ pub struct Terrain {
     changes: u64,
 }
 
+/// The index of tile `(x, y)` in a layer `side` tiles a side, row by row;
+/// `None` off it or for an empty layer (`side` 0).
+fn index_in(side: i32, x: i32, y: i32) -> Option<usize> {
+    ((0..side).contains(&x) && (0..side).contains(&y)).then(|| (y * side + x) as usize)
+}
+
 impl Terrain {
     pub(crate) fn new(ground: &Ground, map_tiles: u32) -> Terrain {
         let n = map_tiles as usize;
@@ -230,14 +248,9 @@ impl Terrain {
                 .map(|c| if woods(c) { Growth::Woods as u8 } else { 0 })
                 .collect()
         };
-        let footing: Vec<u8> =
-            if n > 0 && ground.footing.len() == n * n && ground.footing.iter().any(|&f| f != 0) {
-                (ground.footing.iter())
-                    .map(|&f| Footing::from_u8(f) as u8)
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let footing: Vec<u8> = (Footing::layer(ground.footing, map_tiles).iter())
+            .map(|&f| Footing::from_u8(f) as u8)
+            .collect();
         let footing_tiles = if footing.is_empty() {
             0
         } else {
@@ -272,10 +285,7 @@ impl Terrain {
     /// The tile `p` is on, as an index into the cover and growth layers;
     /// `None` off the map or with no cover.
     fn tile_of(&self, x: i32, y: i32) -> Option<usize> {
-        (self.cover_tiles != 0
-            && (0..self.cover_tiles).contains(&x)
-            && (0..self.cover_tiles).contains(&y))
-        .then(|| (y * self.cover_tiles + x) as usize)
+        index_in(self.cover_tiles, x, y)
     }
 
     /// What grows on the tile `(x, y)` (open off the map or with no cover).
@@ -352,14 +362,10 @@ impl Terrain {
     }
 
     /// How the tile `p` is on holds a soldier's feet.
+    /// (Firm off the map, as cover is open there.)
     pub fn footing(&self, p: FxVec2) -> Footing {
-        let side = self.footing_tiles;
-        if side == 0 {
-            return Footing::Firm;
-        }
-        let x = p.x.floor_int().clamp(0, side - 1);
-        let y = p.y.floor_int().clamp(0, side - 1);
-        Footing::from_u8(self.footing[(y * side + x) as usize])
+        index_in(self.footing_tiles, p.x.floor_int(), p.y.floor_int())
+            .map_or(Footing::Firm, |i| Footing::from_u8(self.footing[i]))
     }
 
     /// Whether `p` is in soft ground (see [`Footing::Soft`]).
@@ -367,18 +373,24 @@ impl Terrain {
         self.footing(p) == Footing::Soft
     }
 
-    /// Whether the map has any soft ground.
-    pub fn has_soft_ground(&self) -> bool {
-        !self.footing.is_empty()
+    /// Whether a charge can start from `p`, or be made onto a regiment at
+    /// `p`: not in water and not in soft ground.
+    pub fn bears_charge(&self, p: FxVec2) -> bool {
+        !self.wet(p) && !self.soft(p)
     }
 
     /// Pace kept climbing from `p` a tile along `heading`, percent (100 on
     /// the level or going down).
     pub fn climb_percent(&self, p: FxVec2, heading: FxVec2) -> i32 {
+        self.climb_from(self.height(p), p, heading)
+    }
+
+    /// [`Terrain::climb_percent`] from ground `here` high.
+    fn climb_from(&self, here: i32, p: FxVec2, heading: FxVec2) -> i32 {
         if self.tiles == 0 || heading == FxVec2::ZERO {
             return 100;
         }
-        let rise = self.height(p + heading) - self.height(p);
+        let rise = self.height(p + heading) - here;
         let slow = rise.max(0) * CLIMB_SLOW_PERCENT / HEIGHT_UNITS as i32;
         100 - slow.min(CLIMB_SLOW_MAX)
     }
@@ -386,9 +398,14 @@ impl Terrain {
     /// The charge bonus `bonus` of a regiment at `from` hitting home on one
     /// at `to`: more from high ground, less up onto it.
     pub fn charge_bonus(&self, bonus: u8, from: FxVec2, to: FxVec2) -> u8 {
-        let percent = if self.downhill(from, to) {
+        let drop = if self.tiles == 0 {
+            0
+        } else {
+            self.height(from) - self.height(to)
+        };
+        let percent = if drop >= HIGH_GROUND {
             CHARGE_DOWNHILL_PERCENT
-        } else if self.downhill(to, from) {
+        } else if drop <= -HIGH_GROUND {
             CHARGE_UPHILL_PERCENT
         } else {
             return bonus;
@@ -454,7 +471,8 @@ impl Terrain {
     /// the climb.
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
         let heavy = mass == Mass::Heavy;
-        let wading = if self.wet(p) {
+        let here = self.height(p);
+        let wading = if self.tiles != 0 && here < i32::from(self.water_level) {
             WADING_SPEED_PERCENT
         } else {
             100
@@ -469,14 +487,14 @@ impl Terrain {
             true => SOFT_SPEED_PERCENT,
             false => 100,
         };
-        let percent = i64::from(wading * woods) * i64::from(soft * self.climb_percent(p, heading));
-        const WHOLE: i64 = 100 * 100 * 100 * 100;
-        if percent == WHOLE {
-            step
-        } else {
-            let raw = i64::from(step.raw()) * percent / WHOLE;
-            Fx::from_raw((raw as i32).max(1))
+        let climb = self.climb_from(here, p, heading);
+        let percents = [wading, woods, soft, climb];
+        if percents == [100; 4] {
+            return step;
         }
+        let raw =
+            (percents.iter()).fold(i64::from(step.raw()), |raw, &pc| raw * i64::from(pc) / 100);
+        Fx::from_raw((raw as i32).max(1))
     }
 
     /// Percent of a volley's arrows that get through the trees, loosed from

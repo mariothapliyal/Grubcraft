@@ -646,7 +646,7 @@ impl Replay {
 
     /// The growth layer, just after the map (format 27 on), then the
     /// footing (format 30 on).
-    fn write_growth(&self, w: &mut Writer) {
+    fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
     }
@@ -712,7 +712,7 @@ impl Replay {
         let mut w = Writer::default();
         self.write_units(&mut w);
         self.write_map(&mut w);
-        self.write_growth(&mut w);
+        self.write_layers(&mut w);
         self.write_conquest(&mut w);
         self.write_tail(&mut w);
         let packed = lz4_flex::compress_prepend_size(&w.buf);
@@ -887,22 +887,17 @@ impl Replay {
             return None;
         }
         let champions = format >= 4 && r.bool()?;
-        let growth = if format >= 27 {
-            r.bytes()?.to_vec()
-        } else {
-            Vec::new()
+        // A tile layer written from `since` on: empty, or one byte a tile.
+        let mut layer = |since: u16| -> Option<Vec<u8>> {
+            let bytes = if format >= since {
+                r.bytes()?.to_vec()
+            } else {
+                Vec::new()
+            };
+            (bytes.is_empty() || bytes.len() == (map_tiles as usize).pow(2)).then_some(bytes)
         };
-        if !growth.is_empty() && growth.len() != (map_tiles as usize).pow(2) {
-            return None;
-        }
-        let footing = if format >= 30 {
-            r.bytes()?.to_vec()
-        } else {
-            Vec::new()
-        };
-        if !footing.is_empty() && footing.len() != (map_tiles as usize).pow(2) {
-            return None;
-        }
+        let growth = layer(27)?;
+        let footing = layer(30)?;
         let conquest = if format >= 12 && info.conquest {
             Some(ConquestRecord::read(r, format)?)
         } else {
@@ -1126,13 +1121,7 @@ impl Recorder {
                 },
                 // Footing that doesn't fit the map, or is firm everywhere,
                 // is none, as in the sim.
-                footing: if setup.ground.footing.len() == (setup.map_tiles as usize).pow(2)
-                    && setup.ground.footing.iter().any(|&f| f != 0)
-                {
-                    setup.ground.footing.to_vec()
-                } else {
-                    Vec::new()
-                },
+                footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
                 champions: setup.champions,
                 conquest: None,
                 ticks: 0,
@@ -1711,7 +1700,7 @@ mod tests {
         let mut w = Writer::default();
         replay.write_units(&mut w);
         replay.write_map(&mut w);
-        replay.write_growth(&mut w);
+        replay.write_layers(&mut w);
         // Every byte of the Conquest record.
         let mut c = Writer::default();
         replay.write_conquest(&mut c);
