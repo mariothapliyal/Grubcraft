@@ -7,8 +7,10 @@
 pub mod bases;
 pub mod birds;
 pub mod felling;
+pub mod hamlets;
 pub mod piles;
 pub mod touches;
+pub mod villagers;
 pub mod walkers;
 pub mod wildlife;
 
@@ -16,7 +18,9 @@ use glam::Vec2;
 
 pub use birds::Birds;
 pub use felling::{Felling, Style};
+pub use hamlets::Hamlets;
 pub use touches::Touches;
+pub use villagers::Villagers;
 pub use walkers::Walkers;
 pub use wildlife::Wildlife;
 
@@ -30,8 +34,12 @@ pub struct Ambient {
     pub walkers: Walkers,
     pub wildlife: Wildlife,
     pub birds: Birds,
+    pub hamlets: Hamlets,
+    pub villagers: Villagers,
     /// Seconds until `--fell-demo` fells the trees round the camera.
     fell_demo: Option<f32>,
+    /// `--hamlet-demo`: move the camera to the first hamlet, once.
+    hamlet_demo: bool,
 }
 
 /// How long `--fell-demo` waits before it fells, in seconds.
@@ -42,15 +50,31 @@ const FELL_DEMO_REACH: i32 = 5;
 const FELL_DEMO_SEARCH: i32 = 30;
 
 impl Ambient {
-    pub fn new(fell_demo: bool) -> Ambient {
+    pub fn new(fell_demo: bool, hamlet_demo: bool) -> Ambient {
         Ambient {
             felling: Felling::default(),
             touches: Touches::default(),
             walkers: Walkers::default(),
             wildlife: Wildlife::default(),
             birds: Birds::default(),
+            hamlets: Hamlets::default(),
+            villagers: Villagers::default(),
             fell_demo: fell_demo.then_some(FELL_DEMO_AFTER),
+            hamlet_demo,
         }
+    }
+
+    /// `--hamlet-demo`: put the camera's `focus` at the first hamlet, once
+    /// one is laid out, for a look at it. True on the frame it does.
+    pub fn hamlet_demo(&mut self, focus: &mut Vec2) -> bool {
+        if self.hamlet_demo
+            && let Some(at) = self.hamlets.first()
+        {
+            *focus = at;
+            self.hamlet_demo = false;
+            return true;
+        }
+        false
     }
 
     /// `--fell-demo`: a few seconds in, fell everything near the thickest

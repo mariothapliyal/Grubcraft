@@ -235,6 +235,13 @@ const TEAM_COLORS: [[u8; 3]; 4] = [
 const EDGE_SCROLL_PX: f64 = 6.0;
 /// Height of a placeholder box soldier, for unit types without a model.
 const SOLDIER_HEIGHT: f32 = 0.95;
+/// How far above the water line the ground still holds mist (a ford's ramps
+/// and a fen's low shores lie within it), how far in from the map's edge it
+/// begins, and its colour before the light: pale, for the sun and the sky to
+/// colour.
+const MIST_BANK: f32 = 0.3;
+const MIST_EDGE: f32 = 3.0;
+const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
 /// his men, in his side's colour lightened by [`GENERAL_LIGHT`].
 const GENERAL_SCALE: f32 = 1.15;
@@ -446,6 +453,8 @@ struct Options {
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
+    /// Look at the first hamlet (`--hamlet-demo`).
+    hamlet_demo: bool,
     render: RendererOptions,
 }
 
@@ -478,6 +487,7 @@ fn parse_args() -> Options {
         fx: None,
         siege: false,
         fell_demo: false,
+        hamlet_demo: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -509,6 +519,10 @@ fn parse_args() -> Options {
             } else {
                 fx_demo::Mode::Still
             });
+            continue;
+        }
+        if flag == "--hamlet-demo" {
+            opts.hamlet_demo = true;
             continue;
         }
         if flag == "--fell-demo" {
@@ -951,6 +965,9 @@ struct Art {
     deer: Option<usize>,
     /// The dove of the ambient birds, if the pack has it.
     dove: Option<usize>,
+    /// The villagers' models, by `ambient::villagers::Kind`, if the pack
+    /// has them all.
+    folk: Option<[usize; 4]>,
     /// This frame's camera, for choosing levels of detail.
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
@@ -1392,6 +1409,11 @@ impl App {
             heights: models.models.iter().map(|m| m.height).collect(),
             deer: models.by_name("Deer"),
             dove: models.by_name("Dove"),
+            folk: ambient::villagers::Kind::ALL
+                .map(|k| models.by_name(k.model()))
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .and_then(|v| v.try_into().ok()),
             view: LodView {
                 eye: glam::Vec3::ZERO,
                 forward: glam::Vec3::NEG_Z,
@@ -1572,7 +1594,7 @@ impl App {
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             effects: effects::Field::new(opts.fx),
             lights: lights::Lights::default(),
-            ambient: ambient::Ambient::new(opts.fell_demo),
+            ambient: ambient::Ambient::new(opts.fell_demo, opts.hamlet_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
             aftermath: aftermath::Aftermath::default(),
@@ -3694,6 +3716,10 @@ impl Running {
             &mut self.camera.focus,
             &mut self.scenery,
         );
+        // The demo lifts the fog too, so the villagers show.
+        if self.ambient.hamlet_demo(&mut self.camera.focus) && self.online.is_none() {
+            self.reveal_all = true;
+        }
         let heightmap = &self.heightmap;
         let scenery = &self.scenery;
         self.ambient.felling.advance(
@@ -3704,13 +3730,17 @@ impl Running {
         );
         let (view_focus, view_distance) = self.view_focus();
         self.atmosphere.follow(atmosphere::SkyView::of(&self.world));
-        let look = self.atmosphere.look(
+        let mut look = self.atmosphere.look(
             dt.as_secs_f32(),
             heightmap,
             view_focus,
             view_distance,
             self.menu.settings().clarity,
         );
+        // The unit viewer shows a model as made, not as the last rain left it.
+        if self.viewer.is_some() {
+            look.wet = 0.0;
+        }
         self.renderer.set_look(look);
         // A battle that has just begun draws the bars; blows shook the screen
         // as they came in. Still while paused or behind the menu.
@@ -3827,7 +3857,7 @@ impl Running {
                 && self
                     .art
                     .as_ref()
-                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some());
+                    .is_some_and(|a| a.deer.is_some() || a.dove.is_some() || a.folk.is_some());
             if showing {
                 // Deer and doves stand on ground no building or tree covers, keep away
                 // from buildings, and bolt or fly from the soldiers the viewer sees
@@ -3837,6 +3867,12 @@ impl Running {
                     .regiments
                     .iter()
                     .filter(|r| reveal || world.sees(viewer, r.handle))
+                    .map(|r| from_fx_vec(r.position))
+                    .collect();
+                let fights: Vec<Vec2> = world
+                    .regiments
+                    .iter()
+                    .filter(|r| r.engaged && (reveal || world.sees(viewer, r.handle)))
                     .map(|r| from_fx_vec(r.position))
                     .collect();
                 let shown = buildings::shown_to(viewer, reveal);
@@ -3881,9 +3917,21 @@ impl Running {
                     tame,
                     &threats,
                 );
+                self.ambient.villagers.advance(
+                    step,
+                    view_focus,
+                    view_distance,
+                    &self.ambient.hamlets,
+                    ambient::villagers::Eyes {
+                        armies: &threats,
+                        fights: &fights,
+                    },
+                    |t| scenery.occupied_at(t),
+                );
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
+                self.ambient.villagers.hush();
             }
         }
         // Rain and snow, the one weather clearing and the one coming in;
@@ -3911,6 +3959,27 @@ impl Running {
                     |p| {
                         p.cmpge(Vec2::ZERO).all()
                             && p.cmplt(Vec2::splat(side)).all()
+                            && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
+                    },
+                );
+            }
+            // Mist lies on the rivers and pools: not under Clarity, nor from
+            // the saddle (a puff round the eye would fill the screen), and
+            // only where the viewer sees the water.
+            if !self.menu.settings().clarity && self.ride.is_none() {
+                let (reveal, fog) = (self.reveal_all, &self.fog);
+                let side = heightmap.tiles as f32;
+                let eye = self.camera.eye();
+                self.effects.mist(
+                    dt.as_secs_f32() * fx_speed,
+                    density,
+                    (self.atmosphere.mist(), MIST_TINT, wind),
+                    (view_focus, view_distance, Vec2::new(eye.x, eye.z)),
+                    |p| heightmap.height_at(p.x, p.y).max(water),
+                    |p| {
+                        p.cmpge(Vec2::splat(MIST_EDGE)).all()
+                            && p.cmplt(Vec2::splat(side - MIST_EDGE)).all()
+                            && heightmap.height_at(p.x, p.y) < water + MIST_BANK
                             && (reveal || fog.sees_tile((p.x.floor() as i32, p.y.floor() as i32)))
                     },
                 );
@@ -4859,6 +4928,8 @@ impl Running {
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
+        self.ambient.villagers.clear();
+        self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6278,6 +6349,13 @@ impl Running {
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
         let piled = self.wood_piles(focus, distance);
+        let hamlets: Vec<scenery::Extra> = if self.commander {
+            Vec::new()
+        } else {
+            let reach = scenery::stump_reach(distance);
+            let built = |t| self.scenery.occupied_at(t);
+            self.ambient.hamlets.near(focus, reach, built).collect()
+        };
         let stumps = (!self.commander)
             .then(|| {
                 let reach = scenery::stump_reach(distance);
@@ -6291,7 +6369,8 @@ impl Running {
                 .chain(falling)
                 .chain(fallen)
                 .chain(stumps)
-                .chain(piled),
+                .chain(piled)
+                .chain(hamlets),
         );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
@@ -6646,6 +6725,39 @@ impl Running {
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: d.alt,
                     scale: d.scale,
+                    ..Default::default()
+                });
+            }
+        }
+        if let Some(folk) = art.folk {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            for v in self.ambient.villagers.seen() {
+                let tile = (v.pos.x.floor() as i32, v.pos.y.floor() as i32);
+                if !(reveal || fog.sees_tile(tile)) {
+                    continue;
+                }
+                let model = folk[v.kind.index()];
+                let foot = Vec3::new(v.pos.x, ground(v.pos.x, v.pos.y), v.pos.y);
+                let Some(lod) = art.view.place(art.heights[model], foot) else {
+                    continue;
+                };
+                let action = match v.doing {
+                    ambient::villagers::Doing::Stand => Action::Idle,
+                    ambient::villagers::Doing::Walk => Action::Walk,
+                    ambient::villagers::Doing::Run => Action::Run,
+                    ambient::villagers::Doing::Work => Action::Cheer,
+                };
+                let Some(pose) = art.clips.pose(model, action, time + v.phase) else {
+                    continue;
+                };
+                art.buckets[model * LODS + lod].push(SoldierInstance {
+                    pos: v.pos.to_array(),
+                    facing: v.facing.to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, 0, false),
+                    color: [255, 255, 255, gc_render::TONE_NEUTRAL],
+                    lift: 0.0,
+                    scale: 1.0,
                     ..Default::default()
                 });
             }
