@@ -3747,12 +3747,23 @@ impl Running {
             self.renderer.clear_particles();
         }
         self.renderer.spawn_particles(&particles);
-        // Lit windows and fires light the ground round them once it is dark.
+        // Lit windows and fires light the ground round them once it is
+        // dark, but only those the viewer sees now (a point light, unlike a
+        // particle, would show a fire in the fog), and not behind the unit
+        // viewer or while a rejoining player's catch-up replays old fights.
         let mut glows = self.effects.take_glows();
         glows.extend(self.siege.take_glows());
-        self.lights.note(glows);
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let showing =
+            self.viewer.is_none() && !(self.online.is_some() && self.menu.net().catching_up());
+        if showing {
+            lights::in_sight(&mut glows, |tile| reveal || fog.sees_tile(tile));
+        } else {
+            glows.clear();
+        }
         let lights = self.lights.frame(
             dt.as_secs_f32() * fx_speed,
+            glows,
             view_focus,
             view_distance,
             ambient::touches::dusk_of(look.sun_dir().y),

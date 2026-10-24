@@ -123,6 +123,7 @@ impl Effects {
             color,
             radius: LAMP_REACH,
             strength: level.clamp(0.0, 1.0),
+            needs_dark: false,
         });
         let n = 10.0 * dt;
         let n = n.floor() as u32 + u32::from(self.rng.unit() < n.fract());
