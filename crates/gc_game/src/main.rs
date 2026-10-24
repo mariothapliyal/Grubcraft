@@ -155,6 +155,7 @@ mod fx_demo;
 mod goldens;
 mod ground_look;
 mod land;
+mod lights;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
 mod hud;
@@ -727,6 +728,8 @@ struct Running {
     /// Particles collected this frame (dust, sparks, smoke), handed to the
     /// renderer just before it draws.
     effects: effects::Field,
+    /// The lamps and fires that light the ground at night.
+    lights: lights::Lights,
     /// The living world: trees coming down as land is cleared.
     ambient: ambient::Ambient,
     /// Spent arrows stuck in the ground and the fallen.
@@ -1526,6 +1529,7 @@ impl App {
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             effects: effects::Field::new(opts.fx),
+            lights: lights::Lights::default(),
             ambient: ambient::Ambient::new(opts.fell_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
@@ -3743,6 +3747,17 @@ impl Running {
             self.renderer.clear_particles();
         }
         self.renderer.spawn_particles(&particles);
+        // Lit windows and fires light the ground round them once it is dark.
+        let mut glows = self.effects.take_glows();
+        glows.extend(self.siege.take_glows());
+        self.lights.note(glows);
+        let lights = self.lights.frame(
+            dt.as_secs_f32() * fx_speed,
+            view_focus,
+            view_distance,
+            ambient::touches::dusk_of(look.sun_dir().y),
+        );
+        self.renderer.set_lights(&lights);
         let frame = FrameParams {
             view_proj,
             camera_pos: eye,
@@ -4626,6 +4641,7 @@ impl Running {
         self.sim_clock = Duration::ZERO;
         self.puppets = Puppets::new(self.capacities.regiments as usize, MAX_CORPSES);
         self.effects.clear();
+        self.lights.clear();
         self.renderer.clear_particles();
         self.arrows = field::Arrows::new(field::MAX_STUCK);
         self.siege.clear();
