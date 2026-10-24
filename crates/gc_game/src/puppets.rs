@@ -465,6 +465,9 @@ impl Killing {
 /// A man finishing one knocked down stands this far from him, in tiles,
 /// over his body.
 const FINISH_GAP: f32 = 0.55;
+/// He may step this much further from his place in the ranks to get there,
+/// in tiles, than a man fighting one standing.
+const FINISH_STRIDE: f32 = 0.6;
 /// He bends to it over this share of his killing blow, and straightens
 /// over this last share.
 const STOOP_IN: f32 = 0.3;
@@ -585,7 +588,8 @@ impl Fallen {
     fn pose(&self, age: f32) -> (Vec2, Vec2, f32) {
         if self.owner & THROWN == 0 {
             let steps = (self.owner >> RECOIL_SHIFT) & 3;
-            if steps == 0 || self.lying() || age <= 0.0 {
+            // A man finished where he lay isn't driven anywhere.
+            if steps == 0 || steps == FINISHED >> RECOIL_SHIFT || age <= 0.0 {
                 return (self.pos, self.facing, 0.0);
             }
             let back = RECOIL * f32::from(steps) * ease_out(age, RECOIL_SECONDS);
@@ -1679,7 +1683,10 @@ impl Puppets {
                         (block.fighter.gap() + self.fighter[j as usize / SLOTS].gap()) / 2.0
                     };
                     let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
-                    let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
+                    let mut leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
+                    if killing && self.killing[i].finish {
+                        leash += FINISH_STRIDE;
+                    }
                     slot + (spot - slot).clamp_length_max(leash)
                 }
                 (None, None) => slot,
@@ -1869,7 +1876,8 @@ impl Puppets {
             let mut paired = None;
             // Knocked off his feet and down: he dies where he lies, and his
             // killer stands over him to finish him.
-            let lying = matches!(self.acting(victim), Some((Act::Down, f)) if down_depth(f) > 0.5);
+            let lying = slain.is_none()
+                && matches!(self.acting(victim), Some((Act::Down, f)) if down_depth(f) > 0.5);
             let blow_in = if killer == NONE as usize {
                 None
             } else if slain.is_some() {
@@ -1883,7 +1891,11 @@ impl Puppets {
                     // His man is already swinging a killing blow: he falls to
                     // it too.
                     Some((Act::Kill, f)) if self.kill_lands_in(killer, f) > 0.0 => {
-                        Some(self.kill_lands_in(killer, f))
+                        // Unless one is on the ground and the blow is
+                        // aimed at a standing man, or the other way about:
+                        // then he just drops.
+                        (self.killing[killer].finish == lying)
+                            .then(|| self.kill_lands_in(killer, f))
                     }
                     // He is playing out a matched kill that has landed:
                     // this man just drops, rather than cut it short.
@@ -1898,17 +1910,13 @@ impl Puppets {
                         let kr = killer / SLOTS;
                         let apart = self.pos[killer].distance(self.pos[victim]);
                         let salt = self.time.to_bits() ^ 16;
-                        let pair = (self.kills)
-                            .pick(
-                                self.unit[kr],
-                                block.unit,
-                                unit_hash(block.handle, pick, salt),
-                            )
-                            .filter(|&(_, k)| {
-                                !lying
-                                    && killer % SLOTS < self.front(kr)
-                                    && (apart - k.reach).abs() <= DUEL_LEASH
-                            });
+                        let pair = (!lying && killer % SLOTS < self.front(kr))
+                            .then(|| {
+                                let roll = unit_hash(block.handle, pick, salt);
+                                self.kills.pick(self.unit[kr], block.unit, roll)
+                            })
+                            .flatten()
+                            .filter(|&(_, k)| (apart - k.reach).abs() <= DUEL_LEASH);
                         let gap = match pair {
                             Some((_, k)) => k.reach,
                             None if lying => FINISH_GAP,
@@ -3168,12 +3176,13 @@ mod tests {
         assert!(p.killing[k].finish && p.killing[k].gap == FINISH_GAP);
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying && lies.age < 0.0, "{lies:?}");
-        let mut stooped = 0.0_f32;
+        let (mut stooped, mut closest) = (0.0_f32, f32::INFINITY);
         while p.corpses().last().unwrap().age < 1.0 {
             p.advance(FRAME);
             p.pair(|x, y| x != y);
             p.update(&a, 0, FRAME, |s| stooped = stooped.max(s.stoop));
             p.update(&b, 1, FRAME, |_| {});
+            closest = closest.min(p.pos[k].distance(lay));
         }
         assert!(stooped > 0.99, "{stooped}");
         // ...and he lies as he was, not driven or turned.
@@ -3181,6 +3190,8 @@ mod tests {
         assert!(lies.lying);
         assert!(lies.pos.distance(lay) < 0.2, "{lies:?} {lay}");
         assert_eq!(lies.facing, facing);
+        // He closed in to stand over him.
+        assert!((closest - FINISH_GAP).abs() < 0.2, "{closest}");
     }
 
     #[test]

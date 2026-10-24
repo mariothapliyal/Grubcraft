@@ -3651,7 +3651,7 @@ impl Running {
                             feet,
                             // Finishing a man on the ground, he bends over
                             // him to strike down.
-                            look: [0, (s.stoop * f32::from(FINISH_PITCH)) as i8],
+                            look: [0, FINISH_PITCH],
                             look_weight: (s.stoop * 255.0) as u8,
                             ..Default::default()
                         });
@@ -5564,7 +5564,7 @@ impl Running {
                     };
                     // Still standing, waiting for the blow, he is a man.
                     let lod = lod
-                        + if (c.age >= 0.0 || c.lying) && art.view.force.is_none() {
+                        + if age >= 0.0 && art.view.force.is_none() {
                             CORPSE_LOD_BIAS
                         } else {
                             0
