@@ -5524,7 +5524,7 @@ impl Running {
                 facing: c.facing.to_array(),
                 size: [0.4, 0.14, SOLDIER_HEIGHT * 0.8],
                 color: [r / 2, g / 2, b / 2, 0],
-                lift: -0.16 * c.sink,
+                lift: c.lift - 0.16 * c.sink,
             });
         }
     }

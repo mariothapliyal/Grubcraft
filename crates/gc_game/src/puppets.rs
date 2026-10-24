@@ -488,15 +488,18 @@ impl Act {
 /// [`Fallen::owner`]), over this many seconds from the moment it lands.
 const RECOIL: f32 = 0.15;
 const RECOIL_SECONDS: f32 = 0.35;
-/// A man a monster's blow or a charge kills is thrown instead (see
-/// [`THROWN`]): this far back along the blow, in tiles, over this many
+/// A man a much heavier man's blow or a charge kills is thrown instead
+/// (see [`THROWN`]): this far back along the blow, in tiles, over this many
 /// seconds, the first part of it in the air, rising this high, as he
-/// turns over by up to this much, in half turns.
+/// turns over by this much, in radians (four tenths of a turn), one way or
+/// the other ([`SPIN_LEFT`]).
 const THROW: f32 = 0.9;
 const THROW_SECONDS: f32 = 0.6;
 const FLIGHT_SECONDS: f32 = 0.4;
 const THROW_HEIGHT: f32 = 0.3;
-const THROW_SPIN: f32 = 0.9;
+const THROW_TURN: f32 = 0.8 * core::f32::consts::PI;
+/// The turn's cosine and sine, for a man who has come down.
+const THROW_TURNED: Vec2 = Vec2::new(-0.809_017, 0.587_785);
 /// A killer holds his follow-through this long, in seconds, before he
 /// looks for a new man.
 const KILL_HOLD: f32 = 0.3;
@@ -522,8 +525,8 @@ struct Fallen {
     unit: u16,
     /// His player in the low bits, above [`RECOIL_SHIFT`] how hard the
     /// blow that killed him drove him back: 0 for none (arrows, and men who
-    /// simply drop), 1 for a blow, 2 and 3 for a heavier man's; and
-    /// [`THROWN`] for a man thrown by it.
+    /// simply drop), 1 for a blow, 2 for a heavier man's; or [`THROWN`]
+    /// for a man thrown by it, and [`SPIN_LEFT`] for which way he turns.
     owner: u8,
     look: u8,
     /// The matched kill he fell to, if any.
@@ -532,9 +535,10 @@ struct Fallen {
 
 const RECOIL_SHIFT: u32 = 4;
 /// [`Fallen::owner`]'s bit for a man thrown by the blow that killed him
-/// (a monster's on a man, or a charge's): he tumbles through the air and
-/// lands a way off, turned over.
+/// (a much heavier man's, or a charge's): he tumbles through the air and
+/// lands a way off, turned over; and the bit for turning to his left.
 const THROWN: u8 = 1 << 6;
+const SPIN_LEFT: u8 = 1 << 7;
 
 /// How far through `seconds` `age` is, eased out: 0 before, 1 after.
 fn ease_out(age: f32, seconds: f32) -> f32 {
@@ -547,39 +551,41 @@ impl Fallen {
         self.owner & ((1 << RECOIL_SHIFT) - 1)
     }
 
-    fn thrown(&self) -> bool {
-        self.owner & THROWN != 0
+    /// Where he is `age` seconds after he fell, driven back (or thrown)
+    /// along the blow from where it struck him, the way he faces (a thrown
+    /// man turns over in the air) and how high he is off the ground (only
+    /// while a thrown man flies).
+    fn pose(&self, age: f32) -> (Vec2, Vec2, f32) {
+        if self.owner & THROWN == 0 {
+            let steps = (self.owner >> RECOIL_SHIFT) & 3;
+            if steps == 0 || age <= 0.0 {
+                return (self.pos, self.facing, 0.0);
+            }
+            let back = RECOIL * f32::from(steps) * ease_out(age, RECOIL_SECONDS);
+            return (self.pos - self.facing * back, self.facing, 0.0);
+        }
+        let pos = self.pos - self.facing * (THROW * ease_out(age, THROW_SECONDS));
+        let left = self.owner & SPIN_LEFT != 0;
+        let (turn, lift) = match age {
+            _ if age <= 0.0 => return (self.pos, self.facing, 0.0),
+            _ if age >= FLIGHT_SECONDS => (THROW_TURNED, 0.0),
+            _ => {
+                let f = age / FLIGHT_SECONDS;
+                let turn = Vec2::from_angle(THROW_TURN * ease_out(age, FLIGHT_SECONDS));
+                (turn, 4.0 * THROW_HEIGHT * f * (1.0 - f))
+            }
+        };
+        let turn = if left {
+            turn
+        } else {
+            Vec2::new(turn.x, -turn.y)
+        };
+        (pos, turn.rotate(self.facing), lift)
     }
 
-    /// Where he lies `age` seconds after he fell, driven back (or thrown)
-    /// along the blow from where it struck him.
-    fn at(&self, age: f32) -> Vec2 {
-        if self.thrown() {
-            return self.pos - self.facing * (THROW * ease_out(age, THROW_SECONDS));
-        }
-        let steps = f32::from((self.owner >> RECOIL_SHIFT) & 3);
-        self.pos - self.facing * (RECOIL * steps * ease_out(age, RECOIL_SECONDS))
-    }
-
-    /// How high he is off the ground `age` seconds after he fell: above it
-    /// only while a thrown man flies.
-    fn lift(&self, age: f32) -> f32 {
-        if !self.thrown() || !(0.0..FLIGHT_SECONDS).contains(&age) {
-            return 0.0;
-        }
-        let f = age / FLIGHT_SECONDS;
-        4.0 * THROW_HEIGHT * f * (1.0 - f)
-    }
-
-    /// The way he faces `age` seconds after he fell: a thrown man turns
-    /// over in the air, one way or the other.
-    fn facing_at(&self, age: f32) -> Vec2 {
-        if !self.thrown() {
-            return self.facing;
-        }
-        let spin = mix(self.fell.to_bits(), u32::from(self.look), 0, 17) * 2.0 - 1.0;
-        let turn = spin * THROW_SPIN * core::f32::consts::PI * ease_out(age, FLIGHT_SECONDS);
-        Vec2::from_angle(turn).rotate(self.facing)
+    /// Where he comes to rest.
+    fn rest(&self) -> Vec2 {
+        self.pose(f32::INFINITY).0
     }
 }
 
@@ -1064,7 +1070,7 @@ impl Puppets {
         let aside = unit_hash(h, k, 12) - 0.5;
         let side = Vec2::new(-fallen.facing.y, fallen.facing.x);
         // In his body where it comes to rest.
-        let at = fallen.at(RECOIL_SECONDS);
+        let at = fallen.rest();
         self.lodged.push(Lodged {
             pos: at + fallen.facing * (along * LODGED_ALONG) + side * (aside * LODGED_ASIDE),
             dir: self.shot_dir[r],
@@ -1882,20 +1888,21 @@ impl Puppets {
                 None => (self.time, self.facing[victim]),
             };
             // A blow drives him back as he falls, a heavier man's further,
-            // and a monster's or a charge's throws him; a matched kill plays
-            // his fall itself.
-            let recoil = match blow_in {
+            // and a much heavier man's or a charge's throws him; a matched
+            // kill plays his fall itself.
+            let driven = match blow_in {
                 _ if paired.is_some() => 0,
                 Some(_) => {
-                    let (me, them) = (self.fighter[killer / SLOTS], self.fighter[r]);
-                    let outweighs = me.outweighs(&them, true);
-                    let charging = block.ploughed > 0.0
-                        && block.ploughed_by.is_some()
-                        && block.ploughed_by == self.owner[killer / SLOTS];
+                    let kr = killer / SLOTS;
+                    let outweighs = self.fighter[kr].outweighs(&self.fighter[r], true);
+                    let charging = (block.ploughed_by)
+                        .filter(|_| block.ploughed > 0.0)
+                        .is_some_and(|h| self.owner[kr] == Some(h));
                     if outweighs >= 2.0 || charging {
-                        THROWN >> RECOIL_SHIFT
+                        let left = unit_hash(block.handle, pick, self.time.to_bits() ^ 17) < 0.5;
+                        THROWN | if left { SPIN_LEFT } else { 0 }
                     } else {
-                        1 + outweighs.min(2.0) as u8
+                        (1 + outweighs as u8) << RECOIL_SHIFT
                     }
                 }
                 None => 0,
@@ -1907,7 +1914,7 @@ impl Puppets {
                 unit: block.unit,
                 owner: {
                     debug_assert!(owner < 1 << RECOIL_SHIFT, "player {owner}");
-                    owner | recoil << RECOIL_SHIFT
+                    owner | driven
                 },
                 look: self.looks[victim],
                 pair: paired,
@@ -1968,16 +1975,20 @@ impl Puppets {
     /// Every fallen soldier still on the field, those making room for newer
     /// ones last.
     pub fn corpses(&self) -> impl Iterator<Item = Corpse> + '_ {
-        let corpse = move |f: &Fallen, sink: f32| Corpse {
-            pos: f.at(self.time - f.fell),
-            facing: f.facing_at(self.time - f.fell),
-            lift: f.lift(self.time - f.fell),
-            owner: f.player(),
-            unit: f.unit,
-            look: f.look,
-            age: self.time - f.fell,
-            sink,
-            kill: f.pair,
+        let corpse = move |f: &Fallen, sink: f32| {
+            let age = self.time - f.fell;
+            let (pos, facing, lift) = f.pose(age);
+            Corpse {
+                pos,
+                facing,
+                lift,
+                owner: f.player(),
+                unit: f.unit,
+                look: f.look,
+                age,
+                sink,
+                kill: f.pair,
+            }
         };
         self.corpses.iter().map(move |f| corpse(f, 0.0)).chain(
             self.sinking
@@ -3014,15 +3025,15 @@ mod tests {
     fn a_much_heavier_blow_or_a_charge_throws_its_man() {
         // How the dead man flew: his lift and facing over his first second,
         // and where he started and came down.
-        let thrown = |charge: bool| {
+        let thrown = |killer: Mass, victim: Mass, charge: bool| {
             let mut p = Puppets::new(2, 4);
-            let (mut a, mut b) = melee_pair(
+            let (a, mut b) = melee_pair(
                 Fighter {
-                    mass: if charge { Mass::Medium } else { Mass::Heavy },
+                    mass: killer,
                     ..Fighter::default()
                 },
                 Fighter {
-                    mass: if charge { Mass::Medium } else { Mass::Light },
+                    mass: victim,
                     ..Fighter::default()
                 },
             );
@@ -3032,7 +3043,6 @@ mod tests {
             if charge {
                 b.ploughed_by = Some(a.handle);
                 b.ploughed = 1.0;
-                a.charge = 1;
             }
             b.models -= 1;
             frame(&mut p, &a, &b);
@@ -3045,8 +3055,21 @@ mod tests {
             }
             (stood, flight, p.corpses().next().unwrap())
         };
+        // A blow one class heavier only drives its man back.
+        let (stood, flight, lies) = thrown(Mass::Heavy, Mass::Medium, false);
+        assert!(
+            flight
+                .iter()
+                .all(|&(_, lift, facing)| lift == 0.0 && facing == stood.facing)
+        );
+        assert!(lies.pos.distance(stood.pos) < THROW / 2.0, "{lies:?}");
         for charge in [false, true] {
-            let (stood, flight, lies) = thrown(charge);
+            let (killer, victim) = if charge {
+                (Mass::Medium, Mass::Medium)
+            } else {
+                (Mass::Heavy, Mass::Light)
+            };
+            let (stood, flight, lies) = thrown(killer, victim, charge);
             // In the air after the blow lands, and down again soon after.
             assert!(
                 flight
@@ -3054,18 +3077,20 @@ mod tests {
                     .any(|&(age, lift, _)| age > 0.1 && age < 0.3 && lift > 0.2),
                 "{charge}: {flight:?}"
             );
+            // Down before the blow lands and once he comes down.
             assert!(
-                flight
-                    .iter()
-                    .all(|&(age, lift, _)| (age > 0.0 && age < FLIGHT_SECONDS) || lift == 0.0)
+                (flight.iter())
+                    .filter(|&&(age, ..)| age <= 0.0 || age >= FLIGHT_SECONDS)
+                    .all(|&(_, lift, _)| lift == 0.0)
             );
-            // A tile back along the blow, turned over.
+            // Most of a tile back along the blow, turned over.
             assert!(
                 (lies.pos.distance(stood.pos) - THROW).abs() < 1e-3,
                 "{charge}: {lies:?}"
             );
+            let turned = lies.facing.angle_to(stood.facing).abs();
             assert!(
-                lies.facing.dot(stood.facing) < 0.99,
+                (turned - THROW_TURN).abs() < 1e-3,
                 "{charge}: {lies:?} {stood:?}"
             );
             assert!((lies.facing.length() - 1.0).abs() < 1e-3);
