@@ -3549,7 +3549,7 @@ impl Running {
         // sees, near enough to show.
         if live && !self.menu_open && self.viewer.is_none() && view_distance < ambient::bases::REACH
         {
-            let sun = Vec3::from_array(self.look.look().sun).normalize_or_zero().y;
+            let sun = look.sun_dir().y;
             let dusk = ambient::touches::dusk_of(sun);
             let (reveal, fog) = (self.reveal_all, &self.fog);
             let shown = buildings::shown_to(self.sandbox.side, reveal);
