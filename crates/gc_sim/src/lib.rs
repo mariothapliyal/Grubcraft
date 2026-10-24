@@ -27,6 +27,7 @@ pub mod deploy;
 pub mod economy;
 pub mod events;
 pub mod fire;
+pub mod flood;
 pub mod fork;
 pub mod formation;
 pub mod gates;
@@ -117,7 +118,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 44;
+pub const SIM_VERSION: u32 = 45;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -872,6 +873,10 @@ pub struct World {
     sky: SkyState,
     /// Woods burning (see [`fire`]).
     fires: fire::Fires,
+    /// The rivers in flood (see [`flood`]).
+    flood: flood::Flood,
+    /// Room for the slots a flood leaves stranded, kept between seconds.
+    stranded: Vec<usize>,
     pub regiments: Regiments,
 }
 
@@ -889,6 +894,7 @@ impl World {
         );
         nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
+        let flood = flood::Flood::new(&terrain, &nav, setup.map_tiles);
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
@@ -914,6 +920,8 @@ impl World {
             conquest: None,
             sky: SkyState::new(&setup.sky),
             fires: fire::Fires::new(setup.seed),
+            flood,
+            stranded: Vec::new(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -1546,6 +1554,7 @@ impl World {
         // The ground's wetness moves once a second.
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.terrain.soak(self.sky.wet());
+            self.rivers();
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
@@ -1583,6 +1592,9 @@ impl World {
             &self.stances,
         );
         self.burn();
+        if self.tick.is_multiple_of(TICKS_PER_SECOND) {
+            self.sweep_fords();
+        }
         self.combat.after_move(
             &mut self.regiments,
             &self.units,
@@ -2588,6 +2600,54 @@ impl World {
         }
     }
 
+    /// One second of the rivers (see [`flood`]): the water rises or goes
+    /// down with the ground's wetness, and the fords shut or open with it.
+    fn rivers(&mut self) {
+        let shut = (self.flood).second(&mut self.terrain, self.sky.wet(), !self.scratch);
+        if let Some(closed) = shut {
+            (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
+            self.events.flooded(closed);
+        }
+    }
+
+    /// One second of the regiments caught in shut fords (see
+    /// [`flood::Flood::sweep`]): those with nowhere else to go are ordered
+    /// to the nearest bank where their block fits, as a player's move
+    /// order would, leaving off any work.
+    fn sweep_fords(&mut self) {
+        let mut stuck = core::mem::take(&mut self.stranded);
+        self.flood.sweep(&mut self.regiments, &mut stuck);
+        for &i in &stuck {
+            let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
+            let berth = self.regiments.berth(&self.units, i);
+            let bank = self.nav.settle(self.regiments.owner[i], here, berth);
+            if bank == here {
+                continue;
+            }
+            let order = Order {
+                target: bank,
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+            };
+            if self.regiments.order(h, order) {
+                self.leave_off(h);
+            }
+        }
+        self.stranded = stuck;
+    }
+
+    /// The rivers' fords, and whether a flood has shut them (how far it
+    /// has raised the water is [`Terrain::rise`]).
+    pub fn flood(&self) -> &flood::Flood {
+        &self.flood
+    }
+
+    /// Whether regiment `h` is caught in a ford the flood has shut.
+    pub fn swept(&self, h: RegimentHandle) -> bool {
+        (self.regiments.resolve(h)).is_some_and(|i| self.flood.sweeps(self.regiments.position[i]))
+    }
+
     /// The ground's heights, water and cover, and what they do in a fight.
     pub fn terrain(&self) -> &Terrain {
         &self.terrain
@@ -2841,6 +2901,11 @@ impl World {
                 }
                 if self.fires.ever() {
                     self.fires.hash_into(h);
+                }
+                // Only while the rivers are up, so a dry match hashes as
+                // before.
+                if self.terrain.rise() > 0 {
+                    self.flood.hash_into(self.terrain.rise(), h);
                 }
             }
             other => unreachable!("no hash for system {other}"),
