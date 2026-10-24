@@ -103,7 +103,8 @@ impl Cinema {
 
 /// A smooth wobble between -1 and 1 that never quite repeats.
 fn wobble(t: f32, phase: f32) -> f32 {
-    0.6 * (6.283 * t + phase).sin() + 0.4 * (6.283 * t * 2.37 + phase * 1.7).sin()
+    0.6 * (std::f32::consts::TAU * t + phase).sin()
+        + 0.4 * (std::f32::consts::TAU * t * 2.37 + phase * 1.7).sin()
 }
 
 /// How tall each bar is `age` seconds after they began to slide in.
