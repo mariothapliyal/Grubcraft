@@ -451,6 +451,8 @@ struct Options {
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
+    /// Look at the first hamlet (`--hamlet-demo`).
+    hamlet_demo: bool,
     render: RendererOptions,
 }
 
@@ -483,6 +485,7 @@ fn parse_args() -> Options {
         fx: None,
         siege: false,
         fell_demo: false,
+        hamlet_demo: false,
         render: RendererOptions::default(),
     };
     let mut args = std::env::args().skip(1);
@@ -514,6 +517,10 @@ fn parse_args() -> Options {
             } else {
                 fx_demo::Mode::Still
             });
+            continue;
+        }
+        if flag == "--hamlet-demo" {
+            opts.hamlet_demo = true;
             continue;
         }
         if flag == "--fell-demo" {
@@ -1577,7 +1584,7 @@ impl App {
             puppets: Puppets::new(capacities.regiments as usize, MAX_CORPSES),
             effects: effects::Field::new(opts.fx),
             lights: lights::Lights::default(),
-            ambient: ambient::Ambient::new(opts.fell_demo),
+            ambient: ambient::Ambient::new(opts.fell_demo, opts.hamlet_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
             aftermath: aftermath::Aftermath::default(),
@@ -2054,7 +2061,12 @@ impl ApplicationHandler for App {
                             r.hud.toggle_hero_preview();
                         }
                         KeyCode::KeyH if down && !event.repeat => r.toggle_help(),
-                        KeyCode::KeyU if down && !event.repeat => r.open_guide(),
+                        KeyCode::KeyU if down && !event.repeat => {
+                            // A selected wall is raised; otherwise U is the guide.
+                            if !r.raise_key() {
+                                r.open_guide();
+                            }
+                        }
                         KeyCode::KeyG if down && !event.repeat => {
                             r.show_blocked = !r.show_blocked;
                         }
@@ -3663,6 +3675,7 @@ impl Running {
             &mut self.camera.focus,
             &mut self.scenery,
         );
+        self.ambient.hamlet_demo(&mut self.camera.focus);
         let heightmap = &self.heightmap;
         let scenery = &self.scenery;
         self.ambient.felling.advance(
@@ -4849,6 +4862,7 @@ impl Running {
         self.ambient.walkers.clear();
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
+        self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
         match kind {
             MatchKind::Battle(setup) if conquest => self.set_out_conquest(&setup),
             MatchKind::Battle(setup) => self.set_out_battle(&setup),
@@ -6268,6 +6282,13 @@ impl Running {
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
         let piled = self.wood_piles(focus, distance);
+        let hamlets: Vec<scenery::Extra> = if self.commander {
+            Vec::new()
+        } else {
+            let reach = scenery::stump_reach(distance);
+            let built = |t| self.scenery.occupied_at(t);
+            self.ambient.hamlets.near(focus, reach, built).collect()
+        };
         let stumps = (!self.commander)
             .then(|| {
                 let reach = scenery::stump_reach(distance);
@@ -6281,7 +6302,8 @@ impl Running {
                 .chain(falling)
                 .chain(fallen)
                 .chain(stumps)
-                .chain(piled),
+                .chain(piled)
+                .chain(hamlets),
         );
         let (instances, batches) = self.scenery.frame(focus, distance, !self.commander, cull);
         self.renderer.set_scenery_frame(instances, batches);
