@@ -413,6 +413,9 @@ pub enum Move {
     /// Playing his half of matched kill `pair` (an index into the table
     /// given to [`Puppets::set_kills`]), `at` of the way through.
     Kill { pair: u16, at: f32 },
+    /// A champion playing the victim's half of matched kill `pair`, `at` of
+    /// the way through, until he falls.
+    Killed { pair: u16, at: f32 },
 }
 
 /// A matched kill, as the puppets play it: its length in seconds (both
@@ -736,7 +739,14 @@ struct Duel {
     champion: [u32; 2],
     /// The simulation's time, in ticks (interpolated between them).
     now: f32,
+    /// The matched kill the winner ends it with, if the two have one that
+    /// fits between champions (see [`CHAMPION_REACH`]).
+    kill: Option<(u16, KillTiming)>,
 }
+
+/// The longest matched kill champions play, in tiles of reach: the winner
+/// steps back from the spot to it, and a spear's would take him too far.
+const CHAMPION_REACH: f32 = 1.6;
 
 impl Duel {
     /// Whether champion `side` is out between the lines: until the duel is
@@ -747,7 +757,7 @@ impl Duel {
         c.abandoned.is_none()
             && match c.winner {
                 Some(w) if w as usize == side => {
-                    self.now < ends + CHEER_SECONDS * TICKS_PER_SECOND as f32
+                    self.now < ends + self.tail() + CHEER_SECONDS * TICKS_PER_SECOND as f32
                 }
                 // He falls when the simulation takes him (see `fall`).
                 Some(_) => self.now < ends + TICKS_PER_SECOND as f32,
@@ -764,7 +774,7 @@ impl Duel {
         let c = &self.challenge;
         let (mut act, mut swing) = (None, None);
         let since_meet = self.now - c.meet as f32;
-        if since_meet < 0.0 || self.now >= c.ends() as f32 {
+        if since_meet < 0.0 || self.now >= c.ends() as f32 || self.killing().is_some() {
             return (act, swing);
         }
         let beat = (since_meet / gc_sim::champions::BEAT_TICKS as f32) as u8;
@@ -796,9 +806,39 @@ impl Duel {
         (act, swing)
     }
 
-    /// Whether champion `side` has won and is cheering.
+    /// Whether champion `side` has won and is cheering, once his kill has
+    /// played out.
     fn cheering(&self, side: usize) -> bool {
-        self.challenge.winner == Some(side as u8) && self.now >= self.challenge.ends() as f32
+        self.challenge.winner == Some(side as u8)
+            && self.now >= self.challenge.ends() as f32 + self.tail()
+    }
+
+    /// The matched kill the duel ends in, while it plays: which, its timing
+    /// and how far through it the two are (it ends held on its last frame).
+    /// It starts its contact's share of its length before the killing blow
+    /// lands, so the blow meets the man as the simulation has it.
+    fn killing(&self) -> Option<(u16, KillTiming, f32)> {
+        let (pair, k) = self.kill.filter(|_| self.challenge.abandoned.is_none())?;
+        let length = k.seconds * TICKS_PER_SECOND as f32;
+        let at = (self.now - self.challenge.ends() as f32) / length + k.contact;
+        (0.0..1.0).contains(&at).then_some((pair, k, at))
+    }
+
+    /// Ticks the winner's matched kill plays on after its blow lands.
+    fn tail(&self) -> f32 {
+        self.kill.map_or(0.0, |(_, k)| {
+            (1.0 - k.contact) * k.seconds * TICKS_PER_SECOND as f32
+        })
+    }
+
+    /// Champion `side`'s half of the matched kill, while it plays.
+    fn kill_move(&self, side: usize) -> Option<Move> {
+        let (pair, _, at) = self.killing()?;
+        Some(if self.challenge.winner == Some(side as u8) {
+            Move::Kill { pair, at }
+        } else {
+            Move::Killed { pair, at }
+        })
     }
 }
 
@@ -1314,7 +1354,23 @@ impl Puppets {
                     (r * SLOTS + self.front(r) / 2) as u32
                 }),
                 now,
+                kill: None,
             },
+        };
+        // The winner ends it with a matched kill if the two have one.
+        let duel = match (self.duel, challenge.winner) {
+            (None, Some(w)) if !duel.champion.contains(&NONE) => {
+                let unit = |side: usize| self.unit[challenge.champions[side].index as usize];
+                let roll = mix(challenge.called, 0, 0, 18);
+                let w = usize::from(w);
+                Duel {
+                    kill: (self.kills)
+                        .pick(unit(w), unit(1 - w), roll)
+                        .filter(|&(_, k)| k.reach <= CHAMPION_REACH),
+                    ..duel
+                }
+            }
+            _ => duel,
         };
         // Once neither is out between the lines, the puppets are done with it.
         if duel.out(0) || duel.out(1) {
@@ -1340,14 +1396,19 @@ impl Puppets {
 
     /// Where champion `side` stands to fight: beside the spot, on his own
     /// side of it.
+    /// The winner of a duel ending in a matched kill stands at its reach
+    /// (warped onto it as he winds up).
     fn stance(&self, d: &Duel, side: usize) -> Vec2 {
         let [a, b] = d.challenge.champions.map(|h| self.centre[h.index as usize]);
         let toward_b = (b - a).normalize_or(Vec2::Y);
         let half = toward_b * (DUEL_GAP / 2.0);
-        if side == 0 {
-            d.spot - half
-        } else {
-            d.spot + half
+        let stand = [d.spot - half, d.spot + half];
+        match d.killing() {
+            Some((_, k, _)) if d.challenge.winner == Some(side as u8) => {
+                let them = stand[1 - side];
+                them + (stand[side] - them).normalize_or(-toward_b) * k.reach
+            }
+            _ => stand[side],
         }
     }
 
@@ -1753,14 +1814,24 @@ impl Puppets {
             // Motion warping: a man of the front rank dealing a killing blow
             // makes for the distance it needs from where his man stood,
             // whatever his leash from his place, and gets there as it lands.
-            let warp = (killing && self.killing[i].front && champion.is_none()).then(|| {
-                let kill = self.killing[i];
-                kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap
-            });
+            // A champion ending his duel with a matched kill is warped onto
+            // its reach the same way.
+            let warp = match (champion, acting) {
+                (Some((d, side)), _) => d
+                    .killing()
+                    .filter(|_| d.challenge.winner == Some(side as u8))
+                    .map(|(_, k, at)| (self.stance(&d, side), (k.contact - at) * k.seconds)),
+                (None, Some((Act::Kill, f))) if self.killing[i].front => {
+                    let kill = self.killing[i];
+                    let exact = kill.spot + (self.pos[i] - kill.spot).normalize_or(back) * kill.gap;
+                    Some((exact, self.kill_lands_in(i, f)))
+                }
+                _ => None,
+            };
             let target = match (champion, foe) {
                 (Some((d, side)), _) => self.stance(&d, side),
                 _ if down => self.pos[i],
-                _ if warp.is_some() => warp.unwrap_or(slot),
+                _ if warp.is_some() => warp.map_or(slot, |(exact, _)| exact),
                 (None, Some(_)) if k >= files as usize => slot,
                 (None, Some(f)) => {
                     let gap = if killing {
@@ -1820,8 +1891,7 @@ impl Puppets {
                 // The rest of the way to his blow's distance, in his share
                 // of the time left until it lands, and held there as he
                 // follows through: his feet keep the pace.
-                if let (Some(exact), Some((_, f))) = (warp, acting) {
-                    let left = self.kill_lands_in(i, f);
+                if let Some((exact, left)) = warp {
                     if left <= dt {
                         self.pos[i] = exact;
                         self.vel[i] = Vec2::ZERO;
@@ -1854,7 +1924,9 @@ impl Puppets {
             // A champion stands on guard once he has reached his place.
             let on_guard =
                 dueling || champion.is_some() && self.pos[i].distance_squared(target) < 0.25;
+            let duel_kill = champion.and_then(|(d, side)| d.kill_move(side));
             let fight = match (acting, swing) {
+                _ if duel_kill.is_some() => duel_kill,
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
                 (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
                     Some((pair, _)) => Move::Kill { pair, at: f },
@@ -1979,8 +2051,16 @@ impl Puppets {
             let blow_in = if killer == NONE as usize {
                 None
             } else if slain.is_some() {
-                // The other champion's last blow has landed.
-                Some(0.0)
+                // The other champion's last blow has landed, as their matched
+                // kill's has if they play one: he lies as its half goes on.
+                match self.duel.and_then(|d| Some((d.killing()?, d))) {
+                    Some(((pair, _, _), d)) => {
+                        paired = Some(pair);
+                        let since = (d.now - d.challenge.ends() as f32) / TICKS_PER_SECOND as f32;
+                        Some(-since.max(0.0))
+                    }
+                    None => Some(0.0),
+                }
             } else {
                 match self.acting(killer) {
                     // His man is reeling or down and can't strike: he just
@@ -3639,6 +3719,77 @@ mod tests {
             step(&mut p, &a, &b, now);
         }
         assert!(p.pos[x].distance(a.centre) < 3.0, "{:?}", p.pos[x]);
+    }
+
+    #[test]
+    fn a_champion_can_end_his_duel_with_a_matched_kill() {
+        const KILL: KillTiming = KillTiming {
+            seconds: 1.8,
+            contact: 0.3,
+            reach: 1.4,
+        };
+        let mut p = with_a_kill(KILL);
+        let (a, mut b, c) = champions_called();
+        let tick = TICKS_PER_SECOND as f32 * FRAME;
+        let mut now = -tick;
+        let step = |p: &mut Puppets, a: &Block, b: &Block, now: f32| {
+            p.advance(FRAME);
+            p.champions((now >= 0.0).then_some(&c), now);
+            let mut out = Vec::new();
+            p.update(a, 0, FRAME, |s| out.push(s));
+            p.update(b, 1, FRAME, |s| out.push(s));
+            out
+        };
+        let lead = KILL.contact * KILL.seconds * TICKS_PER_SECOND as f32;
+        let ends = c.ends() as f32;
+        while now < c.meet as f32 {
+            step(&mut p, &a, &b, now);
+            now += tick;
+        }
+        let [x, y] = p.duel.unwrap().champion.map(|i| i as usize % SLOTS);
+        let mut last = Vec::new();
+        while now < ends {
+            let out = step(&mut p, &a, &b, now);
+            let (w, l) = (out[x].fight, out[8 + y].fight);
+            if now >= ends - lead + tick {
+                // The winner winds up his half and the loser plays his.
+                assert!(
+                    matches!(w, Some(Move::Kill { pair: 0, .. })),
+                    "{now}: {w:?}"
+                );
+                assert!(
+                    matches!(l, Some(Move::Killed { pair: 0, .. })),
+                    "{now}: {l:?}"
+                );
+            } else if now < ends - lead - tick {
+                assert!(!matches!(w, Some(Move::Kill { .. })), "{now}: {w:?}");
+            }
+            last = vec![out[x], out[8 + y]];
+            now += tick;
+        }
+        // He stepped back to the kill's reach as he wound up.
+        let apart = last[0].pos.distance(last[1].pos);
+        assert!((apart - KILL.reach).abs() < 0.25, "{apart}");
+        // The loser falls as the blow lands, playing on the kill's half.
+        b.models -= 1;
+        let out = step(&mut p, &a, &b, now);
+        let corpse = p.corpses().next().expect("the loser fell");
+        assert_eq!(corpse.kill, Some(0));
+        assert!(corpse.age.abs() < 2.0 * FRAME, "{corpse:?}");
+        let x = p.duel.unwrap().champion[0] as usize % SLOTS;
+        assert!(
+            matches!(out[x].fight, Some(Move::Kill { .. })),
+            "{:?}",
+            out[x].fight
+        );
+        // He plays his half out, then cheers.
+        let tail = (1.0 - KILL.contact) * KILL.seconds;
+        for _ in 0..((tail / FRAME) as usize + 2) {
+            now += tick;
+            step(&mut p, &a, &b, now);
+        }
+        let out = step(&mut p, &a, &b, now + tick);
+        assert_eq!(out[x].fight, Some(Move::Cheer));
     }
 
     #[test]
