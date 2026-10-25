@@ -6135,6 +6135,9 @@ impl Running {
                         "The flash flood has passed: the fords are open again"
                     }
                 }),
+                Event::SweptAway { .. } => news.push(
+                    "The flash flood swept a regiment out of the ford: some drowned, the rest washed up downstream",
+                ),
                 Event::Shallows { open } => news.push(if open {
                     "Low water: the shallows at the rivers' edges can be waded"
                 } else {

@@ -32,6 +32,13 @@ pub const FALL_SECONDS: u32 = 30;
 pub const WARNING_SECONDS: u32 = 8;
 /// A spell of rain at least this strong is a storm.
 pub const STORM_STRENGTH: u8 = 220;
+/// How far down the river the wave carries troops it sweeps away, tiles.
+pub const CARRY_TILES: u32 = 10;
+/// The share of a regiment swept away that drowns, in percent (at least
+/// one soldier).
+pub const DROWN_PERCENT: u32 = 30;
+/// The morale a regiment swept away loses.
+pub const SWEPT_AWAY_MORALE: i16 = 25;
 
 /// The rivers of a map, and the wave running down one of them.
 #[derive(Clone, Debug, Default)]
@@ -304,6 +311,27 @@ impl Flash {
             }
             None => &[],
         }
+    }
+
+    /// Where the wave carries something it sweeps away at tile `(x, y)`:
+    /// on down the river by its flow, [`CARRY_TILES`] at most, stopping
+    /// at still water or the map's edge.
+    pub(crate) fn carried(&self, terrain: &Terrain, x: i32, y: i32) -> (i32, i32) {
+        let (flow, n) = (terrain.flow_layer(), self.side);
+        let (mut x, mut y) = (x, y);
+        for _ in 0..CARRY_TILES {
+            let Some(i) = crate::terrain::index_in(n, x, y) else {
+                break;
+            };
+            let Some((dx, dy)) = flow.get(i).and_then(|&f| step_of(f)) else {
+                break;
+            };
+            if crate::terrain::index_in(n, x + dx, y + dy).is_none() {
+                break;
+            }
+            (x, y) = (x + dx, y + dy);
+        }
+        (x, y)
     }
 
     /// The wave's river's fords as runs, to shut or open on the walkable

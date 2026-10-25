@@ -88,15 +88,30 @@ pub(crate) fn settle_decks(
             }
             regs.wound_last(i, usize::from(regs.models[i]), DROP_HP);
             regs.disorder(i);
-            let mut bank = nav.settle(regs.owner[i], p, regs.berth(units, i));
-            if !nav.walkable(regs.owner[i], bank) {
-                bank = nav.settle(regs.owner[i], p, 0);
-            }
-            regs.position[i] = bank;
-            regs.halt(i);
+            wash_up(nav, regs, units, i, p);
         }
     }
     changes.clear();
+}
+
+/// Slot `i`, in the water at `p`, comes out on the nearest bank where its
+/// block fits (or, failing that, any open ground near), and halts there.
+/// Returns where it came out: `p` itself if there is nowhere.
+pub(crate) fn wash_up(
+    nav: &Nav,
+    regs: &mut Regiments,
+    units: &[UnitStats],
+    i: usize,
+    p: crate::FxVec2,
+) -> crate::FxVec2 {
+    let owner = regs.owner[i];
+    let mut bank = nav.settle(owner, p, regs.berth(units, i));
+    if !nav.walkable(owner, bank) {
+        bank = nav.settle(owner, p, 0);
+    }
+    regs.position[i] = bank;
+    regs.halt(i);
+    bank
 }
 
 impl Conquest {

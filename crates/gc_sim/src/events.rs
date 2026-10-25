@@ -133,6 +133,10 @@ pub enum Event {
     /// A flash flood is coming down a river, has shut its fords, or has
     /// passed and they are open again (see [`crate::flash`]).
     FlashFlood { stage: crate::flash::Stage },
+    /// A flash flood swept `player`'s regiment out of a ford and down the
+    /// river: some of it drowned, and the rest washed up on a bank (see
+    /// [`crate::flash::DROWN_PERCENT`]).
+    SweptAway { player: crate::PlayerId },
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
@@ -158,8 +162,8 @@ pub(crate) struct Events {
 impl Events {
     pub(crate) fn new(capacity: usize) -> Events {
         Events {
-            // A volley's two events, and each regiment's four at most.
-            list: Vec::with_capacity(2 * crate::combat::MAX_VOLLEYS + 4 * capacity),
+            // A volley's two events, and each regiment's five at most.
+            list: Vec::with_capacity(2 * crate::combat::MAX_VOLLEYS + 5 * capacity),
             before: alloc::vec![
                 Before {
                     alive: false,
@@ -217,6 +221,11 @@ impl Events {
     /// Tell of a flash flood coming, arriving or passing.
     pub(crate) fn flash(&mut self, stage: crate::flash::Stage) {
         self.list.push(Event::FlashFlood { stage });
+    }
+
+    /// Tell of `player`'s regiment swept away by a flash flood.
+    pub(crate) fn swept_away(&mut self, player: crate::PlayerId) {
+        self.list.push(Event::SweptAway { player });
     }
 
     /// Tell of a new season.
