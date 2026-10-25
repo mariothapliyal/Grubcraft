@@ -4216,6 +4216,13 @@ impl Running {
                 self.ambient.caravans.hush();
             }
         }
+        // Rain, wind and the air's muffling are heard from the weather on
+        // screen.
+        if let Some(sounds) = &mut self.sounds {
+            let (weather, fade) = self.atmosphere.weather();
+            let (rain, muffle) = sounds::air_of(weather, fade);
+            sounds.sky(rain, self.atmosphere.wind().length(), muffle);
+        }
         let struck = self.atmosphere.take_strike();
         // The thunder that arrives is heard even with the flash out of
         // sight, but not while paused, behind the offline menu or in the
@@ -5240,7 +5247,7 @@ impl Running {
         self.formation_pick = None;
         self.shown_formation = None;
         if let Some(sounds) = &mut self.sounds {
-            sounds.new_match();
+            sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
@@ -5388,7 +5395,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::plateau_positions(self.heightmap.tiles),
+                terrain_view::field_starts(&self.heightmap),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -6035,7 +6042,11 @@ impl Running {
     /// the last frame, those the camera sees (the fog hides the rest, as it
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
+        self.effects.set_full_blood(self.menu.settings().full_blood);
         let hm = &self.heightmap;
+        // A rejoining player catching up sees the blows but doesn't hear them.
+        let heard = !(self.online.is_some() && self.menu.net().catching_up());
+        let mut sounded = 0;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
             cull.on_screen(at, 1.0).then_some((i, at))
@@ -6058,6 +6069,15 @@ impl Running {
             let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
             let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);
             self.effects.blow(chest, i.dir, i.hit, style, armoured);
+            // The kills are heard first, if there are too many to hear.
+            if heard
+                && (sounded < sounds::HITS_PER_FRAME || i.hit == puppets::Hit::Killed)
+                && let (Some(sounds), Some(striker)) =
+                    (&self.sounds, self.units.stats.get(usize::from(i.striker)))
+            {
+                sounded += 1;
+                sounds.blow(i.pos, i.hit, style, armoured, sounds::Weapon::of(striker));
+            }
         }
     }
 
@@ -7207,11 +7227,18 @@ impl Running {
             let still = art.clips.pose(fall.model, Action::Idle, time);
             if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
                 let [r, g, b] = fall.colour;
+                let mut flags = models::pose_flags(pose, 0, false);
+                if fall.tip > 0.0 {
+                    // Tipped over toward its way, which the model reads in
+                    // its own space (turned to face south, as drawn).
+                    flags[2] = (fall.tip * 255.0).round() as u8;
+                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
                     facing: [0.0, 1.0],
                     frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
+                    flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: fall.lift,
                     scale: 1.0,

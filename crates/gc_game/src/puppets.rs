@@ -277,33 +277,59 @@ pub struct Block {
     pub fighter: Fighter,
 }
 
-/// A wall tile a manning regiment stands on: its centre, and how high
-/// above the ground there its top is.
+/// A wall piece a manning regiment stands on: its centre, how high above
+/// the ground there its top is, and for a piece longer than a tile (a
+/// gatehouse) the half of its length along it, else zero.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WallSlot {
     pub centre: Vec2,
     pub lift: f32,
+    pub half: Vec2,
 }
 
-/// Across how much of a tile men sharing it spread, in tiles.
+/// Across how much of each tile of a piece men sharing it spread, in tiles.
 const WALL_SPREAD: f32 = 0.8;
 
 /// How fast a soldier climbs to or down from the wall top, in tiles per
 /// second.
 const CLIMB_RATE: f32 = 1.5;
 
-/// Where soldier `k` of `models` stands on `slots` (never empty): on slot
-/// `k % n`, men sharing a slot spread along `across` (a unit vector along
-/// the wall, across the way they face), and the height of the top there.
+/// How many men a wall slot has room for in one rank: one a tile of its
+/// length.
+fn slot_room(slot: &WallSlot) -> usize {
+    ((slot.half.length() * 2.0).round() as usize).max(1)
+}
+
+/// Where soldier `k` of `models` stands on `slots` (never empty): the slots
+/// give one place a tile of their length, in order, and soldier `k` takes
+/// place `k % places`. Men beyond the places make further ranks. On a
+/// single tile they spread along `across` (a unit vector along the wall,
+/// across the way they face); on a long slot, across its depth. Also the
+/// height of the top there.
 fn wall_stand(slots: &[WallSlot], k: usize, models: usize, across: Vec2) -> (Vec2, f32) {
-    let n = slots.len();
-    let (tile, nth) = (k % n, k / n);
-    // How many men share this tile.
-    let sharing = (models.saturating_sub(tile)).div_ceil(n).max(1);
-    let slot = slots[tile];
+    let places: usize = slots.iter().map(slot_room).sum();
+    let (place, nth) = (k % places, k / places);
+    // How many men share this place.
+    let sharing = (models.saturating_sub(place)).div_ceil(places).max(1);
     let step = WALL_SPREAD / sharing as f32;
     let off = (nth as f32 - (sharing - 1) as f32 / 2.0) * step;
-    (slot.centre + across * off, slot.lift)
+    let (mut left, mut slot) = (place, slots[0]);
+    for s in slots {
+        slot = *s;
+        if left < slot_room(s) {
+            break;
+        }
+        left -= slot_room(s);
+    }
+    let len = slot.half.length();
+    if len > 0.0 {
+        let along = slot.half / len;
+        let tile = left as f32 - (slot_room(&slot) - 1) as f32 / 2.0;
+        let side = Vec2::new(-along.y, along.x);
+        (slot.centre + along * tile + side * off, slot.lift)
+    } else {
+        (slot.centre + across * off, slot.lift)
+    }
 }
 
 /// How a regiment's soldiers fight, from its unit's stats and state, which
@@ -440,6 +466,11 @@ pub enum Move {
     /// rounds of blows (one more each swing), so each may be another of his
     /// attacks; `None` for a killing blow, always his weapon's first.
     Swing { at: f32, blow: Option<u32> },
+    /// Striking down at a man on the ground with a move made for it (a
+    /// finisher), `at` through it: its blow lands at `BLOW_AT`. `seed`
+    /// picks which of his finishers, the same all through one. (A man
+    /// without one swings, bent over him: see [`Soldier::stoop`].)
+    Finish { at: f32, seed: u32 },
     /// Turning a blow aside with his weapon.
     Parry(f32),
     /// Catching a blow on his shield.
@@ -470,7 +501,7 @@ pub struct KillTiming {
 }
 
 /// The matched kills each pair of unit types can play, by their index in
-/// one table of [`KillTiming`]s.
+/// one table of [`KillTiming`]s, and each unit type's finisher.
 #[derive(Default)]
 pub struct Kills {
     timing: Vec<KillTiming>,
@@ -479,6 +510,14 @@ pub struct Kills {
     /// Per (killer's unit, victim's unit), where its run of choices starts
     /// and how long it is.
     by_units: HashMap<(u16, u16), (u32, u16)>,
+    /// Per unit type with a move made for striking down at a man on the
+    /// ground, how far from him its men stand to strike (tiles) and how
+    /// long the move is (seconds; its blow lands at `BLOW_AT` of it).
+    finishers: Vec<Option<(f32, f32)>>,
+    /// Per unit type and look ([`Soldier::look`]), where a man of it lying
+    /// dead has his chest from his position (`x` to his left, `y` ahead
+    /// along the facing he fell with), for a finisher to strike at.
+    chests: Vec<Vec<Option<Vec2>>>,
 }
 
 impl Kills {
@@ -501,6 +540,45 @@ impl Kills {
             self.choices.extend_from_slice(ids);
             self.by_units.insert((killer, victim), (first, n));
         }
+    }
+
+    /// Men of unit `unit` finish a man on the ground with a move made for
+    /// it, `seconds` long, standing `reach` tiles from him.
+    pub fn add_finisher(&mut self, unit: u16, reach: f32, seconds: f32) {
+        let u = usize::from(unit);
+        if self.finishers.len() <= u {
+            self.finishers.resize(u + 1, None);
+        }
+        self.finishers[u] = Some((reach, seconds));
+    }
+
+    /// Men of unit `unit` lying dead have their chests at `by_look[look]`
+    /// from their position, `x` to the left and `y` ahead along the facing
+    /// they fell with.
+    pub fn add_chests(&mut self, unit: u16, by_look: Vec<Option<Vec2>>) {
+        let u = usize::from(unit);
+        if self.chests.len() <= u {
+            self.chests.resize(u + 1, Vec::new());
+        }
+        self.chests[u] = by_look;
+    }
+
+    /// Where a man of unit `unit` and look `look` lying dead has his chest
+    /// from his position, if known.
+    fn chest(&self, unit: u16, look: u8) -> Option<Vec2> {
+        *self.chests.get(usize::from(unit))?.get(usize::from(look))?
+    }
+
+    /// The finisher men of unit `unit` strike down with, if they have one:
+    /// its reach and length.
+    fn finisher(&self, unit: u16) -> Option<(f32, f32)> {
+        self.finishers.get(usize::from(unit)).copied().flatten()
+    }
+
+    /// How far from a man on the ground one of unit `unit` stands to finish
+    /// him: his finisher's reach, else [`FINISH_GAP`] for the bent swing.
+    pub(crate) fn finish_gap(&self, unit: u16) -> f32 {
+        self.finisher(unit).map_or(FINISH_GAP, |(reach, _)| reach)
     }
 
     /// The kill `roll` (0 to 1) picks for a man of `killer` on one of
@@ -531,6 +609,9 @@ struct Killing {
     /// The way from the spot he strikes from, if set (a general coming in
     /// beside his man); else from wherever he is.
     from: Vec2,
+    /// Finishing with a move made for it: its length (seconds), and the
+    /// seed that picks which of his finishers.
+    strike: Option<(f32, u32)>,
 }
 
 impl Killing {
@@ -541,12 +622,13 @@ impl Killing {
         finish: false,
         front: false,
         from: Vec2::ZERO,
+        strike: None,
     };
 }
 
 /// A man finishing one knocked down stands this far from him, in tiles,
 /// over his body.
-const FINISH_GAP: f32 = 0.55;
+pub(crate) const FINISH_GAP: f32 = 0.55;
 /// He bends to it over this share of his killing blow, and straightens
 /// over this last share.
 const STOOP_IN: f32 = 0.3;
@@ -825,6 +907,8 @@ pub struct Impact {
     pub hit: Hit,
     /// The unit type of the man struck.
     pub victim: u16,
+    /// The unit type of the man who struck him.
+    pub striker: u16,
 }
 
 /// Blows told and not yet collected, at most; later ones are dropped.
@@ -1318,6 +1402,7 @@ impl Puppets {
                 dir,
                 hit,
                 victim: self.unit[victim / SLOTS],
+                striker: self.unit[striker / SLOTS],
             },
         );
         match self.impacts.get_mut(slot) {
@@ -1628,12 +1713,28 @@ impl Puppets {
         self.killing[i].pair
     }
 
+    /// The timing of the move puppet `i`'s killing blow plays, if not his
+    /// swing: a matched kill, or a finisher made for it.
+    fn kill_timing(&self, i: usize) -> Option<KillTiming> {
+        if self.act[i].0 != Act::Kill {
+            return None;
+        }
+        let k = &self.killing[i];
+        k.pair
+            .map(|(_, t)| t)
+            .or(k.strike.map(|(seconds, _)| KillTiming {
+                seconds,
+                contact: BLOW_AT,
+                reach: k.gap,
+            }))
+    }
+
     /// Seconds until puppet `i`'s killing blow, `f` of the way through,
     /// lands: none or less once it has, and he is only following through,
     /// and may be struck, or strike again.
     fn kill_lands_in(&self, i: usize, f: f32) -> f32 {
-        match self.pair_of(i) {
-            Some((_, k)) => (k.contact - f) * k.seconds,
+        match self.kill_timing(i) {
+            Some(k) => (k.contact - f) * k.seconds,
             None => (BLOW_AT - kill_swing(f)) * SWING_SECONDS,
         }
     }
@@ -1645,7 +1746,7 @@ impl Puppets {
         if act == Act::None {
             return None;
         }
-        let seconds = self.pair_of(i).map_or(act.seconds(), |(_, k)| k.seconds);
+        let seconds = self.kill_timing(i).map_or(act.seconds(), |k| k.seconds);
         let f = (self.time - at) / seconds;
         (0.0..1.0).contains(&f).then_some((act, f))
     }
@@ -1814,6 +1915,22 @@ impl Puppets {
             && self.champion_of(kr).is_none_or(|(.., c)| c != gi)
             && self.pos[gi].distance_squared(self.pos[victim]) <= HERO_REACH * HERO_REACH)
             .then_some(gi)
+    }
+
+    /// Where a man of regiment `kr` strikes at `victim`: where he stands,
+    /// or, finishing him `lying` with a move made for it, his chest (where
+    /// his model lies it, which for most is behind his feet).
+    fn strike_spot(&self, kr: usize, victim: usize, lying: bool) -> Vec2 {
+        let (pos, facing) = (self.pos[victim], self.facing[victim]);
+        let chest = (lying && self.kills.finisher(self.unit[kr]).is_some())
+            .then(|| {
+                let unit = self.unit[victim / SLOTS];
+                self.kills.chest(unit, self.looks[victim])
+            })
+            .flatten();
+        chest.map_or(pos, |c| {
+            pos + facing * c.y + Vec2::new(facing.y, -facing.x) * c.x
+        })
     }
 
     /// How many of regiment `r`'s soldiers stand in its front rank.
@@ -2125,9 +2242,13 @@ impl Puppets {
                 _ if champion.is_some_and(|(d, side)| d.cheering(side)) => Some(Move::Cheer),
                 (Some((Act::Kill, f)), _) => Some(match self.pair_of(i) {
                     Some((pair, _)) => Move::Kill { pair, at: f },
-                    None => Move::Swing {
-                        at: kill_swing(f),
-                        blow: None,
+                    // A finisher made for it plays once through.
+                    None => match self.killing[i].strike {
+                        Some((_, seed)) => Move::Finish { at: f, seed },
+                        None => Move::Swing {
+                            at: kill_swing(f),
+                            blow: None,
+                        },
                     },
                 }),
                 (Some((Act::Down, f)), _) => Some(Move::Down(f)),
@@ -2211,7 +2332,11 @@ impl Puppets {
                 look: self.looks[i],
                 general: general == Some(k),
                 stoop: match acting {
-                    Some((Act::Kill, f)) if self.killing[i].finish => stoop(f),
+                    Some((Act::Kill, f))
+                        if self.killing[i].finish && self.killing[i].strike.is_none() =>
+                    {
+                        stoop(f)
+                    }
                     _ => 0.0,
                 },
                 lift: self.lift[i],
@@ -2294,13 +2419,16 @@ impl Puppets {
                         .flatten();
                     let (gap, lands) = match pair {
                         Some((_, k)) => (k.reach, k.contact * k.seconds),
-                        None if lying => (FINISH_GAP, BLOW_AT * SWING_SECONDS),
+                        None if lying => match self.kills.finisher(self.unit[kr]) {
+                            Some((reach, seconds)) => (reach, BLOW_AT * seconds),
+                            None => (FINISH_GAP, BLOW_AT * SWING_SECONDS),
+                        },
                         None => (
                             (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
                             BLOW_AT * SWING_SECONDS,
                         ),
                     };
-                    let spot = self.pos[victim];
+                    let spot = self.strike_spot(kr, victim, lying);
                     let toward = (self.pos[gi] - spot).normalize_or(Vec2::Y);
                     let man = self.pos[killer] - spot;
                     let away = if toward.perp_dot(man) > 0.0 {
@@ -2343,9 +2471,10 @@ impl Puppets {
                         (self.killing[killer].finish == lying)
                             .then(|| self.kill_lands_in(killer, f))
                     }
-                    // He is playing out a matched kill that has landed:
-                    // this man just drops, rather than cut it short.
-                    Some((Act::Kill, _)) if self.pair_of(killer).is_some() => None,
+                    // He is playing out a matched kill (or a finisher)
+                    // that has landed: this man just drops, rather than cut
+                    // it short.
+                    Some((Act::Kill, _)) if self.kill_timing(killer).is_some() => None,
                     _ => {
                         self.act[killer] = (Act::Kill, self.time);
                         // He steps in to strike where his man stands, at
@@ -2368,19 +2497,28 @@ impl Puppets {
                         };
                         let gap = match pair {
                             Some((_, k)) => k.reach,
-                            None if lying => FINISH_GAP,
+                            None if lying => self.kills.finish_gap(self.unit[kr]),
                             None => (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
                         };
                         self.killing[killer] = Killing {
-                            spot: self.pos[victim],
+                            spot: self.strike_spot(kr, victim, lying),
                             gap,
                             pair,
                             finish: lying,
                             front,
                             from: hero.map_or(Vec2::ZERO, |(.., from)| from),
+                            strike: lying
+                                .then(|| self.kills.finisher(self.unit[kr]))
+                                .flatten()
+                                .map(|(_, seconds)| {
+                                    let seed = unit_hash(block.handle, pick, salt ^ 1);
+                                    (seconds, (seed * u32::MAX as f32) as u32)
+                                }),
                         };
                         if hero.is_some() {
-                            let length = pair.map_or(Act::Kill.seconds(), |(_, k)| k.seconds);
+                            let length = self
+                                .kill_timing(killer)
+                                .map_or(Act::Kill.seconds(), |k| k.seconds);
                             self.brandish[killer] = self.time + length + HERO_BRANDISH;
                         }
                         paired = pair.map(|(id, _)| id);
@@ -2616,6 +2754,7 @@ mod tests {
         WallSlot {
             centre: Vec2::new(x, 5.5),
             lift,
+            half: Vec2::ZERO,
         }
     }
 
@@ -2641,6 +2780,42 @@ mod tests {
         assert!(c.x - a.x < 1.0, "all within the tile");
         assert!((stand(1).x + stand(3).x - 5.0).abs() < 1e-5);
         assert!(stand(1).x < stand(3).x);
+    }
+
+    #[test]
+    fn men_on_a_gatehouse_spread_along_its_length_at_the_deck() {
+        // Three tiles long, running along y.
+        let house = WallSlot {
+            centre: Vec2::new(10.5, 21.5),
+            lift: 2.0,
+            half: Vec2::new(0.0, 1.5),
+        };
+        let stand = |k, models| wall_stand(&[house], k, models, Vec2::X);
+        let three: Vec<_> = (0..3).map(|k| stand(k, 3)).collect();
+        for (at, lift) in &three {
+            assert_eq!((at.x, *lift), (10.5, 2.0));
+        }
+        // One to a tile, the middle man on the centre.
+        let ys: Vec<f32> = three.iter().map(|(at, _)| at.y).collect();
+        assert!(ys[0] < ys[1] && ys[1] < ys[2]);
+        assert!((ys[1] - 21.5).abs() < 1e-5);
+        assert!(ys[2] - ys[0] > 1.5, "{ys:?}");
+        // However many, all stay on the gatehouse in ranks of three, and
+        // no two share a spot.
+        let mut seen: Vec<Vec2> = Vec::new();
+        for k in 0..24 {
+            let (at, _) = stand(k, 24);
+            assert!(
+                (20.0..=23.0).contains(&at.y) && (10.0..=11.0).contains(&at.x),
+                "{at}"
+            );
+            assert!((at.y - 20.5 - (k % 3) as f32).abs() < 1e-5, "{at}");
+            assert!(seen.iter().all(|p| p.distance(at) > 1e-3));
+            seen.push(at);
+        }
+        // A tile of wall beside it still spreads across the way given.
+        let tile = slot(11.5, 2.0);
+        assert!((wall_stand(&[tile], 0, 2, Vec2::X).0.x - 11.5).abs() > 0.1);
     }
 
     #[test]
@@ -3865,7 +4040,30 @@ mod tests {
 
     #[test]
     fn a_man_killed_on_the_ground_is_finished_where_he_lies() {
+        finished_where_he_lies(Puppets::new(2, 4), FINISH_GAP, false);
+    }
+
+    #[test]
+    fn a_finisher_made_for_it_is_struck_from_its_own_reach() {
         let mut p = Puppets::new(2, 4);
+        let mut kills = Kills::new(Vec::new());
+        kills.add_finisher(0, 1.6, 1.5);
+        // His chest lies behind his feet, a little to his left.
+        for unit in 0..2 {
+            kills.add_chests(unit, vec![Some(CHEST); 256]);
+        }
+        p.set_kills(kills);
+        finished_where_he_lies(p, 1.6, true);
+    }
+
+    /// Where the lying men of [`a_finisher_made_for_it_is_struck_from_its_own_reach`]
+    /// have their chests.
+    const CHEST: Vec2 = Vec2::new(0.2, -0.8);
+
+    /// A man knocked down and killed lying is finished by his killer from
+    /// `gap` away, striking down at him: with a move made for it (`strike`),
+    /// else bent over his swing.
+    fn finished_where_he_lies(mut p: Puppets, gap: f32, strike: bool) {
         let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
         for _ in 0..30 {
             frame(&mut p, &a, &b);
@@ -3883,20 +4081,34 @@ mod tests {
         frame(&mut p, &a, &b);
         // His killer stands over him to strike down at him...
         assert_eq!(p.act[k].0, Act::Kill);
-        assert!(p.killing[k].finish && p.killing[k].gap == FINISH_GAP);
+        assert!(p.killing[k].finish && p.killing[k].gap == gap);
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying && lies.age < 0.0, "{lies:?}");
-        let (mut stooped, mut landed) = (0.0_f32, None);
+        let (mut stooped, mut landed, mut struck) = (0.0_f32, None, false);
         while p.corpses().last().unwrap().age < 1.0 {
             p.advance(FRAME);
             p.pair(|x, y| x != y);
-            p.update(&a, 0, FRAME, |s| stooped = stooped.max(s.stoop));
+            p.update(&a, 0, FRAME, |s| {
+                stooped = stooped.max(s.stoop);
+                struck |= matches!(s.fight, Some(Move::Finish { .. }));
+            });
             p.update(&b, 1, FRAME, |_| {});
             if p.corpses().last().unwrap().age >= 0.0 {
-                landed.get_or_insert(p.pos[k].distance(lay));
+                // A finishing move strikes at his chest, behind his feet.
+                let chest = if strike {
+                    lay + facing * CHEST.y + Vec2::new(facing.y, -facing.x) * CHEST.x
+                } else {
+                    lay
+                };
+                landed.get_or_insert(p.pos[k].distance(chest));
             }
         }
-        assert!(stooped > 0.99, "{stooped}");
+        assert_eq!(struck, strike);
+        if strike {
+            assert_eq!(stooped, 0.0);
+        } else {
+            assert!(stooped > 0.99, "{stooped}");
+        }
         // ...and he lies as he was, not driven or turned.
         let lies = p.corpses().last().unwrap();
         assert!(lies.lying);
@@ -3904,7 +4116,7 @@ mod tests {
         assert_eq!(lies.facing, facing);
         // He stood over him as the blow landed.
         let landed = landed.unwrap();
-        assert!((landed - FINISH_GAP).abs() < 0.01, "{landed}");
+        assert!((landed - gap).abs() < 0.01, "{landed}");
     }
 
     #[test]
