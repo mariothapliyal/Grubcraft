@@ -147,11 +147,11 @@ fn crossings(cands: &[(i32, i32)], tiles: i32, walk: impl Fn(i32, i32) -> bool) 
             }
             for (dx, dy) in NEIGHBOURS {
                 let (nx, ny) = (x + dx, y + dy);
-                if let Some(i) = at(nx, ny).filter(|&i| group[i] == NONE && rim[i] != g) {
-                    if walk(nx, ny) {
-                        rim[i] = g;
-                        edge.push((nx, ny));
-                    }
+                if let Some(i) = at(nx, ny).filter(|&i| group[i] == NONE && rim[i] != g)
+                    && walk(nx, ny)
+                {
+                    rim[i] = g;
+                    edge.push((nx, ny));
                 }
             }
         }

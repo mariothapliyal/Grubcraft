@@ -235,5 +235,9 @@ fn those_left_on_the_bar_wade_out_when_the_water_comes_back() {
     run_to(&mut w, 5 * MINUTE + 30 * SECOND);
     assert!(!w.flood().exposed());
     let y = at(&w, a).y;
-    assert!(y < Fx::from_int(DEEP.start) || y >= Fx::from_int(DEEP.end), "{:?}", at(&w, a));
+    assert!(
+        y < Fx::from_int(DEEP.start) || y >= Fx::from_int(DEEP.end),
+        "{:?}",
+        at(&w, a)
+    );
 }

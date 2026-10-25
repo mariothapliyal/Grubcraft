@@ -72,12 +72,13 @@ Built 2026-10-25. It is simpler than the plan in two ways. It needs no new map l
 - **Snowpack.**
   - Each second of a winter with snow falling adds up to 255 to `Flood::snowpack` (scaled by the snow's strength).
   - In the spring, 170 a second melts (`MELT_PER_SECOND`). While it melts, the rivers rise as they do in long rain, and shut the fords once at the top.
-  - Less than a minute's melt (`MELT_MIN`) melts away unseen, and what the spring leaves is gone by the summer. A winter of heavy snow is about a spring and a half of melt, so it shuts the fords for most of the spring.
+  - Less than a minute's melt (`MELT_MIN`) as the spring comes in melts away unseen, and what the spring leaves is gone by the summer. A winter of heavy snow is about a spring and a half of melt, so it shuts the fords for most of the spring.
 - **Low water.** In a dry summer (the ground drier than `EBB_WET` and no flood up), the water drops 1 height unit a second, down to `LOW_DROP`, a fifth of a tile. Out of summer, or once rain wets the ground again, it comes back up at the same pace. A flood or melt first brings the water back to its line, then raises it.
-- **Summer fords.** These are the tiles whose middle lies under the line but no deeper than `LOW_DROP` + `WADE_DEPTH` below it (0.55 of a tile; the map wades to 0.35), and that have a cell the map gave as blocked. They are found when the match starts.
+- **Summer fords.** These are the tiles whose middle lies under the line but no deeper than `LOW_DROP` + `WADE_DEPTH` below it (0.55 of a tile; the map wades to 0.35), that have a cell the map gave as blocked, and that have no cliff's rise beside them. They are found when the match starts.
+  - Only groups that make a crossing are kept: the land round the group's rim must fall in two or more pieces (a bar across a channel). A strip along one bank crosses nothing, so it stays deep.
   - They open at the full drop and shut again under half of it (`Nav::set_exposed_all`, a new `Change::Exposed` with its own per-cell layer, empty until used). Open cells cost as a ford (`nav::SHALLOWS`).
   - A bridge's deck wins over them, and a flood shuts them. Nothing can be built on them.
-  - When the water comes back, regiments standing on them with no order of their own go to the nearest bank where their block fits. A route out of deep water looks for open ground as far as a goal does.
+  - Once the water is back, any regiment still in their deep water with nowhere else to go (no order, or a chase, and not fighting, as in a shut ford) is sent each second to the nearest bank where its block fits. A route out of deep water, on a grid that has had low water, looks for open ground as far as a goal does.
 - **Seeing it.** `Event::Shallows { open }` puts up a message ("Low water: the shallows at the rivers' edges can be waded", and "the summer fords are deep again"). The top bar's chip says "Low water: summer fords". The drawn water drops with the line. `World::flood().shallows()` and `exposed()` let the ground thread draw exposed mud banks.
 - **Shared state.** Low water, whether the summer fords are open, and the snowpack are hashed with the ground, but only while any is non-zero. So matches without seasons hash exactly as before, and no golden changes. `SIM_VERSION` 52, because a Conquest match with seasons now plays differently.
 
