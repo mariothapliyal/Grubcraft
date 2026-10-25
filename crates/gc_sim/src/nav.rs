@@ -1681,10 +1681,11 @@ fn find(
     let mut start = grid.cell_at(from);
     let mut lead = false;
     if !grid.open_cell(start) {
-        // Out of a flood, or deep water come back over a summer ford, as
-        // far as a goal is looked for: a wide ford's middle is further
-        // from its banks than ground is from a wall.
-        let deep = grid.ground[start as usize] == BLOCKED;
+        // Out of a flood, or deep water come back over a summer ford (on
+        // a grid that has had low water), as far as a goal is looked for:
+        // a wide ford's middle is further from its banks than ground is
+        // from a wall.
+        let deep = !grid.exposed.is_empty() && grid.ground[start as usize] == BLOCKED;
         let snap = if grid.is_flooded(start as usize) || deep {
             SNAP_GOAL
         } else {

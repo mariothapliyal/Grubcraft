@@ -1615,6 +1615,7 @@ impl World {
         self.burn();
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.sweep_fords();
+            self.wade_out();
         }
         self.combat.after_move(
             &mut self.regiments,
@@ -2680,14 +2681,14 @@ impl World {
     /// One second of the rivers (see [`flood`]): the water rises or goes
     /// down with the ground's wetness, and the fords shut or open with it.
     fn rivers(&mut self) {
-        let season = self.sky.season(self.tick).map(|s| s.season);
+        let at = self.sky.season(self.tick);
         let weather = self.sky.weather();
         let snow = match weather.kind {
             WeatherKind::Snow => weather.strength,
             _ => 0,
         };
         let wet = self.sky.wet();
-        let turn = (self.flood).second(&mut self.terrain, wet, season, snow, !self.scratch);
+        let turn = (self.flood).second(&mut self.terrain, wet, at, snow, !self.scratch);
         if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             self.events.flooded(closed);
@@ -2696,25 +2697,29 @@ impl World {
             let runs = self.flood.shallow_runs();
             (self.nav).set_exposed_all(runs, open, &self.regiments);
             self.events.shallows(open);
-            if !open {
-                self.wade_out();
-            }
         }
     }
 
-    /// The water came back over the summer fords: regiments standing on
-    /// them with no order of their own are ordered to the nearest bank
-    /// where their block fits.
+    /// One second of the summer fords gone deep again (with seasons):
+    /// regiments still standing in their deep water with nowhere else to
+    /// go (no order, or a chase, and not fighting, as in a shut ford) are
+    /// ordered to the nearest bank where their block fits.
     fn wade_out(&mut self) {
+        if self.flood.exposed() || self.flood.shallow_runs().is_empty() || self.season().is_none() {
+            return;
+        }
         let mut stuck = core::mem::take(&mut self.stranded);
         stuck.clear();
         let r = &self.regiments;
         stuck.extend((0..r.alive.len()).filter(|&i| {
+            let p = r.position[i];
             r.alive[i]
                 && r.models[i] > 0
-                && r.target[i].is_none()
+                && (r.target[i].is_none() || r.attack_target[i].is_some())
                 && r.foe(i).is_none()
-                && self.flood.on_shallows(r.position[i])
+                && self.flood.on_shallows(p)
+                && !self.terrain.on_deck(p)
+                && self.nav.blocked(r.owner[i], p)
         }));
         self.send_to_bank(stuck);
     }

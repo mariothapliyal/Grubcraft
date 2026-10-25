@@ -24,6 +24,9 @@ const RIVER: core::ops::Range<i32> = 28..36;
 const DEEP: core::ops::Range<i32> = 30..34;
 /// Columns where the deep middle is shallow enough to wade in low water.
 const BAR: core::ops::Range<i32> = 40..46;
+/// Columns where the deep middle's north edge is as shallow: a strip along
+/// one bank, which crosses nothing, so it stays deep.
+const STRIP: core::ops::Range<i32> = 10..20;
 
 fn heights() -> Vec<u16> {
     (0..MAP * MAP)
@@ -33,6 +36,7 @@ fn heights() -> Vec<u16> {
                 // Deep water too deep for any summer, but for the bar: a
                 // quarter of a tile under the wading depth.
                 _ if DEEP.contains(&y) && BAR.contains(&x) => WATER - 89 - 30,
+                _ if y == DEEP.start && STRIP.contains(&x) => WATER - 89 - 30,
                 _ if DEEP.contains(&y) => 20,
                 _ if RIVER.contains(&y) => WATER - 40,
                 _ => 600,
@@ -219,4 +223,17 @@ fn no_snow_no_melt_and_no_seasons_no_change() {
     run_to(&mut w, 5 * MINUTE);
     assert_eq!(w.terrain().low(), 0);
     assert!(!w.flood().exposed());
+}
+
+#[test]
+fn those_left_on_the_bar_wade_out_when_the_water_comes_back() {
+    let mut w = world(SNOWY, YEAR);
+    run_to(&mut w, 2 * MINUTE + 70 * SECOND);
+    assert!(w.flood().exposed());
+    // A regiment halts in the middle of the bar and stays there.
+    let a = spawn(&mut w, 43, 31);
+    run_to(&mut w, 5 * MINUTE + 30 * SECOND);
+    assert!(!w.flood().exposed());
+    let y = at(&w, a).y;
+    assert!(y < Fx::from_int(DEEP.start) || y >= Fx::from_int(DEEP.end), "{:?}", at(&w, a));
 }

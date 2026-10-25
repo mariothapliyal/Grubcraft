@@ -815,6 +815,21 @@ impl Terrain {
             })
     }
 
+    /// Whether no tile beside `(x, y)` (side by side, on the map) is a
+    /// cliff's rise from it: as the map has it, more than 1.2 tiles of
+    /// height a tile.
+    pub(crate) fn tile_gentle(&self, x: i32, y: i32) -> bool {
+        const CLIFF: i32 = (HEIGHT_UNITS * 120 / 100) as i32;
+        let Some(i) = index_in(self.tiles, x, y) else {
+            return false;
+        };
+        let h = i32::from(self.height[i]);
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|&(dx, dy)| {
+            index_in(self.tiles, x + dx, y + dy)
+                .is_none_or(|n| (i32::from(self.height[n]) - h).abs() <= CLIFF)
+        })
+    }
+
     /// Whether the tile `(x, y)` lies under the map's water line (before
     /// any flood); never off the map.
     pub(crate) fn tile_under_water(&self, x: i32, y: i32) -> bool {

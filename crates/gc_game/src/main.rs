@@ -5962,8 +5962,7 @@ impl Running {
         }
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
-        let mut flooded = None;
-        let mut news = None;
+        let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -6119,25 +6118,23 @@ impl Running {
                         self.siege.forget(sprung.structure);
                     }
                 }
-                Event::Flooded { closed } => flooded = Some(closed),
-                Event::Season { season } => news = Some(season_news(season)),
-                Event::Shallows { open } => {
-                    news = Some(if open {
-                        "Low water: the shallows at the rivers' edges can be waded"
-                    } else {
-                        "The water is back up: the summer fords are deep again"
-                    })
-                }
+                Event::Flooded { closed } => news.push(if closed {
+                    "The rivers are in flood: the fords can't be crossed"
+                } else {
+                    "The rivers have gone down: the fords are open again"
+                }),
+                Event::Season { season } => news.push(season_news(season)),
+                Event::Shallows { open } => news.push(if open {
+                    "Low water: the shallows at the rivers' edges can be waded"
+                } else {
+                    "The water is back up: the summer fords are deep again"
+                }),
                 _ => {}
             }
         }
-        match flooded {
-            Some(true) => self.say("The rivers are in flood: the fords can't be crossed".into()),
-            Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
-            None => {}
-        }
-        if let Some(news) = news {
-            self.say(news.into());
+        // Said together, so none hides another from the same tick.
+        if !news.is_empty() {
+            self.say(news.join(". "));
         }
         for b in self.world.blows() {
             self.puppets.struck(b);

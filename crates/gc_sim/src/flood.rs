@@ -16,11 +16,12 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
+use crate::TICKS_PER_SECOND;
 use crate::hash::StateHasher;
 use crate::morale;
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::sky::{Season, WET_FULL};
+use crate::sky::{Season, SeasonAt, WET_FULL};
 use crate::terrain::{HEIGHT_UNITS, Terrain};
 
 /// The rivers rise while the ground is at least this wet: under three
@@ -56,7 +57,8 @@ const SNOW_PER_SECOND: u32 = 255;
 /// Snow melting a second in the spring; what is left at the summer is
 /// gone.
 pub const MELT_PER_SECOND: u32 = 170;
-/// Less snow than a minute of melt melts without swelling the rivers.
+/// Less snow than a minute of melt, as the spring comes in, melts without
+/// swelling the rivers.
 pub const MELT_MIN: u32 = 60 * MELT_PER_SECOND;
 
 /// The rivers' fords, and whether a flood has shut them. How far the
@@ -104,6 +106,91 @@ fn runs_of(tiles: &[(i32, i32)]) -> Vec<[i32; 4]> {
     runs
 }
 
+/// Of the sorted `(y, x)` tiles on a map `tiles` a side, those in groups
+/// (side by side) that join ground on two sides: the land along a group's
+/// rim, where `walk` says a tile can be walked on, falls in two or more
+/// pieces. So a bar across a channel is kept and a strip along one bank
+/// is not. Sorted as given.
+fn crossings(cands: &[(i32, i32)], tiles: i32, walk: impl Fn(i32, i32) -> bool) -> Vec<(i32, i32)> {
+    const NONE: u32 = u32::MAX;
+    let at = |x: i32, y: i32| {
+        ((0..tiles).contains(&x) && (0..tiles).contains(&y)).then(|| (y * tiles + x) as usize)
+    };
+    // Each candidate's group (`NONE - 1` until found), and each rim
+    // tile's marks: the group whose rim it is, and the group it was last
+    // walked for.
+    let mut group = alloc::vec![NONE; (tiles * tiles) as usize];
+    let mut rim = alloc::vec![NONE; (tiles * tiles) as usize];
+    let mut walked = alloc::vec![NONE; (tiles * tiles) as usize];
+    for &(y, x) in cands {
+        group[(y * tiles + x) as usize] = NONE - 1;
+    }
+    let mut keep = Vec::new();
+    let (mut stack, mut members, mut edge) = (Vec::new(), Vec::new(), Vec::new());
+    for (g, &(y, x)) in cands.iter().enumerate() {
+        let g = g as u32;
+        if group[(y * tiles + x) as usize] != NONE - 1 {
+            continue;
+        }
+        // The group, side by side.
+        members.clear();
+        edge.clear();
+        group[(y * tiles + x) as usize] = g;
+        stack.push((x, y));
+        while let Some((x, y)) = stack.pop() {
+            members.push((y, x));
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                if let Some(i) = at(x + dx, y + dy).filter(|&i| group[i] == NONE - 1) {
+                    group[i] = g;
+                    stack.push((x + dx, y + dy));
+                }
+            }
+            for (dx, dy) in NEIGHBOURS {
+                let (nx, ny) = (x + dx, y + dy);
+                if let Some(i) = at(nx, ny).filter(|&i| group[i] == NONE && rim[i] != g) {
+                    if walk(nx, ny) {
+                        rim[i] = g;
+                        edge.push((nx, ny));
+                    }
+                }
+            }
+        }
+        // The rim's pieces: walk the first, and see if any is left.
+        if let Some(&first) = edge.first() {
+            stack.push(first);
+            walked[at(first.0, first.1).unwrap_or(0)] = g;
+        }
+        while let Some((x, y)) = stack.pop() {
+            for (dx, dy) in NEIGHBOURS {
+                if let Some(i) = at(x + dx, y + dy).filter(|&i| rim[i] == g && walked[i] != g) {
+                    walked[i] = g;
+                    stack.push((x + dx, y + dy));
+                }
+            }
+        }
+        if edge
+            .iter()
+            .any(|&(x, y)| at(x, y).is_some_and(|i| walked[i] != g))
+        {
+            keep.extend_from_slice(&members);
+        }
+    }
+    keep.sort_unstable();
+    keep
+}
+
+/// The eight tiles round a tile.
+const NEIGHBOURS: [(i32, i32); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
+
 impl Flood {
     /// The fords of a map `map_tiles` a side with `terrain`, walked on
     /// the grid `nav`.
@@ -117,11 +204,16 @@ impl Flood {
             if nav.walkable_ground(x, y) {
                 fords.push((y, x));
             }
-            // Deep water no deeper than wading depth below the low line.
-            if terrain.tile_within(x, y, LOW_DROP + WADE_DEPTH) && nav.deep_ground(x, y) {
+            // Deep water no deeper than wading depth below the low line,
+            // with no cliff beside it.
+            if terrain.tile_within(x, y, LOW_DROP + WADE_DEPTH)
+                && terrain.tile_gentle(x, y)
+                && nav.deep_ground(x, y)
+            {
                 shallows.push((y, x));
             }
         }
+        let shallows = crossings(&shallows, tiles, |x, y| nav.walkable_ground(x, y));
         Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),
@@ -185,8 +277,8 @@ impl Flood {
                 .is_ok()
     }
 
-    /// One second of the rivers, with the ground `wet`, in `season` (with
-    /// seasons), with snow falling at `snow` (0 to 255): the water in
+    /// One second of the rivers, with the ground `wet`, `at` a point of the
+    /// year (with seasons), with snow falling at `snow` (0 to 255): the water in
     /// `terrain` rises, holds or goes down, and with `shut` the fords shut
     /// or open with it, and the summer fords open or go deep (a rehearsal
     /// keeps them as it found them, so it never changes the walkable grid
@@ -195,7 +287,7 @@ impl Flood {
         &mut self,
         terrain: &mut Terrain,
         wet: u16,
-        season: Option<Season>,
+        at: Option<SeasonAt>,
         snow: u8,
         shut: bool,
     ) -> Turn {
@@ -204,18 +296,20 @@ impl Flood {
         }
         // The winter's snow piles up, and melts in the spring: a little
         // melts away unseen, more swells the rivers as rain does.
+        let season = at.map(|at| at.season);
         let melting = match season {
             Some(Season::Winter) => {
                 self.snowpack += SNOW_PER_SECOND * u32::from(snow) / 255;
                 false
             }
-            Some(Season::Spring) if self.snowpack < MELT_MIN => {
-                self.snowpack = 0;
-                false
-            }
             Some(Season::Spring) => {
-                self.snowpack -= self.snowpack.min(MELT_PER_SECOND);
-                true
+                // Weighed once, as the spring comes in.
+                if at.is_some_and(|at| at.into < TICKS_PER_SECOND) && self.snowpack < MELT_MIN {
+                    self.snowpack = 0;
+                }
+                let melt = self.snowpack.min(MELT_PER_SECOND);
+                self.snowpack -= melt;
+                melt > 0
             }
             // What the spring didn't melt is gone by the summer.
             _ => {
