@@ -66,6 +66,9 @@ pub const CLEAR_CAP: u8 = 32;
 pub const BLOCKED: u8 = 0;
 /// Cost of a cell on a bridge's deck: open ground.
 pub const DECK: u8 = 1;
+/// Cost of deep water that low water has made wadeable (see
+/// [`crate::flood`], "summer fords"): as a ford.
+pub const SHALLOWS: u8 = 3;
 /// The widest berth (cells from a block's centre that routes keep clear of
 /// blocked ground) any regiment asks for: 8 tiles.
 pub const MAX_BERTH: u8 = 16;
@@ -159,6 +162,9 @@ struct Grid {
     /// Cells a flood has shut (see [`Nav::set_flooded_all`]): blocked
     /// whatever stands there. Empty until the first flood.
     flooded: Vec<bool>,
+    /// Deep-water cells low water has made wadeable (see
+    /// [`Nav::set_exposed_all`]). Empty until the first low water.
+    exposed: Vec<bool>,
     /// Finished bridge tiles on each cell (see [`Nav::set_bridged_all`]):
     /// open at [`DECK`] cost over deep water or a flood, unless a building
     /// stands there too. Empty until the first bridge.
@@ -211,6 +217,11 @@ impl Grid {
     /// Whether a flood has shut cell `c` (an index into the grid).
     fn is_flooded(&self, c: usize) -> bool {
         self.flooded.get(c).copied().unwrap_or(false)
+    }
+
+    /// Whether low water has made cell `c` wadeable.
+    fn is_exposed(&self, c: usize) -> bool {
+        self.exposed.get(c).copied().unwrap_or(false)
     }
 
     /// Whether a finished bridge spans cell `c` (an index into the grid).
@@ -1316,6 +1327,19 @@ impl Nav {
         Ok(())
     }
 
+    /// Whether any cell of the tile `(x, y)` is ground the map gave as
+    /// blocked (deep water, under the water line), whatever stands there
+    /// (never off the map, nor with no map).
+    pub(crate) fn deep_ground(&self, x: i32, y: i32) -> bool {
+        let Some(g) = self.base() else {
+            return false;
+        };
+        let Some([x0, y0, x1, y1]) = g.cells([x, y, 1, 1]) else {
+            return false;
+        };
+        (y0..y1).any(|cy| (x0..x1).any(|cx| g.ground[g.idx(cx, cy) as usize] == BLOCKED))
+    }
+
     /// Whether any cell of the tile `(x, y)` is ground a regiment could
     /// walk on, buildings and floods aside (never off the map, nor with no
     /// map).
@@ -1657,9 +1681,11 @@ fn find(
     let mut start = grid.cell_at(from);
     let mut lead = false;
     if !grid.open_cell(start) {
-        // Out of a flood, as far as a goal is looked for: a wide ford's
-        // middle is further from its banks than ground is from a wall.
-        let snap = if grid.is_flooded(start as usize) {
+        // Out of a flood, or deep water come back over a summer ford, as
+        // far as a goal is looked for: a wide ford's middle is further
+        // from its banks than ground is from a wall.
+        let deep = grid.ground[start as usize] == BLOCKED;
+        let snap = if grid.is_flooded(start as usize) || deep {
             SNAP_GOAL
         } else {
             SNAP_START
@@ -1983,6 +2009,7 @@ impl Grid {
             built: vec![0; n],
             opened: Vec::new(),
             flooded: Vec::new(),
+            exposed: Vec::new(),
             bridged: Vec::new(),
             clear: vec![0; n],
             area: vec![0; n],

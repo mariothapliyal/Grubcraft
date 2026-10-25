@@ -122,7 +122,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 51;
+pub const SIM_VERSION: u32 = 52;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2680,11 +2680,47 @@ impl World {
     /// One second of the rivers (see [`flood`]): the water rises or goes
     /// down with the ground's wetness, and the fords shut or open with it.
     fn rivers(&mut self) {
-        let shut = (self.flood).second(&mut self.terrain, self.sky.wet(), !self.scratch);
-        if let Some(closed) = shut {
+        let season = self.sky.season(self.tick).map(|s| s.season);
+        let weather = self.sky.weather();
+        let snow = match weather.kind {
+            WeatherKind::Snow => weather.strength,
+            _ => 0,
+        };
+        let wet = self.sky.wet();
+        let turn = (self.flood).second(&mut self.terrain, wet, season, snow, !self.scratch);
+        if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             self.events.flooded(closed);
         }
+        if let Some(open) = turn.shallows {
+            let runs = self.flood.shallow_runs();
+            (self.nav).set_exposed_all(runs, open, &self.regiments);
+            self.events.shallows(open);
+            if !open {
+                self.wade_out();
+            }
+        }
+    }
+
+    /// The water came back over the summer fords: regiments standing on
+    /// them with no order of their own are ordered to the nearest bank
+    /// where their block fits.
+    fn wade_out(&mut self) {
+        let mut stuck = core::mem::take(&mut self.stranded);
+        stuck.clear();
+        for i in 0..self.regiments.alive.len() {
+            let r = &self.regiments;
+            if r.alive[i]
+                && r.models[i] > 0
+                && r.target[i].is_none()
+                && r.foe(i).is_none()
+                && self.flood.on_shallows(r.position[i])
+            {
+                stuck.push(i);
+            }
+        }
+        self.stranded = stuck;
+        self.to_the_bank();
     }
 
     /// One second of the regiments caught in shut fords (see
@@ -2695,6 +2731,14 @@ impl World {
         let mut stuck = core::mem::take(&mut self.stranded);
         self.flood
             .sweep(&mut self.regiments, &self.terrain, &mut stuck);
+        self.stranded = stuck;
+        self.to_the_bank();
+    }
+
+    /// The regiments in `stranded` go to the nearest bank where their
+    /// block fits, as a player's move order would, leaving off any work.
+    fn to_the_bank(&mut self) {
+        let stuck = core::mem::take(&mut self.stranded);
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
             let berth = self.regiments.berth(&self.units, i);
@@ -3016,8 +3060,9 @@ impl World {
                 }
                 // Only while the rivers are up, so a dry match hashes as
                 // before.
-                if self.terrain.rise() > 0 {
-                    self.flood.hash_into(self.terrain.rise(), h);
+                let (rise, low) = (self.terrain.rise(), self.terrain.low());
+                if rise > 0 || self.flood.seasonal(low) {
+                    self.flood.hash_into(rise, low, h);
                 }
             }
             other => unreachable!("no hash for system {other}"),

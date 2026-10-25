@@ -65,6 +65,8 @@ enum Change {
     Opened(bool),
     /// Ground shut by a flood (`true`), or open again.
     Flooded(bool),
+    /// Deep water made wadeable by low water (`true`), or deep again.
+    Exposed(bool),
     /// A bridge tile finished over it (`true`), or fallen.
     Bridged(bool),
 }
@@ -87,6 +89,15 @@ impl Nav {
     pub(crate) fn set_flooded_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
         for v in 0..self.grids.len() {
             self.change(v, all, Change::Flooded(on), regs);
+        }
+    }
+
+    /// Make the deep water on each of `all`'s tiles wadeable (`on`), as low
+    /// water does (see [`crate::flood`]), or deep again, on every side's
+    /// grid. Cells the map gave as walkable are left as they are.
+    pub(crate) fn set_exposed_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
+        for v in 0..self.grids.len() {
+            self.change(v, all, Change::Exposed(on), regs);
         }
     }
 
@@ -151,7 +162,7 @@ impl Nav {
         self.search.work = work;
         let freed = match change {
             Change::Built(on) | Change::Flooded(on) => !on,
-            Change::Bridged(on) => on,
+            Change::Bridged(on) | Change::Exposed(on) => on,
             Change::Opened(open) => open,
         };
         // Any route passing near a change is found again (walking the old
@@ -264,6 +275,9 @@ impl Grid {
         if matches!(change, Change::Flooded(_)) && self.flooded.is_empty() {
             self.flooded = vec![false; self.built.len()];
         }
+        if matches!(change, Change::Exposed(_)) && self.exposed.is_empty() {
+            self.exposed = vec![false; self.built.len()];
+        }
         if matches!(change, Change::Bridged(_)) && self.bridged.is_empty() {
             self.bridged = vec![0; self.built.len()];
         }
@@ -283,6 +297,7 @@ impl Grid {
                             Change::Built(on) => bump(&mut self.built[i], on),
                             Change::Opened(open) => bump(&mut self.opened[i], open),
                             Change::Flooded(on) => self.flooded[i] = on,
+                            Change::Exposed(on) => self.exposed[i] = on,
                             Change::Bridged(on) => bump(&mut self.bridged[i], on),
                         }
                         let opened = self.opened.get(i).copied().unwrap_or(0);
@@ -292,6 +307,8 @@ impl Grid {
                             DECK
                         } else if self.is_flooded(i) {
                             BLOCKED
+                        } else if self.ground[i] == BLOCKED && self.is_exposed(i) {
+                            super::SHALLOWS
                         } else {
                             self.ground[i]
                         };

@@ -276,6 +276,9 @@ pub struct Terrain {
     /// Height units a flood has raised the water above `water_level`
     /// (see [`crate::flood`]).
     rise: u16,
+    /// Height units summer low water has dropped the water below its line
+    /// (see [`crate::flood`]); never with a flood up.
+    low: u16,
     /// Whether the water is frozen (a winter with no flood, see
     /// [`crate::sky::Season`]): troops cross it as dry ground.
     frozen: bool,
@@ -345,6 +348,7 @@ impl Terrain {
             rubble_moves: 0,
             side: map_tiles as i32,
             rise: 0,
+            low: 0,
             frozen: false,
             changes: 0,
         };
@@ -693,10 +697,7 @@ impl Terrain {
     /// Whether `p` is in water: under the water line, raised by any flood,
     /// and not on a bridge.
     pub fn wet(&self, p: FxVec2) -> bool {
-        self.tiles != 0
-            && !self.frozen
-            && self.height(p) < i32::from(self.water_level) + i32::from(self.rise)
-            && !self.on_deck(p)
+        self.tiles != 0 && !self.frozen && self.height(p) < self.water_line() && !self.on_deck(p)
     }
 
     /// Whether the water is frozen over: walked as dry ground.
@@ -786,6 +787,32 @@ impl Terrain {
     /// Raise the water to `rise` height units above its line.
     pub(crate) fn set_rise(&mut self, rise: u16) {
         self.rise = rise;
+    }
+
+    /// Height units low water has dropped the water below its line (0
+    /// with none).
+    pub fn low(&self) -> u16 {
+        self.low
+    }
+
+    /// Drop the water to `low` height units below its line.
+    pub(crate) fn set_low(&mut self, low: u16) {
+        self.low = low;
+    }
+
+    /// Where the water stands now, in height units: the map's line, raised
+    /// by a flood or dropped by low water.
+    pub fn water_line(&self) -> i32 {
+        i32::from(self.water_level) + i32::from(self.rise) - i32::from(self.low)
+    }
+
+    /// Whether the tile `(x, y)`'s middle lies under the map's water line
+    /// but no deeper than `depth` height units below it.
+    pub(crate) fn tile_within(&self, x: i32, y: i32, depth: u16) -> bool {
+        index_in(self.tiles, x, y).is_some_and(|i| {
+            let h = self.height[i];
+            h < self.water_level && u32::from(h) + u32::from(depth) >= u32::from(self.water_level)
+        })
     }
 
     /// Whether the tile `(x, y)` lies under the map's water line (before
