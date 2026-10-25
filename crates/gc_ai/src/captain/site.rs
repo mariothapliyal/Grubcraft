@@ -288,17 +288,23 @@ impl Captain {
         let watched = fighting
             .iter()
             .any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
-        if watched && !wading && across == 0 {
+        // The water is shutting the ford before anyone is in it: not across
+        // a river that is about to cut them off.
+        let reach = self.river.map_or(FORD_REACH, |r| r.far - r.near + 4.0);
+        let shutting = t.ford_shut_near(exit, reach);
+        if (watched || shutting) && !wading && across == 0 {
             self.bridgehead = None;
             self.crossing = false;
             self.standoff_since = ctx.view.tick;
             self.posture = Posture::Hold;
             self.posture_since = ctx.view.tick;
             self.anchor = t.clamp(line_centre(&self.members, ours, centroid(ours)), 4.0);
-            ctx.journal.note(
-                ctx.view.tick,
-                "They have come to watch that ford: waiting again".to_string(),
-            );
+            let why = if shutting {
+                "The river is rising over that ford: waiting again"
+            } else {
+                "They have come to watch that ford: waiting again"
+            };
+            ctx.journal.note(ctx.view.tick, why.to_string());
             return;
         }
         if across as f32 >= ours.len() as f32 * ACROSS_SHARE {

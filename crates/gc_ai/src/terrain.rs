@@ -50,6 +50,39 @@ pub struct Terrain {
     /// The water is frozen over (`gc_sim::Terrain::frozen`): fords and
     /// shallows are dry ground till the thaw; deep water stays blocked.
     frozen: bool,
+    /// The water as the minds last read it (see [`Terrain::read_water`]).
+    water: Water,
+    /// The nav's costs as the match began, for the ford tiles the water
+    /// shuts and opens again; empty till it first does.
+    dry: Vec<u8>,
+    /// The ford tiles the water has shut, as (column, row).
+    shut: Vec<(i32, i32)>,
+}
+
+/// What the rivers are doing, as far as where a mind may wade goes
+/// (docs/38-living-waterways.md, stage 4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Water {
+    /// Every ford is out: a flood or the spring melt has shut them, or
+    /// the water is rising (or still high) towards it.
+    pub keep_off: bool,
+    /// The summer fords are open.
+    pub summer: bool,
+    /// A flash flood is coming down a river, or has shut it: the first of
+    /// its fords, to tell one wave's river from another's.
+    pub wave: Option<(i32, i32)>,
+}
+
+impl Water {
+    /// The rivers of `world` now.
+    pub fn of(world: &gc_sim::World) -> Water {
+        let flood = world.flood();
+        Water {
+            keep_off: flood.closed() || world.terrain().rise() >= gc_sim::flood::FLOOD_RISE / 2,
+            summer: flood.exposed(),
+            wave: flood.flash().threatened().first().copied(),
+        }
+    }
 }
 
 /// What changes which tiles are soft: the rain's soaking and rubble.
@@ -74,6 +107,9 @@ impl Terrain {
             soft: Vec::new(),
             soaked: None,
             frozen: false,
+            water: Water::default(),
+            dry: Vec::new(),
+            shut: Vec::new(),
         }
     }
 
@@ -97,6 +133,9 @@ impl Terrain {
             soft: Vec::new(),
             soaked: None,
             frozen: false,
+            water: Water::default(),
+            dry: Vec::new(),
+            shut: Vec::new(),
         };
         t.measure_clearance();
         t
@@ -189,6 +228,71 @@ impl Terrain {
             if was == Growth::Thicket as u8 && !self.under.is_empty() {
                 self.restore_tile(t);
             }
+        }
+    }
+
+    /// Whether the water the minds last read is not `water`.
+    pub fn water_stale(&self, water: Water) -> bool {
+        self.water != water
+    }
+
+    /// Read the rivers (`water`, of `flood`'s fords): fords out of the
+    /// water's reach are blocked, and open summer fords can be waded, as
+    /// the simulation routes. A mind then neither plans to wade nor waits
+    /// for an enemy to wade where the water has shut, or is about to.
+    pub fn read_water(&mut self, water: Water, flood: &gc_sim::flood::Flood) {
+        if water == self.water {
+            return;
+        }
+        self.water = water;
+        if self.side == 0 {
+            return;
+        }
+        if self.dry.is_empty() {
+            self.dry.clone_from(&self.cost);
+        }
+        let wave = flood.flash().threatened();
+        let in_wave = |x: i32, y: i32| wave.binary_search(&(y, x)).is_ok();
+        let n = self.map_tiles as i32;
+        self.shut.clear();
+        for (x, y) in flood.fords() {
+            let t = (y * n + x) as usize;
+            if water.keep_off || in_wave(x, y) {
+                self.set_tile(t, BLOCKED);
+                self.shut.push((x, y));
+            } else {
+                self.dry_tile(t);
+            }
+        }
+        for (x, y) in flood.shallows() {
+            let t = (y * n + x) as usize;
+            let out = water.keep_off || in_wave(x, y);
+            if water.summer && !out {
+                self.set_tile(t, FORD);
+            } else {
+                self.dry_tile(t);
+                if water.summer {
+                    self.shut.push((x, y));
+                }
+            }
+        }
+        self.remeasure();
+    }
+
+    /// Whether the water has shut a ford within `reach` tiles of `p`.
+    pub fn ford_shut_near(&self, p: Vec2, reach: f32) -> bool {
+        let r2 = reach * reach;
+        self.shut
+            .iter()
+            .any(|&(x, y)| Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance_squared(p) <= r2)
+    }
+
+    /// Tile `t`'s costs as the match began.
+    fn dry_tile(&mut self, t: usize) {
+        let ((x, y), side) = (self.tile_cell(t), self.side);
+        for cy in y..y + CELLS_PER_TILE {
+            let row = (cy * side + x) as usize..(cy * side + x + CELLS_PER_TILE) as usize;
+            self.cost[row.clone()].copy_from_slice(&self.dry[row]);
         }
     }
 
