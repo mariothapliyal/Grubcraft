@@ -50,6 +50,7 @@ pub fn short_name(faction: Faction) -> &'static str {
         Faction::Brood => "Brood",
         Faction::Choir => "Choir",
         Faction::CarrionConcord => "Carrion",
+        Faction::Oathbound => "Oathbound",
     }
 }
 
@@ -104,7 +105,14 @@ mod tests {
         );
         assert_eq!(
             left,
-            ["Hands", "Gnawer", "Tuner", "Ledger Clerk", "Caravan"],
+            [
+                "Hands",
+                "Gnawer",
+                "Tuner",
+                "Ledger Clerk",
+                "Caravan",
+                "Seedtender"
+            ],
             "left out: the workers and the caravan"
         );
     }
@@ -238,7 +246,7 @@ mod tests {
                     .map(move |i| (i, f))
             })
             .collect();
-        assert_eq!(all.len(), 38);
+        assert_eq!(all.len(), 49);
         for (n, &(unit, faction)) in all.iter().enumerate() {
             // The foe: the next listed troop of another faction.
             let foe = all
@@ -302,7 +310,7 @@ mod tests {
         let mut world = sandbox_world(&data);
         let mut spawns = Vec::new();
         for (k, &f) in Faction::ALL.iter().enumerate() {
-            let (x0, y0) = (12 + 90 * (k as i32 % 2), 12 + 90 * (k as i32 / 2));
+            let (x0, y0) = (12 + 40 * (k as i32 % 3), 12 + 60 * (k as i32 / 3));
             for (j, unit) in placeable(data.conquest_units, f).into_iter().enumerate() {
                 spawns.push(spawn(
                     &world,
@@ -337,7 +345,7 @@ mod tests {
         }
         assert!(
             soldiers(&world) < before,
-            "the four factions met and fought"
+            "the five factions met and fought"
         );
     }
 }
