@@ -40,7 +40,6 @@ pub enum Act {
     Man(StructureHandle),
 }
 
-
 /// A decision about one regiment.
 #[derive(Clone, Copy, Debug)]
 pub struct Want {

@@ -91,6 +91,24 @@ impl Sense<'_> {
     }
 }
 
+/// A start further than this from home, tiles, is someone else's.
+const OTHER_START: f32 = 30.0;
+
+/// The nearest start to `home` that is someone else's: where the nearest
+/// enemy comes from (the rally point and the works face it).
+fn nearest_other_start(s: &Sense, home: Vec2) -> Option<Vec2> {
+    other_starts(s, home).min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
+}
+
+/// The starts on the map that are someone else's.
+fn other_starts<'a>(s: &'a Sense, home: Vec2) -> impl Iterator<Item = Vec2> + 'a {
+    s.kit
+        .starts
+        .iter()
+        .copied()
+        .filter(move |p| p.distance(home) > OTHER_START)
+}
+
 /// A Conquest mind's economy and army.
 pub struct Realm {
     kit: Arc<Kit>,

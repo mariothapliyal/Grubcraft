@@ -67,8 +67,6 @@ enum Change {
     Flooded(bool),
     /// A bridge tile finished over it (`true`), or fallen.
     Bridged(bool),
-    /// Its fords frozen over (`true`), or thawed.
-    Frozen(bool),
 }
 
 impl Nav {
@@ -101,37 +99,21 @@ impl Nav {
         }
     }
 
-    /// Freeze (`on`) the fords on each of `all`'s tiles, so routes cost
-    /// them as open ground, or thaw them, on every side's grid (see
-    /// [`crate::terrain::Terrain::frozen`]).
-    pub(crate) fn set_frozen_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
+    /// Freeze the fords (`on`), so routes cost them as open ground, or
+    /// thaw them, on every side's grid (see
+    /// [`crate::terrain::Terrain::frozen`]). Only costs change, so the
+    /// portals stay put and only routes passing through a sector with a
+    /// ford are found again.
+    pub(crate) fn set_frozen(&mut self, on: bool, regs: &Regiments) {
         for v in 0..self.grids.len() {
-            self.change(v, all, Change::Frozen(on), regs);
-        }
-    }
-
-    /// The tiles with a ford cell, each as `[x, y, 1, 1]`, in order: what
-    /// freezes in a winter. Empty with no map.
-    pub(crate) fn ford_tiles(&self) -> Vec<[i32; 4]> {
-        let Some(g) = self.grids.first() else {
-            return Vec::new();
-        };
-        let tiles = g.side / CELLS_PER_TILE;
-        let mut out = Vec::new();
-        for ty in 0..tiles {
-            for tx in 0..tiles {
-                let ford = (0..CELLS_PER_TILE).any(|dy| {
-                    (0..CELLS_PER_TILE).any(|dx| {
-                        let c = g.idx(tx * CELLS_PER_TILE + dx, ty * CELLS_PER_TILE + dy);
-                        g.ground[c as usize] == FORD
-                    })
-                });
-                if ford {
-                    out.push([tx, ty, 1, 1]);
-                }
+            if self.grids[v].frozen == on {
+                continue;
             }
+            let work = self.search.work;
+            let changed = Arc::make_mut(&mut self.grids[v]).reprice(on, &mut self.search);
+            self.search.work = work;
+            self.reroute_near(v, &changed, 0, false, regs);
         }
-        out
     }
 
     /// The gate standing on `tiles` (put up with [`Nav::set_built`], so a
@@ -186,14 +168,28 @@ impl Nav {
         self.search.work = work;
         let freed = match change {
             Change::Built(on) | Change::Flooded(on) => !on,
-            Change::Bridged(on) | Change::Frozen(on) => on,
+            Change::Bridged(on) => on,
             Change::Opened(open) => open,
         };
         // Any route passing near a change is found again (walking the old
         // way meanwhile: if the change blocks it, the regiment stops at
         // the edge and looks again then), and, once ground is freed, any
-        // that found no way may find one now.
-        let reach = i32::from(CLEAR_CAP);
+        // that found no way may find one now. Clearance may have changed
+        // this far round it.
+        self.reroute_near(v, &changed, i32::from(CLEAR_CAP), freed, regs);
+    }
+
+    /// Find again the routes on grid `v` passing within `reach` cells of
+    /// any of the boxes of cells `changed`, and, if ground was `freed`,
+    /// look again for those that found no way.
+    fn reroute_near(
+        &mut self,
+        v: usize,
+        changed: &[[i32; 4]],
+        reach: i32,
+        freed: bool,
+        regs: &Regiments,
+    ) {
         let tile = |c: i32| Fx::from_ratio(c, CELLS_PER_TILE);
         let near: Vec<(FxVec2, FxVec2)> = changed
             .iter()
@@ -302,9 +298,6 @@ impl Grid {
         if matches!(change, Change::Bridged(_)) && self.bridged.is_empty() {
             self.bridged = vec![0; self.built.len()];
         }
-        if matches!(change, Change::Frozen(_)) && self.frozen.is_empty() {
-            self.frozen = vec![false; self.built.len()];
-        }
         for (g, feet) in &groups {
             for &[cx0, cy0, cx1, cy1] in feet {
                 for cy in cy0..cy1 {
@@ -322,20 +315,8 @@ impl Grid {
                             Change::Opened(open) => bump(&mut self.opened[i], open),
                             Change::Flooded(on) => self.flooded[i] = on,
                             Change::Bridged(on) => bump(&mut self.bridged[i], on),
-                            Change::Frozen(on) => self.frozen[i] = on,
                         }
-                        let opened = self.opened.get(i).copied().unwrap_or(0);
-                        self.cost[i] = if self.built[i] > opened {
-                            BLOCKED
-                        } else if self.is_bridged(i) {
-                            DECK
-                        } else if self.is_flooded(i) {
-                            BLOCKED
-                        } else if self.is_frozen(i) && self.ground[i] == FORD {
-                            OPEN
-                        } else {
-                            self.ground[i]
-                        };
+                        self.cost[i] = self.cell_cost(i);
                     }
                 }
             }
@@ -343,6 +324,70 @@ impl Grid {
             self.changed(x0, y0, x1, y1, search);
         }
         groups.into_iter().map(|(g, _)| g).collect()
+    }
+
+    /// What cell `i` costs to walk as things stand: blocked under a
+    /// building (unless a door lets this grid's side through) or a flood,
+    /// open on a bridge's deck or a frozen ford, else the map's ground.
+    fn cell_cost(&self, i: usize) -> u8 {
+        let opened = self.opened.get(i).copied().unwrap_or(0);
+        if self.built[i] > opened {
+            BLOCKED
+        } else if self.is_bridged(i) {
+            DECK
+        } else if self.is_flooded(i) {
+            BLOCKED
+        } else if self.frozen && self.ground[i] == FORD {
+            OPEN
+        } else {
+            self.ground[i]
+        }
+    }
+
+    /// Freeze the fords (`on`) or thaw them and bring the links up to
+    /// date, searching in `search`'s room. Only costs change (never
+    /// whether a cell is blocked), so clearance, areas and portals stay as
+    /// they are and only the sectors holding a ford are linked again.
+    /// Returns each of those sectors' box of cells.
+    fn reprice(&mut self, on: bool, search: &mut Search) -> Vec<[i32; 4]> {
+        self.frozen = on;
+        let mut dirty = vec![false; (self.sectors * self.sectors) as usize];
+        for i in 0..self.cost.len() {
+            if self.ground[i] != FORD {
+                continue;
+            }
+            let cost = self.cell_cost(i);
+            if cost != self.cost[i] {
+                self.cost[i] = cost;
+                dirty[self.sector_of(i as u32) as usize] = true;
+            }
+        }
+        let boxes: Vec<[i32; 4]> = dirty
+            .iter()
+            .enumerate()
+            .filter(|&(_, &d)| d)
+            .map(|(k, _)| {
+                let (sx, sy) = (
+                    k as i32 % self.sectors * SECTOR,
+                    k as i32 / self.sectors * SECTOR,
+                );
+                [
+                    sx,
+                    sy,
+                    (sx + SECTOR).min(self.side),
+                    (sy + SECTOR).min(self.side),
+                ]
+            })
+            .collect();
+        if boxes.is_empty() {
+            return boxes;
+        }
+        let old = OldGraph::take(self);
+        let partner = self.place_portals(Some((&old, [0, 0, 0, 0])));
+        self.relink(&partner, &old, &dirty, search);
+        self.node_room = self.node_room();
+        search.fit(self);
+        boxes
     }
 
     /// Bring the grid up to date after the cells `x0..x1` × `y0..y1` (cell
@@ -919,15 +964,15 @@ mod tests {
         }
         let mut g = Grid::build(&ground, side);
         let mut search = Search::for_grid(&g);
-        let ford: Vec<[i32; 4]> = (0..tiles)
-            .flat_map(|x| (60 / CELLS_PER_TILE..66 / CELLS_PER_TILE + 1).map(move |y| [x, y, 1, 1]))
+        assert!(!g.reprice(true, &mut search).is_empty());
+        let iced: Vec<u8> = ground
+            .iter()
+            .map(|&c| if c == FORD { OPEN } else { c })
             .collect();
-        g.change_all(&ford, Change::Frozen(true), &mut search);
-        let iced: Vec<u8> = ground.iter().map(|&c| if c == FORD { OPEN } else { c }).collect();
         let mut fresh = Grid::build(&iced, side);
         fresh.ground.clone_from(&g.ground);
         same(&g, &fresh);
-        g.change_all(&ford, Change::Frozen(false), &mut search);
+        g.reprice(false, &mut search);
         same(&g, &Grid::build(&ground, side));
     }
 

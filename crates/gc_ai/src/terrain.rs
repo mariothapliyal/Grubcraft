@@ -349,18 +349,15 @@ impl Terrain {
         Some((y * self.side + x) as usize)
     }
 
-    /// Whether the open ground nearest `a` and that nearest `b` (each
-    /// within a few tiles) join by land, the ground's own way (buildings
-    /// aside): a walk from one to the other needs no bridge. True on an
-    /// open plane.
-    pub fn joined(&self, a: Vec2, b: Vec2) -> bool {
+    /// Whether water (or cliffs) cut the open ground nearest `home` off
+    /// from that nearest every one of `others` (each within a few tiles),
+    /// the ground's own way (buildings aside): reaching any of them needs
+    /// a bridge. Never on an open plane.
+    pub fn cut_off(&self, home: Vec2, others: impl IntoIterator<Item = Vec2>) -> bool {
         if self.side == 0 {
-            return true;
-        }
-        let Some(start) = self.open_near(a) else {
             return false;
-        };
-        let Some(goal) = self.open_near(b) else {
+        }
+        let Some(start) = self.open_near(home) else {
             return false;
         };
         let side = self.side as usize;
@@ -368,9 +365,6 @@ impl Terrain {
         let mut todo = vec![start];
         seen[start] = true;
         while let Some(c) = todo.pop() {
-            if c == goal {
-                return true;
-            }
             let (x, y) = (c % side, c / side);
             let next = [
                 (x > 0).then(|| c - 1),
@@ -385,7 +379,9 @@ impl Terrain {
                 }
             }
         }
-        false
+        others
+            .into_iter()
+            .all(|p| self.open_near(p).is_none_or(|c| !seen[c]))
     }
 
     /// The open cell nearest `p` within 4 tiles, if any (any cell on an
@@ -400,7 +396,14 @@ impl Terrain {
         let reach = 4 * CELLS_PER_TILE;
         (1..=reach).find_map(|r| {
             (-r..=r)
-                .flat_map(|d| [(x + d, y - r), (x + d, y + r), (x - r, y + d), (x + r, y + d)])
+                .flat_map(|d| {
+                    [
+                        (x + d, y - r),
+                        (x + d, y + r),
+                        (x - r, y + d),
+                        (x + r, y + d),
+                    ]
+                })
                 .filter(|&(cx, cy)| cx >= 0 && cy >= 0 && cx < side && cy < side)
                 .map(|(cx, cy)| (cy * side + cx) as usize)
                 .find(|&n| self.cost[n] != BLOCKED)
@@ -521,6 +524,29 @@ fn square_ring(a: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn water_cuts_the_land_till_a_ford_joins_it() {
+        // 32 tiles across, a deep river across rows 30 to 33 (cells).
+        let side = 64usize;
+        let mut nav = vec![1u8; side * side];
+        for cy in 30..34 {
+            nav[cy * side..(cy + 1) * side].fill(BLOCKED);
+        }
+        let (north, south) = (Vec2::new(5.0, 5.0), Vec2::new(25.0, 25.0));
+        assert!(Terrain::new(&nav, 32).cut_off(north, [south]));
+        for cy in 30..34 {
+            nav[cy * side + 40] = FORD;
+        }
+        let t = Terrain::new(&nav, 32);
+        assert!(!t.cut_off(north, [south]));
+        // Frozen over, the ford costs as open ground.
+        let ford = Vec2::new(20.25, 15.25);
+        assert_eq!(t.cost(ford), FORD);
+        let mut iced = t.clone();
+        iced.frozen = true;
+        assert_eq!(iced.cost(ford), OPEN);
+    }
 
     #[test]
     fn matches_the_sims_idea_of_walkable() {

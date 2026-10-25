@@ -53,8 +53,26 @@ impl Sighted {
     }
 }
 
-/// Every enemy building its side has seen and still stands.
+/// Whether `role` is a work rather than a building of a base: a wall or
+/// gate, a bridge, stakes, a barricade or a trap. Those stand out on the
+/// approaches, so they say nothing of where a base is or how big.
+pub fn is_works(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Wall | Role::Bridge | Role::Stakes | Role::Barricade | Role::Trap
+    )
+}
+
+/// The enemy buildings its side has seen that make up their bases: works
+/// left out (see [`enemy_sighted`]).
 pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
+    let mut all = enemy_sighted(s);
+    all.retain(|b| !is_works(b.role));
+    all
+}
+
+/// Every enemy building its side has seen and still stands.
+pub fn enemy_sighted(s: &Sense) -> Vec<Sighted> {
     let Some(st) = s.world.structures() else {
         return Vec::new();
     };

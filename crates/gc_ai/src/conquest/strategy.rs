@@ -58,7 +58,7 @@ pub const ANSWER_UNTIL: u32 = (8.0 * 60.0 * TICKS) as u32;
 
 /// What works a level puts up against its enemies (see the Steward's
 /// Engineer).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Fortify {
     /// None at all.
     #[default]
