@@ -113,18 +113,29 @@ fn world(seed: u64, spells: &'static [Spell], running: bool) -> World {
     })
 }
 
-/// The flash flood stages told up to `ticks`.
-fn stages(w: &mut World, ticks: u32) -> Vec<(u32, Stage)> {
+/// The flash flood stages told up to `ticks`, with `None` for each
+/// regiment swept away.
+fn told(w: &mut World, ticks: u32) -> Vec<(u32, Option<Stage>)> {
     let mut told = Vec::new();
     while w.tick_count() < ticks {
         w.tick(&[]);
         for e in w.events() {
-            if let Event::FlashFlood { stage } = *e {
-                told.push((w.tick_count(), stage));
+            match *e {
+                Event::FlashFlood { stage } => told.push((w.tick_count(), Some(stage))),
+                Event::SweptAway { .. } => told.push((w.tick_count(), None)),
+                _ => {}
             }
         }
     }
     told
+}
+
+/// The flash flood stages told up to `ticks`.
+fn stages(w: &mut World, ticks: u32) -> Vec<(u32, Stage)> {
+    let told = told(w, ticks);
+    told.into_iter()
+        .filter_map(|(t, s)| Some((t, s?)))
+        .collect()
 }
 
 /// A seed whose storm rolls a flash flood (most do not every time).
@@ -152,14 +163,22 @@ fn a_storm_sends_a_flash_flood_down_the_river() {
         },
     }]);
     let h = w.regiments.iter().next().unwrap().handle;
-    let told = stages(&mut w, 2 * 60 * SECOND);
+    let full = w.regiments.iter().next().unwrap().models;
+    let all = told(&mut w, 2 * 60 * SECOND);
+    let swept = all.iter().filter(|&&(_, s)| s.is_none()).count();
+    let told: Vec<(u32, Stage)> = all.into_iter().filter_map(|(t, s)| Some((t, s?))).collect();
     let order: Vec<Stage> = told.iter().map(|&(_, s)| s).collect();
     assert_eq!(order, [Stage::Coming, Stage::Here, Stage::Gone], "{told:?}");
     // The warning comes before the wave, the wave a while after the storm.
     assert!(told[0].0 < told[1].0);
     assert!(told[1].0 > 10 * SECOND);
-    // The ford was shut and the regiment struggled out of it.
-    let at = w.regiments.iter().find(|r| r.handle == h).unwrap().position;
+    // The wave swept the regiment out of the ford once: some drowned, and
+    // the rest washed up on a bank downstream (the river runs east).
+    assert_eq!(swept, 1);
+    let r = w.regiments.iter().find(|r| r.handle == h).unwrap();
+    let (at, left) = (r.position, r.models);
+    assert!(left < full && left >= full * 6 / 10, "{left} of {full}");
+    assert!(at.x > Fx::from_int(FORD.end + 4), "{at:?}");
     assert!(!w.swept(h));
     assert!(
         !(Fx::from_int(RIVER.start + 1)..Fx::from_int(RIVER.end - 1)).contains(&at.y),

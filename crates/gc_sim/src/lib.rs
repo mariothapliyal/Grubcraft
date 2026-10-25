@@ -123,7 +123,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 55;
+pub const SIM_VERSION: u32 = 56;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2728,7 +2728,7 @@ impl World {
         }
         let turn = self.flood.flash.tick();
         self.terrain.set_wave(self.flood.flash.water());
-        if turn.coming {
+        if turn.coming && !self.scratch {
             self.events.flash(flash::Stage::Coming);
         }
         // A rain flood that has shut every ford keeps them shut, and tells
@@ -2775,10 +2775,56 @@ impl World {
     /// [`flood::Flood::sweep`]): those with nowhere else to go are ordered
     /// to the nearest bank where their block fits.
     fn sweep_fords(&mut self) {
+        self.sweep_away();
         let mut stuck = core::mem::take(&mut self.stranded);
         self.flood
             .sweep(&mut self.regiments, &self.terrain, &mut stuck);
         self.send_to_bank(stuck);
+    }
+
+    /// One second of a flash flood (see [`flash`]): a regiment in a ford
+    /// its front has reached is swept away. The wave carries it down the
+    /// river ([`flash::CARRY_TILES`]); [`flash::DROWN_PERCENT`] of it
+    /// drowns, and the rest wash up on the nearest bank there, in
+    /// disorder and shaken.
+    /// A rehearsal leaves its troops in the fords: it shares a walkable
+    /// grid it never shuts them on, so they could wash up in another.
+    fn sweep_away(&mut self) {
+        if self.scratch || !self.flood.flash.shut() {
+            return;
+        }
+        let mut swept = 0u16;
+        for i in 0..self.regiments.alive.len() {
+            let r = &self.regiments;
+            if !r.alive[i] || r.models[i] == 0 || r.on_wall[i] {
+                continue;
+            }
+            let p = r.position[i];
+            let (x, y) = (p.x.floor_int(), p.y.floor_int());
+            if !self.flood.flash.shuts(x, y) || self.terrain.on_deck(p) {
+                continue;
+            }
+            let (owner, h) = (r.owner[i], r.handle(i));
+            let drown = u32::from(r.models[i]) * flash::DROWN_PERCENT / 100;
+            self.regiments.kill_last(i, drown as usize);
+            swept = swept.saturating_add(1);
+            // Out of any fight, and off any work.
+            self.regiments.vanish_from_fight(i);
+            self.leave_off(h);
+            self.regiments.disorder(i);
+            morale::shift(&mut self.regiments, i, -flash::SWEPT_AWAY_MORALE);
+            let (cx, cy) = self.flood.flash.carried(&self.terrain, x, y);
+            let to = FxVec2::new(Fx::from_int(cx) + Fx::HALF, Fx::from_int(cy) + Fx::HALF);
+            // Washed up there, or failing any bank near it, back by the ford.
+            let bank = bridges::wash_up(&self.nav, &mut self.regiments, &self.units, i, to);
+            if !self.nav.walkable(owner, bank) {
+                bridges::wash_up(&self.nav, &mut self.regiments, &self.units, i, p);
+            }
+        }
+        // One event for them all, so the event list's room holds.
+        if swept > 0 {
+            self.events.swept_away(swept);
+        }
     }
 
     /// The regiments `stuck` go to the nearest bank where their block

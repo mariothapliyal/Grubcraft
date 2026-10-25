@@ -908,6 +908,16 @@ impl Regiments {
         }
     }
 
+    /// The last `count` soldiers of slot `i` are killed (drowned, say),
+    /// never the last one standing.
+    pub(crate) fn kill_last(&mut self, i: usize, count: usize) {
+        let models = usize::from(self.models[i]);
+        let count = count.min(models.saturating_sub(1));
+        let hp = &self.hp[i * MAX_MODELS as usize..][..models];
+        let lost: u32 = hp.iter().rev().take(count).map(|&h| u32::from(h)).sum();
+        self.take_damage(i, lost);
+    }
+
     /// The last `count` soldiers of slot `i` lose `amount` hit points
     /// each, none of them below one: hurt, not killed (a fall, say).
     pub(crate) fn wound_last(&mut self, i: usize, count: usize, amount: u32) {
