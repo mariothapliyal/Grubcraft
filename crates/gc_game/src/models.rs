@@ -244,8 +244,8 @@ fn chest_at(anim: &Anim<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
     Some(glam::Vec2::new(row(0), row(8)))
 }
 
-/// How far a victim's size may be from the killer's for a kill made for two
-/// men of one size to still meet.
+/// How far a victim's size may be from the one the kill was made for (as a
+/// share of the killer's, `PairRecord::victim_size`) for it to still meet.
 const KILL_SIZES: core::ops::RangeInclusive<f32> = 0.9..=1.1;
 
 /// How far in front of the killer's origin the finishers made for `weapon`
@@ -271,16 +271,8 @@ pub struct Finisher {
     /// How far in front of the killer's position the lying man's chest
     /// ([`Clips::lying_chest`]) should be, in tiles, allowing for where the
     /// killer's feet are drawn ([`Body::feet`]).
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub reach: f32,
     /// And how far to the killer's left of his facing ([`Body::side`]).
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub aside: f32,
 }
 
@@ -363,8 +355,13 @@ impl Clips {
                     }
                     for (v, victim) in body.iter().enumerate() {
                         let Some(victim) = *victim else { continue };
+                        let reach = p.reach * killer.size + killer.feet + victim.feet;
+                        // A rider and a spearman both drawn well behind their
+                        // positions would have the killer stand beyond the
+                        // victim, and the two turn to face the wrong way.
                         let fits = victim.skeleton == u32::from(killed.skeleton)
-                            && KILL_SIZES.contains(&(victim.size / killer.size));
+                            && KILL_SIZES.contains(&(victim.size / killer.size / p.victim_size))
+                            && reach > 0.0;
                         let (true, Ok(id)) = (fits, u16::try_from(pairs.len())) else {
                             continue;
                         };
@@ -376,7 +373,7 @@ impl Clips {
                         pairs.push(KillPair {
                             kill: MoveClip::of_move(kill),
                             killed: MoveClip::of_move(killed),
-                            reach: p.reach * killer.size + killer.feet + victim.feet,
+                            reach,
                             // The victim's left is the killer's right.
                             aside: killer.side + victim.side,
                             contact: p.contact,
@@ -439,11 +436,19 @@ impl Clips {
     /// Every matched kill between the unit types whose models are `units`,
     /// for the puppets: each kill named by its index here, as [`Move::Kill`]
     /// and [`crate::puppets::Corpse::kill`] give it back.
+    /// Each unit type's finisher reach goes with them, for its men to
+    /// stand that far from a man on the ground they strike down at, and
+    /// where its men lying dead have their chests, for them to strike at.
     pub fn kills_of(&self, units: &[Option<usize>]) -> Kills {
         let mut kills = Kills::new(self.pairs.iter().map(KillPair::timing).collect());
         let mut ids = Vec::new();
         for (k, killer) in units.iter().enumerate() {
             let Some(killer) = *killer else { continue };
+            if let Some(f) = self.finisher(killer, 0) {
+                kills.add_finisher(k as u16, f.reach, f.strike.seconds());
+            }
+            let chests = (0..=u8::MAX).map(|look| self.lying_chest(killer, look));
+            kills.add_chests(k as u16, chests.collect());
             if self.kills.get(killer).is_none_or(Vec::is_empty) {
                 continue;
             }
@@ -488,10 +493,6 @@ impl Clips {
     /// more for a bigger one), `x` to his left. `look` is his, as for
     /// [`Clips::death`]. A finisher strikes there. `None` for a model with no
     /// death move or not posed from a skeleton.
-    #[allow(
-        dead_code,
-        reason = "puppets.rs will place its finishers by it (docs/28, stage 5)"
-    )]
     pub fn lying_chest(&self, model: usize, look: u8) -> Option<glam::Vec2> {
         let own = self.by_model.get(model)?;
         let k = by_look(u32::from(look), DEATH_SALT) as usize % own.lying.len().max(1);
@@ -579,6 +580,11 @@ impl Clips {
                 let k = blow.map_or(0, |b| b.wrapping_add(by_look(look, SWING_SALT)));
                 standing(Some(nth(&own.swings, k)?.at(at)))
             }
+            // Struck down with a move made for it, else his first attack.
+            Move::Finish { at, seed } => match self.finisher(model, seed) {
+                Some(f) => standing(Some(f.strike.at(at))),
+                None => standing(self.at(model, Action::Attack, at)),
+            },
             Move::Parry(f) => {
                 let parry = own.parry?;
                 if parry.act == Act::Parry {
@@ -830,6 +836,31 @@ mod tests {
             (katana.strike.act, katana.strike.weapon),
             (Act::Finish, Weapon::TwoHanded)
         );
+        // The puppets time and place a man's finishers by his first: they
+        // share a length and a reach, and none is drawn aside, which the
+        // puppets leave out.
+        for m in 0..models.models.len() {
+            let lengths: Vec<(f32, f32)> = (0..4)
+                .filter_map(|seed| clips.finisher(m, seed))
+                .inspect(|f| assert!(f.aside.abs() < 0.05, "model {m}: {f:?}"))
+                .map(|f| (f.strike.seconds(), f.reach))
+                .collect();
+            assert!(
+                lengths.windows(2).all(|w| w[0] == w[1]),
+                "model {m}: {lengths:?}"
+            );
+        }
+        // And the fight draws them.
+        let at = |seed| {
+            clips
+                .fight(by("Katana Samurai"), Move::Finish { at: 0.5, seed }, 0.0, 0)
+                .unwrap()
+                .0
+        };
+        assert_eq!(
+            at(0).rows,
+            fin("Katana Samurai", 0).unwrap().strike.at(0.5).rows
+        );
         let spear = fin("Yari Ashigaru", 0).unwrap();
         assert_eq!(spear.strike.weapon, Weapon::Spear);
         // A man's length or so away for a katana, much further for a yari,
@@ -976,6 +1007,13 @@ mod tests {
         for (k, v) in [(0, 2), (2, 1), (3, 1), (0, 3)] {
             assert_eq!(kills.pick(k, v, 0.5), None, "{k} on {v}");
         }
+        // Katana and spear men finish a man on the ground from their own
+        // finishers' reach; the Oni-Bound has none and bends to strike.
+        let reach = |u: usize| clips.finisher(units[u].unwrap(), 0).unwrap().reach;
+        assert_eq!(kills.finish_gap(0), reach(0));
+        assert_eq!(kills.finish_gap(1), reach(1));
+        assert!(kills.finish_gap(1) > kills.finish_gap(0));
+        assert_eq!(kills.finish_gap(2), crate::puppets::FINISH_GAP);
     }
 
     #[test]
@@ -987,6 +1025,105 @@ mod tests {
                 assert!(clips.pose(m, a, 1.3).is_some(), "model {m} {a:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_bodies_on_rigs_of_their_own_reel_three_ways() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        for name in [
+            "Chitin Guard",
+            "Broodmother Bulk",
+            "Colossus Maw",
+            "The Devourer",
+            "The Whisperer",
+            "Gnawer",
+            "Skitterlings",
+            "Reclaimer",
+            "Spitters",
+            "Burrowers",
+            "Mantid Reapers",
+            "Shellbacks",
+            "Drone-Moths",
+            "Spawnlings",
+            "The Queen-in-Waiting",
+            "Mounted Samurai",
+            "The Daimyo",
+            "Yabusame Riders",
+            "Glass Striders",
+            "Debt Collectors",
+            "Harmonic Walkers",
+        ] {
+            let m = models.by_name(name).unwrap();
+            let own = &clips.by_model[m];
+            // His own hit and the two reels made for his rig.
+            assert_eq!(own.staggers.len(), 3, "{name}");
+            let reel = |look| {
+                clips
+                    .fight(m, Move::Stagger(0.5), 0.0, look)
+                    .unwrap()
+                    .0
+                    .rows[0]
+            };
+            // Each of the three comes up by the man's look.
+            let reels: std::collections::BTreeSet<_> = (0..=255).map(reel).collect();
+            assert_eq!(reels.len(), 3, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_brood_and_the_riders_kill_men_their_own_ways() {
+        let models = load().unwrap();
+        let clips = Clips::new(&models);
+        let by = |name| models.by_name(name).unwrap();
+        let kill = |killer, victim| clips.kill_pair(by(killer), by(victim), 0);
+        let feet = |name| clips.body[by(name)].unwrap().feet;
+        // Each kill, made on the killer's own rig, meets an Ember man and
+        // any other man on foot: a Brood insect's though it is drawn half as
+        // big again, as it was made on a man two thirds its size.
+        let mut apart = Vec::new();
+        for killer in [
+            "Chitin Guard",
+            "Gnawer",
+            "Mantid Reapers",
+            "Mounted Samurai",
+            "The Daimyo",
+            "Glass Striders",
+        ] {
+            for victim in ["Katana Samurai", "The Ronin", "Tuner", "Grubfolk Militia"] {
+                let p = kill(killer, victim).unwrap_or_else(|| panic!("{killer} on {victim}"));
+                assert_eq!((p.kill.act, p.killed.act), (Act::Kill, Act::Killed));
+                assert_eq!(p.kill.frames, p.killed.frames);
+                assert!(
+                    p.contact > 0.1 && p.contact < 0.4,
+                    "{killer}: {}",
+                    p.contact
+                );
+            }
+            apart.push(
+                kill(killer, "Katana Samurai").unwrap().reach
+                    - feet(killer)
+                    - feet("Katana Samurai"),
+            );
+        }
+        // An insect or a mounted katana strikes from about a man's length
+        // (the horse's head and neck are long), a lance from further, feet
+        // to feet.
+        for a in &apart[..5] {
+            assert!((0.6..1.2).contains(a), "{apart:?}");
+        }
+        assert!(apart[5] > 1.2 * apart[3], "{apart:?}");
+        // A man is no insect, and the Oni-Bound, on the men's rig but half as
+        // big again, is too big for a kill made for a man.
+        assert_eq!(kill("Katana Samurai", "Chitin Guard"), None);
+        assert_eq!(kill("Chitin Guard", "Gnawer"), None);
+        assert_eq!(kill("Chitin Guard", "Oni-Bound"), None);
+        // The insects meet a yari man too, but the mounted cut, made at a
+        // man's length, would have the rider stand beyond a spearman drawn
+        // as far behind his position, so it is left out there.
+        assert!(kill("Chitin Guard", "Yari Ashigaru").is_some());
+        assert_eq!(kill("Mounted Samurai", "Bone Pikes"), None);
+        assert!(clips.pairs.iter().all(|p| p.reach > 0.0));
     }
 
     #[test]

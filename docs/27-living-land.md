@@ -1,6 +1,6 @@
 # 27 · Living Land: organic world generation
 
-*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)); stages 2 to 5 are not yet. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
+*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)), and stage 2, ways through (2026-10-24, see [Stage 2 as built](#stage-2-as-built)); stages 3 to 5 are not yet. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
 
 Mario asked for maps that are "truly random, truly chaotic, like nature", where no two things are alike. Today's maps tend to be lines, ovals and circles. This document says why, what replaces it, how maps stay fair, how the biomes get depth, and the order of the work. The concept page with prototype maps is the "Grubcraft Living Land" artifact (https://claude.ai/artifact/S9PTV2MgvKnoHBFZ16s6Wt). The Python prototype that made them is in the project files under `design/world-gen/proto/`.
 
@@ -121,17 +121,80 @@ Each stage is playable on its own.
 5. Symmetry: the land is grown whole, then the south half is made the turned copy of the north along a wandering seam, blended over a band so there is no straight join. The water and biome layers are made symmetric the same way: every noise field the biomes read is blended across the seam, and the water is worked out on symmetric ground, with the map's middle rows as outlets, so rivers that reach the middle end in lobed ponds instead of stopping dead.
 6. Water: priority flood and flow, river lines that meander (more on flat land), lakes with a size cap, valleys easing down to the rivers, and shallows across every long river about every 140 tiles of its length (fords).
 7. Biomes, the 19 habitats of [Biome depth](#biome-depth) and canopy: woods, tall grass and thicket are chosen per habitat. Thicket stands only deep in old growth, in small knots (never a wall more than 11 tiles long) and never near a start.
-8. Dead ground: a walkable pocket no start can reach (say a mesa ringed by cliffs) is broken into rock, up to four rounds.
+8. Ways through ([stage 2](#stage-2-as-built)): a walkable pocket no start can reach (say a mesa ringed by cliffs) gets a ramp, or is broken into rock when small, and a pass is cut where two starts' way round is far longer than the straight line.
 
 **The dials.** Plains, Mixed and Wild set the share of mountain country (11%, 30%, 44%), crest height, how sharp bench edges are, where crags begin and how tall they are, forest density and how much flow makes a river.
 
 **Cover for idea 22.** Woods, tall grass and thicket stay the tile cover layer the sim already reads, written into the `Map` at load, never baked into the ground. Scrub (scrub edge and the like) is its own habitat with lighter cover: tall grass, or woods where the canopy allows, so it can be cleared differently from old growth. Every tile keeps its habitat (`Map.habitat`), ready for a cleared tile to become a glade or rough grass. The ground now reads it ([36](36-habitat-ground.md)); the scenery does not yet.
 
-**Sites and set pieces.** The starts are the seeded map's plateaus. The sites (village, company camp, old fort, lair, standing stones) are placed in the north half on standable ground and turned for the south; placing them by reason is stage 4. The set pieces are found from the built land: "The heights" and "The far heights" where ground stands well above its surroundings, and "The ford" where enough ford tiles gather. A map with fewer than two gets a knoll at each side.
+**Sites and set pieces.** The starts are the seeded map's plateaus. The sites (village, company camp, old fort, lair, standing stones) are placed in the north half on standable ground and turned for the south; placing them by reason came in stage 4 (below). The set pieces are found from the built land: "The heights" and "The far heights" where ground stands well above its surroundings, and "The ford" where enough ford tiles gather. A map with fewer than two gets a knoll at each side.
 
 **Measured (2026-10-23, release build).** A 768 map builds in about 2.1 to 2.4 seconds (`grown_load_time`, run by hand, on a machine busy with other builds), inside the 3-second target. `every_grown_map_passes_the_checker` builds each wildness at 256, 512 and 768 for four seeds (36 maps) and runs them through `gc_mapcheck`'s checks. All pass, and none needed a reroll; the test allows a reroll for one map in five, as the lobby rerolls a map whose starts aren't joined. `cargo run -p gc_mapcheck -- gen Land-Wild 512 SEED OUT.ron` (or `Land-Plains`, `Land-Mixed`) writes a grown map. Screenshots are in the project files under `screenshots/living-land/`.
 
-**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2; fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4 (the habitat ground is built, [36](36-habitat-ground.md); scenery by habitat is not).
+**Not in stage 1.** Ways through (the pass and ford carver) and the AI's route check are stage 2 (built, below); fairness is still the turned copy until stage 3; grown maps use today's ground colours by land, not the habitat materials, until stage 4 (the habitat ground is built, [36](36-habitat-ground.md); scenery by habitat is: stump, fallen log, alder, sedge tussock and scree scatter are built and placed by habitat, see [25](25-scenery-models.md#habitat-dressing)).
+
+## Stage 2 as built
+
+*Built 2026-10-24.* The code is `crates/gc_map/src/grown/ways.rs`, run as the last step of growing the land, after the biomes. It works on what a regiment can stand on as the game's own nav rules see it (the same half-tile walkable grid, with ground costs), and every change goes to a tile and its turned copy alike, so the map stays its own turned copy.
+
+- **Ramps into cut-off ground.** A piece of standable ground no start can reach (a plateau ringed by cliffs, a valley shut in by crags, in principle a start cut off by a river) gets a ramp from the reachable land at its cheapest crossing (a step costs ten, plus four a tenth of a tile climbed, plus thirty into deep water). The ramp is a straight slope six tiles wide at full height, fading into the land two tiles further out, long enough to climb no more than 0.3 of a tile per tile (under half what the nav rules call steep). It is cut into the high side and built out on the low side, from the land's own height at one end to its height at the other. Where it meets deep water it becomes a ford, 0.2 of a tile under the line. Thicket on it is gone, and bare rock on it becomes scree. Pieces under 40 tiles, where a ramp would be more scar than land, are broken into rock as in stage 1, now with every other tile pushed up or down so no one can stand there.
+- **Passes.** Where the walk between two starts (as `gc_mapcheck` walks it, ground costs and all) is more than 1.7 times the straight line, the cheapest way through what is in between is found. A step off standable ground costs three open steps plus the climb, and more into deep water. Each stretch of cliff, river or thicket on that way gets a ramp, or a ford across a river.
+- **Rounds.** Ramps and passes run up to four rounds, each checking the land again. Each round cuts a pass only for the worst-stretched pair, since one pass often mends several pairs. Whatever is still cut off at the end is broken, except a start's own ground, which is never broken (and never the reachable land, when a pocket's turned copy is part of it).
+- **Narrow mesas and the middle.** On a pocket narrower than the ramp is long, the ramp runs between the two end tiles' own heights, so it climbs onto the mesa instead of cutting a trench across it. Where a ramp meets its own turned copy (near the middle of the map) the stronger hand wins on both sides, so nothing is blended twice.
+- **Fords on wide rivers.** A river at least six tiles wide somewhere gets a ford about every 93 tiles of its length instead of 140.
+- **Ramps from soft strata** were already in stage 1: a bench edge is a cliff only where the sharpness field says so, and a ramp elsewhere.
+- **Floods.** The fords and river ramps are tiles under the water line a regiment can walk, which is what the flooding rivers ([32](32-changing-land.md#fords-that-flood-idea-6)) look for, so a long rain shuts them like any other ford.
+
+**Measured (2026-10-24, release build, 12 maps at 512: four seeds of each wildness).**
+
+- On Mixed and Wild maps, the share of highland an army can reach went from 35–48% to 54–64%. Cut-off plateaus that stage 1 broke into rubble are now high ground with a way up.
+- The longest walk between any two starts, against the straight line, went from up to 2.2 times to at most 1.46. The walk to the nearest enemy is unchanged (about 1.0 to 1.1).
+- A 768 map still builds in about 2.1 to 2.5 seconds. The loader's height sampling got faster to pay for the extra checks.
+- All 36 maps of `every_grown_map_passes_the_checker` pass with no reroll.
+- `ways::tests` check that no start or plateau is left cut off and no start pair winds past 1.8 at 256.
+- **The computer players' routes.** `gc_match`'s `grown_land_battles_meet` (run by hand) plays two Veteran computer players on a 256 map of each wildness, two seeds each. In all six their armies met within 23 to 77 seconds, and the battle was decided in under four and a half minutes. The minds read the grown land's chokes and ways without changes.
+
+## Stage 3 as built
+
+*Built 2026-10-24, in part.* Measured fairness is in the lobby as four new choices, **Measured: Random, Plains, Mixed and Wild** (`gc_map::MEASURED`). The mirrored grown land stays **Land: ...** and is still the default, because Measured is not yet as even as the doc's limits for four to six players (below). The code is `grown/starts.rs` and the `Fairness` switch on `Grown`.
+
+- **Unique land.** No seam: the land, water and woods grow once over the whole map.
+- **Starts by search.** Each start keeps to a window round its plateau, so north, south, corners and middles mean what they always did for handing out starts (`gc_match::battle_starts`). A coarse-grid search moves the starts one at a time to make the walk to the nearest enemy as equal as it can. It scores every way the lobby hands starts out: corners and all six, north against south, everyone for themselves, and column against column. It runs twice. The first pass runs on the land's shape before the water, so the rivers, woods and open ground grow round the chosen starts. The second runs on the finished land as the nav rules see it, a dozen tiles at most, onto dry, standable ground.
+- **Equal clearings.** Every start gets the same clearing shape, so its building room is equal by construction.
+- **Passes cut sooner.** Stage 2's passes fire at 1.3 times the straight line instead of 1.7, for up to eight rounds, because under Measured the walks are what keeps the starts equal.
+- **Paired sites.** Each site in the north (village, camp, fort, lair, stones, knolls, heights, ford) gets a partner of its own in the south, as near the turned spot as the land has room. Nothing is mirrored.
+- **Deployment and the lobby preview** read the map's own starts (`gc_match::terrain_view::field_starts`), not the plateaus. PROTOCOL 35.
+
+**Measured (2026-10-24, 12 maps at 512, true walks via `gc_mapcheck`'s search, spread = (most - least) / mean of each start's walk to its nearest enemy).**
+
+- **Two players** are equal by construction: one pair, one walk.
+- **Four players (2v2, free-for-all):** 0 to 5% on most seeds, but 10 to 20% on some Mixed and Wild seeds.
+- **Six players:** 3v3 2 to 26%. Free-for-all and two-against-two-against-two 3 to 39%. The mirrored land is 1 to 30% on the same measures, since twins are equal but corners and middles are not.
+- **The checker:** all 72 maps (36 mirrored, 36 measured) of `every_grown_map_passes_the_checker` pass with no reroll.
+- **Build time:** a 768 Measured map builds in about 4.5 seconds (mirrored 2.2), over the 3-second target. The second search and the extra pass rounds are the cost.
+
+**Still to do for stage 3:**
+
+- A finer search, or seeds rerolled against fairness limits in `gc_mapcheck`, to bring four to six players under about 5%.
+- Then make Measured the default.
+- Count cuttable woods near starts (idea 22).
+- Team-aware limits.
+- Store the generator version with the map choice in replays.
+- Move Conquest big maps onto grown land.
+
+## Stage 4 as built
+
+*Built 2026-10-24, in part.*
+
+- **Sites by reason** (`grown::describe`). Each site weighs up to twelve places with room and takes the one its kind likes best:
+  - a Grubfolk village the most water within ten tiles (a lake shore, where rivers meet);
+  - the old fort the ground standing highest over its surroundings;
+  - the lair the deepest woods farthest from any start;
+  - the standing stones the highest ground.
+  - The company camp takes the first place with room.
+  - Under Measured, the best place that has a partner in the south wins.
+- **Scenery by habitat** and the five new models (stump, fallen log, alder, sedge tussock, scree): see [25 · Scenery models](25-scenery-models.md).
+- **Not built:** riverside dressing (gravel bars, reeds, beaches), worn trails, ground materials per habitat, and Conquest lairs guarding rich fields.
 
 ## Costs and risks
 

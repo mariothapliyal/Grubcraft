@@ -93,6 +93,7 @@ enum Role {
     Heroes,
     Defence,
     Wall,
+    Bridge,
     #[serde(other)]
     Other,
 }
@@ -329,7 +330,7 @@ fn tips_of(text: &BuildingText) -> Vec<(Icon, String)> {
 pub fn tip_book() -> TipBook {
     let mut book = TipBook::new();
     for src in EMBEDDED.guides {
-        let file: GuideFile = ron::from_str(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
+        let file = parse_guide(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
         for b in &file.buildings {
             book.insert(b.name.clone(), tips_of(b));
         }
@@ -367,6 +368,11 @@ pub struct Sources<'a> {
     pub rosters: [&'a str; 4],
     pub guides: [&'a str; 4],
     pub classes: &'a str,
+}
+
+/// Read a guide file.
+fn parse_guide(src: &str) -> Result<GuideFile, String> {
+    ron::from_str(src).map_err(|e| e.to_string())
 }
 
 /// The files compiled into the executable.
@@ -411,7 +417,7 @@ pub fn build(src: &Sources<'_>) -> Result<GuideData, String> {
     for (i, f) in Faction::ALL.into_iter().enumerate() {
         let roster: Roster = ron::from_str(src.rosters[i])
             .map_err(|e| format!("data/rosters/{}: {e}", faction_label(f)))?;
-        let text: GuideFile = ron::from_str(src.guides[i])
+        let text = parse_guide(src.guides[i])
             .map_err(|e| format!("data/guide/{}: {e}", faction_label(f)))?;
         if text.faction != f {
             return Err(format!(
@@ -495,9 +501,16 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
         BuildingFlag::Honor => "Earns Honor".into(),
         BuildingFlag::Toll => "Earns 1 Grub per 4 damage it deals".into(),
         BuildingFlag::Silences => "Tolls: silences enemy powers within 10 tiles".into(),
+        BuildingFlag::Gate if b.upgrades_from.is_some() => {
+            "Gatehouse: your side walks through, enemies don't; foot and archers can man its top"
+                .into()
+        }
         BuildingFlag::Gate => {
             "Gate: your side walks through, enemies don't; select it to set Auto, Locked or Open"
                 .into()
+        }
+        BuildingFlag::Line if b.role == Role::Bridge => {
+            "Drawn straight across water, bank to bank; anyone can cross it, and troops on a tile that falls drop in the river".into()
         }
         BuildingFlag::Line => {
             "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
@@ -542,6 +555,7 @@ fn role_name(r: Role) -> &'static str {
         Role::Heroes => "Hero building",
         Role::Defence => "Defence",
         Role::Wall => "Wall",
+        Role::Bridge => "Bridge",
         Role::Other => "Building",
     }
 }
@@ -847,7 +861,8 @@ impl Ctx<'_> {
         let mut facts = Facts::new();
         fact(&mut facts, "Role", role_name(b.role));
         match (b.role, b.upgrades_from.as_deref(), self.main_at(b.tier)) {
-            (Role::Main, Some(from), _) => {
+            // A gatehouse goes up on its gate, as a tier on the main building.
+            (r, Some(from), _) if r == Role::Main || b.flags.contains(&BuildingFlag::Gate) => {
                 fact(&mut facts, "Needs", format!("An upgrade of the {from}"));
             }
             (Role::Main, None, _) => fact(&mut facts, "Needs", "You start with it"),
@@ -980,19 +995,27 @@ impl Ctx<'_> {
         if let Some(n) = next {
             let mut uf = Facts::new();
             fact(&mut uf, "Hit points", thousands(u32::from(n.hp)));
-            fact(&mut uf, "Supply cap", format!("+{}", n.supply));
-            fact(&mut uf, "Armour", format!("{:?}", n.armour));
-            let (bs, us) = self.unlocks(n.tier);
-            if !bs.is_empty() {
-                fact(&mut uf, "Unlocks buildings", join(bs));
+            if n.supply > 0 {
+                fact(&mut uf, "Supply cap", format!("+{}", n.supply));
             }
-            if !us.is_empty() {
-                fact(&mut uf, "Unlocks troops", join(us));
+            fact(&mut uf, "Armour", format!("{:?}", n.armour));
+            if n.role == Role::Main {
+                let (bs, us) = self.unlocks(n.tier);
+                if !bs.is_empty() {
+                    fact(&mut uf, "Unlocks buildings", join(bs));
+                }
+                if !us.is_empty() {
+                    fact(&mut uf, "Unlocks troops", join(us));
+                }
             }
             fact(&mut uf, "In the data", ascii(&n.effect));
             upgrades.push(GuideUpgrade {
                 name: n.name.clone(),
-                tag: format!("Tier {} upgrade", n.tier),
+                tag: if n.flags.contains(&BuildingFlag::Gate) {
+                    "Gatehouse".into()
+                } else {
+                    format!("Tier {} upgrade", n.tier)
+                },
                 cost: format!("{}, {}", cost_text(n.cost), secs(n.build_time)),
                 benefit: ascii(notes.get(n.name.as_str()).copied().unwrap_or(&n.effect)),
                 facts: uf,
@@ -1247,7 +1270,7 @@ mod tests {
         EMBEDDED
             .guides
             .iter()
-            .map(|s| ron::from_str(s).expect("guide file parses"))
+            .map(|s| parse_guide(s).expect("guide file parses"))
             .collect()
     }
 
@@ -1463,6 +1486,35 @@ mod tests {
 
     fn fact_of<'a>(rows: &'a [(String, String)], label: &str) -> &'a str {
         &rows.iter().find(|(l, _)| l == label).unwrap().1
+    }
+
+    #[test]
+    fn each_gate_guides_the_player_to_its_gatehouse() {
+        let d = load();
+        for (f, gate, house) in [
+            (0, "Gate", "Yagura Gatehouse"),
+            (3, "Iron Gate", "Gate of Debts"),
+            (1, "Maw Gate", "Chitin Maw"),
+        ] {
+            let g = find(&d, f, true, gate);
+            assert_eq!(fact_of(&g.links, "Upgrades to"), house);
+            let up = g.upgrades.iter().find(|u| u.name == house).unwrap();
+            assert_eq!(up.tag, "Gatehouse");
+            assert!(
+                up.facts
+                    .iter()
+                    .all(|(l, _)| !l.starts_with("Unlocks") && l != "Supply cap")
+            );
+            assert!(g.tips.iter().any(|(_, t)| t.contains(house)), "{gate}");
+            let h = find(&d, f, true, house);
+            assert_eq!(
+                fact_of(&h.facts, "Needs"),
+                format!("An upgrade of the {gate}")
+            );
+            assert_eq!(fact_of(&h.links, "Upgrades from"), gate);
+            assert!(fact_of(&h.facts, "Features").starts_with("Gatehouse"));
+            assert_eq!(fact_of(&h.facts, "Size"), "1 x 3 tiles");
+        }
     }
 
     #[test]

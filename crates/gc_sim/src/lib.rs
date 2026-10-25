@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 pub mod arrange;
 pub mod blueprints;
+pub mod bridges;
 pub mod champions;
 pub mod chords;
 pub mod clearing;
@@ -119,7 +120,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 46;
+pub const SIM_VERSION: u32 = 49;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1556,6 +1557,7 @@ impl World {
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.terrain.soak(self.sky.wet());
             self.rivers();
+            self.seasons();
         }
         // Time stands still while the armies deploy.
         if self.deploying() {
@@ -1606,6 +1608,7 @@ impl World {
             self.tick,
             &mut self.combat_rng,
         );
+        self.terrain.settle_rubble();
         if let Some(conquest) = &mut self.conquest {
             conquest.towers(
                 &mut self.combat,
@@ -1622,6 +1625,16 @@ impl World {
                 &self.stances,
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
                 self.sky.air(),
+            );
+            for foot in conquest.structures.rubble.drain(..) {
+                self.terrain.spread_rubble(foot);
+            }
+            bridges::settle_decks(
+                &mut conquest.structures.decks,
+                &mut self.nav,
+                &mut self.terrain,
+                &mut self.regiments,
+                &self.units,
             );
             self.clear_land();
             if let Some(c) = &mut self.conquest {
@@ -2584,6 +2597,9 @@ impl World {
             &self.terrain,
             self.sky.weather(),
             self.sky.wet(),
+            self.sky
+                .season(self.tick)
+                .map_or(100, |s| s.season.fire_percent()),
             &mut self.regiments,
             &self.units,
         );
@@ -2618,7 +2634,8 @@ impl World {
     /// order would, leaving off any work.
     fn sweep_fords(&mut self) {
         let mut stuck = core::mem::take(&mut self.stranded);
-        self.flood.sweep(&mut self.regiments, &mut stuck);
+        self.flood
+            .sweep(&mut self.regiments, &self.terrain, &mut stuck);
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
             let berth = self.regiments.berth(&self.units, i);
@@ -2639,6 +2656,34 @@ impl World {
         self.stranded = stuck;
     }
 
+    /// The season's rules (see [`sky::Season`]), worked out from the tick
+    /// each second: how fast Grub is gathered, and in a winter with no
+    /// flood, the water frozen over (fire asks the sky itself). Tells of
+    /// each new season after the first spring.
+    fn seasons(&mut self) {
+        let Some(at) = self.sky.season(self.tick) else {
+            return;
+        };
+        let season = at.season;
+        if at.into < TICKS_PER_SECOND
+            && (at.year, season) != (0, sky::Season::Spring)
+            && !self.scratch
+        {
+            self.events.season(season);
+        }
+        if let Some(c) = &mut self.conquest {
+            c.economy.set_season(season.grub_percent());
+        }
+        let frozen = season == sky::Season::Winter && self.terrain.rise() == 0;
+        self.terrain.set_frozen(frozen);
+    }
+
+    /// Where the year stands (`None` in a match with no seasons): the
+    /// season, how far into it, and which year.
+    pub fn season(&self) -> Option<sky::SeasonAt> {
+        self.sky.season(self.tick)
+    }
+
     /// The rivers' fords, and whether a flood has shut them (how far it
     /// has raised the water is [`Terrain::rise`]).
     pub fn flood(&self) -> &flood::Flood {
@@ -2647,7 +2692,8 @@ impl World {
 
     /// Whether regiment `h` is caught in a ford the flood has shut.
     pub fn swept(&self, h: RegimentHandle) -> bool {
-        (self.regiments.resolve(h)).is_some_and(|i| self.flood.sweeps(self.regiments.position[i]))
+        (self.regiments.resolve(h))
+            .is_some_and(|i| self.flood.sweeps(self.regiments.position[i], &self.terrain))
     }
 
     /// The ground's heights, water and cover, and what they do in a fight.
@@ -2892,6 +2938,11 @@ impl World {
                 // hashes as before).
                 if self.terrain.soaked() > 0 {
                     h.u32(self.terrain.soaked());
+                }
+                // Rubble lying where buildings fell (none until one does).
+                for &(i, left) in self.terrain.rubble() {
+                    h.u32(i);
+                    h.u16(left);
                 }
                 // Changed only by clearing (in Conquest) and fire (once one
                 // has been lit), so other matches hash as before.

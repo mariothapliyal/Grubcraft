@@ -603,9 +603,9 @@ mod tests {
         // Across the slope it does not pitch.
         assert!(tilt_of(hill, Vec2::new(30.0, 30.0), Vec2::Y).abs() < 1e-5);
         // The steepest way a route allows (`route_clear`'s climb over a
-        // step) pitches well within what the renderer can draw.
+        // step) is a pitch of under ten degrees.
         let steepest = (crate::ambient::hamlets::ROUTE_CLIMB / 0.75).atan();
-        assert!(steepest < gc_render::MAX_TILT, "{steepest}");
+        assert!(steepest < 0.17, "{steepest}");
     }
 
     #[test]

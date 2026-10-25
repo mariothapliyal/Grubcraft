@@ -107,6 +107,13 @@ struct ModelConfig {
     team_hue: Option<(f32, f32, f32)>,
     /// Clip kind (`Idle`, `Walk`, ...) to the glTF animation's name.
     clips: HashMap<String, String>,
+    /// For a model's own attack clips (`Attack`, `Attack2`), the second its
+    /// blow lands: the clip is retimed so it falls at
+    /// [`BLOW_AT`](gc_assets::anim::BLOW_AT), as a tagged attack's
+    /// `contact` is, so a duel's blows land on the beat. For the models whose
+    /// rigs are their own, with no fight library to play.
+    #[serde(default)]
+    contacts: HashMap<String, f32>,
     /// Triangle budgets for each level of detail, from full to fewest.
     lod_triangles: [usize; LODS],
     /// Painted texture maps, for models whose detail is in textures rather
@@ -191,9 +198,14 @@ struct MoveConfig {
     pair: Option<String>,
     /// For the killer's half (`Kill`), how far apart the two men stand,
     /// origin to origin, in the glTF's units (as the model is before it is
-    /// sized); stored in tiles.
+    /// sized); the game sizes it by the killer.
     #[serde(default)]
     reach: Option<f32>,
+    /// For the killer's half, how big the victim was made, as a share of the
+    /// killer's size as the game draws each per glTF unit: left out, 1 (men
+    /// alike); 0.667 for a Brood insect, drawn 1.5 times the men's units.
+    #[serde(default)]
+    victim_size: Option<f32>,
 }
 
 fn any() -> String {
@@ -252,6 +264,16 @@ impl MoveConfig {
         if !reach_ok {
             return Err(format!(
                 "move {:?}: the killer's half, and only it, has a reach above 0",
+                self.anim
+            ));
+        }
+        let size_ok = match (act == Act::Kill, self.victim_size) {
+            (true, Some(s)) => s.is_finite() && s > 0.0,
+            (killer, size) => killer || size.is_none(),
+        };
+        if !size_ok {
+            return Err(format!(
+                "move {:?}: only the killer's half has a victim_size, above 0",
                 self.anim
             ));
         }
@@ -748,6 +770,17 @@ fn bake_model(
     library: Option<&Path>,
     sets: &[(PathBuf, &[MoveConfig])],
 ) -> Result<BakedModel, String> {
+    let mut bad: Vec<&String> = cfg
+        .contacts
+        .keys()
+        .filter(|&k| !cfg.clips.contains_key(k) || !matches!(k.as_str(), "Attack" | "Attack2"))
+        .collect();
+    bad.sort();
+    if !bad.is_empty() {
+        return Err(format!(
+            "contacts: {bad:?} are not the model's attack clips"
+        ));
+    }
     let src = load(path)?;
     let doc = &src.doc;
     let get = |b: gltf::Buffer<'_>| src.buffers.get(b.index()).map(std::vec::Vec::as_slice);
@@ -1088,7 +1121,9 @@ fn bake_model(
     for (kind_name, anim_name) in &cfg.clips {
         let kind = named(&ClipKind::ALL, kind_name, "clip kind")?;
         let anim = anim_named(doc, anim_name)?;
-        let globals = sample_clip(&anim, Some, kind.loops(), None, &skel, &joints, get)?;
+        let contact = cfg.contacts.get(kind_name).copied();
+        let globals = sample_clip(&anim, Some, kind.loops(), contact, &skel, &joints, get)
+            .map_err(|e| format!("clip {kind_name}: {e}"))?;
         sampled.push((kind, anim_name.clone(), globals));
     }
     // `clips` is a map, so put them in kind order for a repeatable pack.
@@ -1675,6 +1710,7 @@ fn posed_move(
                 name: name.clone(),
                 reach: m.reach,
                 contact: share,
+                victim_size: m.victim_size.unwrap_or(1.0),
             })
         }
         _ => None,
@@ -1754,17 +1790,22 @@ fn sample_clip<'a>(
             "contact {c} s is outside the animation ({duration} s)"
         ));
     }
-    // A frame's time in the animation. Retimed, frame `f` is the share `u`
-    // of the clip the game plays it at (`MoveClip::at`), and the share
-    // BLOW_AT falls on the contact.
+    // A frame's time in the animation. Retimed, the contact falls on the
+    // frame the game shows at BLOW_AT of the move (`MoveClip::at` plays the
+    // share `at` at frame `at` of the way to the last one), and the time is
+    // stretched evenly on either side: to the last frame for a one-shot clip,
+    // and for a looping one to the frame after its last, the first again, so
+    // the loop stays seamless.
     let time_of = |f: usize| match contact {
         Some(c) => {
             use gc_assets::anim::BLOW_AT;
-            let u = f as f32 / if loops { frames } else { frames - 1 } as f32;
-            if u <= BLOW_AT {
-                u / BLOW_AT * c
+            let blow = BLOW_AT * (frames - 1) as f32;
+            let end = if loops { frames } else { frames - 1 } as f32;
+            let f = f as f32;
+            if f <= blow {
+                f / blow * c
             } else {
-                c + (u - BLOW_AT) / (1.0 - BLOW_AT) * (duration - c)
+                c + (f - blow) / (end - blow) * (duration - c)
             }
         }
         None => (f as f32 / SAMPLE_FPS).min(duration),
@@ -1866,6 +1907,13 @@ mod tests {
     /// The Alien Bug's pack with `moves` (a RON list) tagged on it: the
     /// pack's bytes, or why it would not bake.
     fn bake_bug_with(moves: &str) -> (Result<Vec<u8>, String>, ModelTables, ModelConfig) {
+        bake_bug(|m| m.moves = ron::from_str(moves).unwrap())
+    }
+
+    /// The Alien Bug's pack with its config changed by `change`.
+    fn bake_bug(
+        change: impl FnOnce(&mut ModelConfig),
+    ) -> (Result<Vec<u8>, String>, ModelTables, ModelConfig) {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let opts = Options {
             config: root.join("assets-src/models.ron"),
@@ -1890,7 +1938,7 @@ mod tests {
             )])"#,
         )
         .unwrap();
-        config.models[0].moves = ron::from_str(moves).unwrap();
+        change(&mut config.models[0]);
         let (bytes, tables) = match bake_pack(&config, &opts) {
             Ok((bytes, tables)) => (Ok(bytes), tables),
             Err(e) => (Err(e), ModelTables::default()),
@@ -1924,6 +1972,8 @@ mod tests {
         // untimed move on the same animation (stored once), and it meets
         // where its contact says.
         assert_eq!(p.reach, 2.0);
+        // Made for a man of the killer's size unless it says otherwise.
+        assert_eq!(p.victim_size, 1.0);
         let kill = anim.moves[p.kill as usize];
         let hit = anim.moves.iter().find(|m| m.act() == Act::Hit).unwrap();
         assert_eq!((kill.first_row, kill.frames), (hit.first_row, hit.frames));
@@ -1953,6 +2003,23 @@ mod tests {
         let unpaired =
             r#"[(anim: "Attack.000", act: "Kill", contact: Some(0.2), reach: Some(1.0))]"#;
         assert!(err(unpaired.into()).contains("names its pair"));
+        // A victim's size is the killer's half's to say, and above 0.
+        let small = half("Kill", ", reach: Some(2.0), victim_size: Some(0.5)");
+        let (bytes, _, _) = bake_bug_with(&format!("[{small}, {}]", half("Killed", "")));
+        let pack = gc_assets::Pack::parse(bytes.as_ref().unwrap()).unwrap();
+        let models = gc_assets::model::Models::from_pack(&pack).unwrap();
+        assert_eq!(models.anim.pairs[0].victim_size, 0.5);
+        for (kill, killed) in [
+            (", victim_size: Some(0.0)", ""),
+            ("", ", victim_size: Some(0.5)"),
+        ] {
+            let e = err(format!(
+                "[{}, {}]",
+                half("Kill", &format!(", reach: Some(2.0){kill}")),
+                half("Killed", killed)
+            ));
+            assert!(e.contains("victim_size"), "{e}");
+        }
     }
 
     #[test]
@@ -2078,6 +2145,46 @@ mod tests {
         assert!(near(&moved[0], &plain[0]) && near(&moved[n - 1], &plain[n - 1]));
         let late = sample_clip(&anim, Some, false, Some(100.0), &skel, &joints, get);
         assert!(late.is_err());
+        // A looping clip (a model's own attack, retimed by its `contacts`):
+        // the same, and it still ends where it began, so the loop is seamless.
+        let sample = |c| sample_clip(&anim, Some, true, c, &skel, &joints, get).unwrap();
+        let plain = sample(None);
+        let n = plain.len();
+        let at = (BLOW_AT * (n - 1) as f32).floor() as usize;
+        let contact = 2.0 / SAMPLE_FPS * BLOW_AT * (n - 1) as f32 / at as f32;
+        let moved = sample(Some(contact));
+        assert_eq!(moved.len(), n);
+        assert!(near(&moved[at], &plain[2]));
+        assert!(near(&moved[0], &plain[0]));
+    }
+
+    #[test]
+    fn a_models_own_attack_clip_is_retimed_by_its_contact() {
+        let bake = |contacts: &[(&str, f32)]| {
+            bake_bug(|m| {
+                m.contacts = contacts.iter().map(|&(k, c)| (k.to_string(), c)).collect();
+            })
+            .0
+        };
+        let plain = bake(&[]).unwrap();
+        let timed = bake(&[("Attack", 0.2)]).unwrap();
+        assert_ne!(plain, timed, "the clip is sampled anew");
+        assert_eq!(plain.len(), timed.len(), "and keeps its frames");
+        assert!(
+            bake(&[("Idle", 0.2)])
+                .unwrap_err()
+                .contains("are not the model's attack clips")
+        );
+        assert!(
+            bake(&[("Shoot", 0.2)])
+                .unwrap_err()
+                .contains("are not the model's attack clips")
+        );
+        assert!(
+            bake(&[("Attack2", 100.0)])
+                .unwrap_err()
+                .contains("clip Attack2")
+        );
     }
 
     #[test]

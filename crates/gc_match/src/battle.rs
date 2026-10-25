@@ -37,12 +37,17 @@ pub fn champions_allowed(setup: &MatchStart) -> bool {
 /// The sky a lobby match is played under, from the lobby's time of day and
 /// weather (docs/32-changing-land.md, "Weather and the time of day"):
 /// every machine makes the same one from the same settings and seed. Its
-/// clock runs from the lobby's time.
+/// clock runs from the lobby's time. A Conquest match with seasons turns
+/// through the year ("Seasons"), and its changing weather follows them.
 pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
-    use gc_sim::sky::{DAY_TICKS, Season, at_hour, changing};
+    use gc_sim::sky::{DAY_TICKS, at_hour, seasonal};
     use gc_sim::{Spell, Weather, WeatherKind};
     let (hour, minute) = settings.time_of_day.hour();
     let overcast = settings.time_of_day == TimeOfDay::Overcast;
+    let year_ticks = match settings.seasons.season_minutes() {
+        Some(minutes) if settings.mode == GameMode::Conquest => 4 * minutes * 60 * TICKS_PER_SECOND,
+        _ => 0,
+    };
     let all_match = |kind, strength, cloud: u8, wind| {
         vec![Spell {
             at: 0,
@@ -58,7 +63,8 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         WeatherSetting::Fair if overcast => all_match(WeatherKind::Clear, 0, 220, (4, 2)),
         WeatherSetting::Fair => Vec::new(),
         WeatherSetting::Changing => {
-            let mut spells = changing(seed, Season::Wet, SKY_TICKS);
+            // With no seasons (`year_ticks` 0), the old wet weather.
+            let mut spells = seasonal(seed, year_ticks, SKY_TICKS);
             if overcast {
                 for s in &mut spells {
                     s.weather.cloud = s.weather.cloud.max(220);
@@ -75,6 +81,7 @@ pub fn sky_of(settings: &LobbySettings, seed: u64) -> SkyRecord {
         day_ticks: DAY_TICKS,
         runs: true,
         spells,
+        year_ticks,
     }
 }
 
@@ -1236,6 +1243,41 @@ pub(crate) mod tests {
         });
         for row in rows {
             println!("{row}");
+        }
+    }
+
+    /// The computer players find their way to each other on grown land
+    /// (Living Land stage 2's route check): at every wildness two of
+    /// them meet within the time a battle takes. `AI_BATTLES` seeds each.
+    #[test]
+    #[ignore = "slow: plays battles on grown maps, run by hand in release"]
+    fn grown_land_battles_meet() {
+        let n: u64 = std::env::var("AI_BATTLES").map_or(2, |v| v.parse().unwrap());
+        for k in 1..=3 {
+            for seed in 1..=n {
+                let map = gc_map::FieldMap {
+                    choice: gc_map::GROWN + k,
+                    tiles: 256,
+                    seed,
+                }
+                .make();
+                let setup = lobby(
+                    &[Some(Difficulty::Veteran), Some(Difficulty::Veteran)],
+                    &[0, 1],
+                );
+                let played = play_on(&setup, seed, 15, map, |_| {});
+                let met = played.first_contact.map(|t| t / gc_sim::TICKS_PER_SECOND);
+                println!(
+                    "{} seed {seed}: met at {met:?} s, {:?} after {} s",
+                    gc_map::FIELD_MAPS[gc_map::GROWN + k],
+                    played.battle.outcome,
+                    played.ticks / gc_sim::TICKS_PER_SECOND
+                );
+                assert!(
+                    met.is_some_and(|s| s < 600),
+                    "{k} seed {seed}: the armies never met"
+                );
+            }
         }
     }
 

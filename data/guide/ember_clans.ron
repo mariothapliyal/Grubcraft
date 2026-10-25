@@ -183,12 +183,34 @@
         ),
         (
             name: "Gate",
-            summary: "A wall segment your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
+            summary: "A wall segment your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
+            notes: [
+                ("Yagura Gatehouse", "Half as tough again, with a walkway over the door for archers or foot. It goes up on its own, with no worker, and the door keeps working."),
+            ],
+            tips: [
+                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it under attack; open it for a sally."),
+                (icon: Hammer, text: "Place it on your own Palisade and it replaces that stretch: R turns it to run along the wall."),
+                (icon: Hammer, text: "Press V to raise it to a Yagura Gatehouse: archers or foot can man its top."),
+            ],
+        ),
+        (
+            name: "Yagura Gatehouse",
+            summary: "Level 2 of the Gate: a stone gatehouse with a timber yagura on top, half as tough again. Select a Gate and press V: it goes up on its own, with no worker, and the door keeps working. Archers or foot can man the walkway over the door, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Select it, then Q, W or E: Auto, Locked or Open. Lock it against an attack; open it for a sally."),
-                (icon: Hammer, text: "Place it on your own Palisade and it replaces that stretch: R turns it to run along the wall."),
-                (icon: Alarm, text: "Open lets enemies in too, and on Auto troops in the gateway hold it open: lock it under attack."),
+                (icon: Flag, text: "Alt+right-click it with foot or archers to man it: they shoot further, take half from arrows."),
+                (icon: Alarm, text: "Enemies can climb it on ladders; spears stop climbers. Lock the door under attack."),
+                (icon: Move, text: "A raised wall touching it joins its walkway, so one regiment can hold both."),
+            ],
+        ),
+        (
+            name: "Timber Bridge",
+            summary: "A bridge you draw straight across a river: click the near bank, then the far bank. Hands build it out from the bank a plank-span at a time, and anyone can cross it. Break or burn a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Draw it straight along x or y, with dry land at both ends and water between."),
+                (icon: Move, text: "A Hand builds it from the bank and carries on across the river a tile at a time."),
+                (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
             ],
         ),
     ],

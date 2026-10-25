@@ -166,9 +166,12 @@ pub struct SoldierInstance {
     /// texture rows, or joint pose rows for a model fitted to a skeleton
     /// (as its clips name them).
     pub frames: [u16; 2],
-    /// Blend toward the second frame, selection highlight, whether the
-    /// soldier lies fallen (for models without a death clip), as 0 to 255,
-    /// and a tilt (see [`tilt_byte`]: a signed byte, 0 for upright).
+    /// Blend toward the second frame and selection highlight, as 0 to 255;
+    /// then how far the model is tipped over about its base, 0 (upright) to
+    /// 255 (lying down, as a soldier without a death clip lies on his back),
+    /// and the way it falls in its own space, as a turn from its front in
+    /// 256ths (0 onto its back, 64 to its left; as scenery's `fall` reads
+    /// it). A building toppling as it falls takes both.
     pub flags: [u8; 4],
     /// Team colour (rgb), and a per-soldier tone in the last byte: 128 leaves
     /// the model as painted, lower is darker and cooler, higher is lighter and
@@ -193,17 +196,18 @@ pub struct SoldierInstance {
     pub feet: u8,
 }
 
-/// The most a model can be pitched, in radians (`MAX_TILT` in world.wgsl).
-pub const MAX_TILT: f32 = 0.5;
-
-/// The last byte of [`SoldierInstance::flags`] for a model pitched `radians`
-/// about its origin, forward end up when positive (a cart on a slope, kept
-/// to [`MAX_TILT`] either way): a signed byte, 127 for [`MAX_TILT`]. A
-/// tilted model should also set [`SoldierInstance::feet`] to
-/// [`FEET_AS_POSED`]: foot IK works out each foot's rise from the unpitched
-/// pose, and the pitch is applied on top of it.
-pub fn tilt_byte(radians: f32) -> u8 {
-    ((radians / MAX_TILT).clamp(-1.0, 1.0) * 127.0).round() as i8 as u8
+/// The tip and way bytes of [`SoldierInstance::flags`] (its third and
+/// fourth) for a model pitched `radians` about its base, forward end up when
+/// positive: a cart on a slope. It is the tip the instance already has (a
+/// fallen man or a toppling building, `tipped` in world.wgsl) taken toward
+/// the model's back for a climb and its front for a descent, so lighting,
+/// shadows and foot IK (off for a tipped model) already follow it. The angle
+/// is kept under the quarter turn that means lying down.
+pub fn pitch_bytes(radians: f32) -> [u8; 2] {
+    let tip = (radians.abs() / std::f32::consts::FRAC_PI_2 * 255.0)
+        .round()
+        .min(254.0) as u8;
+    [tip, if radians > 0.0 { 128 } else { 0 }]
 }
 
 /// [`SoldierInstance::feet`]: no foot IK at all (the fallen and the dead).
@@ -1453,14 +1457,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tilt_is_a_signed_byte_in_the_flags_up_to_the_most() {
-        assert_eq!(tilt_byte(0.0), 0);
-        assert_eq!(tilt_byte(MAX_TILT), 127);
-        assert_eq!(tilt_byte(-MAX_TILT) as i8, -127);
-        assert_eq!(tilt_byte(5.0), 127, "kept to the most");
-        assert_eq!(tilt_byte(-5.0) as i8, -127);
-        let half = tilt_byte(MAX_TILT / 2.0) as i8;
-        assert!((63..=64).contains(&half), "{half}");
+    fn a_pitch_is_a_tip_toward_the_back_for_a_climb_and_the_front_for_a_descent() {
+        assert_eq!(pitch_bytes(0.0)[0], 0, "level is upright");
+        let up = pitch_bytes(0.2);
+        let down = pitch_bytes(-0.2);
+        assert_eq!(up[0], down[0]);
+        assert!((32..=33).contains(&up[0]), "{up:?}");
+        assert_eq!((up[1], down[1]), (128, 0));
+        // Never the quarter turn that means lying down.
+        assert_eq!(pitch_bytes(5.0)[0], 254);
     }
 
     #[test]

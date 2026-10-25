@@ -376,6 +376,12 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
+        if (self.structures.buildings().get(usize::from(building)))
+            .is_some_and(BuildingStats::is_bridge)
+        {
+            // Over the water, where nothing else may stand.
+            return nav.deck_footing(tile.0, tile.1);
+        }
         let gone: Vec<[i32; 4]> = replaced
             .iter()
             .map(|&i| self.structures.footprint(i))
@@ -467,7 +473,9 @@ impl Conquest {
         if b.flags & GATE == 0 {
             return Vec::new();
         }
-        self.structures.own_in(player, LINE, foot).collect()
+        (self.structures.own_in(player, LINE, foot))
+            .filter(|&i| !self.structures.is_bridge(i))
+            .collect()
     }
 
     /// Whether a building of type `building` `player` lays at `tile` has
@@ -790,6 +798,11 @@ impl Conquest {
             return Err(Refusal::Busy);
         }
         let b = self.structures.buildings()[usize::from(to)];
+        // A Main building's upgrade is the next tier; anything else's (a
+        // gatehouse) needs the tier it is of.
+        if b.role != Role::Main && self.structures.tier_of(player) < b.tier.max(1) {
+            return Err(Refusal::Tier);
+        }
         if !self
             .economy
             .can_afford(player, u32::from(b.cost_grub), u32::from(b.cost_marrow))

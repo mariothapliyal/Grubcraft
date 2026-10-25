@@ -3341,6 +3341,16 @@ impl Running {
         // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
         let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
+        // Soldiers on a finished bridge stand on its deck. Most maps have
+        // none, and then this is one test of an empty list.
+        let terrain = self.world.terrain();
+        let deck = |p: Vec2| {
+            if terrain.on_deck(fx_vec(p)) {
+                buildings::DECK_TOP
+            } else {
+                0.0
+            }
+        };
         // Footsteps and wear follow the effects clock: none behind the menu
         // or while it stands still.
         let fx_dt = if self.menu_open && self.online.is_none() {
@@ -3450,6 +3460,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |_| {},
                 );
                 continue;
@@ -3562,6 +3573,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |_| {},
                 );
                 continue;
@@ -3691,6 +3703,7 @@ impl Running {
                     r.owner,
                     game_dt.as_secs_f32(),
                     firm(r.owner),
+                    deck,
                     |s| {
                         let mut s = s;
                         // His head turns are from the way the puppets face him.
@@ -3825,8 +3838,13 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
-            self.puppets
-                .update_on(&block, r.owner, game_dt.as_secs_f32(), firm(r.owner), |s| {
+            self.puppets.update_on(
+                &block,
+                r.owner,
+                game_dt.as_secs_f32(),
+                firm(r.owner),
+                deck,
+                |s| {
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -3834,7 +3852,8 @@ impl Running {
                         color,
                         lift: s.lift,
                     });
-                });
+                },
+            );
         }
         self.keep_arrows_in_the_fallen();
         if !self.commander && !viewing {
@@ -4223,6 +4242,13 @@ impl Running {
                 self.ambient.villagers.hush();
                 self.ambient.caravans.hush();
             }
+        }
+        // Rain, wind and the air's muffling are heard from the weather on
+        // screen.
+        if let Some(sounds) = &mut self.sounds {
+            let (weather, fade) = self.atmosphere.weather();
+            let (rain, muffle) = sounds::air_of(weather, fade);
+            sounds.sky(rain, self.atmosphere.wind().length(), muffle);
         }
         let struck = self.atmosphere.take_strike();
         // The thunder that arrives is heard even with the flash out of
@@ -5248,7 +5274,7 @@ impl Running {
         self.formation_pick = None;
         self.shown_formation = None;
         if let Some(sounds) = &mut self.sounds {
-            sounds.new_match();
+            sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
         self.sim_clock = Duration::ZERO;
@@ -5396,7 +5422,7 @@ impl Running {
                 &self.units.stats,
                 &self.units.factions,
                 &self.units.points,
-                terrain_view::plateau_positions(self.heightmap.tiles),
+                terrain_view::field_starts(&self.heightmap),
                 self.seed ^ self.matches.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 self.online.as_ref().is_none_or(|o| o.host),
                 &mut self.minds,
@@ -5889,6 +5915,7 @@ impl Running {
         // Buildings whose blows this tick were shown.
         let mut shown = Vec::new();
         let mut flooded = None;
+        let mut news = None;
         let (focus, distance) = self.view_focus();
         for e in self.world.events() {
             match *e {
@@ -5942,7 +5969,16 @@ impl Running {
                             .filter(|c| c.pos.distance(at) <= aftermath::DEAD_RADIUS)
                             .count();
                         let tint = color_of(&self.parties, owner);
-                        self.aftermath.wiped(regiment, at, facing, tint, dead);
+                        // The nearest foe by takes the standard.
+                        let world = &self.world;
+                        let victor = (world.regiments.iter())
+                            .filter(|f| world.hostile(f.owner, owner) && !world.is_worker(f.handle))
+                            .map(|f| (f.handle, from_fx_vec(f.position).distance(at)))
+                            .filter(|&(_, d)| d <= aftermath::TAKE_RADIUS)
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .map(|(h, _)| h);
+                        self.aftermath
+                            .wiped(regiment, at, facing, tint, dead, victor);
                     }
                 }
                 Event::Contact { regiment, foe } => {
@@ -6021,6 +6057,7 @@ impl Running {
                     }
                 }
                 Event::Flooded { closed } => flooded = Some(closed),
+                Event::Season { season } => news = Some(season_news(season)),
                 _ => {}
             }
         }
@@ -6028,6 +6065,9 @@ impl Running {
             Some(true) => self.say("The rivers are in flood: the fords can't be crossed".into()),
             Some(false) => self.say("The rivers have gone down: the fords are open again".into()),
             None => {}
+        }
+        if let Some(news) = news {
+            self.say(news.into());
         }
         for b in self.world.blows() {
             self.puppets.struck(b);
@@ -6038,7 +6078,11 @@ impl Running {
     /// the last frame, those the camera sees (the fog hides the rest, as it
     /// hides all particles), at most [`BLOWS_SHOWN`] a frame.
     fn show_blows(&mut self, cull: &gc_render::Cull) {
+        self.effects.set_full_blood(self.menu.settings().full_blood);
         let hm = &self.heightmap;
+        // A rejoining player catching up sees the blows but doesn't hear them.
+        let heard = !(self.online.is_some() && self.menu.net().catching_up());
+        let mut sounded = 0;
         let on_screen = self.puppets.drain_impacts().filter_map(|i| {
             let at = glam::Vec3::new(i.pos.x, hm.height_at(i.pos.x, i.pos.y), i.pos.y);
             cull.on_screen(at, 1.0).then_some((i, at))
@@ -6061,6 +6105,15 @@ impl Running {
             let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;
             let chest = at + glam::Vec3::Y * (SOLDIER_HEIGHT * 0.6);
             self.effects.blow(chest, i.dir, i.hit, style, armoured);
+            // The kills are heard first, if there are too many to hear.
+            if heard
+                && (sounded < sounds::HITS_PER_FRAME || i.hit == puppets::Hit::Killed)
+                && let (Some(sounds), Some(striker)) =
+                    (&self.sounds, self.units.stats.get(usize::from(i.striker)))
+            {
+                sounded += 1;
+                sounds.blow(i.pos, i.hit, style, armoured, sounds::Weapon::of(striker));
+            }
         }
     }
 
@@ -6720,6 +6773,14 @@ impl Running {
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
+        let carried = self.aftermath.trophies(
+            |h| {
+                let r = world.regiments.get(h)?;
+                (!self.commander && (self.reveal_all || world.sees(viewer, h)))
+                    .then(|| drawn_pose(prev, alpha, &r))
+            },
+            |p| ground_of(map, p),
+        );
         let piled = self.wood_piles(focus, distance);
         let hamlets: Vec<scenery::Extra> = if self.commander {
             Vec::new()
@@ -6740,6 +6801,7 @@ impl Running {
                 .chain(banners)
                 .chain(falling)
                 .chain(fallen)
+                .chain(carried)
                 .chain(stumps)
                 .chain(piled)
                 .chain(hamlets),
@@ -7182,7 +7244,7 @@ impl Running {
                 let mut flags = models::pose_flags(pose, 0, false);
                 if c.piece == Piece::Cart {
                     let tilt = ambient::caravans::tilt_of(|p| ground(p.x, p.y), c.pos, c.facing);
-                    flags[3] = gc_render::tilt_byte(tilt);
+                    [flags[2], flags[3]] = gc_render::pitch_bytes(tilt);
                 }
                 art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: c.pos.to_array(),
@@ -7192,14 +7254,6 @@ impl Running {
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
-                    // A tilted model keeps its feet as posed: the pitch is
-                    // the ground's slope already, so foot IK would correct
-                    // the legs twice.
-                    feet: if flags[3] == 0 {
-                        0
-                    } else {
-                        gc_render::FEET_AS_POSED
-                    },
                     ..Default::default()
                 });
             }
@@ -7225,11 +7279,18 @@ impl Running {
             let still = art.clips.pose(fall.model, Action::Idle, time);
             if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
                 let [r, g, b] = fall.colour;
+                let mut flags = models::pose_flags(pose, 0, false);
+                if fall.tip > 0.0 {
+                    // Tipped over toward its way, which the model reads in
+                    // its own space (turned to face south, as drawn).
+                    flags[2] = (fall.tip * 255.0).round() as u8;
+                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
                     facing: [0.0, 1.0],
                     frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
+                    flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
                     lift: fall.lift,
                     scale: 1.0,
@@ -7365,7 +7426,7 @@ impl Running {
                         )
                     )
                     && worker.is_some(),
-                visit: done && !matches!(role, Some(Role::Wall | Role::Defence)),
+                visit: done && !matches!(role, Some(Role::Wall | Role::Defence | Role::Bridge)),
                 worker: worker.unwrap_or(0),
                 centre,
                 half,
@@ -8117,6 +8178,18 @@ fn drawn_position(
     match prev_positions[r.handle.index as usize] {
         Some((h, prev, _)) if h == r.handle => prev.lerp(cur, alpha),
         _ => cur,
+    }
+}
+
+/// What a new season brings, for the message line
+/// (docs/32-changing-land.md, "Seasons").
+fn season_news(season: gc_sim::sky::Season) -> &'static str {
+    use gc_sim::sky::Season;
+    match season {
+        Season::Spring => "Spring: Grub comes in as usual again, and any ice thaws",
+        Season::Summer => "Summer: the woods are dry and catch fire easily",
+        Season::Autumn => "Autumn: the harvest is in, and Grub comes in faster",
+        Season::Winter => "Winter: Grub comes in slower, and the shallows freeze unless in flood",
     }
 }
 

@@ -8,8 +8,8 @@ use crate::hud::{MinimapTerrain, draw_terrain};
 use crate::lobby::{
     AI_LEVELS, Budget, COLORS, Faction, GameMode, LobbySettings, LocalNetwork, MAX_ARMY,
     MAX_PLAYERS, MapSize, MatchStart, NetEvent, Network, OnDrop, PLAYER_COLORS, Profile,
-    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, army_points,
-    field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
+    RosterUnit, SlotEdit, SlotKind, Tempo, TimeOfDay, Victory, WeatherSetting, YearSetting,
+    army_points, field_map_tiles, fresh_map_seed, map_code, maps_for, parse_map_code, thousands,
 };
 use crate::settings::{FRAME_CAPS, GraphicsPreset, Settings, UI_SCALES};
 use crate::ui::{ButtonStyle, Ui, theme};
@@ -799,7 +799,8 @@ impl<N: Network> Menu<N> {
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
         // Champions may duel before a battle with a computer player: in the
-        // footer, after Leave and Army.
+        // footer, after Leave and Army. A Conquest match has none, and how
+        // fast its seasons turn takes the place.
         let champions_r = Rect::new(panel.x + 24 + 148 + 140 + 12, panel.bottom() - 52, 320, 44);
         // Which victories count (Conquest) or how big the map is (Field
         // Battle) has no room in the four columns: it sits in the header,
@@ -877,7 +878,19 @@ impl<N: Network> Menu<N> {
                     changed = true;
                 }
             }
-            changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
+            if settings.mode == GameMode::Conquest {
+                let names = YearSetting::ALL.map(YearSetting::name);
+                let mut at = YearSetting::ALL
+                    .iter()
+                    .position(|&y| y == settings.seasons)
+                    .unwrap_or(0);
+                if ui.stepper(champions_r, "Seasons", &mut at, &names) {
+                    settings.seasons = YearSetting::ALL[at];
+                    changed = true;
+                }
+            } else {
+                changed |= ui.toggle(champions_r, CHAMPIONS, &mut settings.champions);
+            }
         } else {
             for (i, text) in [
                 format!("Map: {}", settings.map_name()),
@@ -900,13 +913,13 @@ impl<N: Network> Menu<N> {
                 format!("Size: {}", settings.map_size.name())
             };
             ui.label_centered(option_r, 1, theme::INK, &text);
-            let on = if settings.champions { "on" } else { "off" };
-            ui.label_centered(
-                champions_r,
-                1,
-                theme::INK_MUTED,
-                &format!("{CHAMPIONS}: {on}"),
-            );
+            let text = if settings.mode == GameMode::Conquest {
+                format!("Seasons: {}", settings.seasons.name())
+            } else {
+                let on = if settings.champions { "on" } else { "off" };
+                format!("{CHAMPIONS}: {on}")
+            };
+            ui.label_centered(champions_r, 1, theme::INK_MUTED, &text);
         }
 
         // The map: its picture (when there is room), its name and its code.
@@ -1599,18 +1612,23 @@ impl<N: Network> Menu<N> {
         ui.toggle(st.next(row), "Larger text", &mut s.larger_text);
         ui.toggle(st.next(row), "Reduced screen shake", &mut s.reduced_shake);
         ui.toggle(st.next(row), "Contextual hints", &mut s.hints);
+        ui.toggle(
+            st.next(row),
+            "Full blood: heavier wounds",
+            &mut s.full_blood,
+        );
 
-        let note_y = panel.bottom() - 52 - 44;
+        let note_y = panel.bottom() - 52 - 36;
         ui.label(
             panel.x + 24,
             note_y,
             1,
             theme::INK_MUTED,
-            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, shake, Master, Music.",
+            "Working: name, colour, faction, UI scale, Clarity, Tilt-shift, Full blood, shake, Master, Music.",
         );
         ui.label(
             panel.x + 24,
-            note_y + 18,
+            note_y + 16,
             1,
             theme::INK_MUTED,
             "The other audio, graphics and accessibility choices are saved for later.",
@@ -2294,10 +2312,14 @@ mod tests {
         assert!(!h.menu.settings().tilt_shift);
         h.click("Tilt-shift: soft top and bottom");
         assert!(h.menu.settings().tilt_shift);
+        // Blood is stylised until Full blood is asked for, and is saved.
+        assert!(!h.menu.settings().full_blood);
+        h.click("Full blood: heavier wounds");
+        assert!(h.menu.settings().full_blood);
         h.click("Back");
         assert_eq!(h.menu.screen(), Screen::Main);
         let saved = Settings::load(&path);
-        assert!(saved.larger_text && saved.clarity && saved.tilt_shift);
+        assert!(saved.larger_text && saved.clarity && saved.tilt_shift && saved.full_blood);
         assert_eq!(saved.ui_scale, h.menu.settings().ui_scale);
         let _ = std::fs::remove_dir_all(dir);
     }
