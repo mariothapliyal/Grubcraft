@@ -109,16 +109,19 @@ impl Flood {
     /// the grid `nav`.
     pub(crate) fn new(terrain: &Terrain, nav: &Nav, map_tiles: u32) -> Flood {
         let tiles = map_tiles as i32;
-        let all = || (0..tiles).flat_map(|y| (0..tiles).map(move |x| (y, x)));
-        let fords: Vec<(i32, i32)> = all()
-            .filter(|&(y, x)| terrain.tile_under_water(x, y) && nav.walkable_ground(x, y))
-            .collect();
-        // Deep water no deeper than wading depth below the low line.
-        let shallows: Vec<(i32, i32)> = all()
-            .filter(|&(y, x)| {
-                terrain.tile_within(x, y, LOW_DROP + WADE_DEPTH) && nav.deep_ground(x, y)
-            })
-            .collect();
+        let (mut fords, mut shallows) = (Vec::new(), Vec::new());
+        for (y, x) in (0..tiles).flat_map(|y| (0..tiles).map(move |x| (y, x))) {
+            if !terrain.tile_under_water(x, y) {
+                continue;
+            }
+            if nav.walkable_ground(x, y) {
+                fords.push((y, x));
+            }
+            // Deep water no deeper than wading depth below the low line.
+            if terrain.tile_within(x, y, LOW_DROP + WADE_DEPTH) && nav.deep_ground(x, y) {
+                shallows.push((y, x));
+            }
+        }
         Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),
@@ -291,7 +294,7 @@ impl Flood {
     /// Whether the year has left anything to hash: low water, or snow
     /// still to melt (see [`Flood::hash_into`]).
     pub(crate) fn seasonal(&self, low: u16) -> bool {
-        low > 0 || self.exposed || self.snowpack > 0
+        low > 0 || self.snowpack > 0
     }
 
     /// Hashed with the ground while the water is up (`rise` height units

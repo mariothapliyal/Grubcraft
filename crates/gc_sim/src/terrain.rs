@@ -809,10 +809,10 @@ impl Terrain {
     /// Whether the tile `(x, y)`'s middle lies under the map's water line
     /// but no deeper than `depth` height units below it.
     pub(crate) fn tile_within(&self, x: i32, y: i32, depth: u16) -> bool {
-        index_in(self.tiles, x, y).is_some_and(|i| {
-            let h = self.height[i];
-            h < self.water_level && u32::from(h) + u32::from(depth) >= u32::from(self.water_level)
-        })
+        self.tile_under_water(x, y)
+            && index_in(self.tiles, x, y).is_some_and(|i| {
+                u32::from(self.height[i]) + u32::from(depth) >= u32::from(self.water_level)
+            })
     }
 
     /// Whether the tile `(x, y)` lies under the map's water line (before

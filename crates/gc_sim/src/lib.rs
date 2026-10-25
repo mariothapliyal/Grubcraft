@@ -2708,37 +2708,31 @@ impl World {
     fn wade_out(&mut self) {
         let mut stuck = core::mem::take(&mut self.stranded);
         stuck.clear();
-        for i in 0..self.regiments.alive.len() {
-            let r = &self.regiments;
-            if r.alive[i]
+        let r = &self.regiments;
+        stuck.extend((0..r.alive.len()).filter(|&i| {
+            r.alive[i]
                 && r.models[i] > 0
                 && r.target[i].is_none()
                 && r.foe(i).is_none()
                 && self.flood.on_shallows(r.position[i])
-            {
-                stuck.push(i);
-            }
-        }
-        self.stranded = stuck;
-        self.send_to_bank();
+        }));
+        self.send_to_bank(stuck);
     }
 
     /// One second of the regiments caught in shut fords (see
     /// [`flood::Flood::sweep`]): those with nowhere else to go are ordered
-    /// to the nearest bank where their block fits, as a player's move
-    /// order would, leaving off any work.
+    /// to the nearest bank where their block fits.
     fn sweep_fords(&mut self) {
         let mut stuck = core::mem::take(&mut self.stranded);
         self.flood
             .sweep(&mut self.regiments, &self.terrain, &mut stuck);
-        self.stranded = stuck;
-        self.send_to_bank();
+        self.send_to_bank(stuck);
     }
 
-    /// The regiments in `stranded` go to the nearest bank where their
-    /// block fits, as a player's move order would, leaving off any work.
-    fn send_to_bank(&mut self) {
-        let stuck = core::mem::take(&mut self.stranded);
+    /// The regiments `stuck` go to the nearest bank where their block
+    /// fits, as a player's move order would, leaving off any work; the
+    /// list is kept for its room.
+    fn send_to_bank(&mut self, stuck: Vec<usize>) {
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
             let berth = self.regiments.berth(&self.units, i);

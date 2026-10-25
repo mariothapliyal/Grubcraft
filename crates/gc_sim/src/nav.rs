@@ -1331,26 +1331,26 @@ impl Nav {
     /// blocked (deep water, under the water line), whatever stands there
     /// (never off the map, nor with no map).
     pub(crate) fn deep_ground(&self, x: i32, y: i32) -> bool {
+        self.any_ground(x, y, |cost| cost == BLOCKED)
+    }
+
+    /// Whether the map's own cost of any cell of the tile `(x, y)` is one
+    /// `pick` takes (never off the map, nor with no map).
+    fn any_ground(&self, x: i32, y: i32, pick: impl Fn(u8) -> bool) -> bool {
         let Some(g) = self.base() else {
             return false;
         };
         let Some([x0, y0, x1, y1]) = g.cells([x, y, 1, 1]) else {
             return false;
         };
-        (y0..y1).any(|cy| (x0..x1).any(|cx| g.ground[g.idx(cx, cy) as usize] == BLOCKED))
+        (y0..y1).any(|cy| (x0..x1).any(|cx| pick(g.ground[g.idx(cx, cy) as usize])))
     }
 
     /// Whether any cell of the tile `(x, y)` is ground a regiment could
     /// walk on, buildings and floods aside (never off the map, nor with no
     /// map).
     pub(crate) fn walkable_ground(&self, x: i32, y: i32) -> bool {
-        let Some(g) = self.base() else {
-            return false;
-        };
-        let Some([x0, y0, x1, y1]) = g.cells([x, y, 1, 1]) else {
-            return false;
-        };
-        (y0..y1).any(|cy| (x0..x1).any(|cx| g.ground[g.idx(cx, cy) as usize] != BLOCKED))
+        self.any_ground(x, y, |cost| cost != BLOCKED)
     }
 
     /// Portal nodes in the graph (for the dev overlay and tests).
