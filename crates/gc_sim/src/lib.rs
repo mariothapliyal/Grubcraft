@@ -2793,6 +2793,7 @@ impl World {
         if self.scratch || !self.flood.flash.shut() {
             return;
         }
+        let mut swept = 0u16;
         for i in 0..self.regiments.alive.len() {
             let r = &self.regiments;
             if !r.alive[i] || r.models[i] == 0 || r.on_wall[i] {
@@ -2806,7 +2807,7 @@ impl World {
             let (owner, h) = (r.owner[i], r.handle(i));
             let drown = u32::from(r.models[i]) * flash::DROWN_PERCENT / 100;
             self.regiments.kill_last(i, drown as usize);
-            self.events.swept_away(owner);
+            swept = swept.saturating_add(1);
             // Out of any fight, and off any work.
             self.regiments.vanish_from_fight(i);
             self.leave_off(h);
@@ -2819,6 +2820,10 @@ impl World {
             if !self.nav.walkable(owner, bank) {
                 bridges::wash_up(&self.nav, &mut self.regiments, &self.units, i, p);
             }
+        }
+        // One event for them all, so the event list's room holds.
+        if swept > 0 {
+            self.events.swept_away(swept);
         }
     }
 
