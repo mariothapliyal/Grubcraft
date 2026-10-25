@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 46: the rivers' flow layer (read as still water everywhere);
 /// - 45: hidden traps (a building's trap; read as none);
 /// - 44: planting stakes (the plant stakes command, tag 40);
 /// - 43: the sky's year of seasons (read as none);
@@ -101,7 +102,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 45;
+pub const FORMAT: u16 = 46;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -382,6 +383,9 @@ pub struct Replay {
     /// How each tile holds a soldier's feet, as [`Ground::footing`] (empty:
     /// firm everywhere).
     pub footing: Vec<u8>,
+    /// Which way the rivers run, as [`Ground::flow`] (empty: still water;
+    /// format 46 on).
+    pub flow: Vec<u8>,
     /// The weather and the time of day, as [`MatchSetup::sky`].
     pub sky: SkyRecord,
     /// Whether champions may duel before battle, as [`MatchSetup::champions`].
@@ -594,6 +598,7 @@ impl Replay {
                 cover: &self.cover,
                 growth: &self.growth,
                 footing: &self.footing,
+                flow: &self.flow,
             },
             champions: self.champions,
             sky: self.sky.sky(),
@@ -772,10 +777,11 @@ impl Replay {
     }
 
     /// The growth layer, just after the map (format 27 on), then the
-    /// footing (format 33 on).
+    /// footing (format 33 on) and the flow (format 46 on).
     fn write_layers(&self, w: &mut Writer) {
         w.bytes(&self.growth);
         w.bytes(&self.footing);
+        w.bytes(&self.flow);
     }
 
     /// The generals flag, just after the growth and footing layers (format
@@ -1032,6 +1038,7 @@ impl Replay {
         let champions = format >= 4 && r.bool()?;
         let growth = layer(r, 27)?;
         let footing = layer(r, 33)?;
+        let flow = layer(r, 46)?;
         let generals = format < 34 || r.bool()?;
         let sky = if format >= 35 {
             SkyRecord::read(r, format)?
@@ -1102,6 +1109,7 @@ impl Replay {
             cover,
             growth,
             footing,
+            flow,
             sky,
             champions,
             generals,
@@ -1264,6 +1272,7 @@ impl Recorder {
                 // Footing that doesn't fit the map, or is firm everywhere,
                 // is none, as in the sim.
                 footing: gc_sim::Footing::layer(setup.ground.footing, setup.map_tiles).to_vec(),
+                flow: gc_sim::Flow::layer(setup.ground.flow, setup.map_tiles).to_vec(),
                 sky: SkyRecord::of(&setup.sky),
                 champions: setup.champions,
                 generals: setup.generals,
@@ -1391,6 +1400,7 @@ mod tests {
                 cover: &cover,
                 growth: &[],
                 footing: &[],
+                flow: &[],
             },
             champions: false,
             sky: gc_sim::Sky::STILL,
@@ -2064,6 +2074,14 @@ mod tests {
         replay.footing = (0..64u32 * 64).map(|i| u8::from(i % 7 == 0)).collect();
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
         assert_eq!(replay.setup().ground.footing, &replay.footing[..]);
+    }
+
+    #[test]
+    fn the_flow_layer_round_trips() {
+        let mut replay = record();
+        replay.flow = (0..64u32 * 64).map(|i| if i % 5 == 0 { 0x1a } else { 0 }).collect();
+        assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
+        assert_eq!(replay.setup().ground.flow, &replay.flow[..]);
     }
 
     #[test]

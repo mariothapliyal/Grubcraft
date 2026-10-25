@@ -1141,7 +1141,13 @@ impl Regiments {
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
-                let next = if arriving { point } else { here + dir * step };
+                // Wading a river, the current carries it down a little as
+                // it goes (it steers back onto its way each tick).
+                let next = if arriving {
+                    point
+                } else {
+                    here + dir * step + terrain.current(here)
+                };
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
                 // behind it. In the open, blocks still pass through.

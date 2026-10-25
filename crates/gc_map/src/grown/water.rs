@@ -46,6 +46,9 @@ pub(super) struct Water {
     pub(super) river: Vec<bool>,
     /// Lake tiles.
     pub(super) lake: Vec<bool>,
+    /// Which way and how fast the water runs on each tile, one
+    /// `gc_sim::Flow` byte a tile (0 still: lakes and dry land).
+    pub(super) flow: Vec<u8>,
     /// The middle tile of each ford (shallows across a river), for sites
     /// and trails to use.
     #[allow(dead_code)]
@@ -214,6 +217,18 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         acc[last - i] = acc[i];
     }
 
+    // The current, down each river line, the south half the north's
+    // turned copy.
+    let mut flow = flow_layer(&lines, n);
+    for i in 0..nn / 2 {
+        flow[last - i] = gc_sim::Flow::turned(flow[i]);
+    }
+    for i in 0..nn {
+        if !river[i] || lake[i] {
+            flow[i] = 0;
+        }
+    }
+
     let mut fords = carve(h, seeds, keep, &near_keep, &river, &lake, &lines);
     // Make the carved land (and the fords) the same turned copy.
     for i in 0..nn / 2 {
@@ -232,6 +247,7 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
         acc,
         river,
         lake,
+        flow,
         fords,
     }
 }
@@ -576,6 +592,58 @@ fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
     out
 }
 
+/// The current on each tile the river lines cover: the way the nearest
+/// point of its line runs (lines run from source to mouth), fast where
+/// the river is narrow and slow where it is wide, as `gc_sim::Flow` bytes.
+fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
+    let mut out = vec![0u8; n * n];
+    let mut best = vec![i64::MAX; n * n];
+    let ni = n as i64;
+    for line in lines {
+        let last = line.pts.len().saturating_sub(1);
+        for (k, (&(px, py), &w)) in line.pts.iter().zip(&line.width).enumerate() {
+            let (a, b) = (
+                line.pts[k.min(last.saturating_sub(1))],
+                line.pts[(k + 1).min(last)],
+            );
+            let way = gc_fixed::FxVec2::new(
+                gc_fixed::Fx::from_raw(b.0 - a.0),
+                gc_fixed::Fx::from_raw(b.1 - a.1),
+            );
+            if way == gc_fixed::FxVec2::ZERO {
+                continue;
+            }
+            let speed = if w < 3 * ONE {
+                3
+            } else if w < 6 * ONE {
+                2
+            } else {
+                1
+            };
+            let byte = gc_sim::Flow::byte(Angle::of_vec(way), speed);
+            let r = i64::from(w) / 2 + i64::from(ONE) / 8;
+            let r2 = r * r;
+            let reach = ((r * 3 / 2) >> 16) + 1;
+            let (cx, cy) = (i64::from(px) >> 16, i64::from(py) >> 16);
+            for y in (cy - reach).max(0)..(cy + reach + 2).min(ni) {
+                for x in (cx - reach).max(0)..(cx + reach + 2).min(ni) {
+                    let (dx, dy) = (
+                        x * i64::from(ONE) - i64::from(px),
+                        y * i64::from(ONE) - i64::from(py),
+                    );
+                    let d2 = dx * dx + dy * dy;
+                    let i = (y * ni + x) as usize;
+                    if d2 <= r2 && d2 < best[i] {
+                        best[i] = d2;
+                        out[i] = byte;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Shrink a mask by a tile (a tile stays only if it and its four
 /// neighbours are in it; outside the map counts as out).
 fn erode_cross(m: &[bool], n: usize) -> Vec<bool> {
@@ -828,6 +896,22 @@ mod tests {
             assert_eq!(wa.river, wb.river);
             assert_eq!(wa.lake, wb.lake);
             assert_eq!(wa.acc, wb.acc);
+            assert_eq!(wa.flow, wb.flow);
+            // The rivers run, the lakes and land are still, and the turned
+            // half runs the turned way.
+            let last = n * n - 1;
+            for i in 0..n * n {
+                if wa.flow[i] != 0 {
+                    assert!(wa.river[i] && !wa.lake[i], "flow off a river at {i}");
+                }
+                let both = |k: usize| wa.river[k] && !wa.lake[k];
+                if i < n * n / 2 && both(i) && both(last - i) {
+                    assert_eq!(wa.flow[last - i], gc_sim::Flow::turned(wa.flow[i]));
+                }
+            }
+            let rivers = (0..n * n).filter(|&i| wa.river[i] && !wa.lake[i]).count();
+            let running = wa.flow.iter().filter(|&&f| f != 0).count();
+            assert!(running * 10 >= rivers * 9, "{running} of {rivers} river tiles run");
             for (i, &kept) in keep.iter().enumerate() {
                 if kept {
                     assert_eq!(a.v[i], h0.v[i], "keep tile {i} changed");
