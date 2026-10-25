@@ -80,7 +80,7 @@ Built 2026-10-25. It is simpler than the plan in two ways. It needs no new map l
   - A bridge's deck wins over them, and a flood shuts them. Nothing can be built on them.
   - Once the water is back, any regiment still in their deep water with nowhere else to go (no order, or a chase, and not fighting, as in a shut ford) is sent each second to the nearest bank where its block fits. A route out of deep water, on a grid that has had low water, looks for open ground as far as a goal does.
 - **Seeing it.** `Event::Shallows { open }` puts up a message ("Low water: the shallows at the rivers' edges can be waded", and "the summer fords are deep again"). The top bar's chip says "Low water: summer fords". The drawn water drops with the line. `World::flood().shallows()` and `exposed()` let the ground thread draw exposed mud banks.
-- **Shared state.** Low water, whether the summer fords are open, and the snowpack are hashed with the ground, but only while any is non-zero. So matches without seasons hash exactly as before, and no golden changes. `SIM_VERSION` 52, because a Conquest match with seasons now plays differently.
+- **Shared state.** Low water, whether the summer fords are open, and the snowpack are hashed with the ground, but only while any is non-zero. So matches without seasons hash exactly as before, and no golden changes. `SIM_VERSION` 53, because a Conquest match with seasons now plays differently.
 
 ## Stages (each its own pull request)
 
