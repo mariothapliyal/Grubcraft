@@ -11,6 +11,8 @@
 //! Resonators and Siphons tuning nodes for the Choir, whose workers only
 //! build.
 
+mod engineer;
+
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
 use gc_sim::structures::{BuildingStats, Role, StructureHandle, StructureView, TRADE_POST, VEINS};
 use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId};
@@ -143,6 +145,8 @@ pub struct Steward {
     /// Where each caravan on the road last was seen to be, and since when:
     /// one that doesn't move for a long while is stuck.
     drift: Vec<(RegimentHandle, Vec2, u32)>,
+    /// The works it puts up against its enemies.
+    engineer: engineer::Engineer,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -278,6 +282,7 @@ impl Steward {
         if !soldiers_first {
             self.train_army(s, clicks, &look);
         }
+        self.fortify(s, clicks, &look, rally);
         if let Some(rally) = rally {
             self.rally(s, clicks, &look, rally);
         }

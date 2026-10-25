@@ -2734,6 +2734,11 @@ impl World {
             c.economy.set_season(season.grub_percent());
         }
         let frozen = season == sky::Season::Winter && self.terrain.rise() == 0;
+        if frozen != self.terrain.frozen() {
+            // Routes cost the frozen fords as open ground till the thaw.
+            let fords = self.nav.ford_tiles();
+            self.nav.set_frozen_all(&fords, frozen, &self.regiments);
+        }
         self.terrain.set_frozen(frozen);
     }
 

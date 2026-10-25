@@ -28,6 +28,8 @@ pub struct Sighted {
     pub handle: StructureHandle,
     pub at: Vec2,
     pub role: Role,
+    /// A gate in a wall (see `gc_sim::gates`).
+    pub gate: bool,
     pub owner: u8,
     /// A finished tower's shooting (towers fire, docs/26-fortifications.md).
     pub attack: Option<TowerAttack>,
@@ -65,6 +67,7 @@ pub fn enemy_buildings(s: &Sense) -> Vec<Sighted> {
                 handle: v.handle,
                 at: v2(v.centre()),
                 role: b.role,
+                gate: b.flags & gc_sim::structures::GATE != 0,
                 owner: v.owner,
                 // Fog shortens a tower's reach as it does a bow's.
                 attack: b.attack.filter(|_| v.finished()).map(|mut a| {

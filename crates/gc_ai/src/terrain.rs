@@ -7,7 +7,7 @@
 //! of those (flank anchors, high ground, fords) is worked out in
 //! [`crate::ground`]; where to hide, in the Captain's ambush plans.
 
-use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE};
+use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE, FORD, OPEN};
 use gc_sim::{Cover, Growth};
 use glam::Vec2;
 
@@ -47,6 +47,9 @@ pub struct Terrain {
     /// read the soft tiles (`gc_sim::Terrain::soaked`, `rubble_moves`);
     /// `None` before the first look.
     soaked: Option<(u32, u32)>,
+    /// The water is frozen over (`gc_sim::Terrain::frozen`): fords and
+    /// shallows are dry ground till the thaw; deep water stays blocked.
+    frozen: bool,
 }
 
 /// What changes which tiles are soft: the rain's soaking and rubble.
@@ -70,6 +73,7 @@ impl Terrain {
             seen: 0,
             soft: Vec::new(),
             soaked: None,
+            frozen: false,
         }
     }
 
@@ -92,6 +96,7 @@ impl Terrain {
             seen: 0,
             soft: Vec::new(),
             soaked: None,
+            frozen: false,
         };
         t.measure_clearance();
         t
@@ -158,6 +163,7 @@ impl Terrain {
     /// be walked again.
     /// The soft tiles are read again when rain soaks or dries any.
     pub fn follow(&mut self, ground: &gc_sim::Terrain) {
+        self.frozen = ground.frozen();
         if self.soaked != Some(soft_stamp(ground)) {
             self.soaked = Some(soft_stamp(ground));
             self.read_soft(ground);
@@ -190,6 +196,7 @@ impl Terrain {
     pub fn stale(&self, ground: &gc_sim::Terrain) -> bool {
         (!self.growth.is_empty() && self.seen != ground.changes())
             || self.soaked != Some(soft_stamp(ground))
+            || self.frozen != ground.frozen()
     }
 
     /// Read which tiles are soft from the simulation's ground.
@@ -304,9 +311,12 @@ impl Terrain {
         !self.inside(p, 0.0) || self.cell(p).is_some_and(|c| self.cost[c] == BLOCKED)
     }
 
-    /// Whether `p` is under water, deep or not.
+    /// Whether `p` is under water, deep or not; frozen over, only deep
+    /// water counts (the ice on the fords is walked as dry ground).
     pub fn water(&self, p: Vec2) -> bool {
-        !self.height.is_empty() && self.height(p) < self.water_level
+        !self.height.is_empty()
+            && self.height(p) < self.water_level
+            && !(self.frozen && !self.blocked(p))
     }
 
     /// Whether `p` is soft underfoot: bog, or mud the rain has soaked (slow
@@ -339,6 +349,64 @@ impl Terrain {
         Some((y * self.side + x) as usize)
     }
 
+    /// Whether the open ground nearest `a` and that nearest `b` (each
+    /// within a few tiles) join by land, the ground's own way (buildings
+    /// aside): a walk from one to the other needs no bridge. True on an
+    /// open plane.
+    pub fn joined(&self, a: Vec2, b: Vec2) -> bool {
+        if self.side == 0 {
+            return true;
+        }
+        let Some(start) = self.open_near(a) else {
+            return false;
+        };
+        let Some(goal) = self.open_near(b) else {
+            return false;
+        };
+        let side = self.side as usize;
+        let mut seen = vec![false; self.cost.len()];
+        let mut todo = vec![start];
+        seen[start] = true;
+        while let Some(c) = todo.pop() {
+            if c == goal {
+                return true;
+            }
+            let (x, y) = (c % side, c / side);
+            let next = [
+                (x > 0).then(|| c - 1),
+                (x + 1 < side).then(|| c + 1),
+                (y > 0).then(|| c - side),
+                (y + 1 < side).then(|| c + side),
+            ];
+            for n in next.into_iter().flatten() {
+                if !seen[n] && self.cost[n] != BLOCKED {
+                    seen[n] = true;
+                    todo.push(n);
+                }
+            }
+        }
+        false
+    }
+
+    /// The open cell nearest `p` within 4 tiles, if any (any cell on an
+    /// open plane).
+    fn open_near(&self, p: Vec2) -> Option<usize> {
+        let c = self.cell(p)?;
+        if self.cost[c] != BLOCKED {
+            return Some(c);
+        }
+        let side = self.side;
+        let (x, y) = (c as i32 % side, c as i32 / side);
+        let reach = 4 * CELLS_PER_TILE;
+        (1..=reach).find_map(|r| {
+            (-r..=r)
+                .flat_map(|d| [(x + d, y - r), (x + d, y + r), (x - r, y + d), (x + r, y + d)])
+                .filter(|&(cx, cy)| cx >= 0 && cy >= 0 && cx < side && cy < side)
+                .map(|(cx, cy)| (cy * side + cx) as usize)
+                .find(|&n| self.cost[n] != BLOCKED)
+        })
+    }
+
     /// Whether a regiment's centre can stand at `p`.
     pub fn walkable(&self, p: Vec2) -> bool {
         if !self.inside(p, 0.0) {
@@ -349,7 +417,10 @@ impl Terrain {
 
     /// Ground cost at `p`: 1 open, higher slow, 0 blocked.
     pub fn cost(&self, p: Vec2) -> u8 {
-        self.cell(p).map_or(1, |c| self.cost[c])
+        match self.cell(p).map_or(OPEN, |c| self.cost[c]) {
+            FORD if self.frozen => OPEN,
+            c => c,
+        }
     }
 
     /// Whether `p` is on the map with `margin` tiles to spare.

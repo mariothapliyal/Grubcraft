@@ -60,6 +60,9 @@ pub struct Sense<'a> {
     pub focus: Option<u8>,
     /// When its Sovereign's next timing push sets out.
     pub push: Option<u32>,
+    /// Its personality's caution, 0 to 1: how early and how much it
+    /// fortifies.
+    pub caution: f32,
 }
 
 impl Sense<'_> {
@@ -172,6 +175,7 @@ impl Realm {
             plan: self.plan.opening(self.opening_at(captain.view.tick)),
             focus: None,
             push: None,
+            caution: captain.persona.caution(),
         };
         // A level that adapts reads its enemies' early builds and answers
         // the most pressing.
