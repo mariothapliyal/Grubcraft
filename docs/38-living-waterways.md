@@ -82,6 +82,16 @@ Built 2026-10-25. It is simpler than the plan in two ways. It needs no new map l
 - **Seeing it.** `Event::Shallows { open }` puts up a message ("Low water: the shallows at the rivers' edges can be waded", and "the summer fords are deep again"). The top bar's chip says "Low water: summer fords". The drawn water drops with the line. `World::flood().shallows()` and `exposed()` let the ground thread draw exposed mud banks.
 - **Shared state.** Low water, whether the summer fords are open, and the snowpack are hashed with the ground, but only while any is non-zero. So matches without seasons hash exactly as before, and no golden changes. `SIM_VERSION` 53, because a Conquest match with seasons now plays differently.
 
+## Built: stage 2, currents
+
+Built 2026-10-25.
+
+- **The flow layer.** Grown maps (docs/27) lay a current on every river tile as they lay the river: the way the nearest point of the river's line runs (lines run from source to mouth), in eight ways, and a speed from the river's width there: under 3 tiles is fast, under 6 steady, wider slow. Lakes, ponds and land are still. The turned half of the map runs the turned way (`Seam::select_turned`). It is one `gc_sim::Flow` byte a tile in `Map::flow`, handed to the simulation as `Ground::flow`, kept in replays from format 46, and part of the map's hash. Maps that weren't grown, and older replays, have still water.
+- **Drift.** A regiment marching through running water is carried down a little each tick (`Terrain::current`), and steers back onto its way, so it comes out downstream of a straight line: `DRIFT_PERCENT` 10, 25 and 40 hundredths of a tile a second for slow, steady and fast water, doubled while the rivers are up. The push goes through the same blocked-cell check as a step (`Nav::slide`), so it never puts anyone in deep water.
+- **Up and downstream.** Wading along a river is `CURRENT_PACE_PERCENT` (8) slower against the current for each step of speed and as much faster with it, so a quarter slower up a fast river (`Terrain::going`). Across the current it is as before.
+- **Changed from the plan.** A regiment standing still in a river holds its footing and is not carried, so a ford can still be held. With no drift for idle regiments there is no creep to cap, and no new state to hash. Troops swept in a shut ford still struggle to the nearest bank as before, not downstream. No new golden: the goldens' maps aren't grown, so they keep still water and stay put. The drift is whole-number maths like the rest of the simulation. The water is not yet drawn moving; that is a small piece for the lighting thread.
+- `SIM_VERSION` 54 (grown maps play differently), replay `FORMAT` 46.
+
 ## Stages (each its own pull request)
 
 1. **Seasonal water.** Signed level (hashed exactly as `rise` is today while the level is at or above the line, so seasons-off matches hash the same), the map's depth layer for summer fords (replay format bump), the spring melt from a snowpack, summer low water with summer fords (`Change::Exposed`), messages and the top bar. The simulation only. Seasons-on matches only, so no golden moves. `SIM_VERSION` bump. A new golden: a Conquest year on the river map.
