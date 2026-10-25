@@ -59,7 +59,8 @@ struct Group {
     /// the nearest the river's end (the last).
     first: u16,
     last: u16,
-    /// The ford tiles, as `(y, x)`, sorted.
+    /// The ford tiles, and the summer fords on the river (which the
+    /// wave makes deep again), as `(y, x)`, sorted.
     fords: Vec<(i32, i32)>,
     /// They as runs along each row (`[x, y, w, 1]`).
     runs: Vec<[i32; 4]>,
@@ -76,18 +77,6 @@ pub struct Wave {
     warned: bool,
     /// Whether the river's fords are shut by it.
     shut: bool,
-}
-
-impl Wave {
-    /// Whether it has shut its river's fords.
-    pub fn shut(self) -> bool {
-        self.shut
-    }
-
-    /// Whether the warning has been given.
-    pub fn warned(self) -> bool {
-        self.warned
-    }
 }
 
 /// Where a flash flood is, as told (see [`crate::events::Event::FlashFlood`]).
@@ -128,8 +117,15 @@ fn step_of(flow: u8) -> Option<(i32, i32)> {
 
 impl Flash {
     /// The rivers of `terrain`'s map, `map_tiles` a side, and which of
-    /// the `fords` (`(y, x)` tiles) lie on each.
-    pub(crate) fn new(terrain: &Terrain, fords: &[(i32, i32)], map_tiles: u32, seed: u64) -> Flash {
+    /// the `fords` and summer fords (`shallows`), as `(y, x)` tiles, lie
+    /// on each. Only a river with fords can be flooded.
+    pub(crate) fn new(
+        terrain: &Terrain,
+        fords: &[(i32, i32)],
+        shallows: &[(i32, i32)],
+        map_tiles: u32,
+        seed: u64,
+    ) -> Flash {
         let flow = terrain.flow_layer();
         let n = map_tiles as i32;
         if flow.is_empty() || n == 0 {
@@ -218,6 +214,14 @@ impl Flash {
                 }),
             }
         }
+        for &(y, x) in shallows {
+            let Some(i) = at(x, y).filter(|&i| river[i] != 0) else {
+                continue;
+            };
+            if let Some(g) = groups.iter_mut().find(|g| g.river == river[i]) {
+                g.fords.push((y, x));
+            }
+        }
         // The top of each river.
         let mut tops = alloc::vec![0u16; usize::from(rivers) + 1];
         for i in 0..tiles {
@@ -276,14 +280,16 @@ impl Flash {
         })
     }
 
-    /// Whether a wave has shut the ford tile `(x, y)`.
+    /// Whether a wave has shut the ford tile `(x, y)` and its front has
+    /// reached it, so troops there are swept.
     pub fn shuts(&self, x: i32, y: i32) -> bool {
-        self.wave.is_some_and(|w| {
-            w.shut
-                && (self.groups[usize::from(w.group)].fords)
-                    .binary_search(&(y, x))
-                    .is_ok()
-        })
+        let Some(w) = self.wave.filter(|w| w.shut) else {
+            return false;
+        };
+        let g = &self.groups[usize::from(w.group)];
+        let reached = crate::terrain::index_in(self.side, x, y)
+            .is_some_and(|i| w.ticks >= front_ticks(g.top, self.reach[i]));
+        reached && g.fords.binary_search(&(y, x)).is_ok()
     }
 
     /// The wave's river's fords as runs, to shut or open on the walkable
@@ -349,9 +355,10 @@ impl Flash {
             wave.shut = false;
             turn.fords = Some(false);
         }
+        // Over after the fords open (the water at the river's end falls
+        // last), so their runs can still be read as they open.
         let done = reached(0) + (HIGH_SECONDS + FALL_SECONDS) * TICKS_PER_SECOND;
-        // Kept a tick longer when the fords open, so their runs can be read.
-        self.wave = (wave.ticks < done || wave.shut || turn.fords.is_some()).then_some(wave);
+        self.wave = (wave.ticks < done).then_some(wave);
         turn
     }
 
@@ -379,7 +386,10 @@ impl WaveWater {
     /// How far it raises the water on tile `(x, y)`.
     pub(crate) fn rise_at(&self, x: i32, y: i32) -> u16 {
         match crate::terrain::index_in(self.side, x, y) {
-            Some(i) if self.river[i] == self.id => rise_after(self.ticks, self.top, self.reach[i]),
+            // Above where the wave set off, the river stays as it was.
+            Some(i) if self.river[i] == self.id && self.reach[i] <= self.top => {
+                rise_after(self.ticks, self.top, self.reach[i])
+            }
             _ => 0,
         }
     }
@@ -413,4 +423,36 @@ fn rise_after(ticks: u32, top: u16, reach: u16) -> u16 {
 /// A roll from the match seed and a tick: no random stream moves.
 fn roll(seed: u64, tick: u32) -> u32 {
     crate::fire::splitmix(seed ^ u64::from(tick).rotate_left(29) ^ 0xf1a5_4f10_0d00_0000) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_water_rises_only_below_where_the_wave_set_off() {
+        // One row of river, reach 0 to 9, and a wave set off at reach 5.
+        let water = WaveWater {
+            side: 10,
+            river: alloc::vec![1u16; 100].into(),
+            reach: (0..100u16).map(|i| i % 10).collect::<Vec<_>>().into(),
+            id: 1,
+            top: 5,
+            ticks: 1,
+        };
+        assert_eq!(water.rise_at(5, 0), FLOOD_RISE);
+        assert_eq!(water.rise_at(6, 0), 0);
+        assert_eq!(water.rise_at(9, 0), 0);
+        // Not yet reached further down.
+        assert_eq!(water.rise_at(0, 0), 0);
+    }
+
+    #[test]
+    fn the_water_falls_after_it_has_been_high() {
+        let high = HIGH_SECONDS * TICKS_PER_SECOND;
+        let fall = FALL_SECONDS * TICKS_PER_SECOND;
+        assert_eq!(rise_after(0, 10, 10), FLOOD_RISE);
+        assert_eq!(rise_after(high + fall / 2, 10, 10), FLOOD_RISE / 2);
+        assert_eq!(rise_after(high + fall, 10, 10), 0);
+    }
 }

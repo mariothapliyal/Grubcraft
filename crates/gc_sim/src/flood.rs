@@ -218,7 +218,7 @@ impl Flood {
             }
         }
         let shallows = crossings(&shallows, tiles, |x, y| nav.walkable_ground(x, y));
-        let flash = Flash::new(terrain, &fords, map_tiles, seed);
+        let flash = Flash::new(terrain, &fords, &shallows, map_tiles, seed);
         Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),

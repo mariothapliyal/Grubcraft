@@ -1569,17 +1569,20 @@ impl World {
         }
         self.events.clear();
         // The sky moves on even while the armies deploy.
-        let begun = self.sky.begun();
+        // The spells under way at the start count as begun on the first tick.
+        let begun = if self.tick == 0 { 0 } else { self.sky.begun() };
         if self.sky.tick(self.tick) {
             self.set_air();
         }
-        self.flash(begun);
         // The ground's wetness moves once a second.
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.terrain.soak(self.sky.wet());
             self.rivers();
             self.seasons();
         }
+        // After the seasons, so a storm on the first tick of spring finds
+        // the water thawed.
+        self.flash(begun);
         // Time stands still while the armies deploy.
         if self.deploying() {
             self.judge.deploying();
@@ -2694,11 +2697,12 @@ impl World {
         let turn = (self.flood).second(&mut self.terrain, wet, at, snow, !self.scratch);
         if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
-            // A flash flood's river stays shut when the rain's flood goes.
-            if !closed && self.flood.flash.wave().is_some_and(flash::Wave::shut) {
-                (self.nav).set_flooded_all(self.flood.flash.runs(), true, &self.regiments);
-            }
             self.events.flooded(closed);
+            // A flash flood's river stays shut when the rain's flood goes.
+            if !closed && self.flood.flash.shut() {
+                (self.nav).set_flooded_all(self.flood.flash.runs(), true, &self.regiments);
+                self.events.flash(flash::Stage::Here);
+            }
         }
         if let Some(open) = turn.shallows {
             let runs = self.flood.shallow_runs();
@@ -2710,15 +2714,14 @@ impl World {
     /// One tick of the flash floods (see [`flash`]): a storm among the
     /// spells begun since `begun` may set one off, and a running wave
     /// raises the water down its river and shuts its fords once. A
-    /// rehearsal leaves the water as it found it.
+    /// rehearsal sets none off, but a running one runs on in it.
     fn flash(&mut self, begun: usize) {
-        if self.scratch {
-            return;
-        }
-        let season = self.sky.season(self.tick).map(|s| s.season);
-        let frozen = self.terrain.frozen();
-        for spell in self.sky.spells_since(begun) {
-            self.flood.flash.storm(spell, season, frozen);
+        if !self.scratch {
+            let season = self.sky.season(self.tick).map(|s| s.season);
+            let frozen = self.terrain.frozen();
+            for spell in self.sky.spells_since(begun) {
+                self.flood.flash.storm(spell, season, frozen);
+            }
         }
         if self.flood.flash.wave().is_none() {
             return;
@@ -2728,11 +2731,11 @@ impl World {
         if turn.coming {
             self.events.flash(flash::Stage::Coming);
         }
-        if let Some(shut) = turn.fords {
-            // A rain flood that has shut every ford keeps them shut.
-            if !self.flood.closed() {
-                (self.nav).set_flooded_all(self.flood.flash.runs(), shut, &self.regiments);
-            }
+        // A rain flood that has shut every ford keeps them shut, and tells
+        // when they open. A rehearsal never changes the walkable grid it
+        // shares.
+        if let Some(shut) = turn.fords.filter(|_| !self.flood.closed() && !self.scratch) {
+            (self.nav).set_flooded_all(self.flood.flash.runs(), shut, &self.regiments);
             self.events.flash(if shut {
                 flash::Stage::Here
             } else {
