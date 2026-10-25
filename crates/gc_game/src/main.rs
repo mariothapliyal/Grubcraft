@@ -4057,6 +4057,14 @@ impl Running {
                 |tile| reveal || fog.sees_tile(tile),
                 &mut self.effects,
             );
+            let hm = &self.heightmap;
+            self.ambient.caravans.dust(
+                dt.as_secs_f32() * fx_speed,
+                look.wet.max(look.snow),
+                |p| hm.drawn_height(p.x, p.y),
+                |tile| reveal || fog.sees_tile(tile),
+                &mut self.effects,
+            );
         }
         // Insects follow the effects clock, which stops while paused, so they
         // hang where they are; behind the menu, in the unit viewer and in
@@ -7169,14 +7177,29 @@ impl Running {
                 let Some(pose) = art.clips.pose(model, action, (time + c.phase) * rate) else {
                     continue;
                 };
+                // The cart (the ox too) is pitched to the slope it is on; the
+                // people keep upright.
+                let mut flags = models::pose_flags(pose, 0, false);
+                if c.piece == Piece::Cart {
+                    let tilt = ambient::caravans::tilt_of(|p| ground(p.x, p.y), c.pos, c.facing);
+                    flags[3] = gc_render::tilt_byte(tilt);
+                }
                 art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: c.pos.to_array(),
                     facing: c.facing.to_array(),
                     frames: pose.rows,
-                    flags: models::pose_flags(pose, 0, false),
+                    flags,
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
                     lift: 0.0,
                     scale: 1.0,
+                    // A tilted model keeps its feet as posed: the pitch is
+                    // the ground's slope already, so foot IK would correct
+                    // the legs twice.
+                    feet: if flags[3] == 0 {
+                        0
+                    } else {
+                        gc_render::FEET_AS_POSED
+                    },
                     ..Default::default()
                 });
             }

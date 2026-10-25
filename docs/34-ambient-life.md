@@ -253,7 +253,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Crows perched on standards or corpses, and a crow that takes a bite.
+- Crows perched on corpses, and a crow that takes a bite (one now perches on a fallen standard: stage 9).
 
 ## Stage 6b as built: caravans between hamlets
 
@@ -271,12 +271,12 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 - `gc_game::ambient::Caravans::new` (called with the hamlets at the start of a match) joins each hamlet to its nearest two others within 24 to 180 tiles, stopping each end 3.2 tiles beyond the hamlet's models (`Hamlets::reach`; the cart's middle, so the ox's nose and the turning circle stay outside) and checking the straight line with `hamlets::route_clear` (dry, no woods, at most 0.12 of climb every 0.75 tiles). The load of each route is decided from a hash of its index and length, so every machine, and a replay, draws the same ones.
 - Every caravan is kept going all the time, wherever the camera is (a scalar along its route; a hundred of them cost nothing), so one seen later is where it should be, while the match is showing (they stand still behind the menu, in Commander View and in the unit viewer). Only those within the camera's reach are handed to the renderer. Armies and fights come from the same `Eyes` the villagers use.
 - New model `Oxcart` (`design/creatures/source/oxcart.py`, about 5,600 triangles at full detail, 18 bones; creatures.pak is now about 9 MB): the ox's rig is the dog's gait scaled up, the cart rocks a little on its bone and each wheel is rigid on its own bone. It has only Idle and Walk clips, both two seconds long and exported slid to zero (`crit.py export(slide=True)`) so the baker's 12 frames a second land on whole keys. The Walk clip is two steps of the ox and exactly one turn of the wheels, and a wheel of radius 0.38 tiles rolls 2.39 tiles in a turn, which at `CART_PACE` (1.19 tiles a second, derived from the radius in `caravans.rs`) is two seconds, so the wheels roll without slipping (a test holds the two numbers together). The other creatures' Walk clips are 0.5 s over 6 baked frames (their keys sit a 24th of a second after zero, so the baker drops key 2 and the first step is short); the cart avoids that. The drover and porters are the existing `FolkFarmer` and `FolkPorter` with their Walk clip played at the rate that matches the cart's pace; a porter's Walk is already the laden walk (hands on his straps), so no new carry clip was needed.
-- Drawn as soldier instances in `push_building_models` beside the villagers. A cart does not tilt on slopes (the instance has no pitch), which the climb limit keeps small: the ox's head is at most about half a tile off the ground on the steepest way allowed.
+- Drawn as soldier instances beside the villagers (in `push_creatures` since stage 7). (Stage 9 now pitches the cart to the slope; until then the instance had no pitch.)
 - `--hamlet-demo` puts the first cart (or the first porters, where there is none) on its route and the camera ahead of it so it comes by.
 
 ### Not yet
 
-- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, dust from the wheels, carts that pitch on slopes, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (the Brood's, the Choir's), and crows perched on standards or corpses.
+- Carts and porters on the road from a faction base's seep to its granary (stage 3), a worn road where they go, a cart's wheels easing to rest when it stops (they snap to the Idle pose, at most 22 degrees), other lands' fauna (the Brood's, the Choir's), and crows perched on corpses.
 
 ## Stage 7 as built: butterflies, moths and dragonflies
 
@@ -296,7 +296,7 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 ### Not yet
 
-- Ripples under the dragonflies, fish that are seen (the rises are only their rings), insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers, other lands' fauna (the Brood's, the Choir's), and crows on standards or corpses.
+- Ripples under the dragonflies, fish that are seen (the rises are only their rings), insects that shy from armies and soldiers (they ignore everyone), butterflies on particular flowers, other lands' fauna (the Brood's, the Choir's), and crows on corpses.
 
 ## Stage 8 as built: fish rises
 
@@ -310,3 +310,20 @@ Clearing looks like the faction that does it (`ambient::felling::Style`, from th
 
 - `Touches::rises` (in `ambient/touches.rs`, called from the same block of `main.rs` as `Touches::frame`) tries random points round the camera, `RISE_RATE` (0.003) a second for each tile of reach, doubled at dusk; one that falls on water deeper than `RISE_DEPTH` and in view calls `Field::rise`, which makes the particles (`Effects::rise`: two `Ring` particles with different reach and life, and a little `spray`). Like the other touches it keeps no state. The rings are not staggered in time (the particle kit has no delay), so they open together at different speeds.
 - Tests: rises come only on deep water, never out of view or at zero density, nor over dry land; `Effects::rise` makes two rings on the surface and beads.
+
+## Stage 9 as built: crows on standards, wheel dust, carts on slopes
+
+*2026-10-25. Game and renderer; presentation only, nothing in the simulation, nothing hashed, saved or sent.*
+
+### What a player sees
+
+- **A crow on every fallen standard.** The first crow of the flock that comes to a wiped-out regiment lands on the splintered stub of the standard the regiment left (not on the ground with the rest), sits there looking about, takes off with the flock when soldiers come near and comes back to the stub when they have gone. The standard stands for four minutes and the crows are gone in about three, so it is there for them; if it is dropped on a very crowded field the crow comes down to the ground.
+- **Dust off the cart's wheels.** A cart on the way kicks a small puff behind each wheel in dry weather. A standing cart, one turning about at the end of its route, one on mud or snow (`Look::wet` or `Look::snow` above 0.35) or one the viewer cannot see raises none.
+- **Carts that pitch.** The cart and its ox tilt with the slope along their way: the ox's nose rises on a climb and drops going down, instead of the whole cart staying level while the ground slopes under it. The people walking with it stay upright. The climb limit keeps routes under about nine degrees.
+
+### How it works
+
+- Crows: `aftermath::bird` takes a `perch` flag (the flock's centre still has a standard standing, `Aftermath::perch_standing`); crow 0 always has the standard's position as its spot, and `PERCH_HEIGHT` (0.9, the pole's height) as its height when it is not aloft and the standard stands, blending to the circle's height as it rises. If the standard is dropped (the 96-standard limit on a very big battle) the crow comes down to the ground at that spot. The box fallback is made from the same `bird`, so it perches too.
+- Dust: `Caravans::dust` (called from the touches block of `main.rs`) puts `Field::footstep` at each wheel's contact point (0.62 behind and 0.8 each side of the cart's middle, `oxcart.py`'s hubs) for every cart the viewer sees that is rolling (on the way, not turning about: `Seen::rolling`), at a soldier's dust pace.
+- Pitch: **the renderer's soldier instance has a tilt.** The last byte of `SoldierInstance::flags` (it was always 0) is a signed byte, 127 meaning `MAX_TILT` (0.5 rad, about 29 degrees), set by `gc_render::tilt_byte`. `cs_skin` in `world.wgsl` turns the posed vertex about the model's origin in the vertical plane along its facing (forward end up when positive), and the normal and tangent with it, so lighting and the shadow map follow. A model with 0 there (everything else) takes the same path as before. The game's `caravans::tilt_of` is the slope of the drawn ground along the cart over 2.8 tiles (1.4 either side); the model is pitched about its origin, so on an even slope every contact point (wheels and hooves) stays on the ground, and over a crest or a hollow the error is small. A tilted instance also sets `feet` to `FEET_AS_POSED`, since foot IK would otherwise correct the legs a second time.
+- Tests: a crow sits on the stub at the standard's place and height, even on a hill, flies with the flock and returns, and has no stub once the standard is gone; the wheel points are behind and beside the cart; dust only from a cart on the way (not one standing or turning about) in the dry and in sight; the tilt is 0 level, positive up a hill, negative down it and 0 across it; the tilt byte is signed and kept to the most.

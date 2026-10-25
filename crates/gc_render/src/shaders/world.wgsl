@@ -1542,6 +1542,22 @@ fn model_dir_to_world(m: mat3x4<f32>, d: vec3<f32>, facing: vec2<f32>, fallen: b
 
 // Words in a `SoldierInstance`.
 const INSTANCE_WORDS: u32 = 16u;
+// The most a model can be pitched (`gc_render::MAX_TILT`).
+const MAX_TILT: f32 = 0.5;
+
+// Turn `v`, a model-space vector with the facing as z, up as y, forward end
+// up by the angle whose cosine and sine are `c` and `s`.
+fn pitched(v: vec3<f32>, c: f32, s: f32) -> vec3<f32> {
+    return vec3<f32>(v.x, v.y * c + v.z * s, v.z * c - v.y * s);
+}
+
+// The same for a world-space vector on a soldier facing `facing`.
+fn pitched_world(v: vec3<f32>, facing: vec2<f32>, c: f32, s: f32) -> vec3<f32> {
+    let f = dot(v.xz, facing);
+    let along = f * c - v.y * s;
+    let xz = v.xz + facing * (along - f);
+    return vec3<f32>(xz.x, v.y * c + f * s, xz.y);
+}
 // Layers a soldier may play on top of its base move (`PoseLayer`).
 const POSE_LAYERS: u32 = 3u;
 // Joints a skeleton may have, plus the still bone: one posing thread each.
@@ -2079,16 +2095,26 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         // No death clip: lay the soldier on his back.
         local = vec3<f32>(local.x, -local.z + 0.12 * scale, local.y);
     }
+    // A model pitched on a slope (a cart): the last flags byte, signed.
+    let tilt = f32(bitcast<i32>(flags & 0xff000000u) >> 24u) / 127.0 * MAX_TILT;
+    let tc = cos(tilt);
+    let ts = sin(tilt);
+    if tilt != 0.0 {
+        local = pitched(local, tc, ts);
+    }
     let left = vec2<f32>(facing.y, -facing.x);
     let xz = pos + left * local.x + facing * local.z;
     let ground = ground_at(pos);
     let world = vec3<f32>(xz.x, ground + lift + local.y, xz.y);
-    let normal = normalize(model_dir_to_world(
+    var normal = normalize(model_dir_to_world(
         m,
         vec3<f32>(snorm8(sv.normal, 0u), snorm8(sv.normal, 1u), snorm8(sv.normal, 2u)),
         facing,
         fallen,
     ) + vec3<f32>(0.0, 1e-4, 0.0));
+    if tilt != 0.0 {
+        normal = normalize(pitched_world(normal, facing, tc, ts));
+    }
     // Textured models only: the pixel shader renormalises it anyway.
     var tangent = model_dir_to_world(
         m,
@@ -2096,6 +2122,9 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3<u32>) {
         facing,
         fallen,
     );
+    if tilt != 0.0 {
+        tangent = pitched_world(tangent, facing, tc, ts);
+    }
     tangent = tangent / max(length(tangent), 1e-6);
 
     out_pos[n * 3u] = world.x;

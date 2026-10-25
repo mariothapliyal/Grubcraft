@@ -166,8 +166,9 @@ pub struct SoldierInstance {
     /// texture rows, or joint pose rows for a model fitted to a skeleton
     /// (as its clips name them).
     pub frames: [u16; 2],
-    /// Blend toward the second frame, selection highlight, and whether the
-    /// soldier lies fallen (for models without a death clip), as 0 to 255.
+    /// Blend toward the second frame, selection highlight, whether the
+    /// soldier lies fallen (for models without a death clip), as 0 to 255,
+    /// and a tilt (see [`tilt_byte`]: a signed byte, 0 for upright).
     pub flags: [u8; 4],
     /// Team colour (rgb), and a per-soldier tone in the last byte: 128 leaves
     /// the model as painted, lower is darker and cooler, higher is lighter and
@@ -190,6 +191,19 @@ pub struct SoldierInstance {
     /// [`FEET_AS_POSED`]: at 0 a fitted model's legs bend to stand on
     /// uneven ground; the game fades it up as a soldier falls.
     pub feet: u8,
+}
+
+/// The most a model can be pitched, in radians (`MAX_TILT` in world.wgsl).
+pub const MAX_TILT: f32 = 0.5;
+
+/// The last byte of [`SoldierInstance::flags`] for a model pitched `radians`
+/// about its origin, forward end up when positive (a cart on a slope, kept
+/// to [`MAX_TILT`] either way): a signed byte, 127 for [`MAX_TILT`]. A
+/// tilted model should also set [`SoldierInstance::feet`] to
+/// [`FEET_AS_POSED`]: foot IK works out each foot's rise from the unpitched
+/// pose, and the pitch is applied on top of it.
+pub fn tilt_byte(radians: f32) -> u8 {
+    ((radians / MAX_TILT).clamp(-1.0, 1.0) * 127.0).round() as i8 as u8
 }
 
 /// [`SoldierInstance::feet`]: no foot IK at all (the fallen and the dead).
@@ -1437,6 +1451,17 @@ fn upload_materials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tilt_is_a_signed_byte_in_the_flags_up_to_the_most() {
+        assert_eq!(tilt_byte(0.0), 0);
+        assert_eq!(tilt_byte(MAX_TILT), 127);
+        assert_eq!(tilt_byte(-MAX_TILT) as i8, -127);
+        assert_eq!(tilt_byte(5.0), 127, "kept to the most");
+        assert_eq!(tilt_byte(-5.0) as i8, -127);
+        let half = tilt_byte(MAX_TILT / 2.0) as i8;
+        assert!((63..=64).contains(&half), "{half}");
+    }
 
     #[test]
     fn the_rig_names_the_legs_it_can_bend_and_each_joint_takes_its_fix() {
