@@ -2720,7 +2720,7 @@ impl World {
             }
         }
         self.stranded = stuck;
-        self.to_the_bank();
+        self.send_to_bank();
     }
 
     /// One second of the regiments caught in shut fords (see
@@ -2732,12 +2732,12 @@ impl World {
         self.flood
             .sweep(&mut self.regiments, &self.terrain, &mut stuck);
         self.stranded = stuck;
-        self.to_the_bank();
+        self.send_to_bank();
     }
 
     /// The regiments in `stranded` go to the nearest bank where their
     /// block fits, as a player's move order would, leaving off any work.
-    fn to_the_bank(&mut self) {
+    fn send_to_bank(&mut self) {
         let stuck = core::mem::take(&mut self.stranded);
         for &i in &stuck {
             let (h, here) = (self.regiments.handle(i), self.regiments.position[i]);
