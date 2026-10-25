@@ -2112,8 +2112,8 @@ mod tests {
         old.extend_from_slice(&14u16.to_le_bytes());
         old.extend_from_slice(&(info.len() as u32).to_le_bytes());
         old.extend_from_slice(&info);
-        // The body as it was then: no growth or footing layer, generals
-        // flag or sky after the map.
+        // The body as it was then: no growth, footing or flow layer,
+        // generals flag or sky after the map.
         let body = lz4_flex::decompress_size_prepended(&new[10 + len..]).unwrap();
         let mut map = Writer::default();
         replay.write_units(&mut map);
@@ -2124,8 +2124,8 @@ mod tests {
         replay.write_sky(&mut layers);
         let (at, layers) = (map.buf.len(), layers.buf.len());
         let mut old_body = body[..at].to_vec();
-        assert_eq!(body[at..at + 2], [0, 0], "no growth or footing");
-        assert_eq!(body[at + 2], 1, "generals on");
+        assert_eq!(body[at..at + 3], [0, 0, 0], "no growth, footing or flow");
+        assert_eq!(body[at + 3], 1, "generals on");
         old_body.extend_from_slice(&body[at + layers..]);
         old.extend_from_slice(&lz4_flex::compress_prepend_size(&old_body));
         assert_eq!(Replay::decode(&old).unwrap(), replay);

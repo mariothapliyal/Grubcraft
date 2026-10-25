@@ -1141,13 +1141,7 @@ impl Regiments {
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
-                // Wading a river, the current carries it down a little as
-                // it goes (it steers back onto its way each tick).
-                let next = if arriving {
-                    point
-                } else {
-                    here + dir * step + terrain.current(here)
-                };
+                let next = if arriving { point } else { here + dir * step };
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
                 // behind it. In the open, blocks still pass through.
@@ -1207,6 +1201,13 @@ impl Regiments {
                     }
                 } else if let Some(next) = nav.slide(self.owner[i], here, next) {
                     self.position[i] = next;
+                    // Wading across a river, the current carries it down a
+                    // little (it steers back onto its way each tick), unless
+                    // that would take it onto blocked ground.
+                    let drift = terrain.drift(next, dir, step);
+                    if drift != FxVec2::ZERO && !nav.blocks(self.owner[i], next, next + drift) {
+                        self.position[i] = next + drift;
+                    }
                 } else {
                     nav.lost(i);
                     continue;

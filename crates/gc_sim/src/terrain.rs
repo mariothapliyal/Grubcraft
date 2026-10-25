@@ -308,8 +308,8 @@ pub struct Terrain {
     /// firm everywhere. The ground as the map made it: soaking is apart.
     footing: Arc<[u8]>,
     footing_tiles: i32,
-    /// One [`Flow`] byte per tile of `footing`'s map, or empty: still
-    /// water everywhere.
+    /// One [`Flow`] byte per tile of the map (`tiles` a side), or empty:
+    /// still water everywhere.
     flow: Arc<[u8]>,
     /// The tiles rain can soak, as (index, how wet the ground must be),
     /// the soonest first; the first `soaked` of them are soft now.
@@ -765,9 +765,14 @@ impl Terrain {
     /// Which way and how fast the water runs at `p`, if it runs there and
     /// `p` is in it (see [`Flow`]).
     pub fn flow(&self, p: FxVec2) -> Option<(Angle, u8)> {
-        let i = index_in(self.tiles, p.x.floor_int(), p.y.floor_int())?;
-        let flow = Flow::of(*self.flow.get(i)?)?;
+        let flow = self.flow_byte(p)?;
         self.wet(p).then_some(flow)
+    }
+
+    /// The [`Flow`] of the tile at `p`, in the water or not.
+    fn flow_byte(&self, p: FxVec2) -> Option<(Angle, u8)> {
+        let i = index_in(self.tiles, p.x.floor_int(), p.y.floor_int())?;
+        Flow::of(*self.flow.get(i)?)
     }
 
     /// How far the current carries a regiment wading at `p` in one tick
@@ -785,11 +790,35 @@ impl Terrain {
         way.to_vec() * per_tick
     }
 
+    /// The part of the [`Terrain::current`] at `p` across `heading` (a
+    /// unit vector) that carries a regiment off its way in a tick of
+    /// `step`: along its way the current changes its pace instead (see
+    /// [`Terrain::going`]). Never more than half the step, so the slowest
+    /// regiment still gets across.
+    pub fn drift(&self, p: FxVec2, heading: FxVec2, step: Fx) -> FxVec2 {
+        let current = self.current(p);
+        if current == FxVec2::ZERO {
+            return current;
+        }
+        let across = current - heading * current.dot(heading);
+        let (size, most) = (
+            across.x.abs() + across.y.abs(),
+            Fx::from_raw(step.raw() / 2),
+        );
+        if size > most && size.raw() > 0 {
+            let scale =
+                Fx::from_raw((i64::from(most.raw()) * 65536 / i64::from(size.raw())) as i32);
+            across * scale
+        } else {
+            across
+        }
+    }
+
     /// Percent of its pace a regiment wading at `p` along `heading` (a
     /// unit vector) keeps against the current, or gains with it: from
     /// [`CURRENT_PACE_PERCENT`] a speed (100 across it or in still water).
     fn current_percent(&self, p: FxVec2, heading: FxVec2) -> i32 {
-        let Some((way, speed)) = self.flow(p) else {
+        let Some((way, speed)) = self.flow_byte(p) else {
             return 100;
         };
         let along = heading.dot(way.to_vec());
@@ -992,11 +1021,8 @@ impl Terrain {
     /// the climb.
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
         let heavy = mass == Mass::Heavy;
-        let wading = if self.wet(p) {
-            WADING_SPEED_PERCENT
-        } else {
-            100
-        };
+        let wet = self.wet(p);
+        let wading = if wet { WADING_SPEED_PERCENT } else { 100 };
         let woods = match self.cover(p) {
             Cover::Wood if heavy => WOODS_HEAVY_SPEED_PERCENT,
             Cover::Wood => WOODS_SPEED_PERCENT,
@@ -1013,7 +1039,11 @@ impl Terrain {
         } else {
             100
         };
-        let current = self.current_percent(p, heading);
+        let current = if wet {
+            self.current_percent(p, heading)
+        } else {
+            100
+        };
         let percents = [wading, woods, soft, climb, stakes, current];
         if percents == [100; 6] {
             return step;

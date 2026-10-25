@@ -223,6 +223,10 @@ pub(super) fn water(h: &mut Grid, seeds: &mut Seeds, dials: &Dials, keep: &[bool
     for i in 0..nn / 2 {
         flow[last - i] = gc_sim::Flow::turned(flow[i]);
     }
+    // The middle tile of an odd map is its own turned copy: still.
+    if nn % 2 == 1 {
+        flow[nn / 2] = 0;
+    }
     for i in 0..nn {
         if !river[i] || lake[i] {
             flow[i] = 0;
