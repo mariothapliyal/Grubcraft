@@ -52,9 +52,9 @@ pub struct Terrain {
     frozen: bool,
     /// The water as the minds last read it (see [`Terrain::read_water`]).
     water: Water,
-    /// The nav's costs as the match began, for the ford tiles the water
-    /// shuts and opens again; empty till it first does.
-    dry: Vec<u8>,
+    /// The tiles the water shuts and opens (fords and summer fords), with
+    /// their cells' costs as the match began; empty till it first does.
+    wet_tiles: Vec<WetTile>,
     /// The ford tiles the water has shut, as (column, row).
     shut: Vec<(i32, i32)>,
 }
@@ -74,7 +74,7 @@ pub struct Water {
 }
 
 impl Water {
-    /// The rivers of `world` now.
+    /// The rivers of `world` now (cheap: read every tick).
     pub fn of(world: &gc_sim::World) -> Water {
         let flood = world.flood();
         Water {
@@ -83,6 +83,24 @@ impl Water {
             wave: flood.flash().threatened().first().copied(),
         }
     }
+}
+
+/// Cells a tile has.
+const TILE_CELLS: usize = (CELLS_PER_TILE * CELLS_PER_TILE) as usize;
+
+/// A tile the water shuts and opens.
+#[derive(Clone, Debug)]
+struct WetTile {
+    /// Row by row.
+    t: usize,
+    /// A ford (some of it walkable as the map began), a summer ford (some
+    /// of it deep), or both.
+    ford: bool,
+    shallow: bool,
+    /// The water is shutting it, or about to.
+    out: bool,
+    /// Its cells' costs as the match began, row by row.
+    base: [u8; TILE_CELLS],
 }
 
 /// What changes which tiles are soft: the rain's soaking and rubble.
@@ -108,7 +126,7 @@ impl Terrain {
             soaked: None,
             frozen: false,
             water: Water::default(),
-            dry: Vec::new(),
+            wet_tiles: Vec::new(),
             shut: Vec::new(),
         }
     }
@@ -134,7 +152,7 @@ impl Terrain {
             soaked: None,
             frozen: false,
             water: Water::default(),
-            dry: Vec::new(),
+            wet_tiles: Vec::new(),
             shut: Vec::new(),
         };
         t.measure_clearance();
@@ -227,56 +245,127 @@ impl Terrain {
             }
             if was == Growth::Thicket as u8 && !self.under.is_empty() {
                 self.restore_tile(t);
-            }
-        }
-    }
-
-    /// Whether the water the minds last read is not `water`.
-    pub fn water_stale(&self, water: Water) -> bool {
-        self.water != water
-    }
-
-    /// Read the rivers (`water`, of `flood`'s fords): fords out of the
-    /// water's reach are blocked, and open summer fords can be waded, as
-    /// the simulation routes. A mind then neither plans to wade nor waits
-    /// for an enemy to wade where the water has shut, or is about to.
-    pub fn read_water(&mut self, water: Water, flood: &gc_sim::flood::Flood) {
-        if water == self.water {
-            return;
-        }
-        self.water = water;
-        if self.side == 0 {
-            return;
-        }
-        if self.dry.is_empty() {
-            self.dry.clone_from(&self.cost);
-        }
-        let wave = flood.flash().threatened();
-        let in_wave = |x: i32, y: i32| wave.binary_search(&(y, x)).is_ok();
-        let n = self.map_tiles as i32;
-        self.shut.clear();
-        for (x, y) in flood.fords() {
-            let t = (y * n + x) as usize;
-            if water.keep_off || in_wave(x, y) {
-                self.set_tile(t, BLOCKED);
-                self.shut.push((x, y));
-            } else {
-                self.dry_tile(t);
-            }
-        }
-        for (x, y) in flood.shallows() {
-            let t = (y * n + x) as usize;
-            let out = water.keep_off || in_wave(x, y);
-            if water.summer && !out {
-                self.set_tile(t, FORD);
-            } else {
-                self.dry_tile(t);
-                if water.summer {
-                    self.shut.push((x, y));
+                if let Some(i) = self.wet_tiles.iter().position(|w| w.t == t) {
+                    self.wet_tile(i);
                 }
             }
         }
-        self.remeasure();
+    }
+
+    /// The rivers as the minds last read them.
+    pub fn seen_water(&self) -> Water {
+        self.water
+    }
+
+    /// Read the rivers of `world`, which are now `water`: fords out of
+    /// the water's reach are blocked, and open summer fords can be waded,
+    /// as the simulation routes. A mind then neither plans to wade nor
+    /// waits for an enemy to wade where the water has shut, or is about to.
+    pub fn read_water(&mut self, world: &gc_sim::World, water: Water) {
+        let flood = world.flood();
+        let fords: Vec<_> = flood.fords().collect();
+        let shallows: Vec<_> = flood.shallows().collect();
+        self.set_water(water, &fords, &shallows, flood.flash().threatened());
+    }
+
+    /// The water now `water`, over the `fords` and summer fords
+    /// (`shallows`), as (column, row), with a flash flood shutting the
+    /// `wave` tiles (as (row, column), sorted).
+    fn set_water(
+        &mut self,
+        water: Water,
+        fords: &[(i32, i32)],
+        shallows: &[(i32, i32)],
+        wave: &[(i32, i32)],
+    ) {
+        let was = core::mem::replace(&mut self.water, water);
+        if was == water || self.side == 0 {
+            return;
+        }
+        let n = self.map_tiles as i32;
+        if self.wet_tiles.is_empty() {
+            self.find_wet_tiles(fords, shallows);
+        }
+        self.shut.clear();
+        for i in 0..self.wet_tiles.len() {
+            let w = &mut self.wet_tiles[i];
+            let (x, y) = (w.t as i32 % n, w.t as i32 / n);
+            w.out = water.keep_off || wave.binary_search(&(y, x)).is_ok();
+            // A summer ford going deep again shuts as surely as a flood.
+            let ends = w.shallow && was.summer && !water.summer;
+            if (w.out && (w.ford || water.summer)) || ends {
+                self.shut.push((x, y));
+            }
+            self.wet_tile(i);
+        }
+    }
+
+    /// The fords and summer fords, with their cells as the match began
+    /// (under any thicket).
+    fn find_wet_tiles(&mut self, fords: &[(i32, i32)], shallows: &[(i32, i32)]) {
+        let n = self.map_tiles as i32;
+        let mut tiles: Vec<(usize, bool)> = fords
+            .iter()
+            .map(|&(x, y)| ((y * n + x) as usize, true))
+            .collect();
+        tiles.extend(shallows.iter().map(|&(x, y)| ((y * n + x) as usize, false)));
+        tiles.sort_unstable();
+        let begun = if self.under.is_empty() {
+            &self.cost
+        } else {
+            &self.under
+        };
+        let mut wet: Vec<WetTile> = Vec::new();
+        for (t, ford) in tiles {
+            if let Some(w) = wet.last_mut().filter(|w| w.t == t) {
+                w.ford |= ford;
+                w.shallow |= !ford;
+                continue;
+            }
+            let ((x, y), side) = (self.tile_cell(t), self.side);
+            let mut base = [0; TILE_CELLS];
+            for (k, b) in base.iter_mut().enumerate() {
+                let (cx, cy) = (x + k as i32 % CELLS_PER_TILE, y + k as i32 / CELLS_PER_TILE);
+                *b = begun[(cy * side + cx) as usize];
+            }
+            wet.push(WetTile {
+                t,
+                ford,
+                shallow: !ford,
+                out: false,
+                base,
+            });
+        }
+        self.wet_tiles = wet;
+    }
+
+    /// Wet tile `i`'s cells as the water has them, and the clearance round
+    /// it if any changed: walkable cells of a ford out of the water's reach
+    /// are blocked, and deep cells of an open summer ford can be waded.
+    /// Thicket still standing is left blocked.
+    fn wet_tile(&mut self, i: usize) {
+        let w = &self.wet_tiles[i];
+        if self.growth.get(w.t) == Some(&(Growth::Thicket as u8)) {
+            return;
+        }
+        let open_deep = w.shallow && self.water.summer && !w.out;
+        let ((x, y), side) = (self.tile_cell(w.t), self.side);
+        let mut changed = false;
+        for (k, &b) in w.base.iter().enumerate() {
+            let cost = match b {
+                BLOCKED if open_deep => FORD,
+                BLOCKED => BLOCKED,
+                _ if w.ford && w.out => BLOCKED,
+                b => b,
+            };
+            let (cx, cy) = (x + k as i32 % CELLS_PER_TILE, y + k as i32 / CELLS_PER_TILE);
+            let c = &mut self.cost[(cy * side + cx) as usize];
+            changed |= *c != cost;
+            *c = cost;
+        }
+        if changed {
+            self.reclear(w.t);
+        }
     }
 
     /// Whether the water has shut a ford within `reach` tiles of `p`.
@@ -285,15 +374,6 @@ impl Terrain {
         self.shut
             .iter()
             .any(|&(x, y)| Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance_squared(p) <= r2)
-    }
-
-    /// Tile `t`'s costs as the match began.
-    fn dry_tile(&mut self, t: usize) {
-        let ((x, y), side) = (self.tile_cell(t), self.side);
-        for cy in y..y + CELLS_PER_TILE {
-            let row = (cy * side + x) as usize..(cy * side + x + CELLS_PER_TILE) as usize;
-            self.cost[row.clone()].copy_from_slice(&self.dry[row]);
-        }
     }
 
     /// Whether the minds' ground lags the simulation's.
@@ -340,6 +420,13 @@ impl Terrain {
             let row = (cy * side + x) as usize..(cy * side + x + CELLS_PER_TILE) as usize;
             self.cost[row.clone()].copy_from_slice(&self.under[row]);
         }
+        self.reclear(t);
+    }
+
+    /// The clearance of the cells within [`CLEARANCE`] of tile `t`, which
+    /// is all a change to its ground can change.
+    fn reclear(&mut self, t: usize) {
+        let ((x, y), side) = (self.tile_cell(t), self.side);
         let reach = i32::from(CLEARANCE);
         for cy in (y - reach).max(0)..(y + CELLS_PER_TILE + reach).min(side) {
             for cx in (x - reach).max(0)..(x + CELLS_PER_TILE + reach).min(side) {
@@ -628,6 +715,79 @@ fn square_ring(a: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 16-tile map: tile (5, 5) half ford and half deep, tile (6, 5)
+    /// wholly deep, the rest open.
+    fn river() -> Terrain {
+        let side = 16 * CELLS_PER_TILE;
+        let nav: Vec<u8> = (0..side * side)
+            .map(|c| {
+                let (cx, cy) = (c % side, c / side);
+                let (x, y) = (cx / CELLS_PER_TILE, cy / CELLS_PER_TILE);
+                match (x, y) {
+                    (5, 5) if cx % CELLS_PER_TILE == 0 => BLOCKED,
+                    (5, 5) => FORD,
+                    (6, 5) => BLOCKED,
+                    _ => OPEN,
+                }
+            })
+            .collect();
+        Terrain::new(&nav, 16)
+    }
+
+    #[test]
+    fn the_water_shuts_and_opens_fords_cell_by_cell() {
+        let mut t = river();
+        let (ford, deep, bar) = (
+            Vec2::new(5.9, 5.5),
+            Vec2::new(5.05, 5.5),
+            Vec2::new(6.5, 5.5),
+        );
+        let (fords, shallows) = ([(5, 5)], [(5, 5), (6, 5)]);
+        let flood = Water {
+            keep_off: true,
+            ..Water::default()
+        };
+        t.set_water(flood, &fords, &shallows, &[]);
+        assert_eq!(t.cost(ford), BLOCKED);
+        assert!(t.ford_shut_near(ford, 1.0));
+        t.set_water(Water::default(), &fords, &shallows, &[]);
+        assert_eq!(
+            (t.cost(ford), t.cost(deep)),
+            (FORD, BLOCKED),
+            "deep cells stay deep"
+        );
+        let summer = Water {
+            summer: true,
+            ..Water::default()
+        };
+        t.set_water(summer, &fords, &shallows, &[]);
+        assert_eq!(
+            (t.cost(deep), t.cost(bar)),
+            (FORD, FORD),
+            "summer fords open"
+        );
+        t.set_water(Water::default(), &fords, &shallows, &[]);
+        assert_eq!(
+            (t.cost(ford), t.cost(deep), t.cost(bar)),
+            (FORD, BLOCKED, BLOCKED)
+        );
+        assert!(
+            t.ford_shut_near(bar, 1.0),
+            "a summer ford going deep is shut"
+        );
+        let wave = Water {
+            wave: Some((5, 6)),
+            summer: true,
+            ..Water::default()
+        };
+        t.set_water(wave, &fords, &shallows, &[(5, 6)]);
+        assert_eq!(
+            (t.cost(ford), t.cost(bar)),
+            (FORD, BLOCKED),
+            "only the wave's tiles"
+        );
+    }
 
     #[test]
     fn water_cuts_the_land_till_a_ford_joins_it() {

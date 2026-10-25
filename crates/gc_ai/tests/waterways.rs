@@ -3,12 +3,12 @@
 //! has shut, is no way across to them; once the water has gone it is again.
 
 use gc_ai::terrain::{Terrain, Water};
-use glam::Vec2;
 use gc_fixed::Angle;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::sky::{Spell, Weather, WeatherKind};
 use gc_sim::{Capacities, Flow, Ground, MatchSetup, Sky, World};
+use glam::Vec2;
 
 const MAP: i32 = 64;
 const SECOND: u32 = gc_sim::TICKS_PER_SECOND;
@@ -44,10 +44,10 @@ fn nav() -> Vec<u8> {
         .collect()
 }
 
-fn flow(running: bool) -> Vec<u8> {
+fn flow() -> Vec<u8> {
     (0..MAP * MAP)
         .map(|i| {
-            if running && RIVER.contains(&(i / MAP)) {
+            if RIVER.contains(&(i / MAP)) {
                 Flow::byte(Angle(0), 2)
             } else {
                 0
@@ -80,7 +80,7 @@ const CHANGING: &[Spell] = &[
 ];
 
 fn world(seed: u64) -> World {
-    let (heights, nav, flow) = (heights(), nav(), flow(true));
+    let (heights, nav, flow) = (heights(), nav(), flow());
     World::new(&MatchSetup {
         seed,
         capacities: Capacities::default(),
@@ -107,15 +107,13 @@ fn world(seed: u64) -> World {
 
 fn step(w: &mut World, minds: &mut Terrain) -> Water {
     w.tick(&[]);
-    let water = Water::of(w);
-    minds.read_water(water, w.flood());
-    water
+    minds.read_water(w, Water::of(w));
+    minds.seen_water()
 }
 
-#[test]
-fn the_minds_keep_off_a_ford_the_water_is_coming_over() {
-    let ford = Vec2::new(32.5, 32.5);
-    let seed = (0..64)
+/// A seed whose storm rolls a flash flood (most do not every time).
+fn flooding_seed() -> u64 {
+    (0..64)
         .find(|&seed| {
             let mut w = world(seed);
             while w.tick_count() < 12 * SECOND {
@@ -123,8 +121,13 @@ fn the_minds_keep_off_a_ford_the_water_is_coming_over() {
             }
             w.flood().flash().wave().is_some()
         })
-        .expect("some seed rolls a flash flood");
-    let mut w = world(seed);
+        .expect("some seed rolls a flash flood")
+}
+
+#[test]
+fn the_minds_keep_off_a_ford_the_water_is_coming_over() {
+    let ford = Vec2::new(32.5, 32.5);
+    let mut w = world(flooding_seed());
     let mut minds = Terrain::new(&nav(), MAP as u32);
     assert_eq!(minds.cost(ford), 3, "a ford to wade before the storm");
     let mut warned = false;

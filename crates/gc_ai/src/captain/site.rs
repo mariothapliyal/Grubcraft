@@ -280,17 +280,21 @@ impl Captain {
             return;
         };
         let t = ctx.terrain;
-        let wading = ours.iter().any(|r| t.wet(r.pos));
+        // In the water, even where the minds now count it shut.
+        let wading = ours.iter().any(|r| t.water(r.pos));
         let across = ours
             .iter()
-            .filter(|r| !t.wet(r.pos) && ground::crossing(t, r.pos, b).is_none())
+            .filter(|r| !t.water(r.pos) && ground::crossing(t, r.pos, b).is_none())
             .count();
         let watched = fighting
             .iter()
             .any(|f| f.pos.distance(exit) < UNWATCHED * 0.7);
         // The water is shutting the ford before anyone is in it: not across
         // a river that is about to cut them off.
-        let reach = self.river.map_or(FORD_REACH, |r| r.far - r.near + 4.0);
+        let reach = self
+            .river
+            .map_or(FORD_REACH, |r| r.far - r.near + 4.0)
+            .max(SHUT_REACH);
         let shutting = t.ford_shut_near(exit, reach);
         if (watched || shutting) && !wading && across == 0 {
             self.bridgehead = None;
@@ -322,6 +326,11 @@ impl Captain {
         }
     }
 }
+
+/// The least distance from where a crossing comes out that a shut ford
+/// calls it off, tiles: the river can be wider at the ford than where the
+/// line faces it.
+const SHUT_REACH: f32 = 12.0;
 
 /// Tiles in front of a line whose ground the other side will stand on to
 /// fight it.
