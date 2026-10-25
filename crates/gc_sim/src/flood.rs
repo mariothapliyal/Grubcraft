@@ -218,7 +218,8 @@ impl Flood {
             }
         }
         let shallows = crossings(&shallows, tiles, |x, y| nav.walkable_ground(x, y));
-        let mut flood = Flood {
+        let flash = Flash::new(terrain, &fords, map_tiles, seed);
+        Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),
             closed: false,
@@ -226,10 +227,8 @@ impl Flood {
             shallows: shallows.into(),
             exposed: false,
             snowpack: 0,
-            flash: Flash::default(),
-        };
-        flood.flash = Flash::new(terrain, &flood, map_tiles, seed);
-        flood
+            flash,
+        }
     }
 
     /// Whether the fords are shut by the flood.
@@ -377,7 +376,7 @@ impl Flood {
     /// the nearest bank (see `World::rivers`).
     pub(crate) fn sweep(&self, regs: &mut Regiments, terrain: &Terrain, out: &mut Vec<usize>) {
         out.clear();
-        if !self.closed && !self.flash.wave().is_some_and(crate::flash::Wave::shut) {
+        if !self.closed && !self.flash.shut() {
             return;
         }
         for i in 0..regs.alive.len() {

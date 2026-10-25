@@ -353,7 +353,7 @@ pub struct Terrain {
 
 /// The index of tile `(x, y)` in a layer `side` tiles a side, row by row;
 /// `None` off it or for an empty layer (`side` 0).
-fn index_in(side: i32, x: i32, y: i32) -> Option<usize> {
+pub(crate) fn index_in(side: i32, x: i32, y: i32) -> Option<usize> {
     ((0..side).contains(&x) && (0..side).contains(&y)).then(|| (y * side + x) as usize)
 }
 
@@ -766,8 +766,14 @@ impl Terrain {
         if self.tiles == 0 || self.frozen {
             return false;
         }
-        let wave = (self.wave.as_ref()).map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()));
-        self.height(p) < self.water_line() + i32::from(wave) && !self.on_deck(p)
+        let (h, line) = (self.height(p), self.water_line());
+        // Only ground a flash flood could reach asks after its water.
+        let under = h < line
+            || self.wave.as_ref().is_some_and(|w| {
+                h < line + i32::from(crate::flood::FLOOD_RISE)
+                    && h < line + i32::from(w.rise_at(p.x.floor_int(), p.y.floor_int()))
+            });
+        under && !self.on_deck(p)
     }
 
     /// The flow layer, one [`Flow`] byte a tile (empty: still water).

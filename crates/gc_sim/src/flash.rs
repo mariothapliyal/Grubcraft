@@ -17,7 +17,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::TICKS_PER_SECOND;
-use crate::flood::{FLOOD_RISE, Flood};
+use crate::flood::FLOOD_RISE;
 use crate::hash::StateHasher;
 use crate::sky::{Season, Spell, WeatherKind};
 use crate::terrain::{Flow, Terrain};
@@ -104,8 +104,6 @@ pub enum Stage {
 /// What one tick of the wave changed (see [`Flash::tick`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Turn {
-    /// A wave set off.
-    pub(crate) began: bool,
     /// The front is [`WARNING_SECONDS`] from the first ford.
     pub(crate) coming: bool,
     /// The river's fords just shut (`Some(true)`) or opened again.
@@ -114,7 +112,7 @@ pub(crate) struct Turn {
 
 /// The way to a neighbour that a flow points.
 fn step_of(flow: u8) -> Option<(i32, i32)> {
-    let (way, _) = Flow::of(flow)?;
+    // In the order of the eight ways (an eighth of a turn each from east).
     const STEPS: [(i32, i32); 8] = [
         (1, 0),
         (1, 1),
@@ -125,13 +123,13 @@ fn step_of(flow: u8) -> Option<(i32, i32)> {
         (0, -1),
         (1, -1),
     ];
-    Some(STEPS[usize::from(way.0 >> 13)])
+    Flow::of(flow).map(|_| STEPS[usize::from(flow & 7)])
 }
 
 impl Flash {
     /// The rivers of `terrain`'s map, `map_tiles` a side, and which of
-    /// `flood`'s fords lie on each.
-    pub(crate) fn new(terrain: &Terrain, flood: &Flood, map_tiles: u32, seed: u64) -> Flash {
+    /// the `fords` (`(y, x)` tiles) lie on each.
+    pub(crate) fn new(terrain: &Terrain, fords: &[(i32, i32)], map_tiles: u32, seed: u64) -> Flash {
         let flow = terrain.flow_layer();
         let n = map_tiles as i32;
         if flow.is_empty() || n == 0 {
@@ -140,9 +138,7 @@ impl Flash {
                 ..Flash::default()
             };
         }
-        let at = |x: i32, y: i32| {
-            ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (y * n + x) as usize)
-        };
+        let at = |x: i32, y: i32| crate::terrain::index_in(n, x, y);
         let tiles = (n * n) as usize;
         let mut river = alloc::vec![0u16; tiles];
         let mut reach = alloc::vec![u16::MAX; tiles];
@@ -168,16 +164,7 @@ impl Flash {
         while let Some(&i) = queue.get(head) {
             head += 1;
             let (x, y) = (i as i32 % n, i as i32 / n);
-            for (dx, dy) in [
-                (1, 0),
-                (-1, 0),
-                (0, 1),
-                (0, -1),
-                (1, 1),
-                (-1, 1),
-                (1, -1),
-                (-1, -1),
-            ] {
+            for (dx, dy) in crate::nav::DIRS {
                 if let Some(j) =
                     at(x + dx, y + dy).filter(|&j| flow[j] != 0 && reach[j] == u16::MAX)
                 {
@@ -198,16 +185,7 @@ impl Flash {
             queue.push(start);
             while let Some(i) = queue.pop() {
                 let (x, y) = (i as i32 % n, i as i32 / n);
-                for (dx, dy) in [
-                    (1, 0),
-                    (-1, 0),
-                    (0, 1),
-                    (0, -1),
-                    (1, 1),
-                    (-1, 1),
-                    (1, -1),
-                    (-1, -1),
-                ] {
+                for (dx, dy) in crate::nav::DIRS {
                     if let Some(j) =
                         at(x + dx, y + dy).filter(|&j| reach[j] != u16::MAX && river[j] == 0)
                     {
@@ -219,7 +197,7 @@ impl Flash {
         }
         // Each river's fords.
         let mut groups: Vec<Group> = Vec::new();
-        for (x, y) in flood.fords() {
+        for &(y, x) in fords {
             let Some(i) = at(x, y).filter(|&i| river[i] != 0) else {
                 continue;
             };
@@ -253,6 +231,12 @@ impl Flash {
             g.runs = crate::flood::runs_of(&g.fords);
         }
         groups.sort_by_key(|g| g.river);
+        if groups.is_empty() {
+            return Flash {
+                seed,
+                ..Flash::default()
+            };
+        }
         Flash {
             seed,
             side: n,
@@ -266,6 +250,11 @@ impl Flash {
     /// The wave running now, if any.
     pub fn wave(&self) -> Option<Wave> {
         self.wave
+    }
+
+    /// Whether a wave has shut its river's fords.
+    pub fn shut(&self) -> bool {
+        self.wave.is_some_and(|w| w.shut)
     }
 
     /// How many rivers have fords a wave can shut.
@@ -307,7 +296,7 @@ impl Flash {
     /// A storm `spell` began, in `season` (with seasons): roll once for a
     /// wave, from the seed and the spell's start, and set one off. Only
     /// one wave runs at a time, and none on frozen water.
-    pub(crate) fn storm(&mut self, spell: &Spell, season: Option<Season>, frozen: bool) -> bool {
+    pub(crate) fn storm(&mut self, spell: &Spell, season: Option<Season>, frozen: bool) {
         let w = spell.weather;
         if self.wave.is_some()
             || self.groups.is_empty()
@@ -315,7 +304,7 @@ impl Flash {
             || w.kind != WeatherKind::Rain
             || w.strength < STORM_STRENGTH
         {
-            return false;
+            return;
         }
         let chance = match season {
             None => 40,
@@ -325,7 +314,7 @@ impl Flash {
         };
         let roll = roll(self.seed, spell.at);
         if roll % 100 >= chance {
-            return false;
+            return;
         }
         let group = ((roll >> 8) % self.groups.len() as u32) as u16;
         self.wave = Some(Wave {
@@ -334,7 +323,6 @@ impl Flash {
             warned: false,
             shut: false,
         });
-        true
     }
 
     /// One tick of the wave: the front runs on, and the river's fords
@@ -345,7 +333,6 @@ impl Flash {
         let Some(mut wave) = self.wave else {
             return turn;
         };
-        turn.began = wave.ticks == 0;
         wave.ticks += 1;
         let g = &self.groups[usize::from(wave.group)];
         let top = g.top;
@@ -391,14 +378,10 @@ pub(crate) struct WaveWater {
 impl WaveWater {
     /// How far it raises the water on tile `(x, y)`.
     pub(crate) fn rise_at(&self, x: i32, y: i32) -> u16 {
-        if !(0..self.side).contains(&x) || !(0..self.side).contains(&y) {
-            return 0;
+        match crate::terrain::index_in(self.side, x, y) {
+            Some(i) if self.river[i] == self.id => rise_after(self.ticks, self.top, self.reach[i]),
+            _ => 0,
         }
-        let i = (y * self.side + x) as usize;
-        if self.river[i] != self.id {
-            return 0;
-        }
-        rise_after(self.ticks, self.top, self.reach[i])
     }
 }
 
@@ -429,9 +412,5 @@ fn rise_after(ticks: u32, top: u16, reach: u16) -> u16 {
 
 /// A roll from the match seed and a tick: no random stream moves.
 fn roll(seed: u64, tick: u32) -> u32 {
-    let mut z = seed ^ u64::from(tick).rotate_left(29) ^ 0xf1a5_4f10_0d00_0000;
-    // splitmix64's finish.
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    (z ^ (z >> 31)) as u32
+    crate::fire::splitmix(seed ^ u64::from(tick).rotate_left(29) ^ 0xf1a5_4f10_0d00_0000) as u32
 }

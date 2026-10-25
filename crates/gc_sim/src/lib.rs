@@ -2696,8 +2696,7 @@ impl World {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             // A flash flood's river stays shut when the rain's flood goes.
             if !closed && self.flood.flash.wave().is_some_and(flash::Wave::shut) {
-                let runs = self.flood.flash.runs().to_vec();
-                (self.nav).set_flooded_all(&runs, true, &self.regiments);
+                (self.nav).set_flooded_all(self.flood.flash.runs(), true, &self.regiments);
             }
             self.events.flooded(closed);
         }
@@ -2718,10 +2717,8 @@ impl World {
         }
         let season = self.sky.season(self.tick).map(|s| s.season);
         let frozen = self.terrain.frozen();
-        for i in begun..self.sky.begun() {
-            if let Some(spell) = self.sky.spells_since(i).first().copied() {
-                self.flood.flash.storm(&spell, season, frozen);
-            }
+        for spell in self.sky.spells_since(begun) {
+            self.flood.flash.storm(spell, season, frozen);
         }
         if self.flood.flash.wave().is_none() {
             return;
@@ -2734,8 +2731,7 @@ impl World {
         if let Some(shut) = turn.fords {
             // A rain flood that has shut every ford keeps them shut.
             if !self.flood.closed() {
-                let runs = self.flood.flash.runs().to_vec();
-                (self.nav).set_flooded_all(&runs, shut, &self.regiments);
+                (self.nav).set_flooded_all(self.flood.flash.runs(), shut, &self.regiments);
             }
             self.events.flash(if shut {
                 flash::Stage::Here
