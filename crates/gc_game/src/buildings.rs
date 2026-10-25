@@ -497,6 +497,7 @@ fn worker_of(faction: Faction) -> &'static str {
         Faction::CarrionConcord => "Ledger Clerk",
         Faction::Choir => "Tuner",
         Faction::Brood => "Gnawer",
+        Faction::Oathbound => "Seedtender",
     }
 }
 
@@ -2635,7 +2636,7 @@ mod tests {
             assert!(look.cap.is_none() && !look.merlons && look.lift == 0.0);
             assert_eq!(height_of(role), look.height);
         }
-        assert_eq!((stakes, barricades), (4, 4));
+        assert_eq!((stakes, barricades), (5, 5));
     }
 
     #[test]
@@ -2887,6 +2888,7 @@ mod tests {
             ("Gate", "Yagura Gatehouse"),
             ("Iron Gate", "Gate of Debts"),
             ("Maw Gate", "Chitin Maw"),
+            ("Oathgate", "Warden's Gatehouse"),
         ] {
             let (g, h) = (id(&table, gate), id(&table, house));
             assert!(table.is_gate(g) && !table.is_gatehouse(g));

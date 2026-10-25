@@ -185,6 +185,12 @@ pub fn clear_style(f: Faction) -> ClearStyle {
             pays: [1, 3, 5],
             burns: false,
         },
+        // Timber people: they fell and haul like the Clans, and the
+        // sawn timber pays a little better (first pass, docs/39).
+        Faction::Oathbound => ClearStyle {
+            pays: [0, 5, 8],
+            ..ClearStyle::STANDARD
+        },
     }
 }
 
@@ -586,6 +592,7 @@ mod tests {
             (Faction::CarrionConcord, [50, 50, 50], [0, 0, 0], true),
             (Faction::Choir, [100, 100, 53], [0, 0, 0], false),
             (Faction::Brood, [150, 150, 150], [1, 3, 5], false),
+            (Faction::Oathbound, [100, 100, 100], [0, 5, 8], false),
         ];
         for (f, pace, pays, burns) in table {
             assert_eq!(clear_style(f), ClearStyle { pace, pays, burns }, "{f:?}");
@@ -859,7 +866,8 @@ mod tests {
     #[test]
     fn every_faction_opens_with_its_hall_workers_and_stores() {
         let data = data();
-        let map = make_map(1, 0);
+        // A six-start Wilds map: the four-player Teeth cannot seat five.
+        let map = make_map(2, 0);
         let factions = Faction::ALL;
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1034,7 +1042,9 @@ mod tests {
         assert!(start.players.len() <= start.settings.max_players());
         let mut factions = factions(&start);
         factions.sort_by_key(|&f| f as u8);
-        assert_eq!(factions, Faction::ALL);
+        // The four-player map seats the first four factions; the fifth
+        // (Oathbound) joins when the lobby slot picks it.
+        assert_eq!(factions, Faction::ALL[..4]);
     }
 
     #[test]

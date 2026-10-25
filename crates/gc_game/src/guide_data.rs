@@ -368,8 +368,8 @@ struct ClassText {
 /// The sources, as text: a roster and a guide file for each faction in
 /// [`Faction::ALL`] order, and the class table.
 pub struct Sources<'a> {
-    pub rosters: [&'a str; 4],
-    pub guides: [&'a str; 4],
+    pub rosters: [&'a str; 5],
+    pub guides: [&'a str; 5],
     pub classes: &'a str,
 }
 
@@ -385,12 +385,14 @@ pub const EMBEDDED: Sources<'static> = Sources {
         include_str!("../../../data/rosters/brood.ron"),
         include_str!("../../../data/rosters/choir.ron"),
         include_str!("../../../data/rosters/carrion_concord.ron"),
+        include_str!("../../../data/rosters/oathbound.ron"),
     ],
     guides: [
         include_str!("../../../data/guide/ember_clans.ron"),
         include_str!("../../../data/guide/brood.ron"),
         include_str!("../../../data/guide/choir.ron"),
         include_str!("../../../data/guide/carrion_concord.ron"),
+        include_str!("../../../data/guide/oathbound.ron"),
     ],
     classes: include_str!("../../../data/guide/classes.ron"),
 };
@@ -403,6 +405,7 @@ pub fn faction_label(f: Faction) -> &'static str {
         Faction::Brood => "Brood",
         Faction::Choir => "Shard Choir",
         Faction::CarrionConcord => "Carrion Concord",
+        Faction::Oathbound => "Oathbound",
     }
 }
 
@@ -1426,11 +1429,17 @@ mod tests {
     #[test]
     fn the_guide_joins_every_faction() {
         let d = load();
-        assert_eq!(d.factions.len(), 4);
+        assert_eq!(d.factions.len(), 5);
         let names: Vec<_> = d.factions.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Ember Clans", "Brood", "Shard Choir", "Carrion Concord"]
+            [
+                "Ember Clans",
+                "Brood",
+                "Shard Choir",
+                "Carrion Concord",
+                "Oathbound"
+            ]
         );
         let rs = rosters();
         for (f, r) in d.factions.iter().zip(&rs) {
@@ -1621,6 +1630,7 @@ mod tests {
             EMBEDDED.guides[0],
             EMBEDDED.guides[2],
             EMBEDDED.guides[3],
+            EMBEDDED.guides[4],
         ];
         assert!(build(&swapped).unwrap_err().contains("is for"));
     }
