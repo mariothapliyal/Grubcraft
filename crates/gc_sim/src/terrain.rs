@@ -765,11 +765,9 @@ impl Terrain {
     /// Which way and how fast the water runs at `p`, if it runs there and
     /// `p` is in it (see [`Flow`]).
     pub fn flow(&self, p: FxVec2) -> Option<(Angle, u8)> {
-        if self.flow.is_empty() || !self.wet(p) {
-            return None;
-        }
         let i = index_in(self.tiles, p.x.floor_int(), p.y.floor_int())?;
-        Flow::of(self.flow[i])
+        let flow = Flow::of(*self.flow.get(i)?)?;
+        self.wet(p).then_some(flow)
     }
 
     /// How far the current carries a regiment wading at `p` in one tick
@@ -784,7 +782,7 @@ impl Terrain {
             i32::from(DRIFT_PERCENT[usize::from(speed)]) * flood,
             100 * crate::TICKS_PER_SECOND as i32,
         );
-        FxVec2::new(way.cos() * per_tick, way.sin() * per_tick)
+        way.to_vec() * per_tick
     }
 
     /// Percent of its pace a regiment wading at `p` along `heading` (a
@@ -794,7 +792,7 @@ impl Terrain {
         let Some((way, speed)) = self.flow(p) else {
             return 100;
         };
-        let along = heading.dot(FxVec2::new(way.cos(), way.sin()));
+        let along = heading.dot(way.to_vec());
         let shift = i32::from(CURRENT_PACE_PERCENT) * i32::from(speed);
         if along > Fx::HALF {
             100 + shift

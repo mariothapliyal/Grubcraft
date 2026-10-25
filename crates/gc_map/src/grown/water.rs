@@ -565,62 +565,13 @@ fn chaikin(pts: &[(i32, i32)], rounds: usize) -> Vec<(i32, i32)> {
     pts
 }
 
-/// The tiles under the rivers: a disc as wide as the river at every point
-/// of every line.
-fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
-    let mut out = vec![false; n * n];
+/// Calls `f(tile, d2, line, k)` for each tile within point `k` of each
+/// river line's disc (half its width there, and an eighth of a tile),
+/// `d2` its squared distance from the point (fixed point).
+fn each_disc(lines: &[Line], n: usize, mut f: impl FnMut(usize, i64, &Line, usize)) {
     let ni = n as i64;
     for line in lines {
-        for (&(px, py), &w) in line.pts.iter().zip(&line.width) {
-            let r = i64::from(w) / 2 + i64::from(ONE) / 8;
-            let r2 = r * r;
-            let reach = ((r * 3 / 2) >> 16) + 1;
-            let (cx, cy) = (i64::from(px) >> 16, i64::from(py) >> 16);
-            for y in (cy - reach).max(0)..(cy + reach + 2).min(ni) {
-                for x in (cx - reach).max(0)..(cx + reach + 2).min(ni) {
-                    let (dx, dy) = (
-                        x * i64::from(ONE) - i64::from(px),
-                        y * i64::from(ONE) - i64::from(py),
-                    );
-                    if dx * dx + dy * dy <= r2 {
-                        out[(y * ni + x) as usize] = true;
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The current on each tile the river lines cover: the way the nearest
-/// point of its line runs (lines run from source to mouth), fast where
-/// the river is narrow and slow where it is wide, as `gc_sim::Flow` bytes.
-fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
-    let mut out = vec![0u8; n * n];
-    let mut best = vec![i64::MAX; n * n];
-    let ni = n as i64;
-    for line in lines {
-        let last = line.pts.len().saturating_sub(1);
         for (k, (&(px, py), &w)) in line.pts.iter().zip(&line.width).enumerate() {
-            let (a, b) = (
-                line.pts[k.min(last.saturating_sub(1))],
-                line.pts[(k + 1).min(last)],
-            );
-            let way = gc_fixed::FxVec2::new(
-                gc_fixed::Fx::from_raw(b.0 - a.0),
-                gc_fixed::Fx::from_raw(b.1 - a.1),
-            );
-            if way == gc_fixed::FxVec2::ZERO {
-                continue;
-            }
-            let speed = if w < 3 * ONE {
-                3
-            } else if w < 6 * ONE {
-                2
-            } else {
-                1
-            };
-            let byte = gc_sim::Flow::byte(Angle::of_vec(way), speed);
             let r = i64::from(w) / 2 + i64::from(ONE) / 8;
             let r2 = r * r;
             let reach = ((r * 3 / 2) >> 16) + 1;
@@ -632,15 +583,57 @@ fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
                         y * i64::from(ONE) - i64::from(py),
                     );
                     let d2 = dx * dx + dy * dy;
-                    let i = (y * ni + x) as usize;
-                    if d2 <= r2 && d2 < best[i] {
-                        best[i] = d2;
-                        out[i] = byte;
+                    if d2 <= r2 {
+                        f((y * ni + x) as usize, d2, line, k);
                     }
                 }
             }
         }
     }
+}
+
+/// The tiles under the rivers: a disc as wide as the river at every point
+/// of every line.
+fn rasterize(lines: &[Line], n: usize) -> Vec<bool> {
+    let mut out = vec![false; n * n];
+    each_disc(lines, n, |i, _, _, _| out[i] = true);
+    out
+}
+
+/// The current on each tile the river lines cover: the way the nearest
+/// point of its line runs (lines run from source to mouth), fast where
+/// the river is narrow and slow where it is wide, as `gc_sim::Flow` bytes.
+fn flow_layer(lines: &[Line], n: usize) -> Vec<u8> {
+    let mut out = vec![0u8; n * n];
+    let mut best = vec![i64::MAX; n * n];
+    each_disc(lines, n, |i, d2, line, k| {
+        if d2 >= best[i] {
+            return;
+        }
+        // The way from this point to the next (the last: from the one before).
+        let (a, b) = match line.pts.get(k + 1) {
+            Some(&b) => (line.pts[k], b),
+            None if k > 0 => (line.pts[k - 1], line.pts[k]),
+            None => return,
+        };
+        let way = gc_fixed::FxVec2::new(
+            gc_fixed::Fx::from_raw(b.0 - a.0),
+            gc_fixed::Fx::from_raw(b.1 - a.1),
+        );
+        if way == gc_fixed::FxVec2::ZERO {
+            return;
+        }
+        let w = line.width[k];
+        let speed = if w < 3 * ONE {
+            3
+        } else if w < 6 * ONE {
+            2
+        } else {
+            1
+        };
+        best[i] = d2;
+        out[i] = gc_sim::Flow::byte(Angle::of_vec(way), speed);
+    });
     out
 }
 
@@ -911,7 +904,10 @@ mod tests {
             }
             let rivers = (0..n * n).filter(|&i| wa.river[i] && !wa.lake[i]).count();
             let running = wa.flow.iter().filter(|&&f| f != 0).count();
-            assert!(running * 10 >= rivers * 9, "{running} of {rivers} river tiles run");
+            assert!(
+                running * 10 >= rivers * 9,
+                "{running} of {rivers} river tiles run"
+            );
             for (i, &kept) in keep.iter().enumerate() {
                 if kept {
                     assert_eq!(a.v[i], h0.v[i], "keep tile {i} changed");

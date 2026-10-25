@@ -400,7 +400,6 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         seam.select(&mut wet.acc);
         seam.select(&mut wet.river);
         seam.select(&mut wet.lake);
-        seam.select_turned(&mut wet.flow, gc_sim::Flow::turned);
         let sym = |mut g: Grid| {
             seam.blend(&mut g);
             g
@@ -611,22 +610,6 @@ impl Seam {
             let v = field::lerp(h.v[j], h.v[i], self.weight[i]);
             h.v[i] = v;
             h.v[j] = v;
-        }
-    }
-
-    /// [`Seam::select`] for a layer whose turned copy is `turn` of it (a
-    /// direction turns round with the land).
-    fn select_turned<T: Copy>(&self, v: &mut [T], turn: impl Fn(T) -> T) {
-        let last = self.n * self.n - 1;
-        for i in 0..=last / 2 {
-            let j = last - i;
-            if i == j {
-                continue;
-            } else if self.weight[i] >= ONE / 2 {
-                v[j] = turn(v[i]);
-            } else {
-                v[i] = turn(v[j]);
-            }
         }
     }
 

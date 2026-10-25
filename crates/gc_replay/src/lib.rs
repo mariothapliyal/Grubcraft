@@ -2079,7 +2079,9 @@ mod tests {
     #[test]
     fn the_flow_layer_round_trips() {
         let mut replay = record();
-        replay.flow = (0..64u32 * 64).map(|i| if i % 5 == 0 { 0x1a } else { 0 }).collect();
+        replay.flow = (0..64u32 * 64)
+            .map(|i| if i % 5 == 0 { 0x1a } else { 0 })
+            .collect();
         assert_eq!(Replay::decode(&replay.encode()).unwrap(), replay);
         assert_eq!(replay.setup().ground.flow, &replay.flow[..]);
     }
