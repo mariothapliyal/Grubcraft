@@ -343,6 +343,9 @@ pub struct Terrain {
     /// Whether the water is frozen (a winter with no flood, see
     /// [`crate::sky::Season`]): troops cross it as dry ground.
     frozen: bool,
+    /// The water a flash flood raises while one runs (see
+    /// [`crate::flash`]).
+    wave: Option<crate::flash::WaveWater>,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -412,6 +415,7 @@ impl Terrain {
             rise: 0,
             low: 0,
             frozen: false,
+            wave: None,
             changes: 0,
         };
         let soak = terrain.soakable();
@@ -759,7 +763,27 @@ impl Terrain {
     /// Whether `p` is in water: under the water line, raised by any flood,
     /// and not on a bridge.
     pub fn wet(&self, p: FxVec2) -> bool {
-        self.tiles != 0 && !self.frozen && self.height(p) < self.water_line() && !self.on_deck(p)
+        if self.tiles == 0 || self.frozen {
+            return false;
+        }
+        let wave = (self.wave.as_ref()).map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()));
+        self.height(p) < self.water_line() + i32::from(wave) && !self.on_deck(p)
+    }
+
+    /// The flow layer, one [`Flow`] byte a tile (empty: still water).
+    pub(crate) fn flow_layer(&self) -> &[u8] {
+        &self.flow
+    }
+
+    /// Set the water a flash flood raises (`None` once it has passed).
+    pub(crate) fn set_wave(&mut self, wave: Option<crate::flash::WaveWater>) {
+        self.wave = wave;
+    }
+
+    /// Whether a flash flood is running (its water is in
+    /// [`Terrain::wet`]).
+    pub fn wave_running(&self) -> bool {
+        self.wave.is_some()
     }
 
     /// Which way and how fast the water runs at `p`, if it runs there and
