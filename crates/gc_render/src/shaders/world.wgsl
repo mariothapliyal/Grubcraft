@@ -1932,6 +1932,25 @@ fn fit_rig(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
     }
 }
 
+// A model without a fitted skeleton: each bone straight from its frames,
+// whole-body layers mixed in.
+fn pose_unfitted(i: u32, slot: u32, bone: u32) {
+    let base = instance_layer(i, 0u);
+    var m = bone_rows(base.frames, bone, base.blend);
+    for (var l = 1u; l <= POSE_LAYERS; l++) {
+        let layer = instance_layer(i, l);
+        if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
+            let o = bone_rows(layer.frames, bone, layer.blend);
+            m = mat3x4<f32>(
+                mix(m[0], o[0], layer.weight),
+                mix(m[1], o[1], layer.weight),
+                mix(m[2], o[2], layer.weight),
+            );
+        }
+    }
+    write_palette(slot, m);
+}
+
 // Build one soldier's final bone matrices, a thread per bone, into the
 // palette, where every vertex that follows a bone then reads it.
 //
@@ -1959,24 +1978,14 @@ fn cs_pose(
     let i = soldier * INSTANCE_WORDS;
     let fit = job.pose.z;
 
+    // No thread may leave before the barriers below on its own: Direct3D's
+    // shader compiler rejects a barrier after a return that depends on the
+    // thread (the bone), and one bad pipeline blacks out every frame.
+    // `k`, `fit` and `rigged` are the same for the whole workgroup.
     if fit == 0u {
-        if bone >= bones {
-            return;
+        if bone < bones {
+            pose_unfitted(i, slot, bone);
         }
-        let base = instance_layer(i, 0u);
-        var m = bone_rows(base.frames, bone, base.blend);
-        for (var l = 1u; l <= POSE_LAYERS; l++) {
-            let layer = instance_layer(i, l);
-            if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
-                let o = bone_rows(layer.frames, bone, layer.blend);
-                m = mat3x4<f32>(
-                    mix(m[0], o[0], layer.weight),
-                    mix(m[1], o[1], layer.weight),
-                    mix(m[2], o[2], layer.weight),
-                );
-            }
-        }
-        write_palette(slot, m);
         return;
     }
 
@@ -2032,12 +2041,10 @@ fn cs_pose(
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
     let rigged = feet > 0.0 || look > 0.0;
-    if rigged {
-        if bone == 0u {
-            fit_rig(i, rig, feet, look);
-        }
-        workgroupBarrier();
+    if rigged && bone == 0u {
+        fit_rig(i, rig, feet, look);
     }
+    workgroupBarrier();
     if bone > joints || bone >= bones {
         return;
     }
