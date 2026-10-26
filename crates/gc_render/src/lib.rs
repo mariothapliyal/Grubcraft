@@ -2682,12 +2682,33 @@ mod tests {
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
-            naga::valid::Validator::new(
+            let info = naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
                 naga::valid::Capabilities::empty(),
             )
             .validate(&module)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            // Macs run the shaders as Metal: every entry point must
+            // translate to it too, overrides filled in as wgpu does.
+            let options = naga::back::msl::Options {
+                lang_version: (2, 1),
+                ..Default::default()
+            };
+            for ep in &module.entry_points {
+                let (module, info) = naga::back::pipeline_constants::process_overrides(
+                    &module,
+                    &info,
+                    Some((ep.stage, &ep.name)),
+                    &Default::default(),
+                )
+                .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
+                let pipeline = naga::back::msl::PipelineOptions {
+                    entry_point: Some((ep.stage, ep.name.clone())),
+                    ..Default::default()
+                };
+                naga::back::msl::write_string(&module, &info, &options, &pipeline)
+                    .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
+            }
         }
     }
 
