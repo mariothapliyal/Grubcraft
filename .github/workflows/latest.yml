@@ -1,0 +1,56 @@
+name: Latest
+
+# Every push to main runs the whole of CI, and when all of it passes, the zips
+# that CI built go on one rolling prerelease called "latest" on the Releases
+# page. Friends can always grab the newest Mac and Windows build there. Each
+# run deletes the old "latest" release and its tag, then makes a new one on
+# the new commit. Versioned releases (v* tags) are done by release.yml.
+# Run it by hand from the Actions tab to publish the current main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# If main moves again while this is running, drop the older run.
+concurrency:
+  group: latest-release
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Latest release
+    # Only publish builds of main, never a manual run on some other branch.
+    if: github.ref == 'refs/heads/main'
+    needs: [ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: Grubcraft-*
+          merge-multiple: true
+      - name: Replace the latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          short=$(echo "$GITHUB_SHA" | cut -c1-7)
+          cd dist
+          sha256sum Grubcraft-*.zip | tee SHA256SUMS
+          # Remove the old release and its tag. Nothing to remove the first time.
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest \
+            Grubcraft-macOS.zip Grubcraft-Windows.zip SHA256SUMS \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Grubcraft latest (main @ $short)" \
+            --notes "The newest build from main, commit $short. On a Mac, right-click the app and choose Open the first time you run it."
