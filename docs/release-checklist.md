@@ -14,6 +14,8 @@ How to cut a release and what to test before telling friends.
 
 Everyone in a LAN game must run the same build. Send all friends the same release.
 
+The newest build from `main` is always on the Releases page too, as the prerelease called "latest" (made by the Latest workflow after all of CI passes on each push to `main`). Use it for quick tests; use a versioned release when everyone needs the same build.
+
 ## What to test
 
 Do this from the downloaded zip on a machine with no repo checkout. Not from `target/`.
