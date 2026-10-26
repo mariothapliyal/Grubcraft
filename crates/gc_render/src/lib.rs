@@ -2682,12 +2682,49 @@ mod tests {
         ] {
             let module = naga::front::wgsl::parse_str(src)
                 .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
-            naga::valid::Validator::new(
+            let info = naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
                 naga::valid::Capabilities::empty(),
             )
             .validate(&module)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            // Metal builds a struct constant holding a vec3 with a global
+            // constructor, which it refuses: the pipeline fails on every Mac
+            // and every frame is thrown away (a black window). Use a function.
+            let holds_struct = |mut ty: naga::Handle<naga::Type>| loop {
+                match module.types[ty].inner {
+                    naga::TypeInner::Struct { .. } => break true,
+                    naga::TypeInner::Array { base, .. } => ty = base,
+                    _ => break false,
+                }
+            };
+            for (_, c) in module.constants.iter() {
+                assert!(
+                    !holds_struct(c.ty),
+                    "constant {:?} holds a struct: make it a function (Metal cannot build it)",
+                    c.name
+                );
+            }
+            // Macs run the shaders as Metal: they must translate to it too,
+            // overrides filled in as wgpu does.
+            let (module, info) = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                None,
+                &Default::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
+            let options = naga::back::msl::Options {
+                lang_version: (2, 1),
+                ..Default::default()
+            };
+            naga::back::msl::write_string(
+                &module,
+                &info,
+                &options,
+                &naga::back::msl::PipelineOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
         }
     }
 

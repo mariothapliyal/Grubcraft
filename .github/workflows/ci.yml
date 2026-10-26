@@ -168,6 +168,13 @@ jobs:
           name: Grubcraft-macOS
           path: target/Grubcraft-macOS.zip
           retention-days: 14
+      # After the upload, as on Windows. The runner's GPU is Apple's
+      # paravirtual Metal device, so this catches shaders and pipelines that
+      # Metal rejects but Vulkan accepts (they leave the Mac window black).
+      - name: Smoke run of the app (Metal)
+        run: |
+          python3 scripts/smoke-run.py target/Grubcraft.app/Contents/MacOS/grubcraft 60 menu
+          python3 scripts/smoke-run.py target/Grubcraft.app/Contents/MacOS/grubcraft 120
 
   windows-exe:
     name: Windows build

@@ -2236,6 +2236,9 @@ impl ApplicationHandler for App {
                 }
                 let limit = self.opts.as_ref().and_then(|o| o.frames);
                 if limit.is_some_and(|n| r.stats.frames >= n) {
+                    // Log what the driver said about the last frame too: the
+                    // smoke run fails on any GPU error in the log.
+                    r.check_devices();
                     r.memory_timeline.mark("exit");
                     println!("{}", r.stats_line());
                     r.memory_timeline.print();

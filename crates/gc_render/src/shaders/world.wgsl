@@ -815,7 +815,12 @@ struct Land {
     rough: f32,
 };
 
-const NO_LAND = Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+// A function, not a `const`: Metal cannot hold a struct with a vec3 as a
+// program-wide constant (it would need a global constructor), and the
+// terrain pipeline failed to build on every Mac.
+fn no_land() -> Land {
+    return Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+}
 
 // 1 along a crease of the noise `nz` at `p`, 0 off it, `width` wide.
 fn crease(p: vec2<f32>, width: f32) -> f32 {
@@ -837,7 +842,7 @@ fn speck(grain: vec2<f32>, chance: f32, radius: f32) -> f32 {
 }
 
 fn brood_land(xz: vec2<f32>, dist: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     // Veins, their lines wandering with a warp; thick near the source.
     let warp = vec2<f32>(vnoise(xz * 0.45), vnoise(xz * 0.45 + vec2<f32>(5.2, 1.3))) - 0.5;
     let p = xz * 0.2 + warp * 0.9;
@@ -869,7 +874,7 @@ fn brood_land(xz: vec2<f32>, dist: f32) -> Land {
 }
 
 fn clans_land(xz: vec2<f32>, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.95;
     // Fields of about six tiles, each with rows turned its own way; some
     // lie fallow as trodden yards.
@@ -898,7 +903,7 @@ fn clans_land(xz: vec2<f32>, px: f32) -> Land {
 }
 
 fn choir_land(xz: vec2<f32>, dist: f32, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.35;
     let frost = mix(
         srgb_to_linear(vec3<f32>(0.4, 0.38, 0.46)),
@@ -919,7 +924,7 @@ fn choir_land(xz: vec2<f32>, dist: f32, px: f32) -> Land {
 }
 
 fn concord_land(xz: vec2<f32>, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.92;
     let ash = mix(
         srgb_to_linear(vec3<f32>(0.2, 0.19, 0.19)),
@@ -944,7 +949,7 @@ fn concord_land(xz: vec2<f32>, px: f32) -> Land {
 fn faction_land(xz: vec2<f32>, spread: f32, dist: f32, px: f32) -> Land {
     let cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
     if cover <= 0.0 {
-        return NO_LAND;
+        return no_land();
     }
     let uv = xz / f32(textureDimensions(land_map).x);
     let covers = textureGather(0, land_map, soft_sampler, uv);
@@ -1932,6 +1937,25 @@ fn fit_rig(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
     }
 }
 
+// A model without a fitted skeleton: each bone straight from its frames,
+// whole-body layers mixed in.
+fn pose_unfitted(i: u32, slot: u32, bone: u32) {
+    let base = instance_layer(i, 0u);
+    var m = bone_rows(base.frames, bone, base.blend);
+    for (var l = 1u; l <= POSE_LAYERS; l++) {
+        let layer = instance_layer(i, l);
+        if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
+            let o = bone_rows(layer.frames, bone, layer.blend);
+            m = mat3x4<f32>(
+                mix(m[0], o[0], layer.weight),
+                mix(m[1], o[1], layer.weight),
+                mix(m[2], o[2], layer.weight),
+            );
+        }
+    }
+    write_palette(slot, m);
+}
+
 // Build one soldier's final bone matrices, a thread per bone, into the
 // palette, where every vertex that follows a bone then reads it.
 //
@@ -1959,24 +1983,15 @@ fn cs_pose(
     let i = soldier * INSTANCE_WORDS;
     let fit = job.pose.z;
 
+    // No thread may leave before the barriers below on its own: Direct3D's
+    // shader compiler rejects a barrier after a return that depends on the
+    // thread (the bone), and one bad pipeline blacks out every frame.
+    // `k` and `fit` are the same for the whole workgroup. FXC cannot see
+    // that `rigged` is too, so its barrier stays unconditional.
     if fit == 0u {
-        if bone >= bones {
-            return;
+        if bone < bones {
+            pose_unfitted(i, slot, bone);
         }
-        let base = instance_layer(i, 0u);
-        var m = bone_rows(base.frames, bone, base.blend);
-        for (var l = 1u; l <= POSE_LAYERS; l++) {
-            let layer = instance_layer(i, l);
-            if layer.weight > 0.0 && layer.mask == 0u && !layer.additive {
-                let o = bone_rows(layer.frames, bone, layer.blend);
-                m = mat3x4<f32>(
-                    mix(m[0], o[0], layer.weight),
-                    mix(m[1], o[1], layer.weight),
-                    mix(m[2], o[2], layer.weight),
-                );
-            }
-        }
-        write_palette(slot, m);
         return;
     }
 
@@ -2026,18 +2041,15 @@ fn cs_pose(
         workgroupBarrier();
     }
     // The rig's fixes: the body dropped and the legs bent to stand on the
-    // ground, the upper body turned to look. Whether there are any is the
-    // same for the whole workgroup.
+    // ground, the upper body turned to look.
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
     let rigged = feet > 0.0 || look > 0.0;
-    if rigged {
-        if bone == 0u {
-            fit_rig(i, rig, feet, look);
-        }
-        workgroupBarrier();
+    if rigged && bone == 0u {
+        fit_rig(i, rig, feet, look);
     }
+    workgroupBarrier();
     if bone > joints || bone >= bones {
         return;
     }
