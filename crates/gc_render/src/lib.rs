@@ -2691,10 +2691,17 @@ mod tests {
             // Metal builds a struct constant holding a vec3 with a global
             // constructor, which it refuses: the pipeline fails on every Mac
             // and every frame is thrown away (a black window). Use a function.
+            let holds_struct = |mut ty: naga::Handle<naga::Type>| loop {
+                match module.types[ty].inner {
+                    naga::TypeInner::Struct { .. } => break true,
+                    naga::TypeInner::Array { base, .. } => ty = base,
+                    _ => break false,
+                }
+            };
             for (_, c) in module.constants.iter() {
                 assert!(
-                    !matches!(module.types[c.ty].inner, naga::TypeInner::Struct { .. }),
-                    "struct constant {:?}: make it a function (Metal cannot build it)",
+                    !holds_struct(c.ty),
+                    "constant {:?} holds a struct: make it a function (Metal cannot build it)",
                     c.name
                 );
             }

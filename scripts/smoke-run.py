@@ -25,25 +25,23 @@ TIME_LIMIT_S = 900
 
 
 def main():
-    if not 2 <= len(sys.argv) <= 4 or sys.argv[3:] not in ([], ["menu"]):
+    args = sys.argv[1:]
+    menu = args[-1:] == ["menu"]
+    if menu:
+        args = args[:-1]
+    if not 1 <= len(args) <= 2 or not all(a.isdigit() for a in args[1:]):
         sys.exit(__doc__)
-    binary = pathlib.Path(sys.argv[1]).resolve()
-    frames = sys.argv[2] if len(sys.argv) >= 3 else "300"
-    menu = sys.argv[3:] == ["menu"]
+    binary = pathlib.Path(args[0]).resolve()
+    frames = args[1] if len(args) == 2 else "300"
     app_dir = pathlib.Path(tempfile.mkdtemp(prefix="grubcraft-smoke-"))
     env = dict(os.environ, GRUBCRAFT_SETTINGS=str(app_dir / "settings.ron"))
     # Shadows and glow are left out only because a software GPU draws them
     # very slowly; everything else is what a player runs.
-    cmd = [
-        str(binary),
-        "--battle", "recruit",
-        "--frames", frames,
-        "--no-audio",
-        "--no-shadows",
-        "--no-glow",
-    ]
+    cmd = [str(binary), "--frames", frames, "--no-audio"]
     if menu:
-        cmd = [str(binary), "--menu", "--frames", frames, "--no-audio"]
+        cmd += ["--menu"]
+    else:
+        cmd += ["--battle", "recruit", "--no-shadows", "--no-glow"]
     try:
         run = subprocess.run(
             cmd, env=env, capture_output=True, text=True, timeout=TIME_LIMIT_S
