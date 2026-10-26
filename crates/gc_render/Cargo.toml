@@ -21,4 +21,4 @@ workspace = true
 
 [dev-dependencies]
 # Validates shaders in CI, where there is no GPU.
-naga = { version = "30", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in", "msl-out"] }

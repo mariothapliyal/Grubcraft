@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Smoke run of the real game binary, for CI (docs/10-architecture.md, Testing).
 
-    smoke-run.py PATH-TO-GRUBCRAFT [FRAMES]
+    smoke-run.py PATH-TO-GRUBCRAFT [FRAMES] [menu]
 
 Starts the game straight into a battle against the computer, draws FRAMES
 frames (default 300) on whatever software GPU the machine has, and quits. It
 fails if the game panics, exits with an error, logs a lost GPU, takes longer
-than fifteen minutes, or ends using more than the 6 GB memory budget. The game's
+than fifteen minutes, or ends using more than the 6 GB memory budget. It also
+fails if the GPU driver reports any error: a single bad pipeline throws away
+every frame and leaves the window black (the October 2026 Mac black screen).
+With "menu" it opens the main menu instead, with every effect on, as a player
+first sees the game. The game's
 settings, log and crash reports go in a temporary folder.
 """
 import os
@@ -21,10 +25,11 @@ TIME_LIMIT_S = 900
 
 
 def main():
-    if not 2 <= len(sys.argv) <= 3:
+    if not 2 <= len(sys.argv) <= 4 or sys.argv[3:] not in ([], ["menu"]):
         sys.exit(__doc__)
     binary = pathlib.Path(sys.argv[1]).resolve()
-    frames = sys.argv[2] if len(sys.argv) == 3 else "300"
+    frames = sys.argv[2] if len(sys.argv) >= 3 else "300"
+    menu = sys.argv[3:] == ["menu"]
     app_dir = pathlib.Path(tempfile.mkdtemp(prefix="grubcraft-smoke-"))
     env = dict(os.environ, GRUBCRAFT_SETTINGS=str(app_dir / "settings.ron"))
     # Shadows and glow are left out only because a software GPU draws them
@@ -37,6 +42,8 @@ def main():
         "--no-shadows",
         "--no-glow",
     ]
+    if menu:
+        cmd = [str(binary), "--menu", "--frames", frames, "--no-audio"]
     try:
         run = subprocess.run(
             cmd, env=env, capture_output=True, text=True, timeout=TIME_LIMIT_S
@@ -52,7 +59,7 @@ def main():
         problems.append(f"exit code {run.returncode}")
     log = app_dir / "logs" / "grubcraft.log"
     log_text = log.read_text(errors="replace") if log.exists() else ""
-    for word in ("PANIC", "GPU device lost"):
+    for word in ("PANIC", "GPU device lost", "GPU error"):
         if word in log_text or word in run.stderr:
             problems.append(f"the log says {word!r}")
     crashes = list((app_dir / "crashes").glob("*")) if (app_dir / "crashes").exists() else []
