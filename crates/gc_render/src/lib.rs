@@ -2705,27 +2705,26 @@ mod tests {
                     c.name
                 );
             }
-            // Macs run the shaders as Metal: every entry point must
-            // translate to it too, overrides filled in as wgpu does.
+            // Macs run the shaders as Metal: they must translate to it too,
+            // overrides filled in as wgpu does.
+            let (module, info) = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                None,
+                &Default::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
             let options = naga::back::msl::Options {
                 lang_version: (2, 1),
                 ..Default::default()
             };
-            for ep in &module.entry_points {
-                let (module, info) = naga::back::pipeline_constants::process_overrides(
-                    &module,
-                    &info,
-                    Some((ep.stage, &ep.name)),
-                    &Default::default(),
-                )
-                .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
-                let pipeline = naga::back::msl::PipelineOptions {
-                    entry_point: Some((ep.stage, ep.name.clone())),
-                    ..Default::default()
-                };
-                naga::back::msl::write_string(&module, &info, &options, &pipeline)
-                    .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
-            }
+            naga::back::msl::write_string(
+                &module,
+                &info,
+                &options,
+                &naga::back::msl::PipelineOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}"));
         }
     }
 

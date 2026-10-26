@@ -1986,7 +1986,8 @@ fn cs_pose(
     // No thread may leave before the barriers below on its own: Direct3D's
     // shader compiler rejects a barrier after a return that depends on the
     // thread (the bone), and one bad pipeline blacks out every frame.
-    // `k`, `fit` and `rigged` are the same for the whole workgroup.
+    // `k` and `fit` are the same for the whole workgroup. FXC cannot see
+    // that `rigged` is too, so its barrier stays unconditional.
     if fit == 0u {
         if bone < bones {
             pose_unfitted(i, slot, bone);
@@ -2040,8 +2041,7 @@ fn cs_pose(
         workgroupBarrier();
     }
     // The rig's fixes: the body dropped and the legs bent to stand on the
-    // ground, the upper body turned to look. Whether there are any is the
-    // same for the whole workgroup.
+    // ground, the upper body turned to look.
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
