@@ -815,7 +815,12 @@ struct Land {
     rough: f32,
 };
 
-const NO_LAND = Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+// A function, not a `const`: Metal cannot hold a struct with a vec3 as a
+// program-wide constant (it would need a global constructor), and the
+// terrain pipeline failed to build on every Mac.
+fn no_land() -> Land {
+    return Land(vec3<f32>(0.0), 0.0, vec2<f32>(0.0), vec3<f32>(0.0), 1.0);
+}
 
 // 1 along a crease of the noise `nz` at `p`, 0 off it, `width` wide.
 fn crease(p: vec2<f32>, width: f32) -> f32 {
@@ -837,7 +842,7 @@ fn speck(grain: vec2<f32>, chance: f32, radius: f32) -> f32 {
 }
 
 fn brood_land(xz: vec2<f32>, dist: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     // Veins, their lines wandering with a warp; thick near the source.
     let warp = vec2<f32>(vnoise(xz * 0.45), vnoise(xz * 0.45 + vec2<f32>(5.2, 1.3))) - 0.5;
     let p = xz * 0.2 + warp * 0.9;
@@ -869,7 +874,7 @@ fn brood_land(xz: vec2<f32>, dist: f32) -> Land {
 }
 
 fn clans_land(xz: vec2<f32>, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.95;
     // Fields of about six tiles, each with rows turned its own way; some
     // lie fallow as trodden yards.
@@ -898,7 +903,7 @@ fn clans_land(xz: vec2<f32>, px: f32) -> Land {
 }
 
 fn choir_land(xz: vec2<f32>, dist: f32, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.35;
     let frost = mix(
         srgb_to_linear(vec3<f32>(0.4, 0.38, 0.46)),
@@ -919,7 +924,7 @@ fn choir_land(xz: vec2<f32>, dist: f32, px: f32) -> Land {
 }
 
 fn concord_land(xz: vec2<f32>, px: f32) -> Land {
-    var l = NO_LAND;
+    var l = no_land();
     l.rough = 0.92;
     let ash = mix(
         srgb_to_linear(vec3<f32>(0.2, 0.19, 0.19)),
@@ -944,7 +949,7 @@ fn concord_land(xz: vec2<f32>, px: f32) -> Land {
 fn faction_land(xz: vec2<f32>, spread: f32, dist: f32, px: f32) -> Land {
     let cover = smoothstep(0.2, 0.45, spread + (fbm(xz * 0.3) - 0.5) * 0.5);
     if cover <= 0.0 {
-        return NO_LAND;
+        return no_land();
     }
     let uv = xz / f32(textureDimensions(land_map).x);
     let covers = textureGather(0, land_map, soft_sampler, uv);
