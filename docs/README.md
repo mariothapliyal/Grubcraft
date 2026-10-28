@@ -2,6 +2,8 @@
 
 Read in order the first time; afterwards each document stands alone.
 
+**Quick answers:** [Player quick reference](quick-reference.md) holds controls, costs, tiers and what is built, on one page. Read it first for any "how do I do X in the game?" question.
+
 | # | Document | What's in it |
 |---|---|---|
 | 01 | [Vision](01-vision.md) | The pitch, design pillars, the experience we're aiming for, non-goals |
