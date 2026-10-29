@@ -1,0 +1,75 @@
+// The shared bridge model, baked into assets/buildings/bridges.pak by tools/gc_artbake
+// (`cargo run -p gc_artbake --release -- --config assets-src/buildings/bridges.ron --out assets/buildings/bridges.pak`).
+// One 1 x 1 tile of a bridge running along the model's z (the game turns it to its line), with the
+// deck's top 0.28 tiles above the water (buildings.rs DECK_TOP). Every faction's bridge shows it until
+// it has a model of its own (a model named after the bridge, e.g. "Bone Causeway", takes over).
+// Four looks as for buildings: `#1` foundation, `#2` frame, `#3` half planked, then the finished tile.
+// Source: the project's design/buildings/source/buildings/ember/timber_bridge.py.
+(
+    models: [
+        (
+            name: "Timber Bridge #1",
+            source: "shared:grubcraft/buildings-detail/shared/timber-bridge/stage1.glb",
+            height: 0.95,
+            keep_origin: true,
+            detail_tile: Some(0.5),
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings-detail/shared/timber-bridge/albedo.png",
+                team: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/team.png"),
+                normal: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/normal.png"),
+                orm: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/orm.png"),
+                emissive: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/emissive.png"),
+            )),
+        ),
+        (
+            name: "Timber Bridge #2",
+            source: "shared:grubcraft/buildings-detail/shared/timber-bridge/stage2.glb",
+            height: 0.95,
+            keep_origin: true,
+            detail_tile: Some(0.5),
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings-detail/shared/timber-bridge/albedo.png",
+                team: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/team.png"),
+                normal: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/normal.png"),
+                orm: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/orm.png"),
+                emissive: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/emissive.png"),
+            )),
+        ),
+        (
+            name: "Timber Bridge #3",
+            source: "shared:grubcraft/buildings-detail/shared/timber-bridge/stage3.glb",
+            height: 0.95,
+            keep_origin: true,
+            detail_tile: Some(0.5),
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings-detail/shared/timber-bridge/albedo.png",
+                team: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/team.png"),
+                normal: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/normal.png"),
+                orm: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/orm.png"),
+                emissive: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/emissive.png"),
+            )),
+        ),
+        (
+            name: "Timber Bridge",
+            source: "shared:grubcraft/buildings-detail/shared/timber-bridge/final.glb",
+            height: 0.95,
+            keep_origin: true,
+            detail_tile: Some(0.5),
+            clips: {},
+            lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings-detail/shared/timber-bridge/albedo.png",
+                team: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/team.png"),
+                normal: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/normal.png"),
+                orm: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/orm.png"),
+                emissive: Some("shared:grubcraft/buildings-detail/shared/timber-bridge/emissive.png"),
+            )),
+        ),
+    ],
+)

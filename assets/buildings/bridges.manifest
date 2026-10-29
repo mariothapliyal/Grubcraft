@@ -1,0 +1,19 @@
+# Written by `cargo run -p gc_artbake --release` beside models.pak and checked by
+# `cargo run -p gc_artbake -- --check` in CI. Do not edit by hand.
+# Hashes are XXH3-128. Sources marked "not in the repo" live in the project's
+# shared folder; CI cannot check them, so a change to one shows only in a re-bake.
+manifest = 1
+baker = gc_artbake 2
+schema = 4
+config = a2746761584bc53bfb16d6322e0fb750
+pack = c2e6905f7c676d5bd0bfd51292cfd55c
+pack_bytes = 1400576
+source shared:grubcraft/buildings-detail/shared/timber-bridge/stage1.glb = 39ce5e7746d96bb6fc1745b2ac80d701 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/albedo.png = a1557cf10672c24319e67a8c42b165e4 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/team.png = ed5bebdc1616ae1afc612506ebd491c7 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/normal.png = 45746d28fb6353f26aaa52a68f1ac6ad not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/orm.png = 464e9051a90c382bfe4c8babfbe4b0d2 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/emissive.png = accb70d9a8b28b140fb765fad549c3e8 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/stage2.glb = bb7a282c9a70cda389b95969498174d4 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/stage3.glb = 663a28491df6a3c7a5e13b99c38ebc48 not in the repo
+source shared:grubcraft/buildings-detail/shared/timber-bridge/final.glb = 8dd82a309428b871ee5671b4380a1f68 not in the repo

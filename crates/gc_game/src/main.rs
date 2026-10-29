@@ -7397,8 +7397,7 @@ impl Running {
                     let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
                         pos: centre.to_array(),
-                        // The door, on the model's +z, faces south unturned.
-                        facing: buildings::facing_of(s.turn).to_array(),
+                        facing: art.looks.facing(&s).to_array(),
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
                         color: [r, g, b, gc_render::TONE_NEUTRAL],
