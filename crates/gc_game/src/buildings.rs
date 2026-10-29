@@ -509,6 +509,9 @@ pub fn stage_of(built_percent: u8) -> usize {
         .count()
 }
 
+/// The model every faction's bridge tile shows until it has one of its own.
+const SHARED_BRIDGE: &str = "Timber Bridge";
+
 /// The model name of a building's stage: its own name when finished, and
 /// `#1` to `#3` after it for the stages going up.
 pub fn stage_name(name: &str, stage: usize) -> String {
@@ -555,13 +558,20 @@ impl Looks {
             })
             .unzip();
         Looks {
-            // A drawn wall is a slab along its line, never a model.
+            // A drawn wall is a slab along its line, never a model. A
+            // bridge tile is one: each faction's own, else the shared one.
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
+                    let bridge = stats.is_bridge();
                     core::array::from_fn(|k| {
-                        (stats.flags & gc_sim::structures::LINE == 0)
-                            .then(|| models.by_name(&stage_name(name, k)))
-                            .flatten()
+                        if stats.flags & gc_sim::structures::LINE != 0 && !bridge {
+                            return None;
+                        }
+                        models.by_name(&stage_name(name, k)).or_else(|| {
+                            bridge
+                                .then(|| models.by_name(&stage_name(SHARED_BRIDGE, k)))
+                                .flatten()
+                        })
                     })
                 })
                 .collect(),
@@ -606,6 +616,17 @@ impl Looks {
                 .stage(to, UPGRADE_STAGE)
                 .or_else(|| self.stage(s.building, FINISHED)),
             _ => self.stage(s.building, FINISHED),
+        }
+    }
+
+    /// The way `s`'s model faces: its door on the model's +z, south unturned.
+    /// A modelled tile of a line (a bridge) runs along it, so its +z points that way.
+    pub fn facing(&self, s: &StructureView) -> Vec2 {
+        match s.line.and_then(|line| wall_piece(line, s.tile)) {
+            // Whichever end it was drawn from, a tile faces the same way.
+            Some(p) if p.dir.x < 0.0 || (p.dir.x == 0.0 && p.dir.y < 0.0) => -p.dir,
+            Some(p) => p.dir,
+            None => facing_of(s.turn),
         }
     }
 
@@ -1462,7 +1483,9 @@ pub fn push(
         let [r, g, b] = shade(wall_colour(&look, team(s.owner)), s.hp, s.max_hp);
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
-            push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+            if model.is_none() {
+                push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+            }
         } else if matches!(stats.role, Role::Stakes | Role::Barricade) {
             let (_, trim, _) = fieldwork_colours(stats.role, table.faction(s.building));
             let team = shade(team(s.owner), s.hp, s.max_hp);
@@ -2585,6 +2608,32 @@ mod tests {
     }
 
     #[test]
+    fn every_bridge_shows_the_shared_timber_model_along_its_line() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        for b in (0..table.len() as BuildingId).filter(|&b| table.is_bridge(b)) {
+            let mut view = footprint_view((10, 5), 1, 1, 0);
+            view.building = b;
+            view.line = Some([10, 3, 10, 9]);
+            view.built_percent = 100;
+            let name = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
+            assert_eq!(name(&view), Some("Timber Bridge"));
+            view.built_percent = 10;
+            assert_eq!(name(&view), Some("Timber Bridge #1"));
+            // Along the line (south here), and east for a line across the map.
+            assert_eq!(looks.facing(&view), Vec2::Y);
+            view.line = Some([3, 5, 9, 5]);
+            view.tile = (4, 5);
+            assert_eq!(looks.facing(&view), Vec2::X);
+            // Drawn from the other end, the same way.
+            view.line = Some([9, 5, 3, 5]);
+            assert_eq!(looks.facing(&view), Vec2::X);
+        }
+    }
+
+    #[test]
     fn a_bridge_tile_is_a_deck_with_rails_and_a_frame_while_it_goes_up() {
         let mut view = footprint_view((10, 5), 1, 1, 0);
         view.line = Some([10, 3, 10, 9]);
@@ -2751,7 +2800,8 @@ mod tests {
         for n in &names {
             assert!(n.len() <= gc_assets::model::NAME_BYTES, "{n}");
         }
-        let mut dressed = 0;
+        // The models in use (every faction's bridge may share one).
+        let mut dressed = std::collections::BTreeSet::new();
         for (b, stages) in looks.stages.iter().enumerate() {
             let stats = table.stats[b];
             for (stage, m) in stages.iter().enumerate() {
@@ -2773,7 +2823,7 @@ mod tests {
                         r.name()
                     );
                 }
-                dressed += 1;
+                dressed.insert(*m);
             }
             // A finished model needs every stage a worker can lay.
             if stages[FINISHED].is_some() && stats.upgrades_from.is_none() {
@@ -2787,12 +2837,12 @@ mod tests {
         let still = models.models.iter().filter(|m| m.is_still()).count();
         // The models a drawn wall's name would have found are left unused.
         let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(_, s)| s.flags & gc_sim::structures::LINE != 0)
+            .filter(|(_, s)| s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge())
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
         assert_eq!(
-            dressed + unused,
+            dressed.len() + unused,
             still,
             "a building model's name matches no building"
         );
