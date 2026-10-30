@@ -3253,8 +3253,17 @@ mod tests {
         let bridge = (0..STAGES)
             .filter(|&k| !BRIDGE_MODELS && models.by_name(&stage_name(SHARED_BRIDGE, k)).is_some())
             .count();
+        // And the timber bridge kit's pieces (assets-src/buildings/bridges.ron:
+        // "Bridge Deck A", "Bridge Pier L2 Mid", ...). They are the parts a
+        // bridge generator will lay along a drawn curve, so each is a model of
+        // its own that dresses no building by name.
+        let kit = models
+            .models
+            .iter()
+            .filter(|m| m.is_still() && m.name().starts_with("Bridge "))
+            .count();
         assert_eq!(
-            dressed.len() + unused + bridge,
+            dressed.len() + unused + bridge + kit,
             still,
             "a building model's name matches no building"
         );
