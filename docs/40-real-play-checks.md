@@ -54,7 +54,7 @@ artifact). The whole suite takes about two seconds.
 | Scenario | What it plays | Checks (first run) |
 |---|---|---|
 | `gate` | 200 Ember soldiers (4 spear, 3 sword, 2 bow regiments and horse) march through one Gate in a Palisade across the map | all through and standing within 75 s (52 s), no soldier lost |
-| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (46 s), no regiment strays off the deck into the river |
+| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (49 s; a routed regiment, running from the archers, no longer counts as part of the column), no regiment strays off the deck into the river |
 | `forest-retreat` | 6 regiments fall back west through 16 tiles of woods broken by thicket, 6 foot regiments chasing from 24 tiles behind; the player re-sends any that stop | every regiment out or fallen within 85 s (55 s), at least half get out (6 of 6, 95 of 132 soldiers) |
 | `ai-walls` | a General (Ember) on Ribcage Pass against an Ember base walled all round with a Palisade and a Gate | it hits the wall and gets inside within 10 minutes (5:42, 5:55) |
 
