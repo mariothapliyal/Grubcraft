@@ -916,7 +916,15 @@ impl Running {
         if let Some((card, states)) = card {
             for (i, slot) in grid.iter_mut().enumerate() {
                 if card.slots[i].is_some() {
-                    let (icon, mut tip) = card_look(card.slots[i]);
+                    let (icon, look) = card_look(card.slots[i]);
+                    // A building's or its upgrade's own blurb, else the fixed line.
+                    let blurb = match card.slots[i] {
+                        Some(Action::Lay(b) | Action::Upgrade(b)) => {
+                            self.blurb_book.get(self.buildings.name(b))
+                        }
+                        _ => None,
+                    };
+                    let mut tip = blurb.map_or(look, String::as_str);
                     if let Some(Action::Lay(b)) = card.slots[i]
                         && self.buildings.is_wall(b)
                     {
@@ -1987,10 +1995,8 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
             Icon::Hammer,
             "Selected workers build the walls you have planned (the faint blue tiles), nearest first, paying for each as they go and waiting while you can't. Right-click a planned tile to do the same. Any other order stops them.",
         ),
-        Some(Action::Lay(_)) => (
-            Icon::Hammer,
-            "A worker lays this building. Then click where. Woods and scrub are cleared first, which takes longer.",
-        ),
+        // A building's own line is its blurb (see the card's loop above).
+        Some(Action::Lay(_)) => (Icon::Hammer, ""),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
         Some(Action::RaiseWall(_)) => (

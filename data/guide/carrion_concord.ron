@@ -4,6 +4,7 @@
     buildings: [
         (
             name: "Counting House",
+            blurb: "Your starting base: trains Ledger Clerks and Caravans, takes Marrow. Upgrade to the Exchange for heavies and cavalry.",
             summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Exchange", "The mid game: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero. It costs Marrow, so put Clerks on a vein first."),
@@ -16,6 +17,7 @@
         ),
         (
             name: "Exchange",
+            blurb: "Tier 2 of the Counting House: unlocks the Lantern Spire and tier-2 regiments. Keeps working while it upgrades.",
             summary: "The Counting House's second tier. It keeps working while it upgrades, raises your supply cap and unlocks the Lantern Spire and every tier-2 regiment. Upgrade again for the siege engine and the Insolvent when your trade is paying.",
             notes: [
                 ("Grand Bourse", "The late game: the Mausoleum Engine, the Insolvent, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once trade and Tithe fund it."),
@@ -28,6 +30,7 @@
         ),
         (
             name: "Grand Bourse",
+            blurb: "Tier 3 of the Counting House: lets the Ossuary raise the Mausoleum Engine and opens the third hero slot.",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Ossuary raise the Mausoleum Engine and the Insolvent, and opens the third hero slot. Nothing is left to upgrade, so spend on armies and trade.",
             notes: [],
             tips: [
@@ -38,6 +41,7 @@
         ),
         (
             name: "Waystation",
+            blurb: "Your own trade post for caravan routes, paying half rate, and a Marrow drop-off. Build it far away for long routes.",
             summary: "Your own trade post for caravan routes, paying at half rate, and a Marrow drop-off for expansions. Build one far from your Counting House so caravans earn on long routes and Clerks have a short walk home.",
             notes: [],
             tips: [
@@ -48,6 +52,7 @@
         ),
         (
             name: "Tenement",
+            blurb: "Housing: raises your supply cap. Build one before you hit the cap, and keep it behind the front line.",
             summary: "Housing: every regiment uses supply, and each Tenement raises the cap. Cheap and quick to raise, so build one before you hit the cap, and keep them behind the front line.",
             notes: [],
             tips: [
@@ -58,6 +63,7 @@
         ),
         (
             name: "Reliquary",
+            blurb: "Pays 1 Tithe per death within 12 tiles, on any side. Your undead crumble near it, so keep it clear of your army.",
             summary: "Every model that dies within 12 tiles, on any side, pays you 1 Tithe. Small, cheap and buildable anywhere you have vision, so plant it beside other people's fights. Your own undead crumble away from Reliquaries, so keep them clear of your army.",
             notes: [],
             tips: [
@@ -68,6 +74,7 @@
         ),
         (
             name: "Ossuary",
+            blurb: "Raises Bone Pikes and Gravewardens, undead that never rout. Your steady frontline; build it first of the military ones.",
             summary: "Raises the undead: Bone Pikes and Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. Undead never rout, so this is your steady frontline. Build it first among military buildings; Bone Pikes need no Marrow.",
             notes: [],
             tips: [
@@ -78,6 +85,7 @@
         ),
         (
             name: "Guildhall",
+            blurb: "Trains Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes.",
             summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Living regiments reinforce near it. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
             notes: [],
             tips: [
@@ -88,6 +96,7 @@
         ),
         (
             name: "Lantern Spire",
+            blurb: "Trains Lantern Wraiths, the Concord's flyers. Tier 2, needs Marrow. Scouts and harasses archers and artillery.",
             summary: "Trains Lantern Wraiths, the Concord's flyers. Tier 2 and needs Marrow. Build one to scout, to harass archers and artillery, or to unnerve a line with the Wraiths' Dread Light.",
             notes: [],
             tips: [
@@ -98,6 +107,7 @@
         ),
         (
             name: "Tollgate",
+            blurb: "Two crossbows, ground and air, paying 1 Grub per 4 damage dealt. Build it at seeps and gates; it won't stop an army.",
             summary: "Two crossbows that shoot ground and air (siege engines first, then whoever attacks your buildings, then the nearest; right-click an enemy with it selected to pick its target), and every 4 damage they deal earns you 1 Grub. It is Fortified. Build one at your seeps and gates: it pays for itself while it kills, but it will not stop a real army.",
             notes: [],
             tips: [
@@ -108,6 +118,7 @@
         ),
         (
             name: "Vault of Names",
+            blurb: "Hires and revives heroes: the Magnate, Undertaker and Usurer. Build it early; heroes cost Marrow, so keep a reserve.",
             summary: "Hires and revives heroes: the Magnate, the Undertaker and the Usurer. Build it early; the Magnate pays for itself and the Undertaker multiplies your dead. Heroes cost Marrow, so keep some in reserve for a replacement.",
             notes: [],
             tips: [
@@ -118,6 +129,7 @@
         ),
         (
             name: "Bone Fence",
+            blurb: "A wall you draw, priced and built a tile at a time by a worker. Blocks passage except through gates.",
             summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker.",
             notes: [
                 ("Ossuary Wall", "Twice and a half as tough: worth it on any stretch the living will test."),
@@ -130,6 +142,7 @@
         ),
         (
             name: "Ossuary Wall",
+            blurb: "Tier 2 of the Bone Fence: 2.5 times as tough. Select a Bone Fence and press U to raise its stretch.",
             summary: "Level 2 of the Bone Fence: stacked bone bound in iron, 2.5 times as tough. Select a Bone Fence and press U: the joined stretch is paid now and a worker raises it a tile at a time while it stays up.",
             notes: [
                 ("Mausoleum Wall", "The Concord's toughest wall: four times a Bone Fence. Needs tier 2."),
@@ -142,6 +155,7 @@
         ),
         (
             name: "Mausoleum Wall",
+            blurb: "Tier 3 of the Bone Fence: 4 times as tough, and it mends from nearby deaths. Needs tier 2; press U on an Ossuary Wall.",
             summary: "Level 3, the top: a lantern-lit wall of burial niches, 4 times as tough as a Bone Fence. Needs tier 2. Select an Ossuary Wall and press U to raise its stretch. Its twist: every soldier who dies near it, friend or foe, mends it by 15.",
             notes: [],
             tips: [
@@ -152,6 +166,7 @@
         ),
         (
             name: "Iron Gate",
+            blurb: "A gate in your Bone Fence: your side walks through and enemies don't. Set it Auto, Locked or Open.",
             summary: "A gate in your Bone Fence: your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass).",
             notes: [
                 ("Gate of Debts", "Half as tough again, with a walk on top for archers or foot. It goes up on its own, with no worker, and the bars keep working."),
@@ -164,6 +179,7 @@
         ),
         (
             name: "Gate of Debts",
+            blurb: "Tier 2 of the Iron Gate: half as tough again, with a walkway on top. Select an Iron Gate and press V.",
             summary: "Level 2 of the Iron Gate: an arch of stacked bone and ledger-stones with a walk on top, half as tough again. Select an Iron Gate and press V: it goes up on its own, with no worker, and the bars keep working. Archers or foot can man the walk, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
@@ -174,6 +190,7 @@
         ),
         (
             name: "Bone Causeway",
+            blurb: "Draw a two-tile causeway across a river. Workers build it from the bank, and anyone can cross it.",
             summary: "A causeway of bone piers and boards, two tiles wide, you draw straight across a river: click the near bank, then the far bank. Workers build it out from the bank a span at a time, and anyone can cross it. Break a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
             notes: [],
             tips: [
@@ -184,6 +201,7 @@
         ),
         (
             name: "Bone Stakes",
+            blurb: "Draw stakes that stop enemy riders and beasts dead; foot troops pass at half pace. Wears down each time.",
             summary: "A line of sharpened bone stakes you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered. It wears down each time.",
             notes: [],
             tips: [
@@ -194,6 +212,7 @@
         ),
         (
             name: "Coffin Barricade",
+            blurb: "Draw a barricade nobody walks through; troops behind it take less from arrows and blows.",
             summary: "A line of stacked coffins you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front. Enemy troops get no cover from it.",
             notes: [],
             tips: [
@@ -204,6 +223,7 @@
         ),
         (
             name: "Grave Hands",
+            blurb: "A hidden trap: the first enemy regiment to step on it is held for 6 seconds. Gone once sprung.",
             summary: "A disturbed grave mound for 20 Grub on one tile. The first enemy regiment to walk onto it is seized by bony hands and held where it stands for 6 seconds. Your enemies cannot see it, and once it is sprung it is gone.",
             notes: [],
             tips: [
