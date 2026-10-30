@@ -7,6 +7,7 @@
 //! bumping [`crate::FORMAT`].
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::orders::Step;
 use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, Trap, VEINS, WallTwist};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
@@ -58,6 +59,11 @@ impl Writer {
     pub fn vec(&mut self, v: FxVec2) {
         self.fx(v.x);
         self.fx(v.y);
+    }
+
+    /// An optional angle: 0 for none, else the angle plus one.
+    pub fn opt_angle(&mut self, a: Option<Angle>) {
+        self.var(a.map_or(0, |a| u64::from(a.0) + 1));
     }
 
     pub fn handle(&mut self, h: RegimentHandle) {
@@ -240,7 +246,7 @@ impl Writer {
                 self.u8(1);
                 self.handle(regiment);
                 self.vec(target);
-                self.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                self.opt_angle(facing);
                 self.var(u64::from(files));
                 self.fx(pace);
             }
@@ -248,6 +254,43 @@ impl Writer {
                 self.u8(2);
                 self.handle(regiment);
                 self.handle(target);
+            }
+            Command::AttackMove {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            } => {
+                self.u8(41);
+                self.handle(regiment);
+                self.vec(target);
+                self.opt_angle(facing);
+                self.var(u64::from(files));
+                self.fx(pace);
+            }
+            Command::Then { regiment, step } => {
+                self.u8(42);
+                self.handle(regiment);
+                match step {
+                    Step::Move {
+                        target,
+                        facing,
+                        files,
+                        pace,
+                        hunt,
+                    } => {
+                        self.u8(u8::from(hunt));
+                        self.vec(target);
+                        self.opt_angle(facing);
+                        self.var(u64::from(files));
+                        self.fx(pace);
+                    }
+                    Step::Attack { target } => {
+                        self.u8(2);
+                        self.handle(target);
+                    }
+                }
             }
             Command::RemoveRegiment { regiment } => {
                 self.u8(3);
@@ -582,6 +625,15 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// An optional angle, as [`Writer::opt_angle`] wrote it; `None` when
+    /// cut short or out of range.
+    pub fn opt_angle(&mut self) -> Option<Option<Angle>> {
+        Some(match self.var()? {
+            0 => None,
+            a => Some(Angle(u16::try_from(a - 1).ok()?)),
+        })
+    }
+
     pub fn handle(&mut self) -> Option<RegimentHandle> {
         Some(RegimentHandle {
             index: self.var_as()?,
@@ -806,16 +858,36 @@ impl<'a> Reader<'a> {
             1 => Command::MoveTo {
                 regiment: self.handle()?,
                 target: self.vec()?,
-                facing: match self.var()? {
-                    0 => None,
-                    a => Some(Angle(u16::try_from(a - 1).ok()?)),
-                },
+                facing: self.opt_angle()?,
                 files: self.var_as()?,
                 pace: self.fx()?,
             },
             2 => Command::Attack {
                 regiment: self.handle()?,
                 target: self.handle()?,
+            },
+            41 => Command::AttackMove {
+                regiment: self.handle()?,
+                target: self.vec()?,
+                facing: self.opt_angle()?,
+                files: self.var_as()?,
+                pace: self.fx()?,
+            },
+            42 => Command::Then {
+                regiment: self.handle()?,
+                step: match self.u8()? {
+                    hunt @ (0 | 1) => Step::Move {
+                        target: self.vec()?,
+                        facing: self.opt_angle()?,
+                        files: self.var_as()?,
+                        pace: self.fx()?,
+                        hunt: hunt == 1,
+                    },
+                    2 => Step::Attack {
+                        target: self.handle()?,
+                    },
+                    _ => return None,
+                },
             },
             3 => Command::RemoveRegiment {
                 regiment: self.handle()?,
@@ -1031,7 +1103,32 @@ mod tests {
 
     #[test]
     fn deployment_and_building_commands_round_trip() {
+        let h = gc_sim::RegimentHandle {
+            index: 6,
+            generation: 2,
+        };
         let commands = [
+            Command::AttackMove {
+                regiment: h,
+                target: FxVec2::from_ints(-3, 90),
+                facing: Some(Angle(77)),
+                files: 6,
+                pace: Fx::from_raw(9),
+            },
+            Command::Then {
+                regiment: h,
+                step: Step::Move {
+                    target: FxVec2::from_ints(5, 5),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                    hunt: false,
+                },
+            },
+            Command::Then {
+                regiment: h,
+                step: Step::Attack { target: h },
+            },
             Command::DeployZone {
                 center: FxVec2::from_ints(40, -7),
                 radius: Fx::from_int(30),

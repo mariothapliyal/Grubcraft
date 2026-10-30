@@ -40,6 +40,7 @@ pub mod larvae;
 pub mod manning;
 pub mod morale;
 pub mod nav;
+pub mod orders;
 pub mod power;
 pub mod powers;
 pub mod production;
@@ -72,7 +73,7 @@ pub use morale::MoraleState;
 use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
-pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
+pub use regiments::{ABOUT_FACE_TICKS, Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 use structures::Work;
 pub use structures::{
@@ -123,7 +124,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 61;
+pub const SIM_VERSION: u32 = 63;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -590,6 +591,24 @@ pub enum Command {
         regiment: RegimentHandle,
         target: RegimentHandle,
     },
+    /// Attack-move: march to `target` as [`Command::MoveTo`], but stop to
+    /// fight any enemy regiment met on the way, then march on (see
+    /// [`orders`]). While the armies deploy, a plain placement.
+    AttackMove {
+        regiment: RegimentHandle,
+        target: FxVec2,
+        facing: Option<Angle>,
+        files: u16,
+        pace: Fx,
+    },
+    /// A Shift-queued order: carry out `step` once everything the regiment
+    /// was ordered before is done, or at once if it has nothing to do.
+    /// Refused when its queue is full ([`orders::QUEUE_LEN`]), and while
+    /// the armies deploy.
+    Then {
+        regiment: RegimentHandle,
+        step: orders::Step,
+    },
     /// Sandbox: take a regiment off the field (any player's).
     RemoveRegiment { regiment: RegimentHandle },
     /// Sandbox: change a regiment type's stats mid-match. Regiments already
@@ -791,14 +810,72 @@ pub enum Command {
 }
 
 impl Command {
+    /// The command that gives regiment `h` the order `step`: queued after
+    /// its others (`queued`, as with Shift held), or in their place.
+    pub fn of_step(regiment: RegimentHandle, step: orders::Step, queued: bool) -> Command {
+        if queued {
+            return Command::Then { regiment, step };
+        }
+        match step {
+            orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt: false,
+            } => Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            },
+            orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt: true,
+            } => Command::AttackMove {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            },
+            orders::Step::Attack { target } => Command::Attack { regiment, target },
+        }
+    }
+
     /// Whether this is one of a player's own orders to their regiments (or
     /// Ready), rather than setup (zones, raising armies) or the sandbox's
     /// tools (removing, tuning). In a network match only the host may send
     /// the rest. No `_` arm: a new kind of command must be decided here.
+    /// The regiment a work order (siege, gathering, building, the walls)
+    /// sets to work, in place of its queued orders and any attack-move.
+    pub fn sets_to_work(&self) -> Option<RegimentHandle> {
+        match *self {
+            Command::AttackStructure { regiment, .. }
+            | Command::Gather { regiment, .. }
+            | Command::Trade { regiment, .. }
+            | Command::Build { regiment, .. }
+            | Command::Clear { regiment, .. }
+            | Command::Construct { regiment, .. }
+            | Command::WorkPlan { regiment, .. }
+            | Command::ManWall { regiment, .. }
+            | Command::Climb { regiment, .. }
+            | Command::PlantStakes { regiment, .. } => Some(regiment),
+            Command::BuildWall { regiment, .. } | Command::RaiseWall { regiment, .. } => regiment,
+            _ => None,
+        }
+    }
+
     pub fn is_player_order(&self) -> bool {
         match self {
             Command::MoveTo { .. }
             | Command::Attack { .. }
+            | Command::AttackMove { .. }
+            | Command::Then { .. }
             | Command::SetFormation { .. }
             | Command::Ready
             | Command::FallBack { .. }
@@ -1563,6 +1640,9 @@ impl World {
         });
         for pc in commands {
             if self.apply(pc) {
+                if let Some(h) = pc.command.sets_to_work() {
+                    self.regiments.fresh(h, None);
+                }
                 stats.commands_applied += 1;
             } else {
                 stats.commands_rejected += 1;
@@ -1571,6 +1651,9 @@ impl World {
         // Regiments on the walls given other orders come down first.
         if let Some(c) = &mut self.conquest {
             c.release_held(&mut self.regiments, &self.units, &self.nav);
+        }
+        if !self.deploying() {
+            self.advance_orders();
         }
         self.events.clear();
         // The sky moves on even while the armies deploy.
@@ -1803,6 +1886,7 @@ impl World {
                     | Command::SpawnRegiment { .. }
                     | Command::SpawnStructure { .. }
                     | Command::MoveTo { .. }
+                    | Command::AttackMove { .. }
                     | Command::SetFormation { .. }
                     | Command::Brace { .. }
                     | Command::Torches { .. }
@@ -1851,46 +1935,59 @@ impl World {
                 facing,
                 files,
                 pace,
+            }
+            | Command::AttackMove {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
             } => {
                 if self.deploying() {
                     return self.place(pc.player, regiment, target, facing, files);
                 }
                 // Players may only order the regiments they command.
-                match self.regiments.owner(regiment) {
-                    Some(owner) if self.stances.can_command(pc.player, owner) => {
-                        let done = self.regiments.order(
-                            regiment,
-                            Order {
-                                target,
-                                facing,
-                                files,
-                                pace,
-                            },
-                        );
-                        if done {
-                            let i = regiment.index as usize;
-                            stand_back(&mut self.regiments, &self.units, &self.nav, i);
-                            self.leave_off(regiment);
-                        }
-                        done
-                    }
-                    _ => false,
+                if !self.commands(pc.player, regiment) {
+                    return false;
                 }
+                let hunt = matches!(pc.command, Command::AttackMove { .. }).then_some(
+                    orders::Step::Move {
+                        target,
+                        facing,
+                        files,
+                        pace,
+                        hunt: true,
+                    },
+                );
+                let done = self.march(regiment, target, facing, files, pace);
+                if done {
+                    self.regiments.fresh(regiment, hunt);
+                }
+                done
             }
             Command::Attack { regiment, target } => {
-                match (self.regiments.owner(regiment), self.regiments.owner(target)) {
-                    (Some(owner), Some(enemy))
-                        if self.stances.can_command(pc.player, owner)
-                            && self.stances.hostile(owner, enemy)
-                            && self.faces(owner, target) =>
-                    {
-                        let done = self.regiments.attack(regiment, target);
-                        if done {
-                            self.leave_off(regiment);
-                        }
-                        done
-                    }
-                    _ => false,
+                let done = self.commands(pc.player, regiment) && self.charge_at(regiment, target);
+                if done {
+                    self.regiments.fresh(regiment, None);
+                }
+                done
+            }
+            Command::Then { regiment, step } => {
+                let Some(i) = self.regiments.resolve(regiment) else {
+                    return false;
+                };
+                if self.deploying() || !self.commands(pc.player, regiment) {
+                    return false;
+                }
+                if self.regiments.morale_state[i].broken() {
+                    return false;
+                }
+                // Behind anything it is still to do, its work included.
+                let mut plan = self.regiments.plan(i);
+                if self.free(i) && plan.queue.is_empty() {
+                    self.start_step(i, step)
+                } else {
+                    plan.queue.push(step) && self.regiments.set_plan(i, plan)
                 }
             }
             Command::RemoveRegiment { regiment } => self.regiments.despawn(regiment),
@@ -1919,7 +2016,11 @@ impl World {
                         c.blueprints.forget(i);
                     }
                     let to = self.fall_back_point(i);
-                    self.regiments.fall_back(regiment, to)
+                    let done = self.regiments.fall_back(regiment, to);
+                    if done {
+                        self.regiments.fresh(regiment, None);
+                    }
+                    done
                 }
                 _ => false,
             },
@@ -2545,6 +2646,182 @@ impl World {
         }
     }
 
+    /// Whether `player` may give regiment `h` orders.
+    fn commands(&self, player: PlayerId, h: RegimentHandle) -> bool {
+        self.regiments
+            .owner(h)
+            .is_some_and(|owner| self.stances.can_command(player, owner))
+    }
+
+    /// Whether slot `i` has nothing to carry out: no march, no enemy to
+    /// attack and no work.
+    fn free(&self, i: usize) -> bool {
+        self.regiments.idle(i)
+            && self
+                .conquest
+                .as_ref()
+                .is_none_or(|c| !c.has_job(&self.regiments, i))
+    }
+
+    /// Send regiment `h` marching; the caller has checked who may order it.
+    fn march(
+        &mut self,
+        h: RegimentHandle,
+        target: FxVec2,
+        facing: Option<Angle>,
+        files: u16,
+        pace: Fx,
+    ) -> bool {
+        let order = Order {
+            target,
+            facing,
+            files,
+            pace,
+        };
+        if !self.regiments.order(h, order) {
+            return false;
+        }
+        stand_back(
+            &mut self.regiments,
+            &self.units,
+            &self.nav,
+            h.index as usize,
+        );
+        self.leave_off(h);
+        true
+    }
+
+    /// Send regiment `h` at the enemy regiment `target`, if its side is
+    /// hostile and can see it.
+    fn charge_at(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
+        let (Some(owner), Some(enemy)) = (self.regiments.owner(h), self.regiments.owner(target))
+        else {
+            return false;
+        };
+        if !self.stances.hostile(owner, enemy) || !self.faces(owner, target) {
+            return false;
+        }
+        let done = self.regiments.attack(h, target);
+        if done {
+            self.leave_off(h);
+        }
+        done
+    }
+
+    /// Slot `i` takes up `step`, keeping the rest of its queue. False when
+    /// the step can't be carried out (its target gone or unseen).
+    fn start_step(&mut self, i: usize, step: orders::Step) -> bool {
+        let h = self.regiments.handle(i);
+        let done = match step {
+            orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                ..
+            } => self.march(h, target, facing, files, pace),
+            orders::Step::Attack { target } => self.charge_at(h, target),
+        };
+        if done {
+            let hunt = matches!(step, orders::Step::Move { hunt: true, .. });
+            self.regiments.on_hunt(i, hunt.then_some(step));
+        }
+        done
+    }
+
+    /// Queued orders and attack-moves (see [`orders`]): a regiment on an
+    /// attack-move that sees an enemy near turns on it, setting its march
+    /// aside; one with nothing left to do takes up its next queued step.
+    fn advance_orders(&mut self) {
+        for i in 0..self.regiments.alive.len() {
+            let regs = &self.regiments;
+            if !regs.alive[i]
+                || !regs.planned(i)
+                || regs.on_wall[i]
+                || regs.engaged[i].is_some()
+                || regs.falling_back[i] > 0
+                || regs.morale_state[i].broken()
+            {
+                continue;
+            }
+            let plan = regs.plan(i);
+            if let Some(hunt) = plan.hunt {
+                // A beaten foe is left to run.
+                if let Some(t) = regs.attack_target[i]
+                    && regs
+                        .resolve(t)
+                        .is_none_or(|j| regs.morale_state[j].broken())
+                {
+                    self.regiments.attack_target[i] = None;
+                }
+                let regs = &self.regiments;
+                if plan.diverted {
+                    // The fight is over: the march goes on.
+                    if regs.attack_target[i].is_none() {
+                        self.start_step(i, hunt);
+                    }
+                } else if regs.idle(i) {
+                    // Arrived: the attack-move is done.
+                    self.regiments.on_hunt(i, None);
+                } else if regs.target[i].is_some()
+                    && regs.attack_target[i].is_none()
+                    && (self.tick + i as u32).is_multiple_of(orders::HUNT_EVERY)
+                    && let Some(foe) = self.foe_near(i)
+                    && self.charge_at(self.regiments.handle(i), foe)
+                {
+                    let plan = orders::Plan {
+                        diverted: true,
+                        ..plan
+                    };
+                    self.regiments.set_plan(i, plan);
+                }
+            }
+            while self.free(i) {
+                let mut plan = self.regiments.plan(i);
+                let Some(step) = plan.queue.pop() else {
+                    break;
+                };
+                self.regiments.set_plan(i, plan);
+                if self.start_step(i, step) {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The nearest enemy regiment slot `i`'s side can see, standing (and
+    /// not on a wall, out of the reach of those below) and within
+    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further).
+    /// Looked up in last tick's combat grid, so a regiment that
+    /// only arrived this tick is noticed at the next look.
+    fn foe_near(&self, i: usize) -> Option<RegimentHandle> {
+        let regs = &self.regiments;
+        let owner = regs.owner[i];
+        let reach = self.units[regs.unit[i] as usize]
+            .range
+            .max(orders::HUNT_RADIUS);
+        let here = regs.position[i];
+        let mut best: Option<(Fx, usize)> = None;
+        let slack = reach + self.combat.max_step();
+        self.combat.near_enemies(here, slack, owner, |j| {
+            if !regs.alive[j]
+                || regs.on_wall[j]
+                || regs.morale_state[j].broken()
+                || !self.stances.hostile(owner, regs.owner[j])
+            {
+                return;
+            }
+            let d = (regs.position[j] - here).length();
+            if d <= reach
+                && best.is_none_or(|b| (d, j) < b)
+                && self.vision.sees(owner, j, regs.owner[j])
+            {
+                best = Some((d, j));
+            }
+        });
+        best.map(|(_, j)| regs.handle(j))
+    }
+
     /// Where regiment slot `i` falls back to: [`combat::FALL_BACK_TILES`]
     /// straight back from the foe it is fighting, or behind it if it isn't
     /// fighting, kept on the map.
@@ -2896,6 +3173,8 @@ impl World {
                 pace: Fx::ZERO,
             };
             if self.regiments.order(h, order) {
+                // Its march is now to the bank, and hunts nobody.
+                self.regiments.on_hunt(i, None);
                 self.leave_off(h);
             }
         }

@@ -14,6 +14,7 @@
 
 use std::collections::VecDeque;
 
+use gc_sim::orders::Step;
 use gc_sim::structures::StructureHandle;
 use gc_sim::{Command, PlayerCommand, PlayerId, RegimentHandle};
 use glam::Vec2;
@@ -25,10 +26,13 @@ use crate::perception::{Perception, to_fx, to_fx_vec, vec_angle};
 pub enum Act {
     /// March to `to`, then face `facing` (or keep the direction of travel).
     /// `pace` is tiles per second; zero means the regiment's own speed.
+    /// `hunt` makes it an attack-move: it stops to fight enemies met on the
+    /// way, then marches on.
     Move {
         to: Vec2,
         facing: Option<Vec2>,
         pace: f32,
+        hunt: bool,
     },
     /// Close with an enemy and fight it, or shoot it from range.
     Attack(RegimentHandle),
@@ -193,6 +197,11 @@ impl Orders {
     fn not_carried_out(&mut self, view: &Perception, r: &crate::perception::Seen, s: Sent) -> bool {
         let now = view.tick;
         if now < s.lands + GRACE_TICKS || r.engaged || r.broken() {
+            return false;
+        }
+        // On an attack-move the sim turns it aside to fight and back onto
+        // its march: going the other way meanwhile is the order at work.
+        if r.diverted {
             return false;
         }
         let i = r.handle.index as usize;
@@ -392,14 +401,17 @@ fn same(a: &Act, b: &Act) -> bool {
                 to: a,
                 facing: fa,
                 pace: pa,
+                hunt: ha,
             },
             Act::Move {
                 to: b,
                 facing: fb,
                 pace: pb,
+                hunt: hb,
             },
         ) => {
-            a.distance(*b) < MOVE_SLACK
+            ha == hb
+                && a.distance(*b) < MOVE_SLACK
                 && (pa - pb).abs() < 0.2
                 && match (fa, fb) {
                     (None, None) => true,
@@ -413,13 +425,22 @@ fn same(a: &Act, b: &Act) -> bool {
 
 fn command(regiment: RegimentHandle, act: &Act) -> Command {
     match *act {
-        Act::Move { to, facing, pace } => Command::MoveTo {
+        Act::Move {
+            to,
+            facing,
+            pace,
+            hunt,
+        } => Command::of_step(
             regiment,
-            target: to_fx_vec(to),
-            facing: facing.map(vec_angle),
-            files: 0,
-            pace: to_fx(pace),
-        },
+            Step::Move {
+                target: to_fx_vec(to),
+                facing: facing.map(vec_angle),
+                files: 0,
+                pace: to_fx(pace),
+                hunt,
+            },
+            false,
+        ),
         Act::Attack(target) => Command::Attack { regiment, target },
         Act::Siege(structure) => Command::AttackStructure {
             regiment,

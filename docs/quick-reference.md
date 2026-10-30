@@ -12,8 +12,11 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Regiments**
 - Left-click selects; drag a box; `Shift` adds or removes. Double-click select by type: not built.
-- Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing).
-- `Q` then click: move. `W` then click: attack. `Esc` cancels.
+- Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing). Alt+right-drag: a deep line (the drag is the front, each regiment keeps its frontage and the rest stack behind, as the Deep shape), to fill a gate or bridge.
+- `Shift`+right-click: queue a move or an attack after the regiment's current orders (up to four; more are refused). Each player can have 32 regiments with queued orders or on an attack-move at once; beyond that a queued order is refused and an attack-move marches plainly. Any order without `Shift` replaces the queue. A dotted line runs on through the queued stops (red for advances).
+- `Q` then click: move. `W` then click: attack; a click on open ground advances there instead. `A` (Advance) then click: attack-move, which marches but stops to fight any enemy within 12 tiles, then marches on. `Shift` on the click queues it and keeps the tool armed. `Esc` cancels. While a hero panel is shown (`Shift+H` test), `A` is the hero's first ability instead.
+- Every move shows a fading plate at once where the regiment will stand.
+- A regiment sent back the way it faces (more than 135° round) turns about where it stands, the rear rank becoming the front, and marches off a third of a second later; told to face back the way it came at the end, it turns about again. Up to 90° off it wheels as it marches; between 90° and 135° it turns on the spot first.
 - `R` cycles formation: Line, Tight, Loose, Shield wall (shields only). `F` does the same while no hero owns `F`.
 - `Z` Brace (spears and pikes; again lifts). `V` Fall back (8 tiles at half pace). `E` Burn (set nearby woods alight). `X` Torches (night only). `C` Plant stakes (Conquest).
 - `O` cycles army shape for group moves: Line, Deep, Hammer, Square, Plain, then saved Mine 1 to 3. `Shift+O` saves the selection's shape.
@@ -60,7 +63,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Command-line flags** [crates/gc_game/src/main.rs]
 - `--sandbox`; `--conquest ribcage_pass|four_teeth`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
-- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--watch REPLAY`.
+- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march N` (a regiment through each gate, looking at the Nth); `--watch REPLAY`.
 - Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
 
 **Not in the game:** key rebinding, ping wheel (`G` is blocked-ground view), text chat, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
