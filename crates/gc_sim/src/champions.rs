@@ -456,8 +456,12 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
         *bonus = bonus.saturating_add(heart(party) * SCALE);
     }
     for i in 0..regs.alive.len() {
-        if regs.alive[i] {
-            morale::shift(regs, i, heart(regs.owner[i]));
+        if !regs.alive[i] {
+            continue;
+        }
+        match heart(regs.owner[i]) {
+            h if h < 0 => morale::shake(regs, i, -h, morale::WHY_CHAMPION),
+            h => morale::shift(regs, i, h),
         }
     }
     let last = regs.models[l] as usize - 1;
