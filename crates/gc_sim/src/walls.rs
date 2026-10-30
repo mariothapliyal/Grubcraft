@@ -69,6 +69,17 @@ pub fn wall_tiles(from: (i32, i32), to: (i32, i32)) -> Option<Vec<(i32, i32)>> {
     )
 }
 
+/// The box of tiles (`[x, y, width, depth]`) a line drawn from `from` to `to`
+/// lies in.
+pub(crate) fn line_area(from: (i32, i32), to: (i32, i32)) -> [i32; 4] {
+    [
+        from.0.min(to.0),
+        from.1.min(to.1),
+        (to.0 - from.0).abs() + 1,
+        (to.1 - from.1).abs() + 1,
+    ]
+}
+
 /// One tile of a planned wall: where, and whether it can go up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WallTile {
@@ -338,12 +349,7 @@ impl Conquest {
             return Err(Refusal::Unknown);
         }
         let tiles = wall_tiles(from, to).ok_or(Refusal::Unknown)?;
-        let area = [
-            from.0.min(to.0),
-            from.1.min(to.1),
-            (to.0 - from.0).abs() + 1,
-            (to.1 - from.1).abs() + 1,
-        ];
+        let area = line_area(from, to);
         if b.is_bridge() {
             return Ok((b, self.bridge_line(player, &tiles, area, nav, terrain)?));
         }
@@ -419,10 +425,13 @@ impl Conquest {
             return false;
         }
         let line = [from.0, from.1, to.0, to.1].map(|v| v as i16);
-        let Some((a, b)) = self
-            .structures
-            .found_wall(player, building, &plan, line, nav, regs)
-        else {
+        let ends = if stats.is_bridge() {
+            self.found_bridge(player, building, from, to, nav, regs, terrain)
+        } else {
+            self.structures
+                .found_wall(player, building, &plan, line, nav, regs)
+        };
+        let Some((a, b)) = ends else {
             return false;
         };
         let n = plan.len() as u32;
