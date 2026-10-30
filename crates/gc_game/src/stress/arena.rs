@@ -96,32 +96,12 @@ impl Arena {
         }
     }
 
-    /// The tiles with x in `xs` and y in `ys` as a map shape: a band down
-    /// the longer side, as wide as the shorter. Its ends are rounded, so it
-    /// is exact for a strip that runs off the map; a block loses its
-    /// corners. Map shapes are on the tiles' corners, so the shorter side
-    /// must be even.
-    fn band(xs: Range<i32>, ys: Range<i32>) -> Shape {
-        let (w, h) = (xs.end - xs.start, ys.end - ys.start);
-        assert!(
-            w.min(h) % 2 == 0,
-            "a band {w} by {h}: the narrow side must be even"
-        );
-        let half = w.min(h) / 2;
-        if w >= h {
-            let y = ys.start + half;
-            Shape::Line {
-                a: (xs.start + half, y),
-                b: (xs.end - half, y),
-                half_width: half,
-            }
-        } else {
-            let x = xs.start + half;
-            Shape::Line {
-                a: (x, ys.start + half),
-                b: (x, ys.end - half),
-                half_width: half,
-            }
+    /// The tiles with x in `xs` and y in `ys` as a map shape.
+    fn rect(xs: Range<i32>, ys: Range<i32>) -> Shape {
+        assert!(!xs.is_empty() && !ys.is_empty(), "nothing to paint");
+        Shape::Rect {
+            min: (xs.start, ys.start),
+            max: (xs.end, ys.end),
         }
     }
 
@@ -130,9 +110,11 @@ impl Arena {
         &mut self.def
     }
 
-    /// Deep water no one wades (a bridge crosses it), with steep banks.
+    /// Deep water no one wades (a bridge crosses it). Its banks are sheer,
+    /// so, as on a real map, the half of each bank tile next to the water
+    /// is blocked to the march too.
     pub fn river(&mut self, xs: Range<i32>, ys: Range<i32>) {
-        let shape = Arena::band(xs, ys);
+        let shape = Arena::rect(xs, ys);
         self.paint().terrain.push(TerrainOp {
             shape,
             mode: Mode::Set,
@@ -152,7 +134,7 @@ impl Arena {
     }
 
     fn cover(&mut self, xs: Range<i32>, ys: Range<i32>, kind: CoverKind) {
-        let shape = Arena::band(xs, ys);
+        let shape = Arena::rect(xs, ys);
         self.paint().cover.push(CoverOp { shape, kind });
     }
 
@@ -353,9 +335,9 @@ pub(crate) fn attack_nearest(
         .collect()
 }
 
-/// The map maker paints what the scenarios ask for: a river exactly as
-/// wide as asked and blocked to the march, woods where asked, and thicket
-/// blocked too.
+/// The map maker paints what the scenarios ask for, corners and map
+/// edges included: a river exactly as wide as asked and blocked to the
+/// march, woods where asked, and thicket blocked too.
 #[test]
 fn the_arena_paints_what_it_is_asked() {
     let mut arena = Arena::new(64);
@@ -366,14 +348,23 @@ fn the_arena_paints_what_it_is_asked() {
         let wet: Vec<i32> = (0..64).filter(|&x| arena.is_river(x, y)).collect();
         assert_eq!(wet, (30..34).collect::<Vec<_>>(), "row {y}");
     }
-    assert!((4..20).all(|x| arena.is_woods(x, 40)));
-    assert!(!arena.is_woods(3, 40) && !arena.is_woods(20, 40));
+    for y in [0, 40, 63] {
+        let woods: Vec<i32> = (0..64).filter(|&x| arena.is_woods(x, y)).collect();
+        assert_eq!(woods, (4..20).collect::<Vec<_>>(), "row {y}");
+    }
     let nav = arena.map().nav_costs();
     let cells = gc_sim::nav::CELLS_PER_TILE as usize;
     let side = 64 * cells;
     let cell = |x: usize, y: usize| nav[y * cells * side + x * cells];
     assert_eq!(cell(32, 31), gc_sim::nav::BLOCKED, "the river");
-    assert_eq!(cell(10, 22), gc_sim::nav::BLOCKED, "the thicket");
+    for (x, y) in [(8, 20), (11, 20), (8, 24), (11, 24)] {
+        assert_eq!(
+            cell(x, y),
+            gc_sim::nav::BLOCKED,
+            "the thicket's corner ({x}, {y})"
+        );
+    }
+    assert_ne!(cell(12, 24), gc_sim::nav::BLOCKED, "beside the thicket");
     assert_ne!(cell(15, 40), gc_sim::nav::BLOCKED, "the woods");
     assert_ne!(cell(45, 31), gc_sim::nav::BLOCKED, "open ground");
 }
