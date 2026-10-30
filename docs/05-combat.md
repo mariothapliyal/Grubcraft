@@ -128,6 +128,8 @@ Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-de
 
 The core of Shogun-style battles: armies lose because they *break*, not because every soldier dies.
 
+**Planned for the restart (Mario, 2026-10-30):** regiments break far too early today (wavering near 80% strength). The redesign, *holding until bloodied*, lets a regiment rout only once it is down to a breaking point below half strength (about 35 to 45%, lower for veterans, varied a little per regiment), so shock works by killing men. See [29 · Holding until bloodied](29-restart-plan.md#holding-until-bloodied-in-brief).
+
 Each regiment has a **morale** value. It drops from:
 - Casualties (especially fast casualties)
 - Being hit in the flank or rear
