@@ -500,7 +500,7 @@ pub(super) mod tests {
 
     /// Every shipped Conquest map and a Wilds land.
     fn maps() -> Vec<Map> {
-        let tiles = gc_ui::lobby::MapSize::Small.conquest_tiles();
+        let tiles = gc_ui::lobby::MapSize::Medium.conquest_tiles();
         (0..=gc_map::SHIPPED.len() + 1)
             .map(|choice| crate::conquest::make_map(choice, tiles, 7))
             .collect()

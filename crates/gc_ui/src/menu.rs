@@ -805,24 +805,21 @@ impl<N: Network> Menu<N> {
         let col_w = (panel.w - 48 - 36) / 4;
         let y = panel.y + sp(64);
         let slot_rect = |i: i32| Rect::new(panel.x + 24 + i * (col_w + 12), y, col_w, sp(36));
-        // Champions may duel before a battle with a computer player: in the
-        // footer, after Leave and Army. A Conquest match has none, and how
-        // fast its seasons turn takes the place.
-        let champions_r = Rect::new(panel.x + 24 + 148 + 140 + 12, panel.bottom() - 52, 320, 44);
-        // How big the map is, and in Conquest which victories count, have
-        // no room in the four columns: they sit in the header, between the
-        // title and the host's name, clear of them.
-        let (size_r, victory_r) = if settings.mode == GameMode::Conquest {
-            (
-                Rect::new(panel.x + 164, panel.y + 14, 176, sp(36)),
-                Rect::new(panel.x + 164 + 184, panel.y + 14, 250, sp(36)),
-            )
-        } else {
-            let r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
-            (r, r)
-        };
-        // A shipped Conquest map has its own size.
+        // How big the map is has no room in the four columns: it sits in
+        // the header, between the title and the host's name, clear of them
+        // (a shipped Conquest map has its own size, and no Size).
         let sized = settings.has_map_size();
+        let size_r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
+        // The footer, after Leave: a Field Battle has Army, then whether
+        // champions may duel before a battle with a computer player. A
+        // Conquest match has no Army, and which victories count and how
+        // fast its seasons turn take the room.
+        let footer = |x: i32, w: i32| Rect::new(panel.x + x, panel.bottom() - 52, w, 44);
+        let (victory_r, champions_r) = if settings.mode == GameMode::Conquest {
+            (footer(172, 256), footer(436, 208))
+        } else {
+            (footer(172, 0), footer(24 + 148 + 140 + 12, 320))
+        };
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -2116,12 +2113,13 @@ mod tests {
         h.click("Victory: Annihilation");
         assert_eq!(victory(&h), Victory::Heart);
         assert!(h.has("Victory: Titan's Heart"));
-        // It sits in the header, left of the host's name and above the
-        // settings row.
+        // It sits in the footer, right of Leave, below the settings row.
         let (vx, vy) = h.text_pos("Victory: Titan's Heart");
-        let (hx, _) = h.text_pos("Host:");
+        let (lx, ly) = h.text_pos("Leave");
         let (_, my) = h.text_pos("Mode: Conquest");
-        assert!(vx + 88 < hx && vy < my);
+        assert!(lx < vx && vy > my && vy.abs_diff(ly) < 12);
+        // Ribcage Pass, a shipped map, has its own size: no Size stepper.
+        assert!(!h.has("Size:"));
     }
 
     #[test]

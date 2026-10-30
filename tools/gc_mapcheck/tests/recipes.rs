@@ -117,8 +117,8 @@ fn every_grown_map_passes_the_checker() {
 }
 
 /// Conquest Wilds maps pass the checker's Conquest checks at every
-/// wildness, at the lobby's three sizes (448, 512, 640) and at 768 (which
-/// takes the bigger maps' branches), with room for all their sites: the
+/// wildness, at the lobby's three sizes (448, 512, 640) and at 768, with
+/// room for all their sites: the
 /// game doesn't reroll them. A sweep of 10 seeds of each wildness at 512,
 /// 640, 768 and 896 passed when they were made, and 30 at 448 and 640 when
 /// the lobby's sizes came in; this keeps a few so the test stays quick.
@@ -149,7 +149,7 @@ fn every_conquest_wilds_map_passes_the_checker() {
     );
 }
 
-/// Every lobby map at the big sizes (Standard and Large, for two to six
+/// Every lobby map at the big sizes (Medium and Large, for two to six
 /// players) is the size asked for, and its starts can all walk to each
 /// other (`gc_map`'s own tests do the Small sizes).
 #[test]

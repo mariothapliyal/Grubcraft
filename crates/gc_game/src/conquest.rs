@@ -21,10 +21,7 @@ use gc_sim::{
     Resource, Victories, World,
 };
 use gc_ui::Settings;
-use gc_ui::lobby::{
-    COLORS, CONQUEST_MAP_PLAYERS, GameMode, LobbySettings, MatchStart, Slot, SlotKind, Tempo,
-    Victory,
-};
+use gc_ui::lobby::{COLORS, GameMode, LobbySettings, MatchStart, Slot, SlotKind, Tempo, Victory};
 use glam::Vec2;
 
 use crate::buildings::{self, Table};
@@ -237,7 +234,14 @@ pub fn factions(start: &MatchStart) -> Vec<Faction> {
 /// the first start and an idle side at each of the others, the factions
 /// in turn from yours so a four-player map shows all four.
 pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> MatchStart {
-    let players = CONQUEST_MAP_PLAYERS.get(choice).copied().unwrap_or(2);
+    let lobby = LobbySettings {
+        mode: GameMode::Conquest,
+        map: choice,
+        map_seed,
+        ..LobbySettings::default()
+    };
+    // A made map's size caps its players, as in the lobby.
+    let players = lobby.max_players().max(2);
     let slots = (0..players)
         .map(|i| {
             let mut slot = Slot::open(i);
@@ -258,12 +262,7 @@ pub fn quick_conquest(choice: usize, settings: &Settings, map_seed: u64) -> Matc
         })
         .collect();
     MatchStart {
-        settings: LobbySettings {
-            mode: GameMode::Conquest,
-            map: choice,
-            map_seed,
-            ..LobbySettings::default()
-        },
+        settings: lobby,
         players: slots,
         local_player: 0,
         seed: None,
@@ -813,11 +812,9 @@ mod tests {
             let wild = make_map(CONQUEST_MAPS.len() - 1, tiles, 5);
             assert_eq!((wild.players, wild.tiles), (6, tiles));
             assert!(wild.is_conquest());
-            if tiles == MEDIUM {
-                let past = make_map(99, MEDIUM, 5);
-                assert_eq!(past.hash(), wild.hash(), "never panics");
-            }
         }
+        let last = make_map(CONQUEST_MAPS.len() - 1, MEDIUM, 5).hash();
+        assert_eq!(make_map(99, MEDIUM, 5).hash(), last, "never panics");
         assert_eq!(make_map(SHIPPED_CONQUEST, 100, 5).tiles, 448);
         // Replays from before the sizes were on 768-tile maps.
         assert_eq!(make_map(SHIPPED_CONQUEST, 768, 5).tiles, 768);
