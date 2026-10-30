@@ -68,7 +68,6 @@ const RIVER_BED: i32 = 0;
 /// game's own map maker (`gc_map`) from a description, as a map file is:
 /// the same heights, river banks, woods and thicket rules as a real match.
 pub(crate) struct Arena {
-    pub tiles: u32,
     def: MapDef,
     /// The map, made the first time it is asked for; painting after that
     /// is a mistake.
@@ -78,7 +77,6 @@ pub(crate) struct Arena {
 impl Arena {
     pub fn new(tiles: u32) -> Arena {
         Arena {
-            tiles,
             def: MapDef {
                 name: "Stress arena".into(),
                 size: SizeClass::Field(tiles as i32),
@@ -99,9 +97,16 @@ impl Arena {
     }
 
     /// The tiles with x in `xs` and y in `ys` as a map shape: a band down
-    /// the longer side, as wide as the shorter (its ends rounded).
+    /// the longer side, as wide as the shorter. Its ends are rounded, so it
+    /// is exact for a strip that runs off the map; a block loses its
+    /// corners. Map shapes are on the tiles' corners, so the shorter side
+    /// must be even.
     fn band(xs: Range<i32>, ys: Range<i32>) -> Shape {
         let (w, h) = (xs.end - xs.start, ys.end - ys.start);
+        assert!(
+            w.min(h) % 2 == 0,
+            "a band {w} by {h}: the narrow side must be even"
+        );
         let half = w.min(h) / 2;
         if w >= h {
             let y = ys.start + half;
@@ -156,23 +161,22 @@ impl Arena {
         self.map.get_or_init(|| Map::from_def(&self.def))
     }
 
-    /// Tile `(x, y)`'s place in the rows, if it is on the map.
-    fn index(&self, x: i32, y: i32) -> Option<usize> {
-        let n = self.tiles as i32;
-        ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (y * n + x) as usize)
+    /// The map and tile `(x, y)`'s place in its rows, if it is on it.
+    fn tile(&self, x: i32, y: i32) -> Option<(&Map, usize)> {
+        let map = self.map();
+        let n = map.tiles as i32;
+        ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (map, (y * n + x) as usize))
     }
 
     /// Whether tile `(x, y)` is under water.
     pub fn is_river(&self, x: i32, y: i32) -> bool {
-        let map = self.map();
-        self.index(x, y).is_some_and(|t| map.heights[t] < map.water)
+        self.tile(x, y).is_some_and(|(m, t)| m.heights[t] < m.water)
     }
 
     /// Whether tile `(x, y)` is woods or thicket.
     pub fn is_woods(&self, x: i32, y: i32) -> bool {
-        let map = self.map();
-        self.index(x, y)
-            .is_some_and(|t| map.cover[t] == Cover::Wood as u8)
+        self.tile(x, y)
+            .is_some_and(|(m, t)| m.cover[t] == Cover::Wood as u8)
     }
 
     /// A two-player Conquest world on this map with every faction's units
