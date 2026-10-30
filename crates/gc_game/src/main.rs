@@ -330,15 +330,15 @@ const DOUBLE_TAP: Duration = Duration::from_millis(350);
 /// A right-click this close to an enemy block's edge, in tiles, attacks it.
 const ATTACK_PICK_TILES: f32 = 1.5;
 /// How long the marker under an attacked regiment shows.
+const ATTACK_MARK: Duration = Duration::from_millis(700);
 /// How long a just-given order's ghost plate shows, fading as it goes.
 const ORDER_MARK: Duration = Duration::from_millis(800);
-/// Plate colour of an attack-move (the tint of its route too).
 /// A route ending this near the mark is the order's own.
 const ORDER_ROUTED_TILES: f32 = 2.0;
+/// Plate colour of an attack-move (the tint of its route too).
 const ORDER_HUNT_COLOR: [u8; 3] = [150, 40, 30];
 /// How much lighter a queued order's plate is.
 const ORDER_QUEUED_LIFT: u8 = 50;
-const ATTACK_MARK: Duration = Duration::from_millis(700);
 /// Banner over a shaken regiment: wavering (blinking amber), routing (white)
 /// or shattered (grey). Height above the ground and size, in tiles.
 const BANNER_LIFT: f32 = 1.9;
