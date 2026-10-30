@@ -6779,7 +6779,7 @@ impl Running {
             },
             |s| {
                 art.as_ref()
-                    .is_some_and(|art| art.looks.leaf_shown(s).is_some())
+                    .is_some_and(|art| art.looks.leaf_of(s.building).is_some())
             },
             |h| siege.flash(h),
             across,
