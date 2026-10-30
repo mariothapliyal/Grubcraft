@@ -3,8 +3,8 @@
 
 use gc_sim::TICKS_PER_SECOND;
 
-use super::arena::{Arena, Real, WEST, attack_nearest, centre, move_to, soldiers, spawn};
-use super::{Report, Scenario};
+use super::arena::{Arena, EAST, Real, WEST, attack_nearest, centre, move_to, of, soldiers, spawn};
+use super::{Report, Scenario, seconds};
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "forest-retreat",
@@ -18,8 +18,7 @@ const TILES: u32 = 96;
 const WOODS: core::ops::Range<i32> = 24..40;
 const LIMIT_SECONDS: u32 = 85;
 
-fn run(report: &mut Report) {
-    let real = Real::load();
+fn run(real: &Real, report: &mut Report) {
     let mut arena = Arena::new(TILES);
     arena.woods(WOODS, 0..TILES as i32);
     // Thicket clumps, staggered, so the way through winds.
@@ -34,17 +33,13 @@ fn run(report: &mut Report) {
     ] {
         arena.thicket(x..x + 4, y..y + 5);
     }
-    let mut world = arena.world(&real, 13, 0);
-    let (yari, katana, yumi) = (
-        real.unit("Yari Ashigaru"),
-        real.unit("Katana Samurai"),
-        real.unit("Yumi Ashigaru"),
-    );
+    let mut world = arena.world(real, 13, 0);
+    let [yari, katana, yumi] = real.ember_line();
     let units = [yari, katana, yari, yumi, katana, yari];
     let ours: Vec<_> = (units.iter().enumerate())
         .map(|(i, &u)| (u, centre(46 + (i as i32 / 3) * 4, 26 + (i as i32 % 3) * 9)))
         .collect();
-    let ours = spawn(report, &mut world, 0, &ours, super::arena::EAST);
+    let ours = spawn(&mut world, 0, &ours, EAST);
     // The pursuers are all foot: archers would shoot the retreat to pieces
     // and make it a test of arrows, not of the way through.
     let theirs: Vec<_> = ([yari, katana, yari, katana, yari, katana]
@@ -52,7 +47,7 @@ fn run(report: &mut Report) {
         .enumerate())
     .map(|(i, &u)| (u, centre(70 + (i as i32 / 3) * 4, 26 + (i as i32 % 3) * 9)))
     .collect();
-    let theirs = spawn(report, &mut world, 1, &theirs, WEST);
+    let theirs = spawn(&mut world, 1, &theirs, WEST);
     let start = soldiers(&world, &ours);
     report.metric("soldiers retreating", start);
 
@@ -78,7 +73,7 @@ fn run(report: &mut Report) {
                 (ours.iter().enumerate())
                     .filter(|&(i, r)| {
                         out_at[i].is_none()
-                            && world.regiments.iter().any(|v| v.handle == *r && !v.moving)
+                            && of(&world, core::slice::from_ref(r)).any(|v| !v.moving)
                     })
                     .map(|(i, &r)| move_to(0, r, rally(i))),
             );
@@ -86,14 +81,16 @@ fn run(report: &mut Report) {
         report.tick(&mut world, &orders);
         let mut left = 0;
         for (i, &r) in ours.iter().enumerate() {
-            let Some(v) = world.regiments.iter().find(|v| v.handle == r) else {
+            if out_at[i].is_some() {
+                continue;
+            }
+            let Some(v) = of(&world, core::slice::from_ref(&r)).next() else {
                 continue;
             };
             let (x, y) = (v.position.x.floor_int(), v.position.y.floor_int());
-            if out_at[i].is_none() && x < WOODS.start {
+            if x < WOODS.start {
                 out_at[i] = Some((t, v.models));
-            }
-            if out_at[i].is_none() {
+            } else {
                 left += 1;
                 in_woods += u32::from(arena.is_woods(x, y));
             }
@@ -103,18 +100,11 @@ fn run(report: &mut Report) {
             break;
         }
     }
-    let seconds = |t: u32| format!("{:.1} s", t as f32 / TICKS_PER_SECOND as f32);
     let got_out: Vec<_> = out_at.iter().flatten().collect();
     let saved: u32 = got_out.iter().map(|&&(_, n)| u32::from(n)).sum();
     let first_out = got_out.iter().map(|&&(t, _)| t).min();
-    report.metric(
-        "first regiment out",
-        first_out.map_or("never".into(), seconds),
-    );
-    report.metric(
-        "every regiment out or fallen",
-        done.map_or("never".into(), seconds),
-    );
+    report.metric("first regiment out", seconds(first_out));
+    report.metric("every regiment out or fallen", seconds(done));
     report.metric("regiments out", format!("{}/{}", got_out.len(), ours.len()));
     report.metric("soldiers out", format!("{saved}/{start}"));
     report.metric("regiment-ticks in the woods", in_woods);

@@ -8,10 +8,9 @@ use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::terrain::{Cover, Growth};
 use gc_sim::{
     Capacities, Command, ConquestSetup, ConquestUnit, Ground, MatchSetup, PlayerCommand, PlayerId,
-    RegimentHandle, StructureHandle, UnitStats, World,
+    RegimentHandle, RegimentView, StructureHandle, UnitStats, World,
 };
 
-use super::Report;
 use crate::buildings::Table;
 use crate::conquest;
 
@@ -39,6 +38,11 @@ impl Real {
         (self.data.conquest_units.iter())
             .position(|u| u.name() == name)
             .unwrap_or_else(|| panic!("no unit called {name}")) as u16
+    }
+
+    /// The Ember Clans' spearmen, swordsmen and archers.
+    pub fn ember_line(&self) -> [u16; 3] {
+        ["Yari Ashigaru", "Katana Samurai", "Yumi Ashigaru"].map(|n| self.unit(n))
     }
 
     /// The building called `name`.
@@ -82,12 +86,19 @@ impl Arena {
         ys: core::ops::Range<i32>,
         mut paint: impl FnMut(&mut Arena, usize),
     ) {
-        let n = self.tiles as i32;
-        for y in ys.clone().filter(|y| (0..n).contains(y)) {
-            for x in xs.clone().filter(|x| (0..n).contains(x)) {
-                paint(self, (y * n + x) as usize);
+        for y in ys {
+            for x in xs.clone() {
+                if let Some(t) = self.index(x, y) {
+                    paint(self, t);
+                }
             }
         }
+    }
+
+    /// Tile `(x, y)`'s place in the rows, if it is on the map.
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        let n = self.tiles as i32;
+        ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (y * n + x) as usize)
     }
 
     /// Deep water no one wades (a bridge crosses it).
@@ -129,18 +140,14 @@ impl Arena {
 
     /// Whether tile `(x, y)` is river.
     pub fn is_river(&self, x: i32, y: i32) -> bool {
-        let n = self.tiles as i32;
-        (0..n).contains(&x)
-            && (0..n).contains(&y)
-            && self.heights[(y * n + x) as usize] < WATER_LINE
+        self.index(x, y)
+            .is_some_and(|t| self.heights[t] < WATER_LINE)
     }
 
     /// Whether tile `(x, y)` is woods or thicket.
     pub fn is_woods(&self, x: i32, y: i32) -> bool {
-        let n = self.tiles as i32;
-        (0..n).contains(&x)
-            && (0..n).contains(&y)
-            && self.cover[(y * n + x) as usize] == Cover::Wood as u8
+        self.index(x, y)
+            .is_some_and(|t| self.cover[t] == Cover::Wood as u8)
     }
 
     /// A two-player Conquest world on this map with every faction's units
@@ -185,14 +192,13 @@ pub(crate) fn centre(x: i32, y: i32) -> FxVec2 {
     FxVec2::new(Fx::from_ratio(2 * x + 1, 2), Fx::from_ratio(2 * y + 1, 2))
 }
 
-/// Facing east, south, west and north.
+/// Facing east and west.
 pub(crate) const EAST: Angle = Angle(0);
 pub(crate) const WEST: Angle = Angle(0x8000);
 
 /// Put down `regiments` (unit, where) of `player`'s in one tick, and their
-/// handles in the same order.
+/// handles in the same order. Setting up, so the tick is not timed.
 pub(crate) fn spawn(
-    report: &mut Report,
     world: &mut World,
     player: PlayerId,
     regiments: &[(u16, FxVec2)],
@@ -210,7 +216,7 @@ pub(crate) fn spawn(
             },
         })
         .collect();
-    let stats = report.tick(world, &orders);
+    let stats = world.tick(&orders);
     assert_eq!(
         stats.commands_applied as usize,
         orders.len(),
@@ -229,44 +235,30 @@ pub(crate) fn spawn(
 }
 
 /// Put up a finished `building` of `player`'s at `tile`, turned `turn`.
+/// Setting up, so the tick is not timed.
 pub(crate) fn put_up(
-    report: &mut Report,
     world: &mut World,
     player: PlayerId,
     building: u16,
     tile: (i32, i32),
     turn: u8,
 ) -> StructureHandle {
-    try_put_up(report, world, player, building, tile, turn)
-        .unwrap_or_else(|| panic!("building {building} at {tile:?} refused"))
-}
-
-/// [`put_up`], or `None` where it doesn't fit.
-pub(crate) fn try_put_up(
-    report: &mut Report,
-    world: &mut World,
-    player: PlayerId,
-    building: u16,
-    tile: (i32, i32),
-    turn: u8,
-) -> Option<StructureHandle> {
-    let stats = report.tick(
-        world,
-        &[PlayerCommand {
-            player,
-            command: Command::SpawnStructure {
-                building,
-                tile: (tile.0 as i16, tile.1 as i16),
-                turn,
-            },
-        }],
+    let stats = world.tick(&[PlayerCommand {
+        player,
+        command: Command::SpawnStructure {
+            building,
+            tile: (tile.0 as i16, tile.1 as i16),
+            turn,
+        },
+    }]);
+    assert_eq!(
+        stats.commands_applied, 1,
+        "building {building} at {tile:?} refused"
     );
-    (stats.commands_applied == 1).then(|| {
-        (world.structures().unwrap().iter())
-            .find(|s| s.tile == tile && s.owner == player)
-            .unwrap()
-            .handle
-    })
+    (world.structures().unwrap().iter())
+        .find(|s| s.tile == tile && s.owner == player)
+        .unwrap()
+        .handle
 }
 
 /// March `regiment` of `player`'s to `to`.
@@ -283,12 +275,24 @@ pub(crate) fn move_to(player: PlayerId, regiment: RegimentHandle, to: FxVec2) ->
     }
 }
 
+/// The regiments of `regiments` still on the field.
+pub(crate) fn of<'a>(
+    world: &'a World,
+    regiments: &'a [RegimentHandle],
+) -> impl Iterator<Item = RegimentView> + 'a {
+    (world.regiments.iter()).filter(|r| regiments.contains(&r.handle))
+}
+
 /// Soldiers alive in `regiments`.
 pub(crate) fn soldiers(world: &World, regiments: &[RegimentHandle]) -> u32 {
-    (world.regiments.iter())
-        .filter(|r| regiments.contains(&r.handle))
-        .map(|r| u32::from(r.models))
-        .sum()
+    of(world, regiments).map(|r| u32::from(r.models)).sum()
+}
+
+/// The middle of the `i`th tile of a grid from `origin`, `per_row` across
+/// and `step` tiles apart.
+pub(crate) fn grid(origin: (i32, i32), per_row: usize, step: (i32, i32), i: usize) -> FxVec2 {
+    let (col, row) = ((i % per_row) as i32, (i / per_row) as i32);
+    centre(origin.0 + col * step.0, origin.1 + row * step.1)
 }
 
 /// Orders for each of `attackers` (of `player`'s) to attack the nearest

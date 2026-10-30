@@ -5,7 +5,7 @@
 use gc_ai::{Difficulty, Minds};
 use gc_data::Faction;
 use gc_sim::structures::{Role, StructureView};
-use gc_sim::{Capacities, MatchSetup, TICKS_PER_SECOND, Victories, World};
+use gc_sim::{BuildingStats, Capacities, MatchSetup, TICKS_PER_SECOND, Victories, World};
 
 use super::arena::{Real, put_up};
 use super::{Report, Scenario};
@@ -27,8 +27,7 @@ const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::EmberClans];
 const GAPS: core::ops::RangeInclusive<i32> = 3..=12;
 const LIMIT_MINUTES: u32 = 10;
 
-fn run(report: &mut Report) {
-    let real = Real::load();
+fn run(real: &Real, report: &mut Report) {
     let map = conquest::make_map(MAP, SEED);
     let nav = map.sim_nav_costs();
     let mut world = World::new(&MatchSetup {
@@ -69,13 +68,13 @@ fn run(report: &mut Report) {
     let palisade = real.building("Palisade");
     let gate = real.building("Gate");
     let ring = (GAPS)
-        .map(|gap| Ring::round(&main, gap, foe))
+        .map(|gap| Ring::round(&main, &real.table.stats[usize::from(gate)], gap, foe))
         .find(|r| r.fits(&world, palisade, gate))
         .expect("somewhere a closed ring fits");
     let mut pieces: Vec<_> = (ring.tiles())
-        .map(|t| put_up(report, &mut world, 0, palisade, t, 0))
+        .map(|t| put_up(&mut world, 0, palisade, t, 0))
         .collect();
-    pieces.push(put_up(report, &mut world, 0, gate, ring.gate, ring.turn));
+    pieces.push(put_up(&mut world, 0, gate, ring.gate, ring.turn));
     let [x0, y0, x1, y1] = ring.corners;
     report.metric("wall pieces (gate included)", pieces.len());
     report.metric("tiles from the main building to the wall", ring.gap);
@@ -101,12 +100,9 @@ fn run(report: &mut Report) {
         })
     };
     let wall_hp = |w: &World| -> (u64, usize) {
-        let s = w.structures().unwrap();
-        let standing: Vec<_> = s.iter().filter(|v| pieces.contains(&v.handle)).collect();
-        (
-            standing.iter().map(|v| u64::from(v.hp)).sum(),
-            standing.len(),
-        )
+        (w.structures().unwrap().iter())
+            .filter(|v| pieces.contains(&v.handle))
+            .fold((0, 0), |(hp, n), v| (hp + u64::from(v.hp), n + 1))
     };
     let (full_hp, _) = wall_hp(&world);
     let (mut hurt, mut breached, mut entered) = (None, None, None);
@@ -162,38 +158,44 @@ fn run(report: &mut Report) {
 }
 
 /// A wall right round a building: its corner tiles (west, north, east,
-/// south), and its Gate's north-west tile and turn.
+/// south), and its Gate's north-west tile, turn and turned footprint.
 struct Ring {
     gap: i32,
     corners: [i32; 4],
     gate: (i32, i32),
     turn: u8,
+    gate_size: (i32, i32),
 }
 
 impl Ring {
-    /// The ring `gap` tiles out from `main`, its Gate on the side facing
-    /// `foe`: along a west or east side the Gate runs north to south
-    /// (unturned), along the north or south side it is turned.
-    fn round(main: &StructureView, gap: i32, foe: (i32, i32)) -> Ring {
+    /// The ring `gap` tiles out from `main`, its Gate (`gate`, its
+    /// unturned stats, run north to south) in the middle of the side
+    /// facing `foe`: unturned along a west or east side, turned a quarter
+    /// along the north or south side.
+    fn round(main: &StructureView, gate: &BuildingStats, gap: i32, foe: (i32, i32)) -> Ring {
+        let (w, d) = (i32::from(gate.width), i32::from(gate.depth));
         let (x0, y0) = (main.tile.0 - gap, main.tile.1 - gap);
         let x1 = main.tile.0 + i32::from(main.width) - 1 + gap;
         let y1 = main.tile.1 + i32::from(main.depth) - 1 + gap;
         let (dx, dy) = (foe.0 - main.tile.0, foe.1 - main.tile.1);
-        let (gate, turn) = if dx.abs() >= dy.abs() {
-            ((if dx > 0 { x1 } else { x0 }, (y0 + y1) / 2 - 1), 0)
+        let (at, turn, gate_size) = if dx.abs() >= dy.abs() {
+            let x = if dx > 0 { x1 + 1 - w } else { x0 };
+            ((x, (y0 + y1 + 1 - d) / 2), 0, (w, d))
         } else {
-            (((x0 + x1) / 2 - 1, if dy > 0 { y1 } else { y0 }), 1)
+            let y = if dy > 0 { y1 + 1 - w } else { y0 };
+            (((x0 + x1 + 1 - d) / 2, y), 1, (d, w))
         };
         Ring {
             gap,
             corners: [x0, y0, x1, y1],
-            gate,
+            gate: at,
             turn,
+            gate_size,
         }
     }
 
     fn in_gate(&self, (x, y): (i32, i32)) -> bool {
-        let (w, d) = if self.turn == 0 { (1, 3) } else { (3, 1) };
+        let (w, d) = self.gate_size;
         (self.gate.0..self.gate.0 + w).contains(&x) && (self.gate.1..self.gate.1 + d).contains(&y)
     }
 

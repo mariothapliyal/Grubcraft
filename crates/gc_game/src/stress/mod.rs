@@ -15,7 +15,8 @@
 //! const SCENARIO: Scenario` and its `run` function, and list it in
 //! [`SCENARIOS`]. Build the world with [`arena::Arena`] (a flat map you
 //! paint rivers, woods and thicket on) or any map of gc_map, tick it only
-//! through [`Report::tick`] so the time is measured, and end with
+//! through [`Report::tick`] so the time is measured (the setting-up
+//! helpers `spawn` and `put_up` tick untimed), and end with
 //! [`Report::check`] for each thing that must hold. Checks should be on
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
@@ -31,6 +32,8 @@ use std::time::Instant;
 
 use gc_sim::{PlayerCommand, TickStats, World};
 
+use arena::Real;
+
 /// One scenario of the suite.
 pub(crate) struct Scenario {
     /// Short name, for `STRESS=name` and the report.
@@ -41,7 +44,8 @@ pub(crate) struct Scenario {
     /// time on a CI runner. Generous: it catches a slowdown of several
     /// times, not noise.
     pub budget_ms: u64,
-    pub run: fn(&mut Report),
+    /// Plays it on the game data, loaded once for the whole suite.
+    pub run: fn(&Real, &mut Report),
 }
 
 /// Every scenario, in the order they run.
@@ -79,25 +83,29 @@ impl Report {
     pub fn metric(&mut self, what: impl Into<String>, value: impl std::fmt::Display) {
         self.metrics.push((what.into(), value.to_string()));
     }
+}
 
-    /// The tick time at quantile `q` (0 to 1), in milliseconds.
-    fn quantile(&self, q: f64) -> f64 {
-        let mut t = self.times.clone();
-        t.sort_by(f64::total_cmp);
-        t.get(((t.len().max(1) - 1) as f64 * q) as usize)
-            .copied()
-            .unwrap_or(0.0)
-    }
+/// Game time `t` in ticks as seconds, or "never".
+pub(crate) fn seconds(t: Option<u32>) -> String {
+    t.map_or("never".into(), |t| {
+        format!("{:.1} s", t as f32 / gc_sim::TICKS_PER_SECOND as f32)
+    })
 }
 
 /// Run `scenario`, print what it found and say whether it passed.
-fn run(scenario: &Scenario, out: &mut String) -> bool {
+fn run(scenario: &Scenario, real: &Real, out: &mut String) -> bool {
     let mut report = Report::default();
     let began = Instant::now();
-    (scenario.run)(&mut report);
+    (scenario.run)(real, &mut report);
     let wall_ms = began.elapsed().as_millis() as u64;
     let in_time = wall_ms <= scenario.budget_ms;
     let passed = in_time && report.checks.iter().all(|(_, ok)| *ok);
+    let mut times = report.times.clone();
+    times.sort_by(f64::total_cmp);
+    let at = |q: f64| {
+        let i = ((times.len().max(1) - 1) as f64 * q) as usize;
+        times.get(i).copied().unwrap_or(0.0)
+    };
     let _ = writeln!(
         out,
         "{} {}: {}\n  {} ticks, p50 {:.2} ms, p99 {:.2} ms, max {:.2} ms, total {} ms (budget {} ms{})",
@@ -105,9 +113,9 @@ fn run(scenario: &Scenario, out: &mut String) -> bool {
         scenario.name,
         scenario.about,
         report.times.len(),
-        report.quantile(0.5),
-        report.quantile(0.99),
-        report.quantile(1.0),
+        at(0.5),
+        at(0.99),
+        at(1.0),
         wall_ms,
         scenario.budget_ms,
         if in_time { "" } else { ", OVER" },
@@ -136,10 +144,11 @@ fn stress_suite() {
         "no scenario named {only:?}; there are {:?}",
         SCENARIOS.iter().map(|s| s.name).collect::<Vec<_>>()
     );
+    let real = Real::load();
     let mut out = String::new();
     let failed: Vec<&str> = chosen
         .iter()
-        .filter(|s| !run(s, &mut out))
+        .filter(|s| !run(s, &real, &mut out))
         .map(|s| s.name)
         .collect();
     println!("{out}");

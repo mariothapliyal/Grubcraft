@@ -68,13 +68,15 @@ morale) updates its limit in the same pull request and says why.
 
 1. Write `crates/gc_game/src/stress/<name>.rs` with a
    `pub(super) const SCENARIO: Scenario` (name, one line about it, time
-   budget, `run`) and list it in `SCENARIOS` in `stress/mod.rs`.
+   budget, and `run(&Real, &mut Report)`; the game data is loaded once for
+   the suite) and list it in `SCENARIOS` in `stress/mod.rs`.
 2. Build the world with `arena::Arena` (a flat map: paint `river`, `woods`,
    `thicket`; `world()` gives a two-player Conquest world with every
    faction's units and buildings) or any gc_map map, as `ai-walls` does.
-   `Real` looks units and buildings up by name; `spawn`, `put_up`,
-   `move_to` and `attack_nearest` give the usual orders.
-3. Tick only through `report.tick` so the time is measured.
+   `Real` looks units and buildings up by name; `spawn` and `put_up` set
+   the field up (untimed), `move_to`, `attack_nearest` and `grid` give
+   the usual orders and places, `of` and `soldiers` read regiments back.
+3. Play only through `report.tick` so the time is measured.
 4. `report.metric` what is worth seeing; `report.check` what must hold.
    Set limits about one and a half times what it measures today.
 

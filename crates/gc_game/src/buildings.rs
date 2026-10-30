@@ -600,6 +600,12 @@ impl Looks {
         self.tops.get(model).copied().flatten().unwrap_or(0.0)
     }
 
+    /// The model a finished `building` shows, if it has one.
+    #[cfg(test)]
+    pub fn finished(&self, building: BuildingId) -> Option<usize> {
+        self.stage(building, FINISHED)
+    }
+
     fn stage(&self, building: BuildingId, stage: usize) -> Option<usize> {
         self.stages.get(usize::from(building))?[stage]
     }
