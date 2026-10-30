@@ -5,7 +5,8 @@
 // (nearly done), then the finished building under its own name, exactly as in data/rosters.
 // All four share one texture set (one material) and keep their authored positions in tiles
 // (`keep_origin`), with the origin at the middle of the footprint on the ground and the door
-// facing +z. Sources and scripts: the project's design/buildings/ folder (docs/21-buildings.md).
+// facing +z. The Palisade is modelled two tiles long and 2.4 tall; `scale` brings it to a drawn
+// wall tile's height (1.5 tiles). Sources and scripts: the project's design/buildings/ folder (docs/21-buildings.md).
 (
     models: [
         (
@@ -203,8 +204,9 @@
         (
             name: "Palisade #1",
             source: "shared:grubcraft/buildings-detail/ember/palisade/stage1.glb",
-            height: 2.4,
+            height: 1.5,
             keep_origin: true,
+            scale: 0.625,
             detail_tile: Some(0.5),
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
@@ -219,8 +221,9 @@
         (
             name: "Palisade #2",
             source: "shared:grubcraft/buildings-detail/ember/palisade/stage2.glb",
-            height: 2.4,
+            height: 1.5,
             keep_origin: true,
+            scale: 0.625,
             detail_tile: Some(0.5),
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
@@ -235,8 +238,9 @@
         (
             name: "Palisade #3",
             source: "shared:grubcraft/buildings-detail/ember/palisade/stage3.glb",
-            height: 2.4,
+            height: 1.5,
             keep_origin: true,
+            scale: 0.625,
             detail_tile: Some(0.5),
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
@@ -251,8 +255,9 @@
         (
             name: "Palisade",
             source: "shared:grubcraft/buildings-detail/ember/palisade/final.glb",
-            height: 2.4,
+            height: 1.5,
             keep_origin: true,
+            scale: 0.625,
             detail_tile: Some(0.5),
             clips: {},
             lod_triangles: (2500, 900, 300, 120),

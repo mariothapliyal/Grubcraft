@@ -243,6 +243,28 @@ mod tests {
         pub verdict: Option<Verdict>,
         pub ticks: u32,
         pub sides: Vec<Standing>,
+        /// The first tick (checked each second) two sides' regiments
+        /// fought in melee within [`CONTACT_TILES`] of each other.
+        pub first_contact: Option<u32>,
+    }
+
+    /// How near two sides' regiments in melee count as having met.
+    const CONTACT_TILES: i32 = 6;
+
+    /// Whether regiments of two sides are fighting each other now.
+    fn sides_met(world: &World, players: usize) -> bool {
+        let near = gc_fixed::Fx::from_int(CONTACT_TILES);
+        let fighting: Vec<_> = world
+            .regiments
+            .iter()
+            .filter(|r| r.engaged && usize::from(r.owner) < players)
+            .map(|r| (r.owner, r.position))
+            .collect();
+        fighting.iter().any(|&(a, pa)| {
+            fighting
+                .iter()
+                .any(|&(b, pb)| a != b && (pa - pb).length() <= near)
+        })
     }
 
     impl Played {
@@ -266,6 +288,10 @@ mod tests {
                 }
                 Some(v) => format!("side {} wins by {:?} at {}", v.holder, v.by, clock(v.tick)),
                 None => format!("undecided after {}", clock(self.ticks)),
+            };
+            out += &match self.first_contact {
+                Some(t) => format!("; first contact at {}", clock(t)),
+                None => "; no contact".into(),
             };
             for (p, s) in self.sides.iter().enumerate() {
                 out += &format!("\n  {}", s.line(p));
@@ -321,7 +347,8 @@ mod tests {
         }
     }
 
-    /// Play Conquest map `choice` between Conquest minds, `factions[i]` at
+    /// Play Conquest map `choice`, made `tiles` a side (0 for a shipped
+    /// map), between Conquest minds, `factions[i]` at
     /// start `i` thinking at `levels[i]` (the last level covers any
     /// more), with no window, until a side wins or `max_minutes` of game
     /// time pass. Fog of war and victories are as the lobby's defaults.
@@ -329,18 +356,27 @@ mod tests {
     /// minutes.
     pub(crate) fn play(
         choice: usize,
+        tiles: u32,
         factions: &[Faction],
         levels: &[Difficulty],
         seed: u64,
         max_minutes: u32,
     ) -> Played {
-        play_with(choice, factions, levels, seed, max_minutes, None, &[])
+        play_with(
+            (choice, tiles),
+            factions,
+            levels,
+            seed,
+            max_minutes,
+            None,
+            &[],
+        )
     }
 
     /// [`play`], every side with the personality `temper` picks for its
     /// faction if given (for the arena, so only the level differs).
     pub(crate) fn play_with(
-        choice: usize,
+        (choice, tiles): (usize, u32),
         factions: &[Faction],
         levels: &[Difficulty],
         seed: u64,
@@ -354,7 +390,7 @@ mod tests {
         let trace = journal || trace == "1";
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(choice, seed);
+        let map = conquest::make_map(choice, tiles, seed);
         let units = conquest::unit_stats(&data);
         let nav = map.sim_nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
@@ -400,11 +436,18 @@ mod tests {
         let mut cmds = Vec::new();
         let mut noted = vec![0u32; factions.len()];
         let mut works = vec![Works::default(); factions.len()];
+        let mut first_contact = None;
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
             minds.tick(&world, &mut cmds);
             world.tick(&cmds);
             let t = world.tick_count();
+            if first_contact.is_none()
+                && t.is_multiple_of(TICKS_PER_SECOND)
+                && sides_met(&world, factions.len())
+            {
+                first_contact = Some(t);
+            }
             if t.is_multiple_of(10 * TICKS_PER_SECOND) {
                 for (p, w) in works.iter_mut().enumerate() {
                     *w = w.most(Works::of(&world, p as PlayerId));
@@ -442,6 +485,7 @@ mod tests {
         Played {
             verdict: world.verdict(),
             ticks: world.tick_count(),
+            first_contact,
             sides: factions
                 .iter()
                 .enumerate()
@@ -491,7 +535,7 @@ mod tests {
     fn a_kit_holds_the_factions_own_build_menu_and_the_maps_starts() {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(1, 0);
+        let map = conquest::make_map(1, 0, 0);
         for f in Faction::ALL {
             let k = kit(&data, &table, &map, f);
             assert_eq!(k.faction as u8, f as u8);
@@ -529,7 +573,17 @@ mod tests {
         let seed = env_number("AI_SEED", 7);
         let minutes = env_number("AI_MINUTES", 40) as u32;
         let levels = levels_from_env();
-        let players = gc_ui::lobby::CONQUEST_MAP_PLAYERS[choice];
+        // AI_SIZE (Small, Medium or Large) sizes a made map; AI_PLAYERS
+        // plays fewer sides than its starts.
+        // As in the lobby, a made map's size caps its players.
+        use gc_ui::lobby::{GameMode, LobbySettings, MapSize};
+        let size = std::env::var("AI_SIZE").unwrap_or_default();
+        let size = crate::by_name(&MapSize::ALL, MapSize::name, &size).unwrap_or(MapSize::Medium);
+        let mut lobby = LobbySettings::default();
+        lobby.set_mode(GameMode::Conquest);
+        (lobby.map, lobby.map_size) = (choice, size);
+        let most = lobby.max_players();
+        let players = (env_number("AI_PLAYERS", most as u64) as usize).clamp(2, most);
         // AI_FACTIONS picks them by their index in `Faction::ALL`, such as
         // "12" for the Brood against the Choir.
         let picked = std::env::var("AI_FACTIONS").unwrap_or_default();
@@ -545,7 +599,20 @@ mod tests {
         let same = std::env::var("AI_SAME").is_ok_and(|v| v == "1");
         let temper = same.then(|| super::temper(seed, 0));
         let openings = openings_from_env("AI_OPENINGS");
-        let played = play_with(choice, &factions, &levels, seed, minutes, temper, &openings);
+        // AI_TILES plays a made map at another side, such as the old 768.
+        let tiles = match env_number("AI_TILES", 0) as u32 {
+            0 => lobby.conquest_tiles(),
+            t => t,
+        };
+        let played = play_with(
+            (choice, tiles),
+            &factions,
+            &levels,
+            seed,
+            minutes,
+            temper,
+            &openings,
+        );
         println!("{}", played.report());
         for (p, side) in played.sides.iter().enumerate() {
             println!(
@@ -591,7 +658,7 @@ mod tests {
                     let temper = Some(super::temper(roll, 0));
                     let (oa, ob) = (open_a[0], open_b[0]);
                     let openings = if a_side == 0 { [oa, ob] } else { [ob, oa] };
-                    let played = play_with(0, &[f, f], &levels, roll, 45, temper, &openings);
+                    let played = play_with((0, 0), &[f, f], &levels, roll, 45, temper, &openings);
                     match played.winner() {
                         Some(w) if w == a_side => (won, fw) = (won + 1, fw + 1),
                         Some(_) => (lost, fl) = (lost + 1, fl + 1),
@@ -617,7 +684,7 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, &factions, &[Difficulty::Veteran], 8, 8);
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {
@@ -655,7 +722,7 @@ mod tests {
     fn ai_only_a_generals_scout_finds_the_enemy_start() {
         let factions = [Faction::EmberClans, Faction::EmberClans];
         for seed in [7, 8] {
-            let played = play(0, &factions, &[Difficulty::General], seed, 5);
+            let played = play(0, 0, &factions, &[Difficulty::General], seed, 5);
             let looked: Vec<Option<u32>> = played.sides.iter().map(|s| s.scout_looked).collect();
             assert!(
                 looked.iter().any(Option::is_some),
@@ -681,7 +748,7 @@ mod tests {
     fn ai_only_a_warlords_raiders_kill_enemy_workers() {
         let (mut killed, mut raids) = (0, 0);
         {
-            let played = play(1, &Faction::ALL, &[Difficulty::Warlord], 3, 40);
+            let played = play(1, 0, &Faction::ALL, &[Difficulty::Warlord], 3, 40);
             for (p, side) in played.sides.iter().enumerate() {
                 let find = |label: &str| {
                     let start = format!("  {label:<7} ");
@@ -696,7 +763,7 @@ mod tests {
         assert!(raids > 0, "no raid set out");
         assert!(killed > 0, "the raiders saw no enemy worker go");
         let factions = [Faction::EmberClans, Faction::EmberClans];
-        let played = play(0, &factions, &[Difficulty::General], 7, 8);
+        let played = play(0, 0, &factions, &[Difficulty::General], 7, 8);
         for side in &played.sides {
             assert_eq!(side.raids, 0);
             assert!(side.lens.iter().all(|l| !l.starts_with("  raid    ")));
@@ -714,7 +781,7 @@ mod tests {
         // so one of the two games is enough for them.
         let mut traps = 0;
         for f in [Faction::EmberClans, Faction::CarrionConcord] {
-            let played = play(0, &[f, f], &[Difficulty::General], 8, 40);
+            let played = play(0, 0, &[f, f], &[Difficulty::General], 8, 40);
             let most = played
                 .sides
                 .iter()
@@ -728,6 +795,7 @@ mod tests {
         }
         assert!(traps >= 1, "no traps laid in either game");
         let played = play(
+            0,
             0,
             &[Faction::CarrionConcord; 2],
             &[Difficulty::Veteran],
@@ -755,7 +823,7 @@ mod tests {
             [Faction::Brood, Faction::Choir],
         ];
         for (factions, seed) in pairs.iter().zip([7, 8]) {
-            let played = play(0, factions, &[Difficulty::Veteran], seed, 45);
+            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 45);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }
@@ -766,20 +834,21 @@ mod tests {
         // A last side standing can take most of the 100 minutes to clear
         // the others' bases one by one (seed 8: about 91).
         for seed in [7, 8] {
-            let played = play(1, &Faction::ALL, &[Difficulty::Veteran], seed, 100);
+            let played = play(1, 0, &Faction::ALL, &[Difficulty::Veteran], seed, 100);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }
 
-    /// Six computer players on a big Wilds map (the first choice past the
-    /// shipped maps).
+    /// Six computer players on a Large Wilds map (the first choice past
+    /// the shipped maps).
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_six_player_wilds_ends_in_a_win() {
         use gc_ai::personality::Faction::*;
         let factions = [EmberClans, Brood, Choir, CarrionConcord, EmberClans, Brood];
         let wilds = gc_map::SHIPPED.len();
-        let played = play(wilds, &factions, &[Difficulty::Veteran], 1, 120);
+        let large = gc_ui::lobby::MapSize::Large.conquest_tiles();
+        let played = play(wilds, large, &factions, &[Difficulty::Veteran], 1, 120);
         assert!(played.winner().is_some(), "{}", played.report());
     }
 }
