@@ -343,9 +343,9 @@ pub struct Terrain {
     /// Whether the water is frozen (a winter with no flood, see
     /// [`crate::sky::Season`]): troops cross it as dry ground.
     frozen: bool,
-    /// The water a flash flood raises while one runs (see
-    /// [`crate::flash`]).
-    wave: Option<crate::flash::WaveWater>,
+    /// The water the rivers raise above the line (see [`crate::rivers`]);
+    /// `None` on a map without rivers.
+    rivers: Option<crate::rivers::RiverWater>,
     /// A running digest of every change made to the ground mid-match, for
     /// the state hash (the ground as the match started is the setup's).
     changes: u64,
@@ -415,7 +415,7 @@ impl Terrain {
             rise: 0,
             low: 0,
             frozen: false,
-            wave: None,
+            rivers: None,
             changes: 0,
         };
         let soak = terrain.soakable();
@@ -767,10 +767,10 @@ impl Terrain {
             return false;
         }
         let (h, line) = (self.height(p), self.water_line());
-        // Only ground a flash flood could reach asks after its water.
+        // Only ground a river could reach asks after its water.
         let under = h < line
-            || self.wave.as_ref().is_some_and(|w| {
-                h < line + i32::from(crate::flood::FLOOD_RISE)
+            || self.rivers.as_ref().is_some_and(|w| {
+                h < line + i32::from(w.most())
                     && h < line + i32::from(w.rise_at(p.x.floor_int(), p.y.floor_int()))
             });
         under && !self.on_deck(p)
@@ -781,15 +781,28 @@ impl Terrain {
         &self.flow
     }
 
-    /// Set the water a flash flood raises (`None` once it has passed).
-    pub(crate) fn set_wave(&mut self, wave: Option<crate::flash::WaveWater>) {
-        self.wave = wave;
+    /// Set the water the rivers raise (once, as the match begins).
+    pub(crate) fn set_rivers(&mut self, water: Option<crate::rivers::RiverWater>) {
+        self.rivers = water;
     }
 
-    /// Whether a flash flood is running (its water is in
-    /// [`Terrain::wet`]).
-    pub fn wave_running(&self) -> bool {
-        self.wave.is_some()
+    /// The water the rivers raise, to bring up to date.
+    pub(crate) fn rivers_mut(&mut self) -> Option<&mut crate::rivers::RiverWater> {
+        self.rivers.as_mut()
+    }
+
+    /// Whether the rivers raise the water anywhere (it is in
+    /// [`Terrain::wet`]): a front running or a river swollen.
+    pub fn river_up(&self) -> bool {
+        self.rivers.as_ref().is_some_and(|w| w.most() > 0)
+    }
+
+    /// How far the rivers raise the water above the line on the tile at
+    /// `p` (0 off them).
+    pub fn river_rise(&self, p: FxVec2) -> u16 {
+        (self.rivers.as_ref())
+            .filter(|w| w.most() > 0)
+            .map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()))
     }
 
     /// Which way and how fast the water runs at `p`, if it runs there and
@@ -807,12 +820,16 @@ impl Terrain {
 
     /// How far the current carries a regiment wading at `p` in one tick
     /// (zero out of running water): [`DRIFT_PERCENT`] of a tile a second
-    /// by the river's speed, doubled while the rivers are up.
+    /// by the river's speed, doubled while the water is up there.
     pub fn current(&self, p: FxVec2) -> FxVec2 {
         let Some((way, speed)) = self.flow(p) else {
             return FxVec2::ZERO;
         };
-        let flood = if self.rise > 0 { 2 } else { 1 };
+        let flood = if self.rise > 0 || self.river_rise(p) > 0 {
+            2
+        } else {
+            1
+        };
         let per_tick = Fx::from_ratio(
             i32::from(DRIFT_PERCENT[usize::from(speed)]) * flood,
             100 * crate::TICKS_PER_SECOND as i32,
