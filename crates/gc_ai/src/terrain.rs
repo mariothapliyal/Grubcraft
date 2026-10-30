@@ -68,9 +68,10 @@ pub struct Water {
     pub keep_off: bool,
     /// The summer fords are open.
     pub summer: bool,
-    /// A flash flood is coming down a river, or has shut it: the first of
-    /// its fords, to tell one wave's river from another's.
-    pub wave: Option<(i32, i32)>,
+    /// Fords a flash flood is coming down on, or a river has shut: how
+    /// many times that list has changed (see
+    /// `gc_sim::rivers::Rivers::threats`), or `None` with none.
+    pub wave: Option<u32>,
 }
 
 impl Water {
@@ -80,7 +81,10 @@ impl Water {
         Water {
             keep_off: flood.closed() || world.terrain().rise() >= gc_sim::flood::FLOOD_RISE / 2,
             summer: flood.exposed(),
-            wave: flood.flash().threatened().first().copied(),
+            wave: {
+                let rivers = flood.rivers();
+                (!rivers.threatened().is_empty()).then(|| rivers.threats())
+            },
         }
     }
 }
@@ -265,7 +269,7 @@ impl Terrain {
         let flood = world.flood();
         let fords: Vec<_> = flood.fords().collect();
         let shallows: Vec<_> = flood.shallows().collect();
-        self.set_water(water, &fords, &shallows, flood.flash().threatened());
+        self.set_water(water, &fords, &shallows, flood.rivers().threatened());
     }
 
     /// The water now `water`, over the `fords` and summer fords
@@ -777,7 +781,7 @@ mod tests {
             "a summer ford going deep is shut"
         );
         let wave = Water {
-            wave: Some((5, 6)),
+            wave: Some(1),
             summer: true,
             ..Water::default()
         };

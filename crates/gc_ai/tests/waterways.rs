@@ -113,13 +113,13 @@ fn step(w: &mut World, minds: &mut Terrain) -> Water {
 
 /// A seed whose storm rolls a flash flood (most do not every time).
 fn flooding_seed() -> u64 {
-    (0..64)
+    (0..256)
         .find(|&seed| {
             let mut w = world(seed);
             while w.tick_count() < 12 * SECOND {
                 w.tick(&[]);
             }
-            w.flood().flash().wave().is_some()
+            (w.flood().rivers().fronts()).any(|f| f.band() >= gc_sim::rivers::Band::Flood)
         })
         .expect("some seed rolls a flash flood")
 }
