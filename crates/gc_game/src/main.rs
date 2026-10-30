@@ -139,6 +139,7 @@ mod atmosphere;
 mod buildings;
 mod camera;
 mod cinema;
+mod clearance;
 mod clearing;
 mod conquest;
 mod conquest_ai;
@@ -160,6 +161,8 @@ mod goldens;
 mod ground_look;
 mod land;
 mod lights;
+#[cfg(test)]
+mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod guide_data;
 mod hud;
