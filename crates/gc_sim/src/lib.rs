@@ -890,9 +890,9 @@ pub struct World {
     flood: flood::Flood,
     /// Room for the slots a flood leaves stranded, kept between seconds.
     stranded: Vec<usize>,
-    /// The rain's flood has just opened every ford, so the rivers' own
-    /// shut fords are shut again this tick.
-    fords_reopened: bool,
+    /// The rain's flood has just shut every ford (`Some(true)`) or opened
+    /// them, for the walkable grid this tick (see `World::flash`).
+    flood_fords: Option<bool>,
     pub regiments: Regiments,
 }
 
@@ -939,7 +939,7 @@ impl World {
             fires: fire::Fires::new(setup.seed),
             flood,
             stranded: Vec::new(),
-            fords_reopened: false,
+            flood_fords: None,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -2703,12 +2703,9 @@ impl World {
         };
         let wet = self.sky.wet();
         let turn = (self.flood).second(&mut self.terrain, wet, at, snow, rain, !self.scratch);
-        if let Some(closed) = turn.fords {
-            (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
-            self.events.flooded(closed);
-            // Fords the rivers hold shut stay shut (see `World::flash`).
-            self.fords_reopened = !closed;
-        }
+        // The walkable grid follows in `World::flash`, once the rivers'
+        // own fords are weighed.
+        self.flood_fords = turn.fords;
         if let Some(open) = turn.shallows {
             let runs = self.flood.shallow_runs();
             (self.nav).set_exposed_all(runs, open, &self.regiments);
@@ -2719,16 +2716,63 @@ impl World {
     /// One tick of the rivers' fronts and fords (see [`rivers`]): a storm
     /// among the spells begun since `begun` may set a flash flood off,
     /// fronts run on down their rivers, and fords shut and open with the
-    /// water over them, all of a tick's in one change to the walkable
-    /// grid. A rain flood that has shut every ford keeps them shut and
-    /// tells of it; as it opens them, those the rivers still hold are shut
-    /// again. A rehearsal sets no front off, but a running one runs on in
-    /// it, and it never changes the walkable grid it shares.
+    /// water over them; then the walkable grid is brought to it in one
+    /// place. Every ford is shut while a rain flood is up; as it goes, the
+    /// fords the rivers hold stay shut. A rehearsal sets no front off, but
+    /// a running one runs on in it, and it never changes the walkable grid
+    /// it shares.
     fn flash(&mut self, begun: usize) {
-        let reopened = core::mem::take(&mut self.fords_reopened);
-        if !self.flood.rivers.any() {
+        let flood = self.flood_fords.take();
+        let mut river = None;
+        if self.flood.rivers.any() {
+            river = self.run_rivers(begun);
+        }
+        if self.scratch {
             return;
         }
+        match flood {
+            Some(true) => {
+                (self.nav).set_flooded_all(self.flood.runs(), true, &self.regiments);
+                self.events.flooded(true);
+            }
+            Some(false) => {
+                let rivers = &self.flood.rivers;
+                let open: Vec<[i32; 4]>;
+                let runs = if rivers.shut() {
+                    let fords: Vec<_> = (self.flood.fords())
+                        .filter(|&(x, y)| !rivers.shuts(x, y))
+                        .map(|(x, y)| (y, x))
+                        .collect();
+                    open = flood::runs_of(&fords);
+                    &open[..]
+                } else {
+                    self.flood.runs()
+                };
+                (self.nav).set_flooded_all(runs, false, &self.regiments);
+                self.events.flooded(false);
+                if self.flood.rivers.shut() {
+                    self.events.flash(rivers::Stage::Here);
+                }
+            }
+            None if !self.flood.closed() => {
+                for shut in [true, false] {
+                    let runs = self.flood.rivers.changed_runs(shut);
+                    if !runs.is_empty() {
+                        (self.nav).set_flooded_all(runs, shut, &self.regiments);
+                    }
+                }
+                if let Some(stage) = river {
+                    self.events.flash(stage);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The rivers' part of [`World::flash`]: storms, fronts and fords, and
+    /// the terrain's copy of the water. Returns whether the rivers first
+    /// shut a ford or opened the last.
+    fn run_rivers(&mut self, begun: usize) -> Option<rivers::Stage> {
         if !self.scratch {
             let season = self.sky.season(self.tick).map(|s| s.season);
             let (frozen, wet) = (self.terrain.frozen(), self.sky.wet());
@@ -2747,33 +2791,10 @@ impl World {
         if water && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_water(copy);
         }
-        if self.scratch {
-            return;
-        }
-        if coming {
+        if coming && !self.scratch {
             self.events.flash(rivers::Stage::Coming);
         }
-        if self.flood.closed() {
-            return;
-        }
-        if reopened {
-            // Every ford has just opened: shut again those the rivers hold.
-            let runs = self.flood.rivers.shut_runs();
-            if !runs.is_empty() {
-                (self.nav).set_flooded_all(runs, true, &self.regiments);
-                self.events.flash(rivers::Stage::Here);
-            }
-            return;
-        }
-        for shut in [true, false] {
-            let runs = self.flood.rivers.changed_runs(shut);
-            if !runs.is_empty() {
-                (self.nav).set_flooded_all(runs, shut, &self.regiments);
-            }
-        }
-        if let Some(stage) = stage {
-            self.events.flash(stage);
-        }
+        stage
     }
 
     /// One second of the summer fords gone deep again (with seasons):

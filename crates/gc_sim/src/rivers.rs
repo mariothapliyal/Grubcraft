@@ -57,7 +57,7 @@ pub const CARRY_TILES: u32 = 10;
 pub const DROWN_PERCENT: u32 = 30;
 /// The morale a regiment swept away loses.
 pub const SWEPT_AWAY_MORALE: i16 = 25;
-/// Most fronts running at once; another storm's adds to the biggest.
+/// Most fronts running at once; a storm while all run sets none off.
 pub const MAX_FRONTS: usize = 4;
 /// A stretch's store flows on to the one below at this share a second
 /// (one in eight): a swell runs down a river at about two tiles a second.
@@ -153,6 +153,8 @@ pub struct Rivers {
     /// Whether each group's fords are shut by the river (not the map-wide
     /// flood, which shuts every ford at once; see [`crate::flood`]).
     shut: Vec<bool>,
+    /// Whether a warned front is coming down on each group's fords.
+    coming: Vec<bool>,
     fronts: [Option<Front>; MAX_FRONTS],
     /// The fords the minds keep off: of groups shut, or a front is
     /// coming down on. As `(y, x)`, sorted.
@@ -556,6 +558,7 @@ impl Rivers {
             store: alloc::vec![0; count],
             swell: alloc::vec![0; count],
             shut: alloc::vec![false; groups_n],
+            coming: alloc::vec![false; groups_n],
             fronts: [None; MAX_FRONTS],
             threats: 0,
             turn: Turn {
@@ -668,7 +671,8 @@ impl Rivers {
         water.swell.copy_from_slice(&self.swell);
         water.fronts = self.fronts;
         let swell = self.swell.iter().copied().max().unwrap_or(0);
-        water.most = self.fronts().map(|f| f.crest).fold(swell, u16::max);
+        let crest = self.fronts().map(|f| f.crest).max().unwrap_or(0);
+        water.most = swell.saturating_add(crest);
     }
 
     /// Where a front carries something it sweeps away at tile `(x, y)`:
@@ -708,17 +712,6 @@ impl Rivers {
         &self.runs
     }
 
-    /// The runs of every ford the river has shut.
-    pub(crate) fn shut_runs(&mut self) -> &[[i32; 4]] {
-        self.runs.clear();
-        for (g, group) in self.groups.iter().enumerate() {
-            if self.shut[g] {
-                self.runs.extend_from_slice(&group.runs);
-            }
-        }
-        &self.runs
-    }
-
     /// One second of the rivers' stores, with rain of `rain` strength
     /// (0 to 255) on ground `wet`, and the spring melt running or not:
     /// each stretch takes its rain and passes a share of its water on.
@@ -733,7 +726,8 @@ impl Rivers {
         for &s in self.order.iter() {
             let st = &self.stretches[usize::from(s)];
             let out = self.store[usize::from(s)].div_ceil(OUTFLOW_DIVISOR);
-            self.store[usize::from(s)] += pour * u64::from(st.own) - out;
+            let store = &mut self.store[usize::from(s)];
+            *store = *store + pour * u64::from(st.own) - out;
             if st.below != NONE {
                 self.store[usize::from(st.below)] += out;
             }
@@ -773,7 +767,8 @@ impl Rivers {
             return None;
         }
         // The heavy tail: most small, a few huge.
-        let mut band = match (roll >> 16) % 100 {
+        // Separate bits of the roll for each choice.
+        let mut band = match (roll >> 16 & 0xffff) % 100 {
             0..35 => Band::Minor,
             35..80 => Band::Flood,
             80..96 => Band::Major,
@@ -781,7 +776,7 @@ impl Rivers {
         };
         // Wet ground or a high river makes a bigger one more often.
         let soaked = wet >= crate::flood::FLOOD_WET || rise >= FLOOD_RISE / 2;
-        if soaked && (roll >> 24).is_multiple_of(2) {
+        if soaked && (roll >> 32).is_multiple_of(2) {
             band = match band {
                 Band::Minor => Band::Flood,
                 Band::Flood => Band::Major,
@@ -797,7 +792,7 @@ impl Rivers {
         }
         let band = Band::of(crest);
         // Which ford's river.
-        let g = &self.groups[((roll >> 32) % self.groups.len() as u64) as usize];
+        let g = &self.groups[((roll >> 40) % self.groups.len() as u64) as usize];
         // Up the river's main stem from the ford, to where it sets off.
         let mut start = g.stretch;
         let want = g.first.saturating_add(SET_OFF_ABOVE);
@@ -815,7 +810,7 @@ impl Rivers {
             .filter(|g| g.first <= top && self.stretches[usize::from(g.stretch)].holds(from))
             .map(|g| g.first)
             .max()
-            .unwrap_or(g.first);
+            .unwrap_or(g.first.min(top));
         // Its crest where it sets off, so it is `crest` at the first ford.
         let crest_top = unfaded(crest, top - first);
         let lead = band.lead_seconds() * TICKS_PER_SECOND;
@@ -829,16 +824,8 @@ impl Rivers {
             delay: lead.saturating_sub(front_ticks(top, first)),
             warned: false,
         };
-        match self.fronts.iter_mut().find(|f| f.is_none()) {
-            Some(slot) => *slot = Some(front),
-            // Full: it adds to the biggest running.
-            None => {
-                if let Some(big) = self.fronts.iter_mut().flatten().max_by_key(|f| f.crest) {
-                    big.crest = big.crest.saturating_add(crest_top / 2);
-                    big.band = big.band.max(band);
-                }
-            }
-        }
+        // With every slot taken, the storm passes with the fronts it has.
+        *self.fronts.iter_mut().find(|f| f.is_none())? = Some(front);
         Some(band)
     }
 
@@ -921,8 +908,21 @@ impl Rivers {
         if now_shut != was_shut {
             self.turn.stage = Some(if now_shut { Stage::Here } else { Stage::Gone });
         }
-        let changed = !self.turn.shut.is_empty() || !self.turn.opened.is_empty();
-        if changed || self.turn.coming || second {
+        // Which fords a warned front is still coming down on.
+        let mut changed = !self.turn.shut.is_empty() || !self.turn.opened.is_empty();
+        for (g, group) in self.groups.iter().enumerate() {
+            let here = &self.stretches[usize::from(group.stretch)];
+            let coming = (self.fronts.iter().flatten()).any(|f| {
+                f.warned
+                    && here.holds(&self.stretches[usize::from(f.start)])
+                    && f.ticks < f.delay + front_ticks(f.top, group.first)
+            });
+            if coming != self.coming[g] {
+                self.coming[g] = coming;
+                changed = true;
+            }
+        }
+        if changed {
             self.weigh_threats();
         }
         &self.turn
@@ -934,13 +934,7 @@ impl Rivers {
         let mut list = core::mem::take(&mut self.threat_room);
         list.clear();
         for (g, group) in self.groups.iter().enumerate() {
-            let here = &self.stretches[usize::from(group.stretch)];
-            let coming = (self.fronts.iter().flatten()).any(|f| {
-                f.warned
-                    && here.holds(&self.stretches[usize::from(f.start)])
-                    && f.ticks < f.delay + front_ticks(f.top, group.first)
-            });
-            if self.shut[g] || coming {
+            if self.shut[g] || self.coming[g] {
                 list.extend_from_slice(&group.fords);
             }
         }

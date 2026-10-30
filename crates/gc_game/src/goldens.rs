@@ -900,6 +900,9 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     println!("{note}");
     let mut replay = m.finish().expect("the match was recorded");
     replay.note = note;
+    // The map to draw it on: the lobby's choice, unless it is the
+    // generated map.
+    replay.header.map = (golden.map != 0).then_some(golden.map as u8);
     replay
 }
 
