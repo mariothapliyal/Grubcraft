@@ -95,7 +95,7 @@ jobs:
       - name: Conquest AI games in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_game ai_only -- --ignored
-      # The real-play stress scenarios (docs/39-real-play-checks.md): a
+      # The real-play stress scenarios (docs/40-real-play-checks.md): a
       # gate, a bridge under fire, a retreat through woods and a computer
       # player attacking walls, with the real game data. About two seconds
       # in a release build.

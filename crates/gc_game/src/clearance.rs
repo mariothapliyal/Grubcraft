@@ -1,4 +1,4 @@
-//! The clearance check (docs/39-real-play-checks.md): every passage troops
+//! The clearance check (docs/40-real-play-checks.md): every passage troops
 //! walk through or over, a gate's doorway or a bridge's deck, is measured
 //! twice, as the simulation walks it (its footprint) and as the player sees
 //! it (its model), and held against the widest unit that walks and a

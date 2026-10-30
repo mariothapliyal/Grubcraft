@@ -1,4 +1,4 @@
-//! The stress-scenario suite (docs/39-real-play-checks.md): armies of the
+//! The stress-scenario suite (docs/40-real-play-checks.md): armies of the
 //! real game data played through the hard places of real play, a gate, a
 //! bridge under fire, a retreat through woods, a computer player attacking
 //! walls, with no window. Each scenario says what must hold (its checks)

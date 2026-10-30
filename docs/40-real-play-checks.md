@@ -1,4 +1,4 @@
-# 39. Real-play checks
+# 40. Real-play checks
 
 Mario's rule (2026-10-30): looking right in Blender is not enough; what
 counts is how things work in play. Past misses were gates units couldn't
