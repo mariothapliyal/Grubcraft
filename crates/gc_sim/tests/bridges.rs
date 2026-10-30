@@ -168,10 +168,11 @@ fn draw(w: &mut World, worker: Option<RegimentHandle>, from: i32, to: (i32, i32)
     )
 }
 
-/// Put up a finished bridge along [`ROW`] from x = 27 to 36.
+/// Put up a finished bridge, both lanes of it, along [`ROW`] and the row
+/// below it from x = 27 to 36.
 fn span(w: &mut World) {
-    for x in 27..=36 {
-        let tile = (x, ROW as i16);
+    for (x, y) in (27..=36).flat_map(|x| [(x, ROW), (x, ROW + 1)]) {
+        let tile = (x, y as i16);
         assert!(order(
             w,
             0,
@@ -201,7 +202,8 @@ fn a_bridge_is_drawn_straight_from_bank_to_bank() {
     let plan = |w: &World, from: (i32, i32), to: (i32, i32)| {
         w.wall_plan(0, BRIDGE, from, to).map(|p| p.len())
     };
-    assert_eq!(plan(&w, (27, ROW), (36, ROW)), Ok(10));
+    // Two lanes wide: the line drawn and the row beside it.
+    assert_eq!(plan(&w, (27, ROW), (36, ROW)), Ok(20));
     // Not on the slant, not ending in the water, and not on dry land.
     assert_eq!(plan(&w, (27, ROW), (36, ROW + 3)), Err(Refusal::Crooked));
     assert_eq!(plan(&w, (27, ROW), (32, ROW)), Err(Refusal::Rough));
@@ -358,4 +360,98 @@ fn a_gnawer_builds_a_bridge_by_hand_and_is_not_used_up() {
         w.regiments.iter().any(|r| r.handle == gnawer),
         "still alive"
     );
+}
+
+#[test]
+fn a_bridge_is_two_lanes_wide_and_both_are_built() {
+    let mut w = world();
+    let worker = spawn(&mut w, WORKER, 25, ROW);
+    let plan = w.wall_plan(0, BRIDGE, (27, ROW), (36, ROW)).unwrap();
+    let rows = |row: i32| plan.iter().filter(|t| t.tile.1 == row).count();
+    assert_eq!((rows(ROW), rows(ROW + 1)), (10, 10));
+    let grub = w.bank(0).unwrap().grub;
+    assert!(draw(&mut w, Some(worker), 27, (36, ROW)));
+    assert_eq!(grub - w.bank(0).unwrap().grub, 20 * 12, "12 Grub a tile");
+    for _ in 0..240 * TICKS_PER_SECOND {
+        w.tick(&[]);
+    }
+    let s = w.structures().unwrap();
+    assert!(
+        s.iter()
+            .filter(|v| v.building == BRIDGE)
+            .all(|v| v.finished())
+    );
+    for y in [ROW, ROW + 1] {
+        assert!(w.nav().walkable(
+            0,
+            FxVec2::from_ints(31, y) + FxVec2::new(Fx::HALF, Fx::HALF)
+        ));
+    }
+    // A lane's tile knows its side: the lower lane runs towards higher
+    // coordinates, the upper one back.
+    let line = |y: i32| {
+        s.iter()
+            .find(|v| v.tile == (31, y))
+            .unwrap()
+            .line
+            .unwrap()
+            .map(i32::from)
+    };
+    assert_eq!(line(ROW), [27, ROW, 36, ROW]);
+    assert_eq!(line(ROW + 1), [36, ROW + 1, 27, ROW + 1]);
+}
+
+#[test]
+fn the_second_lane_goes_to_the_other_side_at_the_edge_of_the_map() {
+    let w = world();
+    let last = MAP as i32 - 1;
+    let plan = w.wall_plan(0, BRIDGE, (27, last), (36, last)).unwrap();
+    let rows = |row: i32| plan.iter().filter(|t| t.tile.1 == row).count();
+    assert_eq!((rows(last - 1), rows(last)), (10, 10));
+}
+
+#[test]
+fn a_gap_in_the_upper_lane_is_mended_without_a_third_lane() {
+    let mut w = world();
+    span(&mut w);
+    let worker = spawn(&mut w, WORKER, 25, ROW);
+    let s = w.structures().unwrap();
+    let gone = s.iter().find(|v| v.tile == (31, ROW + 1)).unwrap().handle;
+    assert!(order(
+        &mut w,
+        0,
+        Command::RemoveStructure { structure: gone }
+    ));
+    w.tick(&[]);
+    // Redrawn along the upper lane, only its gap is new: no lane above it.
+    let plan = w
+        .wall_plan(0, BRIDGE, (30, ROW + 1), (32, ROW + 1))
+        .unwrap();
+    assert_eq!(
+        plan.iter().map(|t| t.tile).collect::<Vec<_>>(),
+        [(31, ROW + 1)]
+    );
+    assert!(order(
+        &mut w,
+        0,
+        Command::BuildWall {
+            regiment: Some(worker),
+            building: BRIDGE,
+            from: (30, (ROW + 1) as i16),
+            to: (32, (ROW + 1) as i16),
+        }
+    ));
+    let s = w.structures().unwrap();
+    let line = s
+        .iter()
+        .find(|v| v.tile == (31, ROW + 1))
+        .unwrap()
+        .line
+        .unwrap();
+    assert_eq!(
+        line.map(i32::from),
+        [32, ROW + 1, 30, ROW + 1],
+        "stored running back"
+    );
+    assert!(s.iter().all(|v| v.tile.1 != ROW + 2));
 }

@@ -123,7 +123,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Drawn walls:** wall tool; built tile by tile; snaps to wall ends, towers and gates within 1.5 tiles.
 - **Gates:** Auto (opens for you and allies), Locked (shut to all), Open (held). Enemy routes treat a shut gate as wall.
 - **Manning:** with foot or archers, right-click your raised (level 2 or 3) wall to man it. Right-click an enemy raised wall to climb ladders; `Ctrl`+right-click sieges it instead.
-- **Bridges** (straight, over water, 12 Grub a tile): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are drawn as the same planked timber bridge with lanterns and your team's cloth for now.
+- **Bridges** (straight, over water, two tiles wide, 6 Grub a tile, so 12 Grub a step along the span): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are drawn as the same planked timber bridge with lanterns and your team's cloth for now.
 - **Field works:** Stakes and Barricades, drawn with the wall tool. Spearmen and archers plant stakes with `C` (about 10 s).
 - **Hidden traps** (one per faction; only its owner sees it): Spike Pit (Clans), Grave Hands (Concord), Shard Mine (Choir), Burrow Nest (Brood).
 - **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32). Bolt and Blast towers are not built.
