@@ -1,6 +1,6 @@
 // The shared bridge model, baked into assets/buildings/bridges.pak by tools/gc_artbake
 // (`cargo run -p gc_artbake --release -- --config assets-src/buildings/bridges.ron --out assets/buildings/bridges.pak`).
-// One 1 x 1 tile of a bridge running along the model's z (the game turns it to its line), with the
+// One LANE of a bridge (a 1 x 1 tile running along the model's z, the game turns it to its line, rail on the outer +x side only; two lanes make the bridge), with the
 // deck's top 0.28 tiles above the water (buildings.rs DECK_TOP). Every faction's bridge shows it until
 // it has a model of its own (a model named after the bridge, e.g. "Bone Causeway", takes over).
 // Four looks as for buildings: `#1` foundation, `#2` frame, `#3` half planked, then the finished tile.

@@ -620,14 +620,13 @@ impl Looks {
     }
 
     /// The way `s`'s model faces: its door on the model's +z, south unturned.
-    /// A modelled tile of a line (a bridge) runs along it, so its +z points that way.
+    /// A modelled tile of a line (a bridge) runs along it, so its +z points that
+    /// way: a bridge's lower lane runs towards higher coordinates and its upper
+    /// lane back (see `Conquest::bridge_lanes`), which puts each one's rail on
+    /// the outside.
     pub fn facing(&self, s: &StructureView) -> Vec2 {
-        match s.line.and_then(|line| wall_piece(line, s.tile)) {
-            // Whichever end it was drawn from, a tile faces the same way.
-            Some(p) if p.dir.x < 0.0 || (p.dir.x == 0.0 && p.dir.y < 0.0) => -p.dir,
-            Some(p) => p.dir,
-            None => facing_of(s.turn),
-        }
+        (s.line.and_then(|line| wall_piece(line, s.tile)))
+            .map_or_else(|| facing_of(s.turn), |p| p.dir)
     }
 
     /// The worker model of a building type's faction, if it has one.
@@ -2627,9 +2626,9 @@ mod tests {
             view.line = Some([3, 5, 9, 5]);
             view.tile = (4, 5);
             assert_eq!(looks.facing(&view), Vec2::X);
-            // Drawn from the other end, the same way.
+            // The upper lane of a bridge is stored running back: it faces back.
             view.line = Some([9, 5, 3, 5]);
-            assert_eq!(looks.facing(&view), Vec2::X);
+            assert_eq!(looks.facing(&view), Vec2::NEG_X);
         }
     }
 
