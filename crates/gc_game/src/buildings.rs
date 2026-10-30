@@ -191,8 +191,6 @@ const BAR_BACK: [u8; 4] = [18, 18, 18, 0];
 const REFUSED: [u8; 4] = [210, 40, 30, 110];
 /// A ghost on overgrown ground, which the worker clears first (amber).
 const OVERGROWN: [u8; 4] = [235, 170, 40, 120];
-/// The glow on a ghost that fits.
-const GHOST_GLOW: u8 = 110;
 /// A wall being planned as a blueprint (pale blue), and a planned tile
 /// already down (the same, fainter).
 const PLAN_GHOST: [u8; 4] = [130, 185, 245, 120];
@@ -228,10 +226,24 @@ const HEART_HEIGHT: f32 = 3.2;
 pub const HEART_BASE: f32 = 3.5;
 const HEART_COLOR: [u8; 3] = [150, 20, 70];
 const HEART_GLOW: u8 = 140;
-/// The selected building's white rim: one tile beyond its footprint, this
-/// thick (tiles).
+/// Flat marks on the ground (the selection ring, a ghost's dashed footprint)
+/// stand this thick (tiles).
 const PLATE: f32 = 0.08;
+/// The selected building's ring: a thin white line this far outside its
+/// footprint, this wide, laid in pieces of about a tile so it follows the
+/// ground.
 const RIM_COLOR: [u8; 4] = [240, 240, 240, 120];
+const RIM_OUT: f32 = 0.35;
+const RIM_LINE: f32 = 0.12;
+/// A ghost's footprint is outlined in dashes about this far apart (tiles),
+/// each this much of the way and this wide, just inside its edge.
+const DASH_EVERY: f32 = 0.8;
+const DASH_SHARE: f32 = 0.55;
+const DASH_LINE: f32 = 0.14;
+/// The colour of a ghost that fits: green.
+const FITS: [u8; 4] = [80, 225, 105, 140];
+/// The glow on a wall's ghost that fits (in its side's colour).
+const GHOST_GLOW: u8 = 110;
 /// The selected building's rally point: a pole this tall with a flag in
 /// its owner's colour (tiles).
 const POLE: [f32; 3] = [0.12, 2.4, 0.12];
@@ -602,8 +614,8 @@ impl Looks {
         self.tops.get(model).copied().flatten().unwrap_or(0.0)
     }
 
-    /// The model a finished `building` shows, if it has one.
-    #[cfg(test)]
+    /// The model a building type shows once finished, which its ghost takes
+    /// while it is being placed.
     pub fn finished(&self, building: BuildingId) -> Option<usize> {
         self.stage(building, FINISHED)
     }
@@ -2163,17 +2175,91 @@ pub fn push_rim(
     let Some(s) = world.structures().and_then(|s| s.get(h)) else {
         return;
     };
-    if out.len() >= MAX_BOX_INSTANCES {
-        return;
+    let (x, y) = (s.tile.0 as f32 - RIM_OUT, s.tile.1 as f32 - RIM_OUT);
+    let (w, d) = (
+        f32::from(s.width) + 2.0 * RIM_OUT,
+        f32::from(s.depth) + 2.0 * RIM_OUT,
+    );
+    push_outline([x, y, w, d], RIM_LINE, 1.0, RIM_COLOR, &ground, out);
+}
+
+/// A line `thick` wide around the rectangle `[x, y, width, depth]` (tiles),
+/// lying on the ground: dashed about every `DASH_EVERY` with `share` of
+/// each stretch drawn, or whole for a `share` of 1 (then in pieces of about
+/// a tile, each on the ground under it).
+fn push_outline(
+    [x, y, w, d]: [f32; 4],
+    thick: f32,
+    share: f32,
+    colour: [u8; 4],
+    ground: &impl Fn(f32, f32) -> f32,
+    out: &mut Vec<BoxInstance>,
+) {
+    let half = thick / 2.0;
+    // Each edge runs between two corners, along its centre line.
+    let edges = [
+        (Vec2::new(x, y + half), Vec2::new(x + w, y + half)),
+        (Vec2::new(x, y + d - half), Vec2::new(x + w, y + d - half)),
+        (
+            Vec2::new(x + half, y + thick),
+            Vec2::new(x + half, y + d - thick),
+        ),
+        (
+            Vec2::new(x + w - half, y + thick),
+            Vec2::new(x + w - half, y + d - thick),
+        ),
+    ];
+    let every = if share >= 1.0 { 1.0 } else { DASH_EVERY };
+    for (from, to) in edges {
+        // A side edge of a rectangle under two lines thick runs backwards.
+        let way = to - from;
+        let len = way.length();
+        if to.x < from.x || to.y < from.y || len <= 0.0 {
+            continue;
+        }
+        let along = way / len;
+        // Dashes from corner to corner, so the corners are always marked.
+        let pieces = (len / every).round().max(1.0);
+        let long = len / pieces * share.min(1.0);
+        let gap = if pieces > 1.0 {
+            (len - pieces * long) / (pieces - 1.0)
+        } else {
+            0.0
+        };
+        for k in 0..pieces as usize {
+            if out.len() >= MAX_BOX_INSTANCES {
+                return;
+            }
+            let start = if pieces > 1.0 {
+                k as f32 * (long + gap)
+            } else {
+                (len - long) / 2.0
+            };
+            let centre = from + along * (start + long / 2.0);
+            out.push(bar(centre, along, long, thick, colour, ground));
+        }
     }
-    // Laid over the wider footprint, so it sits on the ground it covers.
-    let rim = StructureView {
-        tile: (s.tile.0 - 1, s.tile.1 - 1),
-        width: s.width.saturating_add(2),
-        depth: s.depth.saturating_add(2),
-        ..s
+}
+
+/// A flat bar on the ground, `long` along `along` (x or y) and `thick`
+/// across, centred on `centre` and standing on the ground under its ends.
+fn bar(
+    centre: Vec2,
+    along: Vec2,
+    long: f32,
+    thick: f32,
+    colour: [u8; 4],
+    ground: &impl Fn(f32, f32) -> f32,
+) -> BoxInstance {
+    let size = if along.x.abs() > along.y.abs() {
+        Vec2::new(long, thick)
+    } else {
+        Vec2::new(thick, long)
     };
-    out.push(block(&rim, PLATE, RIM_COLOR, &ground));
+    let ends = [centre - along * long / 2.0, centre + along * long / 2.0];
+    let (lo, hi) = (ends.iter().map(|e| ground(e.x, e.y)))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)));
+    draped(Slab { centre, size }, PLATE, colour, (lo, hi))
 }
 
 fn bar_colour(frac: f32) -> [u8; 4] {
@@ -2211,7 +2297,7 @@ pub enum Fit {
 
 /// A footprint of `width` × `depth` tiles from `tile`, turned `turn`
 /// quarter turns, as a view, for the flat shapes drawn over the ground.
-fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> StructureView {
+pub fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> StructureView {
     StructureView {
         handle: StructureHandle {
             index: 0,
@@ -2248,34 +2334,50 @@ fn ghost_colour(fit: Fit, [r, g, b]: [u8; 3]) -> [u8; 4] {
     }
 }
 
+/// The colour of a building's ghost: green where it fits, amber where the
+/// ground must be cleared first, red where it won't go (a gate the ring
+/// tool suggests keeps its own, and the side's `colour` is for the rest).
+pub fn building_ghost_colour(fit: Fit, colour: [u8; 3]) -> [u8; 4] {
+    match fit {
+        Fit::Open => FITS,
+        fit => ghost_colour(fit, colour),
+    }
+}
+
 /// The ghost of a building about to be placed with its north-west tile at
-/// `tile`, turned `turn` quarter turns: its full size in the side's colour,
-/// amber where the ground must be cleared first, or red where it won't go,
-/// with a step out of its front.
+/// `tile`, turned `turn` quarter turns: its footprint dashed out on the
+/// ground in [`building_ghost_colour`], with a short mark out of its front so
+/// the player sees which way it faces. A building drawn as a model has its
+/// model ghosted over this (see `GHOST_HIGHLIGHT`); one without a model
+/// (`modelled` false) gets its full-size block, as before.
+#[allow(clippy::too_many_arguments)]
 pub fn push_ghost(
     stats: &BuildingStats,
     tile: (i32, i32),
     turn: u8,
     fit: Fit,
     colour: [u8; 3],
+    modelled: bool,
     ground: impl Fn(f32, f32) -> f32,
     out: &mut Vec<BoxInstance>,
 ) {
     let (width, depth) = stats.size(turn);
     let view = footprint_view(tile, width, depth, turn);
-    let colour = ghost_colour(fit, colour);
-    out.push(block(&view, height_of(stats.role), colour, &ground));
-    // A low step out of its front, so the player sees which way it faces.
+    let colour = building_ghost_colour(fit, colour);
+    if !modelled {
+        out.push(block(&view, height_of(stats.role), colour, &ground));
+    }
+    let (x, y) = (tile.0 as f32, tile.1 as f32);
+    let area = [x, y, f32::from(width), f32::from(depth)];
+    push_outline(area, DASH_LINE, DASH_SHARE, colour, &ground, out);
+    // A short bar just out of its front edge.
     let facing = facing_of(turn);
     let reach = if facing.x == 0.0 { depth } else { width };
-    let centre = centre_of(tile, width, depth) + facing * (f32::from(reach) / 2.0 + 0.5);
-    out.push(BoxInstance {
-        pos: centre.to_array(),
-        facing: facing.to_array(),
-        size: [1.0, 0.3, 1.0],
-        color: colour,
-        lift: 0.0,
-    });
+    let centre = centre_of(tile, width, depth) + facing * (f32::from(reach) / 2.0 + 0.35);
+    if out.len() < MAX_BOX_INSTANCES {
+        let across = Vec2::new(facing.y, facing.x).abs();
+        out.push(bar(centre, across, 1.0, DASH_LINE * 2.0, colour, &ground));
+    }
 }
 
 /// The ghost of a wall about to be drawn along `line`: each of `tiles` in
@@ -3206,20 +3308,71 @@ mod tests {
                 turn,
                 Fit::Open,
                 [1, 2, 3],
+                false,
                 |_, _| 0.0,
                 &mut out,
             );
-            let [ghost, step] = out[..] else {
-                panic!("the building and its front step");
+            let (Some(&ghost), Some(&step)) = (out.first(), out.last()) else {
+                panic!("the building and its front mark");
             };
             assert_eq!(ghost.size[0], f32::from(w));
             assert_eq!(ghost.size[2], f32::from(d));
             assert!((Vec2::from(ghost.pos) - at).length() <= 0.5 + 1e-3);
-            // The step sits just outside its front edge.
+            // The mark sits just outside its front edge.
             let out_of = (Vec2::from(step.pos) - Vec2::from(ghost.pos)).dot(facing_of(turn));
             let half = if turn % 2 == 0 { d } else { w };
-            assert!((out_of - (f32::from(half) / 2.0 + 0.5)).abs() < 1e-3);
+            assert!((out_of - (f32::from(half) / 2.0 + 0.35)).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn a_modelled_ghost_is_only_marks_on_the_ground_round_its_footprint() {
+        let table = Table::new(&crate::data::load());
+        let stats = table.stats[0];
+        let (w, d) = stats.size(0);
+        let mut out = Vec::new();
+        push_ghost(
+            &stats,
+            (10, 20),
+            0,
+            Fit::Refused,
+            [1, 2, 3],
+            true,
+            |_, _| 0.0,
+            &mut out,
+        );
+        // Dashes on all four sides, and the front mark.
+        assert!(out.len() >= 5);
+        for mark in &out {
+            assert!(mark.size[1] <= PLATE + 1e-6, "flat: {mark:?}");
+            assert_eq!(mark.color, REFUSED);
+            let [x, y] = mark.pos;
+            assert!((10.0..=10.0 + f32::from(w)).contains(&x), "{mark:?}");
+            // Only the front mark lies outside, beyond the south edge.
+            assert!((20.0..=21.0 + f32::from(d)).contains(&y), "{mark:?}");
+        }
+    }
+
+    #[test]
+    fn the_selection_ring_is_a_thin_flat_line_round_the_building() {
+        let mut out = Vec::new();
+        push_outline(
+            [0.0, 0.0, 4.0, 3.0],
+            RIM_LINE,
+            1.0,
+            RIM_COLOR,
+            &|_, _| 0.0,
+            &mut out,
+        );
+        // In pieces of about a tile: four along each long side, three down
+        // each short one.
+        assert_eq!(out.len(), 14);
+        let covered: f32 = out.iter().map(|b| b.size[0].max(b.size[2])).sum();
+        assert!((covered - (2.0 * 4.0 + 2.0 * (3.0 - 2.0 * RIM_LINE))).abs() < 1e-3);
+        assert!(
+            out.iter()
+                .all(|b| b.size[1] <= PLATE && b.size[0].min(b.size[2]) <= RIM_LINE)
+        );
     }
 
     #[test]
