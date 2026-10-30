@@ -518,6 +518,11 @@ pub struct Kills {
     /// dead has his chest from his position (`x` to his left, `y` ahead
     /// along the facing he fell with), for a finisher to strike at.
     chests: Vec<Vec<Option<Vec2>>>,
+    /// Per unit type, how much further from his foe (tiles) a man of it
+    /// stands in a duel than its gap says: as far forward as he is drawn
+    /// onto his feet, so two men's bodies keep the distance the gaps were
+    /// tuned to when he was drawn behind his position.
+    stand_offs: Vec<f32>,
 }
 
 impl Kills {
@@ -563,6 +568,25 @@ impl Kills {
         self.chests[u] = by_look;
     }
 
+    /// Men of unit `unit` stand `tiles` further from their foe in a duel
+    /// (see [`Kills::stand_off`]).
+    pub fn add_stand_off(&mut self, unit: u16, tiles: f32) {
+        let u = usize::from(unit);
+        if self.stand_offs.len() <= u {
+            self.stand_offs.resize(u + 1, 0.0);
+        }
+        self.stand_offs[u] = tiles;
+    }
+
+    /// How much further from his foe than his gap a man of unit `unit`
+    /// stands in a duel: as far forward as he is drawn onto his feet.
+    pub(crate) fn stand_off(&self, unit: u16) -> f32 {
+        self.stand_offs
+            .get(usize::from(unit))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     /// Where a man of unit `unit` and look `look` lying dead has his chest
     /// from his position, if known.
     fn chest(&self, unit: u16, look: u8) -> Option<Vec2> {
@@ -576,9 +600,11 @@ impl Kills {
     }
 
     /// How far from a man on the ground one of unit `unit` stands to finish
-    /// him: his finisher's reach, else [`FINISH_GAP`] for the bent swing.
+    /// him: his finisher's reach, else [`FINISH_GAP`] for the bent swing (and
+    /// his stand-off, [`Kills::stand_off`]).
     pub(crate) fn finish_gap(&self, unit: u16) -> f32 {
-        self.finisher(unit).map_or(FINISH_GAP, |(reach, _)| reach)
+        self.finisher(unit)
+            .map_or(FINISH_GAP + self.stand_off(unit), |(reach, _)| reach)
     }
 
     /// The kill `roll` (0 to 1) picks for a man of `killer` on one of
@@ -1682,7 +1708,13 @@ impl Puppets {
                 Duel {
                     kill: (self.kills)
                         .pick(unit(w), unit(1 - w), roll)
-                        .filter(|&(_, k)| k.reach <= CHAMPION_REACH),
+                        .filter(|&(_, k)| {
+                            // Within the reach of two men drawn where the
+                            // bake put them (see `Kills::stand_off`).
+                            let stand =
+                                self.kills.stand_off(unit(w)) + self.kills.stand_off(unit(1 - w));
+                            k.reach <= CHAMPION_REACH + stand
+                        }),
                     ..duel
                 }
             }
@@ -1717,7 +1749,11 @@ impl Puppets {
     fn stance(&self, d: &Duel, side: usize) -> Vec2 {
         let [a, b] = d.challenge.champions.map(|h| self.centre[h.index as usize]);
         let toward_b = (b - a).normalize_or(Vec2::Y);
-        let half = toward_b * (DUEL_GAP / 2.0);
+        let stand = d
+            .challenge
+            .champions
+            .map(|h| self.kills.stand_off(self.unit[h.index as usize]));
+        let half = toward_b * ((DUEL_GAP + stand[0] + stand[1]) / 2.0);
         let stand = [d.spot - half, d.spot + half];
         match d.kill_begun() {
             Some((_, k, _)) if d.won(side) => {
@@ -2002,6 +2038,15 @@ impl Puppets {
         })
     }
 
+    /// How far apart a man of regiment `r` and one of `block` stand to
+    /// fight: the mean of their gaps, and each one's stand-off
+    /// ([`Kills::stand_off`]).
+    fn duel_gap(&self, r: usize, block: &Block) -> f32 {
+        (self.fighter[r].gap() + block.fighter.gap()) / 2.0
+            + self.kills.stand_off(self.unit[r])
+            + self.kills.stand_off(block.unit)
+    }
+
     /// How many of regiment `r`'s soldiers stand in its front rank.
     fn front(&self, r: usize) -> usize {
         (self.files[r] as usize).min(self.models[r] as usize)
@@ -2219,7 +2264,7 @@ impl Puppets {
                     let gap = if killing {
                         self.killing[i].gap
                     } else {
-                        (block.fighter.gap() + self.fighter[j as usize / SLOTS].gap()) / 2.0
+                        self.duel_gap(j as usize / SLOTS, block)
                     };
                     let spot = f + (self.pos[i] - f).normalize_or(back) * gap;
                     let leash = DUEL_LEASH + LEASH_BOLD * unit_hash(block.handle, k, 13);
@@ -2492,14 +2537,12 @@ impl Puppets {
                         .flatten();
                     let (gap, lands) = match pair {
                         Some((_, k)) => (k.reach, k.contact * k.seconds),
-                        None if lying => match self.kills.finisher(self.unit[kr]) {
-                            Some((reach, seconds)) => (reach, BLOW_AT * seconds),
-                            None => (FINISH_GAP, BLOW_AT * SWING_SECONDS),
-                        },
-                        None => (
-                            (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
-                            BLOW_AT * SWING_SECONDS,
-                        ),
+                        None if lying => {
+                            let unit = self.unit[kr];
+                            let seconds = self.kills.finisher(unit).map_or(SWING_SECONDS, |f| f.1);
+                            (self.kills.finish_gap(unit), BLOW_AT * seconds)
+                        }
+                        None => (self.duel_gap(kr, block), BLOW_AT * SWING_SECONDS),
                     };
                     let spot = self.strike_spot(kr, victim, lying);
                     let toward = (self.pos[gi] - spot).normalize_or(Vec2::Y);
@@ -2571,7 +2614,7 @@ impl Puppets {
                         let gap = match pair {
                             Some((_, k)) => k.reach,
                             None if lying => self.kills.finish_gap(self.unit[kr]),
-                            None => (self.fighter[kr].gap() + block.fighter.gap()) / 2.0,
+                            None => self.duel_gap(kr, block),
                         };
                         self.killing[killer] = Killing {
                             spot: self.strike_spot(kr, victim, lying),
@@ -3327,6 +3370,23 @@ mod tests {
         x.fighter = a;
         y.fighter = b;
         (x, y)
+    }
+
+    #[test]
+    fn men_drawn_onto_their_feet_stand_back_by_as_much() {
+        let mut p = Puppets::new(2, 4);
+        let mut kills = Kills::new(Vec::new());
+        kills.add_stand_off(1, 0.4);
+        p.set_kills(kills);
+        let (a, mut b) = melee_pair(Fighter::default(), Fighter::default());
+        b.unit = 1;
+        frame(&mut p, &a, &b);
+        let plain = (a.fighter.gap() + b.fighter.gap()) / 2.0;
+        assert!((p.duel_gap(0, &b) - (plain + 0.4)).abs() < 1e-6);
+        assert!((p.duel_gap(1, &a) - (plain + 0.4)).abs() < 1e-6);
+        // The bent swing at a man on the ground keeps it too.
+        assert!((p.kills.finish_gap(1) - (FINISH_GAP + 0.4)).abs() < 1e-6);
+        assert_eq!(p.kills.finish_gap(0), FINISH_GAP);
     }
 
     fn frame(p: &mut Puppets, a: &Block, b: &Block) {
