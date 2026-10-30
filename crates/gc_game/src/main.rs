@@ -7089,6 +7089,10 @@ impl Running {
                 top,
                 model,
                 lift,
+                facing: self
+                    .art
+                    .as_ref()
+                    .map_or(Vec2::Y, |art| art.looks.facing(&s)),
                 owner: s.owner,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
@@ -7371,13 +7375,13 @@ impl Running {
                 let mut flags = models::pose_flags(pose, 0, false);
                 if fall.tip > 0.0 {
                     // Tipped over toward its way, which the model reads in
-                    // its own space (turned to face south, as drawn).
+                    // its own space (turned as it stood).
                     flags[2] = (fall.tip * 255.0).round() as u8;
-                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                    flags[3] = scenery::fall_of(scenery::turn_of(fall.facing), fall.way);
                 }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
-                    facing: [0.0, 1.0],
+                    facing: fall.facing.to_array(),
                     frames: pose.rows,
                     flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],

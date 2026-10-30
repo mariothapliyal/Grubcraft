@@ -973,6 +973,9 @@ fn bake_model(
         lo = lo.min(p);
         hi = hi.max(p);
     }
+    if cfg.scale.is_nan() || cfg.scale <= 0.0 {
+        return Err(format!("scale {} must be above zero", cfg.scale));
+    }
     if cfg.scale != 1.0 && !cfg.keep_origin {
         return Err("scale is for keep_origin models (the rest are scaled to height)".into());
     }
