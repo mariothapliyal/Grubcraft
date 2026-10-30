@@ -38,7 +38,7 @@ const STEPS: [Step; 5] = [
     Step {
         title: "Command",
         scene: command,
-        text: "Box regiments, right-click to move or attack. Spears in front, archers behind. Charge downhill, never into mud.",
+        text: "Box regiments, right-click to move or attack. Spears front, archers behind. Charge downhill. Only front ranks fight: hold gates.",
     },
     Step {
         title: "Win",

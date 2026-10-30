@@ -1599,6 +1599,7 @@ impl World {
             &self.stances,
             &self.terrain,
             &self.vision,
+            &self.nav,
             self.tick,
         );
         self.combat.push_lines(

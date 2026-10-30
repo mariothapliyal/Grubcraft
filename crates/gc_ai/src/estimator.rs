@@ -10,7 +10,8 @@
 //!   pikes add half their second rank; formations cramp or free weapons and
 //!   change defence) and lands with chance 50 + attack - defence percent
 //!   (10 to 90); regiments beyond the enemy's frontage hit flanks for 40%
-//!   more.
+//!   more, and no more strike than there is room round the enemy's blocks
+//!   for (frontage: only soldiers who touch the enemy strike).
 //! - **Arrows:** soldiers x accuracy x damage per volley, from as soon as the
 //!   enemy is in range, and on through the melee; shield walls turn most of
 //!   them.
@@ -74,6 +75,11 @@ pub struct Force {
     front_damage_attack: f32,
     /// Extra damage from charges, as a fraction of a second's blows.
     charge: f32,
+    /// Width of its melee regiments' fronts, and round the edges of all
+    /// its blocks, in tiles: how many foes can strike them at once
+    /// (frontage: only soldiers who touch the enemy strike).
+    frontage: f32,
+    perimeter: f32,
     /// Hit points a second dealt by arrows at full strength.
     pub ranged: f32,
     /// Longest range among its shooters, tiles.
@@ -118,6 +124,7 @@ impl Force {
             f.arrows_turned += (100 - r.formation.arrow_percent(true)) as f32 / 100.0 * n;
             defence_soldiers += n;
             f.speed = f.speed.min(view.pace(r));
+            f.perimeter += 2.0 * (r.width + r.depth);
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
@@ -133,6 +140,7 @@ impl Force {
                     / 10_000.0
                     * MELEE_PACE;
                 f.melee_regiments += 1.0;
+                f.frontage += r.width;
                 f.front_damage += front * f32::from(s.melee_damage);
                 f.front_damage_attack +=
                     front * f32::from(s.melee_damage) * f32::from(s.melee_attack);
@@ -287,8 +295,20 @@ pub fn estimate(ours: &Force, theirs: &Force, approach: Approach) -> Estimate {
         }
     };
     let (flank_a, flank_b) = (flank(ours, theirs), flank(theirs, ours));
-    let melee_a = ours.melee_against(theirs.defence) * (1.0 + (FLANK_DAMAGE - 1.0) * flank_a);
-    let melee_b = theirs.melee_against(ours.defence) * (1.0 + (FLANK_DAMAGE - 1.0) * flank_b);
+    // Only as many strike as there is room round the enemy for (in the
+    // open: a gate or a bridge leaves less, which this doesn't see).
+    let room = |a: &Force, b: &Force| {
+        if a.frontage > 0.0 && b.perimeter > 0.0 {
+            (b.perimeter / a.frontage).min(1.0)
+        } else {
+            1.0
+        }
+    };
+    let (room_a, room_b) = (room(ours, theirs), room(theirs, ours));
+    let melee_a =
+        ours.melee_against(theirs.defence) * (1.0 + (FLANK_DAMAGE - 1.0) * flank_a) * room_a;
+    let melee_b =
+        theirs.melee_against(ours.defence) * (1.0 + (FLANK_DAMAGE - 1.0) * flank_b) * room_b;
     let charge_hit = |a: &Force, b: &Force| {
         if a.front_damage <= 0.0 {
             return 0.0;
@@ -296,7 +316,10 @@ pub fn estimate(ours: &Force, theirs: &Force, approach: Approach) -> Estimate {
         let attack = a.front_damage_attack / a.front_damage;
         a.charge * (50.0 + attack - b.defence).clamp(10.0, 90.0) / 100.0
     };
-    let (charge_a, charge_b) = (charge_hit(ours, theirs), charge_hit(theirs, ours));
+    let (charge_a, charge_b) = (
+        charge_hit(ours, theirs) * room_a,
+        charge_hit(theirs, ours) * room_b,
+    );
 
     let start = |f: &Force| Fighting {
         hp: f.hp,

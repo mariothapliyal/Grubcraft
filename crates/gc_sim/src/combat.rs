@@ -56,6 +56,15 @@ pub const REACH: Fx = Fx::from_ratio(1, 2);
 /// turn to face each other don't brush apart, and a nearer enemy coming up
 /// doesn't pull a regiment off the foe it is fighting.
 const LET_GO: Fx = Fx::from_int(2);
+/// A regiment locked in a fight with fewer than a quarter of its files able
+/// to strike (its foe's side is full, or only a corner touches) for this
+/// many turns in a row looks for a less crowded side to go round to.
+pub const CROWDED_TURNS: u8 = 2;
+/// A regiment closing on its target this near (beyond both blocks' sizes)
+/// looks for a freer side of it, if friends already fight on its own.
+const APPROACH: Fx = Fx::from_int(6);
+/// Going round gives up after this long and takes whatever fight it finds.
+const ROUNDING_TICKS: u8 = 8 * TICKS_PER_SECOND as u8;
 /// Locked lines that have drifted more than [`REACH`] apart close up again
 /// at this many tiles a tick (a tile a second, slower than a walk).
 const CLOSE_UP: Fx = Fx::from_ratio(1, 20);
@@ -1083,6 +1092,7 @@ impl Combat {
         stances: &Stances,
         terrain: &Terrain,
         vision: &Vision,
+        nav: &Nav,
         tick: u32,
     ) {
         self.build_grid(regs, units);
@@ -1099,6 +1109,17 @@ impl Combat {
                 regs.falling_back[i] = 0;
                 regs.braced[i] = false;
                 continue;
+            }
+            // Going round a crowded fight (see `open_side`): it takes no
+            // fight on the way.
+            if regs.round[i].is_some() {
+                if regs.attack_target[i].is_some() {
+                    if regs.engaged[i].is_some() {
+                        regs.leave_fight(i);
+                    }
+                    continue;
+                }
+                regs.round[i] = None;
             }
             let me = self.blocks[i];
             // Locked in: a regiment keeps fighting the foe it is touching,
@@ -1261,6 +1282,43 @@ impl Combat {
                 regs.attack_target[i] = None;
                 continue;
             };
+            // Closing on a foe that friends already fight on the side it
+            // would hit: it makes for a freer side at once (looking once a
+            // second), rather than stack up behind them.
+            if regs.round[i].is_none()
+                && units[regs.unit[i] as usize].range.raw() == 0
+                && !regs.on_wall[i]
+                && (tick + i as u32).is_multiple_of(STRIKE_INTERVAL)
+            {
+                let near = self.radius[i] + self.radius[j] + APPROACH;
+                if (regs.position[j] - regs.position[i]).length_sq_raw() <= (near.raw() as u64).pow(2)
+                {
+                    regs.round[i] =
+                        open_side(regs, nav, i, j, &self.blocks[i], &self.blocks[j], true)
+                            .map(Round::pack);
+                    regs.crowded[i] = 0;
+                }
+            }
+            if let Some(code) = regs.round[i] {
+                // Going round: by the corner, then beside the side; there,
+                // or long enough on the way, it takes the fight again.
+                let mut round = Round::unpack(code);
+                let (corner, side) = round.spots(&self.blocks[j], &self.blocks[i]);
+                let near = |p: FxVec2, d: Fx| {
+                    (p - regs.position[i]).length_sq_raw() <= (d.raw() as u64).pow(2)
+                };
+                round.corner &= !near(corner, Fx::ONE);
+                regs.crowded[i] = regs.crowded[i].saturating_add(1);
+                if (!round.corner && near(side, REACH)) || regs.crowded[i] >= ROUNDING_TICKS {
+                    regs.round[i] = None;
+                    regs.crowded[i] = 0;
+                } else {
+                    regs.round[i] = Some(round.pack());
+                    regs.target[i] = Some(if round.corner { corner } else { side });
+                    regs.target_facing[i] = None;
+                    continue;
+                }
+            }
             let range = terrain.range(
                 vision.reach_at(units[regs.unit[i] as usize].range, j),
                 regs.position[i],
@@ -1371,6 +1429,10 @@ impl Combat {
                 continue;
             };
             let me = self.blocks[i];
+            // Lines drifted out of reach push nobody: they close up first.
+            if regs.plougher(i).is_none() && !me.touches(&self.blocks[j], REACH) {
+                continue;
+            }
             let foe = self.blocks[j].centre;
             let (axis, across) = if me.side_facing(foe) == Side::Flank {
                 (me.right, me.forward)
@@ -1481,9 +1543,9 @@ impl Combat {
 
     /// The step regiment `i` takes toward the foe it is locked with when
     /// their lines have drifted more than [`REACH`] apart (but less than
-    /// [`LET_GO`]), unless either is giving ground (lines that push move
-    /// them, see [`Combat::follow`]), the ground is blocked, or it would push
-    /// into another block. Reads only where everyone stood at the start of
+    /// [`LET_GO`]), unless a charge is ploughing either of them back (lines
+    /// out of reach push nobody, see [`Combat::push_lines`]), the ground is
+    /// blocked, or it would push into another block. Reads only where everyone stood at the start of
     /// the tick.
     fn close_up(
         &self,
@@ -1496,8 +1558,8 @@ impl Combat {
     ) -> Option<FxVec2> {
         let j = regs.foe(i)?;
         let (me, them) = (self.blocks[i], self.blocks[j]);
-        if regs.driven_pace(i) > 0
-            || regs.driven_pace(j) > 0
+        if regs.plougher(i).is_some()
+            || regs.plougher(j).is_some()
             || regs.morale_state[i].broken()
             || me.touches(&them, REACH)
         {
@@ -1558,6 +1620,13 @@ impl Combat {
         self.landed.clear();
         self.blows.clear();
         self.tower_hits.clear();
+        // A regiment's sides have room again on its turn: each of its foes
+        // has one turn in between (see `strikers`).
+        for i in 0..regs.alive.len() {
+            if (tick + i as u32).is_multiple_of(STRIKE_INTERVAL) {
+                regs.room_taken[i] = [Fx::ZERO; 4];
+            }
+        }
         // Melee.
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -1604,29 +1673,33 @@ impl Combat {
                 REACH
             };
             if !me.touches(&them, reach) {
-                // Locked but drifted apart: closing up, out of reach.
+                // Locked but drifted apart: closing up, out of reach (and
+                // if that gets it nowhere, going round, see `crowded_out`).
+                crowded_out(regs, nav, i, j, &me, &them);
                 continue;
             }
-            let (files, models) = (regs.files[i], regs.models[i]);
-            // Soldiers who can reach the foe, in percent of a soldier.
             // At the head of a ladder the fight is head on, and only a few
             // wide (see `crate::manning`).
             let ladder = regs.climber[i] || regs.climber[j];
-            let (my_side, side, width) = if ladder {
-                (Side::Front, Side::Front, crate::manning::LADDER_FRONT)
+            let (my_side, side) = if ladder {
+                (Side::Front, Side::Front)
             } else {
-                (
-                    me.side_facing(them.centre),
-                    them.side_facing(me.centre),
-                    u16::MAX,
-                )
+                (me.side_facing(them.centre), them.side_facing(me.centre))
             };
-            let fighters = match my_side {
-                Side::Front => attacker.front_fighters_percent(files, models),
-                Side::Flank => 100 * u64::from(formation::ranks(files, models)),
-                Side::Rear => 100 * u64::from(files.min(models).div_ceil(2)),
+            let strikers = strikers(regs, units, nav, i, j, &them, my_side, side, ladder);
+            // Hardly anyone can reach (its foe's side is full, or only a
+            // corner meets it) for a few turns: it looks for a better side
+            // (see `open_side`); nobody at all, it waits.
+            if strikers.whole * 4 < regs.files[i].min(regs.models[i]) {
+                crowded_out(regs, nav, i, j, &me, &them);
+            } else {
+                regs.crowded[i] = 0;
             }
-            .min(100 * u64::from(width));
+            if strikers.count == 0 {
+                continue;
+            }
+            // Soldiers who strike, in percent of a soldier.
+            let fighters = strikers.fighters_percent();
             // Not marching: a disciplined regiment holds its ground (see
             // `UnitStats::melee_defence_in`).
             let defence =
@@ -1692,14 +1765,11 @@ impl Combat {
                 Fight {
                     i,
                     j,
-                    my_side,
                     side,
                     hit,
                     landed,
-                    // No second rank reaches past a ladder head.
-                    reach: attacker.reach && !ladder,
-                    width,
                 },
+                &strikers,
                 rng,
                 blows,
             );
@@ -2000,18 +2070,289 @@ struct Fight {
     /// The striking regiment and its foe.
     i: usize,
     j: usize,
-    /// The striker's side that faces the foe, and the foe's side that faces
-    /// the striker.
-    my_side: Side,
+    /// The foe's side that faces the striker.
     side: Side,
     /// The chance each blow lands, in percent.
     hit: u32,
     /// What one blow that lands does, in 1/256 hit points, before its roll.
     landed: u64,
-    /// Spears and pikes: the second rank fights too.
-    reach: bool,
-    /// The most soldiers abreast who strike (a ladder head's few).
-    width: u16,
+}
+
+/// The soldiers of a regiment who strike on its turn (see [`strikers`]):
+/// their slots, and each one's share of a whole blow, in percent.
+struct Strikers {
+    slots: [(u16, u8); 2 * formation::MAX_MODELS as usize],
+    count: usize,
+    /// Those striking whole blows (not a spear's second rank).
+    whole: u16,
+    /// For a flank of the foe: whether it is the one by its last file.
+    theirs_last_file: bool,
+}
+
+impl Strikers {
+    fn push(&mut self, slot: u16, share: u8) {
+        self.slots[self.count] = (slot, share);
+        self.count += 1;
+        self.whole += u16::from(share == 100);
+    }
+
+    fn fighters_percent(&self) -> u64 {
+        self.slots[..self.count]
+            .iter()
+            .map(|&(_, share)| u64::from(share))
+            .sum()
+    }
+}
+
+/// Who of regiment `i` strikes its foe `j` (whose block is `them`) on this
+/// turn: only soldiers who touch it (frontage, docs/29-restart-plan.md).
+/// Its men along `my_side` whose spot is across from `side` of the foe's
+/// block, or within [`REACH`] of its ends, strike (and for spears and pikes on the front, the man behind each
+/// at [`crate::SECOND_RANK_PERCENT`]); from the rear, no more than half its
+/// front, as men have to turn round. Every striker takes his own width of
+/// the foe's side, until the side is full: other regiments striking the
+/// same side since the foe's last turn have taken their share already. At
+/// a ladder head only [`crate::manning::LADDER_FRONT`] strike, head on.
+#[allow(clippy::too_many_arguments)]
+fn strikers(
+    regs: &mut Regiments,
+    units: &[UnitStats],
+    nav: &Nav,
+    i: usize,
+    j: usize,
+    them: &Block,
+    my_side: Side,
+    side: Side,
+    ladder: bool,
+) -> Strikers {
+    let models = regs.models[i];
+    let attacker = &units[regs.unit[i] as usize];
+    let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
+    let mut out = Strikers {
+        slots: [(0, 0); 2 * formation::MAX_MODELS as usize],
+        count: 0,
+        whole: 0,
+        theirs_last_file,
+    };
+    let mine = Edge::of(regs, i, my_side, last_file_nearer(regs, units, i, regs.position[j]));
+    let front = mine.files.min(models);
+    if ladder {
+        for k in 0..front.min(crate::manning::LADDER_FRONT) {
+            out.push(k, 100);
+        }
+        return out;
+    }
+    // The side, and the corners at its ends: a man just past an end still
+    // reaches the end man of it, unless a wall stands between.
+    let (axis, extent) = match side {
+        Side::Flank => (them.forward, them.half_depth),
+        _ => (them.right, them.half_width),
+    };
+    let room = usize::from(Round::side_of(them, regs.position[i]));
+    let (fs, rs) = attacker.spacing(regs.formation[i]);
+    let width = if my_side == Side::Flank { rs } else { fs };
+    let full = (extent + REACH) * 2;
+    let most = if my_side == Side::Rear {
+        front.div_ceil(2)
+    } else {
+        u16::MAX
+    };
+    let mut taken = regs.room_taken[j][room];
+    let mut strikers = 0;
+    // Men fill the room from the one facing the middle of the side outwards,
+    // in turn to either hand, so both ends of an overlapping line close in.
+    let len = mine.len();
+    let along_of = |regs: &Regiments, n: u16| {
+        (slot_pos(regs, units, i, mine.slot(n)) - them.centre).dot(axis)
+    };
+    let mid = (0..len).min_by_key(|&n| along_of(regs, n).abs()).unwrap_or(0);
+    let short = mid.min(len.saturating_sub(1 + mid));
+    for m in 0..len {
+        if strikers == most || taken + Fx::from_raw(width.raw() / 2) > full {
+            break;
+        }
+        // mid, mid+1, mid-1, mid+2, ... until the shorter hand runs out,
+        // then on along the longer one.
+        let n = if m <= 2 * short {
+            if m % 2 == 1 { mid + m.div_ceil(2) } else { mid - m / 2 }
+        } else if mid + short < len - 1 {
+            mid + (m - short)
+        } else {
+            mid - (m - short)
+        };
+        let k = mine.slot(n);
+        let p = slot_pos(regs, units, i, k);
+        let along = (p - them.centre).dot(axis);
+        if along.abs() > extent + REACH {
+            continue;
+        }
+        if along.abs() > extent {
+            let end = them.centre + axis * if along > Fx::ZERO { extent } else { -extent };
+            if nav.blocks(regs.owner[i], p, end) {
+                continue;
+            }
+        }
+        taken = taken + width;
+        strikers += 1;
+        out.push(k, 100);
+        if my_side == Side::Front && attacker.reach && k + mine.files < models {
+            out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
+        }
+    }
+    regs.room_taken[j][room] = taken;
+    // They strike in their order along the line, as before frontage.
+    let files = mine.files.max(1);
+    out.slots[..out.count].sort_unstable_by_key(|&(k, _)| (k % files, k));
+    out
+}
+
+/// Regiment `i`, locked with `j`, had hardly anyone able to strike on this
+/// turn. After [`CROWDED_TURNS`] of it, it looks for a better side to go
+/// round to (see [`open_side`]); with none, it counts its turns afresh.
+fn crowded_out(regs: &mut Regiments, nav: &Nav, i: usize, j: usize, me: &Block, them: &Block) {
+    regs.crowded[i] = regs.crowded[i].saturating_add(1);
+    if regs.crowded[i] < CROWDED_TURNS
+        || regs.braced[i]
+        || regs.on_wall[i]
+        || regs.falling_back[i] > 0
+    {
+        return;
+    }
+    // From here it counts ticks on the way round.
+    regs.crowded[i] = 0;
+    regs.round[i] = open_side(regs, nav, i, j, me, them, false).map(Round::pack);
+    if regs.round[i].is_some() {
+        // Going round means taking this fight on.
+        regs.attack_target[i] = Some(regs.handle(j));
+    }
+}
+
+/// A regiment crowded out of its fight going round its foe (see
+/// [`open_side`]): from the side of the foe's block it was on to one next
+/// to it (sides by [`Round::normal`]), first to the corner between them,
+/// so it never walks through the block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Round {
+    from: u8,
+    to: u8,
+    corner: bool,
+}
+
+impl Round {
+    fn pack(self) -> u8 {
+        self.from | self.to << 2 | u8::from(self.corner) << 4
+    }
+
+    fn unpack(code: u8) -> Round {
+        Round {
+            from: code & 3,
+            to: code >> 2 & 3,
+            corner: code & 16 != 0,
+        }
+    }
+
+    /// Side `s` of `block` (front, right flank, left flank, rear): the way
+    /// out of it, and how far its edge is from the centre.
+    fn normal(block: &Block, s: u8) -> (FxVec2, Fx) {
+        match s {
+            0 => (block.forward, block.half_depth),
+            1 => (block.right, block.half_width),
+            2 => (block.right * -Fx::ONE, block.half_width),
+            _ => (block.forward * -Fx::ONE, block.half_depth),
+        }
+    }
+
+    /// Which side of `block` the point `p` is beyond, numbered as
+    /// [`Round::normal`] (and `Regiments::room_taken`).
+    fn side_of(block: &Block, p: FxVec2) -> u8 {
+        match block.side_facing(p) {
+            Side::Front => 0,
+            Side::Flank if (p - block.centre).dot(block.right) >= Fx::ZERO => 1,
+            Side::Flank => 2,
+            Side::Rear => 3,
+        }
+    }
+
+    /// Where a regiment with block `me` heads for, round the foe's `them`:
+    /// the corner, then the middle of the side, a little off its edge.
+    fn spots(self, them: &Block, me: &Block) -> (FxVec2, FxVec2) {
+        let gap = me.half_depth + REACH / 2;
+        let (to, edge) = Round::normal(them, self.to);
+        let side = them.centre + to * (edge + gap);
+        let (from, edge) = Round::normal(them, self.from);
+        (side + from * (edge + gap), side)
+    }
+}
+
+/// Where regiment `i`, crowded out of its fight with `j`, should go round
+/// to: a side of `j` next to the one `i` is on, with fewer foes on it than
+/// that one, and an open way there by the corner between them. The side
+/// with the fewest wins, then the nearer. With none, but nobody else on its
+/// own side, it steps square in front of that side. `approaching`: not in
+/// the fight yet, it goes round only if friends already fight on its side.
+fn open_side(
+    regs: &Regiments,
+    nav: &Nav,
+    i: usize,
+    j: usize,
+    me: &Block,
+    them: &Block,
+    approaching: bool,
+) -> Option<Round> {
+    let mine = Round::side_of(them, me.centre);
+    let foe = Some(regs.handle(j));
+    let mut on = [0u16; 4];
+    on[mine as usize] = 1;
+    for k in 0..regs.alive.len() {
+        if k != i && regs.alive[k] && regs.engaged[k] == foe {
+            on[Round::side_of(them, regs.position[k]) as usize] += 1;
+        }
+    }
+    if approaching && on[mine as usize] < 2 {
+        // Its own side is free: straight in.
+        return None;
+    }
+    let owner = regs.owner[i];
+    (0..4u8)
+        // Next to it: not the same side, nor the one across.
+        .filter(|&s| s != mine && s != 3 - mine && on[s as usize] < on[mine as usize])
+        .filter_map(|s| {
+            let round = Round {
+                from: mine,
+                to: s,
+                corner: true,
+            };
+            let (corner, spot) = round.spots(them, me);
+            let open = !nav.blocks(owner, me.centre, corner)
+                && !nav.blocks(owner, corner, spot)
+                && room_for(nav, owner, me, &[corner, spot]);
+            open.then(|| (on[s as usize], (spot - me.centre).length_sq_raw(), round))
+        })
+        .min_by_key(|&(n, d, _)| (n, d))
+        .map(|(.., round)| round)
+        .or_else(|| {
+            // Alone on its side and still out of it (only a corner meets
+            // it): it steps across to face the side square.
+            let square = Round {
+                from: mine,
+                to: mine,
+                corner: false,
+            };
+            let (_, spot) = square.spots(them, me);
+            (!approaching
+                && on[mine as usize] == 1
+                && !nav.blocks(owner, me.centre, spot)
+                && room_for(nav, owner, me, &[spot]))
+                .then_some(square)
+        })
+}
+
+/// Whether regiment `i`'s block (`me`) fits on the ground at each of
+/// `spots`: the way round must be wide enough for the block, not just its
+/// centre (a narrow pass has no room beside a fight).
+fn room_for(nav: &Nav, owner: PlayerId, me: &Block, spots: &[FxVec2]) -> bool {
+    let tiles = me.half_width.min(me.half_depth).floor_int().clamp(1, OPEN_GROUND);
+    spots.iter().all(|&p| nav.open_around(owner, p, tiles))
 }
 
 /// The soldiers of a regiment along one side of its block, in order from
@@ -2115,43 +2456,30 @@ impl Line {
     }
 }
 
-/// Regiment `fight.i`'s turn in melee: each of its soldiers who can reach
-/// the foe strikes the soldier across from him on the foe's side that
-/// faces it. The front rank fights to the front (and the second rank too,
-/// at [`crate::SECOND_RANK_PERCENT`] of a blow, for spears and pikes), the
-/// man at the end of each rank to a flank, and the rear rank's men, as many
-/// as half the front, to the rear (no more than stand in the rear rank). A blow lands with the chance to hit, and
-/// then takes its damage, rolled ±25%, off its man; he dies when his hit
-/// points run out, and the soldier in the last slot steps up into his
-/// place and takes the rest of the blow. Blows are told to `blows`, while
-/// it has room.
+/// Regiment `fight.i`'s turn in melee: each of its `strikers` strikes the
+/// soldier across from him on the foe's side that faces it. A blow lands
+/// with the chance to hit, and then takes its damage (times the striker's
+/// share), rolled ±25%, off its man; he dies when his hit points run out,
+/// and the soldier in the last slot steps up into his place and takes the
+/// rest of the blow. Blows are told to `blows`, while it has room.
 fn duel(
     regs: &mut Regiments,
     units: &[UnitStats],
     nav: &Nav,
     fight: Fight,
+    strikers: &Strikers,
     rng: &mut Pcg32,
     mut blows: Option<&mut Vec<Blow>>,
 ) {
     let Fight {
         i,
         j,
-        my_side,
         side,
         hit,
         landed,
-        reach,
-        width,
     } = fight;
+    let theirs_last_file = strikers.theirs_last_file;
     struck_on(regs, j, side);
-    let models = regs.models[i];
-    let mine = Edge::of(
-        regs,
-        i,
-        my_side,
-        last_file_nearer(regs, units, i, regs.position[j]),
-    );
-    let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
     let ranks_before = formation::ranks(regs.files[j], regs.models[j]);
     // The foe's side facing us, laid out again only when a man falls.
     let mut line = Line::of(regs, units, j, side, theirs_last_file);
@@ -2163,28 +2491,15 @@ fn duel(
         index: j as u32,
         generation: regs.generation[j],
     };
-    // Who strikes: the first `second` of them with a whole blow each.
-    let front = mine.files.min(models).min(width);
-    let (count, second) = match my_side {
-        Side::Front if reach => (front + front.min(models - front), front),
-        Side::Front => (front, front),
-        Side::Flank => (mine.len(), u16::MAX),
-        Side::Rear => (front.div_ceil(2).min(mine.len()), u16::MAX),
-    };
-    for n in 0..count {
+    for &(k, share) in &strikers.slots[..strikers.count] {
         if regs.models[j] == 0 {
             break;
         }
-        let (k, share) = match my_side {
-            Side::Rear => (models - 1 - n, 100),
-            _ if n >= second => (n, crate::SECOND_RANK_PERCENT),
-            _ => (mine.slot(n), 100),
-        };
         let t = line.across_from(slot_pos(regs, units, i, k));
         let outcome = if rng.below(100) >= hit {
             Outcome::Parried
         } else {
-            let damage = carry(regs, j, roll(landed * share / 100, rng));
+            let damage = carry(regs, j, roll(landed * u64::from(share) / 100, rng));
             match regs.wound(j, t, damage.min(u64::from(u16::MAX)) as u16) {
                 // Too light to cut him, this time: it glanced off.
                 0 if damage == 0 => Outcome::Parried,

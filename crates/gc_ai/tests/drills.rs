@@ -880,7 +880,8 @@ fn soldiers_left(view: &Perception) -> [f32; 2] {
 /// march decides some of them (2026-10-17), so each personality fights
 /// with several seeds, and must win at least half of them and five in six
 /// overall (59 of 64 on 2026-10-17 before blocks in a queue looked less
-/// often, 58 after).
+/// often, 58 after). Four minutes a battle since frontage (2026-10-30):
+/// only the men touching the enemy strike, so fights take longer.
 #[test]
 fn holding_the_ford_pays_off() {
     const SEEDS: u64 = 8;
@@ -891,7 +892,7 @@ fn holding_the_ford_pays_off() {
             let mut drill = ford_drill(personality);
             drill.foe_plays = Foe::Charge;
             let mut left = [0.0; 2];
-            let winner = run_seeded(drill, seed, 180, |f| left = soldiers_left(f.view));
+            let winner = run_seeded(drill, seed, 240, |f| left = soldiers_left(f.view));
             println!("personality {personality} seed {seed}: {winner:?}, left {left:?}");
             wins += u64::from(winner == Some(AI));
         }

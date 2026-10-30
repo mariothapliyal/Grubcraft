@@ -177,7 +177,11 @@ fn routing_twice_shatters_a_regiment() {
 #[test]
 fn rear_attacks_break_a_regiment_faster() {
     let ticks_to_rout = |from_behind: bool| {
-        let mut w = world();
+        // They can't turn to face it: turning, their short flank faces the
+        // spears, and few of them can reach it (frontage).
+        let mut units = DRILL_UNITS;
+        units[SKITTERS as usize].turn_rate = 0;
+        let mut w = world_with(&units);
         // Skitterlings face north; spearmen hit them from the front (north)
         // or from behind (south).
         let skitters = spawn(&mut w, 1, SKITTERS, 100, 100, NORTH);

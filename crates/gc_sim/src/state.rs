@@ -202,6 +202,26 @@ impl State for Strike {
     }
 }
 
+impl<T: State, const N: usize> State for [T; N] {
+    fn write(&self, out: &mut Vec<u8>) {
+        for v in self {
+            v.write(out);
+        }
+    }
+    fn read(input: &mut &[u8]) -> Option<Self> {
+        let mut out = [T::read(input)?; N];
+        for v in out.iter_mut().skip(1) {
+            *v = T::read(input)?;
+        }
+        Some(out)
+    }
+    fn hash(&self, h: &mut StateHasher) {
+        for v in self {
+            v.hash(h);
+        }
+    }
+}
+
 /// A value of `v`'s type that differs from it, for tests that check every
 /// field reaches the state hash: `v`'s bytes with one bit flipped, the
 /// first flip that still reads back as a value.

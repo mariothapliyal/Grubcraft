@@ -115,6 +115,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
+- **Frontage:** only soldiers touching the enemy strike: the front rank (spears also the second, at half), rank ends on a flank, half the front from the rear. Each side of a block has room for as many strikers as its length, shared by every attacker, so a swarm can't pile six regiments onto one front. Gates and bridges hold: only the front can be reached. Attackers ordered to attack who can't reach go round to a less crowded side.
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
