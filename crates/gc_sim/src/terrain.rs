@@ -9,7 +9,9 @@
 //!   far above its target shoots [`DOWNHILL_RANGE_PERCENT`] as far.
 //! - **Fords:** a regiment whose centre is in water wades at
 //!   [`WADING_SPEED_PERCENT`] of its pace, takes [`WADING_DAMAGE_PERCENT`]
-//!   melee damage, and can't charge or be charged.
+//!   melee damage, and can't charge or be charged. Where a river is up
+//!   ([`crate::rivers::DEEP_RISE`] or more over it), the water is deeper and
+//!   it wades at [`DEEP_WADING_PERCENT`] of that again.
 //!
 //! - **Cover:** each tile is open, tall grass or wood ([`Cover`]).
 //! - **Woods:** a regiment whose centre is in a wood marches at
@@ -60,6 +62,9 @@ pub const DOWNHILL_MELEE_PERCENT: u64 = 110;
 pub const DOWNHILL_RANGE_PERCENT: i32 = 115;
 /// Marching pace in water, percent.
 pub const WADING_SPEED_PERCENT: i32 = 60;
+/// Marching pace in a river that is up (a minor flood or more), percent
+/// of [`WADING_SPEED_PERCENT`] (docs/39-water-engine.md, section 2).
+pub const DEEP_WADING_PERCENT: i32 = 75;
 /// Melee damage taken standing in water, percent.
 pub const WADING_DAMAGE_PERCENT: u64 = 120;
 /// Marching pace in woods, percent, for soldiers on foot and swarms.
@@ -805,6 +810,17 @@ impl Terrain {
             .map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()))
     }
 
+    /// How deep the water stands at `p`, height units: the water line and
+    /// any river's rise over the ground there (0 on dry ground, frozen
+    /// water or a bridge).
+    pub fn depth(&self, p: FxVec2) -> u16 {
+        if !self.wet(p) {
+            return 0;
+        }
+        let top = self.water_line() + i32::from(self.river_rise(p));
+        (top - self.height(p)).clamp(0, i32::from(u16::MAX)) as u16
+    }
+
     /// Which way and how fast the water runs at `p`, if it runs there and
     /// `p` is in it (see [`Flow`]).
     pub fn flow(&self, p: FxVec2) -> Option<(Angle, u8)> {
@@ -1069,7 +1085,13 @@ impl Terrain {
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
         let heavy = mass == Mass::Heavy;
         let wet = self.wet(p);
-        let wading = if wet { WADING_SPEED_PERCENT } else { 100 };
+        let wading = match wet {
+            true if self.river_rise(p) >= crate::rivers::DEEP_RISE => {
+                WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100
+            }
+            true => WADING_SPEED_PERCENT,
+            false => 100,
+        };
         let woods = match self.cover(p) {
             Cover::Wood if heavy => WOODS_HEAVY_SPEED_PERCENT,
             Cover::Wood => WOODS_SPEED_PERCENT,
