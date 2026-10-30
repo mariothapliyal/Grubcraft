@@ -86,10 +86,10 @@ fn place(v: SceneryIn) -> vec3<f32> {
     }
     let flat_xz = v.at + left * local.x + v.facing * local.z;
     // The whole model stands at the height under its base; it is not draped.
-    let ground = max(surface_height(v.at), g.misc.x - 0.05);
+    let ground = max(surface_height(v.at), water_surface(v.at) - 0.05);
     if t.x > 0.0 {
         // A crown lying down rests on the ground under it, not in it.
-        local.y = max(local.y, max(surface_height(flat_xz), g.misc.x - 0.05) - ground);
+        local.y = max(local.y, max(surface_height(flat_xz), water_surface(flat_xz) - 0.05) - ground);
     }
     var sway = vec2<f32>(0.0);
     // Rocks and bases do not move: skip the wind for them. A tree lying

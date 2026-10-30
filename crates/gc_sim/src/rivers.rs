@@ -185,6 +185,11 @@ struct Stretch {
     land: u32,
     /// The furthest up the river any of its tiles lies.
     top: u16,
+    /// Its river (joined rivers are one), counted from 0.
+    river: u16,
+    /// A tile of it about halfway along it, as `(x, y)`: where the
+    /// players look for it.
+    at: (i32, i32),
 }
 
 impl Stretch {
@@ -307,6 +312,18 @@ fn fronts_rise<'a>(
         .unwrap_or(0)
 }
 
+/// How far stretch `here`'s water stands above the line at `reach`: its
+/// swell and the highest of `fronts` there.
+fn water_rise<'a>(
+    stretches: &[Stretch],
+    swell: &[u16],
+    fronts: impl IntoIterator<Item = &'a Front>,
+    here: u16,
+    reach: u16,
+) -> u16 {
+    swell[usize::from(here)].saturating_add(fronts_rise(stretches, fronts, here, reach))
+}
+
 impl Rivers {
     /// The rivers of `terrain`'s map, `map_tiles` a side, and which of
     /// the `fords` and summer fords (`shallows`), as `(y, x)` tiles, lie
@@ -380,13 +397,19 @@ impl Rivers {
                 own: 0,
                 land: 0,
                 top: 0,
+                river: 0,
+                at: xy(start),
             };
             stretch_of[start] = s;
             queue.clear();
             queue.push(start);
+            // Halfway along the band, and the nearest tile to it so far.
+            let middle = band(start) * STRETCH_TILES + STRETCH_TILES / 2;
+            let mut nearest = (reach[start].abs_diff(middle), start);
             while let Some(i) = queue.pop() {
                 st.own += 1;
                 st.top = st.top.max(reach[i]);
+                nearest = nearest.min((reach[i].abs_diff(middle), i));
                 let (x, y) = xy(i);
                 for (dx, dy) in crate::nav::DIRS {
                     if let Some(j) = at(x + dx, y + dy).filter(|&j| {
@@ -397,6 +420,7 @@ impl Rivers {
                     }
                 }
             }
+            st.at = xy(nearest.1);
             stretches.push(st);
         }
         if stretches.is_empty() {
@@ -432,12 +456,15 @@ impl Rivers {
             }
         }
         let mut place = 0u16;
+        let mut river = 0u16;
         let mut stack: Vec<(u16, bool)> = Vec::new();
         for root in 0..count {
             if stretches[root].below != NONE {
                 continue;
             }
             stack.push((root as u16, false));
+            let this_river = river;
+            river += 1;
             while let Some((s, done)) = stack.pop() {
                 let su = usize::from(s);
                 if done {
@@ -456,6 +483,7 @@ impl Rivers {
                     continue;
                 }
                 stretches[su].tin = place;
+                stretches[su].river = this_river;
                 place = place.saturating_add(1);
                 order.push(s);
                 stack.push((s, true));
@@ -604,10 +632,7 @@ impl Rivers {
     /// How far its store lifts the water of the stretch at tile `(x, y)`
     /// (0 off the rivers).
     pub fn swell(&self, x: i32, y: i32) -> u16 {
-        crate::terrain::index_in(self.side, x, y)
-            .map(|i| self.stretch_of[i])
-            .filter(|&s| s != NONE)
-            .map_or(0, |s| self.swell[usize::from(s)])
+        self.stretch_at(x, y).map_or(0, |s| self.swell[s])
     }
 
     /// The group of ford tile `(x, y)`, if a river's.
@@ -649,6 +674,74 @@ impl Rivers {
     /// list again when this moves.
     pub fn threats(&self) -> u32 {
         self.threats
+    }
+
+    /// How many rivers there are (joined rivers are one).
+    pub fn river_count(&self) -> usize {
+        // (The last stretch walked is in the last river.)
+        (self.order.last()).map_or(0, |&s| {
+            usize::from(self.stretches[usize::from(s)].river) + 1
+        })
+    }
+
+    /// The stretch tile `(x, y)` lies in, if it is on a river.
+    pub fn stretch_at(&self, x: i32, y: i32) -> Option<usize> {
+        crate::terrain::index_in(self.side, x, y)
+            .map(|i| self.stretch_of[i])
+            .filter(|&s| s != NONE)
+            .map(usize::from)
+    }
+
+    /// The stretch below stretch `s` (`None` at a river's mouth, or for
+    /// a stretch not under [`Rivers::stretches`]).
+    pub fn below(&self, s: usize) -> Option<usize> {
+        (self.stretches.get(s))
+            .map(|st| st.below)
+            .filter(|&b| b != NONE)
+            .map(usize::from)
+    }
+
+    /// Whether stretch `s` has a ford.
+    pub fn has_ford(&self, s: usize) -> bool {
+        // (The groups are sorted by stretch.)
+        let k = self.groups.partition_point(|g| usize::from(g.stretch) < s);
+        self.groups
+            .get(k)
+            .is_some_and(|g| usize::from(g.stretch) == s)
+    }
+
+    /// What the players read of stretch `s` (see [`Reading`]), with the
+    /// map-wide flood raising every river `lift` height units.
+    ///
+    /// # Panics
+    ///
+    /// If `s` is not under [`Rivers::stretches`].
+    pub fn reading(&self, s: usize, lift: u16) -> Reading {
+        let st = &self.stretches[s];
+        let rise = water_rise(
+            &self.stretches,
+            &self.swell,
+            self.fronts(),
+            s as u16,
+            st.top,
+        );
+        // The worst front still to reach it (the soonest of equals).
+        let coming = (self.fronts())
+            .filter(|f| st.holds(&self.stretches[usize::from(f.start)]) && st.top <= f.top)
+            .filter_map(|f| {
+                let ticks = (front_ticks(f.top, st.top) + f.delay).checked_sub(f.ticks)?;
+                (ticks > 0).then(|| Coming {
+                    seconds: ticks.div_ceil(TICKS_PER_SECOND),
+                    crest: faded(f.crest, f.top - st.top),
+                })
+            })
+            .min_by_key(|c| (core::cmp::Reverse(Band::of(c.crest)), c.seconds));
+        Reading {
+            river: st.river,
+            at: st.at,
+            rise: lift.saturating_add(rise),
+            coming,
+        }
     }
 
     /// The water the rivers raise, for the terrain (`None` with no
@@ -1000,13 +1093,75 @@ impl RiverWater {
         if s == NONE {
             return 0;
         }
-        let front = fronts_rise(
+        water_rise(
             &self.stretches,
+            &self.swell,
             self.fronts.iter().flatten(),
             s,
             self.reach[i],
-        );
-        self.swell[usize::from(s)].saturating_add(front)
+        )
+    }
+}
+
+/// What the players read of a stretch of river (see [`Rivers::reading`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reading {
+    /// Its river, counted from 0 (under [`Rivers::river_count`]).
+    pub river: u16,
+    /// A tile of it about halfway along it, as `(x, y)`.
+    pub at: (i32, i32),
+    /// How far its water stands above the map's line at its top, height
+    /// units: the map-wide flood, its swell and any front over it.
+    pub rise: u16,
+    /// The worst front still to reach it (the soonest of the biggest
+    /// band), if one is running or waiting.
+    pub coming: Option<Coming>,
+}
+
+/// A front on its way to a stretch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Coming {
+    /// Seconds until its crest reaches the stretch's top.
+    pub seconds: u32,
+    /// Its crest there, height units ([`Band::of`] tells its band).
+    pub crest: u16,
+}
+
+/// How high a river runs, as its gauge reads (docs/39-water-engine.md,
+/// "What the player sees").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Gauge {
+    /// Below its line in a dry summer.
+    Low,
+    /// At its line, or barely over it.
+    Normal,
+    /// Up: wading in it is deeper and slower ([`DEEP_RISE`] or more).
+    Up,
+    /// Over its fords ([`FLOOD_RISE`] or more).
+    InFlood,
+    /// Over its banks (half a tile or more).
+    Bursting,
+}
+
+/// The rise at which wading gets deeper and slower: a tenth of a tile
+/// (a minor flood; docs/39-water-engine.md, section 2).
+pub const DEEP_RISE: u16 = (HEIGHT_UNITS / 10) as u16;
+
+impl Gauge {
+    /// The gauge of water `rise` height units above the line, or `low`
+    /// below it.
+    pub const fn of(rise: u16, low: u16) -> Gauge {
+        if rise as u32 >= HEIGHT_UNITS / 2 {
+            Gauge::Bursting
+        } else if rise >= FLOOD_RISE {
+            Gauge::InFlood
+        } else if rise >= DEEP_RISE {
+            Gauge::Up
+        } else if low > 0 && rise == 0 {
+            Gauge::Low
+        } else {
+            Gauge::Normal
+        }
     }
 }
 

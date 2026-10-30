@@ -243,7 +243,23 @@ Built 2026-10-30 (`gc_sim::rivers`, which replaces `gc_sim::flash`). Simpler tha
 - **Computer players** read the fords shut or threatened stretch by stretch (`Rivers::threatened`), as they read one river's before.
 - **Golden.** `field-river-storm-1v1`: a storm over a grown map's rivers rolls a major flash flood. No older golden moves: none has a flow layer.
 - `SIM_VERSION` 58 (grown maps play differently). No new commands, so no format or protocol change.
-- *Left for stage 1b:* river names, the gauge and chip, river watch and forecasts, wading slower in a Minor flood (`Terrain::depth`), and the drawn water by stretch.
+- *Left for stage 1b:* river names, the gauge and chip, river watch and forecasts, wading slower in a Minor flood (`Terrain::deep`), and the drawn water by stretch (all built, below).
+
+## Built: stage 1b, reading the rivers
+
+Built 2026-10-30.
+
+- **Deeper water in a river that is up.** Where a river's swell and fronts raise its water a tenth of a tile or more (`rivers::DEEP_RISE`, a minor flood), wading there is a quarter slower again (`terrain::DEEP_WADING_PERCENT`). `Terrain::deep` tells whether a tile is in such water. The selection panel says "In a river that is up: slower still, no charges".
+- **Readings.** `Rivers::reading` gives each stretch's river, a tile about halfway along it, how far its water stands above the line, and the worst front still to reach it (seconds, and its crest there). `Gauge` reads it as Low, Normal, Up, In flood or Bursting its banks.
+- **Names.** Every river (joined rivers are one) is named from the shape of the map's rivers, so a map's rivers keep their names from match to match: "the Brackwater", "the Mirrow"... The rivers of one map never share a name.
+  - *Simpler than the plan:* the names don't yet follow the faction lands they run through.
+- **The top bar chip** shows the worst river the viewer can see that is out of the ordinary, with whether it is rising or falling: "The Brackwater in flood, rising". Low water and the map-wide flood keep their own words.
+  - *Simpler than the plan:* there is no tooltip on the water itself; the chip and the selection panel say it.
+- **River watch.** Once a second, if the viewer sees a stretch rising in flood and a front is still to come down on a ford below it, they are told when it gets there: "The Brackwater is rising upriver: its crest reaches a ford in about 40 s" (and that it is a major or catastrophic flood, if it is). Once per crest a river. Without eyes upstream, the river's 8-second warning is all they get, as before.
+- **The drawn water.** Each river tile's water is drawn at its own height, the swell and any front over it, and the bank beside it with it, eased between tiles (`Renderer::set_river_water`, a byte a tile, redrawn up to ten times a second while a river is up and not at all otherwise). Soldiers, scenery and particles in the water stand at its raised surface, as they did at the map-wide flood's.
+- **Computer players** keep reading the threatened fords (stage 1a), which already covers every ford a warned front will reach until it gets there.
+- **Golden.** `field-river-storm-1v1` was recorded again on another seed: the one before rolled a Flood, not the major flash flood stage 1a said it did. Now a Major is told to everyone 15 s before it shuts the first ford, and the water reaches Bursting its banks.
+- `SIM_VERSION` 63: wading on grown maps changes. No other golden moves (none wades a swollen river; `water_engine.rs` tests it). No new commands.
 
 ## 7. Stages (each its own pull request)
 
