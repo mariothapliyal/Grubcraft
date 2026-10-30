@@ -685,23 +685,27 @@ pub fn describe(tiles: i32, seed: u64, wildness: Wildness, fairness: Fairness) -
 /// each north start's share is placed on the land at the same walk from
 /// it as every other start's (see [`shares`]), the Heart stands in a
 /// clearing in the middle, and each lair guards a rich field. A seed whose
-/// land has no room for a share grows the next seed's land instead; `None`
-/// only for a size the Conquest maps don't come in.
+/// land has no room for a share (or no counter-route) grows another seed's
+/// land instead, and after [`CONQUEST_TRIES`] the Classic map of the seed
+/// is made; `None` only for a size the Conquest maps don't come in.
 pub fn describe_conquest(tiles: i32, seed: u64, wildness: Wildness) -> Option<MapDef> {
     if !crate::conquest::WILDS_TILES.contains(&tiles) {
         return None;
     }
-    (0..CONQUEST_TRIES).find_map(|k| {
-        let what = Grown {
-            // (Next seeds far apart, so a lobby seed and the next don't
-            // fall back on the same land.)
-            seed: seed ^ k.wrapping_mul(0x9E37_79B9_7F4A_7C15),
-            wildness,
-            fairness: Fairness::Mirrored,
-            heart: true,
-        };
-        lay(tiles, what)
-    })
+    (0..CONQUEST_TRIES)
+        .find_map(|k| {
+            let what = Grown {
+                // (Next seeds far apart, so a lobby seed and the next don't
+                // fall back on the same land.)
+                seed: seed ^ k.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                wildness,
+                fairness: Fairness::Mirrored,
+                heart: true,
+            };
+            lay(tiles, what)
+        })
+        // (Land that never has room: the Classic map of the same seed.)
+        .or_else(|| crate::conquest::describe_wilds(tiles, seed, wildness))
 }
 
 /// How many seeds in a row [`describe_conquest`] tries.
@@ -766,31 +770,26 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
             })
         })
     };
+    // Where a Conquest map's piece has room: standable, no thicket, no ford
+    // under or beside it.
+    let fits = |p: Pos| {
+        room(p, 1)
+            && (-1..=1).all(|dy| {
+                (-1..=1).all(|dx| {
+                    ground[((p.1 + dy) * tiles + p.0 + dx) as usize] != crate::Ground::Ford
+                })
+            })
+    };
+    // A Conquest map's north starts, west to east: the corners, and the
+    // middle between them with six.
+    let north = if six {
+        vec![starts[0], starts[4], starts[1]]
+    } else {
+        vec![starts[0], starts[1]]
+    };
     // A Conquest map's shares and Heart, in place of the starts.
     if conquest {
-        let cost: Vec<u8> = (standable.iter().zip(&ground))
-            .map(|(&ok, g)| if ok { g.cost() as u8 } else { 0 })
-            .collect();
-        let fits = |p: Pos| {
-            room(p, 1)
-                && (-1..=1).all(|dy| {
-                    (-1..=1).all(|dx| {
-                        ground[((p.1 + dy) * tiles + p.0 + dx) as usize] != crate::Ground::Ford
-                    })
-                })
-        };
-        // West to east: the corners, and the middle between them with six.
-        let north = if six {
-            vec![starts[0], starts[4], starts[1]]
-        } else {
-            vec![starts[0], starts[1]]
-        };
-        // The walks from the north starts (the south's are their turned
-        // copies on mirrored land).
-        let walks: Vec<Vec<u32>> = north
-            .iter()
-            .map(|&s| ways::walk(&cost, n, tile_index(n, s), &[]))
-            .collect();
+        let (cost, walks) = walks_from(&map, &north);
         if !counter_routes(n, &cost, &starts, &north, &walks) {
             return None;
         }
@@ -826,7 +825,15 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
                 && starts
                     .iter()
                     .all(|&s| dist2(s, p) > (open_reach(n) + 12).pow(2))
-                && d.objects.iter().all(|o| dist2(o.at, p) > 16 * 16)
+                && d.objects.iter().all(|o| {
+                    // (A Conquest map's Heart keeps its clearing flat.)
+                    let keep = if o.kind == Kind::Heart {
+                        open_reach(n) + 12
+                    } else {
+                        16
+                    };
+                    dist2(o.at, p) > keep * keep
+                })
         };
         let spot = (0..64).find_map(|_| {
             let at = (
@@ -943,6 +950,9 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
                         dist2(p, at) >= d && (measured || dist2(p, copy) >= d)
                     })
                     && room(at, 3)
+                    // (A Conquest lair's rich field has room too.)
+                    && (!(conquest && label == "The lair")
+                        || [(-3, 3), (3, 3)].iter().all(|&(dx, dy)| fits((at.0 + dx, at.1 + dy))))
             };
             // Sites go where the land gives a reason (docs/27, Settlers):
             // of the places with room, the one its kind likes best.
@@ -1002,7 +1012,52 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
             }
         }
     }
+    // The sites' open ground and the knolls change the land a little: the
+    // shares must still be fair on the land as it ships.
+    if conquest && !still_fair(&def, &starts, &north) {
+        return None;
+    }
     Some(def)
+}
+
+/// The cost of stepping onto each tile of `map` (as [`ways::walk`] takes
+/// it, 0 where a regiment can't stand) and the walks from each of `from`.
+fn walks_from(map: &crate::Map, from: &[Pos]) -> (Vec<u8>, Vec<Vec<u32>>) {
+    let n = map.tiles as usize;
+    let ground = map.tile_ground(&map.nav_costs());
+    let cost: Vec<u8> = (map.standable(&ground).iter().zip(&ground))
+        .map(|(&ok, g)| if ok { g.cost() as u8 } else { 0 })
+        .collect();
+    let walks = from
+        .iter()
+        .map(|&s| ways::walk(&cost, n, tile_index(n, s), &[]))
+        .collect();
+    (cost, walks)
+}
+
+/// Whether a Conquest map's shares are still fair on the land its
+/// description makes (sites and knolls included): every start's walk to
+/// each piece of its share within two of [`shares`]' slacks of every
+/// other's, and every start still with a counter-route.
+fn still_fair(def: &MapDef, starts: &[Pos], north: &[Pos]) -> bool {
+    let map = crate::Map::from_def(def);
+    let n = map.tiles as usize;
+    let (cost, walks) = walks_from(&map, north);
+    if !counter_routes(n, &cost, starts, north, &walks) {
+        return false;
+    }
+    // The shares come first, piece by piece, one per north start.
+    let k = north.len();
+    def.objects[k..k * (1 + crate::conquest::SHARE.len())]
+        .chunks(k)
+        .filter(|piece| piece[0].kind != Kind::CreepCamp)
+        .all(|piece| {
+            let d: Vec<u32> = (piece.iter().zip(&walks))
+                .map(|(o, w)| walk_to(w, n, o.at).map_or(u32::MAX, |(d, _)| d))
+                .collect();
+            let (lo, hi) = (d.iter().min().unwrap_or(&0), d.iter().max().unwrap_or(&0));
+            *hi != u32::MAX && hi - lo <= 2 * (hi / 100).max(2)
+        })
 }
 
 /// The tile `p` as an index, row by row, on an `n`-tile map.

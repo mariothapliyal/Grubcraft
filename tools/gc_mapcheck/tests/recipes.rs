@@ -403,7 +403,12 @@ fn every_grown_conquest_map_passes_the_checker() {
         .collect();
     let failed = failures(&jobs, |&(wild, tiles, seed)| {
         let def = gc_map::grown::describe_conquest(tiles, seed, wild).unwrap();
-        let tried = u64::from(def.grown.unwrap().seed != seed);
+        let Some(grown) = def.grown else {
+            return Some(format!(
+                "{wild:?} {tiles} seed {seed}: fell back to Classic land"
+            ));
+        };
+        let tried = u64::from(grown.seed != seed);
         let report = check(&def);
         if std::env::var("SWEEP").is_ok() {
             println!(

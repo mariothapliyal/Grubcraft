@@ -117,12 +117,18 @@ the Classic choices so old choices keep their numbers;
 - **Counter-routes.** Before the shares, every start's way to its nearest
   enemy is walled off in the map maker's own walk; the way round must be at
   most twice as long (the checker allows 2.2).
-- **Rerolls.** A seed whose land fails either grows another seed's land
-  (up to 16; seeds far apart, so neighbouring lobby seeds don't share land).
-  In a sweep of 480 maps (40 seeds of each wildness at 320, 448 and 640
-  tiles) every map passed the checker's Conquest checks, and about one in
-  five was rerolled.
-- **Lairs.** Each lair guards a rich field (a seep and a vein beside it).
+- **Checked again as shipped.** The sites' open ground and any knoll change
+  the land a little, so the finished map is walked again: every start's
+  walks to its share must still agree, and the counter-routes must hold.
+- **Rerolls.** A seed whose land fails any of these grows another seed's
+  land (up to 16; seeds far apart, so neighbouring lobby seeds don't share
+  land); if all fail, the Classic map of the seed is made, so the game never
+  stops on a bad seed. In a sweep of 240 maps (20 seeds of each wildness at
+  320, 448 and 640 tiles) every map passed the checker's Conquest checks,
+  none fell back to Classic, and about one in five was rerolled (a reroll
+  grows the land again: about a second more at 640 tiles).
+- **Lairs.** Each lair guards a rich field (a seep and a vein beside it,
+  off the fords). A knoll is never raised in the Heart's clearing.
 - **Dev flag.** `--conquest land-mixed` (any lobby map's name) starts a
   quick Conquest on it.
 - **Checks.** `gc_mapcheck` test `every_grown_conquest_map_passes_the_checker`

@@ -747,9 +747,9 @@ mod tests {
     #[test]
     fn a_brood_hives_veins_reach_its_base_nodes() {
         let data = data();
-        // Every shipped map, and a Wilds map of every kind of land.
-        let maps = gc_map::SHIPPED.len() + gc_map::wilds::Wildness::ALL.len();
-        for choice in 0..=maps {
+        // Every shipped map, and a Classic and a grown map of every kind of
+        // land.
+        for choice in 0..gc_ui::lobby::CONQUEST_MAPS.len() {
             let map = make_map(choice, MEDIUM, 7);
             let starts = map.starts();
             let factions = vec![Faction::Brood; starts.len()];
@@ -812,8 +812,8 @@ mod tests {
             );
             assert_eq!(choice_of(file), Some(i));
         }
-        assert_eq!(choice_of("land-mixed"), Some(SHIPPED_CONQUEST + 7));
-        assert_eq!(choice_of("Classic: Wild"), Some(SHIPPED_CONQUEST + 4));
+        assert_eq!(choice_of("land-mixed"), Some(SHIPPED_CONQUEST + 6));
+        assert_eq!(choice_of("Classic: Wild"), Some(SHIPPED_CONQUEST + 3));
         assert_eq!(choice_of("nowhere"), None);
         let lands = gc_map::wilds::Wildness::ALL;
         assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST], "Classic: Random");
@@ -1004,7 +1004,8 @@ mod tests {
     /// and every start has a hamlet within a caravan's reach (docs/03).
     #[test]
     fn the_maps_villages_are_the_trade_posts() {
-        for choice in [0, 1, SHIPPED_CONQUEST + 1] {
+        let grown = gc_ui::lobby::DEFAULT_CONQUEST_MAP;
+        for choice in [0, 1, SHIPPED_CONQUEST + 1, grown, grown + 3] {
             let map = make_map(choice, MEDIUM, 3);
             let posts = posts_of(&map);
             let want: Vec<_> = map
@@ -1104,9 +1105,10 @@ mod tests {
 
     #[test]
     fn every_conquest_map_has_its_heart_in_the_middle() {
-        // The shipped maps and one Wilds map (each Wilds map is made the
-        // same way).
-        for choice in 0..=SHIPPED_CONQUEST {
+        // The shipped maps, one Classic map and one grown map (each kind is
+        // made the same way).
+        let grown = gc_ui::lobby::DEFAULT_CONQUEST_MAP;
+        for choice in (0..=SHIPPED_CONQUEST).chain([grown]) {
             let map = make_map(choice, MEDIUM, 3);
             let both = Victories::BOTH;
             let data = data();
