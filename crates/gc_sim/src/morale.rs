@@ -85,6 +85,42 @@ const PINNED_SHOCK: i16 = 3;
 pub(crate) const SHOCK_FLANK: u8 = 1;
 pub(crate) const SHOCK_REAR: u8 = 2;
 pub(crate) const SHOCK_PINNED: u8 = 4;
+/// Why a regiment's nerve is going, as bits in `Regiments::why` and
+/// [`crate::RegimentView::why`], for the screen (docs/29, "Clear orders and
+/// feedback"). The steady pressures are set afresh at each once-a-second
+/// check; the sudden knocks stay until the regiment is out of the fight and
+/// recovering, so a regiment that breaks keeps the reasons it broke for.
+/// Hit in the flank.
+pub const WHY_FLANK: u16 = 1 << 0;
+/// Hit in the rear.
+pub const WHY_REAR: u16 = 1 << 1;
+/// Driven back with nowhere to give ground.
+pub const WHY_PINNED: u16 = 1 << 2;
+/// Fighting at two to one or worse.
+pub const WHY_OUTNUMBERED: u16 = 1 << 3;
+/// Lost many men in the last second.
+pub const WHY_LOSSES: u16 = 1 << 4;
+/// Down to its breaking point (see [`breaking_point`]): it can rout.
+pub const WHY_BLOODIED: u16 = 1 << 5;
+/// A friend nearby broke and ran.
+pub const WHY_ALLY_BROKE: u16 = 1 << 6;
+/// Its side's general fell.
+pub const WHY_GENERAL: u16 = 1 << 7;
+/// Ambushed, or caught by a hidden volley.
+pub const WHY_AMBUSH: u16 = 1 << 8;
+/// Burned.
+pub const WHY_FIRE: u16 = 1 << 9;
+/// Swept by a flood.
+pub const WHY_WATER: u16 = 1 << 10;
+/// Its side's champion lost a duel.
+pub const WHY_CHAMPION: u16 = 1 << 11;
+/// The steady pressures, recomputed at every check; the rest are knocks.
+/// Flank and rear blows count as knocks: a regiment soon turns to face
+/// them, but the nerve they cost stays spent.
+const WHY_PRESSURE: u16 = WHY_PINNED | WHY_OUTNUMBERED | WHY_LOSSES | WHY_BLOODIED;
+/// Losing this many percent of full strength in one second (and at least
+/// two soldiers) counts as heavy losses for [`WHY_LOSSES`].
+const HEAVY_LOSS_PERCENT: i32 = 8;
 /// Enemies and friends within this many tiles count toward being outnumbered.
 const LOCAL_TILES: i32 = 12;
 /// Points lost each second in melee when nearby enemies outnumber nearby
@@ -227,18 +263,29 @@ fn check(
     // `combat::BATTLE_PACE_PERCENT`); the steady drains in a fight are scaled
     // to match, so regiments break from pressure as much as from losses.
     let mut drain = 0;
+    let mut why = regs.why[i] & !WHY_PRESSURE;
     if regs.shock[i] & SHOCK_REAR != 0 {
         drain += i32::from(REAR_SHOCK * SCALE);
+        why |= WHY_REAR;
     } else if regs.shock[i] & SHOCK_FLANK != 0 {
         drain += i32::from(FLANK_SHOCK * SCALE);
+        why |= WHY_FLANK;
     }
     if regs.shock[i] & SHOCK_PINNED != 0 {
         drain += i32::from(PINNED_SHOCK * SCALE);
+        why |= WHY_PINNED;
+    }
+    if regs.losses[i] >= 2 && i32::from(regs.losses[i]) * 100 >= full * HEAVY_LOSS_PERCENT {
+        why |= WHY_LOSSES;
     }
     // How far it is from breaking: its general near it steadies it.
     let strength = strength_percent(regs, stats, i);
     let break_at = u32::from(break_at_now(regs, i));
     let bloodied = strength <= break_at;
+    // Down to its breaking point: it can rout now.
+    if bloodied {
+        why |= WHY_BLOODIED;
+    }
     // Wounds shake it as much as deaths: hit points lost, counted in men,
     // twice over once it is down to its breaking point.
     let bled =
@@ -251,8 +298,10 @@ fn check(
         let (friends, enemies) = local_strength(regs, combat, stances, vision, i);
         if enemies >= friends.max(1) * 3 {
             drain += i32::from(OUTNUMBERED_3 * SCALE);
+            why |= WHY_OUTNUMBERED;
         } else if enemies >= friends.max(1) * 2 {
             drain += i32::from(OUTNUMBERED_2 * SCALE);
+            why |= WHY_OUTNUMBERED;
         }
     } else if regs.bled[i] == 0 {
         tenths += i32::from(RECOVERY * SCALE);
@@ -281,6 +330,13 @@ fn check(
         morale
     };
     regs.morale[i] = morale;
+    // Old knocks fade once it is out of the fight and steady again.
+    let steady = morale >= WAVER_BELOW * SCALE;
+    regs.why[i] = if steady && regs.engaged[i].is_none() {
+        why & WHY_PRESSURE
+    } else {
+        why
+    };
     if morale > 0 {
         regs.morale_state[i] =
             if morale < WAVER_BELOW * SCALE && strength <= break_at + u32::from(WAVER_MARGIN) {
@@ -324,14 +380,35 @@ fn local_strength(
 /// above its ceiling until that check caps it. Routers and regiments that
 /// never rout are left alone.
 pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
-    adjust(&mut regs.morale[i], &mut regs.morale_state[i], points);
+    adjust(
+        &mut regs.morale[i],
+        &mut regs.morale_state[i],
+        &mut regs.why[i],
+        points,
+        0,
+    );
 }
 
-fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
+/// Regiment `i` loses `points` of morale at once, as [`shift`] does, and
+/// the screen is told why: one of the `WHY_` bits.
+pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16, why: u16) {
+    adjust(
+        &mut regs.morale[i],
+        &mut regs.morale_state[i],
+        &mut regs.why[i],
+        -points,
+        why,
+    );
+}
+
+fn adjust(morale: &mut i16, state: &mut MoraleState, reasons: &mut u16, points: i16, why: u16) {
     if state.broken() || *morale <= 0 {
         return;
     }
     *morale = morale.saturating_add(points * SCALE).max(1);
+    if points < 0 {
+        *reasons |= why;
+    }
     // Heartened past wavering, it steadies at once; whether a knock sets it
     // wavering depends on its strength, which its own next check weighs.
     if *morale >= WAVER_BELOW * SCALE {
@@ -340,7 +417,7 @@ fn adjust(morale: &mut i16, state: &mut MoraleState, points: i16) {
 }
 
 /// Every friend of regiment `i` within `tiles` of it (not `i` itself) that
-/// isn't running loses `points` morale, down to 1.
+/// isn't running loses `points` morale, down to 1, booked under `why`.
 pub(crate) fn shake_friends(
     regs: &mut Regiments,
     combat: &Combat,
@@ -348,14 +425,16 @@ pub(crate) fn shake_friends(
     i: usize,
     tiles: i32,
     points: i16,
+    why: u16,
 ) {
     let (p, owner) = (regs.position[i], regs.owner[i]);
     let at = placement!(regs, stances);
     let morale = &mut regs.morale;
     let state = &mut regs.morale_state;
+    let reasons = &mut regs.why;
     combat.each_near(&at, p, Fx::from_int(tiles), Whose::Friends(owner), |j| {
         if j != i {
-            adjust(&mut morale[j], &mut state[j], -points);
+            adjust(&mut morale[j], &mut state[j], &mut reasons[j], -points, why);
         }
     });
 }
@@ -394,7 +473,15 @@ fn rout(
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.
     let me = regs.handle(i);
-    shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK);
+    shake_friends(
+        regs,
+        combat,
+        stances,
+        i,
+        ROUT_SHOCK_TILES,
+        ROUT_SHOCK,
+        WHY_ALLY_BROKE,
+    );
     let (p, owner, near) = (
         regs.position[i],
         regs.owner[i],
@@ -403,10 +490,17 @@ fn rout(
     let at = placement!(regs, stances);
     let morale = &mut regs.morale;
     let state = &mut regs.morale_state;
+    let reasons = &mut regs.why;
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
         if engaged[j] == Some(me) {
-            adjust(&mut morale[j], &mut state[j], VICTORY_BOOST);
+            adjust(
+                &mut morale[j],
+                &mut state[j],
+                &mut reasons[j],
+                VICTORY_BOOST,
+                0,
+            );
         }
     });
     flee(regs, combat, stances, vision, i, map_tiles);
@@ -455,6 +549,7 @@ fn flee(
                 // Rally: wavering, with a little heart back.
                 regs.morale_state[i] = MoraleState::Wavering;
                 regs.morale[i] = WAVER_BELOW * SCALE / 2;
+                regs.why[i] = 0;
                 regs.pace[i] = regs.speed[i];
             }
             return;

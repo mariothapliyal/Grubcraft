@@ -19,6 +19,7 @@ pub mod hud;
 pub mod icons;
 pub mod lobby;
 pub mod menu;
+pub mod orders;
 pub mod placer;
 pub mod powers;
 pub mod quick_start;

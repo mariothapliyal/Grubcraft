@@ -9,7 +9,9 @@
 //!   far above its target shoots [`DOWNHILL_RANGE_PERCENT`] as far.
 //! - **Fords:** a regiment whose centre is in water wades at
 //!   [`WADING_SPEED_PERCENT`] of its pace, takes [`WADING_DAMAGE_PERCENT`]
-//!   melee damage, and can't charge or be charged.
+//!   melee damage, and can't charge or be charged. Where a river is up
+//!   ([`crate::rivers::DEEP_RISE`] or more over it), the water is deeper and
+//!   it wades at [`DEEP_WADING_PERCENT`] of that again.
 //!
 //! - **Cover:** each tile is open, tall grass or wood ([`Cover`]).
 //! - **Woods:** a regiment whose centre is in a wood marches at
@@ -60,6 +62,9 @@ pub const DOWNHILL_MELEE_PERCENT: u64 = 110;
 pub const DOWNHILL_RANGE_PERCENT: i32 = 115;
 /// Marching pace in water, percent.
 pub const WADING_SPEED_PERCENT: i32 = 60;
+/// Marching pace in a river that is up (a minor flood or more), percent
+/// of [`WADING_SPEED_PERCENT`] (docs/39-water-engine.md, section 2).
+pub const DEEP_WADING_PERCENT: i32 = 75;
 /// Melee damage taken standing in water, percent.
 pub const WADING_DAMAGE_PERCENT: u64 = 120;
 /// Marching pace in woods, percent, for soldiers on foot and swarms.
@@ -763,17 +768,24 @@ impl Terrain {
     /// Whether `p` is in water: under the water line, raised by any flood,
     /// and not on a bridge.
     pub fn wet(&self, p: FxVec2) -> bool {
+        self.water_at(p).is_some()
+    }
+
+    /// If `p` is in water ([`Terrain::wet`]), how far the rivers raise it
+    /// there (see [`Terrain::river_rise`]), asked after only once.
+    fn water_at(&self, p: FxVec2) -> Option<u16> {
         if self.tiles == 0 || self.frozen {
-            return false;
+            return None;
         }
         let (h, line) = (self.height(p), self.water_line());
         // Only ground a river could reach asks after its water.
-        let under = h < line
-            || self.rivers.as_ref().is_some_and(|w| {
-                h < line + i32::from(w.most())
-                    && h < line + i32::from(w.rise_at(p.x.floor_int(), p.y.floor_int()))
-            });
-        under && !self.on_deck(p)
+        let rise = match &self.rivers {
+            Some(w) if w.most() > 0 && h < line + i32::from(w.most()) => {
+                w.rise_at(p.x.floor_int(), p.y.floor_int())
+            }
+            _ => 0,
+        };
+        (h < line + i32::from(rise) && !self.on_deck(p)).then_some(rise)
     }
 
     /// The flow layer, one [`Flow`] byte a tile (empty: still water).
@@ -803,6 +815,13 @@ impl Terrain {
         (self.rivers.as_ref())
             .filter(|w| w.most() > 0)
             .map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()))
+    }
+
+    /// Whether `p` is in a river that is up ([`crate::rivers::DEEP_RISE`]
+    /// or more over its line): wading there is slower still.
+    pub fn deep(&self, p: FxVec2) -> bool {
+        self.water_at(p)
+            .is_some_and(|rise| rise >= crate::rivers::DEEP_RISE)
     }
 
     /// Which way and how fast the water runs at `p`, if it runs there and
@@ -1068,8 +1087,15 @@ impl Terrain {
     /// the climb.
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
         let heavy = mass == Mass::Heavy;
-        let wet = self.wet(p);
-        let wading = if wet { WADING_SPEED_PERCENT } else { 100 };
+        let water = self.water_at(p);
+        let wet = water.is_some();
+        let wading = match water {
+            Some(rise) if rise >= crate::rivers::DEEP_RISE => {
+                WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100
+            }
+            Some(_) => WADING_SPEED_PERCENT,
+            None => 100,
+        };
         let woods = match self.cover(p) {
             Cover::Wood if heavy => WOODS_HEAVY_SPEED_PERCENT,
             Cover::Wood => WOODS_SPEED_PERCENT,

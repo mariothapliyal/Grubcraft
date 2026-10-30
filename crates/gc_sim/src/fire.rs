@@ -358,7 +358,7 @@ impl Fires {
             let (touched, _) = self.near(&Block::of(regs, units, i), Fx::ZERO);
             if touched > 0 {
                 regs.take_damage(i, BURN_HP * touched.min(MAX_BURNS));
-                morale::shift(regs, i, -BURN_MORALE);
+                morale::shake(regs, i, BURN_MORALE, morale::WHY_FIRE);
             }
         }
     }

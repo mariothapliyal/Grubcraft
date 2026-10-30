@@ -179,6 +179,7 @@ mod profile;
 mod puppets;
 mod replays;
 mod ring_tool;
+mod river_watch;
 mod roster;
 mod sandbox;
 mod scars;
@@ -938,6 +939,10 @@ struct Running {
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
+    /// The rivers' names, and what the viewer has been told of them.
+    river_watch: river_watch::RiverWatch,
+    /// The rivers' water drawn as high as it stands.
+    river_picture: river_watch::RiverPicture,
     land: land::LandView,
     /// Turned earth and worn tracks on the ground.
     scars: scars::ScarView,
@@ -1801,6 +1806,8 @@ impl App {
             tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
+            river_watch: Default::default(),
+            river_picture: Default::default(),
             land: Default::default(),
             scars: Default::default(),
             data_label: format!(
@@ -3083,6 +3090,28 @@ impl Running {
             .or_else(|| self.ground_under_cursor().and_then(|p| self.enemy_at(p)))
     }
 
+    /// The regiment, of any side your side can see, whose block holds the
+    /// mouse's ground point; the nearest centre if blocks overlap.
+    pub fn regiment_containing_cursor(&self) -> Option<RegimentHandle> {
+        let side = self.sandbox.side;
+        let p = self.ground_under_cursor()?;
+        self.world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == side || self.world.sees(side, r.handle))
+            .filter_map(|r| {
+                let stats = &self.units.stats[r.unit as usize];
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
+                let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
+                let to = p - at;
+                let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
+                let across = to.perp_dot(facing).abs() - fx_to_f32(width) / 2.0;
+                (ahead.max(across) <= 0.0).then_some((r.handle, to.length_squared()))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(h, _)| h)
+    }
+
     /// The enemy regiment whose block is under (or within a step of) `p`.
     fn enemy_at(&self, p: Vec2) -> Option<RegimentHandle> {
         self.world
@@ -3392,6 +3421,38 @@ impl Running {
         })
     }
 
+    /// How much flags and banners grow as the Commander View pulls back, so
+    /// they stay readable.
+    fn banner_zoom(&self) -> f32 {
+        if self.commander {
+            (self.camera.distance / COMMANDER_IN).max(1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// How far up a regiment's marks sit: the wall top (or deck) it stands
+    /// on, else the ground.
+    fn mark_lift(&self, r: &gc_sim::RegimentView) -> f32 {
+        if r.on_wall {
+            self.puppets.wall_top(r.handle)
+        } else {
+            0.0
+        }
+    }
+
+    /// The world point just over a regiment's banner (the Commander View's
+    /// flag pole), where the HUD hangs its order tab.
+    fn banner_top(&self, r: &gc_sim::RegimentView) -> Vec3 {
+        let p = drawn_position(&self.prev_positions, self.alpha, r);
+        let lift = if self.commander {
+            COMMANDER_POLE[1] * self.banner_zoom() + 1.0
+        } else {
+            BANNER_LIFT + self.mark_lift(r) + BANNER_SIZE[1] + 0.6
+        };
+        Vec3::new(p.x, self.heightmap.height_at(p.x, p.y) + lift, p.y)
+    }
+
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
         self.world
             .regiments
@@ -3584,11 +3645,7 @@ impl Running {
         }
         // Flags and banners grow as the Commander View pulls back, so they
         // stay readable.
-        let zoom = if self.commander {
-            (self.camera.distance / COMMANDER_IN).max(1.0)
-        } else {
-            1.0
-        };
+        let zoom = self.banner_zoom();
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment of theirs could walk (an
@@ -3628,11 +3685,7 @@ impl Running {
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
             // Marks of a regiment on a wall sit on the wall top.
-            let up = if r.on_wall {
-                self.puppets.wall_top(r.handle)
-            } else {
-                0.0
-            };
+            let up = self.mark_lift(&r);
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
             if seen
@@ -4171,12 +4224,15 @@ impl Running {
         }
 
         if self.guide.is_some() {
+            self.hud.hover_own = None;
             self.run_guide();
         } else if self.menu_open {
+            self.hud.hover_own = None;
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
         } else {
+            self.hud.hover_own = None;
             self.renderer.clear_ui();
         }
 
@@ -4187,6 +4243,12 @@ impl Running {
             self.sandbox.side,
             self.heightmap.tiles,
             !self.reveal_all,
+        );
+        self.river_picture.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.heightmap.tiles,
         );
         self.land.update(
             self.last_frame,
@@ -5503,6 +5565,8 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.river_watch.reset();
+        self.river_picture.reset();
         self.cinema.reset();
         self.director.stop();
         self.was_deploying = false;
@@ -5649,6 +5713,8 @@ impl Running {
         // The renderer's land is bare again.
         self.land.reset();
         self.scars.reset();
+        self.river_picture.reset();
+        self.river_watch.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();
@@ -6013,7 +6079,9 @@ impl Running {
     /// are red.
     fn push_routes(&mut self) {
         let mut dots = 0;
-        for &h in &self.selected {
+        // The regiment the mouse rests on shows its route too.
+        let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
+        for h in self.selected.iter().copied().chain(hovered) {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };
@@ -6369,6 +6437,20 @@ impl Running {
                 }),
                 _ => {}
             }
+        }
+        // The river watch looks once a second.
+        let mut watched = None;
+        if self
+            .world
+            .tick_count()
+            .is_multiple_of(gc_sim::TICKS_PER_SECOND)
+        {
+            let (fog, reveal) = (&self.fog, self.reveal_all);
+            watched = (self.river_watch)
+                .look(self.world.flood().rivers(), |t| reveal || fog.sees_tile(t));
+        }
+        if let Some(w) = &watched {
+            news.push(w.as_str());
         }
         // Said together, so none hides another from the same tick.
         if !news.is_empty() {

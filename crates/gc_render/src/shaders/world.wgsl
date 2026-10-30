@@ -129,6 +129,32 @@ fn ghost_shade(clip: vec4<f32>, n: vec3<f32>, world: vec3<f32>, tint: vec3<f32>)
 // How each tile's ground looks (Terrain::look), one texel a tile: rgb multiplies
 // the grass (128 leaves it), a is the `GROUND_*` pattern drawn over it.
 @group(0) @binding(18) var ground_look: texture_2d<f32>;
+// How far the rivers raise their water over the water line
+// (Renderer::set_river_water), one texel a tile: r times RIVER_RISE_FULL
+// tiles. Read without a sampler, so every stage can (soldiers are stood
+// in a compute pass).
+@group(0) @binding(19) var river_map: texture_2d<f32>;
+// 255 half height units of a 256-unit tile.
+const RIVER_RISE_FULL: f32 = 510.0 / 256.0;
+
+fn river_texel(p: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(river_map));
+    return textureLoad(river_map, clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1)), 0).r;
+}
+
+// The water's surface at `xz`: the water line, raised where a river is up
+// (eased between tile centres).
+fn water_surface(xz: vec2<f32>) -> f32 {
+    let s = xz - vec2<f32>(0.5);
+    let i = vec2<i32>(floor(s));
+    let f = fract(s);
+    let r = mix(
+        mix(river_texel(i), river_texel(i + vec2<i32>(1, 0)), f.x),
+        mix(river_texel(i + vec2<i32>(0, 1)), river_texel(i + vec2<i32>(1, 1)), f.x),
+        f.y,
+    );
+    return g.misc.x + r * RIVER_RISE_FULL;
+}
 
 fn sample_height(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(heightmap));
@@ -1208,7 +1234,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let clings = 1.0 - smoothstep(0.08, 0.35, slope);
         let edge = mix(1.05, 0.15, lying);
         let blanket = smoothstep(edge, edge + 0.12, fbm(xz * 0.35 + vec2<f32>(71.0, 19.0)));
-        let dry_bed = smoothstep(-0.05, 0.02, ground - g.misc.x);
+        let dry_bed = smoothstep(-0.05, 0.02, ground - water_surface(xz));
         let cover = blanket * clings * (1.0 - rock) * (1.0 - 0.6 * fringe) * (1.0 - land_k)
             * (1.0 - 0.8 * wet) * dry_bed;
         albedo = mix(albedo, SNOW_ALBEDO, cover * 0.92);
@@ -1264,10 +1290,11 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // Water below the water level: deep teal with a soft shoreline, a
     // rippled surface that mirrors the sky (more the lower you look) and
     // glints where it catches the sun.
-    let depth = g.misc.x - ground;
+    let surface = water_surface(xz);
+    let depth = surface - ground;
     if depth > 0.0 {
         let water = srgb_to_linear(vec3<f32>(0.16, 0.36, 0.4));
-        let wp = vec3<f32>(in.world.x, g.misc.x, in.world.z);
+        let wp = vec3<f32>(in.world.x, surface, in.world.z);
         let dist = distance(wp, g.camera_pos.xyz);
         let wn = water_normal(wp.xz, g.misc.y, 1.0 / (1.0 + dist * 0.04));
         let v = (g.camera_pos.xyz - wp) / max(dist, 1e-4);
@@ -1798,7 +1825,7 @@ fn joint_at(j: u32) -> vec3<f32> {
 // The ground where the skinning pass stands a soldier: the terrain, or just
 // under the water line.
 fn ground_at(xz: vec2<f32>) -> f32 {
-    return max(height_at(xz), g.misc.x - 0.05);
+    return max(height_at(xz), water_surface(xz) - 0.05);
 }
 
 // Byte `k` of `w`, a rig joint.
