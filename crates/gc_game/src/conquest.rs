@@ -223,10 +223,15 @@ pub(crate) fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
 }
 
 /// Grub and Marrow each faction starts with (docs/04-economy.md,
-/// "Starting state"): the same for every faction since the Concord's
-/// extra 100 Grub went (docs/29, faction rebalance).
-pub fn start_stores(_: Faction) -> (u32, u32) {
-    (300, 0)
+/// "Starting state"). The Clans gather fastest, so they start poorer and
+/// the Concord richer, so that first armies come at about the same time
+/// (docs/29, even early game).
+pub fn start_stores(f: Faction) -> (u32, u32) {
+    match f {
+        Faction::EmberClans => (250, 0),
+        Faction::CarrionConcord => (350, 0),
+        Faction::Brood | Faction::Choir => (300, 0),
+    }
 }
 
 /// Each lobby player's faction, in player order.
