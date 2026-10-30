@@ -32,7 +32,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 5. Smaller extras: lightning as a game event, burning buildings lighting the ground, Highland snow, and ambient polish (supply carts, forge sparks, more fauna).
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
-8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, and models generated from a timber kit; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
+8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
 
 ## What it covers
 
@@ -68,6 +68,7 @@ Mario (2026-10-30), for the restart: bridges must be **truly dynamic**. Wood onl
 **What the player does**
 - **Draw the path.** Drag from bank to bank; the bridge follows the drag as a smooth curve (a few control points, smoothed). Bends are gentle, about 15 degrees per two tiles at most, so it reads like a real timber bridge and never zig-zags. The preview shows the curved deck, its cost and any tile it can't use before you confirm.
 - **Pick a width.** Narrow, standard or wide (about 1.5, 2 and 3 tiles across), standard by default. The deck also varies a little on its own (a few percent wider at the piers, narrower mid-span), seeded so every player sees the same bridge.
+- **Upgrade it (Mario, 2026-10-30).** A finished bridge can be upgraded, like walls (the same raise order, U key), a span at a time. Level 2, **braced piers**: cross-bracing and doubled pilings, more hit points against blows and debris. Level 3, **reinforced piers**: stone-footed piers with pointed cutwaters facing upstream, so debris glances off and jams less, and the bridge stands through all but catastrophic floods. Each level costs Grub and build time by the tile, and the generator draws the new pieces onto the same bridge (bracing, then stone footings and cutwaters), so you can see which bridges are strong.
 - **Everything else stays as now:** workers build it out from the bank, it costs Grub by the tile covered, and tiles burn and fall one by one, dropping whoever stands on them into the river.
 
 **How it works (simulation)**
@@ -82,7 +83,7 @@ Mario (2026-10-30), for the restart: bridges must be **truly dynamic**. Wood onl
 - Pieces appear in order as tiles finish, and burn or fall with the tile they sit on.
 
 **Who and when**
-- Owner: T6 (fortifications), Opus lead for the sim, the order and the drawing tool. Sonnet 5.5 alone for the kit models; a Sonnet helper for the generator and its drawing code; Haiku for docs, guides and the quick reference. Size M to L, three PRs: (1) curved path and width in the sim, with the drawing tool and preview; (2) the kit and the generator; (3) polish: wear, broken pieces, lanterns lit at night, computer players bending round rocks.
+- Owner: T6 (fortifications), Opus lead for the sim, the order and the drawing tool. Sonnet 5.5 alone for the kit models; a Sonnet helper for the generator and its drawing code; Haiku for docs, guides and the quick reference. Size M to L, three PRs: (1) curved path and width in the sim, with the drawing tool and preview; (2) the kit and the generator; (3) upgrades (braced and reinforced piers) and polish: wear, broken pieces, lanterns lit at night, computer players bending round rocks.
 - Starts in the first wave after the restart, once #319 is settled. Runs alongside the dedicated pathfinding thread: deck tiles are ordinary walkable tiles, so it does not touch route search. Dams (idea 24) reuse the kit and piers.
 
 **Bridges and the water engine (Mario, 2026-10-30)**
@@ -91,6 +92,7 @@ Once the dynamic water engine (idea 25: seasonal flow and volume, minor to catas
 - **Debris jams.** Pieces caught on the piers pile up into a jam. A jam narrows the channel, so water backs up and rises upstream, and pushes harder on the bridge the bigger it gets. Workers can clear a jam from the deck, and a jam can be set alight.
 - **Bridges fail under it.** When the damage is enough, the tiles over the pier fall: soldiers on them drop into the river as today, and the broken pieces join the debris heading downstream. That can take out the next bridge down, so one dump upstream can cascade.
 - **Floods and high water.** Deep, fast water strains the piers, and a catastrophic flood can sweep away a weak or damaged span outright. Tall piers in the channel stand up best, which gives the width and pier layout a reason to matter.
+- **Upgrades pay off here.** Braced piers take less damage from each hit; reinforced piers with cutwaters shed most debris, rarely jam and survive all but catastrophic floods. Upgrading the bridges on a river an enemy can dump debris into is the counter.
 - **Readable and fair.** Strain and jams show on the bridge (creaking, logs piling up, water foaming at the piers), and computer players clear jams, repair their own bridges and use dumped debris against yours.
 - All of it runs in the sim from seeded, fixed-point state, so it stays deterministic in multiplayer and replays.
 - Other materials (Concord bone, Choir glass, Brood chitin) are kit variants for later.
