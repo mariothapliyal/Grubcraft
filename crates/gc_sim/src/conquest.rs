@@ -86,12 +86,23 @@ pub struct ConquestUnit {
     /// It can man a wall (see [`crate::manning`]): foot soldiers and
     /// archers, not workers, riders, engines or beasts.
     pub mans_walls: bool,
+    /// A worker's gathering speed in percent of the usual (the Clans'
+    /// Hands are quicker); 0 means 100.
+    pub gather_percent: u16,
 }
 
 impl ConquestUnit {
     /// Whether it trades.
     pub fn trades(&self) -> bool {
         self.trade_base > 0 || self.trade_tenths > 0
+    }
+
+    /// Its gathering speed in percent of the usual.
+    pub fn gather_percent(&self) -> u32 {
+        match self.gather_percent {
+            0 => 100,
+            p => u32::from(p),
+        }
     }
 
     fn hash_into(&self, h: &mut StateHasher) {
@@ -117,6 +128,7 @@ impl ConquestUnit {
             h.u8(c.pays[i]);
         }
         h.u8(u8::from(c.burns));
+        h.u16(self.gather_percent);
     }
 }
 

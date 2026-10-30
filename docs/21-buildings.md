@@ -13,7 +13,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 - **Times** are seconds at Standard tempo. The lobby's tempo setting scales them like research ([04 · Economy](04-economy.md#tempo-setting)).
 - **Size** is the footprint in tiles, across and deep. Buildings are 2×2 to 5×5. Walls are one tile thick.
 - **Ground** must be clear: a building can't rise on scrub, woods or thicket. Laying one there is allowed; the worker pays, clears the footprint first, then lays the foundation (see [31 · Changing land](32-changing-land.md)).
-- **Supply** is what a building adds to the cap. Only the buildings that docs/04 lists add any. For a main building's upgrades it is the total for that tier: each tier adds 10. Every faction starts on 12; the Choir's Spire gives 4 and its two starting Resonators give the rest.
+- **Supply** is what a building adds to the cap. Only the buildings that docs/04 lists add any. For a main building's upgrades it is the total for that tier: each tier adds 10. Every faction starts on 12; the Choir's Spire gives 8 and its starting Resonator gives the rest.
 - **Tier** is the main-building tier needed to place the building. A building's tier is never above the tier of the units it trains, so nothing has to wait for a building to train a unit its tier already allows.
 - **Tier 1 costs no Marrow.** This holds for buildings as it does for units, so a player who loses their Marrow vein can still rebuild a base.
 - **Construction.** A building appears at 10% of its hit points and fills up as it is built. Hands, Tuners and Ledger Clerks stay with it until it is finished. Cancelling refunds 75% of the cost. A destroyed building refunds nothing.
@@ -129,11 +129,11 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 
 | Building | Tier | Cost (Grub / Marrow) | Build time | Hit points | Armour | Size | Supply | What it does |
 |---|---|---|---|---|---|---|---|---|
-| Spire | 1 | 400 / 0 | 110 s | 2,800 | Fortified | 4×4 | +4 | Main building. Builds Tuners and Conductors and powers buildings within 8 tiles. |
-| Cathedral (upgrades Spire) | 2 | 300 / 100 | 60 s | 3,600 | Fortified | 4×4 | +14 | Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero. |
-| Grand Organ (upgrades Cathedral) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 4×4 | +24 | Tier 3: monsters, top upgrades and a third hero. |
-| Resonator | 1 | 150 / 0 | 25 s | 500 | Structure | 2×2 | +4 | Tunes a seep within 4 tiles to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles. |
-| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | A Resonator built against a Marrow vein (within 3 tiles of its edge): about 50 Marrow a minute. Links chords and powers buildings like a Resonator. |
+| Spire | 1 | 400 / 0 | 110 s | 2,800 | Fortified | 4×4 | +8 | Main building. Builds Tuners and Conductors and powers buildings within 8 tiles. |
+| Cathedral (upgrades Spire) | 2 | 300 / 100 | 60 s | 3,600 | Fortified | 4×4 | +18 | Tier 2: Harmonic Walkers, Glass Striders, Skyglass, the Conductor and a second hero. |
+| Grand Organ (upgrades Cathedral) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 4×4 | +28 | Tier 3: monsters, top upgrades and a third hero. |
+| Resonator | 1 | 175 / 0 | 25 s | 500 | Structure | 2×2 | +4 | Tunes its nearest free seep within 4 tiles (one seep a Resonator, about 109 Grub a minute) to make Grub with no workers, links with Resonators within 14 tiles into chords, and powers buildings within 6 tiles. |
+| Siphon | 1 | 175 / 0 | 30 s | 500 | Structure | 2×2 | +4 | A Resonator built against a Marrow vein (within 3 tiles of its edge): about 40 Marrow a minute from one vein. Links chords and powers buildings like a Resonator. |
 | Forge of Facets | 1 | 160 / 0 | 50 s | 1,300 | Structure | 4×4 |  | Builds every Choir regiment that walks. |
 | Harmonics Lab | 1 | 175 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Researches upgrades. |
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |

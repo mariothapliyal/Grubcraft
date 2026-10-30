@@ -371,9 +371,9 @@ fn an_unpowered_building_trains_nothing_until_a_field_reaches_it() {
     );
 }
 
-/// A Resonator tunes the Grub seeps within 4 tiles of its edge: with no
-/// workers at all, the seep brings its owner a load of 10 Grub every 3
-/// seconds, about 200 Grub a minute. A seep 6 tiles from its edge is past
+/// A Resonator tunes a Grub seep within 4 tiles of its edge: with no
+/// workers at all, the seep brings its owner a load of 10 Grub every 5.5
+/// seconds, about 109 Grub a minute. A seep 6 tiles from its edge is past
 /// its reach, is not tuned, and brings in nothing.
 #[test]
 fn a_resonator_tunes_a_seep_within_four_tiles_and_not_one_six_away() {
@@ -396,15 +396,15 @@ fn a_resonator_tunes_a_seep_within_four_tiles_and_not_one_six_away() {
     run(&mut w, MINUTE);
     let gained = grub(&w) - start;
     assert!(
-        (180..=210).contains(&gained),
-        "{gained} Grub in a minute, expected about 200"
+        (100..=115).contains(&gained),
+        "{gained} Grub in a minute, expected about 109"
     );
 }
 
-/// A Siphon tunes the Marrow veins within 3 tiles of its edge: a load of 5
-/// Marrow every 6 seconds, about 50 Marrow a minute, with no workers.
+/// A Siphon tunes a Marrow vein within 3 tiles of its edge: a load of 5
+/// Marrow every 7.5 seconds, about 40 Marrow a minute, with no workers.
 #[test]
-fn a_siphon_tunes_a_vein_and_brings_about_fifty_marrow_a_minute() {
+fn a_siphon_tunes_a_vein_and_brings_about_forty_marrow_a_minute() {
     let mut w = conquest(&[vein(34, 40)]);
     let siphon = put_up(&mut w, 0, SIPHON, 30, 40);
     run(&mut w, 1);
@@ -418,8 +418,8 @@ fn a_siphon_tunes_a_vein_and_brings_about_fifty_marrow_a_minute() {
     run(&mut w, MINUTE);
     let gained = marrow(&w) - start;
     assert!(
-        (45..=55).contains(&gained),
-        "{gained} Marrow in a minute, expected about 50"
+        (36..=44).contains(&gained),
+        "{gained} Marrow in a minute, expected about 40"
     );
 }
 
@@ -444,9 +444,74 @@ fn of_two_tuners_in_reach_of_a_seep_only_the_nearer_one_tunes_it() {
     run(&mut w, MINUTE);
     let gained = grub(&w) - start;
     assert!(
-        (180..=210).contains(&gained),
-        "{gained} Grub in a minute: one tuner's worth, about 200"
+        (100..=115).contains(&gained),
+        "{gained} Grub in a minute: one tuner's worth, about 109"
     );
+}
+
+/// A tuner works one node: a Resonator with two seeps in reach tunes the
+/// nearer and leaves the other, and a second Resonator by the other takes
+/// it, so two seeps need two Resonators.
+#[test]
+fn a_resonator_tunes_one_seep_and_a_second_takes_the_next() {
+    let mut w = conquest(&[seep(35, 22), seep(36, 27)]);
+    // Its centre is 3.6 tiles from the first seep and 6 from the second;
+    // both are within 4 tiles of its edge.
+    let first = put_up(&mut w, 0, RESONATOR, 30, 22);
+    run(&mut w, 1);
+    assert_eq!(tuner_of_node(&w, 0), Some(first), "the nearer seep");
+    assert_eq!(tuner_of_node(&w, 1), None, "one seep a Resonator");
+
+    let second = put_up(&mut w, 0, RESONATOR, 38, 30);
+    run(&mut w, 1);
+    assert_eq!(tuner_of_node(&w, 0), Some(first));
+    assert_eq!(
+        tuner_of_node(&w, 1),
+        Some(second),
+        "the next takes the other"
+    );
+}
+
+/// A Resonator never sits idle by a seep another could give up: a new one
+/// nearer the first Resonator's only seep takes its other seep instead.
+#[test]
+fn a_new_resonator_takes_the_seep_only_it_can_reach() {
+    let mut w = conquest(&[seep(30, 22), seep(37, 22)]);
+    // It reaches only the first seep (4 tiles from its centre).
+    let first = put_up(&mut w, 0, RESONATOR, 25, 21);
+    run(&mut w, 1);
+    assert_eq!(tuner_of_node(&w, 0), Some(first));
+    // Nearer the first seep (3 tiles) than the second (4), and in reach of
+    // both.
+    let second = put_up(&mut w, 0, RESONATOR, 32, 21);
+    run(&mut w, 1);
+    assert_eq!(
+        tuner_of_node(&w, 0),
+        Some(first),
+        "the first keeps its seep"
+    );
+    assert_eq!(
+        tuner_of_node(&w, 1),
+        Some(second),
+        "the new one takes the other"
+    );
+}
+
+/// A seep run dry goes to dregs; its Resonator moves to a fuller seep in
+/// its reach.
+#[test]
+fn a_resonator_leaves_a_seep_run_dry_for_a_full_one() {
+    let nearly_dry = NodeSetup {
+        amount: 1,
+        ..seep(33, 22)
+    };
+    let mut w = conquest(&[nearly_dry, seep(35, 22)]);
+    let resonator = put_up(&mut w, 0, RESONATOR, 30, 21);
+    run(&mut w, 1);
+    assert_eq!(tuner_of_node(&w, 0), Some(resonator), "the nearer seep");
+    run(&mut w, 20 * SECOND);
+    assert_eq!(tuner_of_node(&w, 0), None, "left to its dregs");
+    assert_eq!(tuner_of_node(&w, 1), Some(resonator), "the full one");
 }
 
 /// A seep yields only while its tuner stands: taken away, the tuner stops

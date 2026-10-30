@@ -21,7 +21,7 @@ pub const POWERS_PATH: &str = "data/powers";
 pub const BUILDING_SCHEMA: u32 = 12;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 5;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 6;
 /// Bump whenever [`PowerRecord`]'s layout or meaning changes.
 pub const POWER_SCHEMA: u32 = 3;
 /// An index field that names nothing.
@@ -342,6 +342,10 @@ pub struct ConquestUnitRecord {
     pub supply: u8,
     /// How many of these the faction starts Conquest with.
     pub start_count: u8,
+    /// A worker's gathering speed, in percent of the usual (schema 6): a
+    /// load fills in `100 / gather_percent` of the time. 100 for others.
+    pub gather_percent: u16,
+    pub reserved: u16,
 }
 
 impl ConquestUnitRecord {
@@ -701,7 +705,7 @@ mod tests {
         // Changing these means bumping the schemas.
         assert_eq!(size_of::<BuildingRecord>(), 72);
         assert_eq!(align_of::<BuildingRecord>(), 4);
-        assert_eq!(size_of::<ConquestUnitRecord>(), 96);
+        assert_eq!(size_of::<ConquestUnitRecord>(), 100);
         assert_eq!(align_of::<ConquestUnitRecord>(), 4);
         assert_eq!(size_of::<PowerRecord>(), 48);
         assert_eq!(align_of::<PowerRecord>(), 4);
