@@ -11,8 +11,7 @@ use gc_fixed::FxVec2;
 use gc_sim::nav::CELLS_PER_TILE;
 use gc_sim::scenario::NORTH;
 use gc_sim::{
-    Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, TICKS_PER_SECOND,
-    World,
+    Capacities, Command, Ground, MatchSetup, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World,
 };
 
 const MAP: u32 = 128;

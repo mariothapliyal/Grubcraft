@@ -1085,6 +1085,7 @@ impl Combat {
     }
 
     /// Contacts, charges and chasing, before anyone moves this tick.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn before_move(
         &mut self,
         regs: &mut Regiments,
@@ -1291,13 +1292,18 @@ impl Combat {
                 && (tick + i as u32).is_multiple_of(STRIKE_INTERVAL)
             {
                 let near = self.radius[i] + self.radius[j] + APPROACH;
-                if (regs.position[j] - regs.position[i]).length_sq_raw() <= (near.raw() as u64).pow(2)
+                if (regs.position[j] - regs.position[i]).length_sq_raw()
+                    <= (near.raw() as u64).pow(2)
                 {
                     regs.round[i] =
                         open_side(regs, nav, i, j, &self.blocks[i], &self.blocks[j], true)
                             .map(Round::pack);
                     regs.crowded[i] = 0;
                 }
+            }
+            if regs.round[i].is_some() && regs.on_wall[j] {
+                // Up on a wall: there is no side to go round to.
+                regs.round[i] = None;
             }
             if let Some(code) = regs.round[i] {
                 // Going round: by the corner, then beside the side; there,
@@ -2134,7 +2140,12 @@ fn strikers(
         whole: 0,
         theirs_last_file,
     };
-    let mine = Edge::of(regs, i, my_side, last_file_nearer(regs, units, i, regs.position[j]));
+    let mine = Edge::of(
+        regs,
+        i,
+        my_side,
+        last_file_nearer(regs, units, i, regs.position[j]),
+    );
     let front = mine.files.min(models);
     if ladder {
         for k in 0..front.min(crate::manning::LADDER_FRONT) {
@@ -2162,10 +2173,11 @@ fn strikers(
     // Men fill the room from the one facing the middle of the side outwards,
     // in turn to either hand, so both ends of an overlapping line close in.
     let len = mine.len();
-    let along_of = |regs: &Regiments, n: u16| {
-        (slot_pos(regs, units, i, mine.slot(n)) - them.centre).dot(axis)
-    };
-    let mid = (0..len).min_by_key(|&n| along_of(regs, n).abs()).unwrap_or(0);
+    let along_of =
+        |regs: &Regiments, n: u16| (slot_pos(regs, units, i, mine.slot(n)) - them.centre).dot(axis);
+    let mid = (0..len)
+        .min_by_key(|&n| along_of(regs, n).abs())
+        .unwrap_or(0);
     let short = mid.min(len.saturating_sub(1 + mid));
     for m in 0..len {
         if strikers == most || taken + Fx::from_raw(width.raw() / 2) > full {
@@ -2174,7 +2186,11 @@ fn strikers(
         // mid, mid+1, mid-1, mid+2, ... until the shorter hand runs out,
         // then on along the longer one.
         let n = if m <= 2 * short {
-            if m % 2 == 1 { mid + m.div_ceil(2) } else { mid - m / 2 }
+            if m % 2 == 1 {
+                mid + m.div_ceil(2)
+            } else {
+                mid - m / 2
+            }
         } else if mid + short < len - 1 {
             mid + (m - short)
         } else {
@@ -2192,7 +2208,7 @@ fn strikers(
                 continue;
             }
         }
-        taken = taken + width;
+        taken += width;
         strikers += 1;
         out.push(k, 100);
         if my_side == Side::Front && attacker.reach && k + mine.files < models {
@@ -2314,8 +2330,16 @@ fn open_side(
     }
     let owner = regs.owner[i];
     (0..4u8)
-        // Next to it: not the same side, nor the one across.
-        .filter(|&s| s != mine && s != 3 - mine && on[s as usize] < on[mine as usize])
+        // Next to it: not the same side, nor the one across. Only off a
+        // side shared with friends, and only to one that stays emptier
+        // once it is there, so nobody swaps back and forth (alone, a short
+        // side is as good as any).
+        .filter(|&s| {
+            s != mine
+                && s != 3 - mine
+                && on[mine as usize] >= 2
+                && on[s as usize] + 2 <= on[mine as usize]
+        })
         .filter_map(|s| {
             let round = Round {
                 from: mine,
@@ -2343,7 +2367,7 @@ fn open_side(
                 && on[mine as usize] == 1
                 && !nav.blocks(owner, me.centre, spot)
                 && room_for(nav, owner, me, &[spot]))
-                .then_some(square)
+            .then_some(square)
         })
 }
 
@@ -2351,7 +2375,11 @@ fn open_side(
 /// `spots`: the way round must be wide enough for the block, not just its
 /// centre (a narrow pass has no room beside a fight).
 fn room_for(nav: &Nav, owner: PlayerId, me: &Block, spots: &[FxVec2]) -> bool {
-    let tiles = me.half_width.min(me.half_depth).floor_int().clamp(1, OPEN_GROUND);
+    let tiles = me
+        .half_width
+        .min(me.half_depth)
+        .floor_int()
+        .clamp(1, OPEN_GROUND);
     spots.iter().all(|&p| nav.open_around(owner, p, tiles))
 }
 

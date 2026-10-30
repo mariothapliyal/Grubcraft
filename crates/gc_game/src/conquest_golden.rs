@@ -898,9 +898,13 @@ impl Match {
     fn ladder(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
         let side = self.sides[usize::from(p)];
         if let Some(c) = side.climber {
-            let up = (self.world.regiments.iter()).any(|r| r.handle == c && r.on_wall);
+            let r = self.world.regiments.get(c);
+            let up = r.is_some_and(|r| r.on_wall);
             self.sides[usize::from(p)].climbed |= up;
-            return;
+            // Cut down or routed on the way: another one goes.
+            if up || side.climbed || r.is_some_and(|r| !r.morale.broken()) {
+                return;
+            }
         }
         let fighter = self.kits[usize::from(p)].fighter;
         let walls = self.raised_walls(1 - p);
