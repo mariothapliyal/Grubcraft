@@ -534,9 +534,6 @@ pub struct Looks {
     /// By model, how far a still model's walls reach from its middle
     /// across and along the map, in tiles: the eaves and roof left out.
     walls: Vec<Option<Vec2>>,
-    /// By building type, whether its models stand along its piece of the
-    /// line (a drawn wall's; a bridge's stand at the tile's middle).
-    along: Vec<bool>,
 }
 
 impl Looks {
@@ -568,9 +565,8 @@ impl Looks {
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
                     let bridge = stats.is_bridge();
-                    let lined = stats.flags & gc_sim::structures::LINE != 0;
                     core::array::from_fn(|k| {
-                        if lined && !bridge && stats.role != Role::Wall {
+                        if boxed_line(stats) {
                             return None;
                         }
                         models.by_name(&stage_name(name, k)).or_else(|| {
@@ -583,9 +579,6 @@ impl Looks {
                 .collect(),
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
-                .collect(),
-            along: (table.stats.iter())
-                .map(|s| s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge())
                 .collect(),
             tops,
             walls,
@@ -638,17 +631,30 @@ impl Looks {
             .map_or_else(|| facing_of(s.turn), |p| p.dir)
     }
 
-    /// Where the model `model` of `s` stands and the way it faces, once or
-    /// more: a drawn wall tile's along its piece of the line, end to end,
-    /// else once at the middle of its footprint.
-    pub fn spots(&self, s: &StructureView, model: usize) -> impl Iterator<Item = (Vec2, Vec2)> {
+    /// Where the model `model` of `s` stands, the way it faces and how far
+    /// it is lifted to the floor of its footprint, once or more: along its
+    /// piece of the line, end to end, for a drawn wall tile (`along`; a
+    /// bridge's stands at the tile's middle), else once at the middle of
+    /// its footprint.
+    pub fn spots(
+        &self,
+        s: &StructureView,
+        model: usize,
+        along: bool,
+        ground: &impl Fn(f32, f32) -> f32,
+    ) -> impl Iterator<Item = (Vec2, Vec2, f32)> {
+        // A still model is drawn facing +z, so its length runs along z.
         let len = self.walls(model).map_or(1.0, |w| w.y * 2.0);
-        let along = self.along.get(usize::from(s.building)).copied() == Some(true);
-        let lined = along.then(|| spots_along(s, len)).flatten();
-        let once = lined
-            .is_none()
-            .then(|| (centre_of(s.tile, s.width, s.depth), self.facing(s)));
-        lined.into_iter().flatten().chain(once)
+        let (lined, once) = match along.then(|| spots_along(s, len)).flatten() {
+            Some(spots) => (Some(spots), None),
+            None => (
+                None,
+                Some((centre_of(s.tile, s.width, s.depth), self.facing(s))),
+            ),
+        };
+        let floor = ground_range(ground, s).1;
+        (lined.into_iter().flatten().chain(once))
+            .map(move |(at, facing)| (at, facing, floor - ground(at.x, at.y)))
     }
 
     /// The worker model of a building type's faction, if it has one.
@@ -748,6 +754,12 @@ fn spots_along(s: &StructureView, len: f32) -> Option<impl Iterator<Item = (Vec2
     let step = (p.len - len).max(0.0) / (count - 1.0).max(1.0);
     let first = -step * (count - 1.0) / 2.0;
     Some((0..count as usize).map(move |k| (p.centre + p.dir * (first + step * k as f32), p.dir)))
+}
+
+/// Whether a building drawn as a line is drawn as boxes, never a model:
+/// stakes and barricades. Walls (the Palisade) and bridges have models.
+fn boxed_line(stats: &BuildingStats) -> bool {
+    stats.flags & gc_sim::structures::LINE != 0 && !matches!(stats.role, Role::Wall | Role::Bridge)
 }
 
 /// How much of a model's length a wall piece may come short by before it
@@ -2876,9 +2888,7 @@ mod tests {
         // Stakes and barricades are drawn as boxes: a model their name would
         // find is left unused.
         let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(_, s)| {
-                s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge() && s.role != Role::Wall
-            })
+            .filter(|(_, s)| boxed_line(s))
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();

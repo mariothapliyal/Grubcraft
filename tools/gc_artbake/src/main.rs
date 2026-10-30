@@ -130,7 +130,7 @@ struct ModelConfig {
     keep_origin: bool,
     /// With `keep_origin`, draw the source this many times its size about
     /// its origin (the Palisade, modelled two tiles long, scaled to stand a
-    /// drawn wall tile's height).
+    /// drawn wall tile's height). `height` is then the scaled height.
     #[serde(default = "default_scale")]
     scale: f32,
     /// Surface detail (docs/31): read each face's surface classes from the
@@ -972,6 +972,9 @@ fn bake_model(
         let p = turn.transform_point3(rest);
         lo = lo.min(p);
         hi = hi.max(p);
+    }
+    if cfg.scale != 1.0 && !cfg.keep_origin {
+        return Err("scale is for keep_origin models (the rest are scaled to height)".into());
     }
     let to_game = if cfg.keep_origin {
         // Stored positions reach this far from the origin, in tiles.

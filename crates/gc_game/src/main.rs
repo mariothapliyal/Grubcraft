@@ -7066,7 +7066,10 @@ impl Running {
             // Blows land on the model's walls, where they stand within the
             // footprint.
             let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
+            // A drawn wall's models run along its line, not its turn: blows
+            // land on its tile as for a slab.
             let walls = (model.zip(self.art.as_ref()))
+                .filter(|_| s.line.is_none())
                 .and_then(|(m, art)| art.looks.walls(m))
                 // Turned a quarter, its model's walls run the other way.
                 .map(|w| {
@@ -7387,15 +7390,14 @@ impl Running {
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
-                let (_, top, _) = buildings::model_spot(&s, &ground);
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let still = art.clips.pose(model, Action::Idle, time);
                 let height = art.looks.top(model);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                for (centre, facing) in art.looks.spots(&s, model) {
-                    let centre = centre + shake;
-                    let lift = top - ground(centre.x, centre.y) + rise;
-                    let at = Vec3::new(centre.x, top, centre.y);
+                let along = !self.buildings.is_bridge(s.building);
+                for (centre, facing, lift) in art.looks.spots(&s, model, along, &ground) {
+                    let (centre, lift) = (centre + shake, lift + rise);
+                    let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
                     if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
                         art.buckets[model * LODS + lod].push(SoldierInstance {
                             pos: centre.to_array(),
