@@ -293,6 +293,144 @@ mod tests {
         assert_eq!(name(5, 2), name(5, 2));
     }
 
+    /// A 128-tile map with one river running east off it along rows
+    /// 60 to 67, a ford at columns 100 to 103, and a storm ten seconds in.
+    fn river_world(seed: u64) -> gc_sim::World {
+        use gc_sim::sky::{Spell, Weather, WeatherKind};
+        const MAP: i32 = 128;
+        const WATER: u16 = 256;
+        static STORM: [Spell; 3] = [
+            Spell {
+                at: 0,
+                weather: Weather::FAIR,
+            },
+            Spell {
+                at: 10 * gc_sim::TICKS_PER_SECOND,
+                weather: Weather {
+                    kind: WeatherKind::Rain,
+                    strength: 255,
+                    cloud: 255,
+                    wind: (0, 0),
+                },
+            },
+            Spell {
+                at: 20 * gc_sim::TICKS_PER_SECOND,
+                weather: Weather::FAIR,
+            },
+        ];
+        let river = |y: i32| (60..68).contains(&y);
+        let ford = |x: i32| (100..104).contains(&x);
+        let heights: Vec<u16> = (0..MAP * MAP)
+            .map(|i| match (i % MAP, i / MAP) {
+                (x, y) if river(y) && ford(x) => WATER - 40,
+                (_, y) if river(y) => 20,
+                _ => 600,
+            })
+            .collect();
+        let side = MAP * gc_sim::nav::CELLS_PER_TILE;
+        let nav: Vec<u8> = (0..side * side)
+            .map(|c| {
+                let (x, y) = (
+                    c % side / gc_sim::nav::CELLS_PER_TILE,
+                    c / side / gc_sim::nav::CELLS_PER_TILE,
+                );
+                match () {
+                    _ if river(y) && ford(x) => 3,
+                    _ if river(y) => gc_sim::nav::BLOCKED,
+                    _ => 1,
+                }
+            })
+            .collect();
+        let flow: Vec<u8> = (0..MAP * MAP)
+            .map(|i| {
+                if river(i / MAP) {
+                    gc_sim::Flow::byte(gc_fixed::Angle(0), 2)
+                } else {
+                    0
+                }
+            })
+            .collect();
+        gc_sim::World::new(&gc_sim::MatchSetup {
+            seed,
+            capacities: gc_sim::Capacities::default(),
+            units: &gc_sim::scenario::DRILL_UNITS,
+            map_tiles: MAP as u32,
+            nav: &nav,
+            teams: &[],
+            ground: gc_sim::Ground {
+                heights: &heights,
+                water_level: WATER,
+                cover: &[],
+                growth: &[],
+                footing: &[],
+                flow: &flow,
+            },
+            champions: false,
+            sky: gc_sim::Sky {
+                spells: &STORM,
+                ..gc_sim::Sky::STILL
+            },
+            generals: false,
+        })
+    }
+
+    #[test]
+    fn the_river_watch_tells_a_crest_coming_once_and_the_chip_reads_the_river() {
+        // A seed whose storm sends a front that shuts the ford.
+        let floods =
+            |w: &gc_sim::World| w.flood().rivers().fronts().any(|f| f.band() >= Band::Flood);
+        let seed = (0..4000)
+            .find(|&seed| {
+                let mut w = river_world(seed);
+                (0..11 * gc_sim::TICKS_PER_SECOND).for_each(|_| {
+                    w.tick(&[]);
+                });
+                floods(&w)
+            })
+            .expect("a flood");
+        let mut w = river_world(seed);
+        let mut watch = RiverWatch::default();
+        let (mut told, mut chips) = (Vec::new(), Vec::new());
+        while w.tick_count() < 90 * gc_sim::TICKS_PER_SECOND {
+            w.tick(&[]);
+            if w.tick_count() % gc_sim::TICKS_PER_SECOND != 0 {
+                continue;
+            }
+            let rivers = w.flood().rivers();
+            told.extend(watch.look(rivers, seed, 0, |_| true));
+            chips.extend(watch.chip(rivers, 0, 0, |_| true));
+        }
+        let (river, name) = (name(seed, 0), capitalised(&name(seed, 0)));
+        let [news] = told.as_slice() else {
+            panic!("{told:?}");
+        };
+        assert!(
+            news.starts_with(&format!("{name} is rising upriver: ")),
+            "{news}"
+        );
+        assert!(
+            news.contains("its crest reaches a ford in about "),
+            "{news}"
+        );
+        assert!(
+            chips.iter().any(|c| c.ends_with("in flood, rising")),
+            "{chips:?}"
+        );
+        assert!(chips.iter().any(|c| c.ends_with(", falling")), "{chips:?}");
+        assert!(chips.iter().all(|c| c.starts_with(&river)), "{chips:?}");
+        // Nobody sees the river: nothing is told.
+        let mut w = river_world(seed);
+        let mut blind = RiverWatch::default();
+        while w.tick_count() < 90 * gc_sim::TICKS_PER_SECOND {
+            w.tick(&[]);
+            if w.tick_count() % gc_sim::TICKS_PER_SECOND == 0 {
+                let rivers = w.flood().rivers();
+                assert_eq!(blind.look(rivers, seed, 0, |_| false), None);
+                assert_eq!(blind.chip(rivers, 0, 0, |_| false), None);
+            }
+        }
+    }
+
     #[test]
     fn a_name_starts_with_a_capital_at_the_start_of_a_line() {
         assert_eq!(capitalised("the Brackwater"), "The Brackwater");
