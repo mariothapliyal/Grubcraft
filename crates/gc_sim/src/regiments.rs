@@ -1069,7 +1069,8 @@ impl Regiments {
 
     /// Slot `i` faces about: it turns half round where it stands, and its
     /// men's places turn with it, so the rear rank is the front and every
-    /// man keeps his ground (the general too). It then stands
+    /// man keeps his ground (the general then steps back to his post, see
+    /// [`crate::generals`]). It then stands
     /// [`ABOUT_FACE_TICKS`] while they turn.
     fn face_about(&mut self, i: usize) {
         let n = usize::from(self.models[i]);
@@ -1195,8 +1196,10 @@ impl Regiments {
                 }
             }
             // Halting, fighting or backing away ends a run-up.
+            // So does facing about: it takes up no later order.
             if self.target[i].is_none() || self.engaged[i].is_some() || self.falling_back[i] > 0 {
                 self.run_up[i] = 0;
+                self.about_left[i] = 0;
             }
             if self.target[i].is_none() {
                 self.held[i] = 0;
@@ -1247,8 +1250,17 @@ impl Regiments {
                     && self.target_facing[i].is_some();
                 let mut wheeling = false;
                 let step = if shuffle {
-                    self.facing[i] =
-                        self.facing[i].turn_toward(self.target_facing[i].unwrap(), turn);
+                    let want = self.target_facing[i].unwrap();
+                    // Told to face back the way it came: it faces about.
+                    if i32::from(self.facing[i].delta_to(want)).abs() > ABOUT_FACE
+                        && self.models[i] > 1
+                        && self.falling_back[i] == 0
+                        && !self.morale_state[i].broken()
+                    {
+                        self.face_about(i);
+                        continue;
+                    }
+                    self.facing[i] = self.facing[i].turn_toward(want, turn);
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);

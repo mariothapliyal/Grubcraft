@@ -1224,14 +1224,15 @@ impl Puppets {
     }
 
     /// Regiment `handle` has faced about `abouts` times (counting round).
-    /// When that is new, it has just faced about: its men's places turned
+    /// When that is an odd number more than last time, it has faced about: its men's places turned
     /// round with it (the rear rank is the front), so each man keeps his
     /// own ground and turns where he stands. Call it every frame before the
     /// regiment's update.
     pub fn faced_about(&mut self, handle: RegimentHandle, abouts: u8) {
         let r = handle.index as usize;
-        let changed = std::mem::replace(&mut self.abouts[r], abouts) != abouts;
-        if self.owner[r] != Some(handle) || !changed {
+        // Two about-faces since the last frame leave the men as they were.
+        let times = abouts.wrapping_sub(std::mem::replace(&mut self.abouts[r], abouts));
+        if self.owner[r] != Some(handle) || times.is_multiple_of(2) {
             return;
         }
         let n = usize::from(self.models[r]).min(SLOTS);

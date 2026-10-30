@@ -83,6 +83,17 @@ fn spawns_at_full_strength_in_default_formation() {
 }
 
 #[test]
+fn a_line_pulled_back_faces_about_both_ways() {
+    let (mut w, h) = one_regiment();
+    // Due south, still facing north at the end: about, march, about.
+    order(&mut w, h, FxVec2::from_ints(50, 80), Some(NORTH), 0);
+    run_until_still(&mut w, h, 2_000);
+    let r = view(&w, h);
+    assert_eq!((r.position, r.abouts), (FxVec2::from_ints(50, 80), 2));
+    assert!(r.facing.delta_to(NORTH).abs() <= 2, "{:?}", r.facing);
+}
+
+#[test]
 fn faces_about_before_marching_backwards() {
     let (mut w, h) = one_regiment();
     // Due south, 30 tiles: it faces about where it stands.
