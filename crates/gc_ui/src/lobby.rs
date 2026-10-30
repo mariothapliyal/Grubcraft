@@ -133,26 +133,53 @@ pub const AI_LEVELS: [&str; 4] = ["Recruit", "Veteran", "General", "Warlord"];
 /// The level a newly added AI starts at.
 pub const DEFAULT_AI_LEVEL: u8 = 1;
 
-/// How big a Field Battle map is, for its player count
-/// ([`field_map_tiles`]).
+/// How big a match's map is: for a Field Battle, for its player count
+/// ([`field_map_tiles`]); for a made Conquest map, a fixed size with a
+/// player limit ([`MapSize::conquest_tiles`], [`MapSize::conquest_players`]).
+/// The shipped Conquest maps keep their own size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MapSize {
-    /// The old battle maps: a minute and a half's march across.
+    /// Field Battle: the old battle maps, a minute and a half's march
+    /// across. Conquest: four starts, for two players or a compact four.
     Small,
-    /// Several minutes' march across, room to manoeuvre and explore.
-    Standard,
-    /// A step bigger again.
+    /// Field Battle: several minutes' march across, room to manoeuvre and
+    /// explore. Conquest: four starts with room between them.
+    #[serde(alias = "Standard")]
+    Medium,
+    /// Field Battle: a step bigger again. Conquest: six starts, a little
+    /// smaller than the old 768-tile six-player maps.
     Large,
 }
 
 impl MapSize {
-    pub const ALL: [MapSize; 3] = [MapSize::Small, MapSize::Standard, MapSize::Large];
+    pub const ALL: [MapSize; 3] = [MapSize::Small, MapSize::Medium, MapSize::Large];
 
     pub fn name(self) -> &'static str {
         match self {
             MapSize::Small => "Small",
-            MapSize::Standard => "Standard",
+            MapSize::Medium => "Medium",
             MapSize::Large => "Large",
+        }
+    }
+
+    /// How many tiles a side a made Conquest map of this size is (under
+    /// 512, four starts; from it, six). Foot marches about 3 tiles a
+    /// second; two players start across the map about 1:15, 1:45 and 3:20
+    /// apart on foot (the old 768 was 4:00).
+    pub const fn conquest_tiles(self) -> u32 {
+        match self {
+            MapSize::Small => 320,
+            MapSize::Medium => 448,
+            MapSize::Large => 640,
+        }
+    }
+
+    /// The most players a made Conquest map of this size takes: its
+    /// starts, four on Small and Medium, six on Large.
+    pub fn conquest_players(self) -> usize {
+        match self {
+            MapSize::Small | MapSize::Medium => 4,
+            MapSize::Large => 6,
         }
     }
 }
@@ -278,7 +305,7 @@ impl YearSetting {
 }
 
 /// How many tiles a side a Field Battle map of `size` is for `players`.
-/// Foot marches about 3 tiles a second, so a Standard map is about three
+/// Foot marches about 3 tiles a second, so a Medium map is about three
 /// minutes across for two players and over four for six. Small is the
 /// old 256, or 320 for five or six, whose Grand Battle armies don't fit
 /// on 256. The same map choice and code make a different map at each
@@ -297,7 +324,7 @@ pub fn field_map_tiles(size: MapSize, players: usize) -> u32 {
                 256
             }
         }
-        MapSize::Standard => 512 + 128 * step,
+        MapSize::Medium => 512 + 128 * step,
         MapSize::Large => 640 + 128 * step,
     }
 }
@@ -332,10 +359,13 @@ pub const MAPS: [&str; 18] = [
 /// (`gc_map::GROWN`).
 pub const DEFAULT_MAP: usize = 10;
 
-/// The Conquest maps the lobby offers, and how many players each is for:
+/// The Conquest maps the lobby offers, and how many starts each has:
 /// first the shipped maps (the game makes them from the shipped maps of
-/// the same names), then the big six-player Wilds maps made from the map
-/// seed, as wild as the seed picks or as plains, mixed or wild land.
+/// the same names), then the Wilds maps made from the map seed (with up to
+/// six starts),
+/// as wild as the seed picks or as plains, mixed or wild land, at the
+/// lobby's size ([`MapSize::conquest_tiles`]), which caps the players
+/// ([`LobbySettings::max_players`]).
 pub const CONQUEST_MAPS: [&str; 6] = [
     "Ribcage Pass",
     "The Four Teeth",
@@ -345,8 +375,8 @@ pub const CONQUEST_MAPS: [&str; 6] = [
     "Classic: Wild",
 ];
 pub const CONQUEST_MAP_PLAYERS: [usize; 6] = [2, 4, 6, 6, 6, 6];
-/// How many of [`CONQUEST_MAPS`] are shipped maps, which the map seed
-/// doesn't change; the rest are made from it.
+/// How many of [`CONQUEST_MAPS`] are shipped maps, which the map seed and
+/// size don't change; the rest are made from them.
 pub const SHIPPED_CONQUEST_MAPS: usize = 2;
 
 /// The seed Conquest map `choice` is made from: the map seed for a made
@@ -356,6 +386,16 @@ pub fn conquest_map_seed(choice: usize, map_seed: u64) -> u64 {
         0
     } else {
         map_seed
+    }
+}
+
+/// The size Conquest map `choice` is made at: `tiles` for a made map, 0
+/// for a shipped one, which has its own (so a new size doesn't remake it).
+pub fn conquest_map_tiles(choice: usize, tiles: u32) -> u32 {
+    if choice < SHIPPED_CONQUEST_MAPS {
+        0
+    } else {
+        tiles
     }
 }
 
@@ -492,7 +532,7 @@ pub struct LobbySettings {
     pub on_drop: OnDrop,
     /// Field Battle: points each side raises its army with.
     pub budget: Budget,
-    /// Field Battle: how big the map is.
+    /// How big the map is (a Field Battle's, or a made Conquest map's).
     pub map_size: MapSize,
     /// Whether champions may duel between the lines before a battle with a
     /// computer player (a chance, not every time).
@@ -515,7 +555,7 @@ impl Default for LobbySettings {
             victory: Victory::Both,
             on_drop: OnDrop::Wait,
             budget: Budget::Battle,
-            map_size: MapSize::Standard,
+            map_size: MapSize::Medium,
             champions: true,
             time_of_day: TimeOfDay::GoldenHour,
             weather: WeatherSetting::Fair,
@@ -544,12 +584,38 @@ impl LobbySettings {
         }
     }
 
-    /// The most players the picked map has room for.
+    /// The most players the picked map has room for: a made Conquest
+    /// map's size caps its six starts.
     pub fn max_players(&self) -> usize {
         match self.mode {
             GameMode::FieldBattle => MAX_PLAYERS,
-            GameMode::Conquest => CONQUEST_MAP_PLAYERS.get(self.map).copied().unwrap_or(0),
+            GameMode::Conquest => {
+                let starts = CONQUEST_MAP_PLAYERS.get(self.map).copied().unwrap_or(0);
+                if self.made_conquest_map() {
+                    starts.min(self.map_size.conquest_players())
+                } else {
+                    starts
+                }
+            }
         }
+    }
+
+    /// Whether the picked map is a Conquest map made from the seed and
+    /// size (not a shipped one).
+    pub fn made_conquest_map(&self) -> bool {
+        self.mode == GameMode::Conquest && self.map >= SHIPPED_CONQUEST_MAPS
+    }
+
+    /// Whether the Size setting means anything for the picked map: every
+    /// Field Battle map and the made Conquest maps.
+    pub fn has_map_size(&self) -> bool {
+        self.mode == GameMode::FieldBattle || self.made_conquest_map()
+    }
+
+    /// How many tiles a side the picked Conquest map is made at, 0 for a
+    /// shipped map ([`conquest_map_tiles`]).
+    pub fn conquest_tiles(&self) -> u32 {
+        conquest_map_tiles(self.map, self.map_size.conquest_tiles())
     }
 }
 
@@ -656,10 +722,12 @@ impl LobbyState {
         }
         let most = self.settings.max_players();
         if players > most {
-            return Some(format!(
-                "{} is for at most {most} players",
-                self.settings.map_name()
-            ));
+            let map = if self.settings.made_conquest_map() {
+                format!("A {} map", self.settings.map_size.name())
+            } else {
+                self.settings.map_name().to_string()
+            };
+            return Some(format!("{map} is for at most {most} players"));
         }
         if let Some((name, version)) = self.version_mismatches().first() {
             return Some(format!(
@@ -1028,9 +1096,27 @@ mod tests {
     fn standard_maps_grow_with_the_players_and_small_keeps_the_old_sizes() {
         let sizes = |size| [2, 3, 4, 5, 6].map(|p| field_map_tiles(size, p));
         assert_eq!(sizes(MapSize::Small), [256, 256, 256, 320, 320]);
-        assert_eq!(sizes(MapSize::Standard), [512, 640, 640, 768, 768]);
+        assert_eq!(sizes(MapSize::Medium), [512, 640, 640, 768, 768]);
         assert_eq!(sizes(MapSize::Large), [640, 768, 768, 896, 896]);
-        assert_eq!(LobbySettings::default().map_size, MapSize::Standard);
+        assert_eq!(LobbySettings::default().map_size, MapSize::Medium);
+    }
+
+    /// A made Conquest map's size sets its side and caps its players; a
+    /// shipped map keeps its own.
+    #[test]
+    fn conquest_sizes_cap_the_players_on_made_maps_only() {
+        let mut s = LobbySettings::default();
+        s.set_mode(GameMode::Conquest);
+        assert_eq!((s.max_players(), s.conquest_tiles()), (2, 0));
+        s.map = SHIPPED_CONQUEST_MAPS;
+        let caps = MapSize::ALL.map(|z| {
+            s.map_size = z;
+            (s.max_players(), s.conquest_tiles())
+        });
+        assert_eq!(caps, [(4, 320), (4, 448), (6, 640)]);
+        s.map = 1;
+        s.map_size = MapSize::Small;
+        assert_eq!((s.max_players(), s.conquest_tiles()), (4, 0));
     }
 
     #[test]
