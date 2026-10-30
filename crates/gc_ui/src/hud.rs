@@ -270,7 +270,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("L-click", "Select a regiment"),
             ("L-drag", "Box select"),
             ("R-click", "March or attack"),
-            ("R-drag", "Draw the line"),
+            ("R-drag", "Draw the line; Alt: deep"),
             ("Q", "Move, then click"),
             ("W, A", "Attack, advance; Shift queues"),
             ("S", "Workers clear land, then drag"),
