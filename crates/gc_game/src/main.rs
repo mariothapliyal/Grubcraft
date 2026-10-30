@@ -5804,7 +5804,9 @@ impl Running {
     /// where each will stop.
     fn push_routes(&mut self) {
         let mut dots = 0;
-        for &h in &self.selected {
+        // The regiment the mouse rests on shows its route too.
+        let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
+        for h in self.selected.iter().copied().chain(hovered) {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };

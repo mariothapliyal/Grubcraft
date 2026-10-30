@@ -15,9 +15,10 @@ use gc_ui::conquest::{
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HandOverButton,
-    HelpScroll, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection,
-    ShapeChip, SlotState, StatusStrip,
+    HelpScroll, HoverCard, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain,
+    Selection, ShapeChip, SlotState, StatusStrip,
 };
+use gc_ui::orders::{Order as UiOrder, Wait};
 use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
@@ -205,6 +206,9 @@ pub struct HudState {
     /// Conquest's top bar and idle-worker count, and the tick and side
     /// they were read for: they only change on a tick.
     readout: Option<Readout>,
+    /// Your regiment the mouse rests on, whose route shows like a selected
+    /// one's.
+    pub hover_own: Option<gc_sim::RegimentHandle>,
     cards: Vec<Card>,
     view: Vec<[f32; 2]>,
     events: Vec<HudEvent>,
@@ -535,6 +539,7 @@ impl Running {
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
         let mut general = false;
+        let (mut order, mut mixed, mut waiting, mut why) = (None, false, None, 0u16);
         let led = self
             .world
             .generals()
@@ -557,6 +562,19 @@ impl Running {
                 }
                 same &= unit == Some(r.unit);
                 same_icon &= icon == this;
+            }
+            let (this_order, this_wait) = (order_of(r.doing), r.waiting.map(wait_of));
+            if n == 0 {
+                (order, waiting) = (Some(this_order), this_wait);
+            } else {
+                mixed |= order != Some(this_order);
+                if waiting != this_wait {
+                    waiting = None;
+                }
+            }
+            // The reasons of those who waver, together.
+            if r.morale != MoraleState::Steady {
+                why |= r.why;
             }
             n += 1;
             general |= led == Some(h);
@@ -595,6 +613,10 @@ impl Running {
             },
             ground,
             general,
+            order,
+            mixed_orders: mixed,
+            waiting: if mixed { None } else { waiting },
+            why,
             shapes: &[],
         };
         Some((name, selection))
@@ -604,6 +626,30 @@ impl Running {
     /// has nothing to gather, so standing about is not idling.
     fn idle_workers(&self, side: PlayerId) -> impl Iterator<Item = gc_sim::RegimentHandle> + '_ {
         (self.world.idle_workers(side)).filter(|&h| !self.world.builds_only(h))
+    }
+
+    /// The regiment in the world the mouse is over, and whether it is an
+    /// enemy's: a visible enemy block first, else one of yours. `None` over
+    /// the HUD, while dragging a box, or off the window.
+    fn world_hover(&self) -> Option<(gc_sim::RegimentHandle, bool)> {
+        if !self.match_started
+            || self.menu_open
+            || self.input.cursor.is_none()
+            || self.input.left_down.is_some()
+            || self.sandbox.placing
+            || self.hud_wants_mouse()
+        {
+            return None;
+        }
+        let ground = self.ground_under_cursor();
+        let enemy =
+            (self.body_under_cursor(false)).or_else(|| ground.and_then(|p| self.enemy_at(p)));
+        if let Some(h) = enemy {
+            return Some((h, true));
+        }
+        (self.body_under_cursor(true))
+            .or_else(|| ground.and_then(|p| self.nearest_own(p, 4.0)))
+            .map(|h| (h, false))
     }
 
     /// The screen in UI pixels, as the menus see it.
@@ -667,6 +713,8 @@ impl Running {
         }
 
         let now_ms = self.now_ms();
+        let hover = self.world_hover();
+        self.hud.hover_own = hover.filter(|&(_, enemy)| !enemy).map(|(h, _)| h);
         // A replay shows what happened to nobody in particular.
         if self.watching.is_some() {
             self.hud.notes.clear();
@@ -843,6 +891,7 @@ impl Running {
                 },
                 engaged: r.engaged,
                 selected: picked(h),
+                order: Some(order_of(r.doing)),
             });
         }
         hud.view.clear();
@@ -1065,6 +1114,65 @@ impl Running {
             hud.draw.rect(r, [120, 255, 140, 36]);
             hud.draw.border(r, 1, [170, 255, 180, 230]);
         }
+        // Over each selected regiment's banner: what it is doing.
+        if self.ride.is_none() {
+            let zoom = if self.commander {
+                (self.camera.distance / crate::COMMANDER_IN).max(1.0)
+            } else {
+                1.0
+            };
+            let lift = if self.commander {
+                crate::COMMANDER_POLE[1] * zoom + 1.0
+            } else {
+                crate::BANNER_LIFT + crate::BANNER_SIZE[1] + 0.6
+            };
+            let clear = (screen.1 - gc_ui::hud::BAR_HEIGHT) as f32;
+            for &h in &self.selected {
+                let Some(r) = self.world.regiments.get(h) else {
+                    continue;
+                };
+                let p = crate::drawn_position(&self.prev_positions, self.alpha, &r);
+                let at = Vec3::new(p.x, self.heightmap.height_at(p.x, p.y) + lift, p.y);
+                let Some([x, y]) = project_ahead(view_proj, at, screen) else {
+                    continue;
+                };
+                let tab = gc_ui::Rect::new(x as i32 - 9, y as i32 - 18, 18, 18);
+                if tab.x < 0 || tab.right() > screen.0 || (tab.bottom() as f32) > clear {
+                    continue;
+                }
+                if tab.y < gc_ui::hud::TOP_BAR_HEIGHT {
+                    continue;
+                }
+                hud.draw.rect(tab, [230, 214, 168, 235]);
+                hud.draw.border(tab, 1, [43, 30, 18, 255]);
+                gc_ui::icons::icon(
+                    &mut hud.draw,
+                    tab.inset(1),
+                    order_of(r.doing).icon(),
+                    [43, 30, 18, 255],
+                );
+            }
+        }
+        // The regiment the mouse rests on: its card, after the delay.
+        let hover_card = hover.and_then(|(h, enemy)| {
+            let r = self.world.regiments.get(h)?;
+            let stats = &self.units.stats[r.unit as usize];
+            Some(HoverCard {
+                id: h.index,
+                name: &self.units.names[r.unit as usize],
+                enemy,
+                models: r.models,
+                max_models: stats.models,
+                order: order_of(r.doing),
+                waiting: r.waiting.map(wait_of),
+                state: match r.morale {
+                    MoraleState::Steady => CardState::Steady,
+                    MoraleState::Wavering => CardState::Wavering,
+                    MoraleState::Routing | MoraleState::Shattered => CardState::Routing,
+                },
+                why: r.why,
+            })
+        });
         hud.events.clear();
         let data = HudData {
             grid: &grid,
@@ -1119,6 +1227,8 @@ impl Running {
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
+        hud.hud
+            .hover_card(&mut hud.draw, screen, cursor, now_ms, hover_card.as_ref());
         self.hud.card_labels = card_labels;
         self.hud.card_details = card_details;
         self.hud.power_names = power_names;
@@ -1812,6 +1922,33 @@ fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
     [r, g, b]
 }
 
+/// What the simulation says a regiment is doing, as the UI's order.
+fn order_of(d: gc_sim::Doing) -> UiOrder {
+    use gc_sim::Doing;
+    match d {
+        Doing::Holding => UiOrder::Holding,
+        Doing::Marching => UiOrder::Marching,
+        Doing::ForcedMarch => UiOrder::ForcedMarch,
+        Doing::Attacking => UiOrder::Attacking,
+        Doing::Fighting => UiOrder::Fighting,
+        Doing::Braced => UiOrder::Braced,
+        Doing::FallingBack => UiOrder::FallingBack,
+        Doing::Running => UiOrder::Running,
+    }
+}
+
+/// What the simulation says holds a regiment up, as the UI's wait.
+fn wait_of(w: gc_sim::Waiting) -> Wait {
+    use gc_sim::Waiting;
+    match w {
+        Waiting::Pinned => Wait::Pinned,
+        Waiting::DrivenBack => Wait::DrivenBack,
+        Waiting::FriendInTheWay => Wait::FriendInTheWay,
+        Waiting::FilingThrough => Wait::FilingThrough,
+        Waiting::Trapped => Wait::Trapped,
+    }
+}
+
 /// The picture for a troop: a bow, a spear or a sword by how it fights.
 fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     if s.range.raw() > 0 {
@@ -2048,6 +2185,13 @@ fn preview_hero(color: [u8; 3]) -> HeroPanel<'static> {
     }
 }
 
+/// Where the world point `p` appears on a screen of `screen` UI pixels;
+/// `None` when it is behind the camera.
+fn project_ahead(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> Option<[f32; 2]> {
+    let clip = view_proj * p.extend(1.0);
+    (clip.w > 1e-4).then(|| project(view_proj, p, screen))
+}
+
 /// Where the ground point `p` appears on a screen of `screen` UI pixels, which
 /// may be far outside it. A point behind the camera lands on the opposite
 /// side of where it projects, so the arrow still points the right way.
@@ -2131,6 +2275,58 @@ mod tests {
         assert!((1..=posts).contains(&marked(&conquest)));
         let lair = site_colour(Kind::CreepCamp).unwrap();
         assert!(!minimap_terrain(&conquest).colors.contains(&lair));
+    }
+
+    #[test]
+    fn the_uis_reason_bits_are_the_simulations() {
+        use gc_sim::morale as m;
+        use gc_ui::orders::why;
+        assert_eq!(
+            [
+                (why::FLANK, m::WHY_FLANK),
+                (why::REAR, m::WHY_REAR),
+                (why::PINNED, m::WHY_PINNED),
+                (why::OUTNUMBERED, m::WHY_OUTNUMBERED),
+                (why::LOSSES, m::WHY_LOSSES),
+                (why::BLOODIED, m::WHY_BLOODIED),
+                (why::ALLY_BROKE, m::WHY_ALLY_BROKE),
+                (why::GENERAL, m::WHY_GENERAL),
+                (why::AMBUSH, m::WHY_AMBUSH),
+                (why::FIRE, m::WHY_FIRE),
+                (why::WATER, m::WHY_WATER),
+                (why::CHAMPION, m::WHY_CHAMPION),
+            ]
+            .iter()
+            .filter(|(ui, sim)| ui != sim)
+            .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn every_doing_and_waiting_has_a_word() {
+        use gc_sim::{Doing, Waiting};
+        for d in [
+            Doing::Holding,
+            Doing::Marching,
+            Doing::ForcedMarch,
+            Doing::Attacking,
+            Doing::Fighting,
+            Doing::Braced,
+            Doing::FallingBack,
+            Doing::Running,
+        ] {
+            assert!(!order_of(d).word().is_empty());
+        }
+        for w in [
+            Waiting::Pinned,
+            Waiting::DrivenBack,
+            Waiting::FriendInTheWay,
+            Waiting::FilingThrough,
+            Waiting::Trapped,
+        ] {
+            assert!(!wait_of(w).note().is_empty());
+        }
     }
 
     #[test]

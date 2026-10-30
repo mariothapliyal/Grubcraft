@@ -18,6 +18,7 @@ use crate::conquest::{self, Block, NodeDot, StructurePanel, TipsCard, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_height, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
+use crate::orders::{self, Order, Wait};
 use crate::placer::{self, PlacePicker};
 use crate::powers::{self, PowerButton};
 use crate::ui::{Press, theme};
@@ -171,6 +172,9 @@ pub struct Card {
     pub state: CardState,
     pub engaged: bool,
     pub selected: bool,
+    /// What it is doing, shown as a small picture on the card; `None`
+    /// shows nothing.
+    pub order: Option<Order>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -228,6 +232,14 @@ pub struct Selection<'a> {
     pub ground: &'a str,
     /// The side's general rides with one of them (docs/37-commander.md).
     pub general: bool,
+    /// What they are doing; `None` with nothing to say.
+    pub order: Option<Order>,
+    /// Several regiments selected, each doing something different.
+    pub mixed_orders: bool,
+    /// What holds them up (one regiment, or all alike).
+    pub waiting: Option<Wait>,
+    /// Why they waver, as `orders::why` bits (the shaken ones' together).
+    pub why: u16,
     /// The army shapes to choose from, as a row of chips along the tray's top
     /// edge. Empty for none, and the row only shows for two or more
     /// regiments.
@@ -501,6 +513,26 @@ pub struct Hud {
     tip: Option<Tip>,
     /// Where the tooltip was last drawn.
     tooltip: Option<Rect>,
+    /// The regiment in the world the mouse rests on and since when (ms),
+    /// for the hover card.
+    world_hover: Option<(u32, u64)>,
+}
+
+/// A regiment in the world under the mouse, for the hover card.
+#[derive(Clone, Copy, Debug)]
+pub struct HoverCard<'a> {
+    /// The game's name for this regiment; a new one restarts the delay.
+    pub id: u32,
+    pub name: &'a str,
+    /// Not yours.
+    pub enemy: bool,
+    pub models: u16,
+    pub max_models: u16,
+    pub order: Order,
+    pub waiting: Option<Wait>,
+    pub state: CardState,
+    /// Why it wavers, as `orders::why` bits.
+    pub why: u16,
 }
 
 /// Widget id of the Help button's tooltip; grid slots use their index.
@@ -556,6 +588,10 @@ pub(crate) fn muted_ink() -> Color {
 pub(crate) fn linen_light() -> Color {
     mix(theme::LINEN, [255, 250, 230, 255], 0.45)
 }
+
+/// Dark amber for the words about a wavering regiment: weld is too pale to
+/// read on linen.
+const WAVER_INK: Color = [140, 92, 12, 255];
 
 pub(crate) fn rgb(c: [u8; 3]) -> Color {
     [c[0], c[1], c[2], 255]
@@ -745,6 +781,96 @@ impl Hud {
             draw.text(r.x + PAD, ty, 1, muted_ink(), &tip.note);
         }
         self.tooltip = Some(r);
+    }
+
+    /// The card for the regiment in the world under the mouse, once the
+    /// mouse has rested on it for [`TOOLTIP_DELAY_MS`]. Call it after
+    /// [`Hud::frame`] with `None` whenever the mouse is over the HUD, a menu
+    /// or nothing. Returns where the card was drawn.
+    pub fn hover_card(
+        &mut self,
+        draw: &mut DrawList,
+        screen: (i32, i32),
+        mouse: (i32, i32),
+        now_ms: u64,
+        card: Option<&HoverCard>,
+    ) -> Option<Rect> {
+        let Some(c) = card else {
+            self.world_hover = None;
+            return None;
+        };
+        let since = match self.world_hover {
+            Some((id, since)) if id == c.id => since,
+            _ => {
+                self.world_hover = Some((c.id, now_ms));
+                now_ms
+            }
+        };
+        if now_ms.wrapping_sub(since) < TOOLTIP_DELAY_MS {
+            return None;
+        }
+        const PAD: i32 = 9;
+        const ROW: i32 = 18;
+        let title = if c.enemy {
+            format!("{} (enemy)", c.name)
+        } else {
+            c.name.to_string()
+        };
+        let count = format!("{} of {} soldiers", c.models, c.max_models);
+        let doing = orders::order_text(c.order, c.waiting);
+        let (morale, morale_color) = match c.state {
+            CardState::Steady => ("Morale: steady", theme::WOAD),
+            CardState::Wavering => ("Morale: wavering", WAVER_INK),
+            CardState::Routing => ("Morale: routing", theme::MADDER),
+        };
+        let why = if c.state == CardState::Steady {
+            None
+        } else {
+            orders::why_text(c.why)
+        };
+        let chars = [
+            title.chars().count(),
+            count.chars().count(),
+            doing.chars().count() + 2,
+            morale.chars().count(),
+            why.as_ref().map_or(0, |w| w.chars().count()),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(1);
+        let lines = 4 + i32::from(why.is_some());
+        let w = chars as i32 * CELL_W + 2 * PAD;
+        let h = lines * ROW + 2 * PAD - 2;
+        let x = if mouse.0 + 16 + w + 4 > screen.0 {
+            mouse.0 - 12 - w
+        } else {
+            mouse.0 + 16
+        };
+        let x = x.clamp(4, (screen.0 - w - 4).max(4));
+        let y = (mouse.1 + 18).clamp(4, (screen.1 - h - 4).max(4));
+        let r = Rect::new(x, y, w, h);
+        draw.shadow(r, 3);
+        draw.boxed(r, linen_light(), 2);
+        draw.border(r.inset(3), 1, theme::WELD);
+        let (tx, mut ty) = (r.x + PAD, r.y + PAD - 1);
+        draw.text_bold(tx, ty, 1, theme::MADDER, &title);
+        ty += ROW;
+        draw.text(tx, ty, 1, theme::INK, &count);
+        ty += ROW;
+        icons::icon(
+            draw,
+            Rect::new(tx, ty - 1, 14, 14),
+            c.order.icon(),
+            theme::INK,
+        );
+        draw.text_bold(tx + 18, ty, 1, theme::INK, &doing);
+        ty += ROW;
+        draw.text(tx, ty, 1, morale_color, morale);
+        if let Some(why) = why {
+            ty += ROW;
+            draw.text(tx, ty, 1, muted_ink(), &why);
+        }
+        Some(r)
     }
 
     /// The top bar: the economy (Conquest), then the status chips and the
@@ -1435,6 +1561,36 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
         draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
         y += 22;
     }
+    // What they are doing, and what holds them up.
+    if s.mixed_orders || s.order.is_some() {
+        let text = match s.order {
+            Some(order) if !s.mixed_orders => orders::order_text(order, s.waiting),
+            _ => "Mixed orders".to_string(),
+        };
+        let ink = if s.state == CardState::Routing {
+            theme::MADDER
+        } else {
+            theme::INK
+        };
+        if let Some(order) = s.order.filter(|_| !s.mixed_orders) {
+            icons::icon(draw, Rect::new(x, y - 1, 14, 14), order.icon(), ink);
+        } else {
+            icons::icon(draw, Rect::new(x, y - 1, 14, 14), Icon::Flag, ink);
+        }
+        draw.text_bold(x + 18, y, 1, ink, &fit(&text, chars.saturating_sub(2)));
+        y += 16;
+    }
+    if s.state != CardState::Steady
+        && let Some(why) = orders::why_text(s.why)
+    {
+        let color = if s.state == CardState::Routing {
+            theme::MADDER
+        } else {
+            WAVER_INK
+        };
+        draw.text(x, y, 1, color, &fit(&why, chars));
+        y += 16;
+    }
     if !s.formation.is_empty() {
         draw.text(
             x,
@@ -1694,6 +1850,20 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     draw_portrait(draw, portrait, c.color, &c.name, 2);
     if c.engaged {
         draw.border(portrait, 2, theme::MADDER);
+    }
+    // What it is doing, in the portrait's top left corner; a shaken one
+    // gets an "!" in the opposite corner.
+    if let Some(order) = c.order {
+        let tab = Rect::new(portrait.x + 2, portrait.y + 2, 14, 14);
+        draw.rect(tab, linen_light());
+        draw.border(tab, 1, theme::INK);
+        icons::icon(draw, tab.inset(1), order.icon(), theme::INK);
+    }
+    if c.state == CardState::Wavering {
+        let tab = Rect::new(portrait.right() - 14, portrait.y + 2, 12, 14);
+        draw.rect(tab, theme::WELD);
+        draw.border(tab, 1, theme::INK);
+        draw.text_centered(tab, 1, theme::INK, "!");
     }
     let chars = (inner.w / 8).max(1) as usize;
     let mut y = portrait.bottom() + 3;
@@ -2748,6 +2918,7 @@ mod tests {
             ground: "In mud: slow, no charges",
             general: false,
             shapes: &[],
+            ..Selection::default()
         }
     }
 
@@ -2838,6 +3009,154 @@ mod tests {
             ..selection()
         };
         assert!(has(&with_selection(Some(broken), &[card(1)]), "Routing"));
+    }
+
+    /// Whether `d` drew `text` (spaces ignored) as a run of glyphs.
+    fn drew(d: &DrawList, text: &str) -> bool {
+        let g: Vec<u32> = text
+            .chars()
+            .filter(|c| *c != ' ')
+            .map(|c| u32::from(c as u8 - b' '))
+            .collect();
+        d.quads
+            .windows(g.len())
+            .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
+    }
+
+    #[test]
+    fn the_panel_says_what_the_regiment_is_doing_and_why_it_wavers() {
+        let base = Selection {
+            order: Some(Order::Marching),
+            ..selection()
+        };
+        let d = with_selection(Some(base), &[card(1)]);
+        assert!(drew(&d, "Marching") && !drew(&d, "Why:"));
+        let waiting = Selection {
+            waiting: Some(Wait::FriendInTheWay),
+            ..base
+        };
+        let d = with_selection(Some(waiting), &[card(1)]);
+        assert!(drew(&d, "Marching(waiting:friendintheway)"));
+        let mixed = Selection {
+            mixed_orders: true,
+            regiments: 3,
+            ..base
+        };
+        assert!(drew(
+            &with_selection(Some(mixed), &[card(1)]),
+            "Mixedorders"
+        ));
+        // Steady regiments give no reasons, wavering ones give two at most.
+        let steady = Selection {
+            why: orders::why::FLANK,
+            ..base
+        };
+        assert!(!drew(&with_selection(Some(steady), &[card(1)]), "Why:"));
+        let shaken = Selection {
+            state: CardState::Wavering,
+            why: orders::why::FIRE | orders::why::FLANK | orders::why::OUTNUMBERED,
+            ..base
+        };
+        let d = with_selection(Some(shaken), &[card(1)]);
+        assert!(drew(&d, "Why:flanked,outnumbered") && !drew(&d, "burning"));
+    }
+
+    #[test]
+    fn a_card_carries_a_small_order_picture_and_a_wavering_mark() {
+        let plain = with_selection(None, &[card(1)]);
+        let doing = Card {
+            order: Some(Order::Fighting),
+            ..card(1)
+        };
+        let with_icon = with_selection(None, std::slice::from_ref(&doing));
+        assert!(with_icon.quads.len() > plain.quads.len() + 4);
+        let shaken = Card {
+            state: CardState::Wavering,
+            ..doing
+        };
+        let d = with_selection(None, &[shaken]);
+        assert!(drew(&d, "!"));
+        assert!(!drew(&with_icon, "!"));
+    }
+
+    fn hover_of(id: u32) -> HoverCard<'static> {
+        HoverCard {
+            id,
+            name: "Yari Ashigaru",
+            enemy: false,
+            models: 40,
+            max_models: 60,
+            order: Order::Fighting,
+            waiting: Some(Wait::Pinned),
+            state: CardState::Wavering,
+            why: orders::why::REAR | orders::why::FLANK | orders::why::FIRE,
+        }
+    }
+
+    #[test]
+    fn the_hover_card_waits_then_lists_the_order_morale_and_reasons() {
+        let mut hud = Hud::default();
+        let mut draw = DrawList::default();
+        let c = hover_of(7);
+        assert!(
+            hud.hover_card(&mut draw, SCREEN, (300, 300), 1000, Some(&c))
+                .is_none(),
+            "not at once"
+        );
+        let later = 1000 + TOOLTIP_DELAY_MS;
+        let r = hud
+            .hover_card(&mut draw, SCREEN, (300, 300), later, Some(&c))
+            .expect("shown after the delay");
+        assert!(r.x >= 0 && r.y >= 0 && r.right() <= SCREEN.0 && r.bottom() <= SCREEN.1);
+        assert!(drew(&draw, "YariAshigaru") && !drew(&draw, "(enemy)"));
+        assert!(drew(&draw, "40of60soldiers"));
+        assert!(drew(&draw, "Fighting(pinned)"));
+        assert!(drew(&draw, "Morale:wavering"));
+        assert!(drew(&draw, "Why:rearattack,flanked"));
+        // A different regiment starts the wait again.
+        let mut draw = DrawList::default();
+        let other = hover_of(8);
+        assert!(
+            hud.hover_card(&mut draw, SCREEN, (300, 300), later + 10, Some(&other))
+                .is_none()
+        );
+        // So does leaving, and an enemy is marked as one.
+        assert!(
+            hud.hover_card(&mut draw, SCREEN, (300, 300), later + 20, None)
+                .is_none()
+        );
+        let foe = HoverCard {
+            enemy: true,
+            state: CardState::Steady,
+            ..other
+        };
+        let t = later + 20;
+        hud.hover_card(&mut draw, SCREEN, (300, 300), t, Some(&foe));
+        let mut draw = DrawList::default();
+        hud.hover_card(&mut draw, SCREEN, (300, 300), t + 400, Some(&foe));
+        assert!(drew(&draw, "(enemy)") && drew(&draw, "Morale:steady"));
+        assert!(
+            !drew(&draw, "Why:"),
+            "a steady regiment has nothing to explain"
+        );
+    }
+
+    #[test]
+    fn the_hover_card_stays_on_the_screen_at_the_corner() {
+        let mut hud = Hud::default();
+        let mut draw = DrawList::default();
+        let c = hover_of(1);
+        hud.hover_card(&mut draw, SCREEN, (SCREEN.0 - 2, SCREEN.1 - 2), 0, Some(&c));
+        let r = hud
+            .hover_card(
+                &mut draw,
+                SCREEN,
+                (SCREEN.0 - 2, SCREEN.1 - 2),
+                TOOLTIP_DELAY_MS,
+                Some(&c),
+            )
+            .expect("shown");
+        assert!(r.x >= 0 && r.y >= 0 && r.right() <= SCREEN.0 && r.bottom() <= SCREEN.1);
     }
 
     const NAMES: [&str; 8] = [
