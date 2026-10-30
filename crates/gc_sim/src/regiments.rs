@@ -97,8 +97,9 @@ macro_rules! regiment_fields {
             /// `k % files`; rank 0 is the front).
             pub(crate) hp: Vec<u16>,
             /// Why its nerve is going: `morale::WHY_` bits, for the screen
-            /// only. Derived each check, so not hashed, copied or
-            /// snapshotted.
+            /// only. Nothing in the sim reads it, so it is kept out of the
+            /// hash and snapshots (a loaded game shows no reasons until the
+            /// next knock or check).
             pub(crate) why: Vec<u16>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
@@ -131,6 +132,7 @@ macro_rules! regiment_fields {
             fn copy_slot(&mut self, from: &Regiments, i: usize) {
                 let m = MAX_MODELS as usize;
                 self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
+                self.why[i] = from.why[i];
                 $(self.$name[i] = from.$name[i];)*
             }
 
@@ -1060,10 +1062,20 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
-            why: self.why[i],
+        }
+    }
+
+    /// What regiment `h` is doing, what holds it up and why its nerve is
+    /// going, for the screen (docs/29, "Clear orders and feedback"). Kept
+    /// out of [`RegimentView`] so the sim's and the AI's many reads of it
+    /// don't pay for it.
+    pub fn feedback(&self, h: RegimentHandle) -> Option<Feedback> {
+        let i = self.resolve(h)?;
+        Some(Feedback {
             doing: self.doing(i),
             waiting: self.waiting(i),
-        }
+            why: self.why[i],
+        })
     }
 
     /// What regiment `i` is doing, for the screen.
@@ -1385,14 +1397,20 @@ pub struct RegimentView {
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).
     pub sung: bool,
-    /// Why its nerve is going: [`morale`]'s `WHY_` bits (flanked, rear,
-    /// outnumbered, ally broke nearby and so on). Shown while it wavers or
-    /// runs.
-    pub why: u16,
+}
+
+/// What a regiment is doing and why, as the screen shows it (see
+/// [`Regiments::feedback`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Feedback {
     /// What it is doing.
     pub doing: Doing,
     /// What is holding it up, if anything.
     pub waiting: Option<Waiting>,
+    /// Why its nerve is going: [`morale`]'s `WHY_` bits (flanked, rear,
+    /// outnumbered, ally broke nearby and so on). Shown while it wavers or
+    /// runs.
+    pub why: u16,
 }
 
 /// What a regiment is doing, as the screen shows it (docs/29, "Clear orders

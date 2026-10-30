@@ -369,13 +369,24 @@ fn local_strength(
 /// point: its own next check decides whether it breaks, and a gain may go
 /// above its ceiling until that check caps it. Routers and regiments that
 /// never rout are left alone.
-/// A loss is booked under `why` (one of the `WHY_` bits, or 0).
-pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16, why: u16) {
+pub(crate) fn shift(regs: &mut Regiments, i: usize, points: i16) {
     adjust(
         &mut regs.morale[i],
         &mut regs.morale_state[i],
         &mut regs.why[i],
         points,
+        0,
+    );
+}
+
+/// Regiment `i` loses `points` of morale at once, as [`shift`] does, and
+/// the screen is told why: one of the `WHY_` bits.
+pub(crate) fn shake(regs: &mut Regiments, i: usize, points: i16, why: u16) {
+    adjust(
+        &mut regs.morale[i],
+        &mut regs.morale_state[i],
+        &mut regs.why[i],
+        -points,
         why,
     );
 }

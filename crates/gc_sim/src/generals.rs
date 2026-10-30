@@ -348,7 +348,7 @@ fn speak(regs: &mut Regiments, combat: &Combat, stances: &Stances, i: usize, tic
     let owner = regs.owner[i];
     for j in 0..regs.alive.len() {
         if regs.alive[j] && regs.owner[j] == owner && regs.heartened_until[j] == until {
-            morale::shift(regs, j, SPEECH, 0);
+            morale::shift(regs, j, SPEECH);
         }
     }
 }
@@ -368,15 +368,15 @@ fn fall(regs: &mut Regiments, units: &[UnitStats], stances: &Stances, g: &Genera
                     regs.disorder(j);
                 }
             } else {
-                morale::shift(
+                morale::shake(
                     regs,
                     j,
-                    if close { -PANIC } else { -PANIC_FAR },
+                    if close { PANIC } else { PANIC_FAR },
                     morale::WHY_GENERAL,
                 );
             }
         } else if regs.engaged[j] == Some(g.regiment) && stances.hostile(regs.owner[j], g.party) {
-            morale::shift(regs, j, FELLED_BOOST, 0);
+            morale::shift(regs, j, FELLED_BOOST);
         }
     }
 }

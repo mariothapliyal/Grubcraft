@@ -72,7 +72,7 @@ pub use morale::MoraleState;
 use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
-pub use regiments::{Doing, Order, RegimentHandle, RegimentView, Regiments, Waiting};
+pub use regiments::{Doing, Feedback, Order, RegimentHandle, RegimentView, Regiments, Waiting};
 pub use stances::Stances;
 use structures::Work;
 pub use structures::{
@@ -2812,10 +2812,10 @@ impl World {
             self.regiments.vanish_from_fight(i);
             self.leave_off(h);
             self.regiments.disorder(i);
-            morale::shift(
+            morale::shake(
                 &mut self.regiments,
                 i,
-                -flash::SWEPT_AWAY_MORALE,
+                flash::SWEPT_AWAY_MORALE,
                 morale::WHY_WATER,
             );
             let (cx, cy) = self.flood.flash.carried(&self.terrain, x, y);

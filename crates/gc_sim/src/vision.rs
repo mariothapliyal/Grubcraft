@@ -719,9 +719,9 @@ impl Vision {
         volley: bool,
     ) {
         if volley {
-            morale::shift(regs, j, -VOLLEY_SHOCK, morale::WHY_AMBUSH);
+            morale::shake(regs, j, VOLLEY_SHOCK, morale::WHY_AMBUSH);
         } else {
-            morale::shift(regs, j, -AMBUSH_SHOCK, morale::WHY_AMBUSH);
+            morale::shake(regs, j, AMBUSH_SHOCK, morale::WHY_AMBUSH);
             self.off_guard[j] = OFF_GUARD_TICKS;
             morale::shake_friends(
                 regs,

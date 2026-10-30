@@ -56,7 +56,7 @@ fn run(w: &mut World, seconds: u32) {
 fn a_regiment_shows_what_it_is_doing() {
     let mut w = world();
     let h = spawn(&mut w, 0, SPEARS, 100, 100, NORTH);
-    assert_eq!(w.regiments.get(h).unwrap().doing, Doing::Holding);
+    assert_eq!(w.regiments.feedback(h).unwrap().doing, Doing::Holding);
     w.tick(&[PlayerCommand {
         player: 0,
         command: Command::MoveTo {
@@ -67,7 +67,7 @@ fn a_regiment_shows_what_it_is_doing() {
             pace: Fx::ZERO,
         },
     }]);
-    let r = w.regiments.get(h).unwrap();
+    let r = w.regiments.feedback(h).unwrap();
     assert_eq!(r.doing, Doing::Marching);
     assert_eq!(r.waiting, None);
 }
@@ -78,7 +78,7 @@ fn a_regiment_hit_from_behind_says_so() {
     let skitters = spawn(&mut w, 1, SKITTERS, 100, 100, NORTH);
     spawn(&mut w, 0, SPEARS, 100, 103, NORTH);
     run(&mut w, 4);
-    let r = w.regiments.get(skitters).unwrap();
+    let r = w.regiments.feedback(skitters).unwrap();
     assert_eq!(r.doing, Doing::Fighting);
     // By its first check it is already turning, so the blows land on its
     // flank; either way the screen says it was struck from the side.
@@ -97,10 +97,13 @@ fn routers_keep_their_reasons_and_friends_hear_of_it() {
         }
         w.tick(&[]);
     }
-    let r = w.regiments.get(skitters).unwrap();
-    assert_eq!(r.morale, MoraleState::Routing);
+    assert_eq!(
+        w.regiments.get(skitters).unwrap().morale,
+        MoraleState::Routing
+    );
+    let r = w.regiments.feedback(skitters).unwrap();
     assert_eq!(r.doing, Doing::Running);
     assert_ne!(r.why, 0, "a router shows why it broke");
-    let f = w.regiments.get(friend).unwrap();
+    let f = w.regiments.feedback(friend).unwrap();
     assert_ne!(f.why & WHY_ALLY_BROKE, 0, "{f:?}");
 }
