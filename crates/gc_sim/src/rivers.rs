@@ -312,6 +312,18 @@ fn fronts_rise<'a>(
         .unwrap_or(0)
 }
 
+/// How far stretch `here`'s water stands above the line at `reach`: its
+/// swell and the highest of `fronts` there.
+fn water_rise<'a>(
+    stretches: &[Stretch],
+    swell: &[u16],
+    fronts: impl IntoIterator<Item = &'a Front>,
+    here: u16,
+    reach: u16,
+) -> u16 {
+    swell[usize::from(here)].saturating_add(fronts_rise(stretches, fronts, here, reach))
+}
+
 impl Rivers {
     /// The rivers of `terrain`'s map, `map_tiles` a side, and which of
     /// the `fords` and summer fords (`shallows`), as `(y, x)` tiles, lie
@@ -620,10 +632,7 @@ impl Rivers {
     /// How far its store lifts the water of the stretch at tile `(x, y)`
     /// (0 off the rivers).
     pub fn swell(&self, x: i32, y: i32) -> u16 {
-        crate::terrain::index_in(self.side, x, y)
-            .map(|i| self.stretch_of[i])
-            .filter(|&s| s != NONE)
-            .map_or(0, |s| self.swell[usize::from(s)])
+        self.stretch_at(x, y).map_or(0, |s| self.swell[s])
     }
 
     /// The group of ford tile `(x, y)`, if a river's.
@@ -669,10 +678,10 @@ impl Rivers {
 
     /// How many rivers there are (joined rivers are one).
     pub fn river_count(&self) -> usize {
-        (self.stretches.iter())
-            .map(|s| usize::from(s.river) + 1)
-            .max()
-            .unwrap_or(0)
+        // (The last stretch walked is in the last river.)
+        (self.order.last()).map_or(0, |&s| {
+            usize::from(self.stretches[usize::from(s)].river) + 1
+        })
     }
 
     /// The stretch tile `(x, y)` lies in, if it is on a river.
@@ -709,7 +718,13 @@ impl Rivers {
     /// If `s` is not under [`Rivers::stretches`].
     pub fn reading(&self, s: usize, lift: u16) -> Reading {
         let st = &self.stretches[s];
-        let front = fronts_rise(&self.stretches, self.fronts(), s as u16, st.top);
+        let rise = water_rise(
+            &self.stretches,
+            &self.swell,
+            self.fronts(),
+            s as u16,
+            st.top,
+        );
         // The soonest front still to reach it.
         let coming = (self.fronts())
             .filter(|f| st.holds(&self.stretches[usize::from(f.start)]) && st.top <= f.top)
@@ -724,7 +739,7 @@ impl Rivers {
         Reading {
             river: st.river,
             at: st.at,
-            rise: lift.saturating_add(self.swell[s]).saturating_add(front),
+            rise: lift.saturating_add(rise),
             coming,
         }
     }
@@ -1078,13 +1093,13 @@ impl RiverWater {
         if s == NONE {
             return 0;
         }
-        let front = fronts_rise(
+        water_rise(
             &self.stretches,
+            &self.swell,
             self.fronts.iter().flatten(),
             s,
             self.reach[i],
-        );
-        self.swell[usize::from(s)].saturating_add(front)
+        )
     }
 }
 

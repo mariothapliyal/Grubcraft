@@ -6173,7 +6173,11 @@ impl Running {
         }
         // The river watch looks once a second.
         let mut watched = None;
-        if self.world.tick_count() % gc_sim::TICKS_PER_SECOND == 0 {
+        if self
+            .world
+            .tick_count()
+            .is_multiple_of(gc_sim::TICKS_PER_SECOND)
+        {
             let (fog, reveal) = (&self.fog, self.reveal_all);
             watched = self.river_watch.look(
                 self.world.flood().rivers(),

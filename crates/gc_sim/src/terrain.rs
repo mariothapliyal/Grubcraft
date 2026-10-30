@@ -810,6 +810,13 @@ impl Terrain {
             .map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()))
     }
 
+    /// Whether a river is up at `p` ([`crate::rivers::DEEP_RISE`] or more
+    /// over its line): wading there is slower still. (Asks after the
+    /// river, not whether `p` is in it.)
+    pub fn deep(&self, p: FxVec2) -> bool {
+        self.river_rise(p) >= crate::rivers::DEEP_RISE
+    }
+
     /// How deep the water stands at `p`, height units: the water line and
     /// any river's rise over the ground there (0 on dry ground, frozen
     /// water or a bridge).
@@ -1086,9 +1093,7 @@ impl Terrain {
         let heavy = mass == Mass::Heavy;
         let wet = self.wet(p);
         let wading = match wet {
-            true if self.river_rise(p) >= crate::rivers::DEEP_RISE => {
-                WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100
-            }
+            true if self.deep(p) => WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100,
             true => WADING_SPEED_PERCENT,
             false => 100,
         };

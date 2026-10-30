@@ -735,11 +735,8 @@ impl Running {
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
         let gauge = {
-            let (fog, reveal, t) = (&self.fog, self.reveal_all, self.world.terrain());
-            self.river_watch
-                .chip(self.world.flood().rivers(), t.rise(), t.low(), |tile| {
-                    reveal || fog.sees_tile(tile)
-                })
+            let (fog, reveal) = (&self.fog, self.reveal_all);
+            self.river_watch.chip(|tile| reveal || fog.sees_tile(tile))
         };
         let sky = sky_word(&self.world, gauge);
         let season = season_word(&self.world);
@@ -1907,10 +1904,12 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
-    if terrain.wet(p) && terrain.river_rise(p) >= gc_sim::rivers::DEEP_RISE {
-        "In a river that is up: slower still, no charges"
-    } else if terrain.wet(p) {
-        "In a ford: slow, no charges"
+    if terrain.wet(p) {
+        if terrain.deep(p) {
+            "In a river that is up: slower still, no charges"
+        } else {
+            "In a ford: slow, no charges"
+        }
     } else if terrain.rubbled(p) {
         "In rubble: slow, no charges"
     } else if terrain.soft(p) {

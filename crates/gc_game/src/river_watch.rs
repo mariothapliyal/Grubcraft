@@ -6,10 +6,12 @@
 //! All of it is read from the simulation's rivers
 //! ([`gc_sim::rivers::Rivers::reading`]); none of it changes the match.
 
+use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
 use gc_render::Renderer;
-use gc_sim::rivers::{Band, Gauge, Rivers};
+use gc_sim::flood::FLOOD_RISE;
+use gc_sim::rivers::{Band, Gauge, Reading, Rivers};
 
 /// The first halves and second halves river names are made of.
 const HEADS: [&str; 24] = [
@@ -35,15 +37,17 @@ pub fn name(seed: u64, river: usize) -> String {
 /// rivers of a map (there are never 24) share either half.
 fn name_parts(seed: u64, river: usize) -> (usize, usize) {
     let mix = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 16;
-    let (h0, t0) = ((mix % 24) as usize, ((mix >> 8) % 12) as usize);
+    let (h0, t0) = (
+        (mix % HEADS.len() as u64) as usize,
+        ((mix >> 8) % TAILS.len() as u64) as usize,
+    );
     ((h0 + river) % HEADS.len(), (t0 + river * 5) % TAILS.len())
 }
 
 /// The gauge, in a few words: "in flood".
 pub fn gauge_word(gauge: Gauge) -> &'static str {
     match gauge {
-        Gauge::Low => "low",
-        Gauge::Normal => "normal",
+        Gauge::Low | Gauge::Normal => "",
         Gauge::Up => "up",
         Gauge::InFlood => "in flood",
         Gauge::Bursting => "bursting its banks",
@@ -57,12 +61,13 @@ pub struct RiverWatch {
     /// The map's seed and stretches the names below were made for.
     made_for: Option<(u64, usize)>,
     names: Vec<String>,
-    /// Each stretch's rise when last looked at, and whether it was rising
-    /// (+1), falling (-1) or holding (0) then.
-    last: Vec<u16>,
-    trend: Vec<i8>,
-    /// Per river: whether the crest now coming down it has been told.
+    /// Each stretch's reading when last looked at, and whether its water
+    /// was rising (`Greater`), falling (`Less`) or holding then.
+    last: Vec<(Reading, Ordering)>,
+    /// Per river: whether the crest now coming down it has been told, and
+    /// whether one is still coming (room for each look).
     told: Vec<bool>,
+    coming: Vec<bool>,
 }
 
 impl RiverWatch {
@@ -74,9 +79,9 @@ impl RiverWatch {
     }
 
     /// Look at the rivers once a second: `sees` says whether the viewer
-    /// sees a tile, and `lift` is the map-wide flood's rise. Returns what the river watch tells the viewer,
-    /// if anything: "The Brackwater is rising upriver: its crest reaches a
-    /// ford in about 40 s".
+    /// sees a tile, and `lift` is the map-wide flood's rise. Returns what
+    /// the river watch tells the viewer, if anything: "The Brackwater is
+    /// rising upriver: its crest reaches a ford in about 40 s".
     pub fn look(
         &mut self,
         rivers: &Rivers,
@@ -88,42 +93,36 @@ impl RiverWatch {
         if self.made_for != Some((seed, count)) {
             self.made_for = Some((seed, count));
             self.names = (0..rivers.river_count()).map(|r| name(seed, r)).collect();
-            self.last = vec![0; count];
-            self.trend = vec![0; count];
+            self.last = (0..count)
+                .map(|s| (rivers.reading(s, lift), Ordering::Equal))
+                .collect();
             self.told = vec![false; rivers.river_count()];
         }
-        for s in 0..count {
-            let rise = rivers.reading(s, lift).rise;
-            self.trend[s] = match rise.cmp(&self.last[s]) {
-                core::cmp::Ordering::Greater => 1,
-                core::cmp::Ordering::Less => -1,
-                core::cmp::Ordering::Equal => self.trend[s],
-            };
-            self.last[s] = rise;
+        self.coming.clear();
+        self.coming.resize(self.told.len(), false);
+        for (s, (last, trend)) in self.last.iter_mut().enumerate() {
+            let now = rivers.reading(s, lift);
+            match now.rise.cmp(&last.rise) {
+                Ordering::Equal => {}
+                way => *trend = way,
+            }
+            *last = now;
+            if now.coming.is_some_and(|c| c.crest >= FLOOD_RISE) {
+                self.coming[usize::from(now.river)] = true;
+            }
         }
         // A crest no stretch still waits for has gone by: the next one is
         // news again.
-        let mut coming = vec![false; self.told.len()];
-        for s in 0..count {
-            let r = rivers.reading(s, lift);
-            if r.coming
-                .is_some_and(|c| c.crest >= gc_sim::flood::FLOOD_RISE)
-            {
-                coming[usize::from(r.river)] = true;
-            }
-        }
-        for (told, &c) in self.told.iter_mut().zip(&coming) {
+        for (told, &c) in self.told.iter_mut().zip(&self.coming) {
             *told &= c;
         }
         // Water the viewer sees rising in flood, with a crest still to come
         // down on a ford below it.
-        let mut news = None;
-        for s in 0..count {
-            let here = rivers.reading(s, 0);
+        for (s, &(here, trend)) in self.last.iter().enumerate() {
             let river = usize::from(here.river);
             if self.told[river]
-                || Gauge::of(here.rise, 0) < Gauge::InFlood
-                || self.trend[s] <= 0
+                || here.rise < FLOOD_RISE
+                || trend != Ordering::Greater
                 || !sees(here.at)
             {
                 continue;
@@ -131,12 +130,10 @@ impl RiverWatch {
             let mut below = rivers.below(s);
             let mut soonest = None;
             while let Some(b) = below {
-                if rivers.has_ford(b) {
-                    let c = rivers.reading(b, 0).coming;
-                    if let Some(c) = c.filter(|c| c.crest >= gc_sim::flood::FLOOD_RISE) {
-                        soonest = Some(c);
-                        break;
-                    }
+                let c = self.last[b].0.coming;
+                if let Some(c) = c.filter(|c| rivers.has_ford(b) && c.crest >= FLOOD_RISE) {
+                    soonest = Some(c);
+                    break;
                 }
                 below = rivers.below(b);
             }
@@ -149,39 +146,39 @@ impl RiverWatch {
                 Band::Major => "a major flood, ",
                 _ => "",
             };
-            news = Some(format!(
+            return Some(format!(
                 "{} is rising upriver: {big}its crest reaches a ford in about {} s",
                 capitalised(&self.names[river]),
                 c.seconds
             ));
-            break;
         }
-        news
+        None
     }
 
-    /// The worst river the viewer sees, for the top bar, if any is out of
-    /// the ordinary: "the Brackwater in flood, rising". `lift` is the
-    /// map-wide flood's rise and `low` low water's drop.
-    pub fn chip(
-        &self,
-        rivers: &Rivers,
-        lift: u16,
-        low: u16,
-        sees: impl Fn((i32, i32)) -> bool,
-    ) -> Option<String> {
-        let (gauge, s, river) = (0..rivers.stretches().min(self.last.len()))
-            .map(|s| (s, rivers.reading(s, lift)))
-            .filter(|(_, r)| sees(r.at))
-            .map(|(s, r)| (Gauge::of(r.rise, low), s, r.river))
-            .max_by_key(|&(g, s, _)| (g, self.last[s], core::cmp::Reverse(s)))?;
-        // (Low water is told map-wide, with what it opens.)
+    /// The worst river the viewer sees, for the top bar, if any is up or
+    /// higher, as of the last look: "the Brackwater in flood, rising".
+    /// (Low water is told map-wide, with what it opens.)
+    pub fn chip(&self, sees: impl Fn((i32, i32)) -> bool) -> Option<String> {
+        let (gauge, trend, river) = (self.last.iter().enumerate())
+            .filter(|(_, (r, _))| sees(r.at))
+            .map(|(s, &(r, trend))| {
+                (
+                    Gauge::of(r.rise, 0),
+                    r.rise,
+                    core::cmp::Reverse(s),
+                    trend,
+                    r.river,
+                )
+            })
+            .max_by_key(|&(g, rise, s, _, _)| (g, rise, s))
+            .map(|(g, _, _, trend, river)| (g, trend, river))?;
         if gauge <= Gauge::Normal {
             return None;
         }
-        let way = match self.trend[s] {
-            1 => ", rising",
-            -1 => ", falling",
-            _ => "",
+        let way = match trend {
+            Ordering::Greater => ", rising",
+            Ordering::Less => ", falling",
+            Ordering::Equal => "",
         };
         Some(format!("{} {}{way}", self.name(river), gauge_word(gauge)))
     }
@@ -200,9 +197,10 @@ pub struct RiverPicture {
     made_for: Option<(u32, usize)>,
     /// The river tiles, as `(x, y)`.
     tiles: Vec<(i32, i32)>,
+    /// What the renderer was last given, and room for the next.
     grid: Vec<u8>,
-    /// Whether the renderer was last given any rise, and when.
-    drawn: bool,
+    next: Vec<u8>,
+    /// When it was last brought up to date.
     last: Option<Instant>,
 }
 
@@ -226,16 +224,15 @@ impl RiverPicture {
                 .filter(|&(x, y)| rivers.stretch_at(x, y).is_some())
                 .collect();
             self.grid = vec![0; (side * side) as usize];
+            self.next = self.grid.clone();
             self.last = None;
-            if self.drawn {
-                renderer.set_river_water(None);
-                self.drawn = false;
-            }
+            renderer.set_river_water(None);
         }
         if !terrain.river_up() {
-            if self.drawn {
+            // (Nothing to do when the water is already at its line.)
+            if self.grid.iter().any(|&b| b > 0) {
+                self.grid.fill(0);
                 renderer.set_river_water(None);
-                self.drawn = false;
             }
             return;
         }
@@ -247,7 +244,7 @@ impl RiverPicture {
         }
         self.last = Some(now);
         let n = side as i32;
-        self.grid.fill(0);
+        self.next.fill(0);
         for &(x, y) in &self.tiles {
             let rise = terrain.river_rise(gc_fixed::FxVec2::from_ints(x, y));
             let byte = (rise / 2).min(255) as u8;
@@ -258,14 +255,16 @@ impl RiverPicture {
                 for dx in -1..=1 {
                     let (bx, by) = (x + dx, y + dy);
                     if (0..n).contains(&bx) && (0..n).contains(&by) {
-                        let cell = &mut self.grid[(by * n + bx) as usize];
+                        let cell = &mut self.next[(by * n + bx) as usize];
                         *cell = (*cell).max(byte);
                     }
                 }
             }
         }
-        renderer.set_river_water(Some(&self.grid));
-        self.drawn = true;
+        if self.next != self.grid {
+            std::mem::swap(&mut self.next, &mut self.grid);
+            renderer.set_river_water(Some(&self.grid));
+        }
     }
 }
 
@@ -393,12 +392,12 @@ mod tests {
         let (mut told, mut chips) = (Vec::new(), Vec::new());
         while w.tick_count() < 90 * gc_sim::TICKS_PER_SECOND {
             w.tick(&[]);
-            if w.tick_count() % gc_sim::TICKS_PER_SECOND != 0 {
+            if !w.tick_count().is_multiple_of(gc_sim::TICKS_PER_SECOND) {
                 continue;
             }
             let rivers = w.flood().rivers();
             told.extend(watch.look(rivers, seed, 0, |_| true));
-            chips.extend(watch.chip(rivers, 0, 0, |_| true));
+            chips.extend(watch.chip(|_| true));
         }
         let (river, name) = (name(seed, 0), capitalised(&name(seed, 0)));
         let [news] = told.as_slice() else {
@@ -423,10 +422,10 @@ mod tests {
         let mut blind = RiverWatch::default();
         while w.tick_count() < 90 * gc_sim::TICKS_PER_SECOND {
             w.tick(&[]);
-            if w.tick_count() % gc_sim::TICKS_PER_SECOND == 0 {
+            if w.tick_count().is_multiple_of(gc_sim::TICKS_PER_SECOND) {
                 let rivers = w.flood().rivers();
                 assert_eq!(blind.look(rivers, seed, 0, |_| false), None);
-                assert_eq!(blind.chip(rivers, 0, 0, |_| false), None);
+                assert_eq!(blind.chip(|_| false), None);
             }
         }
     }
