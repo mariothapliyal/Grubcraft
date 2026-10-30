@@ -152,7 +152,7 @@ Mario (2026-10-30): the "living campaign map" idea (regions that keep their hist
 
 **How each feature proves it.** Its pull requests add one remembered-state test (make the change, play on, check the state is still there and its digest is in the hash) and extend a golden replay so a later fight in the same match uses the changed ground. Save games, "Restage this battle" and the Campaign, when they are built, take this same state through `gc_sim::fork` rather than a second record, so nothing has to be remembered twice. The on-screen marks for the new features (broken dam rubble, stranded logs, flood silt) are added to [35](35-ground-marks.md)'s grid by whichever thread builds the feature.
 
-**Who and when.** No thread of its own: each feature's owner (T6 for bridges and walls, the dam and water-engine threads for ideas 24 and 25) builds its part in its own pull requests, at the restart. Haiku helpers update the docs, guides and quick reference (the guide line:  ("the land remembers what was done to it").
+**Who and when.** No thread of its own: each feature's owner (T6 for bridges and walls, the dam and water-engine threads for ideas 24 and 25) builds its part in its own pull requests, at the restart. Haiku helpers update the docs, guides and quick reference (the guide line: "the land remembers what was done to it").
 
 ## Waves
 
