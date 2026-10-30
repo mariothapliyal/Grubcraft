@@ -44,9 +44,30 @@ pub(crate) enum Strike {
     Rest,
 }
 
-/// When the travel direction is further than this from the facing, the
-/// regiment turns on the spot before marching (45 degrees).
-const TURN_BEFORE_MARCH: i32 = 0x2000;
+/// Beyond this angle off its way (90 degrees), a regiment turns on the
+/// spot before marching (see [`wheeling_pace`]).
+const TURN_BEFORE_MARCH: i32 = 0x4000;
+/// Within this angle off its way (45 degrees), it marches at full pace.
+const WHEEL_FULL_PACE: i32 = 0x2000;
+
+/// The pace of a block marching `off` (raw angle units) away from where it
+/// faces: it wheels as it marches, at full pace within [`WHEEL_FULL_PACE`],
+/// easing to half pace at [`TURN_BEFORE_MARCH`]; further off it stands and
+/// turns (`None`). So an order to the side gets it moving at once. In tight
+/// ground, and for a run-up, only the first 45 degrees count (see
+/// `step_movement`).
+fn wheeling_pace(pace: Fx, off: i32) -> Option<Fx> {
+    let off = off.abs();
+    if off <= WHEEL_FULL_PACE {
+        return Some(pace);
+    }
+    if off > TURN_BEFORE_MARCH {
+        return None;
+    }
+    let span = TURN_BEFORE_MARCH - WHEEL_FULL_PACE;
+    let cut = i64::from(pace.raw()) * i64::from(off - WHEEL_FULL_PACE) / i64::from(2 * span);
+    Some(Fx::from_raw(pace.raw() - cut as i32).max(Fx::from_raw(1)))
+}
 /// An order with an explicit facing that ends within this distance is done as
 /// a shuffle: the block turns toward its final facing and steps there at half
 /// pace instead of wheeling round to face the way it walks.
@@ -1125,17 +1146,26 @@ impl Regiments {
                 // Falling back, it backs away all the way, facing its foe.
                 let shuffle = ((last && dist <= SHUFFLE_DISTANCE) || self.falling_back[i] > 0)
                     && self.target_facing[i].is_some();
+                let mut wheeling = false;
                 let step = if shuffle {
                     self.facing[i] =
                         self.facing[i].turn_toward(self.target_facing[i].unwrap(), turn);
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
-                    let off = i32::from(self.facing[i].delta_to(travel));
                     self.facing[i] = self.facing[i].turn_toward(travel, turn);
-                    if off.abs() > TURN_BEFORE_MARCH {
+                    // How far off it still faces after this tick's turn.
+                    let off = i32::from(self.facing[i].delta_to(travel));
+                    wheeling = off.abs() > WHEEL_FULL_PACE;
+                    // In tight ground (a ford, a gate, a pass) it squares up
+                    // first, so it narrows into a column across its way
+                    // rather than going in broadside (see `squeeze`).
+                    if wheeling && !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND) {
                         continue;
                     }
+                    let Some(pace) = wheeling_pace(pace, off) else {
+                        continue;
+                    };
                     pace
                 };
                 let dir = if dist.raw() > 0 {
@@ -1224,7 +1254,8 @@ impl Regiments {
                 }
                 // A run-up is made on ground that bears a charge: wading or
                 // slogging through mud starts it again.
-                if !terrain.bears_charge(self.position[i]) {
+                // Wheeling, its side leads: no run-up either.
+                if wheeling || !terrain.bears_charge(self.position[i]) {
                     self.run_up[i] = 0;
                 } else if self.falling_back[i] == 0 {
                     self.run_up[i] = (self.run_up[i] + 1).min(crate::combat::RUN_UP_TICKS);
