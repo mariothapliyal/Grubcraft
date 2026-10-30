@@ -1046,7 +1046,7 @@ impl Regiments {
             charge: self.charge[i],
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
-            break_at: self.break_at[i],
+            break_at: morale::break_at_now(self, i),
             disorder: self.disorder[i],
             giving_ground: self.driven_pace(i) > 0 && self.engaged[i].is_some(),
             ploughed: if self.plougher(i).is_some() {
@@ -1363,9 +1363,9 @@ pub struct RegimentView {
     pub morale: MoraleState,
     /// Morale in points (0 to 100); meaningless for regiments that never rout.
     pub morale_points: u8,
-    /// Its breaking point: the percent of its full hit points it must be
-    /// down to before it can rout or waver (100 for workers, whose nerve is
-    /// low by design).
+    /// Its breaking point as it stands (lowered while its general is near):
+    /// the percent of its full hit points it must be down to before it can
+    /// rout or waver (100 for workers, whose nerve is low by design).
     pub break_at: u8,
     /// Out of order from pushing through friends: ticks left until it has
     /// re-formed, from [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS)

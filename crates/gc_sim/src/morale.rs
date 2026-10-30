@@ -63,6 +63,7 @@ pub const BREAK_SPREAD: u8 = 5;
 pub const LED_BREAK: u8 = 5;
 /// No fighting regiment ever routs above this share of its hit points.
 pub const BREAK_CAP: u8 = 50;
+const _: () = assert!(LEVY_BREAK + BREAK_SPREAD <= BREAK_CAP);
 /// A regiment wavers only within this many points above its breaking point.
 pub const WAVER_MARGIN: u8 = 10;
 /// Percent of its usual damage a wavering regiment deals.
@@ -191,13 +192,21 @@ pub(crate) fn breaking_point(stats: &UnitStats, index: u32, generation: u16) -> 
     if base >= 100 {
         return base;
     }
-    // A small integer hash of the handle (splitmix-style mixing).
-    let mut h = u64::from(index) << 16 | u64::from(generation);
-    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    h ^= h >> 31;
+    let h = crate::fire::splitmix(u64::from(index) << 16 | u64::from(generation));
     let roll = (h % (2 * u64::from(BREAK_SPREAD) + 1)) as u8;
     base + roll - BREAK_SPREAD
+}
+
+/// Regiment `i`'s breaking point as it stands: its own, lowered while its
+/// side's general is near it.
+pub(crate) fn break_at_now(regs: &Regiments, i: usize) -> u8 {
+    // Workers break at any strength, general or not.
+    let base = regs.break_at[i];
+    if base >= 100 || !regs.led[i] {
+        base
+    } else {
+        base - LED_BREAK
+    }
 }
 
 /// Regiment `i`'s hit points left, in percent of its full strength's.
@@ -271,11 +280,7 @@ fn check(
     }
     // How far it is from breaking: its general near it steadies it.
     let strength = strength_percent(regs, stats, i);
-    let break_at = u32::from(if regs.led[i] {
-        regs.break_at[i].saturating_sub(LED_BREAK)
-    } else {
-        regs.break_at[i]
-    });
+    let break_at = u32::from(break_at_now(regs, i));
     let bloodied = strength <= break_at;
     if bloodied {
         why |= WHY_BLOODIED;

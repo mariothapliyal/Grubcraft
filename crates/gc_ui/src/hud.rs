@@ -1588,15 +1588,19 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let bar_x = x + label_w;
     let bar_w = (w - label_w - pct_w).max(20);
     let health = s.models as f32 / s.max_models.max(1) as f32;
-    for (label, frac, color) in [
-        ("Health", health, health_color(health)),
-        (s.state.label(), f32::from(s.morale) / 100.0, s.state.bar()),
+    for (label, frac, color, mark) in [
+        ("Health", health, health_color(health), s.break_at),
+        (
+            s.state.label(),
+            f32::from(s.morale) / 100.0,
+            s.state.bar(),
+            0,
+        ),
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
-        ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
-        if label == "Health" {
-            break_mark(draw, Rect::new(bar_x, y, bar_w, 12), s.break_at);
-        }
+        let bar = Rect::new(bar_x, y, bar_w, 12);
+        ink_meter(draw, bar, frac, color);
+        break_mark(draw, bar, mark);
         let pct = format!("{}%", (frac * 100.0).round() as i32);
         draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
         y += 22;

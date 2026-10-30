@@ -72,13 +72,18 @@ impl Difficulty {
                 doctrines: &Doctrine::ALL,
                 reserve: true,
                 morale_targeting: false,
-                timed_hammer: true,
+                // Regiments hold until bloodied (docs/05, "Morale"): a
+                // flank charge breaks nobody by shock alone, so cavalry kept
+                // back for an opening is wasted while the lines grind. It
+                // goes in with the line, and the line closes from further
+                // off. Only the Warlord, who rehearses, still times it.
+                timed_hammer: false,
                 save_wavering: true,
                 focus_fire: true,
                 ground: true,
                 read_ground: true,
                 team_play: true,
-                engage_tiles: 10.0,
+                engage_tiles: 15.0,
                 hunt_leash: 55.0,
                 slip_percent: 10,
                 slip_gap_ticks: 30 * TICKS_PER_SECOND,
@@ -91,13 +96,18 @@ impl Difficulty {
                 doctrines: &Doctrine::ALL,
                 reserve: true,
                 morale_targeting: true,
-                timed_hammer: true,
+                // Regiments hold until bloodied (docs/05, "Morale"): a
+                // flank charge breaks nobody by shock alone, so cavalry kept
+                // back for an opening is wasted while the lines grind. It
+                // goes in with the line, and the line closes from further
+                // off. Only the Warlord, who rehearses, still times it.
+                timed_hammer: false,
                 save_wavering: true,
                 focus_fire: true,
                 ground: true,
                 read_ground: true,
                 team_play: true,
-                engage_tiles: 12.0,
+                engage_tiles: 18.0,
                 hunt_leash: 40.0,
                 slip_percent: 2,
                 slip_gap_ticks: 90 * TICKS_PER_SECOND,
@@ -116,7 +126,7 @@ impl Difficulty {
                 ground: true,
                 read_ground: true,
                 team_play: true,
-                engage_tiles: 12.0,
+                engage_tiles: 18.0,
                 hunt_leash: 40.0,
                 slip_percent: 0,
                 slip_gap_ticks: 90 * TICKS_PER_SECOND,

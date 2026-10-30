@@ -114,8 +114,9 @@ pub(crate) enum Purpose {
     /// A Field Battle: the armies' starts, the land and its sites.
     Battle,
     /// Conquest: the same, with each start's economy round it, rich fields
-    /// by the lairs, and the Heart in the middle.
-    Conquest,
+    /// by the lairs, and the Heart in the middle, for four starts (the
+    /// corners) or six.
+    Conquest { six: bool },
 }
 
 /// The Field Battle map a seed makes, `tiles` on a side, as wild as
@@ -138,7 +139,9 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
         },
         scale: w.range(56, 96),
     };
-    let starts = plateaus(tiles as u32);
+    // The plateaus' first four are the corners.
+    let six = !matches!(purpose, Purpose::Conquest { six: false });
+    let starts = plateaus(tiles as u32)[..if six { 6 } else { 4 }].to_vec();
     let mut wilds = Wilds {
         wildness,
         purpose,
@@ -152,18 +155,19 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
         w,
     };
     wilds.layout();
+    let players = wilds.starts.len() as u8;
     let Wilds {
         w, land, objects, ..
     } = wilds;
     let name = match purpose {
         Purpose::Battle => format!("Wilds {seed}"),
-        Purpose::Conquest => format!("Conquest Wilds {seed}"),
+        Purpose::Conquest { .. } => format!("Conquest Wilds {seed}"),
     };
     MapDef {
         name,
         size: SizeClass::Field(tiles),
         symmetry: Symmetry::Rot2,
-        players: starts.len() as u8,
+        players,
         base: BASE,
         water: WATER,
         noise: Some(noise),
@@ -179,7 +183,7 @@ pub(crate) fn make(tiles: i32, seed: u64, wildness: Wildness, purpose: Purpose) 
 struct Wilds<'a> {
     wildness: Wildness,
     purpose: Purpose,
-    starts: [Pos; 6],
+    starts: Vec<Pos>,
     /// Places later things stay clear of, with how far.
     keep: Vec<(Pos, i32)>,
     /// The ways through the barriers, which nothing may block.
@@ -207,7 +211,7 @@ impl Wilds<'_> {
     }
 
     fn conquest(&self) -> bool {
-        self.purpose == Purpose::Conquest
+        matches!(self.purpose, Purpose::Conquest { .. })
     }
 
     /// Keep everything later `r` clear of `at`: nothing blocks, floods or
@@ -237,7 +241,7 @@ impl Wilds<'_> {
         let (n, mid) = (self.w.tiles, self.w.mid);
         // Round every start: open meadow, kept clear.
         let clear = self.clearing();
-        for s in self.starts {
+        for s in self.starts.clone() {
             self.hold(s, clear);
         }
         // On a Conquest map, round the Heart too.
@@ -261,8 +265,15 @@ impl Wilds<'_> {
         // The band across the map, between the north starts and the middle:
         // on plains with ways over all along it; on wilder maps only
         // between the starts, and one more in the middle of a big mixed map.
-        let band_y = (self.starts[0].1 + mid) / 2 + n / 40;
         let wave = n / 24;
+        let mut band_y = (self.starts[0].1 + mid) / 2 + n / 40;
+        if self.conquest() && self.starts.len() == 4 {
+            // A four-start map is small: the band keeps south of the
+            // shares (the natural expansion 33 tiles out, the frontier
+            // slot four fifths of the clearing) however it waves.
+            let share = 36.max(self.clearing() * 85 / 100);
+            band_y = band_y.max(self.starts[0].1 + share + wave + 8);
+        }
         let mut band = vec![(-8, band_y + self.w.range(-wave, wave))];
         let mut x = 0;
         while x < n {
@@ -364,7 +375,7 @@ impl Wilds<'_> {
         }
 
         // Last, the starts: flat and open.
-        let starts = self.starts;
+        let starts = self.starts.clone();
         for s in starts {
             if s.1 < mid {
                 let r = self.scaled(20);
@@ -446,8 +457,8 @@ impl Wilds<'_> {
     /// Each north start's share of a Conquest map, the same round every
     /// start, so the starts have the same economy on the same open ground
     /// (the clearing, which the land's features keep out of). The players
-    /// go round the north starts west to east, 0 to 2; their turned copies
-    /// are players 3 to 5. A share has:
+    /// go round the north starts west to east, 0 to 2 (0 and 1 on a
+    /// four-start map); their turned copies are the rest. A share has:
     /// - the base's two seeps and a Marrow vein, as a Conquest recipe's
     ///   ([`conquest::BASE_NODES`]), and a natural expansion of two seeps
     ///   33 tiles out (past `BASE_AREA`, inside `EXPANSION_AREA`);
@@ -456,7 +467,12 @@ impl Wilds<'_> {
     ///   expansions a start takes are its own.
     fn shares(&mut self) {
         // West to east (see [`plateaus`] for the order).
-        let [nw, ne, _, _, n, _] = self.starts;
+        // Four starts: the corners, west to east; six: the middle too.
+        let (nw, ne) = (self.starts[0], self.starts[1]);
+        let north = match self.starts.get(4) {
+            Some(&n) => vec![nw, n, ne],
+            None => vec![nw, ne],
+        };
         let z = self.clearing();
         // One jitter for every share, so they stay alike.
         let natural = [(Kind::GrubSeep, -6, 33), (Kind::GrubSeep, 7, 32)];
@@ -478,7 +494,7 @@ impl Wilds<'_> {
             (Kind::GrubSeep, -65, 50, ""),
             (Kind::CreepCamp, -70, 55, conquest::TOADS),
         ];
-        for (player, s) in (0..).zip([nw, n, ne]) {
+        for (player, s) in (0..).zip(north) {
             self.put(Kind::Start, s, Some(player), "");
             for &(kind, dx, dy) in &own {
                 self.put(kind, (s.0 + dx, s.1 + dy), Some(player), "");

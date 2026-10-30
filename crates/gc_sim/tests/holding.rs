@@ -160,18 +160,19 @@ fn fight(name: &str, defender: u16, attackers: &[(u16, (i32, i32), Angle)]) -> O
     out
 }
 
+/// It broke in the end (shock works by killing men), and not above its
+/// breaking point or half strength.
 fn holds(o: &Outcome) {
-    if let Some(r) = o.routed {
-        assert!(
-            r <= u32::from(BREAK_CAP),
-            "routed at {r}%, above half strength"
-        );
-        assert!(
-            r <= u32::from(o.break_at),
-            "routed at {r}%, above its breaking point {}%",
-            o.break_at
-        );
-    }
+    let r = o.routed.expect("it never broke");
+    assert!(
+        r <= u32::from(BREAK_CAP),
+        "routed at {r}%, above half strength"
+    );
+    assert!(
+        r <= u32::from(o.break_at),
+        "routed at {r}%, above its breaking point {}%",
+        o.break_at
+    );
     if let Some(wv) = o.wavered {
         assert!(wv <= 60, "wavered at {wv}%");
     }
@@ -179,6 +180,13 @@ fn holds(o: &Outcome) {
 
 #[test]
 fn heavy_shock_breaks_nobody_above_their_breaking_point() {
+    // Held in front by spears, charged in the rear by cavalry.
+    let hammer_and_anvil = [(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)];
+    let spears_caught = fight(
+        "Yari held in front, cavalry in the rear",
+        YARI,
+        &hammer_and_anvil,
+    );
     let cases = [
         fight(
             "Yari, cavalry charge in front",
@@ -203,29 +211,19 @@ fn heavy_shock_breaks_nobody_above_their_breaking_point() {
             &[(YARI, (96, 80), SOUTH), (YARI, (104, 80), SOUTH)],
         ),
         fight(
-            "Yari held in front, cavalry in the rear",
-            YARI,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
-        ),
-        fight(
             "Katana held in front, cavalry in the rear",
             KATANA,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
+            &hammer_and_anvil,
         ),
         fight(
             "Levy held in front, cavalry in the rear",
             LEVY,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
+            &hammer_and_anvil,
         ),
     ];
-    for o in &cases {
+    for o in cases.iter().chain([&spears_caught]) {
         holds(o);
     }
-    // Hammer and anvil still breaks them: shock works by killing men.
-    assert!(
-        cases[6].routed.is_some(),
-        "spears caught front and rear still break"
-    );
 }
 
 #[test]
