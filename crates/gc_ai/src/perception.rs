@@ -113,6 +113,9 @@ pub struct Seen {
     /// Not marching (it may be fighting): what formation discipline goes by.
     pub still: bool,
     pub engaged: bool,
+    /// On an attack-move and turned aside to fight what it met (see
+    /// [`gc_sim::orders`]).
+    pub diverted: bool,
     pub morale: MoraleState,
     /// Morale in points, 0 to 100 (meaningless for units that never rout).
     pub morale_points: u8,
@@ -312,6 +315,7 @@ impl Perception {
                 moving: r.moving,
                 still: r.still,
                 engaged: r.engaged,
+                diverted: r.diverted,
                 morale: r.morale,
                 morale_points: r.morale_points,
                 hidden: world.hidden(r.handle),

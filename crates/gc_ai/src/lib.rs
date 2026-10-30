@@ -103,6 +103,7 @@ fn flee_fire(view: &Perception, world: &World, party: PlayerId, wants: &mut Vec<
                 to: r.pos + away * FLEE_FIRE,
                 facing: None,
                 pace: 0.0,
+                hunt: false,
             },
             priority: FLEE_PRIORITY,
             group: 0,
