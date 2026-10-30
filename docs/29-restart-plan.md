@@ -33,6 +33,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
 8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
+9. Faction rebalance, first wave at the restart: fair economies (the Choir earns about three and a half times what the Clans do), the Clans gathering 20% faster, and the Brood as a true swarm of cheap, weak units ([in brief](#faction-rebalance-in-brief)).
 
 ## What it covers
 
@@ -46,6 +47,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 
 - **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
 - **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
+- **Faction rebalance** (Mario, 2026-10-30, for the restart): fair resources for every faction, the Clans gathering faster, and Brood units cheap and weak one by one but many. See [Faction rebalance in brief](#faction-rebalance-in-brief).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
@@ -104,6 +106,60 @@ Once the dynamic water engine (idea 25: seasonal flow and volume, minor to catas
 - **Readable and fair.** Strain and jams show on the bridge (creaking, logs piling up, water foaming at the piers), and computer players clear jams, repair their own bridges and use dumped debris against yours.
 - All of it runs in the sim from seeded, fixed-point state, so it stays deterministic in multiplayer and replays.
 - Other materials (Concord bone, Choir glass, Brood chitin) are kit variants for later.
+
+## Faction rebalance in brief
+
+Mario (2026-10-30): resources aren't fair. The Choir (Shard) piles them up fast while the Ember Clans struggle; the Brood are "absurdly strong". Brood units should stay cheap, with lots of attacks, like a swarm of ants, but each one should be weak; today they are almost a match for other factions' units, and they arrive wave after wave before an Ember player has built much. He suggests about 20% faster Ember gathering.
+
+**Measured (2026-10-30, before any change).** Headless Conquest, computer against computer at Veteran on Ribcage Pass: every pair of factions, each on both starts, 8 seeds, two seed sets (1 to 8 and 101 to 108), 192 games. The tool is a new `conquest_balance` test that prints wins, income, army and losses (kept as a patch until the build; see below). Both seed sets agree:
+
+| Pair | Wins (both sets, 32 games) | Worth of fighters killed (set 2) |
+|---|---|---|
+| Clans v Brood | 7 to 25 | 39k v 39k |
+| Clans v Choir | 0 to 32 | 14k v 15k |
+| Clans v Concord | 1 to 31 | 35k v 34k |
+| Brood v Choir | 0 to 32 | 9k v 16k |
+| Brood v Concord | 2 to 30 | 26k v 33k |
+| Choir v Concord | 31 to 0 (1 undecided) | 24k v 35k |
+
+| Faction | Grub/Marrow in by 5 min | by 10 min | Army worth at 10 min | Soldiers at 10 min | Worth killed per worth lost |
+|---|---|---|---|---|---|
+| Ember Clans | 1,130 / 150 | 2,160 / 330 | 350 | 57 | 1.01 |
+| Brood | 810 / 240 | 2,020 / 460 | 400 | 119 | 0.84 |
+| Choir | 3,880 / 385 | 9,830 / 1,050 | 3,210 | 234 | 0.92 |
+| Carrion Concord | 1,310 / 195 | 3,020 / 390 | 740 | 100 | 1.21 |
+
+(Worth is Grub plus twice the Marrow a fighter cost; set 2 shown, set 1 within a few percent.) What this says:
+
+- **The Choir's economy is the big break.** It brings in about 780 Grub a minute by minute 5, three and a half times the Clans (about 225). A tuned seep gives 200 Grub a minute with no workers and no supply; the Choir starts with two Resonators already tuning; one Resonator tunes every seep within 4 tiles, not one; a new Resonator costs 150 Grub and pays for itself in under a minute; chords add up to 60% more. The Clans pay 250 Grub, 5 supply and a minute of training for the same 200 a minute from five Hands. The Choir wins every game, by about 11 minutes, without killing more per fight: it simply has far more.
+- **The Clans are the weakest economy and the weakest side** (8 wins in 96 games). The Clans AI also leaves Marrow unspent early (200+ banked at 6 minutes) because nothing at tier 1 costs Marrow, so Hands on the vein are wasted then.
+- **The Brood is strong only against the Clans** (25 of 32) and loses to the Choir and the Concord, but its numbers explain what Mario sees: about twice the soldiers of an equal army, hatching several at once from larvae while other factions train one at a time. Skitterlings cost 100 Grub for 32 soldiers with the highest tier 1 attack in the game (50) and 192 hit points a regiment, as much as an Ember spear regiment costing 120. One Brood soldier is as good as others', and there are more of them.
+- **The Concord** wins most of its fights (1.21 worth killed per worth lost) on an ordinary income, so it will lead once the Choir is fixed. Watch it.
+
+**The plan (first-pass numbers, settled by measurement in the build).**
+
+1. **Choir economy, brought into line.** A Resonator tunes only its nearest seep (a Siphon its nearest vein); a tuned seep gives about 130 Grub a minute instead of 200 (a load every 4.5 s, not 3 s) and a tuned vein about 40 Marrow instead of 50; chords add at most 30%, not 60%; a Resonator costs 200 Grub, not 150; the Choir starts with the Spire and one Resonator, not two. A Mobile Resonator tunes the same way. The Choir keeps its identity: no workers to protect, but every pylon is a target and expanding costs a building per seep.
+2. **Clans gather 20% faster (Mario's ask).** Hands fill a Grub load in 7.5 s instead of 9, and Marrow in 10 s instead of 12. Done as data: a gathering speed per unit in the roster (`gather_percent: 120` on the Hand, 100 by default), so other factions can be tuned the same way later. The Clans AI keeps one Hand on Marrow, not more, until a tier 2 upgrade or a Marrow unit is in sight.
+3. **Brood as a real swarm.** Cheaper, more of them, more attacks, each one weak:
+   - Skitterlings: 100 to 70 Grub, supply 3 to 2, 32 to 36 soldiers, 6 to 4 hit points each, attack 50 to 36, defence 28 to 20, damage 3 to 2, train 18 to 13 s.
+   - Chitin Guard: 130 to 100 Grub, 16 to 12 hit points each, attack 30 to 24, defence 55 to 45.
+   - Tier 2 evolutions (Spitters, Burrowers, Mantid Reapers, Shellbacks) and Drone-Moths: about 25% fewer hit points and 15% less attack per soldier, and about 15% cheaper. Monsters and heroes stay as they are.
+   - Swarm Instinct stays (30% less morale lost to casualties), so swarms keep coming, but they melt under archers, cavalry charges and spear lines.
+   - Larvae: no change to start with. If the first Brood wave still hits Clans players too early in play (see the real-use check), the Hive's first larvae come every 16 s for the first 5 minutes instead of 12.
+   - Rule of thumb for the tuning: per Grub spent a Brood army has 1.5 to 2 times the soldiers of anyone else's, but loses one-on-one per soldier, and even per Grub it ends level (worth killed per worth lost between 0.9 and 1.1 against each faction).
+4. **Then the Concord.** Re-measure after 1 to 3. If the Concord leads, trim its combat edge first (undead Bone Pikes or the Ledger's tithe), not its economy.
+5. **Field Battles too.** Field Battle points come from costs (3 a Grub, 6 a Marrow), so cheaper Brood units mean bigger Brood armies there. Re-run `faction_table` on both seed sets and retune points or stats until every pair is 40 to 60%.
+
+**Targets (how we know it's done).**
+- Conquest, Veteran and General, both seed sets, both starts: every faction wins 40 to 60% of its games, every pair 35 to 65% (single pairs swing with the AI).
+- Income: by minute 5 and minute 10 every faction is within 15% of the others, with the Clans allowed at the top after their 20%.
+- Brood: 1.5 to 2 times the soldiers of an equal-worth army; worth killed per worth lost 0.9 to 1.1 against each faction.
+- Mario's case, as a real-play scenario: a Clans side against a Brood Veteran. By the first Brood attack the Clans can have at least two fighting regiments and their tier 1 production up, and hold that wave at their base with a small loss. The scenario is added to the stress suite with its numbers.
+- Field Battles: `faction_table`, every pair 40 to 60%.
+
+**Real use.** Nothing here changes how units walk, fit through gates or cross bridges, except that bigger Brood swarms mean more regiments in traffic: the stress suite's 200 units through a gate and the column over a bridge run with a Brood swarm (twelve regiments of Skitterlings) as well. The Choir AI places one Resonator per seep and the Clans AI moves Hands off Marrow (AI-uses-it). The batched playtest after the first wave plays a full match for each faction against each, records a Brood wave against a Clans base, and Opus judges whether it feels like a swarm.
+
+**Who and when.** A new thread, "Faction rebalance", Opus lead at high effort, first wave after the restart. The sim rules (tuning reach and rate, gather speed per unit) are the lead's; a Sonnet helper does the AI changes (Choir placement, Clans Marrow), Haiku helpers run the balance tables and update the guides, quick reference, docs/04, docs/17 and the rosters. One PR for the economy (1 and 2), one for the Brood (3), then the Concord and Field Battle passes if needed. Sim changes bump SIM_VERSION, re-bless the goldens and go through /simplify and /code-review on Opus. The `conquest_balance` test lands in the first PR (its patch is in the project files, `balance/conquest_balance_test.patch`): `AI_GAMES=8 AI_FROM=1 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture`, then `AI_FROM=101`; about two minutes a set on 4 cores. It touches the economy code, the Conquest AI and the data, not route search or structures, so it runs alongside the bridge and pathfinding threads.
 
 ## How the work is split
 
