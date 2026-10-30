@@ -387,7 +387,7 @@ impl Flood {
             if regs.models[i] == 0 {
                 continue;
             }
-            morale::shift(regs, i, -SWEPT_MORALE);
+            morale::shift(regs, i, -SWEPT_MORALE, morale::WHY_WATER);
             let stuck = regs.target[i].is_none() || regs.attack_target[i].is_some();
             if stuck && regs.foe(i).is_none() {
                 out.push(i);

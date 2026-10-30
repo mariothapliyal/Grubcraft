@@ -96,6 +96,10 @@ macro_rules! regiment_fields {
             /// formation slot (slot `k` is rank `k / files`, file
             /// `k % files`; rank 0 is the front).
             pub(crate) hp: Vec<u16>,
+            /// Why its nerve is going: `morale::WHY_` bits, for the screen
+            /// only. Derived each check, so not hashed, copied or
+            /// snapshotted.
+            pub(crate) why: Vec<u16>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -110,6 +114,7 @@ macro_rules! regiment_fields {
                     alive: vec![false; n],
                     generation: vec![0; n],
                     hp: vec![0; n * MAX_MODELS as usize],
+                    why: vec![0; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -118,6 +123,7 @@ macro_rules! regiment_fields {
             /// Slot `i` as a free slot holds it (its handle aside).
             fn reset_slot(&mut self, i: usize) {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
+                self.why[i] = 0;
                 $(self.$name[i] = $free;)*
             }
 
@@ -1054,6 +1060,49 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
+            why: self.why[i],
+            doing: self.doing(i),
+            waiting: self.waiting(i),
+        }
+    }
+
+    /// What regiment `i` is doing, for the screen.
+    fn doing(&self, i: usize) -> Doing {
+        if self.morale_state[i].broken() {
+            Doing::Running
+        } else if self.falling_back[i] > 0 {
+            Doing::FallingBack
+        } else if self.engaged[i].is_some() {
+            Doing::Fighting
+        } else if self.attack_target[i].is_some() {
+            Doing::Attacking
+        } else if self.braced[i] {
+            Doing::Braced
+        } else if self.target[i].is_some() && self.march_left[i] > 0 {
+            Doing::ForcedMarch
+        } else if self.target[i].is_some() {
+            Doing::Marching
+        } else {
+            Doing::Holding
+        }
+    }
+
+    /// What is holding regiment `i` up, if anything, for the screen.
+    fn waiting(&self, i: usize) -> Option<Waiting> {
+        if self.morale_state[i].broken() {
+            None
+        } else if self.trapped_left[i] > 0 {
+            Some(Waiting::Trapped)
+        } else if self.engaged[i].is_some() && self.why[i] & morale::WHY_PINNED != 0 {
+            Some(Waiting::Pinned)
+        } else if self.engaged[i].is_some() && self.driven_pace(i) > 0 {
+            Some(Waiting::DrivenBack)
+        } else if self.target[i].is_some() && self.disorder[i] > 0 {
+            Some(Waiting::FriendInTheWay)
+        } else if self.target[i].is_some() && self.files[i] < self.frontage[i] {
+            Some(Waiting::FilingThrough)
+        } else {
+            None
         }
     }
 
@@ -1336,6 +1385,51 @@ pub struct RegimentView {
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).
     pub sung: bool,
+    /// Why its nerve is going: [`morale`]'s `WHY_` bits (flanked, rear,
+    /// outnumbered, ally broke nearby and so on). Shown while it wavers or
+    /// runs.
+    pub why: u16,
+    /// What it is doing.
+    pub doing: Doing,
+    /// What is holding it up, if anything.
+    pub waiting: Option<Waiting>,
+}
+
+/// What a regiment is doing, as the screen shows it (docs/29, "Clear orders
+/// and feedback"). Derived from its state each time it is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Doing {
+    /// Standing where it was put, no order left.
+    Holding,
+    /// Walking to an ordered spot.
+    Marching,
+    /// Walking with a march power driving it faster.
+    ForcedMarch,
+    /// Going for an ordered enemy.
+    Attacking,
+    /// In melee.
+    Fighting,
+    /// Spears set against a charge.
+    Braced,
+    /// Pulling out of a fight in good order.
+    FallingBack,
+    /// Routing or shattered: not taking orders.
+    Running,
+}
+
+/// What is holding a regiment up, as the screen shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waiting {
+    /// Driven back against something with nowhere to give ground.
+    Pinned,
+    /// Losing its melee and giving ground.
+    DrivenBack,
+    /// Out of order from pushing past friends.
+    FriendInTheWay,
+    /// Squeezed into a column through tight ground.
+    FilingThrough,
+    /// Held fast by a trap.
+    Trapped,
 }
 
 impl RegimentView {

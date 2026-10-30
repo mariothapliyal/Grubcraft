@@ -457,7 +457,7 @@ fn settle(regs: &mut Regiments, stances: &Stances, won: RegimentHandle, lost: Re
     }
     for i in 0..regs.alive.len() {
         if regs.alive[i] {
-            morale::shift(regs, i, heart(regs.owner[i]));
+            morale::shift(regs, i, heart(regs.owner[i]), morale::WHY_CHAMPION);
         }
     }
     let last = regs.models[l] as usize - 1;
