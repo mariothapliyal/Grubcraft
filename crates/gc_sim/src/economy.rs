@@ -19,9 +19,9 @@
 //!   then comes into the store through their owner's root-veins, if the
 //!   node is on them; off them, it waits there until it is (see
 //!   [`crate::veins`]).
-//! - **Tuned nodes** (the Choir's): a node within reach of a finished
-//!   building that tunes its kind (a Resonator for seeps, a Siphon for
-//!   veins, see [`crate::power`]) yields a load every [`TUNED_GRUB_TICKS`]
+//! - **Tuned nodes** (the Choir's): a node a finished building that tunes
+//!   its kind has taken (a Resonator for seeps, a Siphon for veins, one
+//!   node each, see [`crate::power`]) yields a load every [`TUNED_GRUB_TICKS`]
 //!   (or [`TUNED_MARROW_TICKS`]) into that building's owner's store, with
 //!   no workers, as it runs dry and to dregs like any node. Workers can
 //!   still gather there too.
@@ -38,9 +38,15 @@
 //! - **Tempo** scales gathering: a worker fills its load in
 //!   `100 / gather_percent` of the time.
 //!
+//! - **Gathering speed** is per worker type
+//!   ([`ConquestUnit::gather_percent`]): the Clans' Hands fill a load in
+//!   two thirds of the time, which with the walk brings in about a fifth
+//!   more.
+//!
 //! Five workers on a seep seven tiles from their hall bring in about 200
-//! Grub a minute, and three on a vein about 50 Marrow, as docs/04 sets; a
-//! tuned seep or vein brings in the same.
+//! Grub a minute (the Clans' Hands about 240), and three on a vein about
+//! 50 Marrow, as docs/04 sets; a tuned seep about 109 and a tuned vein
+//! about 40, since a tuner needs no workers or supply.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -51,6 +57,7 @@ mod trade;
 pub use trade::{ALLY_PERCENT, LOAD_TICKS, MAX_PILES, POST_REACH, TradePost, WAYSTATION_PERCENT};
 
 use crate::conquest::{ConquestSetup, ConquestUnit};
+use crate::power::TuneScratch;
 use crate::regiments::{Order, Regiments};
 use crate::stances::Stances;
 use crate::structures::{Approach, DROP_OFF_GRUB, DROP_OFF_MARROW, StructureHandle, Structures};
@@ -126,9 +133,11 @@ pub const MARROW_LOAD: u32 = 5;
 pub const GRUB_TICKS: u32 = 9 * TICKS_PER_SECOND;
 pub const MARROW_TICKS: u32 = 12 * TICKS_PER_SECOND;
 /// Ticks a tuned seep, and a tuned vein, takes to yield a load at
-/// Standard tempo: about 200 Grub and 50 Marrow a minute.
-pub const TUNED_GRUB_TICKS: u32 = 3 * TICKS_PER_SECOND;
-pub const TUNED_MARROW_TICKS: u32 = 6 * TICKS_PER_SECOND;
+/// Standard tempo: about 109 Grub and 40 Marrow a minute (a tuner works
+/// one node, needs no workers and takes no supply, so it yields less than
+/// five workers do).
+pub const TUNED_GRUB_TICKS: u32 = 11 * TICKS_PER_SECOND / 2;
+pub const TUNED_MARROW_TICKS: u32 = 15 * TICKS_PER_SECOND / 2;
 /// A dry node still yields at this percent of its rate.
 pub const DREGS_PERCENT: u32 = 25;
 /// The most supply a player can have.
@@ -270,6 +279,8 @@ pub struct Economy {
     /// the same time.
     node_harmony: Vec<u8>,
     power_seen: Option<u32>,
+    /// Room for working out who tunes what, kept between ticks.
+    tune_scratch: TuneScratch,
     tune_clock: Vec<u32>,
     /// Grub in hundredths, and Marrow, by player.
     grub: [u32; MAX_PARTIES],
@@ -329,6 +340,7 @@ impl Economy {
             node_tuner: vec![None; slots],
             node_harmony: vec![0; slots],
             power_seen: None,
+            tune_scratch: TuneScratch::with_room(real),
             tune_clock: vec![0; slots],
             grub: setup.start.map(|(g, _)| g.saturating_mul(GRUB_SCALE)),
             marrow: setup.start.map(|(_, m)| m),
@@ -643,15 +655,15 @@ impl Economy {
             }
             self.clock[r] = self.clock[r].saturating_sub(1);
             let n = usize::from(self.node[r]);
-            let burrows = kinds
-                .get(usize::from(regs.unit[r]))
-                .is_some_and(|u| u.burrows);
+            let kind = kinds.get(usize::from(regs.unit[r]));
+            let burrows = kind.is_some_and(|u| u.burrows);
+            let quick = kind.map_or(100, ConquestUnit::gather_percent);
             match self.step[r] {
                 Step::ToPost | Step::Loading | Step::Hauling => {
                     self.trade_round(regs, &at, r, &mut used);
                 }
                 Step::ToNode if !self.is_live(n) => self.stop(r),
-                Step::ToNode => self.walk_to_node(regs, r, n, burrows),
+                Step::ToNode => self.walk_to_node(regs, r, n, burrows, quick),
                 Step::Filling if self.clock[r] == 0 => self.fill(r, n),
                 Step::Carrying if burrows => self.send_home(regs, kinds, structures, r, &mut used),
                 Step::Carrying => self.carry(regs, units, kinds, structures, r, &mut used),
@@ -661,8 +673,16 @@ impl Economy {
     }
 
     /// Walk to node `n`, and start filling once there and a place is free
-    /// (a worker that `burrows` takes its load's flow home with it).
-    fn walk_to_node(&mut self, regs: &mut Regiments, r: usize, n: usize, burrows: bool) {
+    /// (a worker that `burrows` takes its load's flow home with it), at
+    /// `quick` percent of the usual speed.
+    fn walk_to_node(
+        &mut self,
+        regs: &mut Regiments,
+        r: usize,
+        n: usize,
+        burrows: bool,
+        quick: u32,
+    ) {
         if !self.at_node(regs, r, n) {
             return;
         }
@@ -681,7 +701,7 @@ impl Economy {
         let left = self.node_left[n];
         self.taking[r] = kind.load().min(left) as u8;
         self.node_left[n] = left - u32::from(self.taking[r]);
-        let mut ticks = self.in_season(kind, kind.fill_ticks());
+        let mut ticks = self.in_season(kind, kind.fill_ticks()) * 100 / quick.max(1);
         if left == 0 {
             ticks = ticks * 100 / DREGS_PERCENT;
         }
@@ -802,8 +822,16 @@ impl Economy {
     ) {
         if self.power_seen != Some(structures.power_stamp) {
             self.power_seen = Some(structures.power_stamp);
-            for n in 0..self.real {
-                let tuner = structures.tuner_of(self.node_resource[n], self.node_at[n]);
+            let mut scratch = core::mem::take(&mut self.tune_scratch);
+            let real = self.real;
+            let left = &self.node_left;
+            structures.tunings(
+                &self.node_resource[..real],
+                &self.node_at[..real],
+                |n| left[n] == 0,
+                &mut scratch,
+            );
+            for (n, &tuner) in scratch.of.iter().enumerate() {
                 let handle = tuner.map(|s| structures.handle(s));
                 if handle != self.node_tuner[n] {
                     self.node_tuner[n] = handle;
@@ -818,6 +846,7 @@ impl Economy {
                 };
                 self.node_harmony[n] = harmony;
             }
+            self.tune_scratch = scratch;
         }
         for n in 0..self.real {
             let kind = self.node_resource[n];
@@ -841,6 +870,10 @@ impl Economy {
                 kind.load().min(left)
             };
             self.node_left[n] = left.saturating_sub(take);
+            if left > 0 && self.node_left[n] == 0 {
+                // Run dry: its tuner may have a fuller node in reach.
+                self.power_seen = None;
+            }
             self.deposit(structures.owner_of(s), kind, take, regs, kinds, used);
         }
     }
