@@ -156,22 +156,22 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    59,
+    60,
     &[
-        ("conquest-ribcage-1v1", 0x619f5ed03b86fe51),
-        ("field-1v1", 0xc10d83d6be4372f3),
-        ("field-2v2", 0xd3245fc68b7edf6d),
-        ("field-8000pt-2v2", 0x4434f1bcba8e8734),
-        ("field-brace-1v1", 0x00156eb1e4450c9c),
-        ("field-champions-1v1", 0xd3184a00455c41c7),
-        ("field-deploy-1v1", 0xfdb06fe312669c96),
-        ("field-fire-1v1", 0x76f4f8e1012c97fc),
-        ("field-flood-1v1", 0x68df2fc4f27f4608),
-        ("field-handover-2v2", 0x4ae5522f68ed3695),
-        ("field-night-rain-1v1", 0x58de32fdad45e7c3),
-        ("field-river-storm-1v1", 0x72ccd45d1dd247fe),
-        ("field-woods-1v1", 0x82880eb52c853690),
-        ("sandbox-tuning", 0xcb046655e2882011),
+        ("conquest-ribcage-1v1", 0x81e2975f4d593343),
+        ("field-1v1", 0xdfc685b0741b4689),
+        ("field-2v2", 0xe221f0c14a7c3ca0),
+        ("field-8000pt-2v2", 0x28d6bd7f1bce9e1c),
+        ("field-brace-1v1", 0xd6637b43c6f0d894),
+        ("field-champions-1v1", 0xc8d4b63f7ae2c43a),
+        ("field-deploy-1v1", 0x5bf83c95da15c824),
+        ("field-fire-1v1", 0xcc54057f21d167da),
+        ("field-flood-1v1", 0x25bbd2ca71af6070),
+        ("field-handover-2v2", 0xd5a2c4fcaa6a1837),
+        ("field-night-rain-1v1", 0x3b62900234b367e2),
+        ("field-river-storm-1v1", 0x56c3dbec36767862),
+        ("field-woods-1v1", 0x52abb0ab14983db4),
+        ("sandbox-tuning", 0x0c69523d6cfb1f8d),
     ],
 );
 
