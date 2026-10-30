@@ -8,8 +8,8 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::morale::{BREAK_CAP, BREAK_SPREAD, ELITE_BREAK, LEVY_BREAK, LINE_BREAK};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::{
-    Capacities, Command, Ground, Mass, MatchSetup, MoraleState, PlayerCommand, RegimentHandle,
-    Sky, UnitStats, World,
+    Capacities, Command, Ground, Mass, MatchSetup, MoraleState, PlayerCommand, RegimentHandle, Sky,
+    UnitStats, World,
 };
 
 const SOUTH: Angle = Angle::QUARTER;
@@ -100,8 +100,15 @@ fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32, facing: Angle) ->
 /// Hit points left, in percent of full.
 fn strength(w: &World, units: &[UnitStats], h: RegimentHandle) -> u32 {
     let v = w.regiments.get(h).unwrap();
-    let full = u32::from(units[v.unit as usize].models) * u32::from(units[v.unit as usize].hp_per_model);
-    let hp: u32 = w.regiments.model_hp(h).unwrap().iter().map(|&x| u32::from(x)).sum();
+    let full =
+        u32::from(units[v.unit as usize].models) * u32::from(units[v.unit as usize].hp_per_model);
+    let hp: u32 = w
+        .regiments
+        .model_hp(h)
+        .unwrap()
+        .iter()
+        .map(|&x| u32::from(x))
+        .sum();
     hp * 100 / full
 }
 
@@ -153,11 +160,19 @@ fn fight(name: &str, defender: u16, attackers: &[(u16, (i32, i32), Angle)]) -> O
     out
 }
 
+/// It broke in the end (shock works by killing men), and not above its
+/// breaking point or half strength.
 fn holds(o: &Outcome) {
-    if let Some(r) = o.routed {
-        assert!(r <= u32::from(BREAK_CAP), "routed at {r}%, above half strength");
-        assert!(r <= u32::from(o.break_at), "routed at {r}%, above its breaking point {}%", o.break_at);
-    }
+    let r = o.routed.expect("it never broke");
+    assert!(
+        r <= u32::from(BREAK_CAP),
+        "routed at {r}%, above half strength"
+    );
+    assert!(
+        r <= u32::from(o.break_at),
+        "routed at {r}%, above its breaking point {}%",
+        o.break_at
+    );
     if let Some(wv) = o.wavered {
         assert!(wv <= 60, "wavered at {wv}%");
     }
@@ -165,34 +180,50 @@ fn holds(o: &Outcome) {
 
 #[test]
 fn heavy_shock_breaks_nobody_above_their_breaking_point() {
+    // Held in front by spears, charged in the rear by cavalry.
+    let hammer_and_anvil = [(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)];
+    let spears_caught = fight(
+        "Yari held in front, cavalry in the rear",
+        YARI,
+        &hammer_and_anvil,
+    );
     let cases = [
-        fight("Yari, cavalry charge in front", YARI, &[(SAMURAI, (100, 50), SOUTH)]),
-        fight("Yari, cavalry charge in the flank", YARI, &[(SAMURAI, (150, 100), WEST)]),
-        fight("Yari, cavalry charge in the rear", YARI, &[(SAMURAI, (100, 150), NORTH)]),
+        fight(
+            "Yari, cavalry charge in front",
+            YARI,
+            &[(SAMURAI, (100, 50), SOUTH)],
+        ),
+        fight(
+            "Yari, cavalry charge in the flank",
+            YARI,
+            &[(SAMURAI, (150, 100), WEST)],
+        ),
+        fight(
+            "Yari, cavalry charge in the rear",
+            YARI,
+            &[(SAMURAI, (100, 150), NORTH)],
+        ),
         fight("Yari against Yari", YARI, &[(YARI, (100, 80), SOUTH)]),
         fight("Yari against Katana", YARI, &[(KATANA, (100, 80), SOUTH)]),
-        fight("Yari against two Yari", YARI, &[(YARI, (96, 80), SOUTH), (YARI, (104, 80), SOUTH)]),
         fight(
-            "Yari held in front, cavalry in the rear",
+            "Yari against two Yari",
             YARI,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
+            &[(YARI, (96, 80), SOUTH), (YARI, (104, 80), SOUTH)],
         ),
         fight(
             "Katana held in front, cavalry in the rear",
             KATANA,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
+            &hammer_and_anvil,
         ),
         fight(
             "Levy held in front, cavalry in the rear",
             LEVY,
-            &[(YARI, (100, 80), SOUTH), (SAMURAI, (100, 160), NORTH)],
+            &hammer_and_anvil,
         ),
     ];
-    for o in &cases {
+    for o in cases.iter().chain([&spears_caught]) {
         holds(o);
     }
-    // Hammer and anvil still breaks them: shock works by killing men.
-    assert!(cases[6].routed.is_some(), "spears caught front and rear still break");
 }
 
 #[test]
@@ -200,9 +231,20 @@ fn breaking_points_follow_the_grade_and_vary_a_little() {
     let units = units();
     let mut w = world(&units);
     let mut seen = std::collections::BTreeSet::new();
-    for (unit, base) in [(LEVY, LEVY_BREAK), (YARI, LINE_BREAK), (KATANA, ELITE_BREAK)] {
+    for (unit, base) in [
+        (LEVY, LEVY_BREAK),
+        (YARI, LINE_BREAK),
+        (KATANA, ELITE_BREAK),
+    ] {
         for k in 0..12 {
-            let h = spawn(&mut w, 0, unit, 20 + 12 * k, 20 + 20 * i32::from(unit), NORTH);
+            let h = spawn(
+                &mut w,
+                0,
+                unit,
+                20 + 12 * k,
+                20 + 20 * i32::from(unit),
+                NORTH,
+            );
             let at = w.regiments.get(h).unwrap().break_at;
             assert!(
                 (base - BREAK_SPREAD..=base + BREAK_SPREAD).contains(&at),

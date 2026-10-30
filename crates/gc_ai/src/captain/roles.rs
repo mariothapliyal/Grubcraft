@@ -367,7 +367,7 @@ impl Captain {
         if m.striking {
             match m.target.and_then(|t| view.get(t)).filter(|t| !t.broken()) {
                 Some(t) => {
-                    self.strike(ctx, m, r, t, wants);
+                    self.strike(ctx, m, r, t, fighting, wants);
                     return;
                 }
                 None => {
@@ -429,7 +429,12 @@ impl Captain {
                     // Never fed into the front of a steady enemy that is
                     // free to meet it.
                     let can_reach = locked || path_clear(view, fighting, r.pos, f.pos, f.handle);
+                    // Never into the points of free spears facing it.
+                    let spears_ahead = view.unit(f).stats.reach
+                        && !f.engaged
+                        && f.side_facing(r.pos) == Side::Front;
                     can_reach
+                        && !spears_ahead
                         && (reckless
                             || f.engaged
                             || exposed(f)
@@ -462,7 +467,7 @@ impl Captain {
             if let Some(t) = target.and_then(|t| view.get(t)) {
                 m.striking = true;
                 m.target = Some(t.handle);
-                self.strike(ctx, m, r, t, wants);
+                self.strike(ctx, m, r, t, fighting, wants);
                 return;
             }
         }
@@ -504,6 +509,7 @@ impl Captain {
         m: &mut Member,
         r: &Seen,
         t: &Seen,
+        fighting: &[&Seen],
         wants: &mut Vec<Want>,
     ) {
         let timed = ctx.knobs.timed_hammer;
@@ -516,7 +522,11 @@ impl Captain {
             - t.facing * (t.depth * 0.5 + STAGE_BACK);
         let level = (r.pos - t.pos).dot(t.facing) < t.depth * 0.5;
         let flank = t.side_facing(r.pos) != Side::Front;
-        let charge = !timed
+        // Even going in with the line, it swings round steady spears free to
+        // meet it rather than ride into their points.
+        let spears_ahead = (ctx.view.unit(t).stats.reach && !t.engaged && !flank)
+            || !spears_clear(ctx.view, fighting, r.pos, t.pos, t.handle);
+        let charge = (!timed && !spears_ahead)
             || (flank
                 && level
                 && (r.pos.distance(t.pos) < 16.0 || (r.pos - t.pos).dot(t.facing) < 0.0))

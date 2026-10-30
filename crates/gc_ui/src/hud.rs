@@ -1422,15 +1422,14 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
         CardState::Wavering => ("Wavering", theme::WELD),
         CardState::Routing => ("Routing", theme::MADDER),
     };
-    for (label, frac, color) in [
-        ("Health", health, health_color(health)),
-        (morale_label, f32::from(s.morale) / 100.0, morale_color),
+    for (label, frac, color, mark) in [
+        ("Health", health, health_color(health), s.break_at),
+        (morale_label, f32::from(s.morale) / 100.0, morale_color, 0),
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
-        ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
-        if label == "Health" {
-            break_mark(draw, Rect::new(bar_x, y, bar_w, 12), s.break_at);
-        }
+        let bar = Rect::new(bar_x, y, bar_w, 12);
+        ink_meter(draw, bar, frac, color);
+        break_mark(draw, bar, mark);
         let pct = format!("{}%", (frac * 100.0).round() as i32);
         draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
         y += 22;
