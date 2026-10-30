@@ -14,6 +14,7 @@
 
 use std::collections::VecDeque;
 
+use gc_sim::orders::Step;
 use gc_sim::structures::StructureHandle;
 use gc_sim::{Command, PlayerCommand, PlayerId, RegimentHandle};
 use glam::Vec2;
@@ -199,8 +200,8 @@ impl Orders {
             return false;
         }
         // On an attack-move the sim turns it aside to fight and back onto
-        // its march: stopping or going the other way is the order at work.
-        if matches!(s.act, Act::Move { hunt: true, .. }) && r.hunting {
+        // its march: going the other way meanwhile is the order at work.
+        if r.diverted {
             return false;
         }
         let i = r.handle.index as usize;
@@ -428,26 +429,18 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
             to,
             facing,
             pace,
-            hunt: false,
-        } => Command::MoveTo {
+            hunt,
+        } => Command::of_step(
             regiment,
-            target: to_fx_vec(to),
-            facing: facing.map(vec_angle),
-            files: 0,
-            pace: to_fx(pace),
-        },
-        Act::Move {
-            to,
-            facing,
-            pace,
-            hunt: true,
-        } => Command::AttackMove {
-            regiment,
-            target: to_fx_vec(to),
-            facing: facing.map(vec_angle),
-            files: 0,
-            pace: to_fx(pace),
-        },
+            Step::Move {
+                target: to_fx_vec(to),
+                facing: facing.map(vec_angle),
+                files: 0,
+                pace: to_fx(pace),
+                hunt,
+            },
+            false,
+        ),
         Act::Attack(target) => Command::Attack { regiment, target },
         Act::Siege(structure) => Command::AttackStructure {
             regiment,

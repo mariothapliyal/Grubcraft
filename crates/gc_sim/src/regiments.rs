@@ -641,7 +641,6 @@ impl Regiments {
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
         self.attack_target[i] = None;
-        self.drop_queue(i);
         self.braced[i] = false;
         self.falling_back[i] = 0;
         self.held[i] = 0;
@@ -663,11 +662,13 @@ impl Regiments {
         self.target[i].is_none() && self.attack_target[i].is_none()
     }
 
-    /// Slot `i` forgets its queued orders and any attack-move: a new order
-    /// given without Shift takes their place.
-    pub(crate) fn drop_queue(&mut self, i: usize) {
-        self.queue[i] = Queue::EMPTY;
-        self.hunting[i] = false;
+    /// Regiment `h` forgets its queued orders: a player's order given
+    /// without Shift has taken their place (`hunt`: on an attack-move).
+    pub(crate) fn fresh(&mut self, h: RegimentHandle, hunt: bool) {
+        if let Some(i) = self.resolve(h) {
+            self.queue[i] = Queue::EMPTY;
+            self.hunting[i] = hunt;
+        }
     }
 
     /// Regiment `h`'s queued orders, first first.
@@ -857,7 +858,6 @@ impl Regiments {
         }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
-        self.drop_queue(i);
         self.braced[i] = false;
         self.falling_back[i] = 0;
         self.held[i] = 0;
@@ -880,7 +880,6 @@ impl Regiments {
         if self.morale_state[i].broken() || self.falling_back[i] > 0 {
             return false;
         }
-        self.drop_queue(i);
         for k in 0..self.alive.len() {
             if self.alive[k] && self.engaged[k] == Some(h) {
                 self.strike[k] = Strike::Early;
@@ -1096,6 +1095,7 @@ impl Regiments {
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
             hunting: self.hunting[i],
+            diverted: self.hunting[i] && self.attack_target[i].is_some(),
             queued: self.queue[i].len() as u8,
         }
     }
@@ -1387,6 +1387,8 @@ pub struct RegimentView {
     pub sung: bool,
     /// On an attack-move (see [`crate::orders`]).
     pub hunting: bool,
+    /// On an attack-move and turned aside to fight what it met.
+    pub diverted: bool,
     /// Orders queued behind the current one ([`Regiments::queued`] has them).
     pub queued: u8,
 }

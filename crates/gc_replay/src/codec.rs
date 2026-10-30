@@ -61,6 +61,11 @@ impl Writer {
         self.fx(v.y);
     }
 
+    /// An optional angle: 0 for none, else the angle plus one.
+    pub fn opt_angle(&mut self, a: Option<Angle>) {
+        self.var(a.map_or(0, |a| u64::from(a.0) + 1));
+    }
+
     pub fn handle(&mut self, h: RegimentHandle) {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));
@@ -241,7 +246,7 @@ impl Writer {
                 self.u8(1);
                 self.handle(regiment);
                 self.vec(target);
-                self.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                self.opt_angle(facing);
                 self.var(u64::from(files));
                 self.fx(pace);
             }
@@ -260,7 +265,7 @@ impl Writer {
                 self.u8(41);
                 self.handle(regiment);
                 self.vec(target);
-                self.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                self.opt_angle(facing);
                 self.var(u64::from(files));
                 self.fx(pace);
             }
@@ -277,7 +282,7 @@ impl Writer {
                     } => {
                         self.u8(u8::from(hunt));
                         self.vec(target);
-                        self.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                        self.opt_angle(facing);
                         self.var(u64::from(files));
                         self.fx(pace);
                     }
@@ -620,6 +625,15 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// An optional angle, as [`Writer::opt_angle`] wrote it; `None` when
+    /// cut short or out of range.
+    pub fn opt_angle(&mut self) -> Option<Option<Angle>> {
+        Some(match self.var()? {
+            0 => None,
+            a => Some(Angle(u16::try_from(a - 1).ok()?)),
+        })
+    }
+
     pub fn handle(&mut self) -> Option<RegimentHandle> {
         Some(RegimentHandle {
             index: self.var_as()?,
@@ -844,10 +858,7 @@ impl<'a> Reader<'a> {
             1 => Command::MoveTo {
                 regiment: self.handle()?,
                 target: self.vec()?,
-                facing: match self.var()? {
-                    0 => None,
-                    a => Some(Angle(u16::try_from(a - 1).ok()?)),
-                },
+                facing: self.opt_angle()?,
                 files: self.var_as()?,
                 pace: self.fx()?,
             },
@@ -858,10 +869,7 @@ impl<'a> Reader<'a> {
             41 => Command::AttackMove {
                 regiment: self.handle()?,
                 target: self.vec()?,
-                facing: match self.var()? {
-                    0 => None,
-                    a => Some(Angle(u16::try_from(a - 1).ok()?)),
-                },
+                facing: self.opt_angle()?,
                 files: self.var_as()?,
                 pace: self.fx()?,
             },
@@ -870,10 +878,7 @@ impl<'a> Reader<'a> {
                 step: match self.u8()? {
                     hunt @ (0 | 1) => Step::Move {
                         target: self.vec()?,
-                        facing: match self.var()? {
-                            0 => None,
-                            a => Some(Angle(u16::try_from(a - 1).ok()?)),
-                        },
+                        facing: self.opt_angle()?,
                         files: self.var_as()?,
                         pace: self.fx()?,
                         hunt: hunt == 1,

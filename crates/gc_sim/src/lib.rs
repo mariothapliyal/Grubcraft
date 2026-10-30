@@ -810,6 +810,43 @@ pub enum Command {
 }
 
 impl Command {
+    /// The command that gives regiment `h` the order `step`: queued after
+    /// its others (`queued`, as with Shift held), or in their place.
+    pub fn of_step(regiment: RegimentHandle, step: orders::Step, queued: bool) -> Command {
+        if queued {
+            return Command::Then { regiment, step };
+        }
+        match step {
+            orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt: false,
+            } => Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            },
+            orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt: true,
+            } => Command::AttackMove {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            },
+            orders::Step::Attack { target } => Command::Attack { regiment, target },
+        }
+    }
+
     /// Whether this is one of a player's own orders to their regiments (or
     /// Ready), rather than setup (zones, raising armies) or the sandbox's
     /// tools (removing, tuning). In a network match only the host may send
@@ -1892,10 +1929,18 @@ impl World {
                     return false;
                 }
                 let hunt = matches!(pc.command, Command::AttackMove { .. });
-                self.march(regiment, target, facing, files, pace, hunt)
+                let done = self.march(regiment, target, facing, files, pace);
+                if done {
+                    self.regiments.fresh(regiment, hunt);
+                }
+                done
             }
             Command::Attack { regiment, target } => {
-                self.commands(pc.player, regiment) && self.charge_at(regiment, target)
+                let done = self.commands(pc.player, regiment) && self.charge_at(regiment, target);
+                if done {
+                    self.regiments.fresh(regiment, false);
+                }
+                done
             }
             Command::Then { regiment, step } => {
                 let Some(i) = self.regiments.resolve(regiment) else {
@@ -1939,7 +1984,11 @@ impl World {
                         c.blueprints.forget(i);
                     }
                     let to = self.fall_back_point(i);
-                    self.regiments.fall_back(regiment, to)
+                    let done = self.regiments.fall_back(regiment, to);
+                    if done {
+                        self.regiments.fresh(regiment, false);
+                    }
+                    done
                 }
                 _ => false,
             },
@@ -2572,8 +2621,7 @@ impl World {
             .is_some_and(|owner| self.stances.can_command(player, owner))
     }
 
-    /// Send regiment `h` marching (`hunt`: on an attack-move). Its queue is
-    /// dropped; the caller has checked who may order it.
+    /// Send regiment `h` marching; the caller has checked who may order it.
     fn march(
         &mut self,
         h: RegimentHandle,
@@ -2581,7 +2629,6 @@ impl World {
         facing: Option<Angle>,
         files: u16,
         pace: Fx,
-        hunt: bool,
     ) -> bool {
         let order = Order {
             target,
@@ -2592,15 +2639,18 @@ impl World {
         if !self.regiments.order(h, order) {
             return false;
         }
-        let i = h.index as usize;
-        self.regiments.hunting[i] = hunt;
-        stand_back(&mut self.regiments, &self.units, &self.nav, i);
+        stand_back(
+            &mut self.regiments,
+            &self.units,
+            &self.nav,
+            h.index as usize,
+        );
         self.leave_off(h);
         true
     }
 
     /// Send regiment `h` at the enemy regiment `target`, if its side is
-    /// hostile and can see it. Its queue is dropped.
+    /// hostile and can see it.
     fn charge_at(&mut self, h: RegimentHandle, target: RegimentHandle) -> bool {
         let (Some(owner), Some(enemy)) = (self.regiments.owner(h), self.regiments.owner(target))
         else {
@@ -2620,18 +2670,19 @@ impl World {
     /// the step can't be carried out (its target gone or unseen).
     fn start_step(&mut self, i: usize, step: orders::Step) -> bool {
         let h = self.regiments.handle(i);
-        let rest = self.regiments.queue[i];
-        let done = match step {
+        let (done, hunt) = match step {
             orders::Step::Move {
                 target,
                 facing,
                 files,
                 pace,
                 hunt,
-            } => self.march(h, target, facing, files, pace, hunt),
-            orders::Step::Attack { target } => self.charge_at(h, target),
+            } => (self.march(h, target, facing, files, pace), hunt),
+            orders::Step::Attack { target } => (self.charge_at(h, target), false),
         };
-        self.regiments.queue[i] = rest;
+        if done {
+            self.regiments.hunting[i] = hunt;
+        }
         done
     }
 
@@ -2670,11 +2721,8 @@ impl World {
                         pace: Fx::from_raw(regs.pace[i].raw() * TICKS_PER_SECOND as i32),
                         hunt: true,
                     };
-                    let mut rest = regs.queue[i];
-                    rest.push_front(march);
                     if self.charge_at(self.regiments.handle(i), foe) {
-                        self.regiments.queue[i] = rest;
-                        self.regiments.hunting[i] = true;
+                        self.regiments.queue[i].push_front(march);
                     }
                 }
             }
@@ -2691,7 +2739,8 @@ impl World {
 
     /// The nearest enemy regiment slot `i`'s side can see, standing and
     /// within [`orders::HUNT_RADIUS`] of it (or its bows' reach, if
-    /// further).
+    /// further). Looked up in last tick's combat grid, so a regiment that
+    /// only arrived this tick is noticed at the next look.
     fn foe_near(&self, i: usize) -> Option<RegimentHandle> {
         let regs = &self.regiments;
         let owner = regs.owner[i];
@@ -2699,18 +2748,24 @@ impl World {
             .range
             .max(orders::HUNT_RADIUS);
         let here = regs.position[i];
-        (0..regs.alive.len())
-            .filter(|&j| {
-                regs.alive[j]
-                    && !regs.morale_state[j].broken()
-                    && self.stances.hostile(owner, regs.owner[j])
-            })
-            .filter_map(|j| {
-                let d = (regs.position[j] - here).length();
-                (d <= reach && self.vision.sees(owner, j, regs.owner[j])).then_some((d, j))
-            })
-            .min_by_key(|&(d, j)| (d, j))
-            .map(|(_, j)| regs.handle(j))
+        let mut best: Option<(Fx, usize)> = None;
+        let slack = reach + self.combat.max_step();
+        self.combat.near_enemies(here, slack, owner, |j| {
+            if !regs.alive[j]
+                || regs.morale_state[j].broken()
+                || !self.stances.hostile(owner, regs.owner[j])
+            {
+                return;
+            }
+            let d = (regs.position[j] - here).length();
+            if d <= reach
+                && best.is_none_or(|b| (d, j) < b)
+                && self.vision.sees(owner, j, regs.owner[j])
+            {
+                best = Some((d, j));
+            }
+        });
+        best.map(|(_, j)| regs.handle(j))
     }
 
     /// Where regiment slot `i` falls back to: [`combat::FALL_BACK_TILES`]
@@ -3064,6 +3119,8 @@ impl World {
                 pace: Fx::ZERO,
             };
             if self.regiments.order(h, order) {
+                // Its march is now to the bank, and hunts nobody.
+                self.regiments.hunting[i] = false;
                 self.leave_off(h);
             }
         }

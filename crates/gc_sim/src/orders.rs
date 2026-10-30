@@ -47,16 +47,7 @@ pub enum Step {
     Attack { target: RegimentHandle },
 }
 
-impl Step {
-    /// Where the step leads, for drawing a regiment's queue: a march's
-    /// end, or none for an attack (the target moves).
-    pub fn destination(&self) -> Option<FxVec2> {
-        match *self {
-            Step::Move { target, .. } => Some(target),
-            Step::Attack { .. } => None,
-        }
-    }
-}
+impl Step {}
 
 /// A regiment's queued steps, first first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

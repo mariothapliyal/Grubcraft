@@ -2580,28 +2580,14 @@ impl Running {
                 continue;
             };
             self.mark_order(regiment, target, facing, files, hunt, queue, now);
-            let command = if queue {
-                gc_sim::Command::Then {
-                    regiment,
-                    step: gc_sim::orders::Step::Move {
-                        target,
-                        facing,
-                        files,
-                        pace,
-                        hunt,
-                    },
-                }
-            } else if hunt {
-                gc_sim::Command::AttackMove {
-                    regiment,
-                    target,
-                    facing,
-                    files,
-                    pace,
-                }
-            } else {
-                command
+            let step = gc_sim::orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt,
             };
+            let command = gc_sim::Command::of_step(regiment, step, queue);
             self.human_orders.push(PlayerCommand {
                 player: self.sandbox.side,
                 command,
@@ -2624,9 +2610,7 @@ impl Running {
         let Some(r) = self.world.regiments.get(regiment) else {
             return;
         };
-        let stats = &self.units.stats[r.unit as usize];
-        let files = if files == 0 { r.frontage } else { files };
-        let (width, depth) = stats.block_size_in(r.formation, files, r.models);
+        let size = self.plate_size(&r, files);
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
         let mut color = if hunt {
             ORDER_HUNT_COLOR
@@ -2636,16 +2620,24 @@ impl Running {
         if queued {
             color = color.map(|c| c.saturating_add(ORDER_QUEUED_LIFT));
         }
-        self.order_marks.retain(|m| m.at.elapsed() < ORDER_MARK);
         self.order_marks.push(OrderMark {
             regiment,
             at,
             target: from_fx_vec(target),
             facing: angle_vec(facing.unwrap_or(r.facing)),
-            size: [fx_to_f32(width), fx_to_f32(depth)],
+            size,
             color,
             queued,
         });
+    }
+
+    /// The ground regiment `r` covers drawn up `files` wide (its frontage
+    /// now, for 0): width and depth in tiles.
+    fn plate_size(&self, r: &gc_sim::RegimentView, files: u16) -> [f32; 2] {
+        let stats = &self.units.stats[r.unit as usize];
+        let files = if files == 0 { r.frontage } else { files };
+        let (width, depth) = stats.block_size_in(r.formation, files, r.models);
+        [fx_to_f32(width), fx_to_f32(depth)]
     }
 
     /// Send the selection to attack `target` (after what they are doing,
@@ -2658,14 +2650,11 @@ impl Running {
         self.human_orders
             .extend(self.selected.iter().map(|&regiment| PlayerCommand {
                 player: self.sandbox.side,
-                command: if queue {
-                    gc_sim::Command::Then {
-                        regiment,
-                        step: gc_sim::orders::Step::Attack { target },
-                    }
-                } else {
-                    gc_sim::Command::Attack { regiment, target }
-                },
+                command: gc_sim::Command::of_step(
+                    regiment,
+                    gc_sim::orders::Step::Attack { target },
+                    queue,
+                ),
             }));
     }
 
@@ -2780,22 +2769,10 @@ impl Running {
                 color,
                 lift: 0.0,
             });
-            if let Some(from) = line {
-                let leg = target - from;
-                let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
-                for s in 1..=steps {
-                    if dots == MAX_ROUTE_DOTS {
-                        return;
-                    }
-                    dots += 1;
-                    self.instances.push(BoxInstance {
-                        pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
-                        facing: [0.0, 1.0],
-                        size: ROUTE_DOT,
-                        color,
-                        lift: 0.0,
-                    });
-                }
+            if let Some(from) = line
+                && !push_dots(&mut self.instances, from, target, color, &mut dots)
+            {
+                return;
             }
         }
     }
@@ -2817,13 +2794,11 @@ impl Running {
             let Some(r) = self.world.regiments.get(regiment) else {
                 continue;
             };
-            let stats = &self.units.stats[r.unit as usize];
-            let files = if files == 0 { r.frontage } else { files };
-            let (width, depth) = stats.block_size_in(r.formation, files, r.models);
+            let [width, depth] = self.plate_size(&r, files);
             self.instances.push(BoxInstance {
                 pos: from_fx_vec(target).to_array(),
                 facing: angle_vec(facing.unwrap_or(r.facing)).to_array(),
-                size: [fx_to_f32(width), PLATE_HEIGHT, fx_to_f32(depth)],
+                size: [width, PLATE_HEIGHT, depth],
                 color: [cr / 2, cg / 2, cb / 2, 160],
                 lift: 0.0,
             });
@@ -6018,35 +5993,22 @@ impl Running {
             // The legs, each ending in a plate: the sim's route (to a
             // march's end), then every queued march.
             let route = self.world.route(h);
-            let mut legs: Vec<(Vec2, bool, bool)> = route
+            let queue = self.world.regiments.queued(h).unwrap_or_default();
+            let marches = queue.iter().filter_map(|step| match step {
+                gc_sim::orders::Step::Move { target, hunt, .. } => {
+                    Some((from_fx_vec(target), hunt, true))
+                }
+                gc_sim::orders::Step::Attack { .. } => None,
+            });
+            let legs = route
                 .iter()
                 .enumerate()
                 .map(|(k, &p)| (from_fx_vec(p), r.hunting, k + 1 == route.len()))
-                .collect();
-            if let Some(queue) = self.world.regiments.queued(h) {
-                for step in queue.iter() {
-                    let gc_sim::orders::Step::Move { target, hunt, .. } = step else {
-                        continue;
-                    };
-                    legs.push((from_fx_vec(target), hunt, true));
-                }
-            }
+                .chain(marches);
             for (to, hunting, end) in legs {
                 let color = if hunting { hunt } else { plain };
-                let leg = to - from;
-                let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
-                for s in 1..=steps {
-                    if dots == MAX_ROUTE_DOTS {
-                        return;
-                    }
-                    dots += 1;
-                    self.instances.push(BoxInstance {
-                        pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
-                        facing: [0.0, 1.0],
-                        size: ROUTE_DOT,
-                        color,
-                        lift: 0.0,
-                    });
+                if !push_dots(&mut self.instances, from, to, color, &mut dots) {
+                    return;
                 }
                 if end {
                     self.instances.push(BoxInstance {
@@ -8551,6 +8513,32 @@ fn drawn_pose(
     )
 }
 
+/// Dots from `from` to `to` (neither end included) in `color`, counted in
+/// `dots`; false once [`MAX_ROUTE_DOTS`] are down.
+fn push_dots(
+    instances: &mut Vec<BoxInstance>,
+    from: Vec2,
+    to: Vec2,
+    color: [u8; 4],
+    dots: &mut usize,
+) -> bool {
+    let leg = to - from;
+    let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
+    for s in 1..=steps {
+        if *dots == MAX_ROUTE_DOTS {
+            return false;
+        }
+        *dots += 1;
+        instances.push(BoxInstance {
+            pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
+            facing: [0.0, 1.0],
+            size: ROUTE_DOT,
+            color,
+            lift: 0.0,
+        });
+    }
+    true
+}
 /// Just the position of [`drawn_pose`], for the many callers that need no
 /// facing (the minimap runs it over every regiment each frame).
 fn drawn_position(
