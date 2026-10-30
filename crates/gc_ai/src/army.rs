@@ -6,11 +6,12 @@
 //! troops on the wings. The same code raises the AI's army and the player's,
 //! so neither side starts better placed.
 
-use gc_sim::{Command, Formation, PlayerCommand, PlayerId, UnitId, UnitStats};
+use gc_sim::{Command, PlayerCommand, PlayerId, UnitId, UnitStats};
 use glam::Vec2;
 use serde::Deserialize;
 
-use crate::perception::{Class, fx, right_of, to_fx_vec, vec_angle};
+pub use crate::deployment::{Deployment, deploy_clear_of};
+use crate::perception::{Class, to_fx_vec, vec_angle};
 use crate::personality::Faction;
 use crate::terrain::Terrain;
 
@@ -180,12 +181,14 @@ pub struct Placement {
 }
 
 /// Space between regiments side by side, and between the rows, tiles.
-const GAP: f32 = 2.0;
-const ROW_GAP: f32 = 4.0;
+pub(crate) const GAP: f32 = 2.0;
+pub(crate) const ROW_GAP: f32 = 4.0;
 
 /// Set `army` out in the standard deployment around `centre`, facing
 /// `forward`: line regiments in a row, archers behind them, fast troops on
-/// the wings. Places that aren't standable ground are nudged onto some.
+/// the wings. Where the ground won't hold that (the edge of the map, water,
+/// cliffs, thicket), the deployment is moved, turned and folded into more
+/// ranks until it fits; see [`crate::deployment`].
 pub fn deploy(
     units: &[UnitStats],
     army: &[UnitId],
@@ -193,79 +196,7 @@ pub fn deploy(
     forward: Vec2,
     terrain: &Terrain,
 ) -> Vec<Placement> {
-    let forward = forward.normalize_or(Vec2::Y);
-    let right = right_of(forward);
-    let size = |u: UnitId| {
-        let s = &units[u as usize];
-        let (w, d) = s.block_size_in(Formation::Line, s.files, s.models);
-        (fx(w), fx(d))
-    };
-    let class = |u: UnitId| Class::of(&units[u as usize]);
-    let mut line: Vec<UnitId> = army
-        .iter()
-        .copied()
-        .filter(|&u| class(u) == Class::Line)
-        .collect();
-    let mut shock: Vec<UnitId> = army
-        .iter()
-        .copied()
-        .filter(|&u| class(u) == Class::Shock)
-        .collect();
-    let ranged: Vec<UnitId> = army
-        .iter()
-        .copied()
-        .filter(|&u| class(u) == Class::Ranged)
-        .collect();
-    // All fast troops: the middle ones stand in the line.
-    if line.is_empty() && shock.len() >= 3 {
-        let wings = shock.len() / 3;
-        line = shock.split_off(wings);
-    }
-    let row_width = |row: &[UnitId]| {
-        row.iter().map(|&u| size(u).0 + GAP).sum::<f32>() - GAP.min(row.len() as f32 * GAP)
-    };
-    let line_depth = line.iter().map(|&u| size(u).1).fold(0.0, f32::max);
-    let mut out = Vec::with_capacity(army.len());
-    let mut put = |unit: UnitId, across: f32, back: f32| {
-        let p = centre + right * across - forward * back;
-        let p = terrain
-            .nearest_walkable(p, 12.0)
-            .unwrap_or(terrain.clamp(p, 4.0));
-        out.push(Placement {
-            unit,
-            position: p,
-            facing: forward,
-        });
-    };
-    // The line.
-    let width = row_width(&line);
-    let mut x = -width * 0.5;
-    for &u in &line {
-        let w = size(u).0;
-        put(u, x + w * 0.5, 0.0);
-        x += w + GAP;
-    }
-    // Archers behind.
-    let rw = row_width(&ranged);
-    let mut x = -rw * 0.5;
-    for &u in &ranged {
-        let (w, d) = size(u);
-        put(u, x + w * 0.5, line_depth * 0.5 + ROW_GAP + d * 0.5);
-        x += w + GAP;
-    }
-    // Fast troops on the wings, alternating sides from the line outward.
-    let (mut left, mut right_edge) = (-width * 0.5 - GAP * 2.0, width * 0.5 + GAP * 2.0);
-    for (k, &u) in shock.iter().enumerate() {
-        let w = size(u).0;
-        if k % 2 == 0 {
-            put(u, right_edge + w * 0.5, 0.0);
-            right_edge += w + GAP;
-        } else {
-            put(u, left - w * 0.5, 0.0);
-            left -= w + GAP;
-        }
-    }
-    out
+    deploy_clear_of(units, army, centre, forward, terrain, &[]).placed
 }
 
 /// The commands that put a deployed army on the field for `party`.

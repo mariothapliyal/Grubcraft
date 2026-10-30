@@ -159,6 +159,8 @@ pub fn set_out(
     let teams: Vec<u8> = players.iter().map(|s| s.team).collect();
     let perspective = if setup.seed.is_some() { 0 } else { me };
     let starts = battle_starts(&teams, perspective, plateaus);
+    // Where each zone goes: the start, or where its army ended up.
+    let mut zones = starts.clone();
     let middle = plateaus.iter().copied().sum::<Vec2>() / START_PLATEAUS as f32;
     // People get a deployment phase; computer players alone don't need one.
     let deployment = players.iter().any(|s| s.kind == SlotKind::Human);
@@ -170,7 +172,7 @@ pub fn set_out(
     };
     // Every zone goes out before any army or Ready, so the deployment can't
     // end before a late zone arrives when the setup spans several turns.
-    let (mut spawns, mut ready) = (Vec::new(), Vec::new());
+    let (mut spawns, mut ready, mut deployed) = (Vec::new(), Vec::new(), Vec::new());
     for (i, slot) in players.iter().enumerate() {
         let party = i as PlayerId;
         let faction = slot.faction;
@@ -204,11 +206,24 @@ pub fn set_out(
             set.my_forward = forward;
         }
         if deploy {
-            let placed = army::deploy(units, &raised, starts[i], forward, minds.terrain());
-            if deployment {
-                out.push(zone_order(party, &placed, &starts));
+            // Clear of the armies already out, which a shifted army may meet.
+            let out_already: Vec<_> = deployed.iter().flatten().copied().collect();
+            let at = army::deploy_clear_of(
+                units,
+                &raised,
+                starts[i],
+                forward,
+                minds.terrain(),
+                &out_already,
+            );
+            zones[i] = at.anchor;
+            if i == me {
+                // The army may have turned to fit the ground.
+                set.my_forward = at.placed.first().map_or(forward, |p| p.facing);
             }
+            let placed = at.placed;
             army::spawn_commands(party, &placed, &mut spawns);
+            deployed.push(placed);
             // The computer keeps the standard deployment.
             if deployment && slot.kind == SlotKind::Ai {
                 ready.push(PlayerCommand {
@@ -219,6 +234,13 @@ pub fn set_out(
         }
         if let Some(mind) = mind {
             minds.add(mind);
+        }
+    }
+    // The camera opens where the army stands.
+    set.my_start = zones.get(me).copied().unwrap_or(middle);
+    if deployment {
+        for (party, placed) in deployed.iter().enumerate() {
+            out.push(zone_order(party as PlayerId, placed, &zones));
         }
     }
     out.append(&mut spawns);
@@ -762,6 +784,78 @@ pub(crate) mod tests {
         /// Time all the minds spent thinking, and the longest single tick.
         pub(crate) ai_time: std::time::Duration,
         pub(crate) ai_worst: std::time::Duration,
+    }
+
+    /// Every regiment of every army starts on open ground inside the map,
+    /// not on another regiment, whatever the map's size, land and starts,
+    /// and however many are playing.
+    #[test]
+    fn armies_start_on_open_ground_inside_every_map() {
+        use gc_map::wilds::{Wildness, describe};
+        let data = crate::test_data();
+        let crate::Tables {
+            units,
+            factions,
+            points,
+        } = crate::Tables::new(data);
+        let mut maps: Vec<Heightmap> = vec![
+            Heightmap::generate(1, 256),
+            Heightmap::generate(2, 256),
+            Heightmap::generate(3, 512),
+        ];
+        for tiles in [256, 512] {
+            for wild in [Wildness::Plains, Wildness::Mixed, Wildness::Wild] {
+                for seed in 1..=2 {
+                    maps.push(Heightmap::from_def(&describe(tiles, seed, wild)));
+                }
+            }
+        }
+        let mut armies = 0;
+        for map in &maps {
+            let nav = map.sim_nav_costs();
+            let starts = crate::terrain_view::field_starts(map);
+            for (who, teams) in [
+                (vec![None, Some(Difficulty::Veteran)], vec![0, 1]),
+                (vec![None; 4], vec![0, 1, 0, 1]),
+                (vec![None; 6], vec![0, 1, 2, 3, 4, 5]),
+            ] {
+                let mut setup = lobby(&who, &teams);
+                // Every faction's units, so wide and deep blocks both come up.
+                for (k, slot) in setup.players.iter_mut().enumerate() {
+                    slot.faction = gc_ui::lobby::Faction::ALL[(k + map.tiles as usize) % 4];
+                }
+                let mut minds = Minds::new(ai_terrain(map, &nav));
+                let mut out = Vec::new();
+                set_out(
+                    &setup, &units, &factions, &points, starts, 1, true, &mut minds, &mut out,
+                );
+                let ground = minds.terrain();
+                let spawns: Vec<_> = out
+                    .iter()
+                    .filter_map(|c| match c.command {
+                        Command::SpawnRegiment { unit, position, .. } => {
+                            Some((c.player, unit, gc_ai::perception::v2(position)))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert!(!spawns.is_empty());
+                for (i, &(player, unit, at)) in spawns.iter().enumerate() {
+                    armies += 1;
+                    let why = format!("{} tiles, {player} players: unit {unit} at {at}", map.tiles);
+                    assert!(ground.walkable(at), "not on walkable ground: {why}");
+                    assert!(ground.inside(at, 3.0), "at the edge: {why}");
+                    assert!(!ground.water(at), "in water: {why}");
+                    for &(other, v, b) in &spawns[i + 1..] {
+                        assert!(
+                            at.distance(b) > 3.0,
+                            "{why} on top of {other}'s unit {v} at {b}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(armies > 1_000, "{armies}");
     }
 
     /// Who fields what: a built army as built (held to the budget), and
