@@ -2518,7 +2518,9 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoWalkway => {
             "Raise the wall a level (or a gate to a gatehouse) first: only a walkway can be manned."
         }
-        Refusal::Crooked => "Too sharp a bend: bridges bend gently, with no corners.",
+        Refusal::Crooked => {
+            "Too sharp a bend: drawn walls and bridges bend gently, with no corners."
+        }
     }
 }
 
