@@ -131,6 +131,19 @@ With a dragged width, Line and Hammer stretch every frontage by the same factor 
 
 `O` cycles the presets and then your saved shapes. `Shift`+`O` saves the selection's current shape (two or more regiments) into the first empty one of "Mine 1" to "Mine 3" and chooses it; when all three are full it replaces the chosen saved shape, or Mine 1 if a preset is chosen. A row of chips along the top of the army tray lists the shapes, the chosen one lit (a click chooses; each has a tooltip). It shows when two or more regiments are selected. Saved shapes and the choice are kept in `army_shapes.ron` beside the settings. A saved shape fits any army: each regiment takes a slot of its own role, spread across them, then any free slot, then a line behind. Only the ordering player's machine does the arranging. The simulation still gets one move per regiment, so the sim, replays and the network protocol are unchanged. The group marches at its slowest member's pace.
 
+## Orders and feedback
+
+What a regiment is doing, and why it is shaken, shows in four places (`gc_ui::orders`, the words and pictures shared by all of them):
+
+- **Order line** on the selection panel: an icon and a word (Holding, Marching, Forced march, Attacking, Fighting, Braced, Falling back, Running), with a note in brackets when something holds it up (pinned, driven back, waiting: friend in the way, filing through, trapped). Several regiments with different orders show "Mixed orders".
+- **Why line:** when a regiment is wavering or routing, "Why:" gives up to two reasons, most serious first (rear attack, flanked, general fell, ally broke, outnumbered, ambushed, heavy losses, bloodied, pinned, burning, flooded, champion lost).
+- **Army tray cards:** a small order icon at the top left of the portrait; a yellow "!" tab when the regiment is wavering.
+- **Banner tab:** each selected regiment shows its order icon in a small tab above its banner.
+
+**Hover card:** rest the mouse on any regiment, yours or a visible enemy, for a short moment (about a third of a second) and a card shows its name, soldiers left, order and note, morale and why. Hovering your own regiment also shows its route.
+
+**Built so far (clear orders and feedback):** the order line, the Why line, the card icon and wavering tab, the banner tab and the hover card, all read from the same simulation reasons. Not yet: attack-move and queued order icons, which wait for responsive orders ([29](29-restart-plan.md)).
+
 ## Readability on the battlefield
 
 - **Regiment banner** above every regiment: faction colour, unit icon, small model-count bar, morale shown by banner state (upright, tilting when wavering, flat and white-flagged when routing).

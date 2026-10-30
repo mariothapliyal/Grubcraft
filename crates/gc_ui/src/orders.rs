@@ -9,7 +9,10 @@
 //! game checks that they stay so.
 //! Docs: docs/08-ui-ux.md#visual-style.
 
-use crate::icons::Icon;
+use crate::draw::{DrawList, Rect};
+use crate::hud::linen_light;
+use crate::icons::{self, Icon};
+use crate::ui::theme;
 
 /// What a regiment is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -86,6 +89,51 @@ pub fn order_text(order: Order, wait: Option<Wait>) -> String {
     }
 }
 
+/// What a selection is doing, as one thing to show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Orders {
+    /// Nothing to say.
+    #[default]
+    None,
+    /// Several regiments, each doing something different.
+    Mixed,
+    /// One order, and what holds it up (one regiment, or all alike).
+    One(Order, Option<Wait>),
+}
+
+impl Orders {
+    /// Add another regiment's: the same order stays, otherwise it is mixed;
+    /// a wait stays only if all share it.
+    pub fn with(self, next: Orders) -> Orders {
+        match (self, next) {
+            (Orders::None, next) => next,
+            (Orders::One(a, wa), Orders::One(b, wb)) if a == b => {
+                Orders::One(a, if wa == wb { wa } else { None })
+            }
+            (Orders::One(..), Orders::One(..)) => Orders::Mixed,
+            (Orders::Mixed, _) | (_, Orders::Mixed) => Orders::Mixed,
+            (one, Orders::None) => one,
+        }
+    }
+
+    /// The picture and line to show; `None` with nothing to say.
+    pub fn shown(self) -> Option<(Icon, String)> {
+        match self {
+            Orders::None => None,
+            Orders::Mixed => Some((Icon::Flag, "Mixed orders".to_string())),
+            Orders::One(order, wait) => Some((order.icon(), order_text(order, wait))),
+        }
+    }
+}
+
+/// The small order picture tab: linen with an ink border, the order's
+/// icon inside. Used on the army cards and over banners in the world.
+pub fn draw_tab(draw: &mut DrawList, tab: Rect, order: Order) {
+    draw.rect(tab, linen_light());
+    draw.border(tab, 1, theme::INK);
+    icons::icon(draw, tab.inset(1), order.icon(), theme::INK);
+}
+
 /// Reasons a regiment's nerve is shaken. The same bits as the
 /// simulation's `WHY_*` constants.
 pub mod why {
@@ -134,8 +182,14 @@ pub fn reasons(bits: u16) -> impl Iterator<Item = &'static str> {
 
 /// "Why: rear attack, outnumbered"; `None` when there is no reason to give.
 pub fn why_text(bits: u16) -> Option<String> {
-    let words: Vec<&str> = reasons(bits).collect();
-    (!words.is_empty()).then(|| format!("Why: {}", words.join(", ")))
+    let mut words = reasons(bits);
+    let mut text = String::from("Why: ");
+    text.push_str(words.next()?);
+    for word in words {
+        text.push_str(", ");
+        text.push_str(word);
+    }
+    Some(text)
 }
 
 #[cfg(test)]
@@ -185,6 +239,23 @@ mod tests {
         assert_eq!(Wait::DrivenBack.note(), "driven back");
         assert_eq!(Wait::FilingThrough.note(), "filing through");
         assert_eq!(Wait::Trapped.note(), "trapped");
+    }
+
+    #[test]
+    fn orders_fold_into_one_thing_to_show() {
+        let march = Orders::One(Order::Marching, None);
+        let pinned = Orders::One(Order::Marching, Some(Wait::Pinned));
+        assert_eq!(Orders::None.with(march), march);
+        assert_eq!(march.with(Orders::None), march);
+        assert_eq!(march.with(march), march);
+        assert_eq!(pinned.with(pinned), pinned);
+        assert_eq!(pinned.with(march), march, "a wait only if all share it");
+        assert_eq!(march.with(Orders::One(Order::Holding, None)), Orders::Mixed);
+        assert_eq!(Orders::Mixed.with(march), Orders::Mixed);
+        assert_eq!(march.with(Orders::Mixed), Orders::Mixed);
+        assert_eq!(Orders::None.shown(), None);
+        assert_eq!(Orders::Mixed.shown().unwrap().1, "Mixed orders");
+        assert_eq!(pinned.shown().unwrap().1, "Marching (pinned)");
     }
 
     #[test]

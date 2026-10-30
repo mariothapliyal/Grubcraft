@@ -18,7 +18,7 @@ use crate::conquest::{self, Block, NodeDot, StructurePanel, TipsCard, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_height, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
-use crate::orders::{self, Order, Wait};
+use crate::orders::{self, Order, Orders, Wait};
 use crate::placer::{self, PlacePicker};
 use crate::powers::{self, PowerButton};
 use crate::ui::{Press, theme};
@@ -147,12 +147,41 @@ pub struct MinimapData<'a> {
     pub blocks: &'a [Block],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum CardState {
     #[default]
     Steady,
     Wavering,
     Routing,
+}
+
+impl CardState {
+    /// The colour of its meter and of its words.
+    pub fn ink(self) -> Color {
+        match self {
+            CardState::Steady => theme::WOAD,
+            CardState::Wavering => WAVER_INK,
+            CardState::Routing => theme::MADDER,
+        }
+    }
+
+    /// The morale bar's label.
+    pub fn label(self) -> &'static str {
+        match self {
+            CardState::Steady => "Morale",
+            CardState::Wavering => "Wavering",
+            CardState::Routing => "Routing",
+        }
+    }
+
+    /// The state as one lower-case word.
+    pub fn word(self) -> &'static str {
+        match self {
+            CardState::Steady => "steady",
+            CardState::Wavering => "wavering",
+            CardState::Routing => "routing",
+        }
+    }
 }
 
 /// One regiment's card in the army tray.
@@ -172,9 +201,8 @@ pub struct Card {
     pub state: CardState,
     pub engaged: bool,
     pub selected: bool,
-    /// What it is doing, shown as a small picture on the card; `None`
-    /// shows nothing.
-    pub order: Option<Order>,
+    /// What it is doing, shown as a small picture on the card.
+    pub order: Order,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -232,12 +260,8 @@ pub struct Selection<'a> {
     pub ground: &'a str,
     /// The side's general rides with one of them (docs/37-commander.md).
     pub general: bool,
-    /// What they are doing; `None` with nothing to say.
-    pub order: Option<Order>,
-    /// Several regiments selected, each doing something different.
-    pub mixed_orders: bool,
-    /// What holds them up (one regiment, or all alike).
-    pub waiting: Option<Wait>,
+    /// What they are doing, and what holds them up.
+    pub orders: Orders,
     /// Why they waver, as `orders::why` bits (the shaken ones' together).
     pub why: u16,
     /// The army shapes to choose from, as a row of chips along the tray's top
@@ -535,6 +559,43 @@ pub struct HoverCard<'a> {
     pub why: u16,
 }
 
+/// Padding and row height of a tooltip's box.
+const TIP_PAD: i32 = 9;
+const TIP_ROW: i32 = 18;
+
+/// Whether the mouse has rested on `id` for [`TOOLTIP_DELAY_MS`]; `seen`
+/// remembers what it rests on and since when (ms).
+fn rested(seen: &mut Option<(u32, u64)>, id: u32, now_ms: u64) -> bool {
+    let since = match *seen {
+        Some((was, since)) if was == id => since,
+        _ => {
+            *seen = Some((id, now_ms));
+            now_ms
+        }
+    };
+    now_ms.wrapping_sub(since) >= TOOLTIP_DELAY_MS
+}
+
+/// The size of a tooltip box for `lines` rows of up to `chars` characters.
+fn tip_size(chars: usize, lines: usize) -> (i32, i32) {
+    (
+        chars as i32 * CELL_W + 2 * TIP_PAD,
+        lines as i32 * TIP_ROW + 2 * TIP_PAD - 2,
+    )
+}
+
+/// A tooltip's box: shadow, linen, and a weld line inside the edge.
+fn tip_frame(draw: &mut DrawList, r: Rect) {
+    draw.shadow(r, 3);
+    draw.boxed(r, linen_light(), 2);
+    draw.border(r.inset(3), 1, theme::WELD);
+}
+
+/// "40 of 60 soldiers".
+fn soldiers_text(models: u32, max_models: u32) -> String {
+    format!("{models} of {max_models} soldiers")
+}
+
 /// Widget id of the Help button's tooltip; grid slots use their index.
 const TIP_HELP: u32 = 100;
 const TIP_GUIDE: u32 = 101;
@@ -723,18 +784,11 @@ impl Hud {
             self.hover = None;
             return;
         };
-        let since = match self.hover {
-            Some((id, since)) if id == tip.id => since,
-            _ => {
-                self.hover = Some((tip.id, input.now_ms));
-                input.now_ms
-            }
-        };
-        if input.now_ms.wrapping_sub(since) < TOOLTIP_DELAY_MS {
+        if !rested(&mut self.hover, tip.id, input.now_ms) {
             return;
         }
         const WRAP: usize = 30;
-        const PAD: i32 = 9;
+        const PAD: i32 = TIP_PAD;
         let body: Vec<String> = if tip.text.is_empty() {
             Vec::new()
         } else {
@@ -748,8 +802,7 @@ impl Hud {
             .max()
             .unwrap_or(1);
         let lines = 1 + body.len() + usize::from(!tip.note.is_empty());
-        let w = chars as i32 * CELL_W + 2 * PAD;
-        let h = lines as i32 * 18 + 2 * PAD - 2;
+        let (w, h) = tip_size(chars, lines);
         // Above the button; below it when there is no room above; always
         // wholly on the screen.
         let mut y = tip.anchor.y - h - 6;
@@ -759,9 +812,7 @@ impl Hud {
         let x = (tip.anchor.right() - w).clamp(4, (screen.0 - w - 4).max(4));
         let y = y.clamp(4, (screen.1 - h - 4).max(4));
         let r = Rect::new(x, y, w, h);
-        draw.shadow(r, 3);
-        draw.boxed(r, linen_light(), 2);
-        draw.border(r.inset(3), 1, theme::WELD);
+        tip_frame(draw, r);
         let mut ty = r.y + PAD - 1;
         draw.text_bold(r.x + PAD, ty, 1, theme::MADDER, &tip.name);
         let key = format!("[{}]", tip.key);
@@ -773,11 +824,11 @@ impl Hud {
             &key,
         );
         for line in &body {
-            ty += 18;
+            ty += TIP_ROW;
             draw.text(r.x + PAD, ty, 1, theme::INK, line);
         }
         if !tip.note.is_empty() {
-            ty += 18;
+            ty += TIP_ROW;
             draw.text(r.x + PAD, ty, 1, muted_ink(), &tip.note);
         }
         self.tooltip = Some(r);
@@ -799,30 +850,19 @@ impl Hud {
             self.world_hover = None;
             return None;
         };
-        let since = match self.world_hover {
-            Some((id, since)) if id == c.id => since,
-            _ => {
-                self.world_hover = Some((c.id, now_ms));
-                now_ms
-            }
-        };
-        if now_ms.wrapping_sub(since) < TOOLTIP_DELAY_MS {
+        if !rested(&mut self.world_hover, c.id, now_ms) {
             return None;
         }
-        const PAD: i32 = 9;
-        const ROW: i32 = 18;
+        const PAD: i32 = TIP_PAD;
+        const ROW: i32 = TIP_ROW;
         let title = if c.enemy {
             format!("{} (enemy)", c.name)
         } else {
             c.name.to_string()
         };
-        let count = format!("{} of {} soldiers", c.models, c.max_models);
+        let count = soldiers_text(c.models.into(), c.max_models.into());
         let doing = orders::order_text(c.order, c.waiting);
-        let (morale, morale_color) = match c.state {
-            CardState::Steady => ("Morale: steady", theme::WOAD),
-            CardState::Wavering => ("Morale: wavering", WAVER_INK),
-            CardState::Routing => ("Morale: routing", theme::MADDER),
-        };
+        let morale = format!("Morale: {}", c.state.word());
         let why = if c.state == CardState::Steady {
             None
         } else {
@@ -839,8 +879,7 @@ impl Hud {
         .max()
         .unwrap_or(1);
         let lines = 4 + i32::from(why.is_some());
-        let w = chars as i32 * CELL_W + 2 * PAD;
-        let h = lines * ROW + 2 * PAD - 2;
+        let (w, h) = tip_size(chars, lines as usize);
         let x = if mouse.0 + 16 + w + 4 > screen.0 {
             mouse.0 - 12 - w
         } else {
@@ -849,9 +888,7 @@ impl Hud {
         let x = x.clamp(4, (screen.0 - w - 4).max(4));
         let y = (mouse.1 + 18).clamp(4, (screen.1 - h - 4).max(4));
         let r = Rect::new(x, y, w, h);
-        draw.shadow(r, 3);
-        draw.boxed(r, linen_light(), 2);
-        draw.border(r.inset(3), 1, theme::WELD);
+        tip_frame(draw, r);
         let (tx, mut ty) = (r.x + PAD, r.y + PAD - 1);
         draw.text_bold(tx, ty, 1, theme::MADDER, &title);
         ty += ROW;
@@ -865,7 +902,7 @@ impl Hud {
         );
         draw.text_bold(tx + 18, ty, 1, theme::INK, &doing);
         ty += ROW;
-        draw.text(tx, ty, 1, morale_color, morale);
+        draw.text(tx, ty, 1, c.state.ink(), &morale);
         if let Some(why) = why {
             ty += ROW;
             draw.text(tx, ty, 1, muted_ink(), &why);
@@ -1533,7 +1570,7 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let count = if s.regiments > 1 {
         format!("{} regiments, {} soldiers", s.regiments, s.models)
     } else {
-        format!("{} of {} soldiers", s.models, s.max_models)
+        soldiers_text(s.models, s.max_models)
     };
     draw.text(x, y - 4, 1, muted_ink(), &fit(&count, chars));
     y += 20;
@@ -1543,14 +1580,9 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let bar_x = x + label_w;
     let bar_w = (w - label_w - pct_w).max(20);
     let health = s.models as f32 / s.max_models.max(1) as f32;
-    let (morale_label, morale_color) = match s.state {
-        CardState::Steady => ("Morale", theme::WOAD),
-        CardState::Wavering => ("Wavering", theme::WELD),
-        CardState::Routing => ("Routing", theme::MADDER),
-    };
     for (label, frac, color) in [
         ("Health", health, health_color(health)),
-        (morale_label, f32::from(s.morale) / 100.0, morale_color),
+        (s.state.label(), f32::from(s.morale) / 100.0, s.state.ink()),
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
         ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
@@ -1562,33 +1594,20 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
         y += 22;
     }
     // What they are doing, and what holds them up.
-    if s.mixed_orders || s.order.is_some() {
-        let text = match s.order {
-            Some(order) if !s.mixed_orders => orders::order_text(order, s.waiting),
-            _ => "Mixed orders".to_string(),
-        };
+    if let Some((icon, text)) = s.orders.shown() {
         let ink = if s.state == CardState::Routing {
             theme::MADDER
         } else {
             theme::INK
         };
-        if let Some(order) = s.order.filter(|_| !s.mixed_orders) {
-            icons::icon(draw, Rect::new(x, y - 1, 14, 14), order.icon(), ink);
-        } else {
-            icons::icon(draw, Rect::new(x, y - 1, 14, 14), Icon::Flag, ink);
-        }
+        icons::icon(draw, Rect::new(x, y - 1, 14, 14), icon, ink);
         draw.text_bold(x + 18, y, 1, ink, &fit(&text, chars.saturating_sub(2)));
         y += 16;
     }
     if s.state != CardState::Steady
         && let Some(why) = orders::why_text(s.why)
     {
-        let color = if s.state == CardState::Routing {
-            theme::MADDER
-        } else {
-            WAVER_INK
-        };
-        draw.text(x, y, 1, color, &fit(&why, chars));
+        draw.text(x, y, 1, s.state.ink(), &fit(&why, chars));
         y += 16;
     }
     if !s.formation.is_empty() {
@@ -1853,12 +1872,11 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     }
     // What it is doing, in the portrait's top left corner; a shaken one
     // gets an "!" in the opposite corner.
-    if let Some(order) = c.order {
-        let tab = Rect::new(portrait.x + 2, portrait.y + 2, 14, 14);
-        draw.rect(tab, linen_light());
-        draw.border(tab, 1, theme::INK);
-        icons::icon(draw, tab.inset(1), order.icon(), theme::INK);
-    }
+    orders::draw_tab(
+        draw,
+        Rect::new(portrait.x + 2, portrait.y + 2, 14, 14),
+        c.order,
+    );
     if c.state == CardState::Wavering {
         let tab = Rect::new(portrait.right() - 14, portrait.y + 2, 12, 14);
         draw.rect(tab, theme::WELD);
@@ -1880,16 +1898,11 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
     );
     break_mark(draw, Rect::new(inner.x, y, inner.w, 8), c.break_at);
     y += 10;
-    let morale_color = match c.state {
-        CardState::Steady => theme::WOAD,
-        CardState::Wavering => theme::WELD,
-        CardState::Routing => theme::MADDER,
-    };
     ink_meter(
         draw,
         Rect::new(inner.x, y, inner.w, 8),
         f32::from(c.morale) / 100.0,
-        morale_color,
+        c.state.ink(),
     );
     y += 10;
     if c.state == CardState::Routing {
@@ -2832,24 +2845,14 @@ mod tests {
         );
         assert!(!hud.wants(SCREEN, (20, 300)), "the field beside it");
         // The title and every group heading are on it.
-        let has = |d: &DrawList, text: &str| {
-            let g: Vec<u32> = text
-                .chars()
-                .filter(|c| *c != ' ')
-                .map(|c| u32::from(c as u8 - b' '))
-                .collect();
-            d.quads
-                .windows(g.len())
-                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
-        };
-        assert!(has(&open, "THE MARSHAL'S SCROLL"));
+        assert!(drew(&open, "THE MARSHAL'S SCROLL"));
         for (name, keys) in HELP_GROUPS {
-            assert!(has(&open, name), "{name}");
+            assert!(drew(&open, name), "{name}");
             for (key, what) in keys {
-                assert!(has(&open, key.trim()) && has(&open, what), "{key} {what}");
+                assert!(drew(&open, key.trim()) && drew(&open, what), "{key} {what}");
             }
         }
-        assert!(has(&open, "commanding red"), "the live notes");
+        assert!(drew(&open, "commanding red"), "the live notes");
     }
 
     #[test]
@@ -2977,23 +2980,13 @@ mod tests {
             in_tray(&one, side) > 5,
             "the banner's cloth is in the side's colour"
         );
-        let has = |d: &DrawList, text: &str| {
-            let g: Vec<u32> = text
-                .chars()
-                .filter(|c| *c != ' ')
-                .map(|c| u32::from(c as u8 - b' '))
-                .collect();
-            d.quads
-                .windows(g.len())
-                .any(|w| w.iter().map(|q| q.glyph).eq(g.iter().copied()))
-        };
-        assert!(has(&one, "Yari") && has(&one, "Ashigaru"));
-        assert!(has(&one, "40of60soldiers"));
-        assert!(has(&one, "Health") && has(&one, "Morale") && has(&one, "Formation:Line"));
+        assert!(drew(&one, "Yari") && drew(&one, "Ashigaru"));
+        assert!(drew(&one, "40of60soldiers"));
+        assert!(drew(&one, "Health") && drew(&one, "Morale") && drew(&one, "Formation:Line"));
         // What the ground does to them, when it does something.
-        assert!(has(&one, "Inmud:slow,nocharges"));
-        assert!(has(&none, "Clickaregimenttocommandit"));
-        assert!(!has(&one, "Clickaregimenttocommandit"));
+        assert!(drew(&one, "Inmud:slow,nocharges"));
+        assert!(drew(&none, "Clickaregimenttocommandit"));
+        assert!(!drew(&one, "Clickaregimenttocommandit"));
         // A mixed selection counts regiments and soldiers.
         let many = Selection {
             name: "3 regiments",
@@ -3002,13 +2995,13 @@ mod tests {
             ..selection()
         };
         let d = with_selection(Some(many), &[card(1), card(2), card(3)]);
-        assert!(has(&d, "3regiments,120soldiers"));
+        assert!(drew(&d, "3regiments,120soldiers"));
         // Routing says so on the morale bar's label.
         let broken = Selection {
             state: CardState::Routing,
             ..selection()
         };
-        assert!(has(&with_selection(Some(broken), &[card(1)]), "Routing"));
+        assert!(drew(&with_selection(Some(broken), &[card(1)]), "Routing"));
     }
 
     /// Whether `d` drew `text` (spaces ignored) as a run of glyphs.
@@ -3026,19 +3019,19 @@ mod tests {
     #[test]
     fn the_panel_says_what_the_regiment_is_doing_and_why_it_wavers() {
         let base = Selection {
-            order: Some(Order::Marching),
+            orders: Orders::One(Order::Marching, None),
             ..selection()
         };
         let d = with_selection(Some(base), &[card(1)]);
         assert!(drew(&d, "Marching") && !drew(&d, "Why:"));
         let waiting = Selection {
-            waiting: Some(Wait::FriendInTheWay),
+            orders: Orders::One(Order::Marching, Some(Wait::FriendInTheWay)),
             ..base
         };
         let d = with_selection(Some(waiting), &[card(1)]);
         assert!(drew(&d, "Marching(waiting:friendintheway)"));
         let mixed = Selection {
-            mixed_orders: true,
+            orders: Orders::Mixed,
             regiments: 3,
             ..base
         };
@@ -3065,11 +3058,14 @@ mod tests {
     fn a_card_carries_a_small_order_picture_and_a_wavering_mark() {
         let plain = with_selection(None, &[card(1)]);
         let doing = Card {
-            order: Some(Order::Fighting),
+            order: Order::Fighting,
             ..card(1)
         };
         let with_icon = with_selection(None, std::slice::from_ref(&doing));
-        assert!(with_icon.quads.len() > plain.quads.len() + 4);
+        assert!(
+            with_icon.quads != plain.quads,
+            "the picture follows the order"
+        );
         let shaken = Card {
             state: CardState::Wavering,
             ..doing
