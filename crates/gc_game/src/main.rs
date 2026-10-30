@@ -5368,6 +5368,8 @@ impl Running {
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
+        // The last match's weather and fires are no news in this one.
+        self.sky_news = sky_news::SkyNews::default();
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
@@ -6456,7 +6458,14 @@ impl Running {
         if let Some(w) = &watched {
             news.push(w.as_str());
         }
-        news.extend(self.weather_and_fire_news());
+        // Kept up while catching up online, but what happened then is old
+        // news.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let mut sky = Vec::new();
+        self.weather_and_fire_news(&mut sky);
+        if !catching_up {
+            news.extend(sky);
+        }
         // Said together, so none hides another from the same tick.
         if !news.is_empty() {
             self.say(news.join(". "));
@@ -6468,21 +6477,23 @@ impl Running {
 
     /// A storm, fog or snow coming in or clearing, and woods catching fire
     /// near the viewer's troops or base, since the last tick.
-    fn weather_and_fire_news(&mut self) -> Vec<&'static str> {
+    fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
         let world = &self.world;
         let side = self.sandbox.side;
-        let mut news: Vec<_> = self.sky_news.weather(world.weather()).into_iter().collect();
+        news.extend(self.sky_news.weather(world.weather()));
         let troops = (world.regiments.iter())
             .filter(|r| r.owner == side)
             .map(|r| (fx_to_f32(r.position.x), fx_to_f32(r.position.y)));
-        let base = (world.structures().into_iter().flat_map(|s| s.iter()))
-            .filter(|b| b.owner == side)
-            .map(|b| (b.tile, (i32::from(b.width), i32::from(b.depth))));
+        let base = (world
+            .structures()
+            .into_iter()
+            .flat_map(gc_sim::Structures::iter))
+        .filter(|b| b.owner == side)
+        .map(|b| [b.tile.0, b.tile.1, i32::from(b.width), i32::from(b.depth)]);
         news.extend(
             self.sky_news
                 .fires(world.tick_count(), world.fires(), troops, base),
         );
-        news
     }
 
     /// Sparks and wounds for the blows soldiers landed on each other since

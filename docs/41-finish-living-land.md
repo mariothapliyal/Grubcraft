@@ -152,15 +152,21 @@ layouts. A new art pass for the habitats.
   each tick and says on the news line when rain, a storm, snow or fog comes
   in, and when it clears: "Fog is rolling in: troops see much less far.
   Watch for ambushes", "A storm is coming in: ...", "The fog has lifted".
-  Weather comes in at strength 100 and has cleared under 40; rain is a storm
-  from 200 and rain again under 160. The give either way means the sim's
+  Weather comes in at strength 80 (the sim's spells are 90 to 255) and has
+  cleared under 40; rain is a storm from 192 (where the picture's lightning
+  starts) and rain again under 152. The give either way means the sim's
   slow fades and small wobbles are told once. The weather a match starts in
-  isn't told.
-- **Fire news.** Once a second, woods burning within 10 tiles of one of the
-  viewer's buildings or regiments are told: "Fire! The woods are burning
-  near your base" (the base first) or "... near your troops". A fire is told
-  as it comes near, then not again for 45 seconds, so a blaze spreading
-  tile by tile or flickering at the edge is told once.
+  isn't told, nor is a new match told the last one's weather.
+- **Fire news.** Once a second, woods or scrub burning within 10 tiles of
+  one of the viewer's buildings or regiments are told: "Fire! It is
+  spreading near your base" or "... near your troops". Base and troops are
+  told apart: each once as a fire comes near, then not again for 45
+  seconds, so a blaze spreading tile by tile or flickering at the edge is
+  told once, and a fire that spreads from the troops to the base is told
+  again. The sim keeps its fires sorted by row, so only the rows in reach of
+  each building or regiment are looked at.
+- **Catching up.** While an online player catches up, the watcher keeps up
+  but says nothing, so a rejoin doesn't replay old news.
 - **Real use.** The alerts matter most in Conquest on grown land, where
   storms send flash floods down the rivers (already told) and fog hides
   ambushes in the woods. The computer players read the weather and fire
@@ -168,4 +174,5 @@ layouts. A new art pass for the habitats.
 - **Tests.** `sky_news::tests`: a fade in and out of rain through a storm is
   told once each way, a wobble about the thresholds says nothing, the
   opening weather is quiet, a new kind is told after the old fades, and a
-  fire near troops then the base is told once each, with the quiet time.
+  fire near troops then the base is told once each, with the quiet time,
+  and a fire spreading from the troops to the base is told again.

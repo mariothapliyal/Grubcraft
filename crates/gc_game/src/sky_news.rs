@@ -6,10 +6,12 @@
 use gc_sim::sky::{Weather, WeatherKind};
 use gc_sim::{Burn, TICKS_PER_SECOND};
 
+use crate::conquest::Foot;
+
 /// The weather as troops feel it, with some give either way, so weather
 /// fading in and out a step at a time is announced once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Felt {
+enum Felt {
     #[default]
     Clear,
     Rain,
@@ -18,16 +20,19 @@ pub(crate) enum Felt {
     Fog,
 }
 
-/// From this strength weather has come in; under [`OUT`] it has cleared.
-const IN: u8 = 100;
+/// From this strength weather has come in (the sim's spells are at least
+/// 90 strong); under [`OUT`] it has cleared.
+const IN: u8 = 80;
 const OUT: u8 = 40;
-/// Rain from this strength is a storm; it is rain again under [`CALMER`].
-const STORM: u8 = 200;
-const CALMER: u8 = 160;
+/// Rain from this strength is a storm (where the picture's lightning
+/// starts); it is rain again under [`CALMER`].
+// Rounded up, as the picture storms from `STORM_AT` and over.
+const STORM: u8 = (crate::atmosphere::STORM_AT * 255.0) as u8 + 1;
+const CALMER: u8 = STORM - 40;
 
 impl Felt {
     /// How `weather` feels to troops who felt `self` until now.
-    pub(crate) fn next(self, weather: Weather) -> Felt {
+    fn next(self, weather: Weather) -> Felt {
         let s = weather.strength;
         let kind = match weather.kind {
             WeatherKind::Clear => return Felt::Clear,
@@ -61,7 +66,7 @@ impl Felt {
 }
 
 /// What the news says when the weather turns from `was` to `now`.
-pub(crate) fn weather_news(was: Felt, now: Felt) -> Option<&'static str> {
+fn weather_news(was: Felt, now: Felt) -> Option<&'static str> {
     Some(match (was, now) {
         (a, b) if a == b => return None,
         (Felt::Rain, Felt::Storm) => {
@@ -84,19 +89,12 @@ pub(crate) fn weather_news(was: Felt, now: Felt) -> Option<&'static str> {
 }
 
 /// Fire within this many tiles of a regiment or building is near it.
-pub(crate) const FIRE_NEAR: i32 = 10;
+const FIRE_NEAR: i32 = 10;
 /// Fires are looked for once a second (the sim's fires spread slower).
 const FIRE_EVERY: u32 = TICKS_PER_SECOND;
 /// A fire is announced when it first comes near, and not again for this
 /// long, so a blaze flickering at the edge isn't announced over and over.
 const FIRE_QUIET: u32 = 45 * TICKS_PER_SECOND;
-
-/// What a fire is near.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Near {
-    Troops,
-    Base,
-}
 
 /// Watches the weather and the fires for the news line.
 #[derive(Debug, Default)]
@@ -104,10 +102,19 @@ pub(crate) struct SkyNews {
     /// The weather felt so far; `None` until the first look, so the
     /// weather a match starts in isn't announced.
     felt: Option<Felt>,
-    /// Whether a fire was near last time, and the tick of the last warning.
-    fire_near: bool,
-    warned: Option<u32>,
+    /// For the base and the troops: whether a fire was near last time, and
+    /// the tick of the last warning.
+    near: [bool; 2],
+    warned: [Option<u32>; 2],
 }
+
+/// What a fire can be near, in [`SkyNews::near`]'s order, and its news.
+const BASE: usize = 0;
+const TROOPS: usize = 1;
+const FIRE_NEWS: [&str; 2] = [
+    "Fire! It is spreading near your base",
+    "Fire! It is spreading near your troops",
+];
 
 impl SkyNews {
     /// The weather's news after a tick, if it turned.
@@ -121,62 +128,50 @@ impl SkyNews {
         weather_news(was, now)
     }
 
-    /// The fires' news at `tick`: woods newly burning near `side`'s
-    /// regiments (`troops`, in tiles) or its buildings (`base`: each
-    /// footprint's corner tile and size).
+    /// The fires' news at `tick`: woods or scrub newly burning near the
+    /// viewer's buildings (`base`, footprints) or regiments (`troops`, in
+    /// tiles); the base first.
     pub(crate) fn fires(
         &mut self,
         tick: u32,
         fires: &[Burn],
-        troops: impl Iterator<Item = (f32, f32)>,
-        base: impl Iterator<Item = ((i32, i32), (i32, i32))>,
+        mut troops: impl Iterator<Item = (f32, f32)>,
+        mut base: impl Iterator<Item = Foot>,
     ) -> Option<&'static str> {
         if !tick.is_multiple_of(FIRE_EVERY) {
             return None;
         }
-        let near = fire_near(fires, troops, base);
-        let was = std::mem::replace(&mut self.fire_near, near.is_some());
-        let near = near?;
-        if was || self.warned.is_some_and(|t| tick < t + FIRE_QUIET) {
-            return None;
+        let r = FIRE_NEAR as f32;
+        let mut now = [false; 2];
+        if !fires.is_empty() {
+            now[BASE] = base.any(|f| burning_in(fires, f, r).next().is_some());
+            now[TROOPS] = troops.any(|(x, y)| {
+                let square = [x.floor() as i32, y.floor() as i32, 1, 1];
+                burning_in(fires, square, r).any(|b| {
+                    let (dx, dy) = (b.x as f32 + 0.5 - x, b.y as f32 + 0.5 - y);
+                    dx * dx + dy * dy <= r * r
+                })
+            });
         }
-        self.warned = Some(tick);
-        Some(match near {
-            Near::Base => "Fire! The woods are burning near your base",
-            Near::Troops => "Fire! The woods are burning near your troops",
-        })
+        let was = std::mem::replace(&mut self.near, now);
+        let place = (0..2).find(|&i| {
+            now[i] && !was[i] && !self.warned[i].is_some_and(|t| tick < t + FIRE_QUIET)
+        })?;
+        self.warned[place] = Some(tick);
+        Some(FIRE_NEWS[place])
     }
 }
 
-/// What, if anything, a burning tile is near: the base before the troops.
-pub(crate) fn fire_near(
-    fires: &[Burn],
-    mut troops: impl Iterator<Item = (f32, f32)>,
-    mut base: impl Iterator<Item = ((i32, i32), (i32, i32))>,
-) -> Option<Near> {
-    if fires.is_empty() {
-        return None;
-    }
-    let by_base = base.any(|((x, y), (w, d))| {
-        fires.iter().any(|b| {
-            b.x >= x - FIRE_NEAR
-                && b.x < x + w + FIRE_NEAR
-                && b.y >= y - FIRE_NEAR
-                && b.y < y + d + FIRE_NEAR
-        })
-    });
-    if by_base {
-        return Some(Near::Base);
-    }
-    let r = FIRE_NEAR as f32;
-    troops
-        .any(|(x, y)| {
-            fires.iter().any(|b| {
-                let (dx, dy) = (b.x as f32 + 0.5 - x, b.y as f32 + 0.5 - y);
-                dx * dx + dy * dy <= r * r
-            })
-        })
-        .then_some(Near::Troops)
+/// The burning tiles within `margin` of footprint `f`, looking only at the
+/// rows in reach (the sim keeps its fires sorted by row, then column).
+fn burning_in(fires: &[Burn], f: Foot, margin: f32) -> impl Iterator<Item = &Burn> {
+    let m = margin.ceil() as i32;
+    let [x, y, _, d] = f;
+    let from = fires.partition_point(|b| (b.y, b.x) < (y - m, x - m));
+    fires[from..]
+        .iter()
+        .take_while(move |b| b.y < y + d + m)
+        .filter(move |b| crate::conquest::near(f, (b.x as f32 + 0.5, b.y as f32 + 0.5), margin))
 }
 
 #[cfg(test)]
@@ -255,7 +250,7 @@ mod tests {
     fn fire_near_the_base_or_troops_is_announced_once() {
         let mut news = SkyNews::default();
         let troops = [(50.0, 50.0)];
-        let base = [((10, 10), (3, 3))];
+        let base = [[10, 10, 3, 3]];
         let mut at = |tick, fires: &[Burn]| {
             news.fires(tick, fires, troops.iter().copied(), base.iter().copied())
         };
@@ -264,10 +259,7 @@ mod tests {
         assert_eq!(at(0, &[burn(100, 100)]), None);
         // Only once a second.
         assert_eq!(at(s + 1, &[burn(55, 52)]), None);
-        assert_eq!(
-            at(2 * s, &[burn(55, 52)]),
-            Some("Fire! The woods are burning near your troops")
-        );
+        assert_eq!(at(2 * s, &[burn(55, 52)]), Some(FIRE_NEWS[TROOPS]));
         // Still burning, or spreading: said once.
         assert_eq!(at(3 * s, &[burn(55, 52), burn(56, 52)]), None);
         // Out, then alight again soon after: still quiet.
@@ -277,7 +269,26 @@ mod tests {
         assert_eq!(at(60 * s, &[]), None);
         assert_eq!(
             at(61 * s, &[burn(22, 12), burn(55, 52)]),
-            Some("Fire! The woods are burning near your base")
+            Some(FIRE_NEWS[BASE])
+        );
+    }
+
+    #[test]
+    fn a_fire_reaching_the_base_is_told_though_troops_were_warned() {
+        let mut news = SkyNews::default();
+        // Troops stand between the woods and the base.
+        let troops = [(30.0, 12.0)];
+        let base = [[10, 10, 3, 3]];
+        let mut at = |tick, fires: &[Burn]| {
+            news.fires(tick, fires, troops.iter().copied(), base.iter().copied())
+        };
+        let s = TICKS_PER_SECOND;
+        assert_eq!(at(0, &[burn(38, 12)]), Some(FIRE_NEWS[TROOPS]));
+        // It spreads towards the base, still near the troops.
+        assert_eq!(at(s, &[burn(30, 12), burn(38, 12)]), None);
+        assert_eq!(
+            at(2 * s, &[burn(22, 12), burn(30, 12), burn(38, 12)]),
+            Some(FIRE_NEWS[BASE])
         );
     }
 }
