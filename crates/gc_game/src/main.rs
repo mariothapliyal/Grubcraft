@@ -179,6 +179,7 @@ mod profile;
 mod puppets;
 mod replays;
 mod ring_tool;
+mod river_watch;
 mod roster;
 mod sandbox;
 mod scars;
@@ -938,6 +939,10 @@ struct Running {
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
+    /// The rivers' names, and what the viewer has been told of them.
+    river_watch: river_watch::RiverWatch,
+    /// The rivers' water drawn as high as it stands.
+    river_picture: river_watch::RiverPicture,
     land: land::LandView,
     /// Turned earth and worn tracks on the ground.
     scars: scars::ScarView,
@@ -1801,6 +1806,8 @@ impl App {
             tip_book: guide_data::tip_book(),
             reveal_all: false,
             fog: Default::default(),
+            river_watch: Default::default(),
+            river_picture: Default::default(),
             land: Default::default(),
             scars: Default::default(),
             data_label: format!(
@@ -4188,6 +4195,12 @@ impl Running {
             self.heightmap.tiles,
             !self.reveal_all,
         );
+        self.river_picture.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.heightmap.tiles,
+        );
         self.land.update(
             self.last_frame,
             &mut self.renderer,
@@ -5503,6 +5516,8 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.river_watch.reset();
+        self.river_picture.reset();
         self.cinema.reset();
         self.director.stop();
         self.was_deploying = false;
@@ -5649,6 +5664,8 @@ impl Running {
         // The renderer's land is bare again.
         self.land.reset();
         self.scars.reset();
+        self.river_picture.reset();
+        self.river_watch.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();
@@ -6369,6 +6386,20 @@ impl Running {
                 }),
                 _ => {}
             }
+        }
+        // The river watch looks once a second.
+        let mut watched = None;
+        if self
+            .world
+            .tick_count()
+            .is_multiple_of(gc_sim::TICKS_PER_SECOND)
+        {
+            let (fog, reveal) = (&self.fog, self.reveal_all);
+            watched = (self.river_watch)
+                .look(self.world.flood().rivers(), |t| reveal || fog.sees_tile(t));
+        }
+        if let Some(w) = &watched {
+            news.push(w.as_str());
         }
         // Said together, so none hides another from the same tick.
         if !news.is_empty() {

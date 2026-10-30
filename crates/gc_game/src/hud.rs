@@ -739,7 +739,8 @@ impl Running {
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
-        let sky = sky_word(&self.world);
+        let gauge = self.river_watch.chip();
+        let sky = sky_word(&self.world, gauge);
         let season = season_word(&self.world);
         let status = StatusStrip {
             mode,
@@ -1850,23 +1851,28 @@ fn season_word(world: &gc_sim::World) -> &'static str {
 /// daylight, else what cuts sight and range (and slows the march), e.g.
 /// "Fog: sight 40%" or "Night: sight 45%", and whether rain has turned
 /// ground to mud (docs/32-changing-land.md).
-fn sky_word(world: &gc_sim::World) -> String {
+/// `gauge` is the worst river the viewer sees, if one is out of the
+/// ordinary ([`crate::river_watch::RiverWatch::chip`]): it tells the river
+/// on a map with rivers.
+fn sky_word(world: &gc_sim::World, gauge: Option<&str>) -> String {
     let air = world.air();
     let mud = world.terrain().soaked() > 0;
     // (On its own, and after the rest.)
-    let river = if world.flood().closed() {
-        Some(("Fords flooded", "fords flooded"))
+    let river: Option<(String, String)> = if world.flood().closed() {
+        Some(("Fords flooded".into(), "fords flooded".into()))
+    } else if let Some(g) = gauge {
+        Some((crate::river_watch::capitalised(g), g.to_owned()))
     } else if world.terrain().rise() > 0 {
-        Some(("River high", "river high"))
+        Some(("River high".into(), "river high".into()))
     } else if world.flood().exposed() {
-        Some(("Low water: summer fords", "low water"))
+        Some(("Low water: summer fords".into(), "low water".into()))
     } else {
         None
     };
     if air == gc_sim::Air::CLEAR {
         return match river {
             Some((alone, _)) if mud => format!("{alone}, mud"),
-            Some((alone, _)) => alone.to_string(),
+            Some((alone, _)) => alone,
             None if mud => "Mud by the water".to_string(),
             None => String::new(),
         };
@@ -1893,7 +1899,7 @@ fn sky_word(world: &gc_sim::World) -> String {
     }
     if let Some((_, after)) = river {
         word += ", ";
-        word += after;
+        word += &after;
     }
     if mud {
         word += ", mud";
@@ -1917,7 +1923,11 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {
-        "In a ford: slow, no charges"
+        if terrain.deep(p) {
+            "In a river that is up: slower still, no charges"
+        } else {
+            "In a ford: slow, no charges"
+        }
     } else if terrain.rubbled(p) {
         "In rubble: slow, no charges"
     } else if terrain.soft(p) {
