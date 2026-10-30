@@ -66,6 +66,16 @@ impl Writer {
     }
 
     /// A building's handle, laid out as a regiment's.
+    /// A drawn path: how many points, which are corners, then each point.
+    pub fn path(&mut self, p: &gc_sim::drawn::DrawnPath) {
+        self.u8(p.len);
+        self.var(u64::from(p.corners));
+        for &(x, y) in p.points() {
+            self.var(u64::from(x as u16));
+            self.var(u64::from(y as u16));
+        }
+    }
+
     pub fn structure(&mut self, h: StructureHandle) {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));
@@ -424,6 +434,29 @@ impl Writer {
                     }
                 }
             }
+            Command::DrawLine {
+                regiment,
+                building,
+                path,
+                width,
+            } => {
+                // A grown wall, with no worker, has a tag of its own.
+                match regiment {
+                    Some(r) => {
+                        self.u8(41);
+                        self.handle(r);
+                    }
+                    None => self.u8(42),
+                }
+                self.var(u64::from(building));
+                self.path(&path);
+                self.u8(width);
+            }
+            Command::PlanLine { building, path } => {
+                self.u8(43);
+                self.var(u64::from(building));
+                self.path(&path);
+            }
             Command::PlanWall { building, from, to } => {
                 self.u8(31);
                 self.var(u64::from(building));
@@ -586,6 +619,23 @@ impl<'a> Reader<'a> {
             index: self.var_as()?,
             generation: self.var_as()?,
         })
+    }
+
+    /// A drawn path, as [`Writer::path`] writes it.
+    pub fn path(&mut self) -> Option<gc_sim::drawn::DrawnPath> {
+        let len = usize::from(self.u8()?);
+        if len > gc_sim::drawn::MAX_POINTS {
+            return None;
+        }
+        let mut p = gc_sim::drawn::DrawnPath {
+            len: len as u8,
+            corners: self.var_as()?,
+            ..Default::default()
+        };
+        for k in 0..len {
+            p.points[k] = (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16);
+        }
+        Some(p)
     }
 
     pub fn structure(&mut self) -> Option<StructureHandle> {
@@ -906,6 +956,20 @@ impl<'a> Reader<'a> {
                 from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
             },
+            tag @ (41 | 42) => Command::DrawLine {
+                regiment: if tag == 41 {
+                    Some(self.handle()?)
+                } else {
+                    None
+                },
+                building: self.var_as()?,
+                path: self.path()?,
+                width: self.u8()?,
+            },
+            43 => Command::PlanLine {
+                building: self.var_as()?,
+                path: self.path()?,
+            },
             31 => Command::PlanWall {
                 building: self.var_as()?,
                 from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1146,6 +1210,30 @@ mod tests {
                 building: 5,
                 from: (3, 9),
                 to: (9, 3),
+            },
+            Command::DrawLine {
+                regiment: Some(RegimentHandle {
+                    index: 3,
+                    generation: 2,
+                }),
+                building: 7,
+                path: gc_sim::drawn::DrawnPath::new(&[(1, 3), (-9, 40), (61, 22)], |k| k == 1)
+                    .unwrap(),
+                width: 3,
+            },
+            Command::DrawLine {
+                regiment: None,
+                building: 2,
+                path: gc_sim::drawn::DrawnPath::straight((4, 4), (9, 2)),
+                width: 1,
+            },
+            Command::PlanLine {
+                building: 5,
+                path: gc_sim::drawn::DrawnPath::new(
+                    &[(1, 1), (9, 1), (9, 9), (1, 9), (1, 1)],
+                    |_| false,
+                )
+                .unwrap(),
             },
             Command::RaiseWall {
                 structure: StructureHandle {

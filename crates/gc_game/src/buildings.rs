@@ -2175,6 +2175,7 @@ fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> Structure
         gate: None,
         open: false,
         line: None,
+        drawing: None,
     }
 }
 
@@ -2882,6 +2883,7 @@ mod tests {
             gate: None,
             open: false,
             line: None,
+            drawing: None,
         };
         let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
         assert_eq!(model(&s), Some("Clan Hall #2"));
@@ -2924,6 +2926,7 @@ mod tests {
             gate: Some(gc_sim::gates::GateMode::Auto),
             open: false,
             line: None,
+            drawing: None,
         }
     }
 
@@ -3179,6 +3182,7 @@ mod tests {
                     gate: None,
                     open: false,
                     line: None,
+                    drawing: None,
                 };
                 let mut out = Vec::new();
                 push_trap_tile(&view, trap, |c| c, &mut out);

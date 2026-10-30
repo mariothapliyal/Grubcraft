@@ -410,17 +410,22 @@ impl Steward {
             narrowest_crossing(s, b.id, home, target)
         }))?;
         let (from, to) = line;
-        let len = (to.0 - from.0).abs().max((to.1 - from.1).abs()) as u32 + 1;
-        if spare < u32::from(b.stats.cost_grub) * len {
+        // Standard width, so its army crosses a few files abreast.
+        let deck = bridge_line(from, to);
+        let tiles = s
+            .world
+            .line_fits(s.party, b.id, &deck)
+            .map_or(0, |t| t.len()) as u32;
+        if tiles == 0 || spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
         let w = self.builder_at(s, look, from)?;
         self.engineer.bridge = Some(None);
-        let order = Command::BuildWall {
+        let order = Command::DrawLine {
             regiment: Some(w),
             building: b.id,
-            from: (from.0 as i16, from.1 as i16),
-            to: (to.0 as i16, to.1 as i16),
+            path: deck.path,
+            width: deck.width,
         };
         Some((order, Some(w)))
     }
@@ -605,7 +610,7 @@ fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -
             }
             let fits = s
                 .world
-                .wall_fits(s.party, bridge, from, to)
+                .line_fits(s.party, bridge, &bridge_line(from, to))
                 .is_ok_and(|t| !t.is_empty() && t.iter().all(|t| t.fits.is_ok()));
             if fits {
                 best = Some((n, (from, to)));
@@ -613,6 +618,16 @@ fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -
         }
     }
     best.map(|(_, line)| line)
+}
+
+/// A standard-width bridge drawn straight from tile `from` to tile `to`
+/// (at a slant, if that is the shortest way over).
+fn bridge_line(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
+    gc_sim::walls::Line {
+        path: gc_sim::drawn::DrawnPath::straight(from, to),
+        width: gc_sim::drawn::STANDARD,
+        old: false,
+    }
 }
 
 /// The last land tile before the water at `wet` going back along `dir`,

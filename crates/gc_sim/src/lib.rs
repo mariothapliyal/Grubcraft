@@ -25,6 +25,7 @@ pub mod clearing;
 pub mod combat;
 pub mod conquest;
 pub mod deploy;
+pub mod drawn;
 pub mod economy;
 pub mod events;
 pub mod fieldworks;
@@ -123,7 +124,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 57;
+pub const SIM_VERSION: u32 = 58;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -742,6 +743,24 @@ pub enum Command {
         from: (i16, i16),
         to: (i16, i16),
     },
+    /// Conquest: one of the issuer's workers draws a wall or bridge of type
+    /// `building` along `path`, a bridge `width` tiles across (see
+    /// [`drawn`]), pays for it and builds it tile by tile, as
+    /// [`Command::BuildWall`] does for a straight line. A wall grown along
+    /// veins takes no worker: `regiment` is `None` for it.
+    DrawLine {
+        regiment: Option<RegimentHandle>,
+        building: BuildingId,
+        path: drawn::DrawnPath,
+        width: u8,
+    },
+    /// Conquest: plan a wall of type `building` along `path` as a
+    /// blueprint (see [`blueprints`]), as [`Command::PlanWall`] does for a
+    /// straight line.
+    PlanLine {
+        building: BuildingId,
+        path: drawn::DrawnPath,
+    },
     /// Conquest: raise the stretch of the issuer's wall joined to tile
     /// `structure` a level, paying for every tile now (see
     /// [`Conquest::wall_level`](conquest::Conquest)). A drawn wall's tiles go
@@ -819,6 +838,8 @@ impl Command {
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
+            | Command::DrawLine { .. }
+            | Command::PlanLine { .. }
             | Command::RaiseWall { .. }
             | Command::PlanWall { .. }
             | Command::DropPlan { .. }
@@ -1187,18 +1208,27 @@ impl World {
         from: (i32, i32),
         to: (i32, i32),
     ) -> Result<Vec<walls::WallTile>, Refusal> {
-        self.conquest
-            .as_ref()
-            .ok_or(Refusal::NoBuildings)?
-            .wall_plan(
-                player,
-                building,
-                from,
-                to,
-                &self.nav,
-                &self.regiments,
-                &self.terrain,
-            )
+        self.line_plan(player, building, &walls::Line::straight(from, to))
+    }
+
+    /// [`World::wall_plan`] for a line drawn along a path, the check
+    /// [`Command::DrawLine`] makes (see [`drawn`]).
+    pub fn line_plan(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        line: &walls::Line,
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        (c.wall_plan(
+            player,
+            building,
+            line,
+            &self.nav,
+            &self.regiments,
+            &self.terrain,
+        ))
+        .map(|l| l.tiles)
     }
 
     /// [`World::wall_plan`] without the price or the room left in the
@@ -1212,17 +1242,26 @@ impl World {
         from: (i32, i32),
         to: (i32, i32),
     ) -> Result<Vec<walls::WallTile>, Refusal> {
+        self.line_fits(player, building, &walls::Line::straight(from, to))
+    }
+
+    /// [`World::wall_fits`] for a line drawn along a path.
+    pub fn line_fits(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        line: &walls::Line,
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
         let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
         (c.wall_fits(
             player,
             building,
-            from,
-            to,
+            line,
             &self.nav,
             &self.regiments,
             &self.terrain,
         ))
-        .map(|(_, plan)| plan)
+        .map(|l| l.tiles)
     }
 
     /// The tiles of a wall `player` would plan from tile `from` to tile
@@ -1236,18 +1275,34 @@ impl World {
         from: (i32, i32),
         to: (i32, i32),
     ) -> Result<Vec<walls::WallTile>, Refusal> {
-        self.conquest
-            .as_ref()
-            .ok_or(Refusal::NoBuildings)?
-            .blueprint(
-                player,
-                building,
-                from,
-                to,
-                &self.nav,
-                &self.regiments,
-                &self.terrain,
-            )
+        self.line_blueprint(player, building, &walls::Line::straight(from, to))
+    }
+
+    /// [`World::blueprint`] for a line drawn along a path, the check
+    /// [`Command::PlanLine`] makes.
+    pub fn line_blueprint(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        line: &walls::Line,
+    ) -> Result<Vec<walls::WallTile>, Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        (c.blueprint(
+            player,
+            building,
+            line,
+            &self.nav,
+            &self.regiments,
+            &self.terrain,
+        ))
+        .map(|l| l.tiles)
+    }
+
+    /// Drawn line `id` (a tile's [`structures::StructureView::drawing`]):
+    /// its path, width, owner and the seed its look is laid out from. Kept
+    /// for the whole match, so the land remembers every line drawn on it.
+    pub fn drawing(&self, id: u32) -> Option<drawn::Drawing> {
+        (self.conquest.as_ref()).and_then(|c| c.structures.drawings.get(id).copied())
     }
 
     /// Whether regiment `r` may man wall tile `h` (see
@@ -2076,8 +2131,34 @@ impl World {
                         pc.player,
                         r,
                         building,
-                        tile(from),
-                        tile(to),
+                        &walls::Line::straight(tile(from), tile(to)),
+                        &mut self.nav,
+                        &mut self.regiments,
+                        &self.terrain,
+                    ),
+                    _ => false,
+                }
+            }
+            Command::DrawLine {
+                regiment,
+                building,
+                path,
+                width,
+            } => {
+                let line = walls::Line {
+                    path,
+                    width,
+                    old: false,
+                };
+                match (
+                    self.optional_worker(pc.player, regiment),
+                    &mut self.conquest,
+                ) {
+                    (Some(r), Some(c)) => c.lay_wall(
+                        pc.player,
+                        r,
+                        building,
+                        &line,
                         &mut self.nav,
                         &mut self.regiments,
                         &self.terrain,
@@ -2103,8 +2184,22 @@ impl World {
                 c.plan_wall(
                     pc.player,
                     building,
-                    tile(from),
-                    tile(to),
+                    &walls::Line::straight(tile(from), tile(to)),
+                    &self.nav,
+                    &self.regiments,
+                    &self.terrain,
+                )
+            }),
+            Command::PlanLine { building, path } => self.conquest.as_mut().is_some_and(|c| {
+                let line = walls::Line {
+                    path,
+                    width: 1,
+                    old: false,
+                };
+                c.plan_wall(
+                    pc.player,
+                    building,
+                    &line,
                     &self.nav,
                     &self.regiments,
                     &self.terrain,
