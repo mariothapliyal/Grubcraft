@@ -7387,24 +7387,27 @@ impl Running {
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
-                let (centre, top, lift) = buildings::model_spot(&s, &ground);
+                let (_, top, _) = buildings::model_spot(&s, &ground);
                 let (shake, rise) = self.siege.jolt(s.handle);
-                let (centre, lift) = (centre + shake, lift + rise);
-                let at = Vec3::new(centre.x, top, centre.y);
                 let still = art.clips.pose(model, Action::Idle, time);
                 let height = art.looks.top(model);
-                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                    art.buckets[model * LODS + lod].push(SoldierInstance {
-                        pos: centre.to_array(),
-                        facing: art.looks.facing(&s).to_array(),
-                        frames: pose.rows,
-                        flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, gc_render::TONE_NEUTRAL],
-                        lift,
-                        scale: 1.0,
-                        ..Default::default()
-                    });
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                for (centre, facing) in art.looks.spots(&s, model) {
+                    let centre = centre + shake;
+                    let lift = top - ground(centre.x, centre.y) + rise;
+                    let at = Vec3::new(centre.x, top, centre.y);
+                    if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                        art.buckets[model * LODS + lod].push(SoldierInstance {
+                            pos: centre.to_array(),
+                            facing: facing.to_array(),
+                            frames: pose.rows,
+                            flags: models::pose_flags(pose, highlight, false),
+                            color: [r, g, b, gc_render::TONE_NEUTRAL],
+                            lift,
+                            scale: 1.0,
+                            ..Default::default()
+                        });
+                    }
                 }
             }
             let Some(worker) = art.looks.crew_of(&s) else {

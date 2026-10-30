@@ -128,6 +128,11 @@ struct ModelConfig {
     /// game culls and picks a level of detail by.
     #[serde(default)]
     keep_origin: bool,
+    /// With `keep_origin`, draw the source this many times its size about
+    /// its origin (the Palisade, modelled two tiles long, scaled to stand a
+    /// drawn wall tile's height).
+    #[serde(default = "default_scale")]
+    scale: f32,
     /// Surface detail (docs/31): read each face's surface classes from the
     /// glTF's `COLOR_0` (red and green are the two classes, a fifteenth
     /// each, blue the mix) and repeat the shared detail textures about this
@@ -292,6 +297,10 @@ impl MoveConfig {
 
 fn default_team_tolerance() -> f32 {
     40.0
+}
+
+fn default_scale() -> f32 {
+    1.0
 }
 
 struct Options {
@@ -967,12 +976,13 @@ fn bake_model(
     let to_game = if cfg.keep_origin {
         // Stored positions reach this far from the origin, in tiles.
         let room = f32::from(i16::MAX) / POSITION_SCALE;
+        let (lo, hi) = (lo * cfg.scale, hi * cfg.scale);
         if lo.min_element() < -room || hi.max_element() > room {
             return Err(format!(
                 "reaches {lo} to {hi}, beyond the {room:.2} tiles a position can store"
             ));
         }
-        turn
+        Mat4::from_scale(Vec3::splat(cfg.scale)) * turn
     } else {
         let scale = cfg.height / (hi.y - lo.y).max(1e-6);
         Mat4::from_scale(Vec3::splat(scale))

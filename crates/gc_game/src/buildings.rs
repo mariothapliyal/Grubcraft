@@ -534,6 +534,9 @@ pub struct Looks {
     /// By model, how far a still model's walls reach from its middle
     /// across and along the map, in tiles: the eaves and roof left out.
     walls: Vec<Option<Vec2>>,
+    /// By building type, whether its models stand along its piece of the
+    /// line (a drawn wall's; a bridge's stand at the tile's middle).
+    along: Vec<bool>,
 }
 
 impl Looks {
@@ -558,13 +561,16 @@ impl Looks {
             })
             .unzip();
         Looks {
-            // A drawn wall is a slab along its line, never a model. A
-            // bridge tile is one: each faction's own, else the shared one.
+            // A drawn wall with a model of its own (the Palisade) shows it
+            // along its line (`model_spots`); the rest, and stakes and
+            // barricades, are drawn as boxes. A bridge tile is a model:
+            // each faction's own, else the shared one.
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
                     let bridge = stats.is_bridge();
+                    let lined = stats.flags & gc_sim::structures::LINE != 0;
                     core::array::from_fn(|k| {
-                        if stats.flags & gc_sim::structures::LINE != 0 && !bridge {
+                        if lined && !bridge && stats.role != Role::Wall {
                             return None;
                         }
                         models.by_name(&stage_name(name, k)).or_else(|| {
@@ -577,6 +583,9 @@ impl Looks {
                 .collect(),
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
+                .collect(),
+            along: (table.stats.iter())
+                .map(|s| s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge())
                 .collect(),
             tops,
             walls,
@@ -627,6 +636,19 @@ impl Looks {
     pub fn facing(&self, s: &StructureView) -> Vec2 {
         (s.line.and_then(|line| wall_piece(line, s.tile)))
             .map_or_else(|| facing_of(s.turn), |p| p.dir)
+    }
+
+    /// Where the model `model` of `s` stands and the way it faces, once or
+    /// more: a drawn wall tile's along its piece of the line, end to end,
+    /// else once at the middle of its footprint.
+    pub fn spots(&self, s: &StructureView, model: usize) -> impl Iterator<Item = (Vec2, Vec2)> {
+        let len = self.walls(model).map_or(1.0, |w| w.y * 2.0);
+        let along = self.along.get(usize::from(s.building)).copied() == Some(true);
+        let lined = along.then(|| spots_along(s, len)).flatten();
+        let once = lined
+            .is_none()
+            .then(|| (centre_of(s.tile, s.width, s.depth), self.facing(s)));
+        lined.into_iter().flatten().chain(once)
     }
 
     /// The worker model of a building type's faction, if it has one.
@@ -714,6 +736,23 @@ pub fn model_spot(s: &StructureView, ground: &impl Fn(f32, f32) -> f32) -> (Vec2
     let (_, hi) = ground_range(ground, s);
     (centre, hi, hi - ground(centre.x, centre.y))
 }
+
+/// Where the models of a drawn wall tile `s` stand and the way they face:
+/// along its piece of the line, as many as it takes to reach end to end
+/// (`len` tiles long each; two on a diagonal). `None` for a lone tile.
+fn spots_along(s: &StructureView, len: f32) -> Option<impl Iterator<Item = (Vec2, Vec2)>> {
+    let p = wall_piece(s.line?, s.tile)?;
+    // A hair short of a whole extra model leaves a slit, not a doubled
+    // stretch.
+    let count = (p.len / len.max(0.1) - SPOT_SLACK).ceil().max(1.0);
+    let step = (p.len - len).max(0.0) / (count - 1.0).max(1.0);
+    let first = -step * (count - 1.0) / 2.0;
+    Some((0..count as usize).map(move |k| (p.centre + p.dir * (first + step * k as f32), p.dir)))
+}
+
+/// How much of a model's length a wall piece may come short by before it
+/// takes another.
+const SPOT_SLACK: f32 = 0.15;
 
 /// Whether a building of `world` that `shown` allows stands over `p`
 /// (always false outside Conquest, the only mode with buildings).
@@ -2834,9 +2873,12 @@ mod tests {
             }
         }
         let still = models.models.iter().filter(|m| m.is_still()).count();
-        // The models a drawn wall's name would have found are left unused.
+        // Stakes and barricades are drawn as boxes: a model their name would
+        // find is left unused.
         let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(_, s)| s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge())
+            .filter(|(_, s)| {
+                s.flags & gc_sim::structures::LINE != 0 && !s.is_bridge() && s.role != Role::Wall
+            })
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
@@ -2848,6 +2890,16 @@ mod tests {
         assert!(
             looks.stages[0][FINISHED].is_some(),
             "the Clan Hall has no model"
+        );
+        // The drawn Palisade shows its own textured model at every stage.
+        let palisade = (0..table.len() as BuildingId)
+            .find(|&b| table.name(b) == "Palisade")
+            .unwrap();
+        assert!(
+            looks.stages[usize::from(palisade)]
+                .iter()
+                .all(Option::is_some),
+            "the Palisade is drawn without its model"
         );
         assert!(
             looks.crews.iter().all(Option::is_some),
@@ -3245,6 +3297,65 @@ mod tests {
         let p = wall_piece([0, 0, 4, 4], (2, 2)).unwrap();
         assert!((p.centre - Vec2::splat(2.5)).length() < 1e-4);
         assert!((p.len - (2f32.sqrt() + 2.0 * LINE_JOINT)).abs() < 1e-4);
+    }
+
+    /// The Palisade model's length along the line once baked (2.02 tiles
+    /// modelled, scaled 0.625).
+    const PALISADE_LEN: f32 = 1.26;
+
+    #[test]
+    fn wall_models_cover_their_line_with_no_gap() {
+        for line in [
+            [2, 2, 12, 2],
+            [2, 2, 2, 9],
+            [2, 2, 9, 9],
+            [2, 2, 14, 7],
+            [20, 3, 4, 9],
+        ] {
+            let tiles = gc_sim::walls::wall_tiles((line[0], line[1]), (line[2], line[3])).unwrap();
+            let mut spans: Vec<(f32, f32)> = Vec::new();
+            let along = Vec2::new((line[2] - line[0]) as f32, (line[3] - line[1]) as f32);
+            let dir = along.normalize();
+            let from = Vec2::new(line[0] as f32 + 0.5, line[1] as f32 + 0.5);
+            for &t in &tiles {
+                let view = StructureView {
+                    line: Some(line),
+                    ..footprint_view(t, 1, 1, 0)
+                };
+                for (centre, facing) in spots_along(&view, PALISADE_LEN).unwrap() {
+                    assert!(
+                        (facing - dir).length() < 1e-4,
+                        "{line:?}: faces along the line"
+                    );
+                    let mid = (centre - from).dot(dir);
+                    spans.push((mid - PALISADE_LEN / 2.0, mid + PALISADE_LEN / 2.0));
+                }
+            }
+            spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+            // Each model reaches the next, or leaves no more than a slit.
+            for pair in spans.windows(2) {
+                assert!(pair[1].0 - pair[0].1 < 0.2, "{line:?} {pair:?}");
+            }
+            // Models only double up where one would fall well short: never
+            // more than two to a tile.
+            assert!(spans.len() <= tiles.len() * 2, "{line:?}");
+            if line[0] == line[2] || line[1] == line[3] {
+                assert_eq!(
+                    spans.len(),
+                    tiles.len(),
+                    "{line:?}: one to a tile when straight"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_lone_wall_tile_has_no_spots_along() {
+        let view = StructureView {
+            line: Some([4, 4, 4, 4]),
+            ..footprint_view((4, 4), 1, 1, 0)
+        };
+        assert!(spots_along(&view, PALISADE_LEN).is_none());
     }
 
     #[test]
