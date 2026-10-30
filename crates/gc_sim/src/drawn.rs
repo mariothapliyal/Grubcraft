@@ -48,9 +48,6 @@ pub const BRIDGE_WIDTHS: [u8; 3] = [3, 4, 5];
 /// (`Command::BuildWall`) has: the two lanes it always had.
 pub const OLD_WIDTH: u8 = 2;
 
-/// The narrowest width a player may pick.
-pub const NARROW: u8 = BRIDGE_WIDTHS[0];
-
 /// The width a bridge is drawn with unless the player picks another.
 pub const STANDARD: u8 = BRIDGE_WIDTHS[1];
 
@@ -247,14 +244,39 @@ impl DrawnPath {
 
     /// The length of the curve, in sub-units.
     pub fn length(&self) -> i64 {
-        arc(&self.samples()).last().copied().unwrap_or(0)
+        self.curve().length()
+    }
+
+    /// The curve sampled once, with the distance along it to each sample,
+    /// for asking many questions of it (see [`Curve`]).
+    pub fn curve(&self) -> Curve {
+        let samples = self.samples();
+        let arc = arc(&samples);
+        Curve { samples, arc }
     }
 
     /// Whether every smooth stretch turns at most [`MAX_BEND_DEGREES`] over
     /// any two tiles (sharp corners left out).
     pub fn bends_gently(&self) -> bool {
-        let s = self.samples();
-        let arc = arc(&s);
+        self.curve().bends_gently()
+    }
+}
+
+/// A path's curve, sampled once (see [`DrawnPath::curve`]).
+pub struct Curve {
+    pub samples: Vec<Sample>,
+    arc: Vec<i64>,
+}
+
+impl Curve {
+    /// See [`DrawnPath::length`].
+    pub fn length(&self) -> i64 {
+        self.arc.last().copied().unwrap_or(0)
+    }
+
+    /// See [`DrawnPath::bends_gently`].
+    pub fn bends_gently(&self) -> bool {
+        let (s, arc) = (&self.samples, &self.arc);
         let sub = i64::from(SUB);
         let (mut j, mut k) = (0, 0);
         for i in 0..s.len() {
@@ -286,6 +308,57 @@ impl DrawnPath {
         true
     }
 
+    /// The local line a tile laid along the curve at `tile` runs along, its
+    /// two end tiles: on a straight stretch, the stretch's own ends (so a
+    /// wall drawn straight keeps the line it was drawn in); on a curve, the
+    /// centre line two tiles either side of the point nearest the tile.
+    /// Either is moved across, if need be, so that `tile` is one of its
+    /// steps (see [`crate::walls::wall_tiles`]): a bridge's outer lanes
+    /// run beside the centre line.
+    pub fn chord(&self, tile: (i32, i32)) -> [i16; 4] {
+        let (samples, arc) = (&self.samples, &self.arc);
+        let c = centre_sub(tile);
+        let k = nearest(samples, c);
+        let t = |p: &Sample| [p.x.div_euclid(SUB) as i16, p.y.div_euclid(SUB) as i16];
+        // On a straight stretch: from its start to the next sample (its end).
+        let on = |k: usize| samples[k].straight && k + 1 < samples.len();
+        let k = if k > 0 && !on(k) && on(k - 1) && near_seg(samples, k - 1, c) {
+            k - 1
+        } else {
+            k
+        };
+        if on(k) {
+            let (a, b) = (t(&samples[k]), t(&samples[k + 1]));
+            return through([a[0], a[1], b[0], b[1]], tile);
+        }
+        let sub = i64::from(2 * SUB);
+        let lo = (0..=k).rev().find(|&j| arc[k] - arc[j] >= sub).unwrap_or(0);
+        let hi = (k..samples.len())
+            .find(|&j| arc[j] - arc[k] >= sub)
+            .unwrap_or(samples.len() - 1);
+        let (a, b) = (t(&samples[lo]), t(&samples[hi]));
+        through([a[0], a[1], b[0], b[1]], tile)
+    }
+
+    /// Whether `tile`'s centre lies on the higher side of the curve
+    /// (higher rows across a path running east, lower columns across one
+    /// running south).
+    pub fn higher_side(&self, tile: (i32, i32)) -> bool {
+        let s = &self.samples;
+        let c = centre_sub(tile);
+        let k = nearest(s, c);
+        let (a, b) = if k + 1 < s.len() {
+            (k, k + 1)
+        } else {
+            (k.saturating_sub(1), k)
+        };
+        let along = (i64::from(s[b].x - s[a].x), i64::from(s[b].y - s[a].y));
+        let off = (i64::from(c.0 - s[a].x), i64::from(c.1 - s[a].y));
+        along.0 * off.1 - along.1 * off.0 > 0
+    }
+}
+
+impl DrawnPath {
     /// The tiles of a wall drawn along the path, in order: a tile wide,
     /// 8-connected (steps meet at corners), each once. A straight stretch
     /// covers just the tiles [`crate::walls::wall_tiles`] gives, so a path
@@ -346,8 +419,7 @@ impl DrawnPath {
         let mut tiles: Vec<(usize, i32, i32)> = Vec::new();
         for ty in ty0..=ty1 {
             for tx in tx0..=tx1 {
-                let c = (tx * SUB + SUB / 2, ty * SUB + SUB / 2);
-                if let Some(k) = within(&s, c, half) {
+                if let Some(k) = within(&s, centre_sub((tx, ty)), half) {
                     tiles.push((k, ty, tx));
                 }
             }
@@ -369,7 +441,8 @@ impl DrawnPath {
             let mut out = Vec::new();
             for ty in cy - r..=cy + r {
                 for tx in cx - r..=cx + r {
-                    let c = (i64::from(tx * SUB + SUB / 2), i64::from(ty * SUB + SUB / 2));
+                    let c = centre_sub((tx, ty));
+                    let c = (i64::from(c.0), i64::from(c.1));
                     if (c.0 - px).pow(2) + (c.1 - py).pow(2) < half * half {
                         out.push((tx, ty));
                     }
@@ -377,38 +450,6 @@ impl DrawnPath {
             }
             out
         })
-    }
-
-    /// The local line a tile laid along the path at `tile` runs along, its
-    /// two end tiles: on a straight stretch, the stretch's own ends (so a
-    /// wall drawn straight keeps the line it was drawn in); on a curve, the
-    /// centre line two tiles either side of the point nearest the tile.
-    /// Either is moved across, if need be, so that `tile` is one of its
-    /// steps (see [`crate::walls::wall_tiles`]): a bridge's outer lanes
-    /// run beside the centre line.
-    pub fn chord(&self, samples: &[Sample], tile: (i32, i32)) -> [i16; 4] {
-        let c = (tile.0 * SUB + SUB / 2, tile.1 * SUB + SUB / 2);
-        let k = nearest(samples, c);
-        let t = |p: &Sample| [p.x.div_euclid(SUB) as i16, p.y.div_euclid(SUB) as i16];
-        // On a straight stretch: from its start to the next sample (its end).
-        let on = |k: usize| samples[k].straight && k + 1 < samples.len();
-        let k = if k > 0 && !on(k) && on(k - 1) && near_seg(samples, k - 1, c) {
-            k - 1
-        } else {
-            k
-        };
-        if on(k) {
-            let (a, b) = (t(&samples[k]), t(&samples[k + 1]));
-            return through([a[0], a[1], b[0], b[1]], tile);
-        }
-        let arc = arc(samples);
-        let sub = i64::from(2 * SUB);
-        let lo = (0..=k).rev().find(|&j| arc[k] - arc[j] >= sub).unwrap_or(0);
-        let hi = (k..samples.len())
-            .find(|&j| arc[j] - arc[k] >= sub)
-            .unwrap_or(samples.len() - 1);
-        let (a, b) = (t(&samples[lo]), t(&samples[hi]));
-        through([a[0], a[1], b[0], b[1]], tile)
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
@@ -419,6 +460,11 @@ impl DrawnPath {
             h.u16(y as u16);
         }
     }
+}
+
+/// The centre of `tile`, in sub-units.
+fn centre_sub(tile: (i32, i32)) -> (i32, i32) {
+    (tile.0 * SUB + SUB / 2, tile.1 * SUB + SUB / 2)
 }
 
 /// Whether tiles `a` and `b` touch, edge or corner.
@@ -444,9 +490,31 @@ fn near_seg(s: &[Sample], k: usize, c: (i32, i32)) -> bool {
     k + 2 >= s.len() || d(k) <= d(k + 1)
 }
 
+/// Where a point lies against a segment of the curve.
+#[derive(Clone, Copy)]
+struct Proj {
+    /// The square of its distance from the segment, as a fraction:
+    /// numerator and denominator.
+    n: i128,
+    d: i128,
+    /// The segment, end to end.
+    ab: (i128, i128),
+    /// How far along it the point lies, times its length squared...
+    dot: i128,
+    /// ...and how far across, times its length (positive to the right of
+    /// the way it runs, in screen terms).
+    cross: i128,
+}
+
 /// The square of the distance from `c` to segment `k` (samples `k` to
 /// `k + 1`), as a fraction: numerator and denominator.
 fn seg_dist(s: &[Sample], k: usize, c: (i32, i32)) -> (i128, i128) {
+    let p = proj(s, k, c);
+    (p.n, p.d)
+}
+
+/// Where `c` lies against segment `k` (samples `k` to `k + 1`).
+fn proj(s: &[Sample], k: usize, c: (i32, i32)) -> Proj {
     let a = (i128::from(s[k].x), i128::from(s[k].y));
     let b = (i128::from(s[k + 1].x), i128::from(s[k + 1].y));
     let p = (i128::from(c.0), i128::from(c.1));
@@ -454,15 +522,32 @@ fn seg_dist(s: &[Sample], k: usize, c: (i32, i32)) -> (i128, i128) {
     let ap = (p.0 - a.0, p.1 - a.1);
     let len = ab.0 * ab.0 + ab.1 * ab.1;
     let dot = ap.0 * ab.0 + ap.1 * ab.1;
-    if len == 0 || dot <= 0 {
-        return (ap.0 * ap.0 + ap.1 * ap.1, 1);
-    }
-    if dot >= len {
+    let cross = ab.0 * ap.1 - ab.1 * ap.0;
+    let (n, d) = if len == 0 || dot <= 0 {
+        (ap.0 * ap.0 + ap.1 * ap.1, 1)
+    } else if dot >= len {
         let bp = (p.0 - b.0, p.1 - b.1);
-        return (bp.0 * bp.0 + bp.1 * bp.1, 1);
+        (bp.0 * bp.0 + bp.1 * bp.1, 1)
+    } else {
+        (cross * cross, len)
+    };
+    Proj {
+        n,
+        d,
+        ab,
+        dot,
+        cross,
     }
-    let cross = ap.0 * ab.1 - ap.1 * ab.0;
-    (cross * cross, len)
+}
+
+/// The square of the distance from `c` to the box round segment `k`: no
+/// more than its distance from the segment itself.
+fn box_dist(s: &[Sample], k: usize, c: (i32, i32)) -> i128 {
+    let (a, b) = (&s[k], &s[k + 1]);
+    let gap = |v: i32, lo: i32, hi: i32| i128::from((lo - v).max(v - hi).max(0));
+    let dx = gap(c.0, a.x.min(b.x), a.x.max(b.x));
+    let dy = gap(c.1, a.y.min(b.y), a.y.max(b.y));
+    dx * dx + dy * dy
 }
 
 /// The segment of the curve `s` nearest `c`, if `c` lies within the band
@@ -473,28 +558,34 @@ fn seg_dist(s: &[Sample], k: usize, c: (i32, i32)) -> (i128, i128) {
 /// segment slants; beyond a segment's ends, within `half` of the end.
 fn within(s: &[Sample], c: (i32, i32), half: i64) -> Option<usize> {
     let h = i128::from(half);
-    let mut best: Option<(i128, i128, usize)> = None;
+    let mut best: Option<(Proj, usize)> = None;
     for k in 0..s.len().saturating_sub(1) {
-        let (n, d) = seg_dist(s, k, c);
+        // A segment whose box is already further off can't be nearer.
+        if best.is_some_and(|(b, _)| box_dist(s, k, c) * b.d > b.n) {
+            continue;
+        }
+        let p = proj(s, k, c);
         // The nearest segment, the first on a tie.
-        if best.is_none_or(|(bn, bd, _)| n * bd < bn * d) {
-            best = Some((n, d, k));
+        if best.is_none_or(|(b, _)| p.n * b.d < b.n * p.d) {
+            best = Some((p, k));
         }
     }
-    let (_, _, k) = best?;
-    let a = (i128::from(s[k].x), i128::from(s[k].y));
-    let b = (i128::from(s[k + 1].x), i128::from(s[k + 1].y));
-    let p = (i128::from(c.0), i128::from(c.1));
-    let ab = (b.0 - a.0, b.1 - a.1);
-    let ap = (p.0 - a.0, p.1 - a.1);
+    let (
+        Proj {
+            n,
+            d,
+            ab,
+            dot,
+            cross,
+        },
+        k,
+    ) = best?;
     let len2 = ab.0 * ab.0 + ab.1 * ab.1;
-    let dot = ap.0 * ab.0 + ap.1 * ab.1;
     if len2 > 0 && (0..=len2).contains(&dot) {
         // Square to it: the signed distance across, times its length. A
         // tile is a square, and across a slanting line it reaches further
         // than half a tile (up to half a diagonal): the band takes that in
         // too, so a slanting deck is as wide across as a straight one.
-        let cross = ab.0 * ap.1 - ab.1 * ap.0;
         let len = i128::from(isqrt(len2.min(i128::from(i64::MAX)) as i64)).max(1);
         let half_tile = i128::from(SUB / 2);
         let reach = h * len + 3 * half_tile * (ab.0.abs() + ab.1.abs() - len);
@@ -505,7 +596,6 @@ fn within(s: &[Sample], c: (i32, i32), half: i64) -> Option<usize> {
         };
         return inside.then_some(k);
     }
-    let (n, d) = seg_dist(s, k, c);
     (n < h * h * d).then_some(k)
 }
 

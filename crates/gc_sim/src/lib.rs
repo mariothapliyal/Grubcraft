@@ -2145,11 +2145,7 @@ impl World {
                 path,
                 width,
             } => {
-                let line = walls::Line {
-                    path,
-                    width,
-                    old: false,
-                };
+                let line = walls::Line::drawn(path, width);
                 match (
                     self.optional_worker(pc.player, regiment),
                     &mut self.conquest,
@@ -2191,11 +2187,7 @@ impl World {
                 )
             }),
             Command::PlanLine { building, path } => self.conquest.as_mut().is_some_and(|c| {
-                let line = walls::Line {
-                    path,
-                    width: 1,
-                    old: false,
-                };
+                let line = walls::Line::drawn(path, 1);
                 c.plan_wall(
                     pc.player,
                     building,

@@ -215,26 +215,6 @@ pub fn width_name(index: usize) -> &'static str {
     ["Narrow", "Standard", "Wide"][index.min(2)]
 }
 
-/// `path` for a bridge of even `width`, its centre line moved onto the tile
-/// edges across the way it runs, so the bridge is that many rows wide and
-/// not one more or less. An odd width keeps tile centres.
-pub fn for_width(path: DrawnPath, width: u8) -> DrawnPath {
-    if width % 2 == 1 {
-        return path;
-    }
-    let n = usize::from(path.len);
-    let (a, b) = (path.points[0], path.points[n - 1]);
-    let along_x = (b.0 - a.0).abs() >= (b.1 - a.1).abs();
-    let mut out = path;
-    for k in 0..n {
-        let (x, y) = &mut out.points[k];
-        // Odd is a tile's centre: on to its far edge.
-        let v = if along_x { y } else { x };
-        *v = (*v + 1) & !1;
-    }
-    out
-}
-
 /// What the ring preview was worked out from; while it stays the same, so
 /// does the preview.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -403,11 +383,7 @@ impl Running {
     /// The bridge a click on each bank draws: straight, as wide as chosen.
     fn bridge_click_line(&self, from: Tile, to: Tile) -> Line {
         let width = self.hud.wall_mode.bridge_width();
-        Line {
-            path: for_width(DrawnPath::straight(from, to), width),
-            width,
-            old: false,
-        }
+        Line::drawn(DrawnPath::straight(from, to), width)
     }
 
     /// The press that may start a drag: the tile it is on (snapped to your
@@ -457,11 +433,7 @@ impl Running {
         } else {
             drawn_tool::path(&drag.raw, centre_half(end), ring)?
         };
-        Some(if bridge {
-            for_width(path, self.hud.wall_mode.bridge_width())
-        } else {
-            path
-        })
+        Some(path)
     }
 
     /// The simulation's check of the drag as it would be ordered now, with
@@ -488,19 +460,15 @@ impl Running {
         if let Some(old) = old.filter(|o| o.key == key) {
             return Some(old);
         }
-        let line = Line {
-            path,
-            width,
-            old: false,
-        };
+        let line = Line::drawn(path, width);
         let side = self.sandbox.side;
         let plan = if blueprint {
             self.world.line_blueprint(side, building, &line)
         } else {
             self.world.line_plan(side, building, &line)
         };
-        let samples = path.samples();
-        let chord = |t| path.chord(&samples, t).map(i32::from);
+        let curve = path.curve();
+        let chord = |t| curve.chord(t).map(i32::from);
         let open = if blueprint { Fit::Blueprint } else { Fit::Open };
         let ghost = match &plan {
             Ok(tiles) => (tiles.iter())
@@ -975,11 +943,7 @@ impl Running {
             1
         };
         let blueprint = self.hud.wall_mode.blueprint;
-        let line = Line {
-            path,
-            width,
-            old: false,
-        };
+        let line = Line::drawn(path, width);
         let side = self.sandbox.side;
         let plan = if blueprint {
             self.world.line_blueprint(side, building, &line)
@@ -1465,18 +1429,6 @@ mod tests {
             assert!(line.len() <= 150, "{} chars: {line}", line.len());
             assert!(line.is_ascii(), "{line}");
         }
-    }
-
-    #[test]
-    fn an_even_bridge_sits_on_tile_edges_and_an_odd_one_on_centres() {
-        let path = DrawnPath::straight((10, 10), (25, 10));
-        assert_eq!(for_width(path, 3), path);
-        let even = for_width(path, 4);
-        // Along x: y moves to the edge between rows 10 and 11, x stays.
-        assert_eq!(even.points()[0], (21, 22));
-        assert_eq!(even.points()[1], (51, 22));
-        let down = for_width(DrawnPath::straight((10, 10), (10, 25)), 4);
-        assert_eq!(down.points()[0], (22, 21));
     }
 
     #[test]

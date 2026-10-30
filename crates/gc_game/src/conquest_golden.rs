@@ -1381,11 +1381,7 @@ pub fn record() -> Replay {
 /// A wall drawn straight from tile `from` to tile `to` with the drawing
 /// order.
 fn drawn_straight(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
-    gc_sim::walls::Line {
-        path: gc_sim::drawn::DrawnPath::straight(from, to),
-        width: 1,
-        old: false,
-    }
+    gc_sim::walls::Line::drawn(gc_sim::drawn::DrawnPath::straight(from, to), 1)
 }
 
 #[cfg(test)]

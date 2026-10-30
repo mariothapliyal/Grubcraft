@@ -106,8 +106,9 @@ pub(super) struct Engineer {
     staked: Vec<RegimentHandle>,
     traps: u8,
     /// The bridge it means to draw: `None` until it has looked, then the
-    /// crossing, or none where it needs or can draw none (or has drawn it).
-    bridge: Option<Option<Line>>,
+    /// crossing and its tiles, or none where it needs or can draw none (or
+    /// has drawn it).
+    bridge: Option<Option<(Line, u32)>>,
 }
 
 impl Steward {
@@ -297,10 +298,19 @@ impl Steward {
         if spare < RICH {
             return None;
         }
+        // One try a drawn bridge: its tiles are raised together.
+        let mut tried = Vec::new();
         let (tile, h, raise) = look
             .mine
             .iter()
             .filter(|m| m.finished() && m.stats.role == Role::Bridge)
+            .filter(|m| {
+                m.view.drawing.is_none_or(|d| {
+                    let new = !tried.contains(&d);
+                    tried.push(d);
+                    new
+                })
+            })
             .find_map(|m| {
                 let raise = s.world.wall_level(s.party, m.view.handle).ok()?;
                 (raise.afford && spare >= raise.grub + RICH / 2).then_some((
@@ -441,16 +451,12 @@ impl Steward {
             }
             narrowest_crossing(s, b.id, home, target)
         }))?;
-        let (from, to) = line;
-        // Standard width, so its army crosses a few files abreast.
-        let deck = bridge_line(from, to);
-        let tiles = s
-            .world
-            .line_fits(s.party, b.id, &deck)
-            .map_or(0, |t| t.len()) as u32;
-        if tiles == 0 || spare < u32::from(b.stats.cost_grub) * tiles {
+        let ((from, to), tiles) = line;
+        if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
+        // Standard width, so its army crosses a few files abreast.
+        let deck = bridge_line(from, to);
         let w = self.builder_at(s, look, from)?;
         self.engineer.bridge = Some(None);
         let order = Command::DrawLine {
@@ -611,12 +617,17 @@ fn heavy_foes(s: &Sense) -> bool {
 
 /// The shortest bridge (from bank to bank) that fits over the water on
 /// the way from `home` to `target`: crossings straight along that way and
-/// along each axis, from points either side of it.
-fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -> Option<Line> {
+/// along each axis, from points either side of it; with its tiles.
+fn narrowest_crossing(
+    s: &Sense,
+    bridge: BuildingId,
+    home: Vec2,
+    target: Vec2,
+) -> Option<(Line, u32)> {
     let way = (target - home).try_normalize()?;
     let side = Vec2::new(-way.y, way.x);
     let len = home.distance(target);
-    let mut best: Option<(i32, Line)> = None;
+    let mut best: Option<(i32, Line, u32)> = None;
     for k in -6..=6 {
         let start = home + side * (k as f32 * 3.0);
         // Where this walk first meets water it can't wade.
@@ -637,29 +648,28 @@ fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -
                 continue;
             };
             let n = (to.0 - from.0).abs().max((to.1 - from.1).abs());
-            if n > BRIDGE_LONGEST || best.is_some_and(|(b, _)| b <= n) {
+            if n > BRIDGE_LONGEST || best.is_some_and(|(b, ..)| b <= n) {
                 continue;
             }
-            let fits = s
-                .world
-                .line_fits(s.party, bridge, &bridge_line(from, to))
-                .is_ok_and(|t| !t.is_empty() && t.iter().all(|t| t.fits.is_ok()));
-            if fits {
-                best = Some((n, (from, to)));
+            let fits = s.world.line_fits(s.party, bridge, &bridge_line(from, to));
+            if let Ok(t) = fits
+                && !t.is_empty()
+                && t.iter().all(|t| t.fits.is_ok())
+            {
+                best = Some((n, (from, to), t.len() as u32));
             }
         }
     }
-    best.map(|(_, line)| line)
+    best.map(|(_, line, tiles)| (line, tiles))
 }
 
 /// A standard-width bridge drawn straight from tile `from` to tile `to`
 /// (at a slant, if that is the shortest way over).
 fn bridge_line(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
-    gc_sim::walls::Line {
-        path: gc_sim::drawn::DrawnPath::straight(from, to),
-        width: gc_sim::drawn::STANDARD,
-        old: false,
-    }
+    gc_sim::walls::Line::drawn(
+        gc_sim::drawn::DrawnPath::straight(from, to),
+        gc_sim::drawn::STANDARD,
+    )
 }
 
 /// The last land tile before the water at `wet` going back along `dir`,

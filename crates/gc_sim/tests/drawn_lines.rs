@@ -190,11 +190,7 @@ fn crossing() -> DrawnPath {
 }
 
 fn bridge(path: DrawnPath, width: u8) -> Line {
-    Line {
-        path,
-        width,
-        old: false,
-    }
+    Line::drawn(path, width)
 }
 
 fn draw(w: &mut World, worker: RegimentHandle, path: DrawnPath, width: u8) -> bool {
@@ -370,11 +366,7 @@ fn a_gate_in_a_curved_wall_lets_its_army_through_and_keeps_others_out() {
     // A wall from the north edge to the south, bowing west, east of the
     // river: the only way through it is its gate.
     let path = DrawnPath::new(&[c((60, 0)), c((54, 40)), c((60, 79))], |_| false).unwrap();
-    let wall = Line {
-        path,
-        width: 1,
-        old: false,
-    };
+    let wall = Line::drawn(path, 1);
     let plan = tiles(&w.line_plan(0, WALL, &wall).unwrap());
     assert!(plan.len() > 79 && plan.len() <= 96, "{}", plan.len());
     let workers: Vec<_> = (0..4)

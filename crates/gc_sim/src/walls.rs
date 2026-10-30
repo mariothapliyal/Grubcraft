@@ -159,7 +159,7 @@ impl Structures {
     /// The next tile of `owner`'s walls (or bridges, after a bridge tile)
     /// to build after slot `i`: the nearest with work left (see
     /// [`Structures::wall_work_left`]) within [`CARRY_ON`] tiles of it,
-    /// those drawn in the same line first, then the lowest slot; failing
+    /// those drawn in the same drawing first, then the lowest slot; failing
     /// that the nearest within [`MAX_WALL_TILES`], so a builder at the end
     /// of one line goes back for the rest of the wall. A bridge tile out
     /// over the water is next only once a builder can reach it.
@@ -174,15 +174,17 @@ impl Structures {
                     && self.is_line(j)
                     && self.stats_of(j).role == role
                     && self.wall_work_left(j)
-                    && (!bridge || self.reachable_deck(j))
             })
-            .map(|j| {
+            .filter_map(|j| {
                 let [jx, jy, _, _] = self.footprint(j);
                 let gap = (jx - x).abs().max((jy - y).abs());
+                // The reach check last: it looks round the deck.
+                if gap > MAX_WALL_TILES as i32 || bridge && !self.reachable_deck(j) {
+                    return None;
+                }
                 let far = gap > CARRY_ON;
-                (far, !far && self.line[j] != self.line[i], gap, j)
+                Some((far, !far && self.drawing[j] != self.drawing[i], gap, j))
             })
-            .filter(|&(_, _, gap, _)| gap <= MAX_WALL_TILES as i32)
             .min()
             .map(|(.., j)| j)
     }
@@ -274,6 +276,16 @@ impl Line {
             old: true,
         }
     }
+
+    /// A line drawn along `path` (`Command::DrawLine`), a bridge `width`
+    /// tiles across.
+    pub fn drawn(path: DrawnPath, width: u8) -> Line {
+        Line {
+            path,
+            width,
+            old: false,
+        }
+    }
 }
 
 /// The tiles a line covers and how each is laid.
@@ -292,43 +304,19 @@ impl Laying {
         &'a self,
         terrain: &'a Terrain,
     ) -> impl Fn((i32, i32)) -> ([i16; 4], bool) + 'a {
-        let samples = self.path.samples();
+        let curve = self.path.curve();
         let bridge = self.stats.is_bridge();
         move |t| {
-            let mut line = self.path.chord(&samples, t);
+            let mut line = curve.chord(t);
             // A bridge tile on the higher side of the way it was drawn
             // runs back, so each side's rail is on its outer edge (as the
             // two lanes of a bridge drawn straight always have).
-            if bridge && higher_side(&samples, t) {
+            if bridge && curve.higher_side(t) {
                 line = [line[2], line[3], line[0], line[1]];
             }
             (line, !terrain.tile_under_water(t.0, t.1))
         }
     }
-}
-
-/// Whether tile `t`'s centre lies on the higher side of the curve `s`
-/// (higher rows across a path running east, lower columns across one
-/// running south).
-fn higher_side(s: &[drawn::Sample], t: (i32, i32)) -> bool {
-    let c = (
-        t.0 * drawn::SUB + drawn::SUB / 2,
-        t.1 * drawn::SUB + drawn::SUB / 2,
-    );
-    let k = (0..s.len())
-        .min_by_key(|&k| {
-            let (dx, dy) = (i64::from(s[k].x - c.0), i64::from(s[k].y - c.1));
-            (dx * dx + dy * dy, k)
-        })
-        .unwrap_or(0);
-    let (a, b) = if k + 1 < s.len() {
-        (k, k + 1)
-    } else {
-        (k.saturating_sub(1), k)
-    };
-    let along = (i64::from(s[b].x - s[a].x), i64::from(s[b].y - s[a].y));
-    let off = (i64::from(c.0 - s[a].x), i64::from(c.1 - s[a].y));
-    along.0 * off.1 - along.1 * off.0 > 0
 }
 
 impl Conquest {

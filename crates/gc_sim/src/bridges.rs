@@ -191,16 +191,12 @@ impl Conquest {
             } else {
                 (from.0 + dy, from.1, to.0 + dy, to.1)
             };
-            let area = [
-                ax.min(bx),
-                ay.min(by),
-                (bx - ax).abs() + 1,
-                (by - ay).abs() + 1,
-            ];
+            let area = crate::walls::tiles_area(&[(ax, ay), (bx, by)]);
             s.own_in(player, LINE, area).any(|i| s.is_bridge(i))
         };
-        if beside(1) || beside(-1) {
-            return side(beside(1));
+        let below = beside(1);
+        if below || beside(-1) {
+            return side(below);
         }
         let up = side(true);
         if clear(&up) {
