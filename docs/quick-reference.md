@@ -2,7 +2,7 @@
 
 Keep this file current: any PR that changes something a player sees updates it in the same PR, like the in-game guides.
 
-Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-27). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
+Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-30). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
 
 Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment** = a block of soldiers. **Worker** = Hands, Gnawers, Tuners, Ledger Clerks.
 
@@ -71,12 +71,12 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Grub:** from seeps. A seep holds 7,500; then dregs at 25% of the rate, for good. Pays for most things.
 - **Marrow:** from veins (3,000 each, no regrowth, dregs at 25%). Pays for tier upgrades, elite units, monsters, hero revival and most research.
 - **Top bar:** Grub, Marrow, Supply used/cap, clock, and a line "Upkeep 80%" in amber once upkeep bites. A faction meter sits beside them.
-- **Harvest:** a full seep (5 workers) gives about 200 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands carry 10 Grub in 9 s; a Marrow load (5) takes 12 s.
+- **Harvest:** five Hands on a seep near the hall give about 240 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands fill 10 Grub in 6 s; a Marrow load (5) takes 8 s. Choir: one Resonator (175 Grub) tunes one seep for about 109 Grub a minute, and a Siphon one vein for about 40 Marrow; chords add 10% to 30%.
 - **Upkeep** (Grub only): supply used 0 to 60 = 100%; 61 to 100 = 75%; 101 to 150 = 55%.
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 2 Resonators, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 400 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 
@@ -95,7 +95,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Buildings per faction** (tier, cost Grub/Marrow)
 - **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Palisade T1 10/0 per tile; Gate T1 60/0.
 - **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
-- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 150/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
+- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
 - **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
 
 **Walls** [docs/26-fortifications.md]
@@ -107,8 +107,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - **Ember Clans** (Shogun): Hands carry Grub to the hall or a Granary. **Honor** meter: +5 when an enemy regiment routs against yours, +10 for a win while outnumbered, +2 a minute per Shrine held, -5 when yours routs. Spent on Edicts. Tight formation gives +15% defence when still.
 - **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Tier-1 regiments evolve on the field (15 s cocoon).
-- **Shard Choir** (chords): Resonators tune seeps with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +60% Grub to tuned seeps there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
-- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 40 Grub + 1.2 per tile of straight-line distance. **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
+- **Shard Choir** (chords): Each Resonator tunes one seep with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +30% Grub to the seeps they tune there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
+- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 37 Grub + 1.1 per tile of straight-line distance (about 81 at 40 tiles). **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
 - **Heroes:** up to three per faction, not in the game yet (section 8).
 - **Field Battle generals:** each side's general rides with one regiment. Select it to see "Your general rides here: guard him". His death panics nearby regiments. [docs/37-commander.md]
 
@@ -137,7 +137,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed).
 - **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled (flames only).
 - **Mud and floods:** long rain soaks ground into mud (slow, no charges). Long heavy rain swells rivers and shuts the fords; troops caught on a shut ford lose 12 HP a second and are moved to the bank.
-- **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a wave down a river. 8 s warning: "A flash flood is coming down the river: get off the fords".
+- **Rivers carry their own water [docs/39]:** each river is cut into 16-tile stretches. Rain on a river fills them and runs on downstream, so a long river's lower fords flood most and drain last.
+- **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a flood front down a river at 6 tiles a second; each ford shuts as it arrives (upper fords first) and opens once the water falls. Sizes: Minor (no ford shuts; 35 in 100), Flood (45), Major (16), Catastrophic (4); wet ground and rain on spring snow make them bigger, a dry summer smaller. Warnings: 8 s before the first ford ("A flash flood is coming down the river"); a Major is told to everyone 15 s ahead and a Catastrophic one 30 s ahead. Troops in a ford the front shuts are swept 10 tiles downstream and 30% drown.
 - **Currents:** wading troops drift downstream; going upstream is slower.
 - **Clearing** (`S`): scrub 3 s, woods 8 s (3 Grub of timber), thicket 15 s (5 Grub).
 
@@ -145,9 +146,10 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Main menu:** Play (Host a game, Join a game), Sandbox, Replays, Unit viewer, Settings, Guide, Exit.
 
-- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Big 6-player maps: Land: Random, Plains, Mixed, Wild. Fog of war on in Conquest matches played to a victory.
+- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
+  - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000; build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. Win by rout or victory points. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
 - **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type an address or join code. Version mismatches are shown in the lobby.

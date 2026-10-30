@@ -60,8 +60,9 @@ const CLEAR_AT: u32 = 100 * TICKS_PER_SECOND;
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
 const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
-/// How much later side 1 marches.
-const MARCH_LATER: u32 = 30 * TICKS_PER_SECOND;
+/// How much later side 1 marches (10 s, from 30, so it still sees and
+/// climbs the other's wall in time once the Clans gathered faster).
+const MARCH_LATER: u32 = 10 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// When the second side's chord goes up.
 const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;
@@ -349,7 +350,7 @@ impl Match {
     pub fn new() -> Match {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(0, 0);
+        let map = conquest::make_map(0, 0, 0);
         let units = conquest::unit_stats(&data);
         let nav = map.sim_nav_costs();
         let setup = MatchSetup {
@@ -898,20 +899,26 @@ impl Match {
     fn ladder(&mut self, p: PlayerId, out: &mut Vec<PlayerCommand>) {
         let side = self.sides[usize::from(p)];
         if let Some(c) = side.climber {
-            let up = (self.world.regiments.iter()).any(|r| r.handle == c && r.on_wall);
+            let climber = (self.world.regiments.iter()).find(|r| r.handle == c);
+            let up = climber.is_some_and(|r| r.on_wall);
             self.sides[usize::from(p)].climbed |= up;
-            return;
+            // One that broke or fell on the way hands the ladders on.
+            let lost = climber.is_none_or(|r| r.morale.broken());
+            if side.climbed || up || !lost {
+                return;
+            }
+            self.sides[usize::from(p)].climber = None;
         }
         let fighter = self.kits[usize::from(p)].fighter;
         let walls = self.raised_walls(1 - p);
+        // The one nearest a tile it can climb, so it has the least ground
+        // to cross under fire.
         let pick = (self.world.regiments.iter())
             .filter(|r| r.owner == p && r.unit == fighter && !r.engaged)
-            .find_map(|r| {
-                let tile = walls
-                    .iter()
-                    .find(|t| self.world.climb_check(r.handle, t.handle).is_ok())?;
-                Some((r.handle, tile.handle))
-            });
+            .flat_map(|r| walls.iter().map(move |t| (r, t)))
+            .filter(|(r, t)| self.world.climb_check(r.handle, t.handle).is_ok())
+            .min_by_key(|(r, t)| (r.position - t.centre()).length_sq_raw())
+            .map(|(r, t)| (r.handle, t.handle));
         if let Some((regiment, structure)) = pick {
             out.push(PlayerCommand {
                 player: p,

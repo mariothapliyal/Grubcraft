@@ -89,7 +89,7 @@ fn starting_state_matches_the_economy_doc() {
             .iter()
             .find(|b| b.name() == "Resonator")
             .unwrap();
-        assert_eq!(resonator.start_count, 2);
+        assert_eq!(resonator.start_count, 1);
         assert_eq!(resonator.faction(), Faction::Choir);
 
         let hands = data
@@ -353,7 +353,7 @@ fn the_concord_trades_for_its_grub() {
             .iter()
             .find(|u| u.name() == "Caravan")
             .unwrap();
-        assert_eq!((caravan.trade_base, caravan.trade_tenths), (40, 12));
+        assert_eq!((caravan.trade_base, caravan.trade_tenths), (37, 11));
         assert_eq!(caravan.faction(), Faction::CarrionConcord);
     });
 }

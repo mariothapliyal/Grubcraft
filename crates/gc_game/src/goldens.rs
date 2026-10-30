@@ -44,6 +44,9 @@ struct Golden {
     name: &'static str,
     seed: u64,
     map_tiles: u32,
+    /// The lobby's map choice (an index into [`gc_map::FIELD_MAPS`]); 0 is
+    /// the generated map most goldens use.
+    map: usize,
     sides: &'static [Side],
     /// Soldiers each army is raised to (at least), or zero for the
     /// lobby's standard army of [`army::ARMY_REGIMENTS`] regiments.
@@ -332,6 +335,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-1v1",
         seed: 0x1d1,
         map_tiles: 256,
+        map: 0,
         sides: &[side(EmberClans, Veteran, 0), side(Brood, General, 1)],
         soldiers: 0,
         rows: 1,
@@ -346,6 +350,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-2v2",
         seed: 0x2d2,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, General, 0),
             side(Brood, Veteran, 1),
@@ -365,6 +370,7 @@ const GOLDENS: &[Golden] = &[
         name: "sandbox-tuning",
         seed: 0x5a2d,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, Veteran, 0),
             side(CarrionConcord, Veteran, 1),
@@ -385,6 +391,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-woods-1v1",
         seed: 0xd9,
         map_tiles: 256,
+        map: 0,
         sides: &[side(Brood, General, 0), side(Choir, General, 1)],
         soldiers: 0,
         rows: 1,
@@ -402,6 +409,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-night-rain-1v1",
         seed: 0xd9,
         map_tiles: 256,
+        map: 0,
         sides: &[side(EmberClans, General, 0), side(Choir, General, 1)],
         soldiers: 0,
         rows: 1,
@@ -433,6 +441,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-fire-1v1",
         seed: 0xd9,
         map_tiles: 256,
+        map: 0,
         sides: &[side(CarrionConcord, General, 0), side(Brood, General, 1)],
         soldiers: 0,
         rows: 1,
@@ -460,6 +469,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-flood-1v1",
         seed: 0xd9,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, General, 0),
             side(CarrionConcord, General, 1),
@@ -491,6 +501,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-8000pt-2v2",
         seed: 0x8000,
         map_tiles: 384,
+        map: 0,
         sides: &[
             side(EmberClans, General, 0),
             side(Brood, General, 1),
@@ -512,6 +523,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-brace-1v1",
         seed: 0xb4ace,
         map_tiles: 256,
+        map: 0,
         sides: &[side(EmberClans, Veteran, 0), side(Brood, Veteran, 1)],
         soldiers: 0,
         rows: 1,
@@ -527,6 +539,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-champions-1v1",
         seed: 0xc4a1,
         map_tiles: 256,
+        map: 0,
         sides: &[side(EmberClans, Veteran, 0), side(Choir, Veteran, 1)],
         soldiers: 0,
         rows: 1,
@@ -543,6 +556,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-handover-2v2",
         seed: 0x4a2d,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, Veteran, 0),
             side(Brood, Veteran, 1),
@@ -566,6 +580,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-deploy-1v1",
         seed: 0xde9,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, Veteran, 0),
             side(CarrionConcord, Veteran, 1),
@@ -578,6 +593,56 @@ const GOLDENS: &[Golden] = &[
         champions: false,
         deployment: true,
         sky: gc_sim::Sky::STILL,
+    },
+    // The water engine (docs/39-water-engine.md): a storm over a grown
+    // map's rivers. The rain swells the rivers stretch by stretch, and the
+    // storm sends a flash flood down one, shutting its fords in turn as
+    // the armies cross.
+    Golden {
+        name: "field-river-storm-1v1",
+        seed: RIVER_STORM_SEED,
+        map_tiles: 256,
+        map: gc_map::GROWN + 2,
+        sides: &[
+            side(EmberClans, General, 0),
+            side(CarrionConcord, General, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 6,
+        minds: true,
+        extra: no_extra,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky {
+            spells: RIVER_STORM,
+            ..gc_sim::Sky::STILL
+        },
+    },
+];
+
+/// The river storm golden's seed: its grown map has rivers with fords,
+/// and its storm rolls a major flash flood.
+const RIVER_STORM_SEED: u64 = 0x570a;
+
+/// Fair, a storm from the first minute for two, then fair again.
+const RIVER_STORM: &[gc_sim::Spell] = &[
+    gc_sim::Spell {
+        at: 0,
+        weather: gc_sim::Weather::FAIR,
+    },
+    gc_sim::Spell {
+        at: 60 * gc_sim::TICKS_PER_SECOND,
+        weather: gc_sim::Weather {
+            kind: gc_sim::WeatherKind::Rain,
+            strength: 240,
+            cloud: 255,
+            wind: (8, 4),
+        },
+    },
+    gc_sim::Spell {
+        at: 3 * 60 * gc_sim::TICKS_PER_SECOND,
+        weather: gc_sim::Weather::FAIR,
     },
 ];
 
@@ -610,7 +675,12 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let gc_match::Tables {
         units, factions, ..
     } = gc_match::Tables::new(&data);
-    let heightmap = gc_map::Map::generate(golden.seed, golden.map_tiles);
+    let heightmap = gc_map::FieldMap {
+        choice: golden.map,
+        tiles: golden.map_tiles,
+        seed: golden.seed,
+    }
+    .make();
     let nav = heightmap.sim_nav_costs();
     let teams: Vec<u8> = golden.sides.iter().map(|s| s.team).collect();
     let setup = MatchSetup {
@@ -830,6 +900,9 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     println!("{note}");
     let mut replay = m.finish().expect("the match was recorded");
     replay.note = note;
+    // The map to draw it on: the lobby's choice, unless it is the
+    // generated map.
+    replay.header.map = (golden.map != 0).then_some(golden.map as u8);
     replay
 }
 

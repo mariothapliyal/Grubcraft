@@ -116,16 +116,18 @@ fn every_grown_map_passes_the_checker() {
     assert!(rerolls * 5 <= jobs.len(), "{rerolls} rerolls");
 }
 
-/// Big Conquest maps pass the checker's Conquest checks at every wildness,
-/// at the Standard size and at 768 (which takes the bigger maps'
-/// branches), with room for all their sites: the game doesn't reroll them.
-/// A sweep of 10 seeds of each wildness at 512, 640, 768 and 896 passed
-/// when they were made; this keeps a few of them so the test stays quick.
+/// Conquest Wilds maps pass the checker's Conquest checks at every
+/// wildness, at the lobby's three sizes (320 and 448 with four starts, 640
+/// with six) and at 768, with room for all their sites: the game doesn't
+/// reroll them. A sweep of 10 seeds of each wildness at 512, 640, 768 and
+/// 896 passed when they were made, and 30 at 320, 384, 448 and 640 when
+/// the lobby's sizes came in (but a flat knoll at 320); this keeps a few
+/// so the test stays quick.
 #[test]
 fn every_conquest_wilds_map_passes_the_checker() {
     let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
         .into_iter()
-        .flat_map(|w| [(512, 1), (512, 2), (768, 3)].map(|(t, seed)| (w, t, seed)))
+        .flat_map(|w| [(320, 1), (448, 1), (640, 2), (768, 3)].map(|(t, seed)| (w, t, seed)))
         .collect();
     let failed = failures(&jobs, |&(wild, tiles, seed)| {
         let def = conquest::describe_wilds(tiles, seed, wild).unwrap();
@@ -148,7 +150,7 @@ fn every_conquest_wilds_map_passes_the_checker() {
     );
 }
 
-/// Every lobby map at the big sizes (Standard and Large, for two to six
+/// Every lobby map at the big sizes (Medium and Large, for two to six
 /// players) is the size asked for, and its starts can all walk to each
 /// other (`gc_map`'s own tests do the Small sizes).
 #[test]

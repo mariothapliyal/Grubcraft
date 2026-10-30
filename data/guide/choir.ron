@@ -9,7 +9,7 @@
                 ("Cathedral", "The mid game: Harmonic Walkers, Glass Striders, the Skyglass Loom's Skyglass, the Conductor and a second hero. It costs Marrow, so build a Siphon first."),
             ],
             tips: [
-                (icon: Grub, text: "Tune nearby seeps with your two starting Resonators first; they are your only early income."),
+                (icon: Grub, text: "Tune the nearest seep with your starting Resonator; each Resonator tunes one seep."),
                 (icon: Marrow, text: "Build a Siphon early so you have the Marrow for the Cathedral upgrade."),
                 (icon: Alarm, text: "Keep it away from the front; it is the only building that trains Tuners and Conductors."),
             ],
@@ -38,10 +38,10 @@
         ),
         (
             name: "Resonator",
-            summary: "Tunes a seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
+            summary: "Tunes its nearest free seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
             notes: [],
             tips: [
-                (icon: Grub, text: "Place each Resonator within 4 tiles of a seep so it can tune that seep for Grub."),
+                (icon: Grub, text: "Place each Resonator within 4 tiles of a free seep, since each Resonator tunes one seep for Grub."),
                 (icon: Flag, text: "Build three Resonators in a triangle within 14 tiles of each other to form a chord."),
                 (icon: Alarm, text: "Site Resonators so they power Forges and Sanctums within 6 tiles; both need power."),
             ],
@@ -51,7 +51,7 @@
             summary: "A Resonator built against a Marrow vein (within 3 tiles): it draws Marrow with no workers, and also links chords and powers buildings. Build one on every Marrow vein you hold; tier-2 buildings and units cost Marrow.",
             notes: [],
             tips: [
-                (icon: Marrow, text: "Place it within 3 tiles of a Marrow vein; it draws about 50 Marrow a minute with no workers."),
+                (icon: Marrow, text: "Place it within 3 tiles of a Marrow vein; it draws about 40 Marrow a minute with no workers."),
                 (icon: Marrow, text: "Take every Marrow vein you can, since tier-2 buildings, units and heroes all cost Marrow."),
                 (icon: Grub, text: "Like a Resonator, it links chords, so keep it within 14 tiles of your other Resonators."),
             ],

@@ -355,7 +355,7 @@ fn a_seep_inside_a_chord_yields_more_and_a_vein_inside_one_does_not() {
     let outside = grub(&lone) - start;
     let percent = in_chord * 100 / outside;
     assert!(
-        (150..=170).contains(&percent),
+        (120..=145).contains(&percent),
         "{in_chord} Grub inside a chord against {outside} outside: {percent}%"
     );
 
@@ -374,7 +374,7 @@ fn a_seep_inside_a_chord_yields_more_and_a_vein_inside_one_does_not() {
     run(&mut veins, MINUTE);
     let gained = marrow(&veins) - start;
     assert!(
-        (45..=55).contains(&gained),
+        (36..=44).contains(&gained),
         "{gained} Marrow a minute, as with no chord"
     );
 }
@@ -402,7 +402,7 @@ fn a_bigger_chord_has_more_harmony_and_both_stay_within_the_bounds() {
     assert!(in_bounds(u32::from(small)), "small: {small} percent");
     assert!(in_bounds(u32::from(big)), "big: {big} percent");
     assert!(big > small, "big {big} percent, small {small} percent");
-    assert!(big >= 50, "a near-equilateral chord gives {big} percent");
+    assert!(big >= 27, "a near-equilateral chord gives {big} percent");
 }
 
 /// Each chord charges Resonance a point per RESONANCE_TICKS chord-ticks, but

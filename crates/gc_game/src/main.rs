@@ -139,6 +139,7 @@ mod atmosphere;
 mod buildings;
 mod camera;
 mod cinema;
+mod clearance;
 mod clearing;
 mod conquest;
 mod conquest_ai;
@@ -160,6 +161,8 @@ mod goldens;
 mod ground_look;
 mod land;
 mod lights;
+#[cfg(test)]
+mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod drawn_tool;
 mod guide_data;
@@ -1019,6 +1022,9 @@ struct Art {
     view: LodView,
     /// Instances per model and level of detail (model * LODS + lod).
     buckets: Vec<Vec<SoldierInstance>>,
+    /// This frame's ghost (the building being placed), by bucket: drawn in
+    /// a batch of its own that casts no shadow.
+    ghost: Option<(usize, SoldierInstance)>,
     soldiers: Vec<SoldierInstance>,
     batches: Vec<SoldierBatch>,
 }
@@ -1092,6 +1098,7 @@ impl Art {
         for b in &mut self.buckets {
             b.clear();
         }
+        self.ghost = None;
         self.view = LodView {
             eye,
             forward,
@@ -1105,6 +1112,17 @@ impl Art {
     fn finish(&mut self) {
         self.soldiers.clear();
         self.batches.clear();
+        // The ghost first, as a full frame drops soldiers from the back.
+        if let Some((k, ghost)) = self.ghost {
+            self.batches.push(SoldierBatch {
+                model: (k / LODS) as u16,
+                lod: (k % LODS) as u8,
+                first: self.soldiers.len() as u32,
+                count: 1,
+                shadowless: true,
+            });
+            self.soldiers.push(ghost);
+        }
         for (k, b) in self.buckets.iter().enumerate() {
             if b.is_empty() {
                 continue;
@@ -1114,6 +1132,7 @@ impl Art {
                 lod: (k % LODS) as u8,
                 first: self.soldiers.len() as u32,
                 count: b.len() as u32,
+                shadowless: false,
             });
             self.soldiers.extend_from_slice(b);
         }
@@ -1499,6 +1518,7 @@ impl App {
                 force: opts.lod,
             },
             buckets: vec![Vec::new(); models.models.len() * LODS],
+            ghost: None,
             soldiers: Vec::with_capacity(gc_render::MAX_SOLDIER_INSTANCES),
             batches: Vec::with_capacity(models.models.len() * LODS),
         });
@@ -5157,6 +5177,7 @@ impl Running {
                 let key = if conquest {
                     MapKey::Conquest {
                         choice,
+                        tiles: gc_ui::lobby::conquest_map_tiles(choice, r.map_tiles),
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
@@ -5452,7 +5473,7 @@ impl Running {
         // every machine; a Field Battle map's follow its seed.
         let trees = match key {
             MapKey::Field(k) => k.seed,
-            MapKey::Conquest { choice, seed } => seed ^ choice as u64,
+            MapKey::Conquest { choice, seed, .. } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(&self.heightmap, trees, &self.scenery_models)
@@ -6131,15 +6152,21 @@ impl Running {
                 }),
                 Event::Season { season } => news.push(season_news(season)),
                 Event::FlashFlood { stage } => news.push(match stage {
-                    gc_sim::flash::Stage::Coming => {
+                    gc_sim::rivers::Stage::Coming => {
                         "A flash flood is coming down the river: get off the fords"
                     }
-                    gc_sim::flash::Stage::Here => {
-                        "The flash flood is here: that river's fords can't be crossed"
+                    gc_sim::rivers::Stage::Here => {
+                        "The river is over its fords: they can't be crossed"
                     }
-                    gc_sim::flash::Stage::Gone => {
-                        "The flash flood has passed: the fords are open again"
+                    gc_sim::rivers::Stage::Gone => {
+                        "The river has fallen: the fords are open again"
                     }
+                }),
+                Event::GreatFlood { band } => news.push(match band {
+                    gc_sim::rivers::Band::Catastrophic => {
+                        "A great storm has broken over the hills: a catastrophic flood is coming down the river. Get off the river and its banks"
+                    }
+                    _ => "A storm in the hills: a major flood is coming down the river. Keep off the fords and the low banks",
                 }),
                 Event::SweptAway { regiments } => news.push(if regiments == 1 {
                     "The flash flood swept a regiment out of the ford: some drowned, the rest washed up downstream"
@@ -6723,6 +6750,7 @@ impl Running {
         };
         let colour = color_of(&self.parties, self.sandbox.side);
         let fit = self.fit_of(&stats, tile, why);
+        let modelled = (self.art.as_ref()).is_some_and(|art| art.looks.finished(id).is_some());
         let hm = &self.heightmap;
         buildings::push_ghost(
             &stats,
@@ -6730,9 +6758,24 @@ impl Running {
             self.sandbox.building_turn,
             fit,
             colour,
+            modelled,
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             &mut self.instances,
         );
+    }
+
+    /// The building being placed as its finished model would stand there,
+    /// and its ghost's colour, for a building drawn as a model.
+    fn building_ghost_view(&self) -> Option<(StructureView, [u8; 4])> {
+        let id = self.laying()?;
+        let (stats, tile, why) = self.building_placement(id)?;
+        let turn = self.sandbox.building_turn;
+        let (width, depth) = stats.size(turn);
+        let mut view = buildings::footprint_view(tile, width, depth, turn);
+        view.building = id;
+        let fit = self.fit_of(&stats, tile, why);
+        let colour = color_of(&self.parties, self.sandbox.side);
+        Some((view, buildings::building_ghost_colour(fit, colour)))
     }
 
     /// Every standing building as a box, the selected one with a rim, and
@@ -7361,6 +7404,7 @@ impl Running {
     /// fallen buildings sinking (after `Art::begin`).
     fn push_building_models(&mut self) {
         let picked = self.picked_structure();
+        let ghost = self.building_ghost_view();
         let (Some(art), Some(structures)) = (&mut self.art, self.world.structures()) else {
             return;
         };
@@ -7369,6 +7413,29 @@ impl Running {
         let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
+        // The building being placed: its finished model, see-through in the
+        // colour that says whether it fits.
+        if let Some((view, [r, g, b, _])) = ghost
+            && let Some(model) = art.looks.finished(view.building)
+        {
+            let (centre, top, lift) = buildings::model_spot(&view, &ground);
+            let height = art.looks.top(model);
+            let at = Vec3::new(centre.x, top, centre.y);
+            let still = art.clips.pose(model, Action::Idle, time);
+            if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                let ghost = SoldierInstance {
+                    pos: centre.to_array(),
+                    facing: art.looks.facing(&view).to_array(),
+                    frames: pose.rows,
+                    flags: models::pose_flags(pose, gc_render::GHOST_HIGHLIGHT, false),
+                    color: [r, g, b, gc_render::TONE_NEUTRAL],
+                    lift,
+                    scale: 1.0,
+                    ..Default::default()
+                };
+                art.ghost = Some((model * LODS + lod, ghost));
+            }
+        }
         for fall in self.siege.sinking() {
             let height = art.looks.top(fall.model);
             let at = Vec3::new(fall.pos.x, ground(fall.pos.x, fall.pos.y), fall.pos.y);
@@ -7996,14 +8063,16 @@ impl Running {
 }
 
 /// A map the lobby can play on: a Field Battle map made from its choice,
-/// size and seed, or a Conquest map made from its choice and seed.
+/// size and seed, or a Conquest map made from its choice, size and seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MapKey {
     Field(FieldMap),
-    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the seed a Wilds
-    /// map is made from (`gc_ui::lobby::conquest_map_seed`).
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the size and seed
+    /// a Wilds map is made at (`gc_ui::lobby::MapSize::conquest_tiles`,
+    /// `gc_ui::lobby::conquest_map_seed`; a shipped map ignores both).
     Conquest {
         choice: usize,
+        tiles: u32,
         seed: u64,
     },
 }
@@ -8012,7 +8081,11 @@ impl MapKey {
     fn make(self) -> Map {
         match self {
             MapKey::Field(key) => key.make(),
-            MapKey::Conquest { choice, seed } => conquest::make_map(choice, seed),
+            MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => conquest::make_map(choice, tiles, seed),
         }
     }
 
@@ -8038,7 +8111,15 @@ impl From<MapPreviewKey> for MapKey {
                 tiles,
                 seed,
             }),
-            MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
+            MapPreviewKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            },
         }
     }
 }

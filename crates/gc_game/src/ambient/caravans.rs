@@ -636,7 +636,7 @@ mod tests {
         // Four Teeth has hamlets close enough with clear ground between them;
         // Ribcage Pass has two with none.
         let count = |choice: usize| {
-            let map = crate::conquest::make_map(choice, 7);
+            let map = crate::conquest::make_map(choice, 0, 7);
             let hamlets = Hamlets::new(&map);
             let c = Caravans::new(&map, &hamlets);
             for r in &c.routes {
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(count(0), 0);
         assert!(count(1) >= 2);
         let steep = {
-            let mut map = crate::conquest::make_map(1, 7);
+            let mut map = crate::conquest::make_map(1, 0, 7);
             // Corrugate the ground so no way between hamlets is gentle.
             for (i, h) in map.samples.iter_mut().enumerate() {
                 *h = h.saturating_add(if i % 2 == 0 { 6000 } else { 0 });

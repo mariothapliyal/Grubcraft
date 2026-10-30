@@ -1,5 +1,5 @@
 //! The six-player Conquest soak (docs/12-performance.md, "Conquest soak"):
-//! an hour of game time on a 768-tile Wilds Conquest map, set up as the
+//! an hour of game time on a Large (640-tile) Wilds Conquest map, set up as the
 //! lobby sets up Conquest, between six scripted sides that play a whole
 //! match's worth: each gathers with up to 14 workers, keeps laying houses
 //! and barracks, trains soldiers to its supply cap, upgrades its main
@@ -376,7 +376,9 @@ fn conquest_soak() {
         .and_then(|m| m.parse().ok())
         .unwrap_or(60);
     let made = Instant::now();
-    let map = tagged_alloc::scope(Tag::Map, || conquest::make_map(MAP, SEED));
+    let map = tagged_alloc::scope(Tag::Map, || {
+        conquest::make_map(MAP, gc_ui::lobby::MapSize::Large.conquest_tiles(), SEED)
+    });
     println!(
         "map: {} ({} tiles, {} starts) made in {:.1} s",
         gc_ui::lobby::CONQUEST_MAPS[MAP],

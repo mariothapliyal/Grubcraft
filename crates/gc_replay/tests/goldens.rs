@@ -160,9 +160,9 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    58,
+    60,
     &[
-        ("conquest-ribcage-1v1", 0x3509c89d1760c69d),
+        ("conquest-ribcage-1v1", 0xab27929e3e2d07ac),
         ("field-1v1", 0xc10d83d6be4372f3),
         ("field-2v2", 0xd3245fc68b7edf6d),
         ("field-8000pt-2v2", 0x4434f1bcba8e8734),
@@ -173,6 +173,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
         ("field-flood-1v1", 0x68df2fc4f27f4608),
         ("field-handover-2v2", 0x4ae5522f68ed3695),
         ("field-night-rain-1v1", 0x58de32fdad45e7c3),
+        ("field-river-storm-1v1", 0x72ccd45d1dd247fe),
         ("field-woods-1v1", 0x82880eb52c853690),
         ("sandbox-tuning", 0xcb046655e2882011),
     ],

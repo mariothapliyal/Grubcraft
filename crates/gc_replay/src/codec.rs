@@ -204,6 +204,7 @@ impl Writer {
             self.u8(c.pays[i]);
         }
         self.bool(c.burns);
+        self.var(u64::from(u.gather_percent));
     }
 
     /// A caravan's trade post (format 24 on).
@@ -820,6 +821,9 @@ impl<'a> Reader<'a> {
                 u.clearing.pays[i] = self.u8()?;
             }
             u.clearing.burns = self.bool()?;
+        }
+        if format >= 47 {
+            u.gather_percent = self.var_as()?;
         }
         Some(u)
     }

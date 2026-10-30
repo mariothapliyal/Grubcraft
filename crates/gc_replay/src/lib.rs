@@ -45,6 +45,7 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 47: drawn lines (the draw line and plan line commands, tags 41 to 43);
 /// - 46: the rivers' flow layer (read as still water everywhere);
 /// - 45: hidden traps (a building's trap; read as none);
 /// - 44: planting stakes (the plant stakes command, tag 40);
@@ -102,7 +103,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 47;
+pub const FORMAT: u16 = 48;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

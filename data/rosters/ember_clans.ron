@@ -400,11 +400,12 @@
             supply: 1,
             train_time: 12.0,
             from: Building("Clan Hall"),
+            gather_percent: 150,
             abilities: [
                 (
                     name: "Gather",
                     kind: Passive,
-                    effect: "Carries 10 Grub or 5 Marrow per trip to a Clan Hall or Granary.",
+                    effect: "Carries 10 Grub or 5 Marrow per trip to a Clan Hall or Granary, filling a load in two thirds of the time other workers take (about a fifth more Grub a minute).",
                     primitives: [Gather],
                 ),
                 (

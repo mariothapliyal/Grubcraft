@@ -396,6 +396,16 @@ impl UnitContext<'_> {
                 self.starting.iter().map(|(n, c)| (n.as_str(), *c)),
                 name,
             )?,
+            gather_percent: match u.gather_percent {
+                100 => 100,
+                p if matches!(u.class, rosters::Class::Worker) && (50..=300).contains(&p) => p,
+                p => {
+                    return Err(bad(format!(
+                        "gather_percent {p}: only a worker has one, 50 to 300"
+                    )));
+                }
+            },
+            reserved: 0,
         })
     }
 }

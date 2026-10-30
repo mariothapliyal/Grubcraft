@@ -779,6 +779,7 @@ impl Running {
                         spot.turn,
                         Fit::Suggested,
                         colour,
+                        false,
                         ground,
                         &mut self.instances,
                     );

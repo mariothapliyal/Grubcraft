@@ -6,8 +6,8 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::events::Event;
-use gc_sim::flash::Stage;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
+use gc_sim::rivers::{Band, Stage};
 use gc_sim::scenario::DRILL_UNITS;
 use gc_sim::sky::{Spell, Weather, WeatherKind};
 use gc_sim::{Capacities, Command, Flow, Ground, MatchSetup, PlayerCommand, Sky, World};
@@ -138,21 +138,27 @@ fn stages(w: &mut World, ticks: u32) -> Vec<(u32, Stage)> {
         .collect()
 }
 
-/// A seed whose storm rolls a flash flood (most do not every time).
-fn flooding_seed() -> u64 {
-    (0..64)
+/// A seed whose storm rolls a flash flood of `band` (most do not every
+/// time).
+fn seed_of(band: Band) -> u64 {
+    (0..256)
         .find(|&seed| {
             let mut w = world(seed, CHANGING, true);
             stages(&mut w, 12 * SECOND);
-            w.flood().flash().wave().is_some()
+            w.flood().rivers().fronts().any(|f| f.band() == band)
         })
         .expect("some seed rolls a flash flood")
+}
+
+/// A seed whose storm rolls a flash flood that shuts the fords.
+fn flooding_seed() -> u64 {
+    seed_of(Band::Flood)
 }
 
 #[test]
 fn a_storm_sends_a_flash_flood_down_the_river() {
     let mut w = world(flooding_seed(), CHANGING, true);
-    assert_eq!(w.flood().flash().rivers(), 1);
+    assert_eq!(w.flood().rivers().fords(), 1);
     // A regiment standing in the ford.
     w.tick(&[PlayerCommand {
         player: 0,
@@ -184,7 +190,7 @@ fn a_storm_sends_a_flash_flood_down_the_river() {
         !(Fx::from_int(RIVER.start + 1)..Fx::from_int(RIVER.end - 1)).contains(&at.y),
         "{at:?}"
     );
-    assert!(w.flood().flash().wave().is_none());
+    assert!(!w.flood().rivers().running());
 }
 
 #[test]
@@ -192,9 +198,12 @@ fn the_wave_runs_only_while_the_water_is_up() {
     let mut w = world(flooding_seed(), CHANGING, true);
     let told = stages(&mut w, 60 * SECOND);
     assert!(told.iter().any(|&(_, s)| s == Stage::Here), "{told:?}");
-    assert!(w.terrain().wave_running());
+    assert!(w.terrain().river_up());
     stages(&mut w, 2 * 60 * SECOND);
-    assert!(!w.terrain().wave_running());
+    assert!(!w.flood().rivers().running());
+    // Once the storm is over, the rain runs off down the river too.
+    stages(&mut w, 6 * 60 * SECOND);
+    assert!(!w.terrain().river_up());
 }
 
 #[test]
@@ -204,6 +213,6 @@ fn fixed_weather_and_still_water_never_flash_flood() {
         assert!(stages(&mut w, 60 * SECOND).is_empty());
         let mut w = world(seed, CHANGING, false);
         assert!(stages(&mut w, 60 * SECOND).is_empty());
-        assert_eq!(w.flood().flash().rivers(), 0);
+        assert_eq!(w.flood().rivers().fords(), 0);
     }
 }

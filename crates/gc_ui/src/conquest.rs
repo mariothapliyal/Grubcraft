@@ -146,7 +146,7 @@ const INFO_W: i32 = 26;
 pub struct Tuning {
     /// It tunes Marrow veins, not Grub seeps.
     pub vein: bool,
-    /// How many nodes it tunes now.
+    /// How many nodes it tunes now (a tuner works at most one).
     pub nodes: u8,
     /// What they yield together, a minute, at the match tempo (before any
     /// upkeep cut to Grub).
@@ -169,12 +169,9 @@ impl Tuning {
         };
         match self.nodes {
             0 => format!("No {node} in reach"),
-            1 => format!(
+            // A tuner works one node.
+            _ => format!(
                 "Tuning a {node}: about {} {what} a minute{chord}",
-                self.per_minute
-            ),
-            n => format!(
-                "Tuning {n} {node}s: about {} {what} a minute{chord}",
                 self.per_minute
             ),
         }
@@ -628,14 +625,10 @@ mod tests {
         assert_eq!(line(false, 0, 0), "No seep in reach");
         assert_eq!(line(true, 0, 0), "No vein in reach");
         assert_eq!(
-            line(false, 1, 200),
-            "Tuning a seep: about 200 Grub a minute"
+            line(false, 1, 109),
+            "Tuning a seep: about 109 Grub a minute"
         );
-        assert_eq!(line(true, 1, 50), "Tuning a vein: about 50 Marrow a minute");
-        assert_eq!(
-            line(false, 2, 400),
-            "Tuning 2 seeps: about 400 Grub a minute"
-        );
+        assert_eq!(line(true, 1, 40), "Tuning a vein: about 40 Marrow a minute");
     }
 
     #[test]
@@ -644,22 +637,22 @@ mod tests {
             Tuning {
                 vein: false,
                 nodes,
-                per_minute: 240,
+                per_minute: 130,
                 harmony,
             }
             .line()
         };
         assert_eq!(
-            line(2, 35),
-            "Tuning 2 seeps: about 240 Grub a minute (chord +35%)"
+            line(1, 30),
+            "Tuning a seep: about 130 Grub a minute (chord +30%)"
         );
         assert_eq!(
             line(1, 10),
-            "Tuning a seep: about 240 Grub a minute (chord +10%)"
+            "Tuning a seep: about 130 Grub a minute (chord +10%)"
         );
-        assert_eq!(line(2, 0), "Tuning 2 seeps: about 240 Grub a minute");
+        assert_eq!(line(1, 0), "Tuning a seep: about 130 Grub a minute");
         // Nothing tuned, nothing to sing over.
-        assert_eq!(line(0, 35), "No seep in reach");
+        assert_eq!(line(0, 30), "No seep in reach");
     }
 
     #[test]
