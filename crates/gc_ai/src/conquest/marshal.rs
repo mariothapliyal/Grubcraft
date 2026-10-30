@@ -643,6 +643,9 @@ impl Marshal {
                 let there = mid.distance(at) <= AT_TARGET
                     || going.iter().any(|r| r.pos.distance(at) <= AT_TARGET / 2.0);
                 if !there {
+                    // A plain march: as an attack-move, a wave turned on
+                    // every defender it met short of the base and six-player
+                    // games stalled (none ended in 120 minutes).
                     march(
                         s,
                         &going,
@@ -650,7 +653,7 @@ impl Marshal {
                         (at - mid).normalize_or(face),
                         &mut self.wants,
                         3,
-                        true,
+                        false,
                     );
                 } else {
                     self.knock_down(s, &going, at, s.now < self.raid_until);

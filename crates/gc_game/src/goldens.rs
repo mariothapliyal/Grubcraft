@@ -611,6 +611,7 @@ const GOLDENS: &[Golden] = &[
         name: "field-orders-1v1",
         seed: 0x0d3e5,
         map_tiles: 256,
+        map: 0,
         sides: &[
             side(EmberClans, Veteran, 0),
             side(CarrionConcord, Veteran, 1),
