@@ -195,6 +195,78 @@ fn braced(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
+/// Side 1 only ever charges; side 0 advances on an attack-move to the far
+/// side of side 1's army, with a Shift-queued waypoint beyond it and,
+/// for its first regiment, a queued attack on the nearest enemy. A minute
+/// in, its regiments not fighting are called back with plain moves, which
+/// drop what they had queued (docs/29, "How battles play", item 6).
+fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
+    charge_with(world, out, |p| p == 1);
+    let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
+    let theirs: Vec<_> = world.regiments.iter().filter(|r| r.owner == 1).collect();
+    if mine.is_empty() || theirs.is_empty() {
+        return;
+    }
+    let middle = |rs: &[gc_sim::RegimentView]| {
+        let n = rs.len() as i32;
+        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
+        FxVec2::new(sum.x / n, sum.y / n)
+    };
+    let (ours, enemy) = (middle(&mine), middle(&theirs));
+    let order = |command| PlayerCommand { player: 0, command };
+    match world.tick_count() {
+        2 => {
+            let beyond = enemy + (enemy - ours) * Fx::from_ratio(1, 4);
+            out.extend(mine.iter().map(|r| {
+                order(Command::AttackMove {
+                    regiment: r.handle,
+                    target: beyond + (r.position - ours),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                })
+            }));
+        }
+        3 => {
+            let back = ours + (enemy - ours) * Fx::from_ratio(1, 2);
+            out.extend(mine.iter().map(|r| {
+                order(Command::Then {
+                    regiment: r.handle,
+                    step: gc_sim::orders::Step::Move {
+                        target: back + (r.position - ours),
+                        facing: None,
+                        files: 0,
+                        pace: Fx::ZERO,
+                        hunt: true,
+                    },
+                })
+            }));
+            let first = mine[0].position;
+            let near = theirs.iter().min_by_key(|e| (e.position - first).length());
+            out.extend(near.map(|e| {
+                order(Command::Then {
+                    regiment: mine[0].handle,
+                    step: gc_sim::orders::Step::Attack { target: e.handle },
+                })
+            }));
+        }
+        1200 => out.extend(
+            mine.iter()
+                .filter(|r| !r.engaged && !r.morale.broken())
+                .map(|r| {
+                    order(Command::MoveTo {
+                        regiment: r.handle,
+                        target: ours,
+                        facing: None,
+                        files: 0,
+                        pace: Fx::ZERO,
+                    })
+                }),
+        ),
+        _ => {}
+    }
+}
+
 /// Half a minute in, each side changes one regiment's formation (Ember to
 /// Tight, Concord to Loose); a minute in, someone in the sandbox makes
 /// Ember spearmen hit harder; at a minute and a half, they take the first
@@ -530,6 +602,24 @@ const GOLDENS: &[Golden] = &[
         minutes: 3,
         minds: false,
         extra: braced,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky::STILL,
+    },
+    // Attack-moves and Shift-queued orders (see [`ordering`]).
+    Golden {
+        name: "field-orders-1v1",
+        seed: 0x0d3e5,
+        map_tiles: 256,
+        sides: &[
+            side(EmberClans, Veteran, 0),
+            side(CarrionConcord, Veteran, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 3,
+        minds: false,
+        extra: ordering,
         champions: false,
         deployment: false,
         sky: gc_sim::Sky::STILL,

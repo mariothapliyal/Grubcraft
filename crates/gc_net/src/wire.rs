@@ -7,6 +7,7 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::orders::Step;
 use gc_sim::{
     Command, Formation, Mass, PlayerCommand, PowerTarget, RegimentHandle, StructureHandle,
     TradePost, UnitStats,
@@ -259,6 +260,43 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(2);
             w.handle(regiment);
             w.handle(target);
+        }
+        Command::AttackMove {
+            regiment,
+            target,
+            facing,
+            files,
+            pace,
+        } => {
+            w.u8(41);
+            w.handle(regiment);
+            w.vec(target);
+            w.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+            w.var(u64::from(files));
+            w.fx(pace);
+        }
+        Command::Then { regiment, step } => {
+            w.u8(42);
+            w.handle(regiment);
+            match step {
+                Step::Move {
+                    target,
+                    facing,
+                    files,
+                    pace,
+                    hunt,
+                } => {
+                    w.u8(u8::from(hunt));
+                    w.vec(target);
+                    w.var(facing.map_or(0, |a| u64::from(a.0) + 1));
+                    w.var(u64::from(files));
+                    w.fx(pace);
+                }
+                Step::Attack { target } => {
+                    w.u8(2);
+                    w.handle(target);
+                }
+            }
         }
         Command::RemoveRegiment { regiment } => {
             w.u8(3);
@@ -536,6 +574,35 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             target: r.handle()?,
         },
+        41 => Command::AttackMove {
+            regiment: r.handle()?,
+            target: r.vec()?,
+            facing: match r.var()? {
+                0 => None,
+                a => Some(Angle(u16::try_from(a - 1).ok()?)),
+            },
+            files: r.var_as()?,
+            pace: r.fx()?,
+        },
+        42 => Command::Then {
+            regiment: r.handle()?,
+            step: match r.u8()? {
+                hunt @ (0 | 1) => Step::Move {
+                    target: r.vec()?,
+                    facing: match r.var()? {
+                        0 => None,
+                        a => Some(Angle(u16::try_from(a - 1).ok()?)),
+                    },
+                    files: r.var_as()?,
+                    pace: r.fx()?,
+                    hunt: hunt == 1,
+                },
+                2 => Step::Attack {
+                    target: r.handle()?,
+                },
+                _ => return None,
+            },
+        },
         3 => Command::RemoveRegiment {
             regiment: r.handle()?,
         },
@@ -781,6 +848,27 @@ mod tests {
             Command::Attack {
                 regiment: h(4, 1),
                 target: h(900, 65_535),
+            },
+            Command::AttackMove {
+                regiment: h(3, 1),
+                target: v(-5, 1 << 18),
+                facing: Some(Angle(65_535)),
+                files: 7,
+                pace: Fx::ZERO,
+            },
+            Command::Then {
+                regiment: h(3, 1),
+                step: Step::Move {
+                    target: v(9, -9),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::from_raw(5),
+                    hunt: true,
+                },
+            },
+            Command::Then {
+                regiment: h(3, 1),
+                step: Step::Attack { target: h(8, 2) },
             },
             Command::RemoveRegiment { regiment: h(2, 2) },
             Command::TuneUnit { unit: 1, stats },

@@ -7,6 +7,7 @@ use crate::combat::{Combat, OPEN_GROUND, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
+use crate::orders::Queue;
 use crate::state::State;
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
@@ -228,6 +229,11 @@ regiment_fields! {
     pace: Fx = Fx::ZERO,
     /// Enemy regiment this one was ordered to attack.
     attack_target: Option<RegimentHandle> = None,
+    /// Orders queued behind the current one (see [`crate::orders`]).
+    queue: Queue = Queue::EMPTY,
+    /// Its march is an attack-move: it stops to fight any enemy met on the
+    /// way (see [`crate::orders`]).
+    hunting: bool = false,
     /// The enemy it is fighting in melee this tick (the nearest one in contact).
     engaged: Option<RegimentHandle> = None,
     /// Ticks of charge bonus left.
@@ -635,6 +641,7 @@ impl Regiments {
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
         self.attack_target[i] = None;
+        self.drop_queue(i);
         self.braced[i] = false;
         self.falling_back[i] = 0;
         self.held[i] = 0;
@@ -649,6 +656,23 @@ impl Regiments {
             pace.min(self.speed[i])
         };
         true
+    }
+
+    /// Slot `i` has nothing to carry out: no march, no enemy to attack.
+    pub(crate) fn idle(&self, i: usize) -> bool {
+        self.target[i].is_none() && self.attack_target[i].is_none()
+    }
+
+    /// Slot `i` forgets its queued orders and any attack-move: a new order
+    /// given without Shift takes their place.
+    pub(crate) fn drop_queue(&mut self, i: usize) {
+        self.queue[i] = Queue::EMPTY;
+        self.hunting[i] = false;
+    }
+
+    /// Regiment `h`'s queued orders, first first.
+    pub fn queued(&self, h: RegimentHandle) -> Option<Queue> {
+        self.resolve(h).map(|i| self.queue[i])
     }
 
     /// Put a regiment straight down at `position` (deployment): no march,
@@ -833,6 +857,7 @@ impl Regiments {
         }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
+        self.drop_queue(i);
         self.braced[i] = false;
         self.falling_back[i] = 0;
         self.held[i] = 0;
@@ -855,6 +880,7 @@ impl Regiments {
         if self.morale_state[i].broken() || self.falling_back[i] > 0 {
             return false;
         }
+        self.drop_queue(i);
         for k in 0..self.alive.len() {
             if self.alive[k] && self.engaged[k] == Some(h) {
                 self.strike[k] = Strike::Early;
@@ -1069,6 +1095,8 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
+            hunting: self.hunting[i],
+            queued: self.queue[i].len() as u8,
         }
     }
 
@@ -1357,6 +1385,10 @@ pub struct RegimentView {
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).
     pub sung: bool,
+    /// On an attack-move (see [`crate::orders`]).
+    pub hunting: bool,
+    /// Orders queued behind the current one ([`Regiments::queued`] has them).
+    pub queued: u8,
 }
 
 impl RegimentView {
