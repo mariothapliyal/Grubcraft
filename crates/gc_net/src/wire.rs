@@ -7,6 +7,7 @@
 //! fails to decode is dropped.
 
 use gc_fixed::{Angle, Fx, FxVec2};
+use gc_sim::orders::Step;
 use gc_sim::{
     Command, Formation, Mass, PlayerCommand, PowerTarget, RegimentHandle, StructureHandle,
     TradePost, UnitStats,
@@ -62,6 +63,11 @@ impl Writer {
     pub fn vec(&mut self, v: FxVec2) {
         self.fx(v.x);
         self.fx(v.y);
+    }
+
+    /// An optional angle: 0 for none, else the angle plus one.
+    pub fn opt_angle(&mut self, a: Option<Angle>) {
+        self.var(a.map_or(0, |a| u64::from(a.0) + 1));
     }
 
     pub fn handle(&mut self, h: RegimentHandle) {
@@ -173,6 +179,15 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// An optional angle, as [`Writer::opt_angle`] wrote it; `None` when
+    /// cut short or out of range.
+    pub fn opt_angle(&mut self) -> Option<Option<Angle>> {
+        Some(match self.var()? {
+            0 => None,
+            a => Some(Angle(u16::try_from(a - 1).ok()?)),
+        })
+    }
+
     pub fn handle(&mut self) -> Option<RegimentHandle> {
         Some(RegimentHandle {
             index: self.var_as()?,
@@ -275,10 +290,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(1);
             w.handle(regiment);
             w.vec(target);
-            match facing {
-                Some(a) => w.var(u64::from(a.0) + 1),
-                None => w.var(0),
-            }
+            w.opt_angle(facing);
             w.var(u64::from(files));
             w.fx(pace);
         }
@@ -286,6 +298,43 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(2);
             w.handle(regiment);
             w.handle(target);
+        }
+        Command::AttackMove {
+            regiment,
+            target,
+            facing,
+            files,
+            pace,
+        } => {
+            w.u8(41);
+            w.handle(regiment);
+            w.vec(target);
+            w.opt_angle(facing);
+            w.var(u64::from(files));
+            w.fx(pace);
+        }
+        Command::Then { regiment, step } => {
+            w.u8(42);
+            w.handle(regiment);
+            match step {
+                Step::Move {
+                    target,
+                    facing,
+                    files,
+                    pace,
+                    hunt,
+                } => {
+                    w.u8(u8::from(hunt));
+                    w.vec(target);
+                    w.opt_angle(facing);
+                    w.var(u64::from(files));
+                    w.fx(pace);
+                }
+                Step::Attack { target } => {
+                    w.u8(2);
+                    w.handle(target);
+                }
+            }
         }
         Command::RemoveRegiment { regiment } => {
             w.u8(3);
@@ -460,7 +509,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.u8(width);
         }
         Command::PlanLine { building, path } => {
-            w.u8(41);
+            w.u8(43);
             w.var(u64::from(building));
             w.path(&path);
         }
@@ -575,16 +624,36 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         1 => Command::MoveTo {
             regiment: r.handle()?,
             target: r.vec()?,
-            facing: match r.var()? {
-                0 => None,
-                a => Some(Angle(u16::try_from(a - 1).ok()?)),
-            },
+            facing: r.opt_angle()?,
             files: r.var_as()?,
             pace: r.fx()?,
         },
         2 => Command::Attack {
             regiment: r.handle()?,
             target: r.handle()?,
+        },
+        41 => Command::AttackMove {
+            regiment: r.handle()?,
+            target: r.vec()?,
+            facing: r.opt_angle()?,
+            files: r.var_as()?,
+            pace: r.fx()?,
+        },
+        42 => Command::Then {
+            regiment: r.handle()?,
+            step: match r.u8()? {
+                hunt @ (0 | 1) => Step::Move {
+                    target: r.vec()?,
+                    facing: r.opt_angle()?,
+                    files: r.var_as()?,
+                    pace: r.fx()?,
+                    hunt: hunt == 1,
+                },
+                2 => Step::Attack {
+                    target: r.handle()?,
+                },
+                _ => return None,
+            },
         },
         3 => Command::RemoveRegiment {
             regiment: r.handle()?,
@@ -678,7 +747,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             path: r.path()?,
             width: r.u8()?,
         },
-        41 => Command::PlanLine {
+        43 => Command::PlanLine {
             building: r.var_as()?,
             path: r.path()?,
         },
@@ -841,6 +910,27 @@ mod tests {
             Command::Attack {
                 regiment: h(4, 1),
                 target: h(900, 65_535),
+            },
+            Command::AttackMove {
+                regiment: h(3, 1),
+                target: v(-5, 1 << 18),
+                facing: Some(Angle(65_535)),
+                files: 7,
+                pace: Fx::ZERO,
+            },
+            Command::Then {
+                regiment: h(3, 1),
+                step: Step::Move {
+                    target: v(9, -9),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::from_raw(5),
+                    hunt: true,
+                },
+            },
+            Command::Then {
+                regiment: h(3, 1),
+                step: Step::Attack { target: h(8, 2) },
             },
             Command::RemoveRegiment { regiment: h(2, 2) },
             Command::TuneUnit { unit: 1, stats },
