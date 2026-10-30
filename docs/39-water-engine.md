@@ -228,6 +228,23 @@ Dams are idea 24 and get their own stage, but the engine is built for them:
 - **Destroying a dam** releases everything at once as a burst: the reservoir empties, a catastrophic crest goes down the valley with the dam's rubble in it.
 - The real-use rules for the walkway (clearance for the largest unit and a formation, traffic both ways, fighting on it, what happens to troops on it when it breaks) go in the dam stage's design, which follows this one.
 
+## Built: stage 1a, rivers with water
+
+Built 2026-10-30 (`gc_sim::rivers`, which replaces `gc_sim::flash`). Simpler than the plan in places, as noted.
+
+- **Stretches.** Worked out when the match starts from the flow layer: each river's tiles side by side in the same 16 tiles of reach are a stretch, each stretch knows the one below and the one above with the most land, and a walk of each river's tree tells in one comparison whether one stretch is downstream of another. A 256-tile grown map has some 10 to 90 fords on its rivers.
+- **Stores.** Once a second each stretch takes the rain falling on its tiles (strength times wetness of the ground, so the first rain on dry ground barely moves it), plus the spring melt as rain of strength 120, and passes an eighth of its water on to the stretch below (`OUTFLOW_DIVISOR`). The water lifts the stretch by its store over `STORE_PER_UNIT` a tile, at most half a tile (`MAX_SWELL`). So long rain lifts a river's lower stretches several times more than its head, and they fall last.
+  - *Simpler than the plan:* summer low water, the snowpack and the rain flood that shuts every ford stay map-wide as built in docs/38, and the stretches add to them. Small streams don't yet dry first.
+- **Fronts.** A storm's roll gives a band from the heavy tail (35 Minor, 45 Flood, 16 Major, 4 Catastrophic in 100), a band bigger half the time on wet ground or a high river, the crest doubled on spring snow and halved in a dry summer. The front sets off up to 96 tiles above the first ford it reaches, runs at 6 tiles a second only down the stretches below where it set off (so a fork's other branch stays dry), and fades an eighth every 128 tiles. Up to 4 run at once. A Major waits to set off until it is at least 15 seconds from its first ford, a Catastrophic one 30, and both are told to everyone at once (`Event::GreatFlood`). Flood and bigger give the river's 8-second warning as before.
+  - *Simpler than the plan:* what is left of a front isn't handed to the stores as it passes.
+- **Fords.** Each connected group of ford tiles on a river (with the summer fords up or down its branch) is one ford, in the stretch of its middle tile. It shuts when the map's rise, its stretch's swell and the highest front over it reach a full flood, and opens below half one. Every ford that shuts or opens in a tick is one change to the walkable grid. A rain flood that has shut every ford still keeps them shut and tells it; fords a river still holds shut stay shut when it goes. `Stage::Here` and `Gone` now tell when the rivers first shut a ford and when the last opens.
+- **The water on a tile.** The terrain keeps a small copy of the stretches' swell and the fronts (`RiverWater`), brought up to date once a second and every tick a front runs. `Terrain::wet` asks it only for ground lower than the most it raises anywhere, so dry land costs nothing. The current pushes twice as hard where a river is up.
+- **Swept away.** Troops in a ford a front is over when it shuts are carried down the river as before (`World::sweep_away`); troops in a ford a slow swell shut struggle to the bank as in a rain flood.
+- **Computer players** read the fords shut or threatened stretch by stretch (`Rivers::threatened`), as they read one river's before.
+- **Golden.** `field-river-storm-1v1`: a storm over a grown map's rivers rolls a major flash flood. No older golden moves: none has a flow layer.
+- `SIM_VERSION` 58 (grown maps play differently). No new commands, so no format or protocol change.
+- *Left for stage 1b:* river names, the gauge and chip, river watch and forecasts, wading slower in a Minor flood (`Terrain::depth`), and the drawn water by stretch.
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**

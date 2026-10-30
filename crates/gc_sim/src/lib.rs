@@ -29,7 +29,6 @@ pub mod economy;
 pub mod events;
 pub mod fieldworks;
 pub mod fire;
-pub mod flash;
 pub mod flood;
 pub mod fork;
 pub mod formation;
@@ -45,6 +44,7 @@ pub mod power;
 pub mod powers;
 pub mod production;
 mod regiments;
+pub mod rivers;
 pub mod scenario;
 pub mod sky;
 pub mod stances;
@@ -123,7 +123,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 57;
+pub const SIM_VERSION: u32 = 58;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -890,6 +890,10 @@ pub struct World {
     flood: flood::Flood,
     /// Room for the slots a flood leaves stranded, kept between seconds.
     stranded: Vec<usize>,
+    /// What the rivers changed this tick, and the fords' runs to shut or
+    /// open (both kept for their room).
+    river_turn: rivers::Turn,
+    river_runs: Vec<[i32; 4]>,
     pub regiments: Regiments,
 }
 
@@ -897,7 +901,7 @@ impl World {
     pub fn new(setup: &MatchSetup) -> World {
         assert!(setup.teams.len() <= MAX_PARTIES, "too many parties");
         let stances = Stances::from_teams(setup.teams);
-        let terrain = Terrain::new(&setup.ground, setup.map_tiles);
+        let mut terrain = Terrain::new(&setup.ground, setup.map_tiles);
         // Thicket stands on the walkable grid until it is cleared.
         let mut nav = Nav::standing(
             setup.nav,
@@ -908,6 +912,7 @@ impl World {
         nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
         let flood = flood::Flood::new(&terrain, &nav, setup.map_tiles, setup.seed);
+        terrain.set_rivers(flood.rivers.water());
         World {
             tick: 0,
             rng: Pcg32::new(setup.seed, streams::WORLD),
@@ -935,6 +940,8 @@ impl World {
             fires: fire::Fires::new(setup.seed),
             flood,
             stranded: Vec::new(),
+            river_turn: rivers::Turn::default(),
+            river_runs: Vec::new(),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -2685,23 +2692,34 @@ impl World {
     }
 
     /// One second of the rivers (see [`flood`]): the water rises or goes
-    /// down with the ground's wetness, and the fords shut or open with it.
+    /// down with the ground's wetness, and the fords shut or open with it;
+    /// and the rivers' own water (see [`rivers`]) takes the rain and runs
+    /// on down them.
     fn rivers(&mut self) {
         let at = self.sky.season(self.tick);
         let weather = self.sky.weather();
-        let snow = match weather.kind {
-            WeatherKind::Snow => weather.strength,
-            _ => 0,
+        let (snow, rain) = match weather.kind {
+            WeatherKind::Snow => (weather.strength, 0),
+            WeatherKind::Rain => (0, weather.strength),
+            _ => (0, 0),
         };
         let wet = self.sky.wet();
         let turn = (self.flood).second(&mut self.terrain, wet, at, snow, !self.scratch);
+        (self.flood.rivers).second(rain, wet, turn.melting);
         if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             self.events.flooded(closed);
-            // A flash flood's river stays shut when the rain's flood goes.
-            if !closed && self.flood.flash.shut() {
-                (self.nav).set_flooded_all(self.flood.flash.runs(), true, &self.regiments);
-                self.events.flash(flash::Stage::Here);
+            // The fords a river has shut stay shut when the rain's flood
+            // goes.
+            if !closed && self.flood.rivers.shut() {
+                let mut runs = core::mem::take(&mut self.river_runs);
+                runs.clear();
+                for g in self.flood.rivers.shut_groups() {
+                    runs.extend_from_slice(self.flood.rivers.runs(g));
+                }
+                (self.nav).set_flooded_all(&runs, true, &self.regiments);
+                self.river_runs = runs;
+                self.events.flash(rivers::Stage::Here);
             }
         }
         if let Some(open) = turn.shallows {
@@ -2711,40 +2729,64 @@ impl World {
         }
     }
 
-    /// One tick of the flash floods (see [`flash`]): a storm among the
-    /// spells begun since `begun` may set one off, and a running wave
-    /// raises the water down its river and shuts its fords once. A
-    /// rehearsal sets none off, but a running one runs on in it.
+    /// One tick of the rivers' fronts and fords (see [`rivers`]): a storm
+    /// among the spells begun since `begun` may set a flash flood off,
+    /// fronts run on down their rivers, and fords shut and open with the
+    /// water over them, all of a tick's in one change to the walkable
+    /// grid. A rehearsal sets none off, but a running one runs on in it,
+    /// and it never changes the walkable grid it shares.
     fn flash(&mut self, begun: usize) {
-        if !self.scratch {
-            let season = self.sky.season(self.tick).map(|s| s.season);
-            let frozen = self.terrain.frozen();
-            for spell in self.sky.spells_since(begun) {
-                self.flood.flash.storm(spell, season, frozen);
-            }
-        }
-        if self.flood.flash.wave().is_none() {
+        if !self.flood.rivers.any() {
             return;
         }
-        let turn = self.flood.flash.tick();
-        self.terrain.set_wave(self.flood.flash.water());
+        if !self.scratch {
+            let season = self.sky.season(self.tick).map(|s| s.season);
+            let (frozen, wet) = (self.terrain.frozen(), self.sky.wet());
+            let (rise, snowpack) = (self.terrain.rise(), self.flood.snowpack());
+            for spell in self.sky.spells_since(begun) {
+                let band = (self.flood.rivers).storm(spell, season, frozen, wet, rise, snowpack);
+                if let Some(band) = band.filter(|&b| b >= rivers::Band::Major) {
+                    self.events.great_flood(band);
+                }
+            }
+        }
+        let second = self.tick.is_multiple_of(TICKS_PER_SECOND);
+        let was_shut = self.flood.rivers.shut();
+        let lift = i32::from(self.terrain.rise()) - i32::from(self.terrain.low());
+        let mut turn = core::mem::take(&mut self.river_turn);
+        self.flood.rivers.tick(lift, second, &mut turn);
+        if (second || self.flood.rivers.running() || was_shut)
+            && let Some(water) = self.terrain.rivers_mut()
+        {
+            self.flood.rivers.write_water(water);
+        }
         if turn.coming && !self.scratch {
-            self.events.flash(flash::Stage::Coming);
+            self.events.flash(rivers::Stage::Coming);
         }
         // A rain flood that has shut every ford keeps them shut, and tells
-        // when they open. A rehearsal never changes the walkable grid it
-        // shares.
-        if let Some(shut) = turn.fords.filter(|_| !self.flood.closed() && !self.scratch) {
-            (self.nav).set_flooded_all(self.flood.flash.runs(), shut, &self.regiments);
-            self.events.flash(if shut {
-                flash::Stage::Here
-            } else {
-                flash::Stage::Gone
-            });
+        // when they open.
+        if !self.flood.closed() && !self.scratch {
+            let mut runs = core::mem::take(&mut self.river_runs);
+            for (list, shut) in [(&turn.shut, true), (&turn.opened, false)] {
+                runs.clear();
+                for &g in list {
+                    runs.extend_from_slice(self.flood.rivers.runs(g));
+                }
+                if !runs.is_empty() {
+                    (self.nav).set_flooded_all(&runs, shut, &self.regiments);
+                }
+            }
+            self.river_runs = runs;
+            let now = self.flood.rivers.shut();
+            if now != was_shut {
+                self.events.flash(if now {
+                    rivers::Stage::Here
+                } else {
+                    rivers::Stage::Gone
+                });
+            }
         }
-        if self.flood.flash.wave().is_none() {
-            self.terrain.set_wave(None);
-        }
+        self.river_turn = turn;
     }
 
     /// One second of the summer fords gone deep again (with seasons):
@@ -2782,15 +2824,16 @@ impl World {
         self.send_to_bank(stuck);
     }
 
-    /// One second of a flash flood (see [`flash`]): a regiment in a ford
-    /// its front has reached is swept away. The wave carries it down the
-    /// river ([`flash::CARRY_TILES`]); [`flash::DROWN_PERCENT`] of it
+    /// One second of a flash flood (see [`rivers`]): a regiment in a ford
+    /// the river has shut, with a front over it, is swept away. The front
+    /// carries it down the river ([`rivers::CARRY_TILES`]);
+    /// [`rivers::DROWN_PERCENT`] of it
     /// drowns, and the rest wash up on the nearest bank there, in
     /// disorder and shaken.
     /// A rehearsal leaves its troops in the fords: it shares a walkable
     /// grid it never shuts them on, so they could wash up in another.
     fn sweep_away(&mut self) {
-        if self.scratch || !self.flood.flash.shut() {
+        if self.scratch || !self.flood.rivers.shut() || !self.flood.rivers.running() {
             return;
         }
         let mut swept = 0u16;
@@ -2801,19 +2844,19 @@ impl World {
             }
             let p = r.position[i];
             let (x, y) = (p.x.floor_int(), p.y.floor_int());
-            if !self.flood.flash.shuts(x, y) || self.terrain.on_deck(p) {
+            if !self.flood.rivers.carries(x, y) || self.terrain.on_deck(p) {
                 continue;
             }
             let (owner, h) = (r.owner[i], r.handle(i));
-            let drown = u32::from(r.models[i]) * flash::DROWN_PERCENT / 100;
+            let drown = u32::from(r.models[i]) * rivers::DROWN_PERCENT / 100;
             self.regiments.kill_last(i, drown as usize);
             swept = swept.saturating_add(1);
             // Out of any fight, and off any work.
             self.regiments.vanish_from_fight(i);
             self.leave_off(h);
             self.regiments.disorder(i);
-            morale::shift(&mut self.regiments, i, -flash::SWEPT_AWAY_MORALE);
-            let (cx, cy) = self.flood.flash.carried(&self.terrain, x, y);
+            morale::shift(&mut self.regiments, i, -rivers::SWEPT_AWAY_MORALE);
+            let (cx, cy) = self.flood.rivers.carried(&self.terrain, x, y);
             let to = FxVec2::new(Fx::from_int(cx) + Fx::HALF, Fx::from_int(cy) + Fx::HALF);
             // Washed up there, or failing any bank near it, back by the ford.
             let bank = bridges::wash_up(&self.nav, &mut self.regiments, &self.units, i, to);
@@ -2869,9 +2912,8 @@ impl World {
         if let Some(c) = &mut self.conquest {
             c.economy.set_season(season.grub_percent());
         }
-        let frozen = season == sky::Season::Winter
-            && self.terrain.rise() == 0
-            && self.flood.flash().wave().is_none();
+        let frozen =
+            season == sky::Season::Winter && self.terrain.rise() == 0 && !self.terrain.river_up();
         if frozen != self.terrain.frozen() {
             // Routes cost the frozen fords as open ground till the thaw.
             self.nav.set_frozen(frozen, &self.regiments);
@@ -3169,8 +3211,8 @@ impl World {
                 if rise > 0 || self.flood.seasonal(low) {
                     self.flood.hash_into(rise, low, h);
                 }
-                // Only while a flash flood runs.
-                self.flood.flash().hash_into(h);
+                // Only while the rivers hold anything.
+                self.flood.rivers().hash_into(h);
             }
             other => unreachable!("no hash for system {other}"),
         }

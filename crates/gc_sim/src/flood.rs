@@ -17,11 +17,11 @@ use alloc::vec::Vec;
 use gc_fixed::FxVec2;
 
 use crate::TICKS_PER_SECOND;
-use crate::flash::Flash;
 use crate::hash::StateHasher;
 use crate::morale;
 use crate::nav::Nav;
 use crate::regiments::Regiments;
+use crate::rivers::Rivers;
 use crate::sky::{Season, SeasonAt, WET_FULL};
 use crate::terrain::{HEIGHT_UNITS, Terrain};
 
@@ -84,9 +84,9 @@ pub struct Flood {
     exposed: bool,
     /// The winter's snow, still to melt.
     snowpack: u32,
-    /// The rivers, and the flash flood running down one (see
-    /// [`crate::flash`]).
-    pub(crate) flash: Flash,
+    /// The rivers, their water and the fronts running down them (see
+    /// [`crate::rivers`]).
+    pub(crate) rivers: Rivers,
 }
 
 /// What one second of the rivers changed (see [`Flood::second`]).
@@ -96,6 +96,8 @@ pub(crate) struct Turn {
     pub(crate) fords: Option<bool>,
     /// The summer fords just opened (`Some(true)`) or went deep again.
     pub(crate) shallows: Option<bool>,
+    /// The spring melt is swelling the rivers.
+    pub(crate) melting: bool,
 }
 
 /// Runs along each row of the sorted `(y, x)` tiles.
@@ -218,7 +220,7 @@ impl Flood {
             }
         }
         let shallows = crossings(&shallows, tiles, |x, y| nav.walkable_ground(x, y));
-        let flash = Flash::new(terrain, &fords, &shallows, map_tiles, seed);
+        let rivers = Rivers::new(terrain, &fords, &shallows, map_tiles, seed);
         Flood {
             runs: runs_of(&fords).into(),
             fords: fords.into(),
@@ -227,7 +229,7 @@ impl Flood {
             shallows: shallows.into(),
             exposed: false,
             snowpack: 0,
-            flash,
+            rivers,
         }
     }
 
@@ -278,13 +280,13 @@ impl Flood {
     pub fn sweeps(&self, p: FxVec2, terrain: &Terrain) -> bool {
         let (x, y) = (p.x.floor_int(), p.y.floor_int());
         let shut =
-            (self.closed && self.fords.binary_search(&(y, x)).is_ok()) || self.flash.shuts(x, y);
+            (self.closed && self.fords.binary_search(&(y, x)).is_ok()) || self.rivers.shuts(x, y);
         shut && !terrain.on_deck(p)
     }
 
-    /// The rivers, and the flash flood running down one, if any.
-    pub fn flash(&self) -> &Flash {
-        &self.flash
+    /// The rivers, their water and the fronts running down them.
+    pub fn rivers(&self) -> &Rivers {
+        &self.rivers
     }
 
     /// One second of the rivers, with the ground `wet`, `at` a point of the
@@ -346,7 +348,10 @@ impl Flood {
                 terrain.set_low(low.saturating_sub(LOW_PER_SECOND));
             }
         }
-        let mut turn = Turn::default();
+        let mut turn = Turn {
+            melting,
+            ..Turn::default()
+        };
         if !shut {
             return turn;
         }
@@ -376,7 +381,7 @@ impl Flood {
     /// the nearest bank (see `World::rivers`).
     pub(crate) fn sweep(&self, regs: &mut Regiments, terrain: &Terrain, out: &mut Vec<usize>) {
         out.clear();
-        if !self.closed && !self.flash.shut() {
+        if !self.closed && !self.rivers.shut() {
             return;
         }
         for i in 0..regs.alive.len() {

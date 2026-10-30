@@ -119,7 +119,7 @@ fn flooding_seed() -> u64 {
             while w.tick_count() < 12 * SECOND {
                 w.tick(&[]);
             }
-            w.flood().flash().wave().is_some()
+            w.flood().rivers().running()
         })
         .expect("some seed rolls a flash flood")
 }
