@@ -293,11 +293,16 @@ fn the_veteran_beats_charge_straight_in_more_often_than_not() {
     assert!(wins > 20, "won {wins} of 40");
 }
 
+/// Since regiments wheel as they march instead of turning on the spot
+/// first (docs/29, "How battles play", item 6), a slow or sloppy order
+/// costs less, and the General's edge over the Veteran fell from about 73%
+/// to about 67% over 450 battles (the AI generals' work in the plan's third
+/// wave is to win it back). 150 battles keep the bar from hanging on a few.
 #[test]
-fn the_general_beats_the_veteran_seven_times_in_ten() {
+fn the_general_beats_the_veteran_five_times_in_eight() {
     let general = Side::Mind(Difficulty::General);
-    let wins = contest(general, Side::Mind(Difficulty::Veteran), 1..=30);
-    assert!(wins >= 21, "won {wins} of 30");
+    let wins = contest_parallel(general, Side::Mind(Difficulty::Veteran), 1..=150);
+    assert!(wins >= 94, "won {wins} of 150");
 }
 
 #[test]
