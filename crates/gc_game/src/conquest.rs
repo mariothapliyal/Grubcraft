@@ -62,7 +62,8 @@ pub fn make_map(choice: usize, tiles: u32, seed: u64) -> Map {
 /// (north-west, north, north-east, then their turned copies south-east,
 /// south, south-west), and the players take every other one where they
 /// can, so two start across the map, three in a triangle and four in the
-/// corners.
+/// corners. On a four-start map (a small Wilds map's corners, or The Four
+/// Teeth) two players start across the map, at starts 0 and 2.
 pub fn player_starts(map: &Map, players: usize) -> Vec<(i32, i32)> {
     const SPREAD: [&[usize]; 6] = [
         &[0],
@@ -73,10 +74,14 @@ pub fn player_starts(map: &Map, players: usize) -> Vec<(i32, i32)> {
         &[],
     ];
     let starts = map.starts();
-    if starts.len() != SPREAD.len() || players == 0 || players >= starts.len() {
+    if players == 0 || players >= starts.len() {
         return starts;
     }
-    SPREAD[players - 1].iter().map(|&i| starts[i]).collect()
+    match starts.len() {
+        6 => SPREAD[players - 1].iter().map(|&i| starts[i]).collect(),
+        4 if players == 2 => vec![starts[0], starts[2]],
+        _ => starts,
+    }
 }
 
 /// The lobby's Conquest map choice for a shipped map's file name.
@@ -575,6 +580,7 @@ mod tests {
 
     /// The lobby's default size.
     const MEDIUM: u32 = gc_ui::lobby::MapSize::Medium.conquest_tiles();
+    const LARGE: u32 = gc_ui::lobby::MapSize::Large.conquest_tiles();
 
     fn data() -> GameData<'static> {
         crate::data::load()
@@ -810,12 +816,17 @@ mod tests {
         for size in gc_ui::lobby::MapSize::ALL {
             let tiles = size.conquest_tiles();
             let wild = make_map(CONQUEST_MAPS.len() - 1, tiles, 5);
-            assert_eq!((wild.players, wild.tiles), (6, tiles));
+            let starts = if size == gc_ui::lobby::MapSize::Large {
+                6
+            } else {
+                4
+            };
+            assert_eq!((wild.players, wild.tiles), (starts, tiles));
             assert!(wild.is_conquest());
         }
         let last = make_map(CONQUEST_MAPS.len() - 1, MEDIUM, 5).hash();
         assert_eq!(make_map(99, MEDIUM, 5).hash(), last, "never panics");
-        assert_eq!(make_map(SHIPPED_CONQUEST, 100, 5).tiles, 448);
+        assert_eq!(make_map(SHIPPED_CONQUEST, 100, 5).tiles, 320);
         // Replays from before the sizes were on 768-tile maps.
         assert_eq!(make_map(SHIPPED_CONQUEST, 768, 5).tiles, 768);
         // A shipped map keeps its size.
@@ -825,8 +836,8 @@ mod tests {
     /// Fewer players than a Wilds map's six starts are spread round it;
     /// a full map, or a map with fewer starts, keeps the map's order.
     #[test]
-    fn players_are_spread_round_a_six_start_map() {
-        let wild = make_map(SHIPPED_CONQUEST, MEDIUM, 9);
+    fn players_are_spread_round_the_map() {
+        let wild = make_map(SHIPPED_CONQUEST, LARGE, 9);
         let starts = wild.starts();
         assert_eq!(player_starts(&wild, 6), starts);
         assert_eq!(player_starts(&wild, 2), vec![starts[0], starts[3]]);
@@ -839,7 +850,16 @@ mod tests {
             vec![starts[0], starts[2], starts[3], starts[5]]
         );
         let teeth = make_map(1, 0, 0);
-        assert_eq!(player_starts(&teeth, 2), teeth.starts());
+        let corners = teeth.starts();
+        assert_eq!(player_starts(&teeth, 2), vec![corners[0], corners[2]]);
+        assert_eq!(player_starts(&teeth, 4), corners);
+        // A Small Wilds map has the four corners: two start across it.
+        let small = make_map(SHIPPED_CONQUEST, 320, 9);
+        let corners = small.starts();
+        assert_eq!(corners.len(), 4);
+        let across = player_starts(&small, 2);
+        assert_eq!(across, vec![corners[0], corners[2]]);
+        assert_eq!(across[0].0 + across[1].0, 320 - 1);
     }
 
     #[test]

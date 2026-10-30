@@ -144,7 +144,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Main menu:** Play (Host a game, Join a game), Sandbox, Replays, Unit viewer, Settings, Guide, Exit.
 
-- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** have six starts, sized by the lobby's **Size**: Small 448 tiles (up to 4 players), Medium 512 (the default, up to 5), Large 640 (up to 6). Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
+- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.

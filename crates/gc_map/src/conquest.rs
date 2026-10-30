@@ -17,8 +17,8 @@
 use gc_fixed::Pcg32;
 
 use crate::def::{
-    CoverKind, FIELD_TILES, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode, Noise, Object, Pos,
-    SetPieceKind, Shape, SizeClass, Symmetry,
+    BIG_MAP_TILES, CoverKind, FIELD_TILES, FRONTIER_SLOTS, Kind, MIN_BLOODSEEPS, MapDef, Mode,
+    Noise, Object, Pos, SetPieceKind, Shape, SizeClass, Symmetry,
 };
 use crate::recipe::{DEEP, FORD, RISE_REACH, WATER, Writer};
 use crate::stamp::{dist2, tile_copies};
@@ -136,28 +136,31 @@ pub fn describe(recipe: ConquestRecipe, size: SizeClass, seed: u64) -> Option<Ma
 }
 
 /// The smallest Wilds Conquest map, in tiles a side: the lobby's Small
-/// size. Six bases need the room; at 384 a third of the seeds put a
-/// start's frontier slot on the band.
-pub const MIN_WILDS_TILES: i32 = 448;
+/// size. Under [`BIG_MAP_TILES`] a map has four starts, the corners (six
+/// bases need the room: at 384 a third of the seeds put a six-start map's
+/// frontier slot on the band); from it, six. 30 seeds of each wildness at
+/// 320, 384 and 448 (four starts) and 448 and 640 (six) passed the
+/// checker but one, a flat knoll at 320.
+pub const MIN_WILDS_TILES: i32 = 320;
 /// The sizes [`describe_wilds`] makes, up to the biggest Field size.
 pub const WILDS_TILES: std::ops::RangeInclusive<i32> = MIN_WILDS_TILES..=*FIELD_TILES.end();
 
-/// A Conquest map with six starts, `tiles` on a side, or `None` for a
-/// side under [`MIN_WILDS_TILES`] or over the biggest Field size: the
-/// Wilds' land ([`crate::wilds`]) as wild as
+/// A Conquest map, `tiles` on a side, or `None` for a side outside
+/// [`WILDS_TILES`]: the Wilds' land ([`crate::wilds`]) as wild as
 /// `wildness`, with each start's economy round it, villages, outposts and
 /// lairs with rich fields out in the land, and the Heart in the middle.
-/// Players 0 to 2 are the north starts west to east and 3 to 5 their
-/// turned copies, so three against three, north against south, is fair
+/// It has four starts (the corners) under [`BIG_MAP_TILES`] and six from
+/// it. The north starts, west to east, are players 0 and 1 (0 to 2 with
+/// six), and the rest their turned copies, so north against south is fair
 /// (to the half tile the Heart stands off the turning centre), and every
-/// start has the same economy round it; in a game for
-/// all, the middle two are nearer the Heart. It isn't rerolled: every
-/// seed swept passes the checker (120 maps when this was made, and
-/// `gc_mapcheck`'s tests sweep some each build).
+/// start has the same economy round it; in a six-start game for all, the
+/// middle two are nearer the Heart. It isn't rerolled: every seed swept
+/// passes the checker (`gc_mapcheck`'s tests sweep some each build).
 pub fn describe_wilds(tiles: i32, seed: u64, wildness: Wildness) -> Option<MapDef> {
+    let six = tiles >= BIG_MAP_TILES;
     WILDS_TILES
         .contains(&tiles)
-        .then(|| wilds::make(tiles, seed, wildness, Purpose::Conquest))
+        .then(|| wilds::make(tiles, seed, wildness, Purpose::Conquest { six }))
 }
 
 /// Where the first player's share sits on a map of one size.
@@ -634,7 +637,11 @@ mod tests {
         assert!(hearts.next().is_some_and(|h| h.once));
         assert!(hearts.next().is_none());
         assert!(describe_wilds(MIN_WILDS_TILES - 64, 1, Wildness::Wild).is_none());
-        assert!(describe_wilds(MIN_WILDS_TILES, 1, Wildness::Wild).is_some());
+        // Under the big maps' size, four starts: the corners.
+        let small = describe_wilds(MIN_WILDS_TILES, 1, Wildness::Wild).unwrap();
+        assert_eq!(small.players, 4);
+        let starts = small.objects.iter().filter(|o| o.kind == Kind::Start);
+        assert_eq!(starts.count(), 2);
     }
 
     #[test]

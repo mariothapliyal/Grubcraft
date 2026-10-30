@@ -140,13 +140,13 @@ pub const DEFAULT_AI_LEVEL: u8 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MapSize {
     /// Field Battle: the old battle maps, a minute and a half's march
-    /// across. Conquest: two players, or a compact four.
+    /// across. Conquest: four starts, for two players or a compact four.
     Small,
     /// Field Battle: several minutes' march across, room to manoeuvre and
-    /// explore. Conquest: made for four.
+    /// explore. Conquest: four starts with room between them.
     #[serde(alias = "Standard")]
     Medium,
-    /// Field Battle: a step bigger again. Conquest: room for six, a little
+    /// Field Battle: a step bigger again. Conquest: six starts, a little
     /// smaller than the old 768-tile six-player maps.
     Large,
 }
@@ -162,23 +162,23 @@ impl MapSize {
         }
     }
 
-    /// How many tiles a side a made Conquest map of this size is. Foot
-    /// marches about 3 tiles a second; two players start across the map
-    /// about 1:45, 2:40 and 3:20 apart on foot (the old 768 was 4:00).
+    /// How many tiles a side a made Conquest map of this size is (under
+    /// 512, four starts; from it, six). Foot marches about 3 tiles a
+    /// second; two players start across the map about 1:15, 1:45 and 3:20
+    /// apart on foot (the old 768 was 4:00).
     pub const fn conquest_tiles(self) -> u32 {
         match self {
-            MapSize::Small => 448,
-            MapSize::Medium => 512,
+            MapSize::Small => 320,
+            MapSize::Medium => 448,
             MapSize::Large => 640,
         }
     }
 
-    /// The most players a made Conquest map of this size takes: Small
-    /// four, Medium five, Large all six.
+    /// The most players a made Conquest map of this size takes: its
+    /// starts, four on Small and Medium, six on Large.
     pub fn conquest_players(self) -> usize {
         match self {
-            MapSize::Small => 4,
-            MapSize::Medium => 5,
+            MapSize::Small | MapSize::Medium => 4,
             MapSize::Large => 6,
         }
     }
@@ -361,7 +361,8 @@ pub const DEFAULT_MAP: usize = 10;
 
 /// The Conquest maps the lobby offers, and how many starts each has:
 /// first the shipped maps (the game makes them from the shipped maps of
-/// the same names), then the six-start Wilds maps made from the map seed,
+/// the same names), then the Wilds maps made from the map seed (with up to
+/// six starts),
 /// as wild as the seed picks or as plains, mixed or wild land, at the
 /// lobby's size ([`MapSize::conquest_tiles`]), which caps the players
 /// ([`LobbySettings::max_players`]).
@@ -1112,7 +1113,7 @@ mod tests {
             s.map_size = z;
             (s.max_players(), s.conquest_tiles())
         });
-        assert_eq!(caps, [(4, 448), (5, 512), (6, 640)]);
+        assert_eq!(caps, [(4, 320), (4, 448), (6, 640)]);
         s.map = 1;
         s.map_size = MapSize::Small;
         assert_eq!((s.max_players(), s.conquest_tiles()), (4, 0));
