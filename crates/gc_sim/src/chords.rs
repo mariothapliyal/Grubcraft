@@ -37,7 +37,7 @@ pub const MAX_LINKS_EACH: usize = 256;
 pub const MIN_HARMONY: u8 = 10;
 /// A seep in the largest chord the links allow yields this many percent
 /// more.
-pub const MAX_HARMONY: u8 = 60;
+pub const MAX_HARMONY: u8 = 30;
 /// The Resonance meter's top.
 pub const MAX_RESONANCE: u32 = 100;
 /// Chord-ticks to a point of Resonance: a point every 3 seconds for one
@@ -268,6 +268,6 @@ mod tests {
         assert_eq!(harmony_of(170 * unit, 14), MAX_HARMONY);
         assert_eq!(harmony_of(1000 * unit, 14), MAX_HARMONY);
         let half = harmony_of(85 * unit, 14);
-        assert!((34..=36).contains(&half), "{half}");
+        assert!((19..=21).contains(&half), "{half}");
     }
 }

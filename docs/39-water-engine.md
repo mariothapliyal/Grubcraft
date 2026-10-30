@@ -259,7 +259,7 @@ Built 2026-10-30.
 - **The drawn water.** Each river tile's water is drawn at its own height, the swell and any front over it, and the bank beside it with it, eased between tiles (`Renderer::set_river_water`, a byte a tile, redrawn up to ten times a second while a river is up and not at all otherwise). Soldiers, scenery and particles in the water stand at its raised surface, as they did at the map-wide flood's.
 - **Computer players** keep reading the threatened fords (stage 1a), which already covers every ford a warned front will reach until it gets there.
 - **Golden.** `field-river-storm-1v1` was recorded again on another seed: the one before rolled a Flood, not the major flash flood stage 1a said it did. Now a Major is told to everyone 15 s before it shuts the first ford, and the water reaches Bursting its banks.
-- `SIM_VERSION` 59: wading on grown maps changes. No other golden moves (none wades a swollen river; `water_engine.rs` tests it). No new commands.
+- `SIM_VERSION` 60: wading on grown maps changes. No other golden moves (none wades a swollen river; `water_engine.rs` tests it). No new commands.
 
 ## 7. Stages (each its own pull request)
 

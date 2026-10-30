@@ -9,13 +9,16 @@
 //!   its owner's fields reaches, and works only while one does: unpowered,
 //!   it trains nothing until power returns (its queue waits).
 //! - A finished building that tunes ([`crate::structures::BuildingStats::tunes`],
-//!   a Resonator for seeps and a Siphon for veins) works every node of its
-//!   kind within its reach with no workers (see [`crate::economy`]). A node
-//!   takes only the tuner whose centre is nearest it.
+//!   a Resonator for seeps and a Siphon for veins) works one node of its
+//!   kind within its reach with no workers (see [`crate::economy`]): tuners
+//!   and nodes pair up nearest first, so a tuner works the nearest node no
+//!   nearer tuner has taken, and a node takes at most one tuner.
 //!
 //! Which buildings power and tune is worked out afresh each tick from the
 //! buildings standing, so it is not stored or hashed; the economy hands
 //! nodes to tuners again only when the tuners change.
+
+use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
@@ -107,17 +110,109 @@ impl Structures {
         })
     }
 
-    /// Of this tick's tuning buildings still standing that tune `resource`
-    /// and reach `point`, the one whose centre is nearest it (the lowest
-    /// slot, on a tie).
-    pub(crate) fn tuner_of(&self, resource: Resource, point: FxVec2) -> Option<usize> {
-        (self.tuners.iter())
-            .filter_map(|&h| self.resolve(h))
-            .filter(|&v| {
-                self.stats_of(v).tunes.is_some_and(|(r, tiles)| {
-                    r == resource && within(self.footprint(v), point, i32::from(tiles))
-                })
-            })
-            .min_by_key(|&v| ((self.centre(v) - point).length_sq_raw(), v))
+    /// For each node (its kind, centre and whether it has run dry), the
+    /// slot of the tuning building that works it, if any, into
+    /// `scratch.of`. Of this tick's tuners still standing, each works one
+    /// node of its kind within its reach and each node has one tuner: as
+    /// many nodes are worked as can be, each tuner taking the nearest it
+    /// can (a node with Grub left before one run to dregs; then centre to
+    /// centre; lower slot, then lower node, on a tie). `scratch` keeps its
+    /// room between calls, so this seldom allocates.
+    pub(crate) fn tunings(
+        &self,
+        kinds: &[Resource],
+        at: &[FxVec2],
+        dry: impl Fn(usize) -> bool,
+        scratch: &mut TuneScratch,
+    ) {
+        let TuneScratch {
+            pairs,
+            busy,
+            of,
+            seen,
+        } = scratch;
+        pairs.clear();
+        for v in self.tuners.iter().filter_map(|&h| self.resolve(h)) {
+            let Some((r, tiles)) = self.stats_of(v).tunes else {
+                continue;
+            };
+            let (foot, centre) = (self.footprint(v), self.centre(v));
+            for (n, (&kind, &at)) in kinds.iter().zip(at).enumerate() {
+                if kind == r && within(foot, at, i32::from(tiles)) {
+                    pairs.push((dry(n), (centre - at).length_sq_raw(), v, n));
+                }
+            }
+        }
+        pairs.sort_unstable();
+        of.clear();
+        of.resize(kinds.len(), None);
+        busy.clear();
+        busy.resize(self.slots(), false);
+        // Nearest first...
+        for &(_, _, v, n) in pairs.iter() {
+            if of[n].is_none() && !busy[v] {
+                of[n] = Some(v);
+                busy[v] = true;
+            }
+        }
+        // ...then a tuner left idle takes a node from one that has another
+        // free in reach, so no node goes untuned that a tuner could work.
+        for i in 0..pairs.len() {
+            let v = pairs[i].2;
+            if busy[v] {
+                continue;
+            }
+            seen.clear();
+            seen.resize(kinds.len(), false);
+            if hand_over(pairs, of, seen, v) {
+                busy[v] = true;
+            }
+        }
+    }
+}
+
+/// Finds tuner `v` a node, moving the tuner of a node it wants on to
+/// another of its own if that one can (an augmenting path); true if it did.
+fn hand_over(
+    pairs: &[(bool, u64, usize, usize)],
+    of: &mut [Option<usize>],
+    seen: &mut [bool],
+    v: usize,
+) -> bool {
+    for &(_, _, t, n) in pairs {
+        if t != v || seen[n] {
+            continue;
+        }
+        seen[n] = true;
+        if of[n].is_none_or(|w| hand_over(pairs, of, seen, w)) {
+            of[n] = Some(v);
+            return true;
+        }
+    }
+    false
+}
+
+/// Room [`Structures::tunings`] reuses from one call to the next.
+#[derive(Debug, Default)]
+pub(crate) struct TuneScratch {
+    /// Each (node run dry, distance squared, tuner slot, node) in reach.
+    pairs: Vec<(bool, u64, usize, usize)>,
+    /// By slot: whether the tuner has its node.
+    busy: Vec<bool>,
+    /// By node: the slot of the tuner that works it.
+    pub(crate) of: Vec<Option<usize>>,
+    /// By node: looked at in this search for an idle tuner.
+    seen: Vec<bool>,
+}
+
+impl TuneScratch {
+    /// Room for `nodes` nodes and a few tuners in reach of each.
+    pub(crate) fn with_room(nodes: usize) -> TuneScratch {
+        TuneScratch {
+            pairs: Vec::with_capacity(nodes * 4),
+            busy: Vec::with_capacity(256),
+            of: Vec::with_capacity(nodes),
+            seen: Vec::with_capacity(nodes),
+        }
     }
 }

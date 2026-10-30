@@ -386,7 +386,7 @@
             supply: 2,
             train_time: 20.0,
             from: Building("Counting House"),
-            trade: Some((base: 40, per_tile_tenths: 12)),
+            trade: Some((base: 37, per_tile_tenths: 11)),
             abilities: [
                 (
                     name: "Trade Run",
@@ -422,7 +422,7 @@
         (
             tier: 1,
             class: Spear,
-            cost: (grub: 90, marrow: 0),
+            cost: (grub: 110, marrow: 0),
             supply: 3,
             train_time: 18.0,
             from: Building("Ossuary"),
