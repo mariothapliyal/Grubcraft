@@ -526,7 +526,8 @@ impl Captain {
         // meet it rather than ride into their points.
         let spears_ahead = (ctx.view.unit(t).stats.reach && !t.engaged && !flank)
             || !spears_clear(ctx.view, fighting, r.pos, t.pos, t.handle);
-        let charge = (!timed && !spears_ahead)
+        // Once in melee it stays in; it never pulls out to re-stage.
+        let charge = (!timed && (r.engaged || !spears_ahead))
             || (flank
                 && level
                 && (r.pos.distance(t.pos) < 16.0 || (r.pos - t.pos).dot(t.facing) < 0.0))

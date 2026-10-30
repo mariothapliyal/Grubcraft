@@ -164,7 +164,9 @@ pub(crate) fn breaking_point(stats: &UnitStats, index: u32, generation: u16) -> 
 /// Regiment `i`'s breaking point as it stands: its own, lowered while its
 /// side's general is near it.
 pub(crate) fn break_at_now(regs: &Regiments, i: usize) -> u8 {
-    regs.break_at[i].saturating_sub(if regs.led[i] { LED_BREAK } else { 0 })
+    // Workers break at any strength, general or not.
+    let base = regs.break_at[i];
+    if base >= 100 || !regs.led[i] { base } else { base - LED_BREAK }
 }
 
 /// Regiment `i`'s hit points left, in percent of its full strength's.
