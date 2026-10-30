@@ -20,20 +20,25 @@
 //!
 //! **Where they are kept.** Few regiments have anything queued or are on
 //! an attack-move at once, so a regiment's [`Plan`] is not kept in every
-//! regiment slot but in a shared pool of [`PLANS`] (the simulation's
-//! memory is held tight, docs/12). When every plan is in use, a Shift order
-//! is refused and an attack-move marches as a plain move.
+//! regiment slot but in a shared pool (the simulation's memory is held
+//! tight, docs/12), where each player has [`PLANS_EACH`] of their own, so
+//! one player's orders can never crowd out another's. A plan is given back
+//! as soon as its queue is empty and its attack-move done. A player with
+//! all theirs in use has a Shift order refused, and an attack-move marches
+//! as a plain move.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::hash::StateHasher;
 use crate::regiments::RegimentHandle;
 use crate::state::State;
+use crate::{MAX_PARTIES, PlayerId};
 
 /// Steps a regiment can have queued behind the order it is carrying out.
 pub const QUEUE_LEN: usize = 4;
-/// Regiments that can have orders queued or be on an attack-move at once.
-pub const PLANS: usize = 256;
+/// Regiments each player can have with orders queued or on an attack-move
+/// at once.
+pub const PLANS_EACH: usize = 32;
 /// How far a regiment on an attack-move looks for an enemy to fight, in
 /// tiles (beyond its bows' reach, for archers).
 pub const HUNT_RADIUS: Fx = Fx::from_int(12);
@@ -248,15 +253,23 @@ pub(crate) const NO_PLAN: PlanIndex = PlanIndex::MAX;
 /// its plan holds is hashed and saved.
 pub(crate) struct Plans {
     plans: alloc::vec::Vec<Plan>,
+    /// Whose each entry is, while it is taken.
+    owner: alloc::vec::Vec<PlayerId>,
+    /// Entries each player holds.
+    held: [u16; MAX_PARTIES],
     /// Free entries, popped from the back.
     free: alloc::vec::Vec<PlanIndex>,
 }
 
 impl Plans {
-    pub(crate) fn with_capacity(n: usize) -> Plans {
-        let n = n.min(PLANS);
+    /// Room for every player's [`PLANS_EACH`], or for every one of
+    /// `regiments` if that is fewer.
+    pub(crate) fn with_capacity(regiments: usize) -> Plans {
+        let n = regiments.min(PLANS_EACH * MAX_PARTIES);
         Plans {
             plans: alloc::vec![Plan::NONE; n],
+            owner: alloc::vec![0; n],
+            held: [0; MAX_PARTIES],
             free: (0..n as PlanIndex).rev().collect(),
         }
     }
@@ -268,19 +281,25 @@ impl Plans {
             .unwrap_or(Plan::NONE)
     }
 
-    /// Store `plan` in entry `*k`, taking an entry if `*k` has none and
-    /// giving it back if `plan` is empty. False (and `*k` unchanged) when
-    /// none is free.
-    pub(crate) fn set(&mut self, k: &mut PlanIndex, plan: Plan) -> bool {
+    /// Store `plan` in entry `*k`, taking one for `owner` if `*k` has none
+    /// and giving it back if `plan` is empty. False (and `*k` unchanged)
+    /// when `owner` has all theirs in use, or none is free.
+    pub(crate) fn set(&mut self, k: &mut PlanIndex, owner: PlayerId, plan: Plan) -> bool {
         if plan.is_none() {
             self.release(k);
             return true;
         }
         if *k == NO_PLAN {
+            let o = usize::from(owner);
+            if usize::from(self.held[o]) >= PLANS_EACH {
+                return false;
+            }
             let Some(free) = self.free.pop() else {
                 return false;
             };
             *k = free;
+            self.owner[usize::from(free)] = owner;
+            self.held[o] += 1;
         }
         self.plans[usize::from(*k)] = plan;
         true
@@ -290,6 +309,7 @@ impl Plans {
     pub(crate) fn release(&mut self, k: &mut PlanIndex) {
         if *k != NO_PLAN {
             self.plans[usize::from(*k)] = Plan::NONE;
+            self.held[usize::from(self.owner[usize::from(*k)])] -= 1;
             self.free.push(*k);
             *k = NO_PLAN;
         }
@@ -344,20 +364,28 @@ mod tests {
 
     #[test]
     fn plans_are_lent_and_given_back() {
-        let mut plans = Plans::with_capacity(2);
+        let mut plans = Plans::with_capacity(usize::MAX);
         let plan = Plan {
             hunt: Some(to(1)),
             ..Plan::NONE
         };
-        let (mut a, mut b, mut c) = (NO_PLAN, NO_PLAN, NO_PLAN);
-        assert!(plans.set(&mut a, plan) && plans.set(&mut b, plan));
-        assert!(!plans.set(&mut c, plan), "only two to lend");
-        assert_eq!(c, NO_PLAN);
-        assert_eq!(plans.get(a), plan);
-        // An empty plan gives its entry back.
-        assert!(plans.set(&mut a, Plan::NONE));
-        assert_eq!(a, NO_PLAN);
-        assert_eq!(plans.get(a), Plan::NONE);
-        assert!(plans.set(&mut c, plan));
+        let mut mine = [NO_PLAN; PLANS_EACH + 1];
+        for k in &mut mine[..PLANS_EACH] {
+            assert!(plans.set(k, 1, plan));
+        }
+        assert!(
+            !plans.set(&mut mine[PLANS_EACH], 1, plan),
+            "all player 1's in use"
+        );
+        assert_eq!(mine[PLANS_EACH], NO_PLAN);
+        // Player 2 still has all of theirs.
+        let mut theirs = NO_PLAN;
+        assert!(plans.set(&mut theirs, 2, plan));
+        assert_eq!(plans.get(mine[0]), plan);
+        // An empty plan gives its entry back, to its own player.
+        assert!(plans.set(&mut mine[0], 1, Plan::NONE));
+        assert_eq!(mine[0], NO_PLAN);
+        assert_eq!(plans.get(mine[0]), Plan::NONE);
+        assert!(plans.set(&mut mine[PLANS_EACH], 1, plan));
     }
 }

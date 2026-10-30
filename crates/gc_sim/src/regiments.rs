@@ -154,8 +154,10 @@ macro_rules! regiment_fields {
             fn copy_slot(&mut self, from: &Regiments, i: usize) {
                 let m = MAX_MODELS as usize;
                 self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
-                self.set_plan(i, from.plan(i));
                 $(self.$name[i] = from.$name[i];)*
+                // The same players hold the same plans in both worlds.
+                let copied = self.set_plan(i, from.plan(i));
+                debug_assert!(copied, "no plan free for a copied regiment");
             }
 
             /// Slot `i`'s fields (its handle aside), into the state hash:
@@ -187,10 +189,10 @@ macro_rules! regiment_fields {
                     self.hp[i * MAX_MODELS as usize + k] = u16::read(input)?;
                 }
                 let plan = Plan::read(input)?;
-                if !self.set_plan(i, plan) {
+                $(self.$name[i] = <$ty>::read(input)?;)*
+                if usize::from(self.owner[i]) >= crate::MAX_PARTIES || !self.set_plan(i, plan) {
                     return None;
                 }
-                $(self.$name[i] = <$ty>::read(input)?;)*
                 Some(())
             }
 
@@ -684,15 +686,12 @@ impl Regiments {
     /// Slot `i` is on the attack-move `hunt` from now, or on none (and
     /// marches plainly if no plan is free to keep it in).
     pub(crate) fn on_hunt(&mut self, i: usize, hunt: Option<Step>) {
-        let queue = self.plan(i).queue;
-        self.set_plan(
-            i,
-            Plan {
-                queue,
-                hunt,
-                diverted: false,
-            },
-        );
+        let plan = Plan {
+            hunt,
+            diverted: false,
+            ..self.plan(i)
+        };
+        self.set_plan(i, plan);
     }
 
     /// Slot `i`'s queued orders and attack-move.
@@ -703,7 +702,7 @@ impl Regiments {
     /// Slot `i`'s queued orders and attack-move from now; false (and
     /// nothing changed) when there is no room left to keep them.
     pub(crate) fn set_plan(&mut self, i: usize, plan: Plan) -> bool {
-        self.plans.set(&mut self.plan[i], plan)
+        self.plans.set(&mut self.plan[i], self.owner[i], plan)
     }
 
     /// Whether slot `i` has anything queued or is on an attack-move.
@@ -1100,6 +1099,7 @@ impl Regiments {
     }
 
     fn view(&self, i: usize) -> RegimentView {
+        let plan = self.plan(i);
         RegimentView {
             handle: RegimentHandle {
                 index: i as u32,
@@ -1134,9 +1134,9 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
-            hunting: self.plan(i).hunt.is_some(),
-            diverted: self.plan(i).diverted,
-            queued: self.plan(i).queue.len() as u8,
+            hunting: plan.hunt.is_some(),
+            diverted: plan.diverted,
+            queued: plan.queue.len() as u8,
         }
     }
 
@@ -1510,6 +1510,33 @@ mod tests {
         let mut changed = copy(regs);
         changed.party_morale[crate::MAX_PARTIES - 1] = 5;
         assert_ne!(hash(&changed), before, "party morale isn't hashed");
+        // A plan's every part, wherever in the pool it is kept.
+        let step = crate::orders::Step::Move {
+            target: FxVec2::from_ints(3, 4),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+            hunt: true,
+        };
+        let mut queued = Plan::NONE;
+        queued.queue.push(step);
+        let hunting = Plan {
+            hunt: Some(step),
+            ..Plan::NONE
+        };
+        let diverted = Plan {
+            diverted: true,
+            ..hunting
+        };
+        let mut hashes = alloc::vec![before];
+        for plan in [queued, hunting, diverted] {
+            let mut changed = copy(regs);
+            assert!(changed.set_plan(i, plan));
+            hashes.push(hash(&changed));
+        }
+        hashes.sort_unstable();
+        hashes.dedup();
+        assert_eq!(hashes.len(), 4, "a plan isn't hashed in full");
         let mut changed = copy(regs);
         changed.despawn(changed.handle(i));
         assert_ne!(hash(&changed), before, "who is alive isn't hashed");

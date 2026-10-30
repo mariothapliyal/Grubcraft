@@ -2744,7 +2744,8 @@ impl World {
             {
                 continue;
             }
-            if let Some(hunt) = regs.plan(i).hunt {
+            let plan = regs.plan(i);
+            if let Some(hunt) = plan.hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
                     && regs
@@ -2754,25 +2755,25 @@ impl World {
                     self.regiments.attack_target[i] = None;
                 }
                 let regs = &self.regiments;
-                if regs.plan(i).diverted {
+                if plan.diverted {
                     // The fight is over: the march goes on.
                     if regs.attack_target[i].is_none() {
                         self.start_step(i, hunt);
                     }
+                } else if regs.idle(i) {
+                    // Arrived: the attack-move is done.
+                    self.regiments.on_hunt(i, None);
                 } else if regs.target[i].is_some()
                     && regs.attack_target[i].is_none()
                     && (self.tick + i as u32).is_multiple_of(orders::HUNT_EVERY)
                     && let Some(foe) = self.foe_near(i)
                     && self.charge_at(self.regiments.handle(i), foe)
                 {
-                    let plan = self.regiments.plan(i);
-                    self.regiments.set_plan(
-                        i,
-                        orders::Plan {
-                            diverted: true,
-                            ..plan
-                        },
-                    );
+                    let plan = orders::Plan {
+                        diverted: true,
+                        ..plan
+                    };
+                    self.regiments.set_plan(i, plan);
                 }
             }
             while self.free(i) {
