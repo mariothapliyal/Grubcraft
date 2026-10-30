@@ -1090,8 +1090,10 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
+        // An hour: since frontage a base under siege holds a little longer
+        // (seed 7 ended by the Heart at 46 minutes).
         for (factions, seed) in pairs.iter().zip([7, 8]) {
-            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 45);
+            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }

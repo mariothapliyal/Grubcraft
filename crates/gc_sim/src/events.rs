@@ -347,8 +347,11 @@ impl Events {
                     to: regs.morale_state[i],
                 });
             }
+            // (Not with a foe cut down later in the same tick: its lock
+            // goes next tick.)
             if let Some(foe) = regs.engaged[i]
                 && !b.engaged
+                && regs.resolve(foe).is_some()
             {
                 list.push(Event::Contact { regiment, foe });
             }
