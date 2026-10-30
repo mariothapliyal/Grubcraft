@@ -575,6 +575,8 @@ pub(crate) struct SoldiersGpu {
     /// For models painted in vertex colours.
     pub pipeline: wgpu::RenderPipeline,
     pub textured_pipeline: wgpu::RenderPipeline,
+    /// Draws the shadowless batches see-through (`fs_ghost`).
+    pub ghost_pipeline: wgpu::RenderPipeline,
     /// Depth only, for the sun's shadow map; any model.
     pub shadow_pipeline: wgpu::RenderPipeline,
     /// A soft dark patch on the ground under every soldier.
@@ -757,6 +759,14 @@ pub(crate) fn make(
         None,
         &[],
     );
+    // A ghost (a shadowless batch), textured or not, in one flat colour.
+    let ghost_pipeline = pipeline(
+        "soldier ghosts",
+        "vs_soldier",
+        crate::Target::Color(hdr, "fs_ghost"),
+        None,
+        &buffers,
+    );
     let pipeline = pipeline(
         "soldiers",
         "vs_soldier",
@@ -823,6 +833,7 @@ pub(crate) fn make(
     SoldiersGpu {
         pipeline,
         textured_pipeline,
+        ghost_pipeline,
         shadow_pipeline,
         pose_pipeline,
         contact_pipeline,
@@ -1054,15 +1065,16 @@ impl SoldiersGpu {
             pass.set_vertex_buffer(0, models.vertices.slice(..));
             pass.set_vertex_buffer(1, self.instances.slice(..));
         }
-        let mut textured_now = None;
+        let mut kind_now = None;
         for d in self.draws.iter().filter(|d| !(shadow && d.shadowless)) {
-            if !shadow && textured_now != Some(d.textured) {
-                pass.set_pipeline(if d.textured {
-                    &self.textured_pipeline
-                } else {
-                    &self.pipeline
+            let kind = (d.shadowless, d.textured);
+            if !shadow && kind_now != Some(kind) {
+                pass.set_pipeline(match kind {
+                    (true, _) => &self.ghost_pipeline,
+                    (false, true) => &self.textured_pipeline,
+                    (false, false) => &self.pipeline,
                 });
-                textured_now = Some(d.textured);
+                kind_now = Some(kind);
             }
             // The sun only needs a silhouette, so its pass never draws the
             // finer meshes, however close the soldier is to the camera.

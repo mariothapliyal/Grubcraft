@@ -2124,9 +2124,6 @@ pub fn push_rim(
     let Some(s) = world.structures().and_then(|s| s.get(h)) else {
         return;
     };
-    if out.len() >= MAX_BOX_INSTANCES {
-        return;
-    }
     let (x, y) = (s.tile.0 as f32 - RIM_OUT, s.tile.1 as f32 - RIM_OUT);
     let (w, d) = (
         f32::from(s.width) + 2.0 * RIM_OUT,
@@ -2163,33 +2160,55 @@ fn push_outline(
     ];
     let every = if share >= 1.0 { 1.0 } else { DASH_EVERY };
     for (from, to) in edges {
+        // A side edge of a rectangle under two lines thick runs backwards.
         let way = to - from;
         let len = way.length();
-        if len <= 0.0 {
+        if to.x < from.x || to.y < from.y || len <= 0.0 {
             continue;
         }
-        let pieces = (len / every).round().max(1.0);
-        let step = len / pieces;
         let along = way / len;
+        // Dashes from corner to corner, so the corners are always marked.
+        let pieces = (len / every).round().max(1.0);
+        let long = len / pieces * share.min(1.0);
+        let gap = if pieces > 1.0 {
+            (len - pieces * long) / (pieces - 1.0)
+        } else {
+            0.0
+        };
         for k in 0..pieces as usize {
             if out.len() >= MAX_BOX_INSTANCES {
                 return;
             }
-            let centre = from + along * step * (k as f32 + 0.5);
-            let long = step * share.min(1.0);
-            let size = if along.x.abs() > along.y.abs() {
-                Vec2::new(long, thick)
+            let start = if pieces > 1.0 {
+                k as f32 * (long + gap)
             } else {
-                Vec2::new(thick, long)
+                (len - long) / 2.0
             };
-            let ends = [centre - along * long / 2.0, centre + along * long / 2.0];
-            let (lo, hi) = ends
-                .iter()
-                .map(|e| ground(e.x, e.y))
-                .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)));
-            out.push(draped(Slab { centre, size }, PLATE, colour, (lo, hi)));
+            let centre = from + along * (start + long / 2.0);
+            out.push(bar(centre, along, long, thick, colour, ground));
         }
     }
+}
+
+/// A flat bar on the ground, `long` along `along` (x or y) and `thick`
+/// across, centred on `centre` and standing on the ground under its ends.
+fn bar(
+    centre: Vec2,
+    along: Vec2,
+    long: f32,
+    thick: f32,
+    colour: [u8; 4],
+    ground: &impl Fn(f32, f32) -> f32,
+) -> BoxInstance {
+    let size = if along.x.abs() > along.y.abs() {
+        Vec2::new(long, thick)
+    } else {
+        Vec2::new(thick, long)
+    };
+    let ends = [centre - along * long / 2.0, centre + along * long / 2.0];
+    let (lo, hi) = (ends.iter().map(|e| ground(e.x, e.y)))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), g| (lo.min(g), hi.max(g)));
+    draped(Slab { centre, size }, PLATE, colour, (lo, hi))
 }
 
 fn bar_colour(frac: f32) -> [u8; 4] {
@@ -2265,12 +2284,12 @@ fn ghost_colour(fit: Fit, [r, g, b]: [u8; 3]) -> [u8; 4] {
 }
 
 /// The colour of a building's ghost: green where it fits, amber where the
-/// ground must be cleared first, red where it won't go (the ring tool's
-/// suggested gates keep their own).
-pub fn building_ghost_colour(fit: Fit) -> [u8; 4] {
+/// ground must be cleared first, red where it won't go (a gate the ring
+/// tool suggests keeps its own, and the side's `colour` is for the rest).
+pub fn building_ghost_colour(fit: Fit, colour: [u8; 3]) -> [u8; 4] {
     match fit {
         Fit::Open => FITS,
-        fit => ghost_colour(fit, [0; 3]),
+        fit => ghost_colour(fit, colour),
     }
 }
 
@@ -2293,10 +2312,7 @@ pub fn push_ghost(
 ) {
     let (width, depth) = stats.size(turn);
     let view = footprint_view(tile, width, depth, turn);
-    let colour = match fit {
-        Fit::Suggested => ghost_colour(fit, colour),
-        fit => building_ghost_colour(fit),
-    };
+    let colour = building_ghost_colour(fit, colour);
     if !modelled {
         out.push(block(&view, height_of(stats.role), colour, &ground));
     }
@@ -2307,14 +2323,9 @@ pub fn push_ghost(
     let facing = facing_of(turn);
     let reach = if facing.x == 0.0 { depth } else { width };
     let centre = centre_of(tile, width, depth) + facing * (f32::from(reach) / 2.0 + 0.35);
-    let size = if facing.x == 0.0 {
-        Vec2::new(1.0, DASH_LINE * 2.0)
-    } else {
-        Vec2::new(DASH_LINE * 2.0, 1.0)
-    };
-    let (lo, hi) = (ground(centre.x, centre.y), ground(centre.x, centre.y));
     if out.len() < MAX_BOX_INSTANCES {
-        out.push(draped(Slab { centre, size }, PLATE, colour, (lo, hi)));
+        let across = Vec2::new(facing.y, facing.x).abs();
+        out.push(bar(centre, across, 1.0, DASH_LINE * 2.0, colour, &ground));
     }
 }
 

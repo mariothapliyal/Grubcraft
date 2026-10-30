@@ -1108,6 +1108,17 @@ impl Art {
     fn finish(&mut self) {
         self.soldiers.clear();
         self.batches.clear();
+        // The ghost first, as a full frame drops soldiers from the back.
+        if let Some((k, ghost)) = self.ghost {
+            self.batches.push(SoldierBatch {
+                model: (k / LODS) as u16,
+                lod: (k % LODS) as u8,
+                first: self.soldiers.len() as u32,
+                count: 1,
+                shadowless: true,
+            });
+            self.soldiers.push(ghost);
+        }
         for (k, b) in self.buckets.iter().enumerate() {
             if b.is_empty() {
                 continue;
@@ -1120,16 +1131,6 @@ impl Art {
                 shadowless: false,
             });
             self.soldiers.extend_from_slice(b);
-        }
-        if let Some((k, ghost)) = self.ghost {
-            self.batches.push(SoldierBatch {
-                model: (k / LODS) as u16,
-                lod: (k % LODS) as u8,
-                first: self.soldiers.len() as u32,
-                count: 1,
-                shadowless: true,
-            });
-            self.soldiers.push(ghost);
         }
     }
 }
@@ -6760,7 +6761,8 @@ impl Running {
         let mut view = buildings::footprint_view(tile, width, depth, turn);
         view.building = id;
         let fit = self.fit_of(&stats, tile, why);
-        Some((view, buildings::building_ghost_colour(fit)))
+        let colour = color_of(&self.parties, self.sandbox.side);
+        Some((view, buildings::building_ghost_colour(fit, colour)))
     }
 
     /// Every standing building as a box, the selected one with a rim, and
