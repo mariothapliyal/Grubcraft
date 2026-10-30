@@ -2735,9 +2735,8 @@ impl Running {
         self.group_commands.clear();
         // Alt on a dragged line draws it deep: the drag is the front, every
         // regiment keeps its frontage and those that don't fit stand behind.
-        let deep = gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep);
         let how = if self.input.alt && order.width.is_some() {
-            deep
+            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
         } else {
             self.army_shapes.arrangement()
         };

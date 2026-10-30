@@ -1230,12 +1230,10 @@ impl Puppets {
     /// regiment's update.
     pub fn faced_about(&mut self, handle: RegimentHandle, abouts: u8) {
         let r = handle.index as usize;
-        let known = self.owner[r] == Some(handle);
-        if !known || self.abouts[r] == abouts {
-            self.abouts[r] = abouts;
+        let changed = std::mem::replace(&mut self.abouts[r], abouts) != abouts;
+        if self.owner[r] != Some(handle) || !changed {
             return;
         }
-        self.abouts[r] = abouts;
         let n = usize::from(self.models[r]).min(SLOTS);
         let base = r * SLOTS;
         let range = base..base + n;
@@ -1255,10 +1253,11 @@ impl Puppets {
         self.brandish[range.clone()].reverse();
         // Anyone who had one of its men as his: the same man, in his new
         // place.
+        let mirror = |k: usize| n - 1 - k;
         let turned = |p: u32| {
             let p = p as usize;
             if range.contains(&p) {
-                (base + n - 1 - (p - base)) as u32
+                (base + mirror(p - base)) as u32
             } else {
                 p as u32
             }
@@ -1273,10 +1272,17 @@ impl Puppets {
         }
         for (h, slot, by) in &mut self.slain {
             if *h == handle && usize::from(*slot) < n {
-                *slot = (n - 1 - usize::from(*slot)) as u8;
+                *slot = mirror(usize::from(*slot)) as u8;
             }
             if *by != NONE {
                 *by = turned(*by);
+            }
+        }
+        if let Some(d) = &mut self.duel {
+            for c in &mut d.champion {
+                if *c != NONE {
+                    *c = turned(*c);
+                }
             }
         }
     }
