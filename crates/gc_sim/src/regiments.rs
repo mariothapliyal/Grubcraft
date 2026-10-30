@@ -1252,9 +1252,11 @@ impl Regiments {
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
-                    // Its way lies behind it: it faces about.
+                    // Its way lies behind it: it faces about (in good order;
+                    // a routing block just turns and runs).
                     if i32::from(self.facing[i].delta_to(travel)).abs() > ABOUT_FACE
                         && self.models[i] > 1
+                        && !self.morale_state[i].broken()
                     {
                         self.face_about(i);
                         continue;

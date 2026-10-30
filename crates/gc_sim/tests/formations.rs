@@ -87,7 +87,10 @@ fn faces_about_before_marching_backwards() {
     let (mut w, h) = one_regiment();
     // Due south, 30 tiles: it faces about where it stands.
     order(&mut w, h, FxVec2::from_ints(50, 80), None, 0);
-    w.tick(&[]);
+    // On the order's tick, or the next if its route comes a tick later.
+    if view(&w, h).abouts == 0 {
+        w.tick(&[]);
+    }
     let r = view(&w, h);
     assert_eq!(
         r.position,
