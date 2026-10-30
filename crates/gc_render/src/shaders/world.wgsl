@@ -66,6 +66,24 @@ const WIND_DIR = vec2<f32>(0.8, 0.6);
 // which flattens it, so it is twice what it was when added after.
 const HIGHLIGHT: f32 = 1.6;
 
+// A highlight of 255 (`GHOST_HIGHLIGHT`) draws the model as a ghost: a
+// building about to be placed, see-through and in one flat colour.
+const GHOST_FROM: f32 = 254.5 / 255.0;
+
+// A ghost's colour at a pixel: every other pixel is left out, so the ground
+// and what stands behind show through without sorting, and the rest is
+// `tint`, brighter on the tops and the edges so the outline reads.
+fn ghost_shade(clip: vec4<f32>, n: vec3<f32>, world: vec3<f32>, tint: vec3<f32>) -> vec4<f32> {
+    let p = vec2<u32>(clip.xy);
+    if ((p.x + p.y) & 1u) == 1u {
+        discard;
+    }
+    let v = normalize(g.camera_pos.xyz - world);
+    let edge = 1.0 - abs(dot(n, v));
+    let up = 0.55 + 0.45 * max(n.y, 0.0);
+    return vec4<f32>(tint * (0.45 * up + 1.2 * edge * edge), 1.0);
+}
+
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var heightmap: texture_2d<u32>;
 @group(0) @binding(2) var shadow_map: texture_depth_2d;
@@ -2196,6 +2214,9 @@ fn vs_soldier(v: SoldierIn) -> SoldierOut {
         team,
     );
     out.highlight = v.flags.y;
+    if out.highlight >= GHOST_FROM {
+        out.color = v.team_color.rgb;
+    }
     return out;
 }
 
@@ -2213,6 +2234,9 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
     let dry = srgb_to_linear(in.color);
+    if in.highlight >= GHOST_FROM {
+        return ghost_shade(in.clip, n, in.world, dry);
+    }
     let albedo = mix(dry * (1.0 - WET_DARK * drench(n)), SNOW_ALBEDO, dusting(n) * SNOW_ON_MODELS);
     let c = shade(albedo, n, in.world) + albedo * rim(n, in.world);
     // The selection glows as brightly in rain as in the dry.
@@ -2323,6 +2347,10 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     let dust = dusting(n) * SNOW_ON_MODELS * (1.0 - e.a) * (1.0 - 0.75 * a.a);
     albedo = mix(albedo, SNOW_ALBEDO, dust);
     rough = mix(rough, 0.9, dust);
+    // Checked last: the derivatives above need every pixel still running.
+    if in.highlight >= GHOST_FROM {
+        return ghost_shade(in.clip, n0, in.world, in.team_color);
+    }
     let c = shade_material(albedo, n, in.world, rough, e.a, ao, e.rgb) + albedo * rim(n, in.world);
     // The selection glows as brightly in rain as in the dry.
     return vec4<f32>(c + dry * in.highlight * HIGHLIGHT, 1.0);

@@ -134,6 +134,11 @@ const CONTACT_ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
 /// soldier as painted.
 pub const TONE_NEUTRAL: u8 = 128;
 
+/// The highlight byte (the second of [`SoldierInstance::flags`]) that draws
+/// a model as a ghost: see-through, in its team colour alone (a building
+/// about to be placed, the colour saying whether it fits).
+pub const GHOST_HIGHLIGHT: u8 = 255;
+
 /// One layer of a soldier's pose on top of its base move: a move's two frame
 /// rows to blend between and how far, how much of the layer shows (0 is
 /// none), the [`Mask`](gc_assets::anim::Mask) of joints it moves, and
@@ -224,6 +229,8 @@ pub struct SoldierBatch {
     pub lod: u8,
     pub first: u32,
     pub count: u32,
+    /// Casts no shadow and leaves no dark patch on the ground (a ghost).
+    pub shadowless: bool,
 }
 
 /// One model at one level of detail, as the GPU holds it: the vertices both
@@ -312,6 +319,7 @@ struct Draw {
     mesh: [u32; 2],
     shadow_mesh: [u32; 2],
     textured: bool,
+    shadowless: bool,
 }
 
 pub(crate) struct ModelGpu {
@@ -868,6 +876,7 @@ impl SoldiersGpu {
             textured: bool,
             bones: usize,
             fit: u32,
+            shadowless: bool,
         }
         let mut runs = Vec::with_capacity(batches.len());
         for b in batches {
@@ -894,6 +903,7 @@ impl SoldiersGpu {
                 textured,
                 bones: bones as usize,
                 fit,
+                shadowless: b.shadowless,
             });
         }
         // Each instance has one origin, so runs must not share instances.
@@ -974,6 +984,7 @@ impl SoldiersGpu {
                 mesh: level.mesh,
                 shadow_mesh: level.shadow_mesh,
                 textured: r.textured,
+                shadowless: r.shadowless,
             });
             slots += r.n * level.len as usize;
             palette += r.n * r.bones;
@@ -1044,7 +1055,7 @@ impl SoldiersGpu {
             pass.set_vertex_buffer(1, self.instances.slice(..));
         }
         let mut textured_now = None;
-        for d in &self.draws {
+        for d in self.draws.iter().filter(|d| !(shadow && d.shadowless)) {
             if !shadow && textured_now != Some(d.textured) {
                 pass.set_pipeline(if d.textured {
                     &self.textured_pipeline
@@ -1074,7 +1085,7 @@ impl SoldiersGpu {
         // Adjacent runs (the batches are usually laid out in instance
         // order) go in one call.
         let mut run = 0..0;
-        for d in self.draws.iter().filter(|d| d.asked <= CONTACT_MAX_LOD) {
+        for d in (self.draws.iter()).filter(|d| d.asked <= CONTACT_MAX_LOD && !d.shadowless) {
             if d.first != run.end {
                 if !run.is_empty() {
                     pass.draw(0..4, run.clone());
