@@ -221,8 +221,13 @@ struct KillFor {
 /// from the soldier's position, in tiles: `x` to his left, `y` ahead along
 /// his facing (model space's x and z). The joint's pose composed up to the
 /// root, then turned, sized and placed into the model by its fit.
-fn chest_at(models: &Models<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
-    let anim = &models.anim;
+/// `shift` is how far forward the model is drawn ([`Models::feet_shift`]).
+fn chest_at(
+    anim: &gc_assets::anim::Anim<'_>,
+    model: usize,
+    row: u32,
+    shift: f32,
+) -> Option<glam::Vec2> {
     use gc_assets::model::f16_value;
     use glam::{Mat4, Quat, Vec3};
     let fit = anim.fit(model)?;
@@ -248,7 +253,7 @@ fn chest_at(models: &Models<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
     }
     let f = anim.fixes.get(fit.first_fix as usize)?;
     let row = |r: usize| f[r] * at.x + f[r + 1] * at.y + f[r + 2] * at.z + f[r + 3];
-    Some(glam::Vec2::new(row(0), row(8) + models.feet_shift(model)))
+    Some(glam::Vec2::new(row(0), row(8) + shift))
 }
 
 /// How far a victim's size may be from the one the kill was made for (as a
@@ -300,6 +305,10 @@ pub struct Clips {
 impl Clips {
     pub fn new(models: &Models<'_>) -> Clips {
         let moves = Moves::new(models);
+        // How far forward each model is drawn onto its feet.
+        let shifts: Vec<f32> = (0..models.models.len())
+            .map(|m| models.feet_shift(m))
+            .collect();
         let by_model = (0..models.models.len())
             .map(|m| {
                 // A model that names what it holds plays the moves made for it.
@@ -318,7 +327,7 @@ impl Clips {
                 ModelClips {
                     lying: dies
                         .iter()
-                        .map(|d| chest_at(models, m, d.first_row + d.frames - 1))
+                        .map(|d| chest_at(&models.anim, m, d.first_row + d.frames - 1, shifts[m]))
                         .collect(),
                     actions: ACTIONS.map(|a| pick(want(a))),
                     parry: choices(Act::Parry).first().copied(),
@@ -339,9 +348,9 @@ impl Clips {
                 Some(Body {
                     skeleton: fit.skeleton,
                     size: (f[0] * f[0] + f[4] * f[4] + f[8] * f[8]).sqrt(),
-                    feet: f[11] + models.feet_shift(m),
+                    feet: f[11] + shifts[m],
                     side: f[3],
-                    shift: models.feet_shift(m),
+                    shift: shifts[m],
                 })
             })
             .collect();
@@ -1261,7 +1270,14 @@ mod tests {
         // Standing, the chest is over the feet.
         let m = by("Yari Ashigaru");
         let idle = clips.clip(m, Action::Idle).unwrap();
-        let up = chest_at(&models, m, idle.first_row).unwrap().y - clips.body[m].unwrap().feet;
+        let up = chest_at(
+            &models.anim,
+            m,
+            idle.first_row,
+            clips.body[m].unwrap().shift,
+        )
+        .unwrap()
+        .y - clips.body[m].unwrap().feet;
         assert!(up.abs() < 0.2, "{up}");
     }
 

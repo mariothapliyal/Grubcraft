@@ -587,6 +587,11 @@ impl Kills {
             .unwrap_or(0.0)
     }
 
+    /// The stand-offs of two men of units `a` and `b` together.
+    fn stand_offs(&self, a: u16, b: u16) -> f32 {
+        self.stand_off(a) + self.stand_off(b)
+    }
+
     /// Where a man of unit `unit` and look `look` lying dead has his chest
     /// from his position, if known.
     fn chest(&self, unit: u16, look: u8) -> Option<Vec2> {
@@ -1622,7 +1627,7 @@ impl Puppets {
             for k in 0..self.band(a) {
                 let i = a * SLOTS + k;
                 if self.partner[i] == NONE {
-                    let foe = self.nearest_foe(self.pos[i], &near);
+                    let foe = self.nearest_foe(a, self.pos[i], &near);
                     self.partner[i] = foe;
                     if foe != NONE {
                         self.mark(foe as usize);
@@ -1711,9 +1716,7 @@ impl Puppets {
                         .filter(|&(_, k)| {
                             // Within the reach of two men drawn where the
                             // bake put them (see `Kills::stand_off`).
-                            let stand =
-                                self.kills.stand_off(unit(w)) + self.kills.stand_off(unit(1 - w));
-                            k.reach <= CHAMPION_REACH + stand
+                            k.reach <= CHAMPION_REACH + self.kills.stand_offs(unit(w), unit(1 - w))
                         }),
                     ..duel
                 }
@@ -1749,11 +1752,8 @@ impl Puppets {
     fn stance(&self, d: &Duel, side: usize) -> Vec2 {
         let [a, b] = d.challenge.champions.map(|h| self.centre[h.index as usize]);
         let toward_b = (b - a).normalize_or(Vec2::Y);
-        let stand = d
-            .challenge
-            .champions
-            .map(|h| self.kills.stand_off(self.unit[h.index as usize]));
-        let half = toward_b * ((DUEL_GAP + stand[0] + stand[1]) / 2.0);
+        let [ra, rb] = d.challenge.champions.map(|h| h.index as usize);
+        let half = toward_b * ((DUEL_GAP + self.stand_offs(ra, rb)) / 2.0);
         let stand = [d.spot - half, d.spot + half];
         match d.kill_begun() {
             Some((_, k, _)) if d.won(side) => {
@@ -1770,11 +1770,12 @@ impl Puppets {
     /// The nearest front-rank soldier of the regiments `near` within reach
     /// of `me`, those others already fight seeming further off (`CROWD`),
     /// or `NONE`.
-    fn nearest_foe(&self, me: Vec2, near: &[u32]) -> u32 {
-        let reach = DUEL_REACH * DUEL_REACH;
+    fn nearest_foe(&self, a: usize, me: Vec2, near: &[u32]) -> u32 {
         let mut best = (NONE, f32::INFINITY);
         for &b in near {
             let b = b as usize;
+            // Men who stand further apart reach further for a man.
+            let reach = (DUEL_REACH + self.stand_offs(a, b)).powi(2);
             for j in b * SLOTS..b * SLOTS + self.front(b) {
                 let d = me.distance_squared(self.pos[j]);
                 if d >= reach {
@@ -2043,8 +2044,13 @@ impl Puppets {
     /// ([`Kills::stand_off`]).
     fn duel_gap(&self, r: usize, block: &Block) -> f32 {
         (self.fighter[r].gap() + block.fighter.gap()) / 2.0
-            + self.kills.stand_off(self.unit[r])
-            + self.kills.stand_off(block.unit)
+            + self.kills.stand_offs(self.unit[r], block.unit)
+    }
+
+    /// The stand-offs of regiments `a` and `b`'s men together
+    /// ([`Kills::stand_off`]): how much further apart they stand in a duel.
+    fn stand_offs(&self, a: usize, b: usize) -> f32 {
+        self.kills.stand_offs(self.unit[a], self.unit[b])
     }
 
     /// How many of regiment `r`'s soldiers stand in its front rank.
@@ -2067,7 +2073,7 @@ impl Puppets {
         b != a
             && near.contains(&(b as u32))
             && j % SLOTS < self.front(b)
-            && me.distance_squared(self.pos[j]) <= DUEL_KEEP * DUEL_KEEP
+            && me.distance_squared(self.pos[j]) <= (DUEL_KEEP + self.stand_offs(a, b)).powi(2)
     }
 
     /// Advance one regiment's soldiers and hand each to `out`. `owner` is the
