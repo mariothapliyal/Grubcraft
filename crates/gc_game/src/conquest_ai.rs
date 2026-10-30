@@ -778,20 +778,23 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_generals_wall_and_trap_veterans_only_field_works() {
         // Traps come last, once Grub piles up: a quick win may come first,
-        // so one of the two games is enough for them.
+        // so one of the games is enough for them. Whether a General gets
+        // its whole front up depends on how the war goes (a side losing
+        // early arms instead), so each faction gets a few games to show it.
         let mut traps = 0;
         for f in [Faction::EmberClans, Faction::CarrionConcord] {
-            let played = play(0, 0, &[f, f], &[Difficulty::General], 8, 40);
-            let most = played
-                .sides
-                .iter()
-                .fold(Works::default(), |m, s| m.most(s.works));
-            assert!(
-                most.walls >= 5 && most.gates >= 1 && most.barricades >= 1,
-                "{f:?}: {}",
-                played.report()
-            );
-            traps += most.traps;
+            let mut reports = Vec::new();
+            let walled = (8..=12).any(|seed| {
+                let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
+                let most = played
+                    .sides
+                    .iter()
+                    .fold(Works::default(), |m, s| m.most(s.works));
+                traps += most.traps;
+                reports.push(played.report());
+                most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
+            });
+            assert!(walled, "{f:?}: {}", reports.join("\n"));
         }
         assert!(traps >= 1, "no traps laid in either game");
         let played = play(
