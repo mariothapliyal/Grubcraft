@@ -147,6 +147,7 @@ mod tests {
             top: 3.0,
             model: None,
             lift: 0.0,
+            facing: Vec2::Y,
             owner: 0,
             colour: [200, 0, 0],
             stuff: stuff(Some(faction), Armour::Structure),
