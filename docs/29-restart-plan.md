@@ -288,7 +288,7 @@ A lot of what feels clunky is the controls, not the pathfinding. A **new control
 - **Deep lines and about-face (#341):**
   - Alt+right-drag draws a deep line, each regiment keeping its frontage and the rest stacked behind.
   - A block sent more than 135° behind faces about where it stands, its rear rank becoming the front, and marches off 0.3 s later.
-- **Not done:** a ghost of every block while dragging, before letting go (only the plates after the order); LAN timing waits for the batched playtest.
+- **Not done:** LAN timing waits for the batched playtest.
 
 ### 7. Clear orders and feedback
 
