@@ -60,7 +60,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Command-line flags** [crates/gc_game/src/main.rs]
 - `--sandbox`; `--conquest ribcage_pass|four_teeth`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
-- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--watch REPLAY`.
+- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march 0..5` (a regiment through each gate, looking at one); `--watch REPLAY`.
 - Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
 
 **Not in the game:** key rebinding, ping wheel (`G` is blocked-ground view), text chat, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
