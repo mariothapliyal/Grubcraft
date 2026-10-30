@@ -20,7 +20,7 @@ Bases should feel like places worth holding. You draw a wall the way you draw an
 
 ## Drawn walls
 
-- **Click and drag** to draw a wall at any angle, and click again to bend it. The length and price show as you draw.
+- **Drag to draw a curve, click for corners.** Press and drag and the wall follows your mouse in a smooth curve (it may bend 15 degrees every two tiles at most); let go to order it. Click, then click again, for straight pieces with sharp corners, so square forts stay easy. `Shift` keeps lines straight in 15-degree steps. The length and price show as you draw, and the land remembers every line.
 - **Snapping:** a wall end snaps to wall ends, towers, gates and cliff edges within a tile and a half. Shift locks the angle to 15° steps. Otherwise the angle is free.
 - **Ring tool:** click a few points round a base and it closes the loop itself, leans on cliffs, and offers a tower every so often and a gate where the workers' path crosses.
 - **Blueprints:** a whole plan goes down as a ghost and is paid piece by piece as workers reach it, so a city wall can be planned early and rise over time.
@@ -112,6 +112,8 @@ Towers snap into walls as joints and are where troops climb up. Each tower has t
 | Brood | Spine Mound: hits fliers | Harpoon Maw: drags its target a few steps toward it | Acid Bloater: leaves an acid pool for a few seconds |
 
 ## Bridges
+
+**Drawing a bridge (restart).** Press on the near bank and drag to the far bank: the bridge follows your mouse in a gentle curve, bending at most 15 degrees every two tiles and with no corners (a sharper bend shows red: "Too sharp a bend: bridges bend gently, with no corners"). Or click each bank for a straight one. `[` and `]` choose the width, narrow, standard or wide (3, 4 or 5 tiles across; standard by default), shown in the hint. The deck's rails stand along its two outer edges only, outside the deck, so the whole width is walkable. The land remembers every line a bridge or wall was drawn along. Code: `gc_game::drawn_tool` and `wall_tool`.
 
 *Next (Mario, 2026-10-30, for the restart): drawn, gently curved bridges with a choice of width and upgrades to braced and reinforced piers, their models generated from a timber kit; with the water engine (idea 25), river debris and floods strike, jam and break them. Plan in [29, Dynamic bridges in brief](29-restart-plan.md#dynamic-bridges-in-brief).*
 

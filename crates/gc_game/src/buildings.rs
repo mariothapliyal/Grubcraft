@@ -1061,8 +1061,16 @@ fn wall_block(
 /// river), with a rail along each edge and a post at the middle of each;
 /// while it goes up, only two posts that grow with the work done. `deck` is
 /// the deck's colour (with its glow), `team` the owner's, which tints the
-/// posts and rails.
-fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut Vec<BoxInstance>) {
+/// posts and rails. A side with another tile of the same bridge beside it
+/// (`joined` says whether the tile there is one) is an inner edge of a wide
+/// deck, and has no rail.
+fn push_bridge_tile(
+    s: &StructureView,
+    deck: [u8; 4],
+    team: [u8; 3],
+    joined: &dyn Fn((i32, i32)) -> bool,
+    out: &mut Vec<BoxInstance>,
+) {
     let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
         Some(p) => (p.centre, p.dir, p.len),
         None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
@@ -1072,7 +1080,8 @@ fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut V
     let [r, g, b] = tint([r, g, b].map(|c| (u32::from(c) * 3 / 4) as u8), team, 35);
     let wood = [r, g, b, 0];
     let top = DECK_TOP;
-    let edge = 0.5 - POST_THIN / 2.0;
+    // Just outside the deck's edge, so the whole width stays clear.
+    let edge = 0.5 + POST_THIN / 2.0;
     let post = |height: f32, lift: f32, at: Vec2| BoxInstance {
         pos: at.to_array(),
         facing: dir.to_array(),
@@ -1080,10 +1089,15 @@ fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut V
         color: wood,
         lift,
     };
+    // The sides with no bridge tile beside them.
+    let outer = |sign: f32| {
+        let beside = centre + side * sign;
+        !joined((beside.x.floor() as i32, beside.y.floor() as i32))
+    };
     if !s.finished() {
         let done = f32::from(s.built_percent) / 100.0;
         let height = FRAME_LOW + (top + RAIL_HEIGHT - FRAME_LOW) * done;
-        for sign in [-1.0, 1.0] {
+        for sign in [-1.0, 1.0].into_iter().filter(|&sign| outer(sign)) {
             out.push(post(height, 0.0, centre + side * (sign * edge)));
         }
         return;
@@ -1095,7 +1109,7 @@ fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut V
         color: deck,
         lift: DECK_LIFT,
     });
-    for sign in [-1.0, 1.0] {
+    for sign in [-1.0, 1.0].into_iter().filter(|&sign| outer(sign)) {
         let at = centre + side * (sign * edge);
         out.push(post(RAIL_HEIGHT, top, at));
         out.push(BoxInstance {
@@ -1509,6 +1523,12 @@ pub fn push(
         return;
     };
     let right = Vec2::new(-across.y, across.x);
+    // The tiles of each drawn bridge, so a wide deck rails only its edges.
+    let bridged: std::collections::HashSet<(u32, (i32, i32))> = structures
+        .iter()
+        .filter(|s| table.is_bridge(s.building))
+        .filter_map(|s| s.drawing.map(|d| (d, s.tile)))
+        .collect();
     for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 12 > MAX_BOX_INSTANCES {
             return;
@@ -1534,7 +1554,8 @@ pub fn push(
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
             if model.is_none() {
-                push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+                let joined = |tile| s.drawing.is_some_and(|d| bridged.contains(&(d, tile)));
+                push_bridge_tile(&s, [r, g, b, look.glow], team, &joined, out);
             }
         } else if matches!(stats.role, Role::Stakes | Role::Barricade) {
             let (_, trim, _) = fieldwork_colours(stats.role, table.faction(s.building));
@@ -2494,7 +2515,7 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoWalkway => {
             "Raise the wall a level (or a gate to a gatehouse) first: only a walkway can be manned."
         }
-        Refusal::Crooked => "A bridge must run straight across, not at a slant.",
+        Refusal::Crooked => "Too sharp a bend: bridges bend gently, with no corners.",
     }
 }
 
@@ -2695,7 +2716,13 @@ mod tests {
         view.line = Some([10, 3, 10, 9]);
         view.built_percent = 100;
         let mut out = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut out);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut out,
+        );
         // Deck, two rails, two posts; nothing taller than the railing.
         assert_eq!(out.len(), 5);
         let top = out.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
@@ -2705,11 +2732,23 @@ mod tests {
         assert_eq!((out[0].size[0], out[0].facing[0]), (1.0, 0.0));
         view.built_percent = 20;
         let mut frame = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut frame);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut frame,
+        );
         assert_eq!(frame.len(), 2);
         view.built_percent = 80;
         let mut later = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut later);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut later,
+        );
         assert!(later[0].size[1] > frame[0].size[1]);
     }
 
