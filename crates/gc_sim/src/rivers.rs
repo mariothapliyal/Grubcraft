@@ -176,8 +176,9 @@ pub struct Rivers {
     /// Every floodplain tile, as `(y, x)`, sorted, with its group and the
     /// river tile nearest it (as `(x, y)`).
     plain_tiles: Arc<[PlainTile]>,
-    /// Whether each floodplain group is shut.
+    /// Whether each floodplain group is shut, and how many are.
     plain_shut: Vec<bool>,
+    plains_shut: u16,
     /// The water in each stretch beyond its normal flow.
     store: Vec<u64>,
     /// How far each stretch's store lifts its water, height units.
@@ -645,6 +646,7 @@ impl Rivers {
             plains: plains.into(),
             plain_tiles: plain_tiles.into(),
             plain_shut: alloc::vec![false; plains_n],
+            plains_shut: 0,
             store: alloc::vec![0; count],
             swell: alloc::vec![0; count],
             shut: alloc::vec![false; groups_n],
@@ -716,7 +718,7 @@ impl Rivers {
     }
 
     /// Whether the river has shut the ford tile `(x, y)`.
-    pub fn shuts_ford(&self, x: i32, y: i32) -> bool {
+    fn shuts_ford(&self, x: i32, y: i32) -> bool {
         self.group_at(x, y).is_some_and(|g| self.shut[g])
     }
 
@@ -731,7 +733,7 @@ impl Rivers {
 
     /// Whether the river has shut any tile: a ford or floodplain.
     pub fn flooding(&self) -> bool {
-        self.shut() || self.plain_shut.iter().any(|&s| s)
+        self.plains_shut > 0 || self.shut()
     }
 
     /// How many floodplain groups there are, and how many tiles.
@@ -897,12 +899,7 @@ impl Rivers {
         } else {
             &self.turn.plain_opened
         };
-        self.runs.clear();
-        for &p in list {
-            self.runs
-                .extend_from_slice(&self.plains[usize::from(p)].runs);
-        }
-        &self.runs
+        gather(&mut self.runs, list, |p| &self.plains[p].runs)
     }
 
     /// The runs, to shut or open on the walkable grid, of the fords the
@@ -913,12 +910,7 @@ impl Rivers {
         } else {
             &self.turn.opened
         };
-        self.runs.clear();
-        for &g in list {
-            self.runs
-                .extend_from_slice(&self.groups[usize::from(g)].runs);
-        }
-        &self.runs
+        gather(&mut self.runs, list, |g| &self.groups[g].runs)
     }
 
     /// One second of the rivers' stores, with rain of `rain` strength
@@ -1087,33 +1079,20 @@ impl Rivers {
         for (g, group) in self.groups.iter().enumerate() {
             // The highest the water is anywhere on the ford: a front
             // reaches its top first and falls last at its foot.
-            let front = [group.first, group.last]
-                .map(|r| {
-                    fronts_rise(
-                        &self.stretches,
-                        self.fronts.iter().flatten(),
-                        group.stretch,
-                        r,
-                    )
-                })
-                .into_iter()
-                .max()
-                .unwrap_or(0);
-            let water = lift + i32::from(self.swell[usize::from(group.stretch)]) + i32::from(front);
-            let need = if self.shut[g] {
+            let water = lift + i32::from(self.highest(group.stretch, group.first, group.last));
+            let need = (if self.shut[g] {
                 FLOOD_RISE / 2
             } else {
                 FLOOD_RISE
-            };
-            let now = water >= i32::from(need);
-            if now != self.shut[g] {
-                self.shut[g] = now;
-                if now {
-                    self.turn.shut.push(g as u16);
-                } else {
-                    self.turn.opened.push(g as u16);
-                }
-            }
+            })
+            .into();
+            weigh(
+                water >= need,
+                g,
+                &mut self.shut,
+                &mut self.turn.shut,
+                &mut self.turn.opened,
+            );
         }
         if second {
             self.weigh_plains(lift);
@@ -1147,34 +1126,28 @@ impl Rivers {
     /// map's water `lift`.
     fn weigh_plains(&mut self, lift: i32) {
         for (p, plain) in self.plains.iter().enumerate() {
-            let water = [plain.first, plain.last]
-                .map(|r| {
-                    water_rise(
-                        &self.stretches,
-                        &self.swell,
-                        self.fronts.iter().flatten(),
-                        plain.stretch,
-                        r,
-                    )
-                })
-                .into_iter()
-                .max()
-                .unwrap_or(0);
-            let water = lift + i32::from(water);
+            let water = lift + i32::from(self.highest(plain.stretch, plain.first, plain.last));
             let mut need = i32::from(plain.height) + i32::from(WADING_DEPTH);
             if self.plain_shut[p] {
                 need -= i32::from(PLAIN_MARGIN);
             }
-            let now = water >= need;
-            if now != self.plain_shut[p] {
-                self.plain_shut[p] = now;
-                if now {
-                    self.turn.plain_shut.push(p as u16);
+            let (list, other) = (&mut self.turn.plain_shut, &mut self.turn.plain_opened);
+            if weigh(water >= need, p, &mut self.plain_shut, list, other) {
+                self.plains_shut = if self.plain_shut[p] {
+                    self.plains_shut + 1
                 } else {
-                    self.turn.plain_opened.push(p as u16);
-                }
+                    self.plains_shut - 1
+                };
             }
         }
+    }
+
+    /// The highest the water of `stretch` stands over its line anywhere
+    /// from reach `first` down to `last` (a front reaches the top first
+    /// and falls last at the foot).
+    fn highest(&self, stretch: u16, first: u16, last: u16) -> u16 {
+        let at = |r| water_rise(&self.stretches, &self.swell, self.fronts(), stretch, r);
+        at(first).max(at(last))
     }
 
     /// The fords the minds keep off, again, built in the room kept for
@@ -1209,7 +1182,7 @@ impl Rivers {
                 h.u8(u8::from(s));
             }
         }
-        if self.plain_shut.iter().any(|&s| s) {
+        if self.plains_shut > 0 {
             for &s in &self.plain_shut {
                 h.u8(u8::from(s));
             }
@@ -1326,8 +1299,36 @@ impl Gauge {
     }
 }
 
-/// A crest of `crest` once it has run `ran` tiles: an eighth lower every
-/// [`CREST_FADE_TILES`], at most by half.
+/// Gather into `runs` the runs of each of `list`, by `of`.
+fn gather<'a>(
+    runs: &'a mut Vec<[i32; 4]>,
+    list: &[u16],
+    of: impl Fn(usize) -> &'a [[i32; 4]],
+) -> &'a [[i32; 4]] {
+    runs.clear();
+    for &i in list {
+        runs.extend_from_slice(of(usize::from(i)));
+    }
+    runs
+}
+
+/// Set `shut[i]` to `now`: if that changes it, `i` goes on `shuts` or
+/// `opens`, and returns true.
+fn weigh(
+    now: bool,
+    i: usize,
+    shut: &mut [bool],
+    shuts: &mut Vec<u16>,
+    opens: &mut Vec<u16>,
+) -> bool {
+    if now == shut[i] {
+        return false;
+    }
+    shut[i] = now;
+    if now { shuts } else { opens }.push(i as u16);
+    true
+}
+
 /// The floodplain of the rivers on `terrain`'s map, `n` tiles a side
 /// (see the module docs): its groups, by stretch and height band, and its
 /// tiles, sorted. Each floodplain tile takes the `reach` and `stretch_of`
@@ -1393,7 +1394,7 @@ fn floodplain(
                 river: xy(r),
             });
         }
-        cells.sort_unstable();
+        // (Already in order: `found` is sorted by tile, row by row.)
         plains.push(Plain {
             stretch,
             height: band * PLAIN_STEP + PLAIN_STEP / 2,
@@ -1414,6 +1415,8 @@ fn floodplain(
     (plains, tiles)
 }
 
+/// A crest of `crest` once it has run `ran` tiles: an eighth lower every
+/// [`CREST_FADE_TILES`], at most by half.
 fn faded(crest: u16, ran: u16) -> u16 {
     (u32::from(crest) * (FADE_WHOLE - fade_of(ran)) / FADE_WHOLE) as u16
 }
