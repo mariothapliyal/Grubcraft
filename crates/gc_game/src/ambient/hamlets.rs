@@ -500,8 +500,9 @@ pub(super) mod tests {
 
     /// Every shipped Conquest map and a Wilds land.
     fn maps() -> Vec<Map> {
+        let tiles = gc_ui::lobby::MapSize::Small.conquest_tiles();
         (0..=gc_map::SHIPPED.len() + 1)
-            .map(|choice| crate::conquest::make_map(choice, 7))
+            .map(|choice| crate::conquest::make_map(choice, tiles, 7))
             .collect()
     }
 
@@ -510,7 +511,7 @@ pub(super) mod tests {
 
     /// A level, bare, dry map with one site of each size, far apart.
     pub(in crate::ambient) fn flat() -> (Map, Sites) {
-        let mut map = crate::conquest::make_map(0, 7);
+        let mut map = crate::conquest::make_map(0, 0, 7);
         let side = map.tiles as i32;
         let top = map.max_height();
         let sample = ((map.water_level() + 2.0) / top * f32::from(u16::MAX)) as u16;

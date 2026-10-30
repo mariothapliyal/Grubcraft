@@ -79,10 +79,16 @@ pub enum MapPreviewKey {
         seed: u64,
     },
     /// A Conquest map: the choice (an index into
-    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS)) and the seed it is
-    /// made from ([`conquest_map_seed`](crate::lobby::conquest_map_seed),
-    /// 0 for a shipped map).
-    Conquest { choice: usize, seed: u64 },
+    /// [`CONQUEST_MAPS`](crate::lobby::CONQUEST_MAPS)), the size a made
+    /// map is made at ([`LobbySettings::conquest_tiles`], 0 for a shipped
+    /// map) and the seed it is made from
+    /// ([`conquest_map_seed`](crate::lobby::conquest_map_seed), 0 for a
+    /// shipped map).
+    Conquest {
+        choice: usize,
+        tiles: u32,
+        seed: u64,
+    },
 }
 
 /// The map `settings` pick for `players` players.
@@ -95,6 +101,7 @@ pub fn preview_key(settings: &LobbySettings, players: usize) -> MapPreviewKey {
         },
         GameMode::Conquest => MapPreviewKey::Conquest {
             choice: settings.map,
+            tiles: settings.conquest_tiles(),
             seed: crate::lobby::conquest_map_seed(settings.map, settings.map_seed),
         },
     }
@@ -802,10 +809,20 @@ impl<N: Network> Menu<N> {
         // footer, after Leave and Army. A Conquest match has none, and how
         // fast its seasons turn takes the place.
         let champions_r = Rect::new(panel.x + 24 + 148 + 140 + 12, panel.bottom() - 52, 320, 44);
-        // Which victories count (Conquest) or how big the map is (Field
-        // Battle) has no room in the four columns: it sits in the header,
-        // between the title and the host's name, clear of them.
-        let option_r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
+        // How big the map is, and in Conquest which victories count, have
+        // no room in the four columns: they sit in the header, between the
+        // title and the host's name, clear of them.
+        let (size_r, victory_r) = if settings.mode == GameMode::Conquest {
+            (
+                Rect::new(panel.x + 164, panel.y + 14, 176, sp(36)),
+                Rect::new(panel.x + 164 + 184, panel.y + 14, 250, sp(36)),
+            )
+        } else {
+            let r = Rect::new(panel.x + 164, panel.y + 14, 270, sp(36));
+            (r, r)
+        };
+        // A shipped Conquest map has its own size.
+        let sized = settings.has_map_size();
         const CHAMPIONS: &str = "Champions before AI battles";
         let mut changed = false;
         if lobby.is_host {
@@ -863,17 +880,18 @@ impl<N: Network> Menu<N> {
                     .iter()
                     .position(|&v| v == settings.victory)
                     .unwrap_or(0);
-                if ui.stepper(option_r, "Victory", &mut victory, &names) {
+                if ui.stepper(victory_r, "Victory", &mut victory, &names) {
                     settings.victory = Victory::ALL[victory];
                     changed = true;
                 }
-            } else {
+            }
+            if sized {
                 let names = MapSize::ALL.map(MapSize::name);
                 let mut size = MapSize::ALL
                     .iter()
                     .position(|&z| z == settings.map_size)
                     .unwrap_or(0);
-                if ui.stepper(option_r, "Size", &mut size, &names) {
+                if ui.stepper(size_r, "Size", &mut size, &names) {
                     settings.map_size = MapSize::ALL[size];
                     changed = true;
                 }
@@ -907,12 +925,14 @@ impl<N: Network> Menu<N> {
             {
                 ui.label_centered(slot_rect(i as i32), 1, theme::INK, text);
             }
-            let text = if settings.mode == GameMode::Conquest {
-                format!("Victory: {}", settings.victory.name())
-            } else {
-                format!("Size: {}", settings.map_size.name())
-            };
-            ui.label_centered(option_r, 1, theme::INK, &text);
+            if settings.mode == GameMode::Conquest {
+                let text = format!("Victory: {}", settings.victory.name());
+                ui.label_centered(victory_r, 1, theme::INK, &text);
+            }
+            if sized {
+                let text = format!("Size: {}", settings.map_size.name());
+                ui.label_centered(size_r, 1, theme::INK, &text);
+            }
             let text = if settings.mode == GameMode::Conquest {
                 format!("Seasons: {}", settings.seasons.name())
             } else {

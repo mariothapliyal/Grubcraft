@@ -29,17 +29,16 @@ use glam::Vec2;
 
 use crate::buildings::{self, Table};
 
-/// How many tiles a side the six-player Wilds Conquest maps are: the
-/// Standard Field size for six, several minutes' march across.
-pub const WILDS_TILES: i32 = 768;
-
-/// The Conquest map the lobby's choice `choice` names, made from `seed`
+/// The Conquest map the lobby's choice `choice` names, made `tiles` on a
+/// side (`gc_ui::lobby::MapSize::conquest_tiles`) from `seed`
 /// (`gc_ui::lobby::conquest_map_seed`). The shipped maps come first, in
-/// the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`), then
-/// the Wilds maps: as wild as the seed picks, then plains, mixed and wild
-/// land. A choice past the end (from another build's lobby or replay)
-/// gets the last; a replay still plays on the map it stored.
-pub fn make_map(choice: usize, seed: u64) -> Map {
+/// the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`), and
+/// keep their own size; then the Wilds maps: as wild as the seed picks,
+/// then plains, mixed and wild land. A choice past the end (from another
+/// build's lobby or replay) gets the last, and a size the Wilds don't
+/// come in the nearest they do; a replay still plays on the map it
+/// stored. (Replays from before the sizes were made at 768.)
+pub fn make_map(choice: usize, tiles: u32, seed: u64) -> Map {
     let shipped = gc_map::SHIPPED.len();
     let lands = gc_map::wilds::Wildness::ALL;
     let choice = choice.min(shipped + lands.len());
@@ -53,8 +52,10 @@ pub fn make_map(choice: usize, seed: u64) -> Map {
         None => lands[(seed % lands.len() as u64) as usize],
         Some(k) => lands[k],
     };
-    let def = gc_map::conquest::describe_wilds(WILDS_TILES, seed, wildness)
-        .expect("WILDS_TILES is a size describe_wilds makes");
+    let range = gc_map::conquest::WILDS_TILES;
+    let tiles = (tiles as i32).clamp(*range.start(), *range.end());
+    let def = gc_map::conquest::describe_wilds(tiles, seed, wildness)
+        .expect("the size is one describe_wilds makes");
     Map::from_def(&def)
 }
 
@@ -573,6 +574,9 @@ mod tests {
     use gc_sim::{Capacities, MatchSetup, TICKS_PER_SECOND, TradePost};
     use gc_ui::lobby::SHIPPED_CONQUEST_MAPS as SHIPPED_CONQUEST;
 
+    /// The lobby's default size.
+    const MEDIUM: u32 = gc_ui::lobby::MapSize::Medium.conquest_tiles();
+
     fn data() -> GameData<'static> {
         crate::data::load()
     }
@@ -611,7 +615,7 @@ mod tests {
     fn a_regiment_manning_a_gatehouse_stands_at_the_deck_along_its_length() {
         use crate::buildings::{GATEHOUSE_DECK, wall_slots};
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::EmberClans, Faction::EmberClans];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let house = (0..table.len() as u16)
@@ -731,7 +735,7 @@ mod tests {
         // Every shipped map, and a Wilds map of every kind of land.
         let maps = gc_map::SHIPPED.len() + gc_map::wilds::Wildness::ALL.len();
         for choice in 0..=maps {
-            let map = make_map(choice, 7);
+            let map = make_map(choice, MEDIUM, 7);
             let starts = map.starts();
             let factions = vec![Faction::Brood; starts.len()];
             let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
@@ -787,7 +791,10 @@ mod tests {
         assert_eq!(gc_map::SHIPPED.len(), SHIPPED_CONQUEST);
         for (i, &(file, _)) in gc_map::SHIPPED.iter().enumerate() {
             assert_eq!(gc_map::shipped(file).unwrap().name, CONQUEST_MAPS[i]);
-            assert_eq!(make_map(i, 0).players as usize, CONQUEST_MAP_PLAYERS[i]);
+            assert_eq!(
+                make_map(i, MEDIUM, 0).players as usize,
+                CONQUEST_MAP_PLAYERS[i]
+            );
             assert_eq!(choice_of(file), Some(i));
         }
         let lands = gc_map::wilds::Wildness::ALL;
@@ -798,23 +805,31 @@ mod tests {
         }
         assert_eq!(CONQUEST_MAPS.len(), SHIPPED_CONQUEST + 1 + lands.len());
         assert_eq!(CONQUEST_MAP_PLAYERS.len(), CONQUEST_MAPS.len());
-        // A Wilds map is the big six-player Conquest map, and a choice past
-        // the end gets the last.
-        let wild = make_map(CONQUEST_MAPS.len() - 1, 5);
-        assert_eq!(wild.players, 6);
-        assert_eq!(wild.tiles, WILDS_TILES as u32);
-        // The Standard size for six, as the lobby sizes Field Battles.
-        let standard = gc_ui::lobby::field_map_tiles(gc_ui::lobby::MapSize::Standard, 6);
-        assert_eq!(WILDS_TILES as u32, standard);
-        assert!(wild.is_conquest());
-        assert_eq!(make_map(99, 5).hash(), wild.hash(), "never panics");
+        // A Wilds map has six starts at every size, made at the size
+        // asked; a choice past the end gets the last, and a size the
+        // Wilds don't come in the nearest they do.
+        for size in gc_ui::lobby::MapSize::ALL {
+            let tiles = size.conquest_tiles();
+            let wild = make_map(CONQUEST_MAPS.len() - 1, tiles, 5);
+            assert_eq!((wild.players, wild.tiles), (6, tiles));
+            assert!(wild.is_conquest());
+            if tiles == MEDIUM {
+                let past = make_map(99, MEDIUM, 5);
+                assert_eq!(past.hash(), wild.hash(), "never panics");
+            }
+        }
+        assert_eq!(make_map(SHIPPED_CONQUEST, 100, 5).tiles, 448);
+        // Replays from before the sizes were on 768-tile maps.
+        assert_eq!(make_map(SHIPPED_CONQUEST, 768, 5).tiles, 768);
+        // A shipped map keeps its size.
+        assert_eq!(make_map(1, MEDIUM, 0).tiles, 256);
     }
 
     /// Fewer players than a Wilds map's six starts are spread round it;
     /// a full map, or a map with fewer starts, keeps the map's order.
     #[test]
     fn players_are_spread_round_a_six_start_map() {
-        let wild = make_map(SHIPPED_CONQUEST, 9);
+        let wild = make_map(SHIPPED_CONQUEST, MEDIUM, 9);
         let starts = wild.starts();
         assert_eq!(player_starts(&wild, 6), starts);
         assert_eq!(player_starts(&wild, 2), vec![starts[0], starts[3]]);
@@ -826,16 +841,16 @@ mod tests {
             player_starts(&wild, 4),
             vec![starts[0], starts[2], starts[3], starts[5]]
         );
-        let teeth = make_map(1, 0);
+        let teeth = make_map(1, 0, 0);
         assert_eq!(player_starts(&teeth, 2), teeth.starts());
     }
 
     #[test]
     fn ribcage_pass_has_two_starts_each_with_its_seeps_and_vein() {
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         assert_eq!(map.players, 2);
         assert_eq!(map.starts().len(), 2);
-        assert_eq!(make_map(1, 0).starts().len(), 4);
+        assert_eq!(make_map(1, 0, 0).starts().len(), 4);
         let nodes = nodes_of(&map);
         for (sx, sy) in map.starts() {
             let near = |r: Resource| {
@@ -859,7 +874,7 @@ mod tests {
     #[test]
     fn every_faction_opens_with_its_hall_workers_and_stores() {
         let data = data();
-        let map = make_map(1, 0);
+        let map = make_map(1, 0, 0);
         let factions = Faction::ALL;
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -912,7 +927,7 @@ mod tests {
     #[test]
     fn workers_stand_idle_until_they_gather() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::EmberClans, Faction::CarrionConcord];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -950,7 +965,7 @@ mod tests {
     #[test]
     fn the_maps_villages_are_the_trade_posts() {
         for choice in [0, 1, SHIPPED_CONQUEST + 1] {
-            let map = make_map(choice, 3);
+            let map = make_map(choice, MEDIUM, 3);
             let posts = posts_of(&map);
             let want: Vec<_> = map
                 .objects
@@ -981,7 +996,7 @@ mod tests {
     #[test]
     fn a_concord_caravan_sent_to_a_hamlet_brings_grub_home() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::EmberClans, Faction::CarrionConcord];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1039,7 +1054,7 @@ mod tests {
 
     #[test]
     fn tempo_sets_the_rates() {
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let (_, plan, _) = world_on(&map, &[Faction::EmberClans, Faction::Brood], Tempo::Swift);
         let s = plan.setup();
         assert_eq!((s.gather_percent, s.build_percent), (150, 75));
@@ -1052,7 +1067,7 @@ mod tests {
         // The shipped maps and one Wilds map (each Wilds map is made the
         // same way).
         for choice in 0..=SHIPPED_CONQUEST {
-            let map = make_map(choice, 3);
+            let map = make_map(choice, MEDIUM, 3);
             let both = Victories::BOTH;
             let data = data();
             let plan = plan(&Table::new(&data), &data, &map, &[], Tempo::Epic, both);
@@ -1069,7 +1084,7 @@ mod tests {
     #[test]
     fn flow_and_cuts_are_drawn_on_the_root_veins() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Brood, Faction::Brood];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1145,7 +1160,7 @@ mod tests {
     #[test]
     fn land_comes_only_from_the_buildings_a_side_is_shown() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Brood, Faction::Brood];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1176,7 +1191,7 @@ mod tests {
     #[test]
     fn each_faction_spreads_land_of_its_own_kind() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         for (faction, kind) in [
             (Faction::Brood, gc_render::LAND_BROOD),
             (Faction::EmberClans, gc_render::LAND_CLANS),
@@ -1199,7 +1214,7 @@ mod tests {
     #[test]
     fn tuning_beams_are_drawn_for_the_resonators_a_side_is_shown() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Choir, Faction::Choir];
         let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1266,7 +1281,7 @@ mod tests {
     #[test]
     fn power_fields_are_drawn_as_rings_round_their_buildings() {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Choir, Faction::Choir];
         let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1415,7 +1430,7 @@ mod tests {
     /// A two-player Choir world, its opening laid and settled.
     fn opened_choir_world() -> (World, Table) {
         let data = data();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Choir, Faction::Choir];
         let (mut world, _, table) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
         let opening = opening(&data, &table, &map, &world, &factions);
@@ -1505,7 +1520,7 @@ mod tests {
         );
         // The sandbox's own side sees nothing of a world with no chords.
         let mut none = Vec::new();
-        let map = make_map(0, 0);
+        let map = make_map(0, 0, 0);
         let factions = [Faction::Choir, Faction::Choir];
         let (empty, _, _) = world_for(&map, &factions, Tempo::Standard, Victories::BOTH);
         buildings::push_chords(&empty, 0, true, &mut none);

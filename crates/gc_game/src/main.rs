@@ -5154,6 +5154,7 @@ impl Running {
                 let key = if conquest {
                     MapKey::Conquest {
                         choice,
+                        tiles: gc_ui::lobby::conquest_map_tiles(choice, r.map_tiles),
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
@@ -5449,7 +5450,7 @@ impl Running {
         // every machine; a Field Battle map's follow its seed.
         let trees = match key {
             MapKey::Field(k) => k.seed,
-            MapKey::Conquest { choice, seed } => seed ^ choice as u64,
+            MapKey::Conquest { choice, seed, .. } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(&self.heightmap, trees, &self.scenery_models)
@@ -7984,14 +7985,16 @@ impl Running {
 }
 
 /// A map the lobby can play on: a Field Battle map made from its choice,
-/// size and seed, or a Conquest map made from its choice and seed.
+/// size and seed, or a Conquest map made from its choice, size and seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MapKey {
     Field(FieldMap),
-    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the seed a Wilds
-    /// map is made from (`gc_ui::lobby::conquest_map_seed`).
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the size and seed
+    /// a Wilds map is made at (`gc_ui::lobby::MapSize::conquest_tiles`,
+    /// `gc_ui::lobby::conquest_map_seed`; a shipped map ignores both).
     Conquest {
         choice: usize,
+        tiles: u32,
         seed: u64,
     },
 }
@@ -8000,7 +8003,11 @@ impl MapKey {
     fn make(self) -> Map {
         match self {
             MapKey::Field(key) => key.make(),
-            MapKey::Conquest { choice, seed } => conquest::make_map(choice, seed),
+            MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => conquest::make_map(choice, tiles, seed),
         }
     }
 
@@ -8026,7 +8033,15 @@ impl From<MapPreviewKey> for MapKey {
                 tiles,
                 seed,
             }),
-            MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
+            MapPreviewKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            },
         }
     }
 }
