@@ -512,6 +512,9 @@ pub fn stage_of(built_percent: u8) -> usize {
 /// The model every faction's bridge tile shows until it has one of its own.
 const SHARED_BRIDGE: &str = "Timber Bridge";
 
+/// Whether bridge tiles show a model a tile at a time (see `Looks::new`).
+const BRIDGE_MODELS: bool = false;
+
 /// The model name of a building's stage: its own name when finished, and
 /// `#1` to `#3` after it for the stages going up.
 pub fn stage_name(name: &str, stage: usize) -> String {
@@ -560,13 +563,16 @@ impl Looks {
         Looks {
             // A drawn wall with a model of its own (the Palisade) shows it
             // along its line (`model_spots`); the rest, and stakes and
-            // barricades, are drawn as boxes. A bridge tile is a model:
-            // each faction's own, else the shared one.
+            // barricades, are drawn as boxes. A bridge is drawn as boxes too
+            // for now: the one-tile Timber Bridge model has a rail on one
+            // side, which runs down the middle of a deck three to five
+            // tiles wide; its pieces are to be laid along the curve instead
+            // (docs/29, the timber kit). `BRIDGE_MODELS` turns it back on.
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
                     let bridge = stats.is_bridge();
                     core::array::from_fn(|k| {
-                        if boxed_line(stats) {
+                        if boxed_line(stats) || bridge && !BRIDGE_MODELS {
                             return None;
                         }
                         models.by_name(&stage_name(name, k)).or_else(|| {
@@ -2690,7 +2696,7 @@ mod tests {
     }
 
     #[test]
-    fn every_bridge_shows_the_shared_timber_model_along_its_line() {
+    fn every_bridge_shows_the_shared_timber_model_along_its_line_when_turned_on() {
         let data = crate::data::load();
         let table = Table::new(&data);
         let models = crate::models::load().unwrap();
@@ -2701,9 +2707,14 @@ mod tests {
             view.line = Some([10, 3, 10, 9]);
             view.built_percent = 100;
             let name = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
-            assert_eq!(name(&view), Some("Timber Bridge"));
+            let (done, going_up) = if BRIDGE_MODELS {
+                (Some("Timber Bridge"), Some("Timber Bridge #1"))
+            } else {
+                (None, None)
+            };
+            assert_eq!(name(&view), done);
             view.built_percent = 10;
-            assert_eq!(name(&view), Some("Timber Bridge #1"));
+            assert_eq!(name(&view), going_up);
             // Along the line (south here), and east for a line across the map.
             assert_eq!(looks.facing(&view), Vec2::Y);
             view.line = Some([3, 5, 9, 5]);
@@ -2942,8 +2953,12 @@ mod tests {
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
+        // So is the shared bridge model while bridges are boxes.
+        let bridge = (0..STAGES)
+            .filter(|&k| !BRIDGE_MODELS && models.by_name(&stage_name(SHARED_BRIDGE, k)).is_some())
+            .count();
         assert_eq!(
-            dressed.len() + unused,
+            dressed.len() + unused + bridge,
             still,
             "a building model's name matches no building"
         );
