@@ -13,6 +13,11 @@
 // scripts: the project's design/buildings/ folder (docs/21-buildings.md); the Iron Gate is
 // buildings/concord/iron_gate.py, the Maw Gate buildings/brood/maw_gate.py, and the gatehouses are
 // buildings/ember/yagura_gatehouse.py, buildings/concord/gate_of_debts.py and buildings/brood/chitin_maw.py.
+// The finished gates and gatehouses all have an OPEN doorway (2.84 tiles between the jambs, nothing
+// below 1.8 tiles above the floor across it): the door leaves are separate models, `<Gate name> Leaf`
+// (one per gate and gatehouse, sharing its textures, hinge at the model's origin, lying along the leaf's
+// +Y in the authoring frame, see buildings/gatehouse_kit.py), which the game swings open and shut.
+// Looks #1 to #3 keep a half-hung leaf.
 // More faction fortifications (walls, towers) join this pack later.
 (
     models: [
@@ -64,10 +69,25 @@
         (
             name: "Iron Gate",
             source: "shared:grubcraft/buildings/concord/iron-gate/final.glb",
-            height: 2.25,
+            height: 2.5,
             keep_origin: true,
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/iron-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/iron-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/iron-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Iron Gate Leaf",
+            source: "shared:grubcraft/buildings/concord/iron-gate/leaf.glb",
+            height: 1.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
             textures: Some((
                 albedo: "shared:grubcraft/buildings/concord/iron-gate/albedo.png",
                 team: Some("shared:grubcraft/buildings/concord/iron-gate/team.png"),
@@ -124,10 +144,25 @@
         (
             name: "Maw Gate",
             source: "shared:grubcraft/buildings/brood/maw-gate/final.glb",
-            height: 2.25,
+            height: 2.6,
             keep_origin: true,
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/maw-gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/maw-gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/maw-gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Maw Gate Leaf",
+            source: "shared:grubcraft/buildings/brood/maw-gate/leaf.glb",
+            height: 1.77,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
             textures: Some((
                 albedo: "shared:grubcraft/buildings/brood/maw-gate/albedo.png",
                 team: Some("shared:grubcraft/buildings/brood/maw-gate/team.png"),
@@ -167,6 +202,21 @@
             )),
         ),
         (
+            name: "Yagura Gatehouse Leaf",
+            source: "shared:grubcraft/buildings/ember/yagura-gatehouse/leaf.glb",
+            height: 1.8,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/ember/yagura-gatehouse/albedo.png",
+                team: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/team.png"),
+                normal: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/normal.png"),
+                orm: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/ember/yagura-gatehouse/emissive.png"),
+            )),
+        ),
+        (
             name: "Gate of Debts #3",
             source: "shared:grubcraft/buildings/concord/gate-of-debts/stage3.glb",
             height: 2.97,
@@ -197,6 +247,21 @@
             )),
         ),
         (
+            name: "Gate of Debts Leaf",
+            source: "shared:grubcraft/buildings/concord/gate-of-debts/leaf.glb",
+            height: 1.84,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/concord/gate-of-debts/albedo.png",
+                team: Some("shared:grubcraft/buildings/concord/gate-of-debts/team.png"),
+                normal: Some("shared:grubcraft/buildings/concord/gate-of-debts/normal.png"),
+                orm: Some("shared:grubcraft/buildings/concord/gate-of-debts/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/concord/gate-of-debts/emissive.png"),
+            )),
+        ),
+        (
             name: "Chitin Maw #3",
             source: "shared:grubcraft/buildings/brood/chitin-maw/stage3.glb",
             height: 2.32,
@@ -218,6 +283,21 @@
             keep_origin: true,
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings/brood/chitin-maw/albedo.png",
+                team: Some("shared:grubcraft/buildings/brood/chitin-maw/team.png"),
+                normal: Some("shared:grubcraft/buildings/brood/chitin-maw/normal.png"),
+                orm: Some("shared:grubcraft/buildings/brood/chitin-maw/orm.png"),
+                emissive: Some("shared:grubcraft/buildings/brood/chitin-maw/emissive.png"),
+            )),
+        ),
+        (
+            name: "Chitin Maw Leaf",
+            source: "shared:grubcraft/buildings/brood/chitin-maw/leaf.glb",
+            height: 1.77,
+            keep_origin: true,
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
             textures: Some((
                 albedo: "shared:grubcraft/buildings/brood/chitin-maw/albedo.png",
                 team: Some("shared:grubcraft/buildings/brood/chitin-maw/team.png"),
