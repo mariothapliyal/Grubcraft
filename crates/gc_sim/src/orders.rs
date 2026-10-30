@@ -17,6 +17,12 @@
 //! attack-move order apart from its queue. Once the fight is over (the
 //! enemy gone, routing or shattered, or dropped as out of reach), it takes
 //! that order up again, at the pace and width first asked for.
+//!
+//! **Where they are kept.** Few regiments have anything queued or are on
+//! an attack-move at once, so a regiment's [`Plan`] is not kept in every
+//! regiment slot but in a shared pool of [`PLANS`] (the simulation's
+//! memory is held tight, docs/12). When every plan is in use, a Shift order
+//! is refused and an attack-move marches as a plain move.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
@@ -26,6 +32,8 @@ use crate::state::State;
 
 /// Steps a regiment can have queued behind the order it is carrying out.
 pub const QUEUE_LEN: usize = 4;
+/// Regiments that can have orders queued or be on an attack-move at once.
+pub const PLANS: usize = 256;
 /// How far a regiment on an attack-move looks for an enemy to fight, in
 /// tiles (beyond its bows' reach, for archers).
 pub const HUNT_RADIUS: Fx = Fx::from_int(12);
@@ -185,6 +193,109 @@ impl State for Queue {
     }
 }
 
+/// What a regiment is to do beyond the order it is carrying out: its
+/// queued steps and the attack-move it is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Plan {
+    pub queue: Queue,
+    /// The attack-move it is on, kept apart from its queue so it can be
+    /// taken up again after a fight.
+    pub hunt: Option<Step>,
+    /// Turned aside from `hunt` to fight an enemy it met.
+    pub diverted: bool,
+}
+
+impl Plan {
+    pub const NONE: Plan = Plan {
+        queue: Queue::EMPTY,
+        hunt: None,
+        diverted: false,
+    };
+
+    fn is_none(&self) -> bool {
+        self.queue.is_empty() && self.hunt.is_none()
+    }
+}
+
+impl State for Plan {
+    fn write(&self, out: &mut alloc::vec::Vec<u8>) {
+        self.queue.write(out);
+        self.hunt.write(out);
+        self.diverted.write(out);
+    }
+
+    fn read(input: &mut &[u8]) -> Option<Self> {
+        Some(Plan {
+            queue: Queue::read(input)?,
+            hunt: Option::<Step>::read(input)?,
+            diverted: bool::read(input)?,
+        })
+    }
+
+    fn hash(&self, h: &mut StateHasher) {
+        self.queue.hash(h);
+        self.hunt.hash(h);
+        self.diverted.hash(h);
+    }
+}
+
+/// A regiment slot's index in [`Plans`], or [`NO_PLAN`].
+pub(crate) type PlanIndex = u16;
+pub(crate) const NO_PLAN: PlanIndex = PlanIndex::MAX;
+
+/// The pool regiments' [`Plan`]s are kept in, allocated in full up front.
+/// Which entry a regiment has is no part of the game's state: only what
+/// its plan holds is hashed and saved.
+pub(crate) struct Plans {
+    plans: alloc::vec::Vec<Plan>,
+    /// Free entries, popped from the back.
+    free: alloc::vec::Vec<PlanIndex>,
+}
+
+impl Plans {
+    pub(crate) fn with_capacity(n: usize) -> Plans {
+        let n = n.min(PLANS);
+        Plans {
+            plans: alloc::vec![Plan::NONE; n],
+            free: (0..n as PlanIndex).rev().collect(),
+        }
+    }
+
+    pub(crate) fn get(&self, k: PlanIndex) -> Plan {
+        self.plans
+            .get(usize::from(k))
+            .copied()
+            .unwrap_or(Plan::NONE)
+    }
+
+    /// Store `plan` in entry `*k`, taking an entry if `*k` has none and
+    /// giving it back if `plan` is empty. False (and `*k` unchanged) when
+    /// none is free.
+    pub(crate) fn set(&mut self, k: &mut PlanIndex, plan: Plan) -> bool {
+        if plan.is_none() {
+            self.release(k);
+            return true;
+        }
+        if *k == NO_PLAN {
+            let Some(free) = self.free.pop() else {
+                return false;
+            };
+            *k = free;
+        }
+        self.plans[usize::from(*k)] = plan;
+        true
+    }
+
+    /// Give entry `*k` back, if it holds one.
+    pub(crate) fn release(&mut self, k: &mut PlanIndex) {
+        if *k != NO_PLAN {
+            self.plans[usize::from(*k)] = Plan::NONE;
+            self.free.push(*k);
+            *k = NO_PLAN;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +340,24 @@ mod tests {
         let mut bytes = alloc::vec::Vec::new();
         q.write(&mut bytes);
         assert_eq!(Queue::read(&mut bytes.as_slice()), Some(q));
+    }
+
+    #[test]
+    fn plans_are_lent_and_given_back() {
+        let mut plans = Plans::with_capacity(2);
+        let plan = Plan {
+            hunt: Some(to(1)),
+            ..Plan::NONE
+        };
+        let (mut a, mut b, mut c) = (NO_PLAN, NO_PLAN, NO_PLAN);
+        assert!(plans.set(&mut a, plan) && plans.set(&mut b, plan));
+        assert!(!plans.set(&mut c, plan), "only two to lend");
+        assert_eq!(c, NO_PLAN);
+        assert_eq!(plans.get(a), plan);
+        // An empty plan gives its entry back.
+        assert!(plans.set(&mut a, Plan::NONE));
+        assert_eq!(a, NO_PLAN);
+        assert_eq!(plans.get(a), Plan::NONE);
+        assert!(plans.set(&mut c, plan));
     }
 }

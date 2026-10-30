@@ -1983,10 +1983,11 @@ impl World {
                     return false;
                 }
                 // Behind anything it is still to do, its work included.
-                if self.free(i) && self.regiments.queue[i].is_empty() {
+                let mut plan = self.regiments.plan(i);
+                if self.free(i) && plan.queue.is_empty() {
                     self.start_step(i, step)
                 } else {
-                    self.regiments.queue[i].push(step)
+                    plan.queue.push(step) && self.regiments.set_plan(i, plan)
                 }
             }
             Command::RemoveRegiment { regiment } => self.regiments.despawn(regiment),
@@ -2735,6 +2736,7 @@ impl World {
         for i in 0..self.regiments.alive.len() {
             let regs = &self.regiments;
             if !regs.alive[i]
+                || !regs.planned(i)
                 || regs.on_wall[i]
                 || regs.engaged[i].is_some()
                 || regs.falling_back[i] > 0
@@ -2742,7 +2744,7 @@ impl World {
             {
                 continue;
             }
-            if let Some(hunt) = regs.hunt[i] {
+            if let Some(hunt) = regs.plan(i).hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
                     && regs
@@ -2752,7 +2754,7 @@ impl World {
                     self.regiments.attack_target[i] = None;
                 }
                 let regs = &self.regiments;
-                if regs.diverted[i] {
+                if regs.plan(i).diverted {
                     // The fight is over: the march goes on.
                     if regs.attack_target[i].is_none() {
                         self.start_step(i, hunt);
@@ -2763,13 +2765,22 @@ impl World {
                     && let Some(foe) = self.foe_near(i)
                     && self.charge_at(self.regiments.handle(i), foe)
                 {
-                    self.regiments.diverted[i] = true;
+                    let plan = self.regiments.plan(i);
+                    self.regiments.set_plan(
+                        i,
+                        orders::Plan {
+                            diverted: true,
+                            ..plan
+                        },
+                    );
                 }
             }
             while self.free(i) {
-                let Some(step) = self.regiments.queue[i].pop() else {
+                let mut plan = self.regiments.plan(i);
+                let Some(step) = plan.queue.pop() else {
                     break;
                 };
+                self.regiments.set_plan(i, plan);
                 if self.start_step(i, step) {
                     break;
                 }

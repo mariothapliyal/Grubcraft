@@ -7,7 +7,7 @@ use crate::combat::{Combat, OPEN_GROUND, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
-use crate::orders::{Queue, Step};
+use crate::orders::{NO_PLAN, Plan, PlanIndex, Plans, Queue, Step};
 use crate::state::State;
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
@@ -118,6 +118,10 @@ macro_rules! regiment_fields {
             /// formation slot (slot `k` is rank `k / files`, file
             /// `k % files`; rank 0 is the front).
             pub(crate) hp: Vec<u16>,
+            /// Each slot's entry in `plans`, or [`NO_PLAN`]: its queued
+            /// orders and attack-move (see [`crate::orders`]).
+            plan: Vec<PlanIndex>,
+            plans: Plans,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -132,6 +136,8 @@ macro_rules! regiment_fields {
                     alive: vec![false; n],
                     generation: vec![0; n],
                     hp: vec![0; n * MAX_MODELS as usize],
+                    plan: vec![NO_PLAN; n],
+                    plans: Plans::with_capacity(n),
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -140,6 +146,7 @@ macro_rules! regiment_fields {
             /// Slot `i` as a free slot holds it (its handle aside).
             fn reset_slot(&mut self, i: usize) {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
+                self.plans.release(&mut self.plan[i]);
                 $(self.$name[i] = $free;)*
             }
 
@@ -147,6 +154,7 @@ macro_rules! regiment_fields {
             fn copy_slot(&mut self, from: &Regiments, i: usize) {
                 let m = MAX_MODELS as usize;
                 self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
+                self.set_plan(i, from.plan(i));
                 $(self.$name[i] = from.$name[i];)*
             }
 
@@ -158,6 +166,7 @@ macro_rules! regiment_fields {
                 for hp in &self.hp[i * m..][..self.models[i] as usize] {
                     hp.hash(h);
                 }
+                self.plan(i).hash(h);
                 $(self.$name[i].hash(h);)*
             }
 
@@ -167,6 +176,7 @@ macro_rules! regiment_fields {
                 for hp in &self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize] {
                     hp.write(out);
                 }
+                self.plan(i).write(out);
                 $(self.$name[i].write(out);)*
             }
 
@@ -175,6 +185,10 @@ macro_rules! regiment_fields {
             fn read_slot(&mut self, i: usize, input: &mut &[u8]) -> Option<()> {
                 for k in 0..MAX_MODELS as usize {
                     self.hp[i * MAX_MODELS as usize + k] = u16::read(input)?;
+                }
+                let plan = Plan::read(input)?;
+                if !self.set_plan(i, plan) {
+                    return None;
                 }
                 $(self.$name[i] = <$ty>::read(input)?;)*
                 Some(())
@@ -229,13 +243,6 @@ regiment_fields! {
     pace: Fx = Fx::ZERO,
     /// Enemy regiment this one was ordered to attack.
     attack_target: Option<RegimentHandle> = None,
-    /// Orders queued behind the current one (see [`crate::orders`]).
-    queue: Queue = Queue::EMPTY,
-    /// The attack-move it is on, if any: it stops to fight any enemy met
-    /// on the way, then takes this march up again (see [`crate::orders`]).
-    hunt: Option<Step> = None,
-    /// On an attack-move and turned aside to fight what it met.
-    diverted: bool = false,
     /// The enemy it is fighting in melee this tick (the nearest one in contact).
     engaged: Option<RegimentHandle> = None,
     /// Ticks of charge bonus left.
@@ -459,6 +466,7 @@ impl Regiments {
             return false;
         };
         self.alive[i] = false;
+        self.plans.release(&mut self.plan[i]);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.free.push(h.index);
         true
@@ -669,20 +677,43 @@ impl Regiments {
     /// the attack-move it now is).
     pub(crate) fn fresh(&mut self, h: RegimentHandle, hunt: Option<Step>) {
         if let Some(i) = self.resolve(h) {
-            self.queue[i] = Queue::EMPTY;
-            self.on_hunt(i, hunt);
+            self.set_plan(i, Plan { hunt, ..Plan::NONE });
         }
     }
 
-    /// Slot `i` is on the attack-move `hunt` from now, or on none.
+    /// Slot `i` is on the attack-move `hunt` from now, or on none (and
+    /// marches plainly if no plan is free to keep it in).
     pub(crate) fn on_hunt(&mut self, i: usize, hunt: Option<Step>) {
-        self.hunt[i] = hunt;
-        self.diverted[i] = false;
+        let queue = self.plan(i).queue;
+        self.set_plan(
+            i,
+            Plan {
+                queue,
+                hunt,
+                diverted: false,
+            },
+        );
+    }
+
+    /// Slot `i`'s queued orders and attack-move.
+    pub(crate) fn plan(&self, i: usize) -> Plan {
+        self.plans.get(self.plan[i])
+    }
+
+    /// Slot `i`'s queued orders and attack-move from now; false (and
+    /// nothing changed) when there is no room left to keep them.
+    pub(crate) fn set_plan(&mut self, i: usize, plan: Plan) -> bool {
+        self.plans.set(&mut self.plan[i], plan)
+    }
+
+    /// Whether slot `i` has anything queued or is on an attack-move.
+    pub(crate) fn planned(&self, i: usize) -> bool {
+        self.plan[i] != NO_PLAN
     }
 
     /// Regiment `h`'s queued orders, first first.
     pub fn queued(&self, h: RegimentHandle) -> Option<Queue> {
-        self.resolve(h).map(|i| self.queue[i])
+        self.resolve(h).map(|i| self.plan(i).queue)
     }
 
     /// Put a regiment straight down at `position` (deployment): no march,
@@ -1103,9 +1134,9 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
-            hunting: self.hunt[i].is_some(),
-            diverted: self.diverted[i],
-            queued: self.queue[i].len() as u8,
+            hunting: self.plan(i).hunt.is_some(),
+            diverted: self.plan(i).diverted,
+            queued: self.plan(i).queue.len() as u8,
         }
     }
 
