@@ -5179,6 +5179,7 @@ impl Running {
                 let key = if conquest {
                     MapKey::Conquest {
                         choice,
+                        tiles: gc_ui::lobby::conquest_map_tiles(choice, r.map_tiles),
                         seed: gc_ui::lobby::conquest_map_seed(choice, r.seed),
                     }
                 } else {
@@ -5474,7 +5475,7 @@ impl Running {
         // every machine; a Field Battle map's follow its seed.
         let trees = match key {
             MapKey::Field(k) => k.seed,
-            MapKey::Conquest { choice, seed } => seed ^ choice as u64,
+            MapKey::Conquest { choice, seed, .. } => seed ^ choice as u64,
         };
         self.scenery = tagged_alloc::scope(Tag::Render, || {
             scenery::Scenery::new(&self.heightmap, trees, &self.scenery_models)
@@ -7186,7 +7187,10 @@ impl Running {
             // Blows land on the model's walls, where they stand within the
             // footprint.
             let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
+            // A drawn wall's models run along its line, not its turn: blows
+            // land on its tile as for a slab.
             let walls = (model.zip(self.art.as_ref()))
+                .filter(|_| s.line.is_none())
                 .and_then(|(m, art)| art.looks.walls(m))
                 // Turned a quarter, its model's walls run the other way.
                 .map(|w| {
@@ -7206,6 +7210,10 @@ impl Running {
                 top,
                 model,
                 lift,
+                facing: self
+                    .art
+                    .as_ref()
+                    .map_or(Vec2::Y, |art| art.looks.facing(&s)),
                 owner: s.owner,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
@@ -7489,13 +7497,13 @@ impl Running {
                 let mut flags = models::pose_flags(pose, 0, false);
                 if fall.tip > 0.0 {
                     // Tipped over toward its way, which the model reads in
-                    // its own space (turned to face south, as drawn).
+                    // its own space (turned as it stood).
                     flags[2] = (fall.tip * 255.0).round() as u8;
-                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                    flags[3] = scenery::fall_of(scenery::turn_of(fall.facing), fall.way);
                 }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
-                    facing: [0.0, 1.0],
+                    facing: fall.facing.to_array(),
                     frames: pose.rows,
                     flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
@@ -7508,14 +7516,12 @@ impl Running {
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
-                let (centre, top, lift) = buildings::model_spot(&s, &ground);
                 let (shake, rise) = self.siege.jolt(s.handle);
-                let (centre, lift) = (centre + shake, lift + rise);
-                let facing = art.looks.facing(&s);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                // A still model at `pos` on the floor `lift` above the ground.
+                let along = !self.buildings.is_bridge(s.building);
+                // A still model at `pos`, `lift` above the ground there.
                 let mut push = |model: usize, pos: Vec2, facing: Vec2, lift: f32| {
-                    let at = Vec3::new(pos.x, top, pos.y);
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
                     let (Some(lod), Some(pose)) = (
                         art.view.place(art.looks.top(model), at),
                         art.clips.pose(model, Action::Idle, time),
@@ -7533,12 +7539,16 @@ impl Running {
                         ..Default::default()
                     });
                 };
-                push(model, centre, facing, lift);
-                if let Some(leaf) = art.looks.leaf_shown(&s) {
+                let leaf = art.looks.leaf_shown(&s);
+                for (centre, facing, lift) in art.looks.spots(&s, model, along, &ground) {
+                    let (centre, lift) = (centre + shake, lift + rise);
+                    push(model, centre, facing, lift);
+                    let Some(leaf) = leaf else { continue };
+                    // On the gate's floor, wherever the ground is.
+                    let floor = ground(centre.x, centre.y) + lift;
                     let swing = self.gate_swings.swing(s.handle);
                     for (at, way) in buildings::leaf_spots(centre, facing, leaf.hinge, swing) {
-                        // On the gate's floor, wherever the ground is.
-                        push(leaf.model, at, way, top - ground(at.x, at.y) + rise);
+                        push(leaf.model, at, way, floor - ground(at.x, at.y));
                     }
                 }
             }
@@ -8119,14 +8129,16 @@ impl Running {
 }
 
 /// A map the lobby can play on: a Field Battle map made from its choice,
-/// size and seed, or a Conquest map made from its choice and seed.
+/// size and seed, or a Conquest map made from its choice, size and seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MapKey {
     Field(FieldMap),
-    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the seed a Wilds
-    /// map is made from (`gc_ui::lobby::conquest_map_seed`).
+    /// An index into `gc_ui::lobby::CONQUEST_MAPS`, and the size and seed
+    /// a Wilds map is made at (`gc_ui::lobby::MapSize::conquest_tiles`,
+    /// `gc_ui::lobby::conquest_map_seed`; a shipped map ignores both).
     Conquest {
         choice: usize,
+        tiles: u32,
         seed: u64,
     },
 }
@@ -8135,7 +8147,11 @@ impl MapKey {
     fn make(self) -> Map {
         match self {
             MapKey::Field(key) => key.make(),
-            MapKey::Conquest { choice, seed } => conquest::make_map(choice, seed),
+            MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => conquest::make_map(choice, tiles, seed),
         }
     }
 
@@ -8161,7 +8177,15 @@ impl From<MapPreviewKey> for MapKey {
                 tiles,
                 seed,
             }),
-            MapPreviewKey::Conquest { choice, seed } => MapKey::Conquest { choice, seed },
+            MapPreviewKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            } => MapKey::Conquest {
+                choice,
+                tiles,
+                seed,
+            },
         }
     }
 }

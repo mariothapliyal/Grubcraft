@@ -5,9 +5,9 @@
 manifest = 1
 baker = gc_artbake 2
 schema = 4
-config = 2cc430f0a4d6e40aae4b84064a8ea4e9
-pack = 743cbf2577b017c383b70b2f39e7948f
-pack_bytes = 8973696
+config = 09fbf7aad38672571841201cba77a4da
+pack = 945f9907a4622ffd7b19a9259082df5f
+pack_bytes = 8973616
 source shared:grubcraft/buildings-detail/ember/ancestor-shrine/stage1.glb = 0ed9ace6014cb2e1345ec4b50cad841a not in the repo
 source shared:grubcraft/buildings-detail/ember/ancestor-shrine/albedo.png = cdedd0ccc117816cf5bdb321379e58b1 not in the repo
 source shared:grubcraft/buildings-detail/ember/ancestor-shrine/team.png = c16ac9cb2c29cc45214a17a3f1104452 not in the repo

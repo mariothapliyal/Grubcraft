@@ -35,6 +35,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
 9. Holding until bloodied, first wave at the restart: regiments can't rout or waver until they are down to a breaking point below half strength (about 35 to 45%, lower for veterans, varied a little per regiment); shock works by killing men ([in brief](#holding-until-bloodied-in-brief)).
 10. The world remembers the new features, first wave at the restart: every bridge, curved wall, dam, jam and flood scar the restart adds stays on the land for the rest of a Conquest match, so later battles are fought on ground the earlier ones shaped ([in brief](#the-world-remembers-the-new-features)).
+11. Eight changes to how battles play, approved 2026-10-30: unit spacing, frontage, a balance tournament and an even early game in the first wave; charges by weight and speed, responsive orders and clear feedback in the second; smarter computer generals in the third ([in brief](#how-battles-play-eight-changes-in-brief)).
+12. Faction rebalance, first wave at the restart: fair economies (the Choir earns about three and a half times what the Clans do), the Clans gathering 20% faster, and the Brood as a true swarm of cheap, weak units ([in brief](#faction-rebalance-in-brief)).
 
 ## What it covers
 
@@ -50,6 +52,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 - **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
 - **Holding until bloodied** (Mario, 2026-10-30, for the restart): a morale redesign so regiments hold until they have lost most of their men. See [Holding until bloodied in brief](#holding-until-bloodied-in-brief).
 - **The world remembers the new features** (Mario, 2026-10-30): the "living campaign map" idea folded into idea 2, a world that remembers. See [The world remembers the new features](#the-world-remembers-the-new-features).
+- **How battles play: eight changes** (Mario, 2026-10-30, for the restart): unit spacing, frontage, charges by weight and speed with braced spears, an even early game, an automatic balance tournament, responsive orders, clear feedback and smarter computer generals. See [How battles play](#how-battles-play-eight-changes-in-brief).
+- **Faction rebalance** (Mario, 2026-10-30, for the restart): fair resources for every faction, the Clans gathering faster, and Brood units cheap and weak one by one but many. See [Faction rebalance in brief](#faction-rebalance-in-brief).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
@@ -109,6 +113,61 @@ Once the dynamic water engine (idea 25: seasonal flow and volume, minor to catas
 - All of it runs in the sim from seeded, fixed-point state, so it stays deterministic in multiplayer and replays.
 - Other materials (Concord bone, Choir glass, Brood chitin) are kit variants for later.
 
+## Faction rebalance in brief
+
+Mario (2026-10-30): resources aren't fair. The Choir (Shard) piles them up fast while the Ember Clans struggle; the Brood are "absurdly strong". Brood units should stay cheap, with lots of attacks, like a swarm of ants, but each one should be weak; today they are almost a match for other factions' units, and they arrive wave after wave before an Ember player has built much. He suggests about 20% faster Ember gathering.
+
+**Measured (2026-10-30, before any change).** Headless Conquest, computer against computer at Veteran on Ribcage Pass: every pair of factions, each on both starts, 8 seeds, two seed sets (1 to 8 and 101 to 108), 192 games. The tool is a new `conquest_balance` test that prints wins, income, army and losses (kept as a patch until the build; see below). Both seed sets agree:
+
+| Pair | Wins (both sets, 32 games) | Worth of fighters killed (set 2) |
+|---|---|---|
+| Clans v Brood | 7 to 25 | 39k v 39k |
+| Clans v Choir | 0 to 32 | 14k v 15k |
+| Clans v Concord | 1 to 31 | 35k v 34k |
+| Brood v Choir | 0 to 32 | 9k v 16k |
+| Brood v Concord | 2 to 30 | 26k v 33k |
+| Choir v Concord | 31 to 0 (1 undecided) | 24k v 35k |
+
+| Faction | Grub/Marrow in by 5 min | by 10 min | Army worth at 10 min | Soldiers at 10 min | Worth killed per worth lost |
+|---|---|---|---|---|---|
+| Ember Clans | 1,130 / 150 | 2,160 / 330 | 350 | 57 | 1.01 |
+| Brood | 810 / 240 | 2,020 / 460 | 400 | 119 | 0.84 |
+| Choir | 3,880 / 385 | 9,830 / 1,050 | 3,210 | 234 | 0.92 |
+| Carrion Concord | 1,310 / 195 | 3,020 / 390 | 740 | 100 | 1.21 |
+
+(Worth is Grub plus twice the Marrow a fighter cost; set 2 shown, set 1 within a few percent.) What this says:
+
+- **The Choir's economy is the big break.** It brings in about 780 Grub a minute by minute 5, three and a half times the Clans (about 225). A tuned seep gives 200 Grub a minute with no workers and no supply; the Choir starts with two Resonators already tuning; one Resonator tunes every seep within 4 tiles, not one; a new Resonator costs 150 Grub and pays for itself in under a minute; chords add up to 60% more. The Clans pay 250 Grub, 5 supply and a minute of training for the same 200 a minute from five Hands. The Choir wins every game, by about 11 minutes, without killing more per fight: it simply has far more.
+- **The Clans are the weakest economy and the weakest side** (8 wins in 96 games). The Clans AI also leaves Marrow unspent early (200+ banked at 6 minutes) because nothing at tier 1 costs Marrow, so Hands on the vein are wasted then.
+- **The Brood is strong only against the Clans** (25 of 32) and loses to the Choir and the Concord, but its numbers explain what Mario sees: about twice the soldiers of an equal army, hatching several at once from larvae while other factions train one at a time. Skitterlings cost 100 Grub for 32 soldiers with the highest tier 1 attack in the game (50) and 192 hit points a regiment, as much as an Ember spear regiment costing 120. One Brood soldier is as good as others', and there are more of them.
+- **The Concord** wins most of its fights (1.21 worth killed per worth lost) on an ordinary income, so it will lead once the Choir is fixed. Watch it.
+
+**The plan (first-pass numbers, settled by measurement in the build).**
+
+1. **Choir economy, brought into line.** A Resonator tunes only its nearest seep (a Siphon its nearest vein); a tuned seep gives about 130 Grub a minute instead of 200 (a load every 4.5 s, not 3 s) and a tuned vein about 40 Marrow instead of 50; chords add at most 30%, not 60%; a Resonator costs 200 Grub, not 150; the Choir starts with the Spire and one Resonator, not two. A Mobile Resonator tunes the same way. The Choir keeps its identity: no workers to protect, but every pylon is a target and expanding costs a building per seep.
+2. **Clans gather 20% faster (Mario's ask).** Hands fill a Grub load in 7.5 s instead of 9, and Marrow in 10 s instead of 12. Done as data: a gathering speed per unit in the roster (`gather_percent: 120` on the Hand, 100 by default), so other factions can be tuned the same way later. The Clans AI keeps one Hand on Marrow, not more, until a tier 2 upgrade or a Marrow unit is in sight.
+3. **Brood as a real swarm.** Cheaper, more of them, more attacks, each one weak:
+   - Skitterlings: 100 to 70 Grub, supply 3 to 2, 32 to 36 soldiers, 6 to 4 hit points each, attack 50 to 36, defence 28 to 20, damage 3 to 2, train 18 to 13 s.
+   - Chitin Guard: 130 to 100 Grub, 16 to 12 hit points each, attack 30 to 24, defence 55 to 45.
+   - Tier 2 evolutions (Spitters, Burrowers, Mantid Reapers, Shellbacks) and Drone-Moths: about 25% fewer hit points and 15% less attack per soldier, and about 15% cheaper. Monsters and heroes stay as they are.
+   - Swarm Instinct stays (30% less morale lost to casualties), so swarms keep coming, but they melt under archers, cavalry charges and spear lines.
+   - Larvae: no change to start with. If the first Brood wave still hits Clans players too early in play (see the real-use check), the Hive's first larvae come every 16 s for the first 5 minutes instead of 12.
+   - Rule of thumb for the tuning: per Grub spent a Brood army has 1.5 to 2 times the soldiers of anyone else's, but loses one-on-one per soldier, and even per Grub it ends level (worth killed per worth lost between 0.9 and 1.1 against each faction).
+4. **Then the Concord.** Re-measure after 1 to 3. If the Concord leads, trim its combat edge first (undead Bone Pikes or the Ledger's tithe), not its economy.
+5. **Field Battles too.** Field Battle points come from costs (3 a Grub, 6 a Marrow), so cheaper Brood units mean bigger Brood armies there. Re-run `faction_table` on both seed sets and retune points or stats until every pair is 40 to 60%.
+
+**Targets (how we know it's done).**
+- Conquest, Veteran and General, both seed sets, both starts: every faction wins 40 to 60% of its games, every pair 35 to 65% (single pairs swing with the AI).
+- Income: by minute 5 and minute 10 every faction is within 15% of the others, with the Clans allowed at the top after their 20%.
+- Brood: 1.5 to 2 times the soldiers of an equal-worth army; worth killed per worth lost 0.9 to 1.1 against each faction.
+- Mario's case, as a real-play scenario: a Clans side against a Brood Veteran. By the first Brood attack the Clans can have at least two fighting regiments and their tier 1 production up, and hold that wave at their base with a small loss. The scenario is added to the stress suite with its numbers.
+- Field Battles: `faction_table`, every pair 40 to 60%.
+
+**Real use.** Nothing here changes how units walk, fit through gates or cross bridges, except that bigger Brood swarms mean more regiments in traffic: the stress suite's 200 units through a gate and the column over a bridge run with a Brood swarm (twelve regiments of Skitterlings) as well. The Choir AI places one Resonator per seep and the Clans AI moves Hands off Marrow (AI-uses-it). The batched playtest after the first wave plays a full match for each faction against each, records a Brood wave against a Clans base, and Opus judges whether it feels like a swarm.
+
+**Fits with the eight changes to how battles play (Mario, 2026-10-30).** That plan gives a "rebalance thread" the balance tournament and the even early game; this is the same thread, and this rebalance is its first job. The `conquest_balance` test below is the Conquest half of the tournament ([How battles play](#how-battles-play-eight-changes-in-brief), item 3). The Brood early-wave target joins the even early game. Frontage (only soldiers touching the enemy strike) also weakens swarms against a held line, so the Brood stat cut must not stack blindly on it: the economy PR (1 and 2) goes first; the Brood PR (3) is measured with frontage if it has merged, and cuts less if frontage already brings the Brood into the band.
+
+**Who and when.** A new thread, "Faction rebalance", Opus lead at high effort, first wave after the restart. The sim rules (tuning reach and rate, gather speed per unit) are the lead's; a Sonnet helper does the AI changes (Choir placement, Clans Marrow), Haiku helpers run the balance tables and update the guides, quick reference, docs/04, docs/17 and the rosters. One PR for the economy (1 and 2), one for the Brood (3), then the Concord and Field Battle passes if needed. Sim changes bump SIM_VERSION, re-bless the goldens and go through /simplify and /code-review on Opus. The `conquest_balance` test lands in the first PR (its patch is in the project files, `balance/conquest_balance_test.patch`): `AI_GAMES=8 AI_FROM=1 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture`, then `AI_FROM=101`; about two minutes a set on 4 cores. It touches the economy code, the Conquest AI and the data, not route search or structures, so it runs alongside the bridge and pathfinding threads.
 ## Holding until bloodied in brief
 
 Mario (2026-10-30), for the restart: routing is far too easy. Regiments waver and break at around 80% strength, and that is absurd. A regiment should hold, even after heavy shock like a cavalry charge, until it has lost a lot of men: it breaks somewhere below half strength (30 to 50%), later for seasoned and veteran troops, with some variation. Shock should work mostly by **killing men**: a charge cuts a regiment down fast, so it reaches its breaking point sooner, but it does not break a regiment that still has most of its men.
@@ -148,6 +207,95 @@ Mario (2026-10-30), for the restart: routing is far too easy. Regiments waver an
 **Who and when**
 - First wave at the restart. Owner: the soldier combat area (T4 owns `morale.rs`, `combat.rs` and `regiments.rs`), Opus lead at high effort since it moves balance; Haiku for the faction tables, goldens, guides and the quick reference. Two PRs: (1) the breaking point, wavering, variation, the AI and the stress test; (2) veterancy ranks with chevrons. `/simplify` and `/code-review` on Opus before each merge.
 - It touches combat balance, so it merges before or after the dynamic bridges and pathfinding work, never alongside a faction table someone else is running.
+
+## How battles play: eight changes in brief
+
+Mario (2026-10-30), for the restart: eight changes to how the game plays, not how it looks, each aimed at a cause of what he keeps hitting (clumping, swarms winning everywhere, early routs, clunky orders, one faction too strong) rather than a symptom. He approved ten and then dropped two (a travel-distance economy and fatigue, 2026-10-30), so eight remain. The code was checked on 2026-10-30 for what each already has, so every item below starts from what is built. Nothing here is built before Mario says go for the restart.
+
+**Order.** Four start in the first wave because the rest lean on them: **unit spacing** (it is the root of the clumping, gate and bridge trouble), **frontage** (it is what makes chokepoints and held lines work), the **balance tournament** (every later change is measured with it) and an **even early game** (measured by the tournament). The combat items go one after another in the soldier combat thread, after the morale redesign ([Holding until bloodied](#holding-until-bloodied-in-brief)), because they all change `combat.rs` and move balance.
+
+| # | Change | Owner | Wave | Already built (checked 2026-10-30) |
+|---|---|---|---|---|
+| 1 | Unit spacing and collision | The dedicated pathfinding thread (Opus) | First | Regiments are blocks; friends overlapping past a margin slow and fall into disorder (`CROWDING`), blocks squeeze into columns in tight ground and queue behind friends (#136). Soldiers are drawn in slots, not simulated bodies (option C is later) |
+| 2 | Frontage: only the soldiers touching the enemy fight | Soldier combat (T4, Opus) | First, after morale PR 1 | Option B duels: the front rank strikes, spears' second rank too, flank and rear men strike at flanks and rears. **Missing:** an attacker strikes with its whole front however little of the enemy it touches, and any number of regiments can pile onto one |
+| 3 | Balance tournament | Faction rebalance thread | First | Field Battle `faction_table` in `gc_match` (pairs, two seed sets) and AI-only Conquest tests that end in a win. **Missing:** Conquest pairs, timings, deciding units, a report and a gate |
+| 4 | Even early game across factions | Faction rebalance thread | First, with 3 | Starting stores and workers per faction (docs/04). Nobody has measured when each faction's first army is ready |
+| 5 | Charges from weight and speed, braced spears | T4 | Second | Charges plough in by mass ("heft") against the ranks they hit (#212); a charge bonus stat that fades; braced spears (Z) stop a frontal charge and throw the charger into disorder; flank and rear blows land 1.4 and 1.8 times as hard. **Missing:** speed at impact counts for nothing beyond "at the run", and nothing about the angle |
+| 6 | Responsive orders | New controls thread (Sonnet lead, Opus for the sim command) | Second | Right-drag draws a line (frontage and facing), army shapes (O), input delay of 2 turns (100 ms) on LAN. **Missing:** Shift-queued orders, a depth choice on the drag, attack-move, a measured click-to-move delay |
+| 7 | Clear orders and feedback | The controls thread, with T4 for the reasons | Second | Banners blink amber when wavering, white routing, grey shattered; cards show morale points; the AI lens shows what computer players think. **Missing:** order and stance markers, why a unit wavers |
+| 8 | Smarter computer generals | The AI (gc_ai owner, Opus) | Third | Scouts, ground reading (cover, high ground, water), flanks, rehearsed plans, raiders, walls and traps. **Missing:** using the restart's new systems, pulling back by strength under the new morale, frontage in the battle estimator |
+
+### 1. Unit spacing and collision
+
+Bigger units take up real room, and regiments keep their spacing while they march, wheel and squeeze, instead of bunching up and spreading out again. Merged into the **dedicated pathfinding thread**, whose scope (Mario, 2026-10-28) already covers crowding, clumping and flow through gaps: one owner for how regiments move.
+- **What changes.** A regiment's block keeps its own size for its unit's real footprint (a Maw or a Bulk is as wide as its model, cavalry deeper than infantry). Blocks push gently apart instead of overlapping when marching side by side, so nobody slides through a friend and falls into disorder for no reason. In a gap narrower than the block, the regiment files into a column at its marching spacing, goes through and re-forms on the far side, in order, rather than every soldier racing for the gap. Soldiers on screen hold their slots while the block turns, so it wheels like a block, not a swarm.
+- **Real use.** 200 soldiers through a gate: they form a column, go through at a steady rate and re-form; the stress scenario times it. A column on a two-lane bridge: the block narrows to the deck and keeps its spacing, nobody is pushed off the edge. Two friendly regiments ordered to the same spot: they stand side by side. A big monster in a line: it takes the room of three files, so the line is longer. In combat, regiments pushed back keep their shape, and a regiment marching past a melee waits or goes round instead of shoving into it.
+- **Checks.** The clearance check uses these footprints (largest unit and a formation width, per the project rules). Stress scenarios: gate, bridge, a retreat through forest, two armies crossing paths.
+
+### 2. Frontage: only the front ranks fight
+
+A regiment can only strike with the soldiers who physically touch the enemy; the rest wait behind to step up. Swarms then only beat a line where they can wrap round it, so gates, bridges and a held line become strong against the Brood. This is what makes chokepoints and Total War-style battles work.
+- **The gap in the code.** Each attacker strikes with its front rank, capped only at a ladder head (`width` in `combat.rs`). So a 20-wide regiment hitting a 4-deep flank strikes with 20 men, and six Brood regiments round one Clans regiment each strike with their whole front.
+- **The rule.** Who strikes is limited by where the two blocks actually touch: an attacker's strikers are the files whose stretch of front overlaps the side they hit, and the total striking any one side is capped by that side's length (one striker per soldier on it, two with spears behind). Extra regiments queued behind wait, push or go round to an open side. Ladders keep their few.
+- **Real use.** A Clans line of 20 files in a gate 6 tiles wide fights only 6 to 8 Skitterlings at once, so the gate holds far longer; outside, the same swarm wraps it and wins. On a bridge, the lead files fight, the rest push behind. Flanking still pays because it opens a new side to strike. Deep blocks are not "wasted": they replace the fallen and hold against a charge (plough depth, item 5).
+- **Balance and AI.** It shifts Brood against everyone, so it lands with the tournament (item 3) and a faction table on both seed sets. It is measured together with the faction rebalance's Brood stat cut ([Faction rebalance](#faction-rebalance-in-brief)), so the two nerfs don't stack: whichever lands second retunes against the other. The AI's battle estimator already counts frontage beyond the enemy's ("hit flanks for 40%"); it must use the same contact rule, and the AI must hold chokepoints and wrap lines on purpose.
+- **Checks.** Stress scenarios: a swarm against a line in a gate and in the open (the win rate must differ sharply), and a column fighting off a bridge head.
+
+### 3. Automatic balance tournament
+
+After every balance or unit change, computer players fight each pair of factions dozens of times and report the result, so a change that makes one faction too strong is caught before Mario plays it. It belongs to the **Faction rebalance thread**, which owns balance, and is its tooling. Its Conquest half starts from that thread's `conquest_balance` test ([Faction rebalance](#faction-rebalance-in-brief)); this item grows it into the full report and gate.
+- **What it runs.** Every pair of the four factions (and the Oathbound if it lands), Conquest 1v1 on two or three maps, both seed sets, at General, a few dozen games a pair; and the existing Field Battle table. Headless, in release, on the CI runner overnight or on demand, not on every PR (too slow).
+- **What it reports.** Win rates per pair with the noise band; when each faction's **first proper army** is ready (first time it fields a set amount of supply in fighting units); when its first attack lands; Grub and Marrow per minute at 5 and 10 minutes; and **which units decide games** (share of kills and of supply in the winner's army at the end). A short Markdown table goes in the PR.
+- **The gate.** A PR that changes stats, rosters, combat or the economy runs it and must keep every pair within a band (first pass 40 to 60%, both seed sets) unless the PR says why. Cheap per PR: Haiku runs it and posts the table; Opus judges.
+- **Real use.** The Brood swarm problem: if a change pushes Brood above 60% on two maps, or their first army comes a minute before everyone else's, the PR stops there.
+
+### 4. Even early game across factions
+
+Every faction fields its first proper army at about the same time, so no faction is swarmed before it has built anything. Measured with the tournament (item 3), owned by the **Faction rebalance thread**, which also sets the Brood early-wave target.
+- **What changes.** Target: every faction's first army ready within 30 s of the others at Standard tempo (first pass; the tournament sets the real figure). Knobs: starting stores and workers, first barracks cost and time, first unit cost and train time, Brood larvae rate. No new mechanics.
+- **Real use.** A Brood rush at minute 3 meets a Clans or Choir army that exists, standing in a gate or behind a palisade (items 2 and the fortifications), not workers. Rushing stays possible but costs economy, so it is a choice, not the default.
+
+### 5. Charges from weight and speed, with braced spears
+
+A charge's punch comes from how heavy the unit is and how fast it is going when it hits. Spears braced and facing the charge stop it dead; a hit to the flank or rear wrecks a unit. With the new morale rule, charges break units by killing men.
+- **What exists.** Ploughing by heft (#212), a fading charge bonus, braced spears that turn a frontal charge, and flank and rear multipliers.
+- **What changes.** Impact = mass × speed at contact (the regiment's real speed over its last second, so a charge from a standstill is weak and one down a slope is strong). It sets both the plough depth and the charge bonus, replacing the fixed `PLOUGH_SPEED`. Braced spears stop a charge whose angle hits their front (within about 45 degrees of facing), and the faster the charger the more it loses on the points. A charge into the flank or rear ploughs deeper (no one braces a side). A unit that has charged must pull out and re-form to charge again at full weight (cycle charging). Mud, rough ground, woods and uphill cut speed, so they cut the charge.
+- **Real use.** Cavalry into the rear of spears locked with infantry: deep plough, many dead in seconds, the spears reach their breaking point. The same cavalry into braced spears' front: stopped, disordered and bleeding. A charge through woods or up a hill hits soft. Charging into a gate or onto a bridge: only the touching files hit (item 2), so a narrow charge does little.
+- **AI.** Computer generals brace spears when they see cavalry coming at their front, charge flanks and rears, and pull cavalry out to charge again.
+- **Checks.** Stress scenarios: a cavalry charge into the front of braced spears, into a flank, and up a hill, with casualties printed; the faction table.
+
+### 6. Orders that respond instantly
+
+A lot of what feels clunky is the controls, not the pathfinding. A **new controls thread** (Sonnet lead for `gc_game` input and HUD; the Opus lead of whichever sim thread owns `regiments.rs` writes the sim side of the queue).
+- **Measure the delay first.** Time from click to the first step on screen in single player and on LAN (Tailscale), split into input, lockstep delay (2 turns, 100 ms), route search and the regiment's turn to face. Fix the biggest part: show the order at once (route line and ghost on click), start the turn immediately, and cut route-search waits (with the pathfinding thread).
+- **Shift-queued orders.** Shift-right-click adds a waypoint or an attack after the current order; the route line shows the whole queue. In the sim, a short queue of orders per regiment (a handful, hashed), so it goes through the lockstep and replays.
+- **Drag a formation.** The right-drag already sets frontage and facing; add depth by dragging further (or a modifier), with a ghost of every regiment's block before letting go. Units in a group turn and move off together and arrive together (matching pace to the slowest).
+- **Attack-move.** Move, but stop and fight anything met on the way (A then click).
+- **Real use.** Queue a march over a bridge, through a gate, then an attack: the regiments file through in order (item 1) and attack on arrival. Drag a deep line across a gate: it fills the gate wide and stacks the rest behind (item 2).
+- **Checks.** A headless test measures ticks from command to first movement and fails over a budget; LAN timing in the batched playtest.
+
+### 7. Clear orders and feedback
+
+Show on screen what each unit is doing and why. Many "this feels wrong" moments happen because you can't see what a unit is thinking. Controls thread for the screen side, T4 for the reasons the sim exposes.
+- **What it shows.** Order and stance icons on the banner and card (marching, attack-move, braced, hold, falling back, forced march, queued orders); morale as a bar with a tick at the breaking point (from the morale redesign); and **why** a unit is wavering, as one or two short reasons from the sim (flanked, rear, outnumbered, general fell, ally broke nearby). Hovering a unit shows its order queue and route.
+- **Real use.** In a big fight you can see which regiment is about to break and why, and send a reserve there. A regiment that won't move shows "waiting: friend in the way" or "pinned".
+- **Sim side.** The reasons come from the morale drains the sim already sums, kept as a small bit set per regiment in the view (not hashed, it is derived).
+
+### 8. Smarter computer generals
+
+Computer players scout, pick favourable ground, flank, pull back damaged units and use the new systems. A strong opponent makes every other system worth having. Owned by the AI (`gc_ai`), third wave, once the systems they must use are in.
+- **What exists.** Scouts that find the enemy start, ground reading (cover, high ground, water), flanking roles, rehearsed plans (the Warlord tries plans in a scratch copy), raiders, walls and traps for Veterans and up, reading fords and floods.
+- **What changes.** Each restart system teaches the AI in its own PR (rule (c): a feature isn't done until the AI uses it). This item adds what no single system owns: scouting **before** each battle and choosing to fight where the ground favours them (a gate, a bridge head, a hill, woods for an ambush); pulling back regiments near their breaking point (new morale) and bringing up fresh reserves; using frontage (hold a chokepoint against a bigger army, wrap a line in the open); and using bridges, debris and walls on purpose (dump debris on an enemy bridge, burn a bridge behind a retreat, clear jams).
+- **Real use.** Outnumbered, the AI falls back to a bridge or gate and holds it; ahead, it meets you in the open and wraps your line.
+- **Checks.** The AI-only Conquest games and the tournament; new tests that the AI holds a chokepoint when outnumbered and pulls back a bloodied regiment.
+
+### Who and when
+
+- **First wave at the restart:** spacing (pathfinding thread); frontage (T4, after morale PR 1); in the Faction rebalance thread, after its economy and Brood passes (which use its `conquest_balance` test), the full tournament, then the early-game pass, so frontage and morale are measured with it.
+- **Second wave:** charges (T4), the controls thread (orders, then feedback).
+- **Third wave:** the generals (AI).
+- Every sim change bumps `SIM_VERSION` and re-blesses goldens through the merge train; `/simplify` and `/code-review` on Opus; guides and the quick reference updated in the same PR; each adds its stress scenario. The batched playtest after each wave records before and after clips of each change.
+- Helpers: Haiku runs the tournament and tables, goldens, docs and guides; Sonnet writes the HUD and input code; Opus leads every sim, balance and AI change.
 
 ## How the work is split
 
