@@ -2558,6 +2558,8 @@ impl Running {
     /// replacing it. The order's mark shows at once, before the simulation
     /// has heard of it.
     pub fn issue_march(&mut self, order: GroupOrder, hunt: bool, queue: bool) {
+        // Nothing queues while the armies deploy: an order places.
+        let queue = queue && !self.world.deploying();
         self.plan_order(order);
         if !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
@@ -2643,6 +2645,7 @@ impl Running {
     /// Send the selection to attack `target` (after what they are doing,
     /// if `queue`).
     fn issue_attack(&mut self, target: RegimentHandle, queue: bool) {
+        let queue = queue && !self.world.deploying();
         if !self.selected.is_empty() {
             self.attack_mark = Some((target, Instant::now()));
             self.ui_sound(sounds::UiSound::Attack);

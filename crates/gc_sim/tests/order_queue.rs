@@ -250,3 +250,47 @@ fn a_plain_move_marches_past_the_enemy() {
     assert!(!fought);
     assert_eq!(view(&w, r).position, FxVec2::from_ints(50, 120));
 }
+
+#[test]
+fn a_fight_on_an_attack_move_keeps_every_queued_step() {
+    let mut w = world();
+    let r = spawn(&mut w, 0, (50, 50));
+    let foe = spawn(&mut w, 1, (58, 80));
+    assert!(send(
+        &mut w,
+        0,
+        Command::AttackMove {
+            regiment: r,
+            target: FxVec2::from_ints(50, 120),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    for k in 0..QUEUE_LEN as i32 {
+        assert!(send(
+            &mut w,
+            0,
+            Command::Then {
+                regiment: r,
+                step: to(60 + k, 120)
+            }
+        ));
+    }
+    let mut diverted = false;
+    for _ in 0..20 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        diverted |= view(&w, r).diverted;
+        assert_eq!(view(&w, r).queued as usize, QUEUE_LEN);
+    }
+    assert!(diverted, "it turned on the enemy it met");
+    if w.regiments.get(foe).is_some() {
+        assert!(send(&mut w, 1, Command::RemoveRegiment { regiment: foe }));
+    }
+    run(&mut w, 60);
+    let r = view(&w, r);
+    assert_eq!(
+        (r.position, r.queued, r.hunting),
+        (FxVec2::from_ints(63, 120), 0, false)
+    );
+}

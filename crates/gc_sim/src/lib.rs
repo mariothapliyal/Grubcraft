@@ -851,6 +851,25 @@ impl Command {
     /// Ready), rather than setup (zones, raising armies) or the sandbox's
     /// tools (removing, tuning). In a network match only the host may send
     /// the rest. No `_` arm: a new kind of command must be decided here.
+    /// The regiment a work order (siege, gathering, building, the walls)
+    /// sets to work, in place of its queued orders and any attack-move.
+    pub fn sets_to_work(&self) -> Option<RegimentHandle> {
+        match *self {
+            Command::AttackStructure { regiment, .. }
+            | Command::Gather { regiment, .. }
+            | Command::Trade { regiment, .. }
+            | Command::Build { regiment, .. }
+            | Command::Clear { regiment, .. }
+            | Command::Construct { regiment, .. }
+            | Command::WorkPlan { regiment, .. }
+            | Command::ManWall { regiment, .. }
+            | Command::Climb { regiment, .. }
+            | Command::PlantStakes { regiment, .. } => Some(regiment),
+            Command::BuildWall { regiment, .. } | Command::RaiseWall { regiment, .. } => regiment,
+            _ => None,
+        }
+    }
+
     pub fn is_player_order(&self) -> bool {
         match self {
             Command::MoveTo { .. }
@@ -1621,6 +1640,9 @@ impl World {
         });
         for pc in commands {
             if self.apply(pc) {
+                if let Some(h) = pc.command.sets_to_work() {
+                    self.regiments.fresh(h, None);
+                }
                 stats.commands_applied += 1;
             } else {
                 stats.commands_rejected += 1;
@@ -1928,7 +1950,15 @@ impl World {
                 if !self.commands(pc.player, regiment) {
                     return false;
                 }
-                let hunt = matches!(pc.command, Command::AttackMove { .. });
+                let hunt = matches!(pc.command, Command::AttackMove { .. }).then_some(
+                    orders::Step::Move {
+                        target,
+                        facing,
+                        files,
+                        pace,
+                        hunt: true,
+                    },
+                );
                 let done = self.march(regiment, target, facing, files, pace);
                 if done {
                     self.regiments.fresh(regiment, hunt);
@@ -1938,7 +1968,7 @@ impl World {
             Command::Attack { regiment, target } => {
                 let done = self.commands(pc.player, regiment) && self.charge_at(regiment, target);
                 if done {
-                    self.regiments.fresh(regiment, false);
+                    self.regiments.fresh(regiment, None);
                 }
                 done
             }
@@ -1952,7 +1982,8 @@ impl World {
                 if self.regiments.morale_state[i].broken() {
                     return false;
                 }
-                if self.regiments.idle(i) {
+                // Behind anything it is still to do, its work included.
+                if self.free(i) && self.regiments.queue[i].is_empty() {
                     self.start_step(i, step)
                 } else {
                     self.regiments.queue[i].push(step)
@@ -1986,7 +2017,7 @@ impl World {
                     let to = self.fall_back_point(i);
                     let done = self.regiments.fall_back(regiment, to);
                     if done {
-                        self.regiments.fresh(regiment, false);
+                        self.regiments.fresh(regiment, None);
                     }
                     done
                 }
@@ -2621,6 +2652,16 @@ impl World {
             .is_some_and(|owner| self.stances.can_command(player, owner))
     }
 
+    /// Whether slot `i` has nothing to carry out: no march, no enemy to
+    /// attack and no work.
+    fn free(&self, i: usize) -> bool {
+        self.regiments.idle(i)
+            && self
+                .conquest
+                .as_ref()
+                .is_none_or(|c| !c.has_job(&self.regiments, i))
+    }
+
     /// Send regiment `h` marching; the caller has checked who may order it.
     fn march(
         &mut self,
@@ -2670,18 +2711,19 @@ impl World {
     /// the step can't be carried out (its target gone or unseen).
     fn start_step(&mut self, i: usize, step: orders::Step) -> bool {
         let h = self.regiments.handle(i);
-        let (done, hunt) = match step {
+        let done = match step {
             orders::Step::Move {
                 target,
                 facing,
                 files,
                 pace,
-                hunt,
-            } => (self.march(h, target, facing, files, pace), hunt),
-            orders::Step::Attack { target } => (self.charge_at(h, target), false),
+                ..
+            } => self.march(h, target, facing, files, pace),
+            orders::Step::Attack { target } => self.charge_at(h, target),
         };
         if done {
-            self.regiments.hunting[i] = hunt;
+            let hunt = matches!(step, orders::Step::Move { hunt: true, .. });
+            self.regiments.on_hunt(i, hunt.then_some(step));
         }
         done
     }
@@ -2700,8 +2742,8 @@ impl World {
             {
                 continue;
             }
-            if regs.hunting[i] {
-                // A beaten foe is left to run: the march goes on.
+            if let Some(hunt) = regs.hunt[i] {
+                // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
                     && regs
                         .resolve(t)
@@ -2710,23 +2752,21 @@ impl World {
                     self.regiments.attack_target[i] = None;
                 }
                 let regs = &self.regiments;
-                if let (Some(target), None) = (regs.target[i], regs.attack_target[i])
+                if regs.diverted[i] {
+                    // The fight is over: the march goes on.
+                    if regs.attack_target[i].is_none() {
+                        self.start_step(i, hunt);
+                    }
+                } else if regs.target[i].is_some()
+                    && regs.attack_target[i].is_none()
                     && (self.tick + i as u32).is_multiple_of(orders::HUNT_EVERY)
                     && let Some(foe) = self.foe_near(i)
+                    && self.charge_at(self.regiments.handle(i), foe)
                 {
-                    let march = orders::Step::Move {
-                        target,
-                        facing: regs.target_facing[i],
-                        files: 0,
-                        pace: Fx::from_raw(regs.pace[i].raw() * TICKS_PER_SECOND as i32),
-                        hunt: true,
-                    };
-                    if self.charge_at(self.regiments.handle(i), foe) {
-                        self.regiments.queue[i].push_front(march);
-                    }
+                    self.regiments.diverted[i] = true;
                 }
             }
-            while self.regiments.idle(i) {
+            while self.free(i) {
                 let Some(step) = self.regiments.queue[i].pop() else {
                     break;
                 };
@@ -2737,9 +2777,10 @@ impl World {
         }
     }
 
-    /// The nearest enemy regiment slot `i`'s side can see, standing and
-    /// within [`orders::HUNT_RADIUS`] of it (or its bows' reach, if
-    /// further). Looked up in last tick's combat grid, so a regiment that
+    /// The nearest enemy regiment slot `i`'s side can see, standing (and
+    /// not on a wall, out of the reach of those below) and within
+    /// [`orders::HUNT_RADIUS`] of it (or its bows' reach, if further).
+    /// Looked up in last tick's combat grid, so a regiment that
     /// only arrived this tick is noticed at the next look.
     fn foe_near(&self, i: usize) -> Option<RegimentHandle> {
         let regs = &self.regiments;
@@ -2752,6 +2793,7 @@ impl World {
         let slack = reach + self.combat.max_step();
         self.combat.near_enemies(here, slack, owner, |j| {
             if !regs.alive[j]
+                || regs.on_wall[j]
                 || regs.morale_state[j].broken()
                 || !self.stances.hostile(owner, regs.owner[j])
             {
@@ -3120,7 +3162,7 @@ impl World {
             };
             if self.regiments.order(h, order) {
                 // Its march is now to the bank, and hunts nobody.
-                self.regiments.hunting[i] = false;
+                self.regiments.on_hunt(i, None);
                 self.leave_off(h);
             }
         }

@@ -7,7 +7,7 @@ use crate::combat::{Combat, OPEN_GROUND, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
-use crate::orders::Queue;
+use crate::orders::{Queue, Step};
 use crate::state::State;
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
@@ -231,9 +231,11 @@ regiment_fields! {
     attack_target: Option<RegimentHandle> = None,
     /// Orders queued behind the current one (see [`crate::orders`]).
     queue: Queue = Queue::EMPTY,
-    /// Its march is an attack-move: it stops to fight any enemy met on the
-    /// way (see [`crate::orders`]).
-    hunting: bool = false,
+    /// The attack-move it is on, if any: it stops to fight any enemy met
+    /// on the way, then takes this march up again (see [`crate::orders`]).
+    hunt: Option<Step> = None,
+    /// On an attack-move and turned aside to fight what it met.
+    diverted: bool = false,
     /// The enemy it is fighting in melee this tick (the nearest one in contact).
     engaged: Option<RegimentHandle> = None,
     /// Ticks of charge bonus left.
@@ -662,13 +664,20 @@ impl Regiments {
         self.target[i].is_none() && self.attack_target[i].is_none()
     }
 
-    /// Regiment `h` forgets its queued orders: a player's order given
-    /// without Shift has taken their place (`hunt`: on an attack-move).
-    pub(crate) fn fresh(&mut self, h: RegimentHandle, hunt: bool) {
+    /// Regiment `h` forgets its queued orders and any attack-move: a
+    /// player's order given without Shift has taken their place (`hunt`:
+    /// the attack-move it now is).
+    pub(crate) fn fresh(&mut self, h: RegimentHandle, hunt: Option<Step>) {
         if let Some(i) = self.resolve(h) {
             self.queue[i] = Queue::EMPTY;
-            self.hunting[i] = hunt;
+            self.on_hunt(i, hunt);
         }
+    }
+
+    /// Slot `i` is on the attack-move `hunt` from now, or on none.
+    pub(crate) fn on_hunt(&mut self, i: usize, hunt: Option<Step>) {
+        self.hunt[i] = hunt;
+        self.diverted[i] = false;
     }
 
     /// Regiment `h`'s queued orders, first first.
@@ -1094,8 +1103,8 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
-            hunting: self.hunting[i],
-            diverted: self.hunting[i] && self.attack_target[i].is_some(),
+            hunting: self.hunt[i].is_some(),
+            diverted: self.diverted[i],
             queued: self.queue[i].len() as u8,
         }
     }

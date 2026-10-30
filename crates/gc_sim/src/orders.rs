@@ -6,14 +6,17 @@
 //! Both live in the simulation, so they go through the lockstep and
 //! replays like every other order. A regiment's queue holds at most
 //! [`QUEUE_LEN`] steps after the one it is carrying out. Any order given
-//! without Shift (a move, an attack, falling back) clears it.
+//! without Shift (a move, an attack, falling back, or setting it to work)
+//! clears it. A step queued for a regiment that is working waits for the
+//! work to end.
 //!
 //! **Attack-move.** A regiment on an attack-move looks round every
 //! [`HUNT_EVERY`] ticks while it marches. When an enemy regiment it can
-//! see is within [`HUNT_RADIUS`] (or its bows' reach, if further), it
-//! puts the rest of its march back at the front of its queue and attacks
-//! that enemy. Once the enemy is beaten (gone, routing or shattered), it
-//! picks the march up again where it left off.
+//! see is within [`HUNT_RADIUS`] (or its bows' reach, if further) and
+//! not up on a wall, it turns aside and attacks that enemy, keeping the
+//! attack-move order apart from its queue. Once the fight is over (the
+//! enemy gone, routing or shattered, or dropped as out of reach), it takes
+//! that order up again, at the pace and width first asked for.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
@@ -46,8 +49,6 @@ pub enum Step {
     /// [`crate::Command::Attack`].
     Attack { target: RegimentHandle },
 }
-
-impl Step {}
 
 /// A regiment's queued steps, first first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,13 +83,6 @@ impl Queue {
             }
             None => false,
         }
-    }
-
-    /// Put `step` at the front (an attack-move's march, set aside for a
-    /// fight). When the queue is full its last step is dropped.
-    pub(crate) fn push_front(&mut self, step: Step) {
-        self.steps.copy_within(0..QUEUE_LEN - 1, 1);
-        self.steps[0] = Some(step);
     }
 
     /// Take the first step off.
@@ -213,13 +207,12 @@ mod tests {
         }
         assert!(!q.push(to(9)));
         assert_eq!(q.len(), QUEUE_LEN);
-        q.push_front(to(-1));
         assert_eq!(
             q.iter().collect::<alloc::vec::Vec<_>>(),
-            [to(-1), to(0), to(1), to(2)]
+            [to(0), to(1), to(2), to(3)]
         );
-        assert_eq!(q.pop(), Some(to(-1)));
         assert_eq!(q.pop(), Some(to(0)));
+        assert_eq!(q.pop(), Some(to(1)));
         assert_eq!(q.len(), 2);
     }
 
