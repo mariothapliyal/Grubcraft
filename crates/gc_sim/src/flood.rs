@@ -380,7 +380,7 @@ impl Flood {
     /// the nearest bank (see `World::rivers`).
     pub(crate) fn sweep(&self, regs: &mut Regiments, terrain: &Terrain, out: &mut Vec<usize>) {
         out.clear();
-        if !self.closed && !self.rivers.shut() {
+        if !self.closed && !self.rivers.flooding() {
             return;
         }
         for i in 0..regs.alive.len() {

@@ -1923,7 +1923,10 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {
-        if terrain.deep(p) {
+        if terrain.height(p) >= i32::from(terrain.water_level()) {
+            // Dry land the water has risen over.
+            "In flood water: slow, no charges"
+        } else if terrain.deep(p) {
             "In a river that is up: slower still, no charges"
         } else {
             "In a ford: slow, no charges"
