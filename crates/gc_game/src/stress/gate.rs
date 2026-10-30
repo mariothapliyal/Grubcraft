@@ -22,11 +22,16 @@ const LIMIT_SECONDS: u32 = 75;
 
 fn run(real: &Real, report: &mut Report) {
     let mut world = Arena::new(TILES).world(real, 11, 0);
-    let palisade = real.building("Palisade");
-    for x in (0..TILES as i32).filter(|x| !(GATE_X..GATE_X + 3).contains(x)) {
-        put_up(&mut world, 0, palisade, (x, WALL_ROW), 0);
-    }
-    put_up(&mut world, 0, real.building("Gate"), (GATE_X, WALL_ROW), 1);
+    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
+    // Turned a quarter, the Gate runs east to west along its long side.
+    let stats = &real.table.stats[usize::from(gate)];
+    let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
+    let mut wall: Vec<_> = (0..TILES as i32)
+        .filter(|x| !span.contains(x))
+        .map(|x| (palisade, (x, WALL_ROW), 0))
+        .collect();
+    wall.push((gate, (GATE_X, WALL_ROW), 1));
+    put_up(&mut world, 0, &wall);
 
     // 4 x 28 spears, 3 x 16 swords, 2 x 16 bows and 8 horse: 200.
     let [yari, katana, yumi] = real.ember_line();
@@ -60,7 +65,10 @@ fn run(real: &Real, report: &mut Report) {
         if n > 0 && first.is_none() {
             first = Some(t);
         }
-        if n == army.len() && of(&world, &army).all(|v| !v.moving) {
+        // Every regiment still on the field through and standing (a lost
+        // one fails the check on losses below, not this one).
+        let alive = of(&world, &army).count();
+        if alive > 0 && n == alive && of(&world, &army).all(|v| !v.moving) {
             done = Some(t);
             break;
         }

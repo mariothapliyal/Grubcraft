@@ -96,7 +96,16 @@ pub(crate) fn seconds(t: Option<u32>) -> String {
 fn run(scenario: &Scenario, real: &Real, out: &mut String) -> bool {
     let mut report = Report::default();
     let began = Instant::now();
-    (scenario.run)(real, &mut report);
+    // A scenario that panics fails, and the rest still run and report.
+    let played = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        (scenario.run)(real, &mut report);
+    }));
+    if let Err(e) = played {
+        let why = (e.downcast_ref::<String>().cloned())
+            .or_else(|| e.downcast_ref::<&str>().map(ToString::to_string))
+            .unwrap_or_default();
+        report.check(format!("ran to the end (panicked: {why})"), false);
+    }
     let wall_ms = began.elapsed().as_millis() as u64;
     let in_time = wall_ms <= scenario.budget_ms;
     let passed = in_time && report.checks.iter().all(|(_, ok)| *ok);

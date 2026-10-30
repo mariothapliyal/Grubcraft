@@ -12,7 +12,7 @@ on every pull request, and failures block the merge.
 Every passage troops walk through or over is measured twice: as the
 simulation walks it (its footprint) and as the player sees it (its finished
 model, measured from the baked triangles at chest height, 0.1 to 1.2 tiles
-above the floor or deck). Each is held against:
+above its floor: the threshold or deck under the middle of the way through). Each is held against:
 
 - **the widest walking unit**: the widest model across (flyers left out),
   plus 0.1 tiles each side. Today the Broodmother Bulk, 2.7 tiles;
@@ -31,7 +31,7 @@ list only shrinks. Found when the check was built:
 | Passage | Problem | Fix |
 |---|---|---|
 | All six gate and gatehouse models | the door leaves are modelled shut across the doorway: 0 tiles open, so troops are drawn walking through closed doors (the game draws its own leaves beside the model) | open the doorway in the models |
-| Timber Bridge model | its rails leave 1.4 of the 2 tiles open at chest height | rails further out |
+| Timber Bridge model (every faction's bridge shows it) | its rails leave 1.4 of the 2 tiles open at chest height | rails further out |
 | Every bridge | the Broodmother Bulk (2.7 tiles) is wider than the 2-tile deck | wider bridges, or a rule for giants |
 
 A new kind of passage (a dam's walkway) adds itself in `passages()`.
@@ -53,10 +53,10 @@ artifact). The whole suite takes about two seconds.
 
 | Scenario | What it plays | Checks (first run) |
 |---|---|---|
-| `gate` | 200 Ember soldiers (4 spear, 3 sword, 2 bow regiments and horse) march through one Gate in a Palisade across the map | all through and standing within 75 s (47 s), no soldier lost |
-| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (44 s), no regiment strays off the deck into the river |
+| `gate` | 200 Ember soldiers (4 spear, 3 sword, 2 bow regiments and horse) march through one Gate in a Palisade across the map | all through and standing within 75 s (52 s), no soldier lost |
+| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (46 s), no regiment strays off the deck into the river |
 | `forest-retreat` | 6 regiments fall back west through 16 tiles of woods broken by thicket, 6 foot regiments chasing from 24 tiles behind; the player re-sends any that stop | every regiment out or fallen within 85 s (55 s), at least half get out (6 of 6, 95 of 132 soldiers) |
-| `ai-walls` | a General (Ember) on Ribcage Pass against an Ember base walled all round with a Palisade and a Gate | it hits the wall and gets inside within 10 minutes (5:46, 5:57) |
+| `ai-walls` | a General (Ember) on Ribcage Pass against an Ember base walled all round with a Palisade and a Gate | it hits the wall and gets inside within 10 minutes (5:42, 5:55) |
 
 Checks are on what the simulation decides (ticks, positions, losses), the
 same on every machine, so they don't flake. Time is held only to each

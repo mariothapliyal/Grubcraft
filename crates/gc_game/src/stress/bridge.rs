@@ -27,11 +27,10 @@ fn run(real: &Real, report: &mut Report) {
     arena.river(RIVER, 0..TILES as i32);
     let mut world = arena.world(real, 12, 0);
     let bridge = real.building("Timber Bridge");
-    for x in SPAN {
-        for y in [ROW, ROW + 1] {
-            put_up(&mut world, 0, bridge, (x, y), 0);
-        }
-    }
+    let deck: Vec<_> = SPAN
+        .flat_map(|x| [(bridge, (x, ROW), 0), (bridge, (x, ROW + 1), 0)])
+        .collect();
+    put_up(&mut world, 0, &deck);
 
     // In file down the west bank, two abreast, the head 7 tiles off the
     // bridge.
@@ -70,7 +69,12 @@ fn run(real: &Real, report: &mut Report) {
                 arena.is_river(x, y) && !(ROW..=ROW + 1).contains(&y)
             })
             .count() as u32;
-        if of(&world, &column).all(|v| v.position.x.floor_int() > RIVER.end + 3 && !v.moving) {
+        // The survivors across and standing (not none left: a column
+        // shot to pieces has not crossed).
+        let mut left = of(&world, &column).peekable();
+        if left.peek().is_some()
+            && left.all(|v| v.position.x.floor_int() > RIVER.end + 3 && !v.moving)
+        {
             done = Some(t);
             break;
         }

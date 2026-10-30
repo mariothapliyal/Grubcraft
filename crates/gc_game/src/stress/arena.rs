@@ -234,31 +234,39 @@ pub(crate) fn spawn(
     new
 }
 
-/// Put up a finished `building` of `player`'s at `tile`, turned `turn`.
+/// Put up finished buildings of `player`'s, each (building, north-west
+/// tile, turn), all in one tick, and their handles in the same order.
 /// Setting up, so the tick is not timed.
 pub(crate) fn put_up(
     world: &mut World,
     player: PlayerId,
-    building: u16,
-    tile: (i32, i32),
-    turn: u8,
-) -> StructureHandle {
-    let stats = world.tick(&[PlayerCommand {
-        player,
-        command: Command::SpawnStructure {
-            building,
-            tile: (tile.0 as i16, tile.1 as i16),
-            turn,
-        },
-    }]);
+    pieces: &[(u16, (i32, i32), u8)],
+) -> Vec<StructureHandle> {
+    let orders: Vec<PlayerCommand> = (pieces.iter())
+        .map(|&(building, (x, y), turn)| PlayerCommand {
+            player,
+            command: Command::SpawnStructure {
+                building,
+                tile: (x as i16, y as i16),
+                turn,
+            },
+        })
+        .collect();
+    let stats = world.tick(&orders);
     assert_eq!(
-        stats.commands_applied, 1,
-        "building {building} at {tile:?} refused"
+        stats.commands_applied as usize,
+        pieces.len(),
+        "buildings refused"
     );
-    (world.structures().unwrap().iter())
-        .find(|s| s.tile == tile && s.owner == player)
-        .unwrap()
-        .handle
+    let s = world.structures().unwrap();
+    (pieces.iter())
+        .map(|&(_, tile, _)| {
+            (s.iter())
+                .find(|v| v.tile == tile && v.owner == player)
+                .unwrap()
+                .handle
+        })
+        .collect()
 }
 
 /// March `regiment` of `player`'s to `to`.

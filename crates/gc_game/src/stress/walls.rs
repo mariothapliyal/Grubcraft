@@ -56,7 +56,8 @@ fn run(real: &Real, report: &mut Report) {
     );
     assert!(world.conquest(&plan.setup()));
     let opening = conquest::opening(&real.data, &real.table, &map, &world, &FACTIONS);
-    report.tick(&mut world, &opening);
+    let stats = report.tick(&mut world, &opening);
+    assert_eq!(stats.commands_applied as usize, opening.len());
 
     // Wall the defender's main building all round, the Gate on the side
     // facing the attacker, at the nearest distance where the whole ring
@@ -71,10 +72,11 @@ fn run(real: &Real, report: &mut Report) {
         .map(|gap| Ring::round(&main, &real.table.stats[usize::from(gate)], gap, foe))
         .find(|r| r.fits(&world, palisade, gate))
         .expect("somewhere a closed ring fits");
-    let mut pieces: Vec<_> = (ring.tiles())
-        .map(|t| put_up(&mut world, 0, palisade, t, 0))
-        .collect();
-    pieces.push(put_up(&mut world, 0, gate, ring.gate, ring.turn));
+    // In one tick, so nothing walks onto a tile between the check and
+    // the building.
+    let mut plan: Vec<_> = ring.tiles().map(|t| (palisade, t, 0)).collect();
+    plan.push((gate, ring.gate, ring.turn));
+    let pieces = put_up(&mut world, 0, &plan);
     let [x0, y0, x1, y1] = ring.corners;
     report.metric("wall pieces (gate included)", pieces.len());
     report.metric("tiles from the main building to the wall", ring.gap);
@@ -126,6 +128,10 @@ fn run(real: &Real, report: &mut Report) {
         if entered.is_none() && inside(&world) {
             entered = Some(t);
         }
+        // All that is checked is known: no need to play on.
+        if hurt.is_some() && breached.is_some() && entered.is_some() {
+            break;
+        }
     }
     let at = |t: Option<u32>| {
         t.map_or("never".into(), |t| {
@@ -146,7 +152,6 @@ fn run(real: &Real, report: &mut Report) {
         "wall hit points left",
         format!("{}%", hp * 100 / full_hp.max(1)),
     );
-    report.metric("defender knocked out", world.is_out(0));
     report.check(
         format!("the General attacks the wall within {LIMIT_MINUTES} minutes"),
         hurt.is_some(),

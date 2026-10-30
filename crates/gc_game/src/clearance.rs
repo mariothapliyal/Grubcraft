@@ -28,8 +28,8 @@ const BRIDGE_LANES: f32 = 2.0;
 /// The height band a model's passage must be open in, above its floor or
 /// deck, in tiles: from the ankles to the chest of a man.
 const BAND: (f32, f32) = (0.1, 1.2);
-/// A bridge model's deck lies below this height, its rails reach above.
-const DECK_BELOW: f32 = 0.6;
+/// A model's floor (a threshold, a deck) lies below this height.
+const FLOOR_BELOW: f32 = 0.6;
 
 /// Problems found and owned: what fails, what fixes it, and the passages.
 const KNOWN: &[(What, &str, &[&str])] = &[
@@ -222,6 +222,31 @@ fn gaps(mut blocks: Vec<(f32, f32)>, from: f32, to: f32) -> Vec<(f32, f32)> {
     free
 }
 
+/// The top of a model's floor (a gate's threshold, a bridge's deck): the
+/// highest face that looks up from under the middle of the way through,
+/// below [`FLOOR_BELOW`]; 0 if there is none.
+fn floor(tris: &[Triangle]) -> f32 {
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    tris.iter()
+        .filter(|t| {
+            let (u, v) = (sub(t[1], t[0]), sub(t[2], t[0]));
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let flat = n[1].abs() >= 0.9 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            // Over the middle (x, z) = (0, 0), seen from above.
+            let side = |a: [f32; 3], b: [f32; 3]| a[0] * b[2] - a[2] * b[0];
+            let d = [side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0])];
+            let over = d.iter().all(|&e| e >= 0.0) || d.iter().all(|&e| e <= 0.0);
+            flat && over && n[1] != 0.0
+        })
+        .map(|t| (t[0][1] + t[1][1] + t[2][1]) / 3.0)
+        .filter(|&y| y < FLOOR_BELOW)
+        .fold(0.0, f32::max)
+}
+
 /// The widest free doorway of a gate model: across its longer side, at
 /// [`BAND`] above its floor, within `half` of its middle (its footprint).
 fn doorway(tris: &[Triangle], half: f32) -> f32 {
@@ -232,10 +257,15 @@ fn doorway(tris: &[Triangle], half: f32) -> f32 {
     };
     let across = if extent(0) >= extent(2) { 0 } else { 2 };
     let half = extent(across).min(half);
-    gaps(blocked(tris, across, BAND.0, BAND.1), -half, half)
-        .iter()
-        .map(|(a, b)| b - a)
-        .fold(0.0, f32::max)
+    let top = floor(tris);
+    gaps(
+        blocked(tris, across, top + BAND.0, top + BAND.1),
+        -half,
+        half,
+    )
+    .iter()
+    .map(|(a, b)| b - a)
+    .fold(0.0, f32::max)
 }
 
 /// The free width of a two-lane deck built from bridge tile model `tris`
@@ -243,11 +273,7 @@ fn doorway(tris: &[Triangle], half: f32) -> f32 {
 /// stretch of one lane from its inner edge, twice, at [`BAND`] above the
 /// deck.
 fn deck(tris: &[Triangle]) -> f32 {
-    // The deck's top: its highest point below the rails' height.
-    let top = (tris.iter().flatten())
-        .filter(|v| v[1] < DECK_BELOW)
-        .map(|v| v[1])
-        .fold(0.0, f32::max);
+    let top = floor(tris);
     let free = gaps(blocked(tris, 0, top + BAND.0, top + BAND.1), -0.5, 0.5);
     // The two lanes meet at their inner edges: whichever edge is open.
     let edge = |e: f32| {
@@ -318,10 +344,20 @@ fn the_measures_find_a_doorway_and_a_deck() {
             [[x, y0, z0], [x, y1, z1], [x, y1, z0]],
         ]
     };
-    // A gate's two posts, two tiles apart across its three-tile side.
+    // A level face at height `y` over x0..x1 and z0..z1.
+    let level = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| -> [Triangle; 2] {
+        [
+            [[x0, y, z0], [x1, y, z0], [x1, y, z1]],
+            [[x0, y, z0], [x1, y, z1], [x0, y, z1]],
+        ]
+    };
+    // A gate's two posts, two tiles apart across its three-tile side, on
+    // a threshold 0.2 high (which doesn't block the doorway).
     let gate = [
         wall(0.0, -1.5, -1.0, 0.0, 2.0),
         wall(0.0, 1.0, 1.5, 0.0, 2.0),
+        level(-0.5, 0.5, -1.5, 1.5, 0.2),
+        wall(0.5, -1.5, 1.5, 0.0, 0.2),
     ]
     .concat();
     assert!(
@@ -330,16 +366,17 @@ fn the_measures_find_a_doorway_and_a_deck() {
         doorway(&gate, 1.5)
     );
     // Shut, its leaves close the doorway.
-    let shut = [gate.clone(), wall(0.0, -1.0, 1.0, 0.0, 1.8).to_vec()].concat();
+    let shut = [gate.clone(), wall(0.0, -1.0, 1.0, 0.2, 1.8).to_vec()].concat();
     assert!(doorway(&shut, 1.5) < 1e-3, "{}", doorway(&shut, 1.5));
-    // A lane: a flat deck 0.3 up and a rail 0.05 in from its outer edge.
-    let flat = |y: f32| -> [Triangle; 2] {
-        [
-            [[-0.5, y, -0.5], [0.5, y, -0.5], [0.5, y, 0.5]],
-            [[-0.5, y, -0.5], [0.5, y, 0.5], [-0.5, y, 0.5]],
-        ]
-    };
+    // A lane: a deck 0.3 up, and a rail 0.05 in from its outer edge
+    // with a level top at 0.55 (not the deck).
     let rail = [[[0.45, 0.3, -0.5], [0.45, 0.3, 0.5], [0.45, 1.5, 0.5]]];
-    let lane = [flat(0.3).to_vec(), rail.to_vec()].concat();
-    assert!((deck(&lane) - 1.9).abs() < 1e-3, "{}", deck(&lane));
+    let lane = [
+        level(-0.5, 0.5, -0.5, 0.5, 0.3).to_vec(),
+        rail.to_vec(),
+        level(0.44, 0.46, -0.5, 0.5, 0.55).to_vec(),
+    ]
+    .concat();
+    assert!((floor(&lane) - 0.3).abs() < 1e-3, "{}", floor(&lane));
+    assert!((deck(&lane) - 1.88).abs() < 1e-3, "{}", deck(&lane));
 }
