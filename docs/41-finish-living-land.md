@@ -139,3 +139,33 @@ the Classic choices so old choices keep their numbers;
 
 Water levels per tile, dams and debris (docs/39). Three- and five-player
 layouts. A new art pass for the habitats.
+
+## Step 4 as built
+
+*2026-10-30.*
+
+- **Changing by default.** The lobby's Weather starts on **Changing** in
+  both modes (`WeatherSetting::default`). Fair, Rain, Snow and Fog stay as
+  choices. Nothing in the simulation changed: the spells were already there,
+  only the default was Fair.
+- **Weather news.** `gc_game/src/sky_news.rs` reads `world.weather()` after
+  each tick and says on the news line when rain, a storm, snow or fog comes
+  in, and when it clears: "Fog is rolling in: troops see much less far.
+  Watch for ambushes", "A storm is coming in: ...", "The fog has lifted".
+  Weather comes in at strength 100 and has cleared under 40; rain is a storm
+  from 200 and rain again under 160. The give either way means the sim's
+  slow fades and small wobbles are told once. The weather a match starts in
+  isn't told.
+- **Fire news.** Once a second, woods burning within 10 tiles of one of the
+  viewer's buildings or regiments are told: "Fire! The woods are burning
+  near your base" (the base first) or "... near your troops". A fire is told
+  as it comes near, then not again for 45 seconds, so a blaze spreading
+  tile by tile or flickering at the edge is told once.
+- **Real use.** The alerts matter most in Conquest on grown land, where
+  storms send flash floods down the rivers (already told) and fog hides
+  ambushes in the woods. The computer players read the weather and fire
+  directly from the sim, so they need no alerts.
+- **Tests.** `sky_news::tests`: a fade in and out of rain through a storm is
+  told once each way, a wobble about the thresholds says nothing, the
+  opening weather is quiet, a new kind is told after the old fades, and a
+  fire near troops then the base is told once each, with the quiet time.
