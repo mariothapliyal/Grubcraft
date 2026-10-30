@@ -1062,14 +1062,16 @@ fn wall_block(
     }
 }
 
-/// One tile of a bridge: a flat deck slab along its line, a full tile wide
-/// and floating just above the ground the shader draws (the water over a
-/// river), with a rail along each edge and a post at the middle of each;
-/// while it goes up, only two posts that grow with the work done. `deck` is
-/// the deck's colour (with its glow), `team` the owner's, which tints the
-/// posts and rails. A side with another tile of the same bridge beside it
-/// (`joined` says whether the tile there is one) is an inner edge of a wide
-/// deck, and has no rail.
+/// One tile of a bridge: a flat deck slab filling the tile square,
+/// floating just above the ground the shader draws (the water over a
+/// river), so the tiles of a deck meet edge to edge whatever way it curves;
+/// with a rail and a post along each of its sides that is an outer edge of
+/// the deck; while it goes up, only posts there that grow with the work
+/// done. A side is an outer edge where no tile of a bridge is beside it
+/// (`joined` says whether the tile there is one) and it runs along the
+/// way the bridge goes there (its line), not across it, so the ends
+/// where the deck meets the bank stay open. `deck` is the deck's colour
+/// (with its glow), `team` the owner's, which tints the posts and rails.
 fn push_bridge_tile(
     s: &StructureView,
     deck: [u8; 4],
@@ -1077,56 +1079,60 @@ fn push_bridge_tile(
     joined: &dyn Fn((i32, i32)) -> bool,
     out: &mut Vec<BoxInstance>,
 ) {
-    let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
-        Some(p) => (p.centre, p.dir, p.len),
-        None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
-    };
-    let side = Vec2::new(-dir.y, dir.x);
+    let centre = centre_of(s.tile, 1, 1);
+    let dir = (s.line.and_then(|line| wall_piece(line, s.tile))).map_or(Vec2::X, |p| p.dir);
     let [r, g, b, _] = deck;
     let [r, g, b] = tint([r, g, b].map(|c| (u32::from(c) * 3 / 4) as u8), team, 35);
     let wood = [r, g, b, 0];
     let top = DECK_TOP;
     // Just outside the deck's edge, so the whole width stays clear.
     let edge = 0.5 + POST_THIN / 2.0;
-    let post = |height: f32, lift: f32, at: Vec2| BoxInstance {
+    // The outer edges: (outward, along the edge).
+    let sides = [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y]
+        .into_iter()
+        .filter(|&n| n.dot(dir).abs() < RAIL_ACROSS)
+        .filter(|&n| !joined((s.tile.0 + n.x as i32, s.tile.1 + n.y as i32)))
+        .map(|n| (n, Vec2::new(-n.y, n.x)));
+    let post = |height: f32, lift: f32, at: Vec2, along: Vec2| BoxInstance {
         pos: at.to_array(),
-        facing: dir.to_array(),
+        facing: along.to_array(),
         size: [POST_THIN, height, POST_THIN],
         color: wood,
         lift,
     };
-    // The sides with no bridge tile beside them.
-    let outer = |sign: f32| {
-        let beside = centre + side * sign;
-        !joined((beside.x.floor() as i32, beside.y.floor() as i32))
-    };
     if !s.finished() {
         let done = f32::from(s.built_percent) / 100.0;
         let height = FRAME_LOW + (top + RAIL_HEIGHT - FRAME_LOW) * done;
-        for sign in [-1.0, 1.0].into_iter().filter(|&sign| outer(sign)) {
-            out.push(post(height, 0.0, centre + side * (sign * edge)));
+        for (n, along) in sides {
+            out.push(post(height, 0.0, centre + n * edge, along));
         }
         return;
     }
     out.push(BoxInstance {
         pos: centre.to_array(),
-        facing: dir.to_array(),
-        size: [1.0, BRIDGE_THICK, len],
+        facing: Vec2::Y.to_array(),
+        size: [1.0, BRIDGE_THICK, 1.0],
         color: deck,
         lift: DECK_LIFT,
     });
-    for sign in [-1.0, 1.0].into_iter().filter(|&sign| outer(sign)) {
-        let at = centre + side * (sign * edge);
-        out.push(post(RAIL_HEIGHT, top, at));
+    for (n, along) in sides {
+        let at = centre + n * edge;
+        out.push(post(RAIL_HEIGHT, top, at, along));
         out.push(BoxInstance {
             pos: at.to_array(),
-            facing: dir.to_array(),
-            size: [RAIL_THIN, RAIL_THIN, len],
+            facing: along.to_array(),
+            // A touch over a tile, so rails meet round a step.
+            size: [RAIL_THIN, RAIL_THIN, 1.0 + RAIL_THIN],
             color: wood,
             lift: top + RAIL_HEIGHT - RAIL_THIN,
         });
     }
 }
+
+/// How square to the way a bridge runs a tile side must be to carry a
+/// rail: the cosine of the widest angle between the side's outward
+/// direction and the line (about 41 degrees).
+const RAIL_ACROSS: f32 = 0.75;
 
 /// What one tile of a field work is drawn in.
 struct Fieldwork {
