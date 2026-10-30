@@ -102,11 +102,12 @@ fn an_order_to_the_side_moves_off_at_once() {
 }
 
 #[test]
-fn an_order_behind_turns_only_until_it_can_wheel() {
+fn an_order_behind_faces_about_at_once() {
     for unit in 0..DRILL_UNITS.len() as u16 {
         let got = ticks_to_first_step(&[], unit, (100, 100), (100, 140));
-        // Only the turn past 90 degrees is made standing.
-        assert!(got <= turn_ticks(unit, 90), "unit {unit}: {got} ticks");
+        // Every man turns where he stands, whatever the block's turn rate.
+        let budget = u32::from(gc_sim::ABOUT_FACE_TICKS) + 2;
+        assert!(got <= budget, "unit {unit}: {got} ticks");
     }
 }
 

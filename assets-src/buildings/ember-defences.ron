@@ -3,6 +3,9 @@
 // (`cargo run -p gc_artbake --release -- --config assets-src/buildings/ember-defences.ron --out assets/buildings/ember-defences.pak`).
 // Each building has four models: its construction stages `#1` (foundation), `#2` (frame) and `#3`
 // (nearly done), then the finished building under its own name, exactly as in data/rosters.
+// The Gate's finished model has an OPEN doorway (2.84 tiles between its posts): its door leaves are the
+// separate model `Gate Leaf` (the same textures, hinge at its origin, lying along +z/-z from it), which
+// the game swings open and shut.
 // All four share one texture set (one material) and keep their authored positions in tiles
 // (`keep_origin`), with the origin at the middle of the footprint on the ground and the door
 // facing +z. The Palisade is modelled two tiles long and 2.4 tall; `scale` brings it to a drawn
@@ -320,11 +323,27 @@
         (
             name: "Gate",
             source: "shared:grubcraft/buildings-detail/ember/gate/final.glb",
-            height: 2.25,
+            height: 2.55,
             keep_origin: true,
             detail_tile: Some(0.5),
             clips: {},
             lod_triangles: (2500, 900, 300, 120),
+            textures: Some((
+                albedo: "shared:grubcraft/buildings-detail/ember/gate/albedo.png",
+                team: Some("shared:grubcraft/buildings-detail/ember/gate/team.png"),
+                normal: Some("shared:grubcraft/buildings-detail/ember/gate/normal.png"),
+                orm: Some("shared:grubcraft/buildings-detail/ember/gate/orm.png"),
+                emissive: Some("shared:grubcraft/buildings-detail/ember/gate/emissive.png"),
+            )),
+        ),
+        (
+            name: "Gate Leaf",
+            source: "shared:grubcraft/buildings-detail/ember/gate/leaf.glb",
+            height: 1.8,
+            keep_origin: true,
+            detail_tile: Some(0.5),
+            clips: {},
+            lod_triangles: (600, 300, 120, 60),
             textures: Some((
                 albedo: "shared:grubcraft/buildings-detail/ember/gate/albedo.png",
                 team: Some("shared:grubcraft/buildings-detail/ember/gate/team.png"),

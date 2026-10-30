@@ -84,6 +84,7 @@ impl Sense<'_> {
                 to,
                 facing: None,
                 pace: 0.0,
+                hunt: false,
             },
             priority,
             group,

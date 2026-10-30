@@ -346,6 +346,7 @@ impl Captain {
                 to: spot,
                 facing: Some(facing),
                 pace: 0.0,
+                hunt: false,
             },
             priority: 3,
             group: 0,

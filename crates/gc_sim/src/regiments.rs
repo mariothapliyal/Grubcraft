@@ -7,6 +7,7 @@ use crate::combat::{Combat, OPEN_GROUND, PATIENCE};
 use crate::formation::{self, MAX_MODELS};
 use crate::morale::{self, MoraleState};
 use crate::nav::{self, Nav};
+use crate::orders::{NO_PLAN, Plan, PlanIndex, Plans, Queue, Step};
 use crate::state::State;
 use crate::terrain::Terrain;
 use crate::{Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitId, UnitStats};
@@ -49,6 +50,12 @@ pub(crate) enum Strike {
 const TURN_BEFORE_MARCH: i32 = 0x4000;
 /// Within this angle off its way (45 degrees), it marches at full pace.
 const WHEEL_FULL_PACE: i32 = 0x2000;
+/// Beyond this angle off its way (135 degrees), a block of several men
+/// faces about instead of turning: every man turns where he stands and the
+/// rear rank becomes the front (see [`Regiments::face_about`]).
+const ABOUT_FACE: i32 = 0x6000;
+/// Ticks a block stands while it faces about.
+pub const ABOUT_FACE_TICKS: u8 = 6;
 
 /// The pace of a block marching `off` (raw angle units) away from where it
 /// faces: it wheels as it marches, at full pace within [`WHEEL_FULL_PACE`],
@@ -117,6 +124,10 @@ macro_rules! regiment_fields {
             /// formation slot (slot `k` is rank `k / files`, file
             /// `k % files`; rank 0 is the front).
             pub(crate) hp: Vec<u16>,
+            /// Each slot's entry in `plans`, or [`NO_PLAN`]: its queued
+            /// orders and attack-move (see [`crate::orders`]).
+            plan: Vec<PlanIndex>,
+            plans: Plans,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -131,6 +142,8 @@ macro_rules! regiment_fields {
                     alive: vec![false; n],
                     generation: vec![0; n],
                     hp: vec![0; n * MAX_MODELS as usize],
+                    plan: vec![NO_PLAN; n],
+                    plans: Plans::with_capacity(n),
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -139,6 +152,7 @@ macro_rules! regiment_fields {
             /// Slot `i` as a free slot holds it (its handle aside).
             fn reset_slot(&mut self, i: usize) {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
+                self.plans.release(&mut self.plan[i]);
                 $(self.$name[i] = $free;)*
             }
 
@@ -147,6 +161,9 @@ macro_rules! regiment_fields {
                 let m = MAX_MODELS as usize;
                 self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
                 $(self.$name[i] = from.$name[i];)*
+                // The same players hold the same plans in both worlds.
+                let copied = self.set_plan(i, from.plan(i));
+                debug_assert!(copied, "no plan free for a copied regiment");
             }
 
             /// Slot `i`'s fields (its handle aside), into the state hash:
@@ -157,6 +174,7 @@ macro_rules! regiment_fields {
                 for hp in &self.hp[i * m..][..self.models[i] as usize] {
                     hp.hash(h);
                 }
+                self.plan(i).hash(h);
                 $(self.$name[i].hash(h);)*
             }
 
@@ -166,6 +184,7 @@ macro_rules! regiment_fields {
                 for hp in &self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize] {
                     hp.write(out);
                 }
+                self.plan(i).write(out);
                 $(self.$name[i].write(out);)*
             }
 
@@ -175,7 +194,11 @@ macro_rules! regiment_fields {
                 for k in 0..MAX_MODELS as usize {
                     self.hp[i * MAX_MODELS as usize + k] = u16::read(input)?;
                 }
+                let plan = Plan::read(input)?;
                 $(self.$name[i] = <$ty>::read(input)?;)*
+                if usize::from(self.owner[i]) >= crate::MAX_PARTIES || !self.set_plan(i, plan) {
+                    return None;
+                }
                 Some(())
             }
 
@@ -273,6 +296,11 @@ regiment_fields! {
     /// Ticks it has stepped forward since it last halted or fought, up to
     /// [`crate::combat::RUN_UP_TICKS`]: only a run-up makes a charge.
     run_up: u8 = 0,
+    /// Ticks left standing while it faces about (see [`ABOUT_FACE`]).
+    about_left: u8 = 0,
+    /// How many times it has faced about, counting round: the screen turns
+    /// its men's places round when this changes.
+    abouts: u8 = 0,
     /// Melee damage dealt and taken lately, in 1/256ths of a hit point
     /// weighted by the striker's mass: who is winning the exchange, for
     /// lines that push (see [`Combat::push_lines`]). Both fade by an
@@ -451,6 +479,7 @@ impl Regiments {
             return false;
         };
         self.alive[i] = false;
+        self.plans.release(&mut self.plan[i]);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.free.push(h.index);
         true
@@ -649,6 +678,52 @@ impl Regiments {
             pace.min(self.speed[i])
         };
         true
+    }
+
+    /// Slot `i` has nothing to carry out: no march, no enemy to attack.
+    pub(crate) fn idle(&self, i: usize) -> bool {
+        self.target[i].is_none() && self.attack_target[i].is_none()
+    }
+
+    /// Regiment `h` forgets its queued orders and any attack-move: a
+    /// player's order given without Shift has taken their place (`hunt`:
+    /// the attack-move it now is).
+    pub(crate) fn fresh(&mut self, h: RegimentHandle, hunt: Option<Step>) {
+        if let Some(i) = self.resolve(h) {
+            self.set_plan(i, Plan { hunt, ..Plan::NONE });
+        }
+    }
+
+    /// Slot `i` is on the attack-move `hunt` from now, or on none (and
+    /// marches plainly if no plan is free to keep it in).
+    pub(crate) fn on_hunt(&mut self, i: usize, hunt: Option<Step>) {
+        let plan = Plan {
+            hunt,
+            diverted: false,
+            ..self.plan(i)
+        };
+        self.set_plan(i, plan);
+    }
+
+    /// Slot `i`'s queued orders and attack-move.
+    pub(crate) fn plan(&self, i: usize) -> Plan {
+        self.plans.get(self.plan[i])
+    }
+
+    /// Slot `i`'s queued orders and attack-move from now; false (and
+    /// nothing changed) when there is no room left to keep them.
+    pub(crate) fn set_plan(&mut self, i: usize, plan: Plan) -> bool {
+        self.plans.set(&mut self.plan[i], self.owner[i], plan)
+    }
+
+    /// Whether slot `i` has anything queued or is on an attack-move.
+    pub(crate) fn planned(&self, i: usize) -> bool {
+        self.plan[i] != NO_PLAN
+    }
+
+    /// Regiment `h`'s queued orders, first first.
+    pub fn queued(&self, h: RegimentHandle) -> Option<Queue> {
+        self.resolve(h).map(|i| self.plan(i).queue)
     }
 
     /// Put a regiment straight down at `position` (deployment): no march,
@@ -992,6 +1067,21 @@ impl Regiments {
         self.hp.swap(base + usize::from(a), base + usize::from(b));
     }
 
+    /// Slot `i` faces about: it turns half round where it stands, and its
+    /// men's places turn with it, so the rear rank is the front and every
+    /// man keeps his ground (the general then steps back to his post, see
+    /// [`crate::generals`]). It then stands
+    /// [`ABOUT_FACE_TICKS`] while they turn.
+    fn face_about(&mut self, i: usize) {
+        let n = usize::from(self.models[i]);
+        self.facing[i] = self.facing[i].wrapping_add(Angle::HALF);
+        self.hp[i * MAX_MODELS as usize..][..n].reverse();
+        self.general[i] = self.general[i].map(|g| (n - 1 - usize::from(g)) as u8);
+        self.about_left[i] = ABOUT_FACE_TICKS;
+        self.abouts[i] = self.abouts[i].wrapping_add(1);
+        self.run_up[i] = 0;
+    }
+
     /// Take `damage` hit points off soldier `k` of regiment `i`. Each time
     /// that kills the man in slot `k`, the soldier in the last slot steps up
     /// into his place and takes what the blow had to spare. Returns soldiers
@@ -1035,6 +1125,7 @@ impl Regiments {
     }
 
     fn view(&self, i: usize) -> RegimentView {
+        let plan = self.plan(i);
         RegimentView {
             handle: RegimentHandle {
                 index: i as u32,
@@ -1069,6 +1160,10 @@ impl Regiments {
             on_wall: self.on_wall[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
+            hunting: plan.hunt.is_some(),
+            diverted: plan.diverted,
+            abouts: self.abouts[i],
+            queued: plan.queue.len() as u8,
         }
     }
 
@@ -1101,8 +1196,10 @@ impl Regiments {
                 }
             }
             // Halting, fighting or backing away ends a run-up.
+            // So does facing about: it takes up no later order.
             if self.target[i].is_none() || self.engaged[i].is_some() || self.falling_back[i] > 0 {
                 self.run_up[i] = 0;
+                self.about_left[i] = 0;
             }
             if self.target[i].is_none() {
                 self.held[i] = 0;
@@ -1129,6 +1226,11 @@ impl Regiments {
                 continue;
             }
             if let Some(target) = self.target[i] {
+                // Facing about: it stands until every man has turned.
+                if self.about_left[i] > 0 {
+                    self.about_left[i] -= 1;
+                    continue;
+                }
                 // The next waypoint on the way to the target; none while the
                 // route is being searched for.
                 let Some((point, last)) = nav.steer(i, target) else {
@@ -1148,11 +1250,29 @@ impl Regiments {
                     && self.target_facing[i].is_some();
                 let mut wheeling = false;
                 let step = if shuffle {
-                    self.facing[i] =
-                        self.facing[i].turn_toward(self.target_facing[i].unwrap(), turn);
+                    let want = self.target_facing[i].unwrap();
+                    // Told to face back the way it came: it faces about.
+                    if i32::from(self.facing[i].delta_to(want)).abs() > ABOUT_FACE
+                        && self.models[i] > 1
+                        && self.falling_back[i] == 0
+                        && !self.morale_state[i].broken()
+                    {
+                        self.face_about(i);
+                        continue;
+                    }
+                    self.facing[i] = self.facing[i].turn_toward(want, turn);
                     Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
+                    // Its way lies behind it: it faces about (in good order;
+                    // a routing block just turns and runs).
+                    if i32::from(self.facing[i].delta_to(travel)).abs() > ABOUT_FACE
+                        && self.models[i] > 1
+                        && !self.morale_state[i].broken()
+                    {
+                        self.face_about(i);
+                        continue;
+                    }
                     self.facing[i] = self.facing[i].turn_toward(travel, turn);
                     // How far off it still faces after this tick's turn.
                     let off = i32::from(self.facing[i].delta_to(travel));
@@ -1357,6 +1477,16 @@ pub struct RegimentView {
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).
     pub sung: bool,
+    /// On an attack-move (see [`crate::orders`]).
+    pub hunting: bool,
+    /// On an attack-move and turned aside to fight what it met.
+    pub diverted: bool,
+    /// How many times it has faced about, counting round (see
+    /// [`ABOUT_FACE_TICKS`]): when it changes, its men's places have turned
+    /// round with the block.
+    pub abouts: u8,
+    /// Orders queued behind the current one ([`Regiments::queued`] has them).
+    pub queued: u8,
 }
 
 impl RegimentView {
@@ -1436,6 +1566,33 @@ mod tests {
         let mut changed = copy(regs);
         changed.party_morale[crate::MAX_PARTIES - 1] = 5;
         assert_ne!(hash(&changed), before, "party morale isn't hashed");
+        // A plan's every part, wherever in the pool it is kept.
+        let step = crate::orders::Step::Move {
+            target: FxVec2::from_ints(3, 4),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+            hunt: true,
+        };
+        let mut queued = Plan::NONE;
+        queued.queue.push(step);
+        let hunting = Plan {
+            hunt: Some(step),
+            ..Plan::NONE
+        };
+        let diverted = Plan {
+            diverted: true,
+            ..hunting
+        };
+        let mut hashes = alloc::vec![before];
+        for plan in [queued, hunting, diverted] {
+            let mut changed = copy(regs);
+            assert!(changed.set_plan(i, plan));
+            hashes.push(hash(&changed));
+        }
+        hashes.sort_unstable();
+        hashes.dedup();
+        assert_eq!(hashes.len(), 4, "a plan isn't hashed in full");
         let mut changed = copy(regs);
         changed.despawn(changed.handle(i));
         assert_ne!(hash(&changed), before, "who is alive isn't hashed");
