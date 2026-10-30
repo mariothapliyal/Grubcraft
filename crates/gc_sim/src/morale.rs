@@ -117,9 +117,9 @@ pub const WHY_CHAMPION: u16 = 1 << 11;
 /// Flank and rear blows count as knocks: a regiment soon turns to face
 /// them, but the nerve they cost stays spent.
 const WHY_PRESSURE: u16 = WHY_PINNED | WHY_OUTNUMBERED | WHY_LOSSES | WHY_BLOODIED;
-/// Losing this many percent of full strength in one second counts as
-/// heavy losses for [`WHY_LOSSES`].
-const HEAVY_LOSS_PERCENT: i32 = 3;
+/// Losing this many percent of full strength in one second (and at least
+/// two soldiers) counts as heavy losses for [`WHY_LOSSES`].
+const HEAVY_LOSS_PERCENT: i32 = 8;
 /// Enemies and friends within this many tiles count toward being outnumbered.
 const LOCAL_TILES: i32 = 12;
 /// Points lost each second in melee when nearby enemies outnumber nearby
@@ -266,7 +266,7 @@ fn check(
         drain += i32::from(PINNED_SHOCK * SCALE);
         why |= WHY_PINNED;
     }
-    if i32::from(regs.losses[i]) * 100 >= full * HEAVY_LOSS_PERCENT {
+    if regs.losses[i] >= 2 && i32::from(regs.losses[i]) * 100 >= full * HEAVY_LOSS_PERCENT {
         why |= WHY_LOSSES;
     }
     // How far it is from breaking: its general near it steadies it.
@@ -299,10 +299,7 @@ fn check(
         }
     } else if regs.bled[i] == 0 {
         tenths += i32::from(RECOVERY * SCALE);
-        // Out of the fight and getting its nerve back: old knocks fade.
-        why = 0;
     }
-    regs.why[i] = why;
     // Its side's general near it steadies it (see [`crate::generals`]).
     if regs.led[i] {
         drain -= i32::from(generals::LEAD * SCALE);
@@ -327,6 +324,13 @@ fn check(
         morale
     };
     regs.morale[i] = morale;
+    // Old knocks fade once it is out of the fight and steady again.
+    let steady = morale >= WAVER_BELOW * SCALE;
+    regs.why[i] = if steady && regs.engaged[i].is_none() {
+        why & WHY_PRESSURE
+    } else {
+        why
+    };
     if morale > 0 {
         regs.morale_state[i] =
             if morale < WAVER_BELOW * SCALE && strength <= break_at + u32::from(WAVER_MARGIN) {

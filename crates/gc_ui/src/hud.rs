@@ -156,12 +156,20 @@ pub enum CardState {
 }
 
 impl CardState {
-    /// The colour of its meter and of its words.
-    pub fn ink(self) -> Color {
+    /// The colour of its meter.
+    pub fn bar(self) -> Color {
         match self {
             CardState::Steady => theme::WOAD,
-            CardState::Wavering => WAVER_INK,
+            CardState::Wavering => theme::WELD,
             CardState::Routing => theme::MADDER,
+        }
+    }
+
+    /// The colour of its words: darker than the bar where it is pale.
+    pub fn ink(self) -> Color {
+        match self {
+            CardState::Wavering => WAVER_INK,
+            _ => self.bar(),
         }
     }
 
@@ -539,14 +547,14 @@ pub struct Hud {
     tooltip: Option<Rect>,
     /// The regiment in the world the mouse rests on and since when (ms),
     /// for the hover card.
-    world_hover: Option<(u32, u64)>,
+    world_hover: Option<(u64, u64)>,
 }
 
 /// A regiment in the world under the mouse, for the hover card.
 #[derive(Clone, Copy, Debug)]
 pub struct HoverCard<'a> {
     /// The game's name for this regiment; a new one restarts the delay.
-    pub id: u32,
+    pub id: u64,
     pub name: &'a str,
     /// Not yours.
     pub enemy: bool,
@@ -565,7 +573,7 @@ const TIP_ROW: i32 = 18;
 
 /// Whether the mouse has rested on `id` for [`TOOLTIP_DELAY_MS`]; `seen`
 /// remembers what it rests on and since when (ms).
-fn rested(seen: &mut Option<(u32, u64)>, id: u32, now_ms: u64) -> bool {
+fn rested<T: PartialEq + Copy>(seen: &mut Option<(T, u64)>, id: T, now_ms: u64) -> bool {
     let since = match *seen {
         Some((was, since)) if was == id => since,
         _ => {
@@ -1582,7 +1590,7 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let health = s.models as f32 / s.max_models.max(1) as f32;
     for (label, frac, color) in [
         ("Health", health, health_color(health)),
-        (s.state.label(), f32::from(s.morale) / 100.0, s.state.ink()),
+        (s.state.label(), f32::from(s.morale) / 100.0, s.state.bar()),
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
         ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
@@ -1902,7 +1910,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         draw,
         Rect::new(inner.x, y, inner.w, 8),
         f32::from(c.morale) / 100.0,
-        c.state.ink(),
+        c.state.bar(),
     );
     y += 10;
     if c.state == CardState::Routing {
@@ -3025,11 +3033,11 @@ mod tests {
         let d = with_selection(Some(base), &[card(1)]);
         assert!(drew(&d, "Marching") && !drew(&d, "Why:"));
         let waiting = Selection {
-            orders: Orders::One(Order::Marching, Some(Wait::FriendInTheWay)),
+            orders: Orders::One(Order::Marching, Some(Wait::Reforming)),
             ..base
         };
         let d = with_selection(Some(waiting), &[card(1)]);
-        assert!(drew(&d, "Marching(waiting:friendintheway)"));
+        assert!(drew(&d, "Marching(re-formingranks)"));
         let mixed = Selection {
             orders: Orders::Mixed,
             regiments: 3,
@@ -3075,7 +3083,7 @@ mod tests {
         assert!(!drew(&with_icon, "!"));
     }
 
-    fn hover_of(id: u32) -> HoverCard<'static> {
+    fn hover_of(id: u64) -> HoverCard<'static> {
         HoverCard {
             id,
             name: "Yari Ashigaru",

@@ -1110,8 +1110,8 @@ impl Regiments {
         } else if self.engaged[i].is_some() && self.driven_pace(i) > 0 {
             Some(Waiting::DrivenBack)
         } else if self.target[i].is_some() && self.disorder[i] > 0 {
-            Some(Waiting::FriendInTheWay)
-        } else if self.target[i].is_some() && self.files[i] < self.frontage[i] {
+            Some(Waiting::Reforming)
+        } else if self.target[i].is_some() && self.files[i] < self.frontage[i].min(self.models[i]) {
             Some(Waiting::FilingThrough)
         } else {
             None
@@ -1442,8 +1442,9 @@ pub enum Waiting {
     Pinned,
     /// Losing its melee and giving ground.
     DrivenBack,
-    /// Out of order from pushing past friends.
-    FriendInTheWay,
+    /// Out of order (pushed through friends, ploughed, tripped by a trap or
+    /// a flood) and re-forming its ranks.
+    Reforming,
     /// Squeezed into a column through tight ground.
     FilingThrough,
     /// Held fast by a trap.

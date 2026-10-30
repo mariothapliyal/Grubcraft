@@ -209,8 +209,6 @@ pub struct HudState {
     /// Your regiment the mouse rests on, whose route shows like a selected
     /// one's.
     pub hover_own: Option<gc_sim::RegimentHandle>,
-    /// The order tabs over the selected banners this frame; scratch.
-    tabs: Vec<(gc_ui::Rect, UiOrder)>,
     cards: Vec<Card>,
     view: Vec<[f32; 2]>,
     events: Vec<HudEvent>,
@@ -630,7 +628,17 @@ impl Running {
         {
             return None;
         }
-        (self.enemy_under_cursor().map(|h| (h, true)))
+        let side = self.sandbox.side;
+        // A block that holds the cursor wins, yours or not; only then the
+        // looser pickers.
+        let under = self.regiment_containing_cursor();
+        let enemy_of = |h: gc_sim::RegimentHandle| {
+            (self.world.regiments.get(h)).is_some_and(|r| self.world.hostile(side, r.owner))
+        };
+        if let Some(h) = under {
+            return Some((h, enemy_of(h)));
+        }
+        (self.enemy_under_cursor().map(|h| (h, enemy_of(h))))
             .or_else(|| self.own_regiment_at_cursor(4.0).map(|h| (h, false)))
     }
 
@@ -696,7 +704,12 @@ impl Running {
 
         let now_ms = self.now_ms();
         let hover = self.world_hover();
-        self.hud.hover_own = hover.filter(|&(_, enemy)| !enemy).map(|(h, _)| h);
+        self.hud.hover_own = hover
+            .filter(|&(_, enemy)| !enemy)
+            .map(|(h, _)| h)
+            .filter(|&h| {
+                (self.world.regiments.get(h)).is_some_and(|r| r.owner == self.sandbox.side)
+            });
         // A replay shows what happened to nobody in particular.
         if self.watching.is_some() {
             self.hud.notes.clear();
@@ -782,8 +795,7 @@ impl Running {
         let conquest = self.conquest_match();
         let plantable = conquest && !self.plantable().is_empty();
         // The order tabs over the selected banners, where the field has room.
-        let mut tabs = std::mem::take(&mut self.hud.tabs);
-        tabs.clear();
+        let mut tabs: Vec<(gc_ui::Rect, UiOrder)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
             for &h in &self.selected {
@@ -1121,14 +1133,13 @@ impl Running {
         for &(tab, order) in &tabs {
             orders::draw_tab(&mut hud.draw, tab, order);
         }
-        hud.tabs = tabs;
         // The regiment the mouse rests on: its card, after the delay.
         let hover_card = hover.and_then(|(h, enemy)| {
             let r = self.world.regiments.get(h)?;
             let f = self.world.regiments.feedback(h)?;
             let stats = &self.units.stats[r.unit as usize];
             Some(HoverCard {
-                id: h.index,
+                id: u64::from(h.index) << 32 | u64::from(h.generation),
                 name: &self.units.names[r.unit as usize],
                 enemy,
                 models: r.models,
@@ -1918,7 +1929,7 @@ fn wait_of(w: gc_sim::Waiting) -> Wait {
     match w {
         Waiting::Pinned => Wait::Pinned,
         Waiting::DrivenBack => Wait::DrivenBack,
-        Waiting::FriendInTheWay => Wait::FriendInTheWay,
+        Waiting::Reforming => Wait::Reforming,
         Waiting::FilingThrough => Wait::FilingThrough,
         Waiting::Trapped => Wait::Trapped,
     }

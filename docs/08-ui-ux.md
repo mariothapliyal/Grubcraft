@@ -135,7 +135,7 @@ With a dragged width, Line and Hammer stretch every frontage by the same factor 
 
 What a regiment is doing, and why it is shaken, shows in four places (`gc_ui::orders`, the words and pictures shared by all of them):
 
-- **Order line** on the selection panel: an icon and a word (Holding, Marching, Forced march, Attacking, Fighting, Braced, Falling back, Running), with a note in brackets when something holds it up (pinned, driven back, waiting: friend in the way, filing through, trapped). Several regiments with different orders show "Mixed orders".
+- **Order line** on the selection panel: an icon and a word (Holding, Marching, Forced march, Attacking, Fighting, Braced, Falling back, Running), with a note in brackets when something holds it up (pinned, driven back, re-forming ranks, filing through, trapped). Several regiments with different orders show "Mixed orders".
 - **Why line:** when a regiment is wavering or routing, "Why:" gives up to two reasons, most serious first (rear attack, flanked, general fell, ally broke, outnumbered, ambushed, heavy losses, bloodied, pinned, burning, flooded, champion lost).
 - **Army tray cards:** a small order icon at the top left of the portrait; a yellow "!" tab when the regiment is wavering.
 - **Banner tab:** each selected regiment shows its order icon in a small tab above its banner.

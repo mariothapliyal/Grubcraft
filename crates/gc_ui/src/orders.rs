@@ -63,7 +63,7 @@ impl Order {
 pub enum Wait {
     Pinned,
     DrivenBack,
-    FriendInTheWay,
+    Reforming,
     FilingThrough,
     Trapped,
 }
@@ -74,7 +74,7 @@ impl Wait {
         match self {
             Wait::Pinned => "pinned",
             Wait::DrivenBack => "driven back",
-            Wait::FriendInTheWay => "waiting: friend in the way",
+            Wait::Reforming => "re-forming ranks",
             Wait::FilingThrough => "filing through",
             Wait::Trapped => "trapped",
         }
@@ -229,8 +229,8 @@ mod tests {
     fn a_wait_follows_the_order_in_brackets() {
         assert_eq!(order_text(Order::Marching, None), "Marching");
         assert_eq!(
-            order_text(Order::Marching, Some(Wait::FriendInTheWay)),
-            "Marching (waiting: friend in the way)"
+            order_text(Order::Marching, Some(Wait::Reforming)),
+            "Marching (re-forming ranks)"
         );
         assert_eq!(
             order_text(Order::Fighting, Some(Wait::Pinned)),

@@ -2879,6 +2879,28 @@ impl Running {
             .or_else(|| self.ground_under_cursor().and_then(|p| self.enemy_at(p)))
     }
 
+    /// The regiment, of any side your side can see, whose block holds the
+    /// mouse's ground point; the nearest centre if blocks overlap.
+    pub fn regiment_containing_cursor(&self) -> Option<RegimentHandle> {
+        let side = self.sandbox.side;
+        let p = self.ground_under_cursor()?;
+        self.world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == side || self.world.sees(side, r.handle))
+            .filter_map(|r| {
+                let stats = &self.units.stats[r.unit as usize];
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
+                let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
+                let to = p - at;
+                let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
+                let across = to.perp_dot(facing).abs() - fx_to_f32(width) / 2.0;
+                (ahead.max(across) <= 0.0).then_some((r.handle, to.length_squared()))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(h, _)| h)
+    }
+
     /// The enemy regiment whose block is under (or within a step of) `p`.
     fn enemy_at(&self, p: Vec2) -> Option<RegimentHandle> {
         self.world
@@ -3988,12 +4010,15 @@ impl Running {
         }
 
         if self.guide.is_some() {
+            self.hud.hover_own = None;
             self.run_guide();
         } else if self.menu_open {
+            self.hud.hover_own = None;
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
         } else {
+            self.hud.hover_own = None;
             self.renderer.clear_ui();
         }
 
