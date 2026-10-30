@@ -28,7 +28,8 @@ const GAPS: core::ops::RangeInclusive<i32> = 3..=12;
 const LIMIT_MINUTES: u32 = 10;
 
 fn run(real: &Real, report: &mut Report) {
-    let map = conquest::make_map(MAP, SEED);
+    // A shipped map: it keeps its own size whatever size is asked for.
+    let map = conquest::make_map(MAP, 0, SEED);
     let nav = map.sim_nav_costs();
     let mut world = World::new(&MatchSetup {
         seed: SEED,
