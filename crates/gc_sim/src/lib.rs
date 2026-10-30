@@ -890,10 +890,9 @@ pub struct World {
     flood: flood::Flood,
     /// Room for the slots a flood leaves stranded, kept between seconds.
     stranded: Vec<usize>,
-    /// What the rivers changed this tick, and the fords' runs to shut or
-    /// open (both kept for their room).
-    river_turn: rivers::Turn,
-    river_runs: Vec<[i32; 4]>,
+    /// The rain's flood has just opened every ford, so the rivers' own
+    /// shut fords are shut again this tick.
+    fords_reopened: bool,
     pub regiments: Regiments,
 }
 
@@ -940,8 +939,7 @@ impl World {
             fires: fire::Fires::new(setup.seed),
             flood,
             stranded: Vec::new(),
-            river_turn: rivers::Turn::default(),
-            river_runs: Vec::new(),
+            fords_reopened: false,
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -2704,23 +2702,12 @@ impl World {
             _ => (0, 0),
         };
         let wet = self.sky.wet();
-        let turn = (self.flood).second(&mut self.terrain, wet, at, snow, !self.scratch);
-        (self.flood.rivers).second(rain, wet, turn.melting);
+        let turn = (self.flood).second(&mut self.terrain, wet, at, snow, rain, !self.scratch);
         if let Some(closed) = turn.fords {
             (self.nav).set_flooded_all(self.flood.runs(), closed, &self.regiments);
             self.events.flooded(closed);
-            // The fords a river has shut stay shut when the rain's flood
-            // goes.
-            if !closed && self.flood.rivers.shut() {
-                let mut runs = core::mem::take(&mut self.river_runs);
-                runs.clear();
-                for g in self.flood.rivers.shut_groups() {
-                    runs.extend_from_slice(self.flood.rivers.runs(g));
-                }
-                (self.nav).set_flooded_all(&runs, true, &self.regiments);
-                self.river_runs = runs;
-                self.events.flash(rivers::Stage::Here);
-            }
+            // Fords the rivers hold shut stay shut (see `World::flash`).
+            self.fords_reopened = !closed;
         }
         if let Some(open) = turn.shallows {
             let runs = self.flood.shallow_runs();
@@ -2733,9 +2720,12 @@ impl World {
     /// among the spells begun since `begun` may set a flash flood off,
     /// fronts run on down their rivers, and fords shut and open with the
     /// water over them, all of a tick's in one change to the walkable
-    /// grid. A rehearsal sets none off, but a running one runs on in it,
-    /// and it never changes the walkable grid it shares.
+    /// grid. A rain flood that has shut every ford keeps them shut and
+    /// tells of it; as it opens them, those the rivers still hold are shut
+    /// again. A rehearsal sets no front off, but a running one runs on in
+    /// it, and it never changes the walkable grid it shares.
     fn flash(&mut self, begun: usize) {
+        let reopened = core::mem::take(&mut self.fords_reopened);
         if !self.flood.rivers.any() {
             return;
         }
@@ -2751,42 +2741,39 @@ impl World {
             }
         }
         let second = self.tick.is_multiple_of(TICKS_PER_SECOND);
-        let was_shut = self.flood.rivers.shut();
         let lift = i32::from(self.terrain.rise()) - i32::from(self.terrain.low());
-        let mut turn = core::mem::take(&mut self.river_turn);
-        self.flood.rivers.tick(lift, second, &mut turn);
-        if (second || self.flood.rivers.running() || was_shut)
-            && let Some(water) = self.terrain.rivers_mut()
-        {
-            self.flood.rivers.write_water(water);
+        let turn = self.flood.rivers.tick(lift, second);
+        let (coming, stage, water) = (turn.coming, turn.stage, turn.water);
+        if water && let Some(copy) = self.terrain.rivers_mut() {
+            self.flood.rivers.write_water(copy);
         }
-        if turn.coming && !self.scratch {
+        if self.scratch {
+            return;
+        }
+        if coming {
             self.events.flash(rivers::Stage::Coming);
         }
-        // A rain flood that has shut every ford keeps them shut, and tells
-        // when they open.
-        if !self.flood.closed() && !self.scratch {
-            let mut runs = core::mem::take(&mut self.river_runs);
-            for (list, shut) in [(&turn.shut, true), (&turn.opened, false)] {
-                runs.clear();
-                for &g in list {
-                    runs.extend_from_slice(self.flood.rivers.runs(g));
-                }
-                if !runs.is_empty() {
-                    (self.nav).set_flooded_all(&runs, shut, &self.regiments);
-                }
+        if self.flood.closed() {
+            return;
+        }
+        if reopened {
+            // Every ford has just opened: shut again those the rivers hold.
+            let runs = self.flood.rivers.shut_runs();
+            if !runs.is_empty() {
+                (self.nav).set_flooded_all(runs, true, &self.regiments);
+                self.events.flash(rivers::Stage::Here);
             }
-            self.river_runs = runs;
-            let now = self.flood.rivers.shut();
-            if now != was_shut {
-                self.events.flash(if now {
-                    rivers::Stage::Here
-                } else {
-                    rivers::Stage::Gone
-                });
+            return;
+        }
+        for shut in [true, false] {
+            let runs = self.flood.rivers.changed_runs(shut);
+            if !runs.is_empty() {
+                (self.nav).set_flooded_all(runs, shut, &self.regiments);
             }
         }
-        self.river_turn = turn;
+        if let Some(stage) = stage {
+            self.events.flash(stage);
+        }
     }
 
     /// One second of the summer fords gone deep again (with seasons):
@@ -2833,7 +2820,7 @@ impl World {
     /// A rehearsal leaves its troops in the fords: it shares a walkable
     /// grid it never shuts them on, so they could wash up in another.
     fn sweep_away(&mut self) {
-        if self.scratch || !self.flood.rivers.shut() || !self.flood.rivers.running() {
+        if self.scratch || !self.flood.rivers.shut() {
             return;
         }
         let mut swept = 0u16;

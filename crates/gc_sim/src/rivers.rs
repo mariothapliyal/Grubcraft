@@ -140,14 +140,14 @@ pub struct Rivers {
     /// One per tile: its stretch (`NONE` off the rivers).
     stretch_of: Arc<[u16]>,
     stretches: Arc<[Stretch]>,
+    /// The stretches, each before those above it.
+    order: Arc<[u16]>,
     /// The fords, one group each, by stretch.
     groups: Arc<[Group]>,
     /// Every ford tile on a river, as `(y, x)`, sorted, with its group.
     ford_tiles: Arc<[((i32, i32), u16)]>,
     /// The water in each stretch beyond its normal flow.
     store: Vec<u64>,
-    /// What each stretch passes on this second (kept for its room).
-    outflow: Vec<u64>,
     /// How far each stretch's store lifts its water, height units.
     swell: Vec<u16>,
     /// Whether each group's fords are shut by the river (not the map-wide
@@ -157,6 +157,13 @@ pub struct Rivers {
     /// The fords the minds keep off: of groups shut, or a front is
     /// coming down on. As `(y, x)`, sorted.
     threatened: Vec<(i32, i32)>,
+    /// How many times `threatened` has changed, and room to build it anew.
+    threats: u32,
+    threat_room: Vec<(i32, i32)>,
+    /// What the last tick changed, and runs gathered to shut or open
+    /// (both kept for their room).
+    turn: Turn,
+    runs: Vec<[i32; 4]>,
 }
 
 /// A stretch of river.
@@ -165,8 +172,7 @@ struct Stretch {
     /// The stretch below (`NONE` at a river's mouth).
     below: u16,
     /// Its place in a walk of its river's tree from the mouth, and the
-    /// last place under it: stretch `a` is downstream of (or is) `b` when
-    /// `a.tin <= b.tin` and `b.tout <= a.tout`.
+    /// last place under it (see [`Stretch::holds`]).
     tin: u16,
     tout: u16,
     /// The stretch above it with the most land (`NONE` at a river's top),
@@ -230,6 +236,16 @@ impl Front {
     fn running(&self) -> u32 {
         self.ticks.saturating_sub(self.delay)
     }
+
+    /// Whether it has set off.
+    fn moving(&self) -> bool {
+        self.ticks >= self.delay
+    }
+
+    /// How far it raises the water at `reach`.
+    fn rise(&self, reach: u16) -> u16 {
+        rise_after(self.running(), self.top, self.crest, reach)
+    }
 }
 
 /// Where a flash flood is, as told (see [`crate::events::Event::FlashFlood`]).
@@ -248,11 +264,13 @@ pub enum Stage {
 pub(crate) struct Turn {
     /// A front is [`WARNING_SECONDS`] from its first ford.
     pub(crate) coming: bool,
-    /// A big front was rolled: told map-wide at once.
-    pub(crate) great: Option<Band>,
+    /// The rivers first shut a ford, or opened the last.
+    pub(crate) stage: Option<Stage>,
+    /// The water the terrain reads changed.
+    pub(crate) water: bool,
     /// Groups whose fords just shut, and just opened.
-    pub(crate) shut: Vec<u16>,
-    pub(crate) opened: Vec<u16>,
+    shut: Vec<u16>,
+    opened: Vec<u16>,
 }
 
 /// The way to a neighbour that a flow points.
@@ -269,6 +287,22 @@ fn step_of(flow: u8) -> Option<(i32, i32)> {
         (1, -1),
     ];
     Flow::of(flow).map(|_| STEPS[usize::from(flow & 7)])
+}
+
+/// The highest any of `fronts` raises the water at `reach` of stretch
+/// `here`: only those that set off at or above it count.
+fn fronts_rise<'a>(
+    stretches: &[Stretch],
+    fronts: impl IntoIterator<Item = &'a Front>,
+    here: u16,
+    reach: u16,
+) -> u16 {
+    let here = &stretches[usize::from(here)];
+    (fronts.into_iter())
+        .filter(|f| here.holds(&stretches[usize::from(f.start)]))
+        .map(|f| f.rise(reach))
+        .max()
+        .unwrap_or(0)
 }
 
 impl Rivers {
@@ -332,12 +366,10 @@ impl Rivers {
             if reach[start] == NONE || stretch_of[start] != NONE {
                 continue;
             }
-            let Ok(s) = u16::try_from(stretches.len()).map(|s| s.min(NONE - 1)) else {
-                break;
-            };
-            if s == NONE - 1 {
+            if stretches.len() >= usize::from(NONE - 1) {
                 break;
             }
+            let s = stretches.len() as u16;
             let mut st = Stretch {
                 below: NONE,
                 tin: 0,
@@ -387,8 +419,10 @@ impl Rivers {
             }
         }
         // Walk each river's tree from its mouth: places, land, and the
-        // stretch above with the most land.
+        // stretch above with the most land; and the stretches in the order
+        // walked, so each comes before those above it.
         let count = stretches.len();
+        let mut order: Vec<u16> = Vec::with_capacity(count);
         let mut above: Vec<Vec<u16>> = alloc::vec![Vec::new(); count];
         for (s, st) in stretches.iter().enumerate() {
             if st.below != NONE {
@@ -421,6 +455,7 @@ impl Rivers {
                 }
                 stretches[su].tin = place;
                 place = place.saturating_add(1);
+                order.push(s);
                 stack.push((s, true));
                 for &a in above[su].iter().rev() {
                     stack.push((a, false));
@@ -449,7 +484,11 @@ impl Rivers {
             while let Some(i) = queue.pop() {
                 members.push(i);
                 let (x, y) = xy(i);
-                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                for (dx, dy) in crate::nav::DIRS {
+                    // Side by side only.
+                    if dx != 0 && dy != 0 {
+                        continue;
+                    }
                     if let Some(j) = at(x + dx, y + dy).filter(|&j| ford[j] && !taken[j]) {
                         taken[j] = true;
                         queue.push(j);
@@ -496,26 +535,35 @@ impl Rivers {
             g.runs = crate::flood::runs_of(&g.fords);
         }
         groups.sort_by(|a, b| (a.stretch, &a.fords).cmp(&(b.stretch, &b.fords)));
-        let (count, groups_n) = (stretches.len(), groups.len());
         let mut ford_tiles: Vec<((i32, i32), u16)> = (groups.iter().enumerate())
             .flat_map(|(g, group)| group.fords.iter().map(move |&t| (t, g as u16)))
             .collect();
         ford_tiles.sort_unstable();
         ford_tiles.dedup_by_key(|t| t.0);
+        let runs = groups.iter().map(|g| g.runs.len()).sum();
+        let groups_n = groups.len();
         Rivers {
-            ford_tiles: ford_tiles.into(),
             seed,
             side: n,
             reach: reach.into(),
             stretch_of: stretch_of.into(),
             stretches: stretches.into(),
+            order: order.into(),
             groups: groups.into(),
+            threatened: Vec::with_capacity(ford_tiles.len()),
+            threat_room: Vec::with_capacity(ford_tiles.len()),
+            ford_tiles: ford_tiles.into(),
             store: alloc::vec![0; count],
-            outflow: alloc::vec![0; count],
             swell: alloc::vec![0; count],
             shut: alloc::vec![false; groups_n],
             fronts: [None; MAX_FRONTS],
-            threatened: Vec::with_capacity(64),
+            threats: 0,
+            turn: Turn {
+                shut: Vec::with_capacity(groups_n),
+                opened: Vec::with_capacity(groups_n),
+                ..Turn::default()
+            },
+            runs: Vec::with_capacity(runs),
         }
     }
 
@@ -553,14 +601,10 @@ impl Rivers {
     /// How far its store lifts the water of the stretch at tile `(x, y)`
     /// (0 off the rivers).
     pub fn swell(&self, x: i32, y: i32) -> u16 {
-        self.stretch_at(x, y)
-            .map_or(0, |s| self.swell[usize::from(s)])
-    }
-
-    fn stretch_at(&self, x: i32, y: i32) -> Option<u16> {
         crate::terrain::index_in(self.side, x, y)
             .map(|i| self.stretch_of[i])
             .filter(|&s| s != NONE)
+            .map_or(0, |s| self.swell[usize::from(s)])
     }
 
     /// The group of ford tile `(x, y)`, if a river's.
@@ -579,25 +623,16 @@ impl Rivers {
     /// Whether the river has shut the ford tile `(x, y)` and a front is
     /// over it, so troops there are swept away down the river.
     pub fn carries(&self, x: i32, y: i32) -> bool {
-        self.shuts(x, y) && self.front_rise(x, y) > 0
-    }
-
-    /// How far the fronts raise the water on tile `(x, y)`: the highest
-    /// of them.
-    fn front_rise(&self, x: i32, y: i32) -> u16 {
         let Some(i) = crate::terrain::index_in(self.side, x, y) else {
-            return 0;
+            return false;
         };
-        let s = self.stretch_of[i];
-        if s == NONE {
-            return 0;
-        }
-        let here = &self.stretches[usize::from(s)];
-        (self.fronts.iter().flatten())
-            .filter(|f| here.holds(&self.stretches[usize::from(f.start)]))
-            .map(|f| rise_after(f.running(), f.top, f.crest, self.reach[i]))
-            .max()
-            .unwrap_or(0)
+        self.shuts(x, y)
+            && fronts_rise(
+                &self.stretches,
+                self.fronts(),
+                self.stretch_of[i],
+                self.reach[i],
+            ) > 0
     }
 
     /// The fords and summer fords, as `(row, column)` and sorted, that the
@@ -607,6 +642,12 @@ impl Rivers {
         &self.threatened
     }
 
+    /// How many times [`Rivers::threatened`] has changed: a mind reads the
+    /// list again when this moves.
+    pub fn threats(&self) -> u32 {
+        self.threats
+    }
+
     /// The water the rivers raise, for the terrain (`None` with no
     /// rivers).
     pub(crate) fn water(&self) -> Option<RiverWater> {
@@ -614,7 +655,7 @@ impl Rivers {
             side: self.side,
             reach: self.reach.clone(),
             stretch_of: self.stretch_of.clone(),
-            places: self.stretches.iter().map(|s| (s.tin, s.tout)).collect(),
+            stretches: self.stretches.clone(),
             swell: self.swell.clone(),
             fronts: [None; MAX_FRONTS],
             most: 0,
@@ -625,20 +666,9 @@ impl Rivers {
     /// up to date.
     pub(crate) fn write_water(&self, water: &mut RiverWater) {
         water.swell.copy_from_slice(&self.swell);
-        let mut most = self.swell.iter().copied().max().unwrap_or(0);
-        for (k, f) in self.fronts.iter().enumerate() {
-            water.fronts[k] = f.map(|f| {
-                let st = &self.stretches[usize::from(f.start)];
-                most = most.max(f.crest);
-                FrontWater {
-                    start: (st.tin, st.tout),
-                    top: f.top,
-                    crest: f.crest,
-                    ticks: f.running(),
-                }
-            });
-        }
-        water.most = most;
+        water.fronts = self.fronts;
+        let swell = self.swell.iter().copied().max().unwrap_or(0);
+        water.most = self.fronts().map(|f| f.crest).fold(swell, u16::max);
     }
 
     /// Where a front carries something it sweeps away at tile `(x, y)`:
@@ -662,14 +692,31 @@ impl Rivers {
         (x, y)
     }
 
-    /// Group `g`'s fords as runs, to shut or open on the walkable grid.
-    pub(crate) fn runs(&self, g: u16) -> &[[i32; 4]] {
-        &self.groups[usize::from(g)].runs
+    /// The runs, to shut or open on the walkable grid, of the fords the
+    /// last tick shut (`shut`) or opened.
+    pub(crate) fn changed_runs(&mut self, shut: bool) -> &[[i32; 4]] {
+        let list = if shut {
+            &self.turn.shut
+        } else {
+            &self.turn.opened
+        };
+        self.runs.clear();
+        for &g in list {
+            self.runs
+                .extend_from_slice(&self.groups[usize::from(g)].runs);
+        }
+        &self.runs
     }
 
-    /// The groups the river has shut.
-    pub(crate) fn shut_groups(&self) -> impl Iterator<Item = u16> + '_ {
-        (0..self.shut.len() as u16).filter(|&g| self.shut[usize::from(g)])
+    /// The runs of every ford the river has shut.
+    pub(crate) fn shut_runs(&mut self) -> &[[i32; 4]] {
+        self.runs.clear();
+        for (g, group) in self.groups.iter().enumerate() {
+            if self.shut[g] {
+                self.runs.extend_from_slice(&group.runs);
+            }
+        }
+        &self.runs
     }
 
     /// One second of the rivers' stores, with rain of `rain` strength
@@ -681,13 +728,12 @@ impl Rivers {
         }
         let pour = u64::from(rain) * u64::from(wet.min(WET_FULL)) / u64::from(WET_FULL)
             + if melting { MELT_RAIN } else { 0 };
-        for (s, st) in self.stretches.iter().enumerate() {
-            self.outflow[s] = self.store[s] / OUTFLOW_DIVISOR;
-            self.store[s] += pour * u64::from(st.own);
-        }
-        for (s, st) in self.stretches.iter().enumerate() {
-            let out = self.outflow[s];
-            self.store[s] -= out;
+        // Each stretch comes before those above it, so what flows into it
+        // this second flows on only the next.
+        for &s in self.order.iter() {
+            let st = &self.stretches[usize::from(s)];
+            let out = self.store[usize::from(s)].div_ceil(OUTFLOW_DIVISOR);
+            self.store[usize::from(s)] += pour * u64::from(st.own) - out;
             if st.below != NONE {
                 self.store[usize::from(st.below)] += out;
             }
@@ -750,12 +796,11 @@ impl Rivers {
             crest /= 2;
         }
         let band = Band::of(crest);
-        // Which ford's river: the first ford it reaches is that one.
+        // Which ford's river.
         let g = &self.groups[((roll >> 32) % self.groups.len() as u64) as usize];
-        let first = g.first;
         // Up the river's main stem from the ford, to where it sets off.
         let mut start = g.stretch;
-        let want = first.saturating_add(SET_OFF_ABOVE);
+        let want = g.first.saturating_add(SET_OFF_ABOVE);
         loop {
             let st = &self.stretches[usize::from(start)];
             if st.top >= want || st.up == NONE {
@@ -763,20 +808,16 @@ impl Rivers {
             }
             start = st.up;
         }
-        let top = self.stretches[usize::from(start)].top.min(want);
-        // The first ford it reaches may lie above the one rolled for.
         let from = &self.stretches[usize::from(start)];
+        let top = from.top.min(want);
+        // The first ford it reaches may lie above the one rolled for.
         let first = (self.groups.iter())
             .filter(|g| g.first <= top && self.stretches[usize::from(g.stretch)].holds(from))
             .map(|g| g.first)
             .max()
-            .unwrap_or(first);
+            .unwrap_or(g.first);
         // Its crest where it sets off, so it is `crest` at the first ford.
-        let fade = u32::from(top - first.min(top));
-        let crest_top = (u32::from(crest) * 8 * CREST_FADE_TILES
-            / (8 * CREST_FADE_TILES - fade.min(4 * CREST_FADE_TILES)))
-        .min(u32::from(u16::MAX)) as u16;
-        let travel = front_ticks(top, first);
+        let crest_top = unfaded(crest, top - first);
         let lead = band.lead_seconds() * TICKS_PER_SECOND;
         let front = Front {
             start,
@@ -785,7 +826,7 @@ impl Rivers {
             band,
             first,
             ticks: 0,
-            delay: lead.saturating_sub(travel),
+            delay: lead.saturating_sub(front_ticks(top, first)),
             warned: false,
         };
         match self.fronts.iter_mut().find(|f| f.is_none()) {
@@ -802,22 +843,28 @@ impl Rivers {
     }
 
     /// One tick of the rivers, the map's water `lift` height units above
-    /// its line (negative in low water): the fronts run on, and fords shut
-    /// and open with the water over them. Fords are weighed every tick
-    /// while a front runs, else once a second (`second`).
-    pub(crate) fn tick(&mut self, lift: i32, second: bool, turn: &mut Turn) {
+    /// its line (negative in low water), and whether it is a whole
+    /// `second`: the fronts run on, and fords shut and open with the water
+    /// over them. Fords are weighed every tick while a front moves, else
+    /// once a second.
+    pub(crate) fn tick(&mut self, lift: i32, second: bool) -> &Turn {
+        let any = self.any();
+        let turn = &mut self.turn;
         turn.coming = false;
+        turn.stage = None;
+        turn.water = second;
         turn.shut.clear();
         turn.opened.clear();
-        if !self.any() {
-            return;
+        if !any {
+            return &self.turn;
         }
-        let running = self.running();
+        let mut moving = false;
         for slot in &mut self.fronts {
             let Some(f) = slot else {
                 continue;
             };
             f.ticks += 1;
+            moving |= f.moving();
             let reached = f.delay + front_ticks(f.top, f.first);
             if !f.warned
                 && f.band >= Band::Flood
@@ -831,31 +878,30 @@ impl Rivers {
                 f.delay + front_ticks(f.top, 0) + (HIGH_SECONDS + FALL_SECONDS) * TICKS_PER_SECOND;
             if f.ticks >= done {
                 *slot = None;
+                turn.water = true;
             }
         }
-        if !(running || second) {
-            return;
+        turn.water |= moving;
+        if !(moving || second) {
+            return &self.turn;
         }
-        let mut changed = false;
-        for g in 0..self.groups.len() {
-            let group = &self.groups[g];
-            let mut water = lift + i32::from(self.swell[usize::from(group.stretch)]);
-            let here = &self.stretches[usize::from(group.stretch)];
-            let front = (self.fronts.iter().flatten())
-                .filter(|f| here.holds(&self.stretches[usize::from(f.start)]))
-                .map(|f| {
-                    // The highest the front has the water anywhere on the
-                    // ford: reached first at its top, fallen last at its foot.
-                    rise_after(f.running(), f.top, f.crest, group.first).max(rise_after(
-                        f.running(),
-                        f.top,
-                        f.crest,
-                        group.last,
-                    ))
+        let was_shut = self.shut();
+        for (g, group) in self.groups.iter().enumerate() {
+            // The highest the water is anywhere on the ford: a front
+            // reaches its top first and falls last at its foot.
+            let front = [group.first, group.last]
+                .map(|r| {
+                    fronts_rise(
+                        &self.stretches,
+                        self.fronts.iter().flatten(),
+                        group.stretch,
+                        r,
+                    )
                 })
+                .into_iter()
                 .max()
                 .unwrap_or(0);
-            water += i32::from(front);
+            let water = lift + i32::from(self.swell[usize::from(group.stretch)]) + i32::from(front);
             let need = if self.shut[g] {
                 FLOOD_RISE / 2
             } else {
@@ -864,23 +910,28 @@ impl Rivers {
             let now = water >= i32::from(need);
             if now != self.shut[g] {
                 self.shut[g] = now;
-                changed = true;
                 if now {
-                    turn.shut.push(g as u16);
+                    self.turn.shut.push(g as u16);
                 } else {
-                    turn.opened.push(g as u16);
+                    self.turn.opened.push(g as u16);
                 }
             }
         }
-        if changed || running {
+        let now_shut = self.shut();
+        if now_shut != was_shut {
+            self.turn.stage = Some(if now_shut { Stage::Here } else { Stage::Gone });
+        }
+        let changed = !self.turn.shut.is_empty() || !self.turn.opened.is_empty();
+        if changed || self.turn.coming || second {
             self.weigh_threats();
         }
+        &self.turn
     }
 
-    /// The fords the minds keep off, again.
+    /// The fords the minds keep off, again, built in the room kept for
+    /// them; [`Rivers::threats`] moves when they change.
     fn weigh_threats(&mut self) {
-        let before = self.threatened.len();
-        let mut list = core::mem::take(&mut self.threatened);
+        let mut list = core::mem::take(&mut self.threat_room);
         list.clear();
         for (g, group) in self.groups.iter().enumerate() {
             let here = &self.stretches[usize::from(group.stretch)];
@@ -893,11 +944,13 @@ impl Rivers {
                 list.extend_from_slice(&group.fords);
             }
         }
-        if list.len() != before || !list.is_sorted() {
-            list.sort_unstable();
-            list.dedup();
+        list.sort_unstable();
+        list.dedup();
+        if list != self.threatened {
+            self.threats = self.threats.wrapping_add(1);
+            core::mem::swap(&mut list, &mut self.threatened);
         }
-        self.threatened = list;
+        self.threat_room = list;
     }
 
     /// Hashed with the ground only while the rivers hold anything: water
@@ -930,20 +983,11 @@ pub(crate) struct RiverWater {
     side: i32,
     reach: Arc<[u16]>,
     stretch_of: Arc<[u16]>,
-    /// Each stretch's places in its river's walk (see `Stretch::holds`).
-    places: Vec<(u16, u16)>,
+    stretches: Arc<[Stretch]>,
     swell: Vec<u16>,
-    fronts: [Option<FrontWater>; MAX_FRONTS],
+    fronts: [Option<Front>; MAX_FRONTS],
     /// The most it raises the water anywhere, height units.
     most: u16,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FrontWater {
-    start: (u16, u16),
-    top: u16,
-    crest: u16,
-    ticks: u32,
 }
 
 impl RiverWater {
@@ -962,14 +1006,31 @@ impl RiverWater {
         if s == NONE {
             return 0;
         }
-        let (tin, tout) = self.places[usize::from(s)];
-        let front = (self.fronts.iter().flatten())
-            .filter(|f| tin <= f.start.0 && f.start.1 <= tout)
-            .map(|f| rise_after(f.ticks, f.top, f.crest, self.reach[i]))
-            .max()
-            .unwrap_or(0);
+        let front = fronts_rise(
+            &self.stretches,
+            self.fronts.iter().flatten(),
+            s,
+            self.reach[i],
+        );
         self.swell[usize::from(s)].saturating_add(front)
     }
+}
+
+/// A crest of `crest` once it has run `ran` tiles: an eighth lower every
+/// [`CREST_FADE_TILES`], at most by half.
+fn faded(crest: u16, ran: u16) -> u16 {
+    (u32::from(crest) * (FADE_WHOLE - fade_of(ran)) / FADE_WHOLE) as u16
+}
+
+/// The crest that has faded to `crest` after running `ran` tiles.
+fn unfaded(crest: u16, ran: u16) -> u16 {
+    (u32::from(crest) * FADE_WHOLE / (FADE_WHOLE - fade_of(ran))).min(u32::from(u16::MAX)) as u16
+}
+
+const FADE_WHOLE: u32 = 8 * CREST_FADE_TILES;
+
+fn fade_of(ran: u16) -> u32 {
+    u32::from(ran).min(FADE_WHOLE / 2)
 }
 
 /// Ticks from a front setting off at `top` until it reaches `reach`.
@@ -988,8 +1049,7 @@ fn rise_after(ticks: u32, top: u16, crest: u16, reach: u16) -> u16 {
     let Some(since) = ticks.checked_sub(front_ticks(top, reach)) else {
         return 0;
     };
-    let ran = u32::from(top - reach).min(4 * CREST_FADE_TILES);
-    let crest = u32::from(crest) * (8 * CREST_FADE_TILES - ran) / (8 * CREST_FADE_TILES);
+    let crest = u32::from(faded(crest, top - reach));
     let (high, fall) = (
         HIGH_SECONDS * TICKS_PER_SECOND,
         FALL_SECONDS * TICKS_PER_SECOND,

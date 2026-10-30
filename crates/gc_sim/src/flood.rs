@@ -96,8 +96,6 @@ pub(crate) struct Turn {
     pub(crate) fords: Option<bool>,
     /// The summer fords just opened (`Some(true)`) or went deep again.
     pub(crate) shallows: Option<bool>,
-    /// The spring melt is swelling the rivers.
-    pub(crate) melting: bool,
 }
 
 /// Runs along each row of the sorted `(y, x)` tiles.
@@ -290,8 +288,10 @@ impl Flood {
     }
 
     /// One second of the rivers, with the ground `wet`, `at` a point of the
-    /// year (with seasons), with snow falling at `snow` (0 to 255): the water in
-    /// `terrain` rises, holds or goes down, and with `shut` the fords shut
+    /// year (with seasons), with snow or rain falling at `snow` or `rain`
+    /// (0 to 255): the water in `terrain` rises, holds or goes down, the
+    /// rivers' stores take the rain and the melt and run on (see
+    /// [`Rivers::second`]), and with `shut` the fords shut
     /// or open with it, and the summer fords open or go deep (a rehearsal
     /// keeps them as it found them, so it never changes the walkable grid
     /// it shares). Returns what changed.
@@ -301,6 +301,7 @@ impl Flood {
         wet: u16,
         at: Option<SeasonAt>,
         snow: u8,
+        rain: u8,
         shut: bool,
     ) -> Turn {
         if terrain.is_flat() || terrain.water_level() == 0 {
@@ -348,10 +349,8 @@ impl Flood {
                 terrain.set_low(low.saturating_sub(LOW_PER_SECOND));
             }
         }
-        let mut turn = Turn {
-            melting,
-            ..Turn::default()
-        };
+        self.rivers.second(rain, wet, melting);
+        let mut turn = Turn::default();
         if !shut {
             return turn;
         }

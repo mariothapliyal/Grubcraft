@@ -115,8 +115,7 @@ impl World {
             // shares.
             flood: self.flood.clone(),
             stranded: Vec::new(),
-            river_turn: crate::rivers::Turn::default(),
-            river_runs: Vec::new(),
+            fords_reopened: false,
             regiments: Regiments::with_capacity(n),
         }
         .with_air()

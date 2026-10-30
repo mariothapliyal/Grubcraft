@@ -800,8 +800,8 @@ impl Terrain {
     /// How far the rivers raise the water above the line on the tile at
     /// `p` (0 off them).
     pub fn river_rise(&self, p: FxVec2) -> u16 {
-        self.rivers
-            .as_ref()
+        (self.rivers.as_ref())
+            .filter(|w| w.most() > 0)
             .map_or(0, |w| w.rise_at(p.x.floor_int(), p.y.floor_int()))
     }
 
