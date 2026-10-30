@@ -6776,7 +6776,10 @@ impl Running {
                 let art = art.as_ref()?;
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
-            |s| art.as_ref().is_some_and(|art| art.looks.leaf_shown(s).is_some()),
+            |s| {
+                art.as_ref()
+                    .is_some_and(|art| art.looks.leaf_shown(s).is_some())
+            },
             |h| siege.flash(h),
             across,
             &mut self.instances,
@@ -7074,14 +7077,6 @@ impl Running {
     /// regiment south of each marching through it to the north, and the
     /// camera low over the one looked at.
     fn stage_gate_march(&mut self) {
-        const GATES: [&str; 6] = [
-            "Gate",
-            "Yagura Gatehouse",
-            "Iron Gate",
-            "Gate of Debts",
-            "Maw Gate",
-            "Chitin Maw",
-        ];
         const APART: i32 = 10;
         const MARCH: f32 = 9.0;
         let Some((step, looked)) = self.gate_scene else {
@@ -7091,13 +7086,17 @@ impl Running {
             (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
         };
         let unit = |name: &str| self.units.names.iter().position(|n| n == name);
+        let gates: Vec<BuildingId> = (0..self.buildings.len() as BuildingId)
+            .filter(|&b| self.buildings.is_gate(b))
+            .collect();
         let focus = self.camera.focus.round();
         let (x0, row) = (focus.x as i32 - APART * 3, focus.y as i32);
         let gate_x = |k: usize| x0 + APART * k as i32;
         let north = gc_fixed::Angle::of_vec(fx_vec(Vec2::NEG_Y));
         match step {
             0 => {
-                let (Some(palisade), Some(soldiers)) = (building("Palisade"), unit("Yari Ashigaru"))
+                let (Some(palisade), Some(soldiers)) =
+                    (building("Palisade"), unit("Yari Ashigaru"))
                 else {
                     self.gate_scene = None;
                     return;
@@ -7113,18 +7112,17 @@ impl Running {
                     });
                 };
                 let mut gaps = Vec::new();
-                for (k, name) in GATES.iter().enumerate() {
-                    let Some(id) = building(name) else { continue };
+                for (k, &id) in gates.iter().enumerate() {
                     // Turned a quarter, a gate runs east to west.
                     spawn(id, (gate_x(k), row), 1);
                     gaps.extend(gate_x(k)..gate_x(k) + 3);
                 }
-                for x in x0 - APART..gate_x(GATES.len()) + APART {
+                for x in x0 - APART..gate_x(gates.len()) + APART {
                     if !gaps.contains(&x) {
                         spawn(palisade, (x, row), 0);
                     }
                 }
-                for k in 0..GATES.len() {
+                for k in 0..gates.len() {
                     let at = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5 + MARCH);
                     self.human_orders.push(PlayerCommand {
                         player: 0,
@@ -7135,7 +7133,7 @@ impl Running {
                         },
                     });
                 }
-                let k = looked.min(GATES.len() - 1);
+                let k = looked.min(gates.len() - 1);
                 self.camera.focus = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5);
                 self.camera.distance = 16.0;
                 self.hud.placer = false;
@@ -7143,8 +7141,8 @@ impl Running {
                 self.gate_scene = Some((1, looked));
             }
             // A few seconds to settle, then march.
-            1 if self.world.regiments.iter().filter(|r| r.owner == 0).count() >= GATES.len() => {
-                let orders: Vec<_> = (self.world.regiments.iter())
+            1 if self.world.regiments.iter().filter(|r| r.owner == 0).count() >= gates.len() => {
+                let orders = (self.world.regiments.iter())
                     .filter(|r| r.owner == 0)
                     .map(|r| {
                         let p = from_fx_vec(r.position);
@@ -7158,8 +7156,7 @@ impl Running {
                                 pace: gc_fixed::Fx::ZERO,
                             },
                         }
-                    })
-                    .collect();
+                    });
                 self.human_orders.extend(orders);
                 self.gate_scene = None;
             }
@@ -7514,14 +7511,20 @@ impl Running {
                 let (centre, top, lift) = buildings::model_spot(&s, &ground);
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let (centre, lift) = (centre + shake, lift + rise);
-                let at = Vec3::new(centre.x, top, centre.y);
-                let still = art.clips.pose(model, Action::Idle, time);
-                let height = art.looks.top(model);
-                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                let facing = art.looks.facing(&s);
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                // A still model at `pos` on the floor `lift` above the ground.
+                let mut push = |model: usize, pos: Vec2, facing: Vec2, lift: f32| {
+                    let at = Vec3::new(pos.x, top, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(model), at),
+                        art.clips.pose(model, Action::Idle, time),
+                    ) else {
+                        return;
+                    };
                     art.buckets[model * LODS + lod].push(SoldierInstance {
-                        pos: centre.to_array(),
-                        facing: art.looks.facing(&s).to_array(),
+                        pos: pos.to_array(),
+                        facing: facing.to_array(),
                         frames: pose.rows,
                         flags: models::pose_flags(pose, highlight, false),
                         color: [r, g, b, gc_render::TONE_NEUTRAL],
@@ -7529,33 +7532,13 @@ impl Running {
                         scale: 1.0,
                         ..Default::default()
                     });
-                }
+                };
+                push(model, centre, facing, lift);
                 if let Some(leaf) = art.looks.leaf_shown(&s) {
                     let swing = self.gate_swings.swing(s.handle);
-                    let name = self.buildings.name(s.building);
-                    let hinge = buildings::leaf_hinge(name);
-                    let facing = art.looks.facing(&s);
-                    let height = art.looks.top(leaf);
-                    for (at, way) in buildings::leaf_spots(centre, facing, hinge, swing) {
-                        let foot = Vec3::new(at.x, top, at.y);
-                        let (Some(lod), Some(pose)) = (
-                            art.view.place(height, foot),
-                            art.clips.pose(leaf, Action::Idle, time),
-                        ) else {
-                            continue;
-                        };
-                        let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                        art.buckets[leaf * LODS + lod].push(SoldierInstance {
-                            pos: at.to_array(),
-                            facing: way.to_array(),
-                            frames: pose.rows,
-                            flags: models::pose_flags(pose, highlight, false),
-                            color: [r, g, b, gc_render::TONE_NEUTRAL],
-                            // On the gate's floor, wherever the ground is.
-                            lift: top - ground(at.x, at.y),
-                            scale: 1.0,
-                            ..Default::default()
-                        });
+                    for (at, way) in buildings::leaf_spots(centre, facing, leaf.hinge, swing) {
+                        // On the gate's floor, wherever the ground is.
+                        push(leaf.model, at, way, top - ground(at.x, at.y) + rise);
                     }
                 }
             }

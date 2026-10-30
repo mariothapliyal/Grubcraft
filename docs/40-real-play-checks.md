@@ -30,7 +30,7 @@ list only shrinks. Found when the check was built:
 
 | Passage | Problem | Fix |
 |---|---|---|
-| All six gate and gatehouse models | the door leaves are modelled shut across the doorway: 0 tiles open, so troops are drawn walking through closed doors (the game draws its own leaves beside the model) | open the doorway in the models |
+| ~~All six gate and gatehouse models~~ | ~~the door leaves were modelled shut across the doorway: 0 tiles open~~ | fixed 2026-10-30: doorways 2.84 to 2.93 open, doors are separate swinging leaf models ([26](26-fortifications.md), "How gates are drawn") |
 | Timber Bridge model (every faction's bridge shows it) | its rails leave 1.4 of the 2 tiles open at chest height | rails further out |
 | Every bridge | the Broodmother Bulk (2.7 tiles) is wider than the 2-tile deck | wider bridges, or a rule for giants |
 

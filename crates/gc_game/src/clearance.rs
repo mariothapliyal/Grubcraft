@@ -33,21 +33,6 @@ const FLOOR_BELOW: f32 = 0.6;
 
 /// Problems found and owned: what fails, what fixes it, and the passages.
 const KNOWN: &[(What, &str, &[&str])] = &[
-    // The gate models have their door leaves modelled shut across the
-    // doorway, so troops are drawn walking through closed doors (the
-    // game draws its own leaves, open or shut, beside the model).
-    (
-        What::Model,
-        "gate models: open the doorway",
-        &[
-            "Gate",
-            "Yagura Gatehouse",
-            "Maw Gate",
-            "Chitin Maw",
-            "Iron Gate",
-            "Gate of Debts",
-        ],
-    ),
     // The shared bridge model's rails leave 1.4 tiles of the two-tile
     // deck free at chest height, not quite two line soldiers abreast.
     (

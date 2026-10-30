@@ -530,7 +530,7 @@ pub struct Looks {
     crews: Vec<Option<usize>>,
     /// By building type, the model of a gate's door leaf (`<Name> Leaf`),
     /// drawn twice and swung open and shut (see [`leaf_spots`]).
-    leaves: Vec<Option<usize>>,
+    leaves: Vec<Option<Leaf>>,
     /// By model, the top of a still model (a building's look) in tiles
     /// above its floor, or `None` for a rigged soldier.
     tops: Vec<Option<f32>>,
@@ -582,7 +582,13 @@ impl Looks {
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
             leaves: (table.names.iter())
-                .map(|name| models.by_name(&format!("{name} Leaf")))
+                .map(|name| {
+                    let model = models.by_name(&format!("{name} Leaf"))?;
+                    Some(Leaf {
+                        model,
+                        hinge: leaf_hinge(name),
+                    })
+                })
                 .collect(),
             tops,
             walls,
@@ -642,13 +648,13 @@ impl Looks {
     }
 
     /// The door leaf model of gate type `building`, if it has one.
-    pub fn leaf_of(&self, building: BuildingId) -> Option<usize> {
+    pub fn leaf_of(&self, building: BuildingId) -> Option<Leaf> {
         *self.leaves.get(usize::from(building))?
     }
 
     /// The door leaf model `s` shows with the look it shows now (a gatehouse
     /// going up over a gate shows the gatehouse's), if any.
-    pub fn leaf_shown(&self, s: &StructureView) -> Option<usize> {
+    pub fn leaf_shown(&self, s: &StructureView) -> Option<Leaf> {
         if s.gate.is_none() || !s.finished() {
             return None;
         }
@@ -1427,12 +1433,27 @@ const SWING_SECONDS: f32 = 0.9;
 /// How far behind its wall line each gate model hangs its leaves (on its
 /// model's -x side, behind the jambs), in tiles, by gate name; the art
 /// writes it as `leaf_hinge_x` in the gate's facts.json.
-const LEAF_HINGES: &[(&str, f32)] = &[];
+const LEAF_HINGES: &[(&str, f32)] = &[
+    ("Gate", -0.31),
+    ("Yagura Gatehouse", -0.49),
+    ("Iron Gate", -0.27),
+    ("Gate of Debts", -0.49),
+    ("Maw Gate", -0.29),
+    ("Chitin Maw", -0.53),
+];
 /// Behind the wall line of a gate not in [`LEAF_HINGES`].
 const LEAF_HINGE: f32 = -0.25;
 
+/// A gate type's door leaf: its model, and how far behind the gate's wall
+/// line it hangs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Leaf {
+    pub model: usize,
+    pub hinge: f32,
+}
+
 /// How far behind its wall line gate type `name` hangs its leaves.
-pub fn leaf_hinge(name: &str) -> f32 {
+fn leaf_hinge(name: &str) -> f32 {
     (LEAF_HINGES.iter())
         .find(|(n, _)| *n == name)
         .map_or(LEAF_HINGE, |&(_, x)| x)
@@ -1449,8 +1470,7 @@ pub fn leaf_hinge(name: &str) -> f32 {
 pub fn leaf_spots(centre: Vec2, facing: Vec2, hinge: f32, swing: f32) -> [(Vec2, Vec2); 2] {
     let left = Vec2::new(facing.y, -facing.x);
     // Eased, so the leaves start and stop gently.
-    let t = swing.clamp(0.0, 1.0);
-    let angle = t * t * (3.0 - 2.0 * t) * std::f32::consts::FRAC_PI_2;
+    let angle = crate::land::smooth(0.0, 1.0, swing) * std::f32::consts::FRAC_PI_2;
     let (sin, cos) = angle.sin_cos();
     [1.0, -1.0].map(|side: f32| {
         let at = centre + left * hinge + facing * (LEAF_REACH * side);
@@ -1462,8 +1482,10 @@ pub fn leaf_spots(centre: Vec2, facing: Vec2, hinge: f32, swing: f32) -> [(Vec2,
 /// simulation has it open, so they swing rather than snap.
 #[derive(Default)]
 pub struct GateSwings {
-    swings: std::collections::HashMap<StructureHandle, f32>,
+    /// By gate, how far open, and the update that last saw it.
+    swings: std::collections::HashMap<StructureHandle, (f32, u32)>,
     time: Option<f32>,
+    update: u32,
 }
 
 impl GateSwings {
@@ -1472,20 +1494,23 @@ impl GateSwings {
     pub fn update(&mut self, gates: impl Iterator<Item = StructureView>, time: f32) {
         let step = self.time.map_or(0.0, |t| (time - t).clamp(0.0, 0.25)) / SWING_SECONDS;
         self.time = Some(time);
-        let mut seen = std::collections::HashMap::with_capacity(self.swings.len());
+        self.update = self.update.wrapping_add(1);
+        let update = self.update;
         for s in gates.filter(|s| s.gate.is_some()) {
             let target = if s.open { 1.0 } else { 0.0 };
-            let now = self.swings.get(&s.handle).map_or(target, |&v: &f32| {
-                v + (target - v).clamp(-step, step)
-            });
-            seen.insert(s.handle, now);
+            (self.swings.entry(s.handle))
+                .and_modify(|(v, seen)| {
+                    *v += (target - *v).clamp(-step, step);
+                    *seen = update;
+                })
+                .or_insert((target, update));
         }
-        self.swings = seen;
+        self.swings.retain(|_, &mut (_, seen)| seen == update);
     }
 
     /// How far open gate `h` is drawn: 0 shut, 1 open.
     pub fn swing(&self, h: StructureHandle) -> f32 {
-        self.swings.get(&h).copied().unwrap_or(0.0)
+        self.swings.get(&h).map_or(0.0, |&(v, _)| v)
     }
 }
 
@@ -2985,6 +3010,14 @@ mod tests {
                     "{} lacks a stage",
                     table.name(b as u16)
                 );
+            }
+        }
+        // Every gate with a model hangs door leaves of its own.
+        for b in 0..table.len() as BuildingId {
+            if table.is_gate(b) && looks.stage(b, FINISHED).is_some() {
+                let leaf = looks.leaf_of(b);
+                assert!(leaf.is_some(), "{} has no leaf", table.name(b));
+                dressed.extend(leaf.map(|l| l.model));
             }
         }
         let still = models.models.iter().filter(|m| m.is_still()).count();
