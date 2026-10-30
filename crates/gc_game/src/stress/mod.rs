@@ -25,6 +25,7 @@ mod arena;
 mod bridge;
 mod forest;
 mod gate;
+mod orders;
 mod walls;
 
 use std::fmt::Write as _;
@@ -52,6 +53,7 @@ pub(crate) struct Scenario {
 const SCENARIOS: &[Scenario] = &[
     gate::SCENARIO,
     bridge::SCENARIO,
+    orders::SCENARIO,
     forest::SCENARIO,
     walls::SCENARIO,
 ];

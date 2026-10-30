@@ -154,6 +154,7 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
             u.class(),
             Class::Light | Class::Spear | Class::Heavy | Class::Ranged
         ),
+        gather_percent: u.gather_percent,
     }
 }
 
@@ -222,12 +223,10 @@ pub(crate) fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
 }
 
 /// Grub and Marrow each faction starts with (docs/04-economy.md,
-/// "Starting state").
-pub fn start_stores(f: Faction) -> (u32, u32) {
-    match f {
-        Faction::CarrionConcord => (400, 0),
-        _ => (300, 0),
-    }
+/// "Starting state"): the same for every faction since the Concord's
+/// extra 100 Grub went (docs/29, faction rebalance).
+pub fn start_stores(_: Faction) -> (u32, u32) {
+    (300, 0)
 }
 
 /// Each lobby player's faction, in player order.
@@ -1225,8 +1224,8 @@ mod tests {
         }
     }
 
-    /// A Choir opening tunes the two nearest seeps with its two starting
-    /// Resonators, and a beam is drawn to each from the Resonator, for the
+    /// A Choir opening tunes the nearest seep with its starting
+    /// Resonator, and a beam is drawn to it from the Resonator, for the
     /// buildings a side is shown (all with `reveal_all`).
     #[test]
     fn tuning_beams_are_drawn_for_the_resonators_a_side_is_shown() {
@@ -1263,7 +1262,7 @@ mod tests {
             .collect();
         for p in 0..2 {
             let mine = tuned.iter().filter(|t| t.1 == p).count();
-            assert_eq!(mine, 2, "player {p}'s two Resonators tune two seeps");
+            assert_eq!(mine, 1, "player {p}'s Resonator tunes one seep");
         }
 
         // A beam ends on each node you tune; the enemy's only with
