@@ -3646,6 +3646,7 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            self.puppets.faced_about(r.handle, r.abouts);
             // Manning a wall, the soldiers stand on its tiles.
             // At the head of a ladder they stand in their block, lifted to
             // the wall top, with ladders against the wall below them.

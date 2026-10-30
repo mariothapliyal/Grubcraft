@@ -83,28 +83,29 @@ fn spawns_at_full_strength_in_default_formation() {
 }
 
 #[test]
-fn turns_on_the_spot_before_marching_backwards() {
+fn faces_about_before_marching_backwards() {
     let (mut w, h) = one_regiment();
-    // Due south, 30 tiles: a half turn first.
+    // Due south, 30 tiles: it faces about where it stands.
     order(&mut w, h, FxVec2::from_ints(50, 80), None, 0);
-    for _ in 0..10 {
-        w.tick(&[]);
-    }
+    w.tick(&[]);
     let r = view(&w, h);
     assert_eq!(
         r.position,
         FxVec2::from_ints(50, 50),
-        "marched before turning"
+        "marched before facing about"
     );
-    assert_ne!(r.facing, NORTH, "did not start turning");
+    assert_eq!((r.facing, r.abouts), (SOUTH, 1));
+    for _ in 0..gc_sim::ABOUT_FACE_TICKS {
+        w.tick(&[]);
+    }
+    assert_eq!(view(&w, h).position, FxVec2::from_ints(50, 50), "stood");
     let ticks = run_until_still(&mut w, h, 2_000);
     let r = view(&w, h);
-    assert_eq!(r.position, FxVec2::from_ints(50, 80));
+    assert_eq!((r.position, r.abouts), (FxVec2::from_ints(50, 80), 1));
     assert!(r.facing.delta_to(SOUTH).abs() <= 2, "{:?}", r.facing);
-    // 180 degrees at 60/s: 1.5 s of turning on the spot, then it wheels the
-    // last 90 as it marches 30 tiles at 3 tiles/s.
+    // 30 tiles at 3 tiles/s, after a third of a second facing about.
     let secs = ticks / TICKS_PER_SECOND;
-    assert!((11..=14).contains(&secs), "took {secs} s");
+    assert!((9..=11).contains(&secs), "took {secs} s");
 }
 
 #[test]

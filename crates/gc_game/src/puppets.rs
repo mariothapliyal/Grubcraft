@@ -1145,6 +1145,9 @@ pub struct Puppets {
     glance: Vec<Head>,
     /// Per regiment, the slot its general stands in, or `NO_GENERAL`.
     general: Vec<u8>,
+    /// Per regiment, how many times it had faced about when last seen
+    /// (`RegimentView::abouts`).
+    abouts: Vec<u8>,
     /// Per puppet, until when he brandishes his weapon over a man he
     /// killed (a general's flourish).
     brandish: Vec<f32>,
@@ -1206,6 +1209,7 @@ impl Puppets {
             last_fall: vec![(Vec2::ZERO, f32::NEG_INFINITY); regiment_capacity],
             glance: vec![Head::default(); regiment_capacity * SLOTS],
             general: vec![NO_GENERAL; regiment_capacity],
+            abouts: vec![0; regiment_capacity],
             brandish: vec![f32::NEG_INFINITY; regiment_capacity * SLOTS],
             duel: None,
             duel_over: None,
@@ -1217,6 +1221,64 @@ impl Puppets {
     /// The matched kills soldiers play, by their unit types (see [`Kills`]).
     pub fn set_kills(&mut self, kills: Kills) {
         self.kills = kills;
+    }
+
+    /// Regiment `handle` has faced about `abouts` times (counting round).
+    /// When that is new, it has just faced about: its men's places turned
+    /// round with it (the rear rank is the front), so each man keeps his
+    /// own ground and turns where he stands. Call it every frame before the
+    /// regiment's update.
+    pub fn faced_about(&mut self, handle: RegimentHandle, abouts: u8) {
+        let r = handle.index as usize;
+        let known = self.owner[r] == Some(handle);
+        if !known || self.abouts[r] == abouts {
+            self.abouts[r] = abouts;
+            return;
+        }
+        self.abouts[r] = abouts;
+        let n = usize::from(self.models[r]).min(SLOTS);
+        let base = r * SLOTS;
+        let range = base..base + n;
+        self.pos[range.clone()].reverse();
+        self.vel[range.clone()].reverse();
+        self.facing[range.clone()].reverse();
+        self.partner[range.clone()].reverse();
+        self.act[range.clone()].reverse();
+        self.killing[range.clone()].reverse();
+        self.reeling[range.clone()].reverse();
+        self.looks[range.clone()].reverse();
+        self.marked[range.clone()].reverse();
+        self.told[range.clone()].reverse();
+        self.filled[range.clone()].reverse();
+        self.lift[range.clone()].reverse();
+        self.glance[range.clone()].reverse();
+        self.brandish[range.clone()].reverse();
+        // Anyone who had one of its men as his: the same man, in his new
+        // place.
+        let turned = |p: u32| {
+            let p = p as usize;
+            if range.contains(&p) {
+                (base + n - 1 - (p - base)) as u32
+            } else {
+                p as u32
+            }
+        };
+        for p in &mut self.partner {
+            if *p != NONE {
+                *p = turned(*p);
+            }
+        }
+        for t in self.told.iter_mut().flatten() {
+            t.0 = turned(t.0);
+        }
+        for (h, slot, by) in &mut self.slain {
+            if *h == handle && usize::from(*slot) < n {
+                *slot = (n - 1 - usize::from(*slot)) as u8;
+            }
+            if *by != NONE {
+                *by = turned(*by);
+            }
+        }
     }
 
     /// Put regiment `handle`'s soldiers on `slots` from now on (soldier `k`
@@ -2949,6 +3011,50 @@ mod tests {
             mess_look > calm_look + 0.2,
             "{mess_look} vs {calm_look} radians"
         );
+    }
+
+    #[test]
+    fn a_block_facing_about_turns_its_men_where_they_stand() {
+        let mut p = Puppets::new(4, 16);
+        let mut b = block(1, Vec2::new(10.0, 10.0), Vec2::NEG_Y, false);
+        let settle = |p: &mut Puppets, b: &Block| {
+            let mut at = Vec::new();
+            for _ in 0..200 {
+                at.clear();
+                p.update(b, 0, 0.016, |s| at.push((s.pos, s.facing)));
+            }
+            at
+        };
+        p.faced_about(b.handle, 0);
+        let before = settle(&mut p, &b);
+        // It faces about: every man's place turns round with the block.
+        b.facing = Vec2::Y;
+        p.faced_about(b.handle, 1);
+        let mut first = Vec::new();
+        p.update(&b, 0, 0.016, |s| first.push(s.pos));
+        let n = before.len();
+        for k in 0..n {
+            // The man now in place k is the one who was in place n-1-k, and
+            // he hasn't had to walk across the block to get there.
+            assert!(
+                first[k].distance(before[n - 1 - k].0) < 0.1,
+                "man {k} jumped: {:?} vs {:?}",
+                first[k],
+                before[n - 1 - k].0
+            );
+        }
+        let after = settle(&mut p, &b);
+        for k in 0..n {
+            assert!(
+                after[k].0.distance(before[n - 1 - k].0) < 0.5,
+                "man {k} moved"
+            );
+            assert!(
+                after[k].1.dot(Vec2::Y) > 0.9,
+                "man {k} faces {:?}",
+                after[k].1
+            );
+        }
     }
 
     fn block(index: u32, centre: Vec2, facing: Vec2, engaged: bool) -> Block {

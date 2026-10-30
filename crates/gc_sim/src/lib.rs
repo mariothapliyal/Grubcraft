@@ -73,7 +73,7 @@ pub use morale::MoraleState;
 use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
-pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
+pub use regiments::{ABOUT_FACE_TICKS, Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 use structures::Work;
 pub use structures::{
