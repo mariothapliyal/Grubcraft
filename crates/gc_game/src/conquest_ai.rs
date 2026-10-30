@@ -125,7 +125,7 @@ pub fn seat(
 /// team) at `level`, its personality picked by `temper` and its seed from
 /// `roll`; it picks its own opening unless given one.
 #[allow(clippy::too_many_arguments)]
-fn mind_for(
+pub(crate) fn mind_for(
     data: &GameData,
     table: &Table,
     map: &Map,

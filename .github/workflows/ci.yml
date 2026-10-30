@@ -95,6 +95,19 @@ jobs:
       - name: Conquest AI games in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_game ai_only -- --ignored
+      # The real-play stress scenarios (docs/39-real-play-checks.md): a
+      # gate, a bridge under fire, a retreat through woods and a computer
+      # player attacking walls, with the real game data. About two seconds
+      # in a release build.
+      - name: Stress scenarios in release mode
+        if: runner.os == 'Linux'
+        run: cargo test --release -p gc_game stress_suite -- --ignored --nocapture
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && !cancelled()
+        with:
+          name: stress-report
+          path: target/stress/report.txt
+          retention-days: 14
       # macOS runner clocks are too noisy to gate tick time on (the same
       # code has timed 1.2 to 2.8 ms p99 there): it only warns. Linux and
       # Windows still gate it, and the instruction counts below (Linux)
