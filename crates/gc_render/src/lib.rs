@@ -349,6 +349,11 @@ struct TerrainGpu {
     scar_map: wgpu::Texture,
     /// Whether the scar map holds any mark.
     scarred: bool,
+    /// One texel per tile: how far the rivers raise their water there (see
+    /// [`Renderer::set_river_water`]).
+    river_map: wgpu::Texture,
+    /// Whether the river map holds any rise.
+    rivered: bool,
 }
 
 pub struct Renderer {
@@ -809,6 +814,17 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {
                     binding: 18,
                     visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 19,
+                    // (Soldiers, scenery and particles stand on the water too.)
+                    visibility: world_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -1398,6 +1414,9 @@ impl Renderer {
         let land_view = land_map.create_view(&wgpu::TextureViewDescriptor::default());
         let scar_map = self.tile_map("ground scars", wgpu::TextureFormat::Rgba8Unorm, tiles);
         let scar_view = scar_map.create_view(&wgpu::TextureViewDescriptor::default());
+        // Rivers at their line (all zero) until `set_river_water`.
+        let river_map = self.tile_map("river water", wgpu::TextureFormat::R8Unorm, tiles);
+        let river_view = river_map.create_view(&wgpu::TextureViewDescriptor::default());
         // The ground's look by tile; a single neutral texel when there is
         // none, which the shader reads as nothing to look up.
         let (look_side, look): (u32, &[[u8; 4]]) = if t.look.is_empty() {
@@ -1496,6 +1515,10 @@ impl Renderer {
                         binding: 18,
                         resource: wgpu::BindingResource::TextureView(&look_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 19,
+                        resource: wgpu::BindingResource::TextureView(&river_view),
+                    },
                 ],
             })
         };
@@ -1537,6 +1560,8 @@ impl Renderer {
             landed: false,
             scar_map,
             scarred: false,
+            river_map,
+            rivered: false,
         });
     }
 
@@ -1673,6 +1698,30 @@ impl Renderer {
             _ => return,
         }
         terrain.scarred = values.is_some();
+    }
+
+    /// Raise the rivers' water over the water line: one byte per map tile,
+    /// row by row from the north-west corner, the rise in half height
+    /// units (a tile is 256), so 255 is about two tiles. It is eased
+    /// between tiles. `None` is every river at the line again, as after
+    /// `set_terrain`; it costs nothing when they already are. Does nothing
+    /// before `set_terrain`, or when `values` is not `tiles × tiles` long.
+    pub fn set_river_water(&mut self, values: Option<&[u8]>) {
+        let Some(terrain) = &mut self.terrain else {
+            return;
+        };
+        let tiles = terrain.tiles;
+        let n = (tiles * tiles) as usize;
+        match values {
+            Some(v) if v.len() == n => {
+                Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 1, v);
+            }
+            None if terrain.rivered => {
+                Self::write_tile_map(&self.queue, &terrain.river_map, tiles, 1, &vec![0; n]);
+            }
+            _ => return,
+        }
+        terrain.rivered = values.is_some();
     }
 
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
