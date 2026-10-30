@@ -34,6 +34,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
 8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
 9. Holding until bloodied, first wave at the restart: regiments can't rout or waver until they are down to a breaking point below half strength (about 35 to 45%, lower for veterans, varied a little per regiment); shock works by killing men ([in brief](#holding-until-bloodied-in-brief)).
+10. The world remembers the new features, first wave at the restart: every bridge, curved wall, dam, jam and flood scar the restart adds stays on the land for the rest of a Conquest match, so later battles are fought on ground the earlier ones shaped ([in brief](#the-world-remembers-the-new-features)).
+11. Eight changes to how battles play, approved 2026-10-30: unit spacing, frontage, a balance tournament and an even early game in the first wave; charges by weight and speed, responsive orders and clear feedback in the second; smarter computer generals in the third ([in brief](#how-battles-play-eight-changes-in-brief)).
 
 ## What it covers
 
@@ -48,6 +50,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 - **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
 - **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
 - **Holding until bloodied** (Mario, 2026-10-30, for the restart): a morale redesign so regiments hold until they have lost most of their men. See [Holding until bloodied in brief](#holding-until-bloodied-in-brief).
+- **The world remembers the new features** (Mario, 2026-10-30): the "living campaign map" idea folded into idea 2, a world that remembers. See [The world remembers the new features](#the-world-remembers-the-new-features).
+- **How battles play: eight changes** (Mario, 2026-10-30, for the restart): unit spacing, frontage, charges by weight and speed with braced spears, an even early game, an automatic balance tournament, responsive orders, clear feedback and smarter computer generals. See [How battles play](#how-battles-play-eight-changes-in-brief).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
@@ -147,6 +151,95 @@ Mario (2026-10-30), for the restart: routing is far too easy. Regiments waver an
 - First wave at the restart. Owner: the soldier combat area (T4 owns `morale.rs`, `combat.rs` and `regiments.rs`), Opus lead at high effort since it moves balance; Haiku for the faction tables, goldens, guides and the quick reference. Two PRs: (1) the breaking point, wavering, variation, the AI and the stress test; (2) veterancy ranks with chevrons. `/simplify` and `/code-review` on Opus before each merge.
 - It touches combat balance, so it merges before or after the dynamic bridges and pathfinding work, never alongside a faction table someone else is running.
 
+## How battles play: eight changes in brief
+
+Mario (2026-10-30), for the restart: eight changes to how the game plays, not how it looks, each aimed at a cause of what he keeps hitting (clumping, swarms winning everywhere, early routs, clunky orders, one faction too strong) rather than a symptom. He approved ten and then dropped two (a travel-distance economy and fatigue, 2026-10-30), so eight remain. The code was checked on 2026-10-30 for what each already has, so every item below starts from what is built. Nothing here is built before Mario says go for the restart.
+
+**Order.** Four start in the first wave because the rest lean on them: **unit spacing** (it is the root of the clumping, gate and bridge trouble), **frontage** (it is what makes chokepoints and held lines work), the **balance tournament** (every later change is measured with it) and an **even early game** (measured by the tournament). The combat items go one after another in the soldier combat thread, after the morale redesign ([Holding until bloodied](#holding-until-bloodied-in-brief)), because they all change `combat.rs` and move balance.
+
+| # | Change | Owner | Wave | Already built (checked 2026-10-30) |
+|---|---|---|---|---|
+| 1 | Unit spacing and collision | The dedicated pathfinding thread (Opus) | First | Regiments are blocks; friends overlapping past a margin slow and fall into disorder (`CROWDING`), blocks squeeze into columns in tight ground and queue behind friends (#136). Soldiers are drawn in slots, not simulated bodies (option C is later) |
+| 2 | Frontage: only the soldiers touching the enemy fight | Soldier combat (T4, Opus) | First, after morale PR 1 | Option B duels: the front rank strikes, spears' second rank too, flank and rear men strike at flanks and rears. **Missing:** an attacker strikes with its whole front however little of the enemy it touches, and any number of regiments can pile onto one |
+| 3 | Balance tournament | Faction rebalance thread | First | Field Battle `faction_table` in `gc_match` (pairs, two seed sets) and AI-only Conquest tests that end in a win. **Missing:** Conquest pairs, timings, deciding units, a report and a gate |
+| 4 | Even early game across factions | Faction rebalance thread | First, with 3 | Starting stores and workers per faction (docs/04). Nobody has measured when each faction's first army is ready |
+| 5 | Charges from weight and speed, braced spears | T4 | Second | Charges plough in by mass ("heft") against the ranks they hit (#212); a charge bonus stat that fades; braced spears (Z) stop a frontal charge and throw the charger into disorder; flank and rear blows land 1.4 and 1.8 times as hard. **Missing:** speed at impact counts for nothing beyond "at the run", and nothing about the angle |
+| 6 | Responsive orders | New controls thread (Sonnet lead, Opus for the sim command) | Second | Right-drag draws a line (frontage and facing), army shapes (O), input delay of 2 turns (100 ms) on LAN. **Missing:** Shift-queued orders, a depth choice on the drag, attack-move, a measured click-to-move delay |
+| 7 | Clear orders and feedback | The controls thread, with T4 for the reasons | Second | Banners blink amber when wavering, white routing, grey shattered; cards show morale points; the AI lens shows what computer players think. **Missing:** order and stance markers, why a unit wavers |
+| 8 | Smarter computer generals | The AI (gc_ai owner, Opus) | Third | Scouts, ground reading (cover, high ground, water), flanks, rehearsed plans, raiders, walls and traps. **Missing:** using the restart's new systems, pulling back by strength under the new morale, frontage in the battle estimator |
+
+### 1. Unit spacing and collision
+
+Bigger units take up real room, and regiments keep their spacing while they march, wheel and squeeze, instead of bunching up and spreading out again. Merged into the **dedicated pathfinding thread**, whose scope (Mario, 2026-10-28) already covers crowding, clumping and flow through gaps: one owner for how regiments move.
+- **What changes.** A regiment's block keeps its own size for its unit's real footprint (a Maw or a Bulk is as wide as its model, cavalry deeper than infantry). Blocks push gently apart instead of overlapping when marching side by side, so nobody slides through a friend and falls into disorder for no reason. In a gap narrower than the block, the regiment files into a column at its marching spacing, goes through and re-forms on the far side, in order, rather than every soldier racing for the gap. Soldiers on screen hold their slots while the block turns, so it wheels like a block, not a swarm.
+- **Real use.** 200 soldiers through a gate: they form a column, go through at a steady rate and re-form; the stress scenario times it. A column on a two-lane bridge: the block narrows to the deck and keeps its spacing, nobody is pushed off the edge. Two friendly regiments ordered to the same spot: they stand side by side. A big monster in a line: it takes the room of three files, so the line is longer. In combat, regiments pushed back keep their shape, and a regiment marching past a melee waits or goes round instead of shoving into it.
+- **Checks.** The clearance check uses these footprints (largest unit and a formation width, per the project rules). Stress scenarios: gate, bridge, a retreat through forest, two armies crossing paths.
+
+### 2. Frontage: only the front ranks fight
+
+A regiment can only strike with the soldiers who physically touch the enemy; the rest wait behind to step up. Swarms then only beat a line where they can wrap round it, so gates, bridges and a held line become strong against the Brood. This is what makes chokepoints and Total War-style battles work.
+- **The gap in the code.** Each attacker strikes with its front rank, capped only at a ladder head (`width` in `combat.rs`). So a 20-wide regiment hitting a 4-deep flank strikes with 20 men, and six Brood regiments round one Clans regiment each strike with their whole front.
+- **The rule.** Who strikes is limited by where the two blocks actually touch: an attacker's strikers are the files whose stretch of front overlaps the side they hit, and the total striking any one side is capped by that side's length (one striker per soldier on it, two with spears behind). Extra regiments queued behind wait, push or go round to an open side. Ladders keep their few.
+- **Real use.** A Clans line of 20 files in a gate 6 tiles wide fights only 6 to 8 Skitterlings at once, so the gate holds far longer; outside, the same swarm wraps it and wins. On a bridge, the lead files fight, the rest push behind. Flanking still pays because it opens a new side to strike. Deep blocks are not "wasted": they replace the fallen and hold against a charge (plough depth, item 5).
+- **Balance and AI.** It shifts Brood against everyone, so it lands with the tournament (item 3) and a faction table on both seed sets. It is measured together with the faction rebalance's Brood stat cut ([Faction rebalance](#faction-rebalance-in-brief)), so the two nerfs don't stack: whichever lands second retunes against the other. The AI's battle estimator already counts frontage beyond the enemy's ("hit flanks for 40%"); it must use the same contact rule, and the AI must hold chokepoints and wrap lines on purpose.
+- **Checks.** Stress scenarios: a swarm against a line in a gate and in the open (the win rate must differ sharply), and a column fighting off a bridge head.
+
+### 3. Automatic balance tournament
+
+After every balance or unit change, computer players fight each pair of factions dozens of times and report the result, so a change that makes one faction too strong is caught before Mario plays it. It belongs to the **Faction rebalance thread**, which owns balance, and is its tooling. Its Conquest half starts from that thread's `conquest_balance` test ([Faction rebalance](#faction-rebalance-in-brief)); this item grows it into the full report and gate.
+- **What it runs.** Every pair of the four factions (and the Oathbound if it lands), Conquest 1v1 on two or three maps, both seed sets, at General, a few dozen games a pair; and the existing Field Battle table. Headless, in release, on the CI runner overnight or on demand, not on every PR (too slow).
+- **What it reports.** Win rates per pair with the noise band; when each faction's **first proper army** is ready (first time it fields a set amount of supply in fighting units); when its first attack lands; Grub and Marrow per minute at 5 and 10 minutes; and **which units decide games** (share of kills and of supply in the winner's army at the end). A short Markdown table goes in the PR.
+- **The gate.** A PR that changes stats, rosters, combat or the economy runs it and must keep every pair within a band (first pass 40 to 60%, both seed sets) unless the PR says why. Cheap per PR: Haiku runs it and posts the table; Opus judges.
+- **Real use.** The Brood swarm problem: if a change pushes Brood above 60% on two maps, or their first army comes a minute before everyone else's, the PR stops there.
+
+### 4. Even early game across factions
+
+Every faction fields its first proper army at about the same time, so no faction is swarmed before it has built anything. Measured with the tournament (item 3), owned by the **Faction rebalance thread**, which also sets the Brood early-wave target.
+- **What changes.** Target: every faction's first army ready within 30 s of the others at Standard tempo (first pass; the tournament sets the real figure). Knobs: starting stores and workers, first barracks cost and time, first unit cost and train time, Brood larvae rate. No new mechanics.
+- **Real use.** A Brood rush at minute 3 meets a Clans or Choir army that exists, standing in a gate or behind a palisade (items 2 and the fortifications), not workers. Rushing stays possible but costs economy, so it is a choice, not the default.
+
+### 5. Charges from weight and speed, with braced spears
+
+A charge's punch comes from how heavy the unit is and how fast it is going when it hits. Spears braced and facing the charge stop it dead; a hit to the flank or rear wrecks a unit. With the new morale rule, charges break units by killing men.
+- **What exists.** Ploughing by heft (#212), a fading charge bonus, braced spears that turn a frontal charge, and flank and rear multipliers.
+- **What changes.** Impact = mass × speed at contact (the regiment's real speed over its last second, so a charge from a standstill is weak and one down a slope is strong). It sets both the plough depth and the charge bonus, replacing the fixed `PLOUGH_SPEED`. Braced spears stop a charge whose angle hits their front (within about 45 degrees of facing), and the faster the charger the more it loses on the points. A charge into the flank or rear ploughs deeper (no one braces a side). A unit that has charged must pull out and re-form to charge again at full weight (cycle charging). Mud, rough ground, woods and uphill cut speed, so they cut the charge.
+- **Real use.** Cavalry into the rear of spears locked with infantry: deep plough, many dead in seconds, the spears reach their breaking point. The same cavalry into braced spears' front: stopped, disordered and bleeding. A charge through woods or up a hill hits soft. Charging into a gate or onto a bridge: only the touching files hit (item 2), so a narrow charge does little.
+- **AI.** Computer generals brace spears when they see cavalry coming at their front, charge flanks and rears, and pull cavalry out to charge again.
+- **Checks.** Stress scenarios: a cavalry charge into the front of braced spears, into a flank, and up a hill, with casualties printed; the faction table.
+
+### 6. Orders that respond instantly
+
+A lot of what feels clunky is the controls, not the pathfinding. A **new controls thread** (Sonnet lead for `gc_game` input and HUD; the Opus lead of whichever sim thread owns `regiments.rs` writes the sim side of the queue).
+- **Measure the delay first.** Time from click to the first step on screen in single player and on LAN (Tailscale), split into input, lockstep delay (2 turns, 100 ms), route search and the regiment's turn to face. Fix the biggest part: show the order at once (route line and ghost on click), start the turn immediately, and cut route-search waits (with the pathfinding thread).
+- **Shift-queued orders.** Shift-right-click adds a waypoint or an attack after the current order; the route line shows the whole queue. In the sim, a short queue of orders per regiment (a handful, hashed), so it goes through the lockstep and replays.
+- **Drag a formation.** The right-drag already sets frontage and facing; add depth by dragging further (or a modifier), with a ghost of every regiment's block before letting go. Units in a group turn and move off together and arrive together (matching pace to the slowest).
+- **Attack-move.** Move, but stop and fight anything met on the way (A then click).
+- **Real use.** Queue a march over a bridge, through a gate, then an attack: the regiments file through in order (item 1) and attack on arrival. Drag a deep line across a gate: it fills the gate wide and stacks the rest behind (item 2).
+- **Checks.** A headless test measures ticks from command to first movement and fails over a budget; LAN timing in the batched playtest.
+
+### 7. Clear orders and feedback
+
+Show on screen what each unit is doing and why. Many "this feels wrong" moments happen because you can't see what a unit is thinking. Controls thread for the screen side, T4 for the reasons the sim exposes.
+- **What it shows.** Order and stance icons on the banner and card (marching, attack-move, braced, hold, falling back, forced march, queued orders); morale as a bar with a tick at the breaking point (from the morale redesign); and **why** a unit is wavering, as one or two short reasons from the sim (flanked, rear, outnumbered, general fell, ally broke nearby). Hovering a unit shows its order queue and route.
+- **Real use.** In a big fight you can see which regiment is about to break and why, and send a reserve there. A regiment that won't move shows "waiting: friend in the way" or "pinned".
+- **Sim side.** The reasons come from the morale drains the sim already sums, kept as a small bit set per regiment in the view (not hashed, it is derived).
+
+### 8. Smarter computer generals
+
+Computer players scout, pick favourable ground, flank, pull back damaged units and use the new systems. A strong opponent makes every other system worth having. Owned by the AI (`gc_ai`), third wave, once the systems they must use are in.
+- **What exists.** Scouts that find the enemy start, ground reading (cover, high ground, water), flanking roles, rehearsed plans (the Warlord tries plans in a scratch copy), raiders, walls and traps for Veterans and up, reading fords and floods.
+- **What changes.** Each restart system teaches the AI in its own PR (rule (c): a feature isn't done until the AI uses it). This item adds what no single system owns: scouting **before** each battle and choosing to fight where the ground favours them (a gate, a bridge head, a hill, woods for an ambush); pulling back regiments near their breaking point (new morale) and bringing up fresh reserves; using frontage (hold a chokepoint against a bigger army, wrap a line in the open); and using bridges, debris and walls on purpose (dump debris on an enemy bridge, burn a bridge behind a retreat, clear jams).
+- **Real use.** Outnumbered, the AI falls back to a bridge or gate and holds it; ahead, it meets you in the open and wraps your line.
+- **Checks.** The AI-only Conquest games and the tournament; new tests that the AI holds a chokepoint when outnumbered and pulls back a bloodied regiment.
+
+### Who and when
+
+- **First wave at the restart:** spacing (pathfinding thread); frontage (T4, after morale PR 1); in the Faction rebalance thread, after its economy and Brood passes (which use its `conquest_balance` test), the full tournament, then the early-game pass, so frontage and morale are measured with it.
+- **Second wave:** charges (T4), the controls thread (orders, then feedback).
+- **Third wave:** the generals (AI).
+- Every sim change bumps `SIM_VERSION` and re-blesses goldens through the merge train; `/simplify` and `/code-review` on Opus; guides and the quick reference updated in the same PR; each adds its stress scenario. The batched playtest after each wave records before and after clips of each change.
+- Helpers: Haiku runs the tournament and tables, goldens, docs and guides; Sonnet writes the HUD and input code; Opus leads every sim, balance and AI change.
+
 ## How the work is split
 
 Work is grouped into **eleven threads, one per area of code**. A thread keeps its area for all of its stages, so it never has to relearn the code, and two threads never edit the same files at once. Since M3 the project has read [15](15-staffing-plan.md#hard-rules) rule 3 ("one writer per crate") as one writer per module; this plan makes that explicit for `gc_sim`, `gc_render` and `gc_game`.
@@ -168,6 +261,31 @@ Work is grouped into **eleven threads, one per area of code**. A thread keeps it
 **Cost tiers** are relative, for planning: **M** is two or three pull requests, mostly Sonnet. **L** is four to six pull requests, or fewer with an Opus lead on hard code. **XL** is seven or more pull requests, long-lived.
 
 **Models and effort** follow the project rules: Opus leads anything that changes the simulation, netcode or replays; Sonnet leads render, audio and tools. **3D modelling runs on Sonnet 5.5 alone** (Mario, 2026-10-23): models, rigs, moves, bakes and re-bakes, with no Opus supervisor and no Haiku builders. Low effort is never used. Extra-high or max needs Mario's go first; option C may be worth suggesting it.
+
+## The world remembers the new features
+
+Mario (2026-10-30): the "living campaign map" idea (regions that keep their history, battles that start on ground shaped by the past) is not a new system. It folds into idea 2, **a world that remembers**, which is already built. Every restart feature that changes the land must be remembered the same way.
+
+**What is remembered today (checked 2026-10-30).** A Conquest match is one long game on one map, so its "battles" are the fights within it, and the world's memory is the match's own state:
+- **In the simulation, for the whole match:** cleared and burnt woods, scrub and thicket (cover and growth, through the one ground-change path in [32](32-changing-land.md)); rubble of fallen buildings until it settles; bridge decks, stakes, barricades, walls, gates and their levels and damage; flood height, summer low water and frozen water; soaked ground. Every change mid-match feeds the ground's `changes` digest in the state hash, so every machine and every replay agrees on it.
+- **On screen only, rebuilt from the simulation's events:** felled, scorched, trodden and soaked ground and stumps ([35](35-ground-marks.md), on the Conquest map since #289), the fallen and spent arrows, trophies and torn banners. Trodden tracks heal over minutes; the rest stays.
+- **Not built yet:** save games and "Restage this battle" (the copying pieces are in `gc_sim::fork`), the Campaign ([19](19-campaign.md), design only, whose regions would carry this memory from battle to battle), and enemy buildings remembered as last seen in fog.
+
+**The requirement.** Each new feature below keeps its state in the simulation (the terrain or the building it belongs to), changes it only through the ground-change path or a building's own state, so it reaches the `changes` digest, and keeps it until something in the game undoes it, never on a timer the player can't see:
+
+| Feature | What the land remembers | Until |
+|---|---|---|
+| Drawn bridges | The drawn path, width, each span's level (plain, braced, reinforced), damage, burnt and fallen tiles | Repaired, rebuilt or upgraded |
+| Curved walls and palisades | The drawn path and each tile's level, damage and breaches | Repaired or rebuilt |
+| Dams (idea 24) | Built, open or shut spillway, damage; a **broken dam** stays broken, with its rubble in the river and the river running at its new level downstream and its old one upstream | Rebuilt |
+| Debris and jams (idea 25) | Each jam where it caught, its size, and the water backed up behind it; logs and wreckage stranded on banks and shallows | Cleared by workers, burnt, or carried on by the next high water |
+| Water-engine flood damage (idea 25) | Spans swept away, palisade and field works torn out, banks scoured (shore tiles lost to the river), mud and silt left on the floodplain (soft ground), drowned woods knocked flat | Rebuilt; silt dries and woods regrow only on the slow season clock |
+
+**Real use.** The point is the next fight on the same ground. A column that crossed a braced bridge in spring finds the same bridge, damaged or upgraded, in autumn. An army that broke a dam to flood the valley meets a river it can wade below the dam and a lake it can't cross above it, and both sides' routes, fords and pathfinding see the change straight away (the nav reopen hook). A jam left on a pier keeps the water high upstream until someone clears it, so it is both a hazard and a ford-closer either side can use. Computer players read the remembered state as they read the land today: they cross the bridges that stand, clear jams in their way, rebuild what they need and avoid ground the flood has made soft.
+
+**How each feature proves it.** Its pull requests add one remembered-state test (make the change, play on, check the state is still there and its digest is in the hash) and extend a golden replay so a later fight in the same match uses the changed ground. Save games, "Restage this battle" and the Campaign, when they are built, take this same state through `gc_sim::fork` rather than a second record, so nothing has to be remembered twice. The on-screen marks for the new features (broken dam rubble, stranded logs, flood silt) are added to [35](35-ground-marks.md)'s grid by whichever thread builds the feature.
+
+**Who and when.** No thread of its own: each feature's owner (T6 for bridges and walls, the dam and water-engine threads for ideas 24 and 25) builds its part in its own pull requests, at the restart. Haiku helpers update the docs, guides and quick reference (the guide line: "the land remembers what was done to it").
 
 ## Waves
 

@@ -7066,7 +7066,10 @@ impl Running {
             // Blows land on the model's walls, where they stand within the
             // footprint.
             let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
+            // A drawn wall's models run along its line, not its turn: blows
+            // land on its tile as for a slab.
             let walls = (model.zip(self.art.as_ref()))
+                .filter(|_| s.line.is_none())
                 .and_then(|(m, art)| art.looks.walls(m))
                 // Turned a quarter, its model's walls run the other way.
                 .map(|w| {
@@ -7086,6 +7089,10 @@ impl Running {
                 top,
                 model,
                 lift,
+                facing: self
+                    .art
+                    .as_ref()
+                    .map_or(Vec2::Y, |art| art.looks.facing(&s)),
                 owner: s.owner,
                 colour: color_of(&self.parties, s.owner),
                 stuff: siege::stuff(self.buildings.faction(s.building), stats.armour),
@@ -7368,13 +7375,13 @@ impl Running {
                 let mut flags = models::pose_flags(pose, 0, false);
                 if fall.tip > 0.0 {
                     // Tipped over toward its way, which the model reads in
-                    // its own space (turned to face south, as drawn).
+                    // its own space (turned as it stood).
                     flags[2] = (fall.tip * 255.0).round() as u8;
-                    flags[3] = scenery::fall_of(scenery::turn_of(Vec2::Y), fall.way);
+                    flags[3] = scenery::fall_of(scenery::turn_of(fall.facing), fall.way);
                 }
                 art.buckets[fall.model * LODS + lod].push(SoldierInstance {
                     pos: fall.pos.to_array(),
-                    facing: [0.0, 1.0],
+                    facing: fall.facing.to_array(),
                     frames: pose.rows,
                     flags,
                     color: [r, g, b, gc_render::TONE_NEUTRAL],
@@ -7387,24 +7394,26 @@ impl Running {
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
-                let (centre, top, lift) = buildings::model_spot(&s, &ground);
                 let (shake, rise) = self.siege.jolt(s.handle);
-                let (centre, lift) = (centre + shake, lift + rise);
-                let at = Vec3::new(centre.x, top, centre.y);
                 let still = art.clips.pose(model, Action::Idle, time);
                 let height = art.looks.top(model);
-                if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                    let highlight = if picked == Some(s.handle) { 40 } else { 0 };
-                    art.buckets[model * LODS + lod].push(SoldierInstance {
-                        pos: centre.to_array(),
-                        facing: art.looks.facing(&s).to_array(),
-                        frames: pose.rows,
-                        flags: models::pose_flags(pose, highlight, false),
-                        color: [r, g, b, gc_render::TONE_NEUTRAL],
-                        lift,
-                        scale: 1.0,
-                        ..Default::default()
-                    });
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                let along = !self.buildings.is_bridge(s.building);
+                for (centre, facing, lift) in art.looks.spots(&s, model, along, &ground) {
+                    let (centre, lift) = (centre + shake, lift + rise);
+                    let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
+                    if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
+                        art.buckets[model * LODS + lod].push(SoldierInstance {
+                            pos: centre.to_array(),
+                            facing: facing.to_array(),
+                            frames: pose.rows,
+                            flags: models::pose_flags(pose, highlight, false),
+                            color: [r, g, b, gc_render::TONE_NEUTRAL],
+                            lift,
+                            scale: 1.0,
+                            ..Default::default()
+                        });
+                    }
                 }
             }
             let Some(worker) = art.looks.crew_of(&s) else {

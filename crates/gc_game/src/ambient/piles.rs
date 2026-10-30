@@ -143,6 +143,7 @@ mod tests {
             top: 4.0,
             model: None,
             lift: 0.0,
+            facing: Vec2::Y,
             owner: 0,
             colour: [200; 3],
             stuff: Stuff {

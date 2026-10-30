@@ -252,6 +252,8 @@ pub struct Look {
     /// middle.
     pub model: Option<usize>,
     pub lift: f32,
+    /// The way its model faces (along its line, for a drawn wall's).
+    pub facing: Vec2,
     pub owner: PlayerId,
     pub colour: [u8; 3],
     pub stuff: Stuff,
@@ -457,6 +459,8 @@ struct Fall {
 pub struct Sinking {
     pub model: usize,
     pub pos: Vec2,
+    /// The way the model faces, as it did standing.
+    pub facing: Vec2,
     pub lift: f32,
     pub colour: [u8; 3],
     /// How far it has tipped over, 0 (upright) to 1 (lying), and toward
@@ -1210,6 +1214,7 @@ impl Siege {
             Some(Sinking {
                 model,
                 pos: f.look.centre() + across,
+                facing: f.look.facing,
                 lift: f.look.lift - f.look.top * 1.05 * down,
                 colour: f.look.colour,
                 tip,
@@ -1390,6 +1395,7 @@ mod tests {
             top: 3.0,
             model: Some(2),
             lift: 0.0,
+            facing: Vec2::Y,
             owner: 1,
             colour: [200, 0, 0],
             stuff: stuff(Some(Faction::EmberClans), Armour::Structure),
