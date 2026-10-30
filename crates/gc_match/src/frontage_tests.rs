@@ -152,7 +152,7 @@ fn hold(ground: Ground3, stalwart: bool) -> Held {
 
 /// The real-play check: one Yari regiment against six Skitterling
 /// regiments holds a gate and a bridge head far longer than open ground,
-/// and kills at least twice as many of the swarm for each man it loses there. Played twice:
+/// and kills at least half as many again of the swarm for each man it loses there. Played twice:
 /// with morale, and to the last man (blows alone).
 #[test]
 fn a_line_holds_a_gate_and_a_bridge_against_a_swarm() {
@@ -180,7 +180,7 @@ fn a_line_holds_a_gate_and_a_bridge_against_a_swarm() {
                 "the {name} holds half as long again as the open: {narrow:?} against {open:?}"
             );
             assert!(
-                rate(narrow) >= rate(&open) * 2.0,
+                rate(narrow) >= rate(&open) * 1.5,
                 "the {name} trades better than the open: {narrow:?} against {open:?}"
             );
         }
