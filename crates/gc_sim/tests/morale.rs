@@ -240,4 +240,3 @@ fn routers_stay_on_the_map() {
         }
     }
 }
-

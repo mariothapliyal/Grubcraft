@@ -723,7 +723,15 @@ impl Vision {
         } else {
             morale::shift(regs, j, -AMBUSH_SHOCK, morale::WHY_AMBUSH);
             self.off_guard[j] = OFF_GUARD_TICKS;
-            morale::shake_friends(regs, combat, stances, j, RIPPLE_TILES, AMBUSH_RIPPLE, morale::WHY_AMBUSH);
+            morale::shake_friends(
+                regs,
+                combat,
+                stances,
+                j,
+                RIPPLE_TILES,
+                AMBUSH_RIPPLE,
+                morale::WHY_AMBUSH,
+            );
         }
         if self.ambushes.len() < MAX_AMBUSHES {
             self.ambushes.push(Ambush {

@@ -114,8 +114,9 @@ pub const WHY_WATER: u16 = 1 << 10;
 /// Its side's champion lost a duel.
 pub const WHY_CHAMPION: u16 = 1 << 11;
 /// The steady pressures, recomputed at every check; the rest are knocks.
-const WHY_PRESSURE: u16 =
-    WHY_FLANK | WHY_REAR | WHY_PINNED | WHY_OUTNUMBERED | WHY_LOSSES | WHY_BLOODIED;
+/// Flank and rear blows count as knocks: a regiment soon turns to face
+/// them, but the nerve they cost stays spent.
+const WHY_PRESSURE: u16 = WHY_PINNED | WHY_OUTNUMBERED | WHY_LOSSES | WHY_BLOODIED;
 /// Losing this many percent of full strength in one second counts as
 /// heavy losses for [`WHY_LOSSES`].
 const HEAVY_LOSS_PERCENT: i32 = 3;
@@ -281,10 +282,8 @@ fn check(
     }
     // Wounds shake it as much as deaths: hit points lost, counted in men,
     // twice over once it is down to its breaking point.
-    let bled = i32::from(regs.bled[i])
-        * 100
-        * CASUALTY_TENTHS_PER_PERCENT
-        * if bloodied { 2 } else { 1 };
+    let bled =
+        i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT * if bloodied { 2 } else { 1 };
     let mut tenths = -(bled / (full * i32::from(stats.hp_per_model.max(1))));
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {
@@ -329,13 +328,12 @@ fn check(
     };
     regs.morale[i] = morale;
     if morale > 0 {
-        regs.morale_state[i] = if morale < WAVER_BELOW * SCALE
-            && strength <= break_at + u32::from(WAVER_MARGIN)
-        {
-            MoraleState::Wavering
-        } else {
-            MoraleState::Steady
-        };
+        regs.morale_state[i] =
+            if morale < WAVER_BELOW * SCALE && strength <= break_at + u32::from(WAVER_MARGIN) {
+                MoraleState::Wavering
+            } else {
+                MoraleState::Steady
+            };
     } else {
         rout(regs, combat, stances, vision, i, tick, map_tiles);
     }
@@ -454,7 +452,15 @@ fn rout(
     // Friends nearby are shaken; the enemies who broke them take heart. The
     // friends' own checks decide whether they break in turn.
     let me = regs.handle(i);
-    shake_friends(regs, combat, stances, i, ROUT_SHOCK_TILES, ROUT_SHOCK, WHY_ALLY_BROKE);
+    shake_friends(
+        regs,
+        combat,
+        stances,
+        i,
+        ROUT_SHOCK_TILES,
+        ROUT_SHOCK,
+        WHY_ALLY_BROKE,
+    );
     let (p, owner, near) = (
         regs.position[i],
         regs.owner[i],
@@ -467,7 +473,13 @@ fn rout(
     let engaged = &regs.engaged;
     combat.each_near(&at, p, near, Whose::Enemies(owner), |j| {
         if engaged[j] == Some(me) {
-            adjust(&mut morale[j], &mut state[j], &mut reasons[j], VICTORY_BOOST, 0);
+            adjust(
+                &mut morale[j],
+                &mut state[j],
+                &mut reasons[j],
+                VICTORY_BOOST,
+                0,
+            );
         }
     });
     flee(regs, combat, stances, vision, i, map_tiles);

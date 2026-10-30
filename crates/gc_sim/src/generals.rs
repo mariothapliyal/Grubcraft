@@ -368,7 +368,12 @@ fn fall(regs: &mut Regiments, units: &[UnitStats], stances: &Stances, g: &Genera
                     regs.disorder(j);
                 }
             } else {
-                morale::shift(regs, j, if close { -PANIC } else { -PANIC_FAR }, morale::WHY_GENERAL);
+                morale::shift(
+                    regs,
+                    j,
+                    if close { -PANIC } else { -PANIC_FAR },
+                    morale::WHY_GENERAL,
+                );
             }
         } else if regs.engaged[j] == Some(g.regiment) && stances.hostile(regs.owner[j], g.party) {
             morale::shift(regs, j, FELLED_BOOST, 0);
