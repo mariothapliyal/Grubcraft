@@ -44,6 +44,7 @@ Read in order the first time; afterwards each document stands alone.
 | 36 | [Habitat ground](36-habitat-ground.md) | Each habitat's own ground: bog pools, mud, flower drifts, heather, gravel, crust, bone ripples, leaf litter and moss, drawn by the terrain shader from a per-tile look (Living Land stage 4, ground half) |
 | 37 | [The commander on the field](37-commander.md) | Idea 12, built: each player's general rides with their best regiment, steadies the men near him, speaks before the lines meet, and when he falls his side panics |
 | 38 | [Living waterways](38-living-waterways.md) | Idea 23: rivers that vary with the seasons (all four stages built: the spring melt shuts fords, summer low water opens new crossings, winter ice; rivers run one way and carry wading troops downstream; flash floods run down a river after a storm and shut its fords; computer players keep off fords the water is shutting and wade the summer fords) |
+| 39 | [The water engine](39-water-engine.md) | Idea 25 (plan, building in stages): every river carries its own water from rain, snow and summer, rises downstream later, floods from minor to catastrophic, and carries debris (felled and burnt logs, dumped rafts, bridge wrecks) that hits troops, jams and breaks bridges; dams (idea 24) sit on it |
 | — | [Glossary](glossary.md) | Terms used across the docs |
 | — | [ADR 0001: Engine and language](adr/0001-engine-and-language.md) | Why a custom Rust engine |
 | — | [Dependencies](dependencies.md) | Every third-party crate, why it's there and what it costs |

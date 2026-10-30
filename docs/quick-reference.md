@@ -2,7 +2,7 @@
 
 Keep this file current: any PR that changes something a player sees updates it in the same PR, like the in-game guides.
 
-Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-27). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
+Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-30). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
 
 Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment** = a block of soldiers. **Worker** = Hands, Gnawers, Tuners, Ledger Clerks.
 
@@ -144,9 +144,10 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Main menu:** Play (Host a game, Join a game), Sandbox, Replays, Unit viewer, Settings, Guide, Exit.
 
-- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Big 6-player maps: Land: Random, Plains, Mixed, Wild. Fog of war on in Conquest matches played to a victory.
+- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
+  - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000; build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. Win by rout or victory points. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
 - **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type an address or join code. Version mismatches are shown in the lobby.
