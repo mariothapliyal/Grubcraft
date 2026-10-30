@@ -91,11 +91,43 @@ the game:
   pieces the computer players fight over.
 - **The Heart.** Its clearing is flat and open, so a Titan's Heart fight is
   a field battle, not a scramble through woods.
-- **Stress check.** A new `grown-conquest` scenario plays two Generals on
-  Land: Mixed at 448 tiles and checks they meet and fight (armies cross the
-  land between the bases) within a time limit.
-- **AI uses it.** The Conquest AI soak runs on grown land; a computer player
-  must finish 1v1 matches there as on the Classic maps.
+- **AI uses it.** Two computer players must finish one-on-ones on a Medium
+  grown map (`ai_only_grown_land_1v1_ends_in_a_win`, run in CI with the
+  other `ai_only` checks): they scout, expand, cross the land between the
+  bases and fight it out.
+
+## Step 1 as built
+
+*Built 2026-10-30.* `gc_map::grown::describe_conquest` and the lobby's
+**Land: Random, Plains, Mixed, Wild** (`gc_ui::lobby::CONQUEST_MAPS`, after
+the Classic choices so old choices keep their numbers;
+`DEFAULT_CONQUEST_MAP` is Land: Random). Network protocol 40.
+
+- **The land.** Grown as the Field Battle's mirrored land, with one change
+  (`Grown::heart`): the middle is flattened and kept open like a start's
+  clearing. Field Battle maps are unchanged (their fingerprints hold).
+  Four-start maps keep the two middle start clearings as open meadow.
+- **Shares by walk.** Each north start's share is the Classic one, but each
+  piece stands where the walk to it from its start is what it would be on
+  open ground (within 1%), as near its open-ground place as the land
+  allows. Where the land makes every start go round, all of them get the
+  same longer walk (up to 30% longer), so the starts stay equal. A start's
+  own seeps and vein stay inside its base area (24 tiles) and its natural
+  expansion between 24 and 60 tiles.
+- **Counter-routes.** Before the shares, every start's way to its nearest
+  enemy is walled off in the map maker's own walk; the way round must be at
+  most twice as long (the checker allows 2.2).
+- **Rerolls.** A seed whose land fails either grows another seed's land
+  (up to 16; seeds far apart, so neighbouring lobby seeds don't share land).
+  In a sweep of 480 maps (40 seeds of each wildness at 320, 448 and 640
+  tiles) every map passed the checker's Conquest checks, and about one in
+  five was rerolled.
+- **Lairs.** Each lair guards a rich field (a seep and a vein beside it).
+- **Dev flag.** `--conquest land-mixed` (any lobby map's name) starts a
+  quick Conquest on it.
+- **Checks.** `gc_mapcheck` test `every_grown_conquest_map_passes_the_checker`
+  (`SWEEP=N` for more seeds), and the AI one-on-one above (first run: wins
+  by Annihilation at 25:53 and 32:42, first contact at 7:22 and 6:34).
 
 ## Not in this plan
 

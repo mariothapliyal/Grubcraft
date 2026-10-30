@@ -240,7 +240,7 @@ fn passes(r: &mut Raster, standable: &[u8]) -> bool {
 /// ground's cost, no cutting corners, as `gc_mapcheck` walks); `u32::MAX`
 /// where it can't go. Only the walks to `targets` are sure to be final:
 /// it stops once they all are.
-fn walk(standable: &[u8], n: usize, from: usize, targets: &[usize]) -> Vec<u32> {
+pub(super) fn walk(standable: &[u8], n: usize, from: usize, targets: &[usize]) -> Vec<u32> {
     let mut dist = vec![u32::MAX; n * n];
     let mut heap = BinaryHeap::new();
     dist[from] = 0;
@@ -523,6 +523,7 @@ mod tests {
                         seed,
                         wildness,
                         fairness,
+                        heart: false,
                     },
                 );
                 let standable = super::super::standable(&r);
