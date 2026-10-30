@@ -32,7 +32,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 5. Smaller extras: lightning as a game event, burning buildings lighting the ground, Highland snow, and ambient polish (supply carts, forge sparks, more fauna).
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
-8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
+8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
 
 ## What it covers
 
@@ -85,6 +85,14 @@ Mario (2026-10-30), for the restart: bridges must be **truly dynamic**. Wood onl
 **Who and when**
 - Owner: T6 (fortifications), Opus lead for the sim, the order and the drawing tool. Sonnet 5.5 alone for the kit models; a Sonnet helper for the generator and its drawing code; Haiku for docs, guides and the quick reference. Size M to L, three PRs: (1) curved path and width in the sim, with the drawing tool and preview; (2) the kit and the generator; (3) upgrades (braced and reinforced piers) and polish: wear, broken pieces, lanterns lit at night, computer players bending round rocks.
 - Starts in the first wave after the restart, once #319 is settled. Runs alongside the dedicated pathfinding thread: deck tiles are ordinary walkable tiles, so it does not touch route search. Dams (idea 24) reuse the kit and piers.
+
+**Walls, fences and palisades drawn the same way (Mario, 2026-10-30)**
+Today a wall is drawn as straight lines from click to click (any angle, chained at corners). At the restart, walls get the same drawing as bridges, so palisades, fences and walls follow the land:
+- **One shared drawn path.** The curve, the bend limit, the smoothing and the turning of the curve into tiles are one piece of sim code that bridges, walls and blueprints all use (bridges join their tiles edge to edge so soldiers can walk them; walls keep today's corner-joined steps, which already seal the way). The order carries control points instead of two end tiles. Each tile stays its own building, so breaches, wall levels, manning, ladders, gates and fire work as today. Walls get the bend limit too, but a click still makes a sharp corner, so square forts stay easy.
+- **The tool.** Drag to draw a smooth curve, click for a corner, Shift to keep straight lines and 15 degree steps as now. The ring tool closes into a smooth loop when dragged, and blueprints are drawn the same way. Ends still snap to your walls, gates, towers and bridges.
+- **Gates on a curve** sit on the tile under them and turn to the curve's direction there; the generator straightens the wall for a tile on each side so the gate looks right.
+- **Generated looks.** Like the bridge, a wall's look is laid along the curve from a kit, seeded per wall. First the Ember Palisade (logs of slightly different heights, thicknesses and lean, sharpened tops, bracing and a walkway behind on higher levels) and the Concord Bone Fence; other walls keep today's models bent to follow the curve until their kits come.
+- Computer players keep drawing straight walls and may follow ridges and rivers later. This is part of the same T6 work: the shared path lands in the first bridge PR, wall drawing in the second, wall kits with the third.
 
 **Bridges and the water engine (Mario, 2026-10-30)**
 Once the dynamic water engine (idea 25: seasonal flow and volume, minor to catastrophic flash floods) and its debris are built, bridges must react to them. This is a fourth bridge PR, built with or right after idea 25, owned by whichever thread builds the water engine, with T6 reviewing:
