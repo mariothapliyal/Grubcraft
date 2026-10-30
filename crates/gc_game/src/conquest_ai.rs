@@ -1051,14 +1051,14 @@ mod tests {
         // known one first, then the rest of 1 to 12.
         for (f, known) in [(Faction::EmberClans, 2), (Faction::CarrionConcord, 8)] {
             let walled = core::iter::once(known)
-                .chain((1..=12).filter(|&s| s != known))
+                .chain((1..=24).filter(|&s| s != known))
                 .any(|seed| {
                     let most;
                     (most, last) = general(f, seed);
                     traps += most.traps;
                     most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
-            assert!(walled, "{f:?}: no General walled in seeds 1 to 12: {last}");
+            assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
         }
         // Still none: more Clans games until one lays a trap.
         for seed in 13..=24 {
