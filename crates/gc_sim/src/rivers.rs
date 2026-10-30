@@ -725,7 +725,7 @@ impl Rivers {
             s as u16,
             st.top,
         );
-        // The soonest front still to reach it.
+        // The worst front still to reach it (the soonest of equals).
         let coming = (self.fronts())
             .filter(|f| st.holds(&self.stretches[usize::from(f.start)]) && st.top <= f.top)
             .filter_map(|f| {
@@ -735,7 +735,7 @@ impl Rivers {
                     crest: faded(f.crest, f.top - st.top),
                 })
             })
-            .min_by_key(|c| (c.seconds, u16::MAX - c.crest));
+            .min_by_key(|c| (core::cmp::Reverse(Band::of(c.crest)), c.seconds));
         Reading {
             river: st.river,
             at: st.at,
@@ -1113,7 +1113,8 @@ pub struct Reading {
     /// How far its water stands above the map's line at its top, height
     /// units: the map-wide flood, its swell and any front over it.
     pub rise: u16,
-    /// The soonest front still to reach it, if one is running or waiting.
+    /// The worst front still to reach it (the soonest of the biggest
+    /// band), if one is running or waiting.
     pub coming: Option<Coming>,
 }
 

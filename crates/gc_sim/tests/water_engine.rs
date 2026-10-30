@@ -372,7 +372,7 @@ fn wading_is_slower_while_the_river_is_up() {
     while w.tick_count() < 2 * 60 * SECOND {
         w.tick(&[]);
         slowest = slowest.min(pace(&w));
-        assert!(w.terrain().depth(p) > 0);
+        assert!(w.terrain().wet(p));
     }
     let (wading, deep) = (
         gc_sim::terrain::WADING_SPEED_PERCENT,
@@ -380,4 +380,5 @@ fn wading_is_slower_while_the_river_is_up() {
     );
     assert_eq!(before.raw(), step.raw() * wading / 100);
     assert_eq!(slowest.raw(), step.raw() * (wading * deep / 100) / 100);
+    assert!(!w.terrain().deep(p), "the river is down again");
 }

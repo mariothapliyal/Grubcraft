@@ -113,15 +113,29 @@ const HIGHLIGHT: f32 = 1.6;
 @group(0) @binding(18) var ground_look: texture_2d<f32>;
 // How far the rivers raise their water over the water line
 // (Renderer::set_river_water), one texel a tile: r times RIVER_RISE_FULL
-// tiles.
+// tiles. Read without a sampler, so every stage can (soldiers are stood
+// in a compute pass).
 @group(0) @binding(19) var river_map: texture_2d<f32>;
 // 255 half height units of a 256-unit tile.
 const RIVER_RISE_FULL: f32 = 510.0 / 256.0;
 
-// The water's surface at `xz`: the water line, raised where a river is up.
+fn river_texel(p: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(river_map));
+    return textureLoad(river_map, clamp(p, vec2<i32>(0, 0), size - vec2<i32>(1, 1)), 0).r;
+}
+
+// The water's surface at `xz`: the water line, raised where a river is up
+// (eased between tile centres).
 fn water_surface(xz: vec2<f32>) -> f32 {
-    let size = f32(textureDimensions(river_map).x);
-    return g.misc.x + textureSampleLevel(river_map, soft_sampler, xz / size, 0.0).r * RIVER_RISE_FULL;
+    let s = xz - vec2<f32>(0.5);
+    let i = vec2<i32>(floor(s));
+    let f = fract(s);
+    let r = mix(
+        mix(river_texel(i), river_texel(i + vec2<i32>(1, 0)), f.x),
+        mix(river_texel(i + vec2<i32>(0, 1)), river_texel(i + vec2<i32>(1, 1)), f.x),
+        f.y,
+    );
+    return g.misc.x + r * RIVER_RISE_FULL;
 }
 
 fn sample_height(p: vec2<i32>) -> f32 {
@@ -1793,7 +1807,7 @@ fn joint_at(j: u32) -> vec3<f32> {
 // The ground where the skinning pass stands a soldier: the terrain, or just
 // under the water line.
 fn ground_at(xz: vec2<f32>) -> f32 {
-    return max(height_at(xz), g.misc.x - 0.05);
+    return max(height_at(xz), water_surface(xz) - 0.05);
 }
 
 // Byte `k` of `w`, a rig joint.

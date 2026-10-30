@@ -5309,6 +5309,8 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.river_watch.reset();
+        self.river_picture.reset();
         self.cinema.reset();
         self.director.stop();
         self.was_deploying = false;
@@ -5455,6 +5457,8 @@ impl Running {
         // The renderer's land is bare again.
         self.land.reset();
         self.scars.reset();
+        self.river_picture.reset();
+        self.river_watch.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();
@@ -6179,12 +6183,8 @@ impl Running {
             .is_multiple_of(gc_sim::TICKS_PER_SECOND)
         {
             let (fog, reveal) = (&self.fog, self.reveal_all);
-            watched = self.river_watch.look(
-                self.world.flood().rivers(),
-                self.seed,
-                self.world.terrain().rise(),
-                |t| reveal || fog.sees_tile(t),
-            );
+            watched = (self.river_watch)
+                .look(self.world.flood().rivers(), |t| reveal || fog.sees_tile(t));
         }
         if let Some(w) = &watched {
             news.push(w.as_str());

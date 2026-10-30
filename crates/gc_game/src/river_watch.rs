@@ -24,7 +24,8 @@ const TAILS: [&str; 12] = [
     "stream",
 ];
 
-/// The name of river `river` of a map seeded `seed`: "the Brackwater".
+/// The name of river `river` of rivers laid out as `seed` says (see
+/// `layout_seed`): "the Brackwater".
 /// The rivers of one map never share a name.
 pub fn name(seed: u64, river: usize) -> String {
     let (h, t) = name_parts(seed, river);
@@ -54,12 +55,21 @@ pub fn gauge_word(gauge: Gauge) -> &'static str {
     }
 }
 
+/// A number for the shape of a map's rivers, the same in every match on
+/// that map: what the rivers' names are drawn from.
+fn layout_seed(rivers: &Rivers) -> u64 {
+    (0..rivers.stretches()).fold(rivers.stretches() as u64, |h, s| {
+        let (x, y) = rivers.reading(s, 0).at;
+        (h ^ ((x as u64) << 20) ^ (y as u64)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    })
+}
+
 /// What the viewer has been told of the rivers, and how they stood a
 /// second ago.
 #[derive(Default)]
 pub struct RiverWatch {
-    /// The map's seed and stretches the names below were made for.
-    made_for: Option<(u64, usize)>,
+    /// The rivers' layout the names below were made for.
+    made_for: Option<u64>,
     names: Vec<String>,
     /// Each stretch's reading when last looked at, and whether its water
     /// was rising (`Greater`), falling (`Less`) or holding then.
@@ -68,6 +78,8 @@ pub struct RiverWatch {
     /// whether one is still coming (room for each look).
     told: Vec<bool>,
     coming: Vec<bool>,
+    /// The top bar's words, as of the last look.
+    chip: Option<String>,
 }
 
 impl RiverWatch {
@@ -78,39 +90,43 @@ impl RiverWatch {
             .map_or("", String::as_str)
     }
 
-    /// Look at the rivers once a second: `sees` says whether the viewer
-    /// sees a tile, and `lift` is the map-wide flood's rise. Returns what
-    /// the river watch tells the viewer, if anything: "The Brackwater is
-    /// rising upriver: its crest reaches a ford in about 40 s".
-    pub fn look(
-        &mut self,
-        rivers: &Rivers,
-        seed: u64,
-        lift: u16,
-        sees: impl Fn((i32, i32)) -> bool,
-    ) -> Option<String> {
+    /// Forget what was seen and told, for a new match (the names stay
+    /// with the map).
+    pub fn reset(&mut self) {
+        self.last.clear();
+        self.told.clear();
+        self.chip = None;
+    }
+
+    /// Look at the rivers once a second (`sees` says whether the viewer
+    /// sees a tile). Returns what the river watch tells the viewer, if
+    /// anything: "The Brackwater is rising upriver: its crest reaches a
+    /// ford in about 40 s". The map-wide flood, which shuts every ford at
+    /// once, is told on its own, so it is not read here.
+    pub fn look(&mut self, rivers: &Rivers, sees: impl Fn((i32, i32)) -> bool) -> Option<String> {
         let count = rivers.stretches();
-        if self.made_for != Some((seed, count)) {
-            self.made_for = Some((seed, count));
-            self.names = (0..rivers.river_count()).map(|r| name(seed, r)).collect();
+        if self.last.len() != count {
+            let seed = layout_seed(rivers);
+            if self.made_for != Some(seed) {
+                self.made_for = Some(seed);
+                self.names = (0..rivers.river_count()).map(|r| name(seed, r)).collect();
+            }
             self.last = (0..count)
-                .map(|s| (rivers.reading(s, lift), Ordering::Equal))
+                .map(|s| (rivers.reading(s, 0), Ordering::Equal))
                 .collect();
             self.told = vec![false; rivers.river_count()];
         }
         self.coming.clear();
         self.coming.resize(self.told.len(), false);
         for (s, (last, trend)) in self.last.iter_mut().enumerate() {
-            let now = rivers.reading(s, lift);
-            match now.rise.cmp(&last.rise) {
-                Ordering::Equal => {}
-                way => *trend = way,
-            }
+            let now = rivers.reading(s, 0);
+            *trend = now.rise.cmp(&last.rise);
             *last = now;
             if now.coming.is_some_and(|c| c.crest >= FLOOD_RISE) {
                 self.coming[usize::from(now.river)] = true;
             }
         }
+        self.chip = self.chip_now(&sees);
         // A crest no stretch still waits for has gone by: the next one is
         // news again.
         for (told, &c) in self.told.iter_mut().zip(&self.coming) {
@@ -155,10 +171,14 @@ impl RiverWatch {
         None
     }
 
-    /// The worst river the viewer sees, for the top bar, if any is up or
-    /// higher, as of the last look: "the Brackwater in flood, rising".
-    /// (Low water is told map-wide, with what it opens.)
-    pub fn chip(&self, sees: impl Fn((i32, i32)) -> bool) -> Option<String> {
+    /// The worst river the viewer saw at the last look, for the top bar,
+    /// if any is up or higher: "the Brackwater in flood, rising". (Low
+    /// water is told map-wide, with what it opens.)
+    pub fn chip(&self) -> Option<&str> {
+        self.chip.as_deref()
+    }
+
+    fn chip_now(&self, sees: impl Fn((i32, i32)) -> bool) -> Option<String> {
         let (gauge, trend, river) = (self.last.iter().enumerate())
             .filter(|(_, (r, _))| sees(r.at))
             .map(|(s, &(r, trend))| {
@@ -205,6 +225,11 @@ pub struct RiverPicture {
 }
 
 impl RiverPicture {
+    /// Forget the map, for a new one (whose texture starts at the line).
+    pub fn reset(&mut self) {
+        *self = RiverPicture::default();
+    }
+
     /// Draw the rivers' water as `world`'s rivers raise it, on a map
     /// `side` tiles across. Call it every frame; it redraws only while a
     /// river is up, a few times a second.
@@ -396,10 +421,11 @@ mod tests {
                 continue;
             }
             let rivers = w.flood().rivers();
-            told.extend(watch.look(rivers, seed, 0, |_| true));
-            chips.extend(watch.chip(|_| true));
+            told.extend(watch.look(rivers, |_| true));
+            chips.extend(watch.chip().map(str::to_owned));
         }
-        let (river, name) = (name(seed, 0), capitalised(&name(seed, 0)));
+        let river = watch.name(0).to_owned();
+        let name = capitalised(&river);
         let [news] = told.as_slice() else {
             panic!("{told:?}");
         };
@@ -424,8 +450,8 @@ mod tests {
             w.tick(&[]);
             if w.tick_count().is_multiple_of(gc_sim::TICKS_PER_SECOND) {
                 let rivers = w.flood().rivers();
-                assert_eq!(blind.look(rivers, seed, 0, |_| false), None);
-                assert_eq!(blind.chip(|_| false), None);
+                assert_eq!(blind.look(rivers, |_| false), None);
+                assert_eq!(blind.chip(), None);
             }
         }
     }

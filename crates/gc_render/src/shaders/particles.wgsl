@@ -89,7 +89,7 @@ fn vs_particle(p: FxIn) -> FxOut {
     // out toward it.
     var ground = 0.0;
     if (flags & (FX_GROUND | FX_SOFT)) != 0u {
-        ground = max(surface_height(world.xz), g.misc.x - 0.05);
+        ground = max(surface_height(world.xz), water_surface(world.xz) - 0.05);
     }
     if (flags & FX_GROUND) != 0u {
         world.y = max(world.y, ground + radius * 0.4);

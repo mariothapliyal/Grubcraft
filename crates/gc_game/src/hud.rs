@@ -734,10 +734,7 @@ impl Running {
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
-        let gauge = {
-            let (fog, reveal) = (&self.fog, self.reveal_all);
-            self.river_watch.chip(|tile| reveal || fog.sees_tile(tile))
-        };
+        let gauge = self.river_watch.chip();
         let sky = sky_word(&self.world, gauge);
         let season = season_word(&self.world);
         let status = StatusStrip {
@@ -1836,14 +1833,14 @@ fn season_word(world: &gc_sim::World) -> &'static str {
 /// `gauge` is the worst river the viewer sees, if one is out of the
 /// ordinary ([`crate::river_watch::RiverWatch::chip`]): it tells the river
 /// on a map with rivers.
-fn sky_word(world: &gc_sim::World, gauge: Option<String>) -> String {
+fn sky_word(world: &gc_sim::World, gauge: Option<&str>) -> String {
     let air = world.air();
     let mud = world.terrain().soaked() > 0;
     // (On its own, and after the rest.)
     let river: Option<(String, String)> = if world.flood().closed() {
         Some(("Fords flooded".into(), "fords flooded".into()))
     } else if let Some(g) = gauge {
-        Some((crate::river_watch::capitalised(&g), g))
+        Some((crate::river_watch::capitalised(g), g.to_owned()))
     } else if world.terrain().rise() > 0 {
         Some(("River high".into(), "river high".into()))
     } else if world.flood().exposed() {

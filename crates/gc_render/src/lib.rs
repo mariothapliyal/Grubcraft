@@ -823,7 +823,8 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 19,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // (Soldiers, scenery and particles stand on the water too.)
+                    visibility: world_stages,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
