@@ -6154,15 +6154,21 @@ impl Running {
                 }),
                 Event::Season { season } => news.push(season_news(season)),
                 Event::FlashFlood { stage } => news.push(match stage {
-                    gc_sim::flash::Stage::Coming => {
+                    gc_sim::rivers::Stage::Coming => {
                         "A flash flood is coming down the river: get off the fords"
                     }
-                    gc_sim::flash::Stage::Here => {
-                        "The flash flood is here: that river's fords can't be crossed"
+                    gc_sim::rivers::Stage::Here => {
+                        "The river is over its fords: they can't be crossed"
                     }
-                    gc_sim::flash::Stage::Gone => {
-                        "The flash flood has passed: the fords are open again"
+                    gc_sim::rivers::Stage::Gone => {
+                        "The river has fallen: the fords are open again"
                     }
+                }),
+                Event::GreatFlood { band } => news.push(match band {
+                    gc_sim::rivers::Band::Catastrophic => {
+                        "A great storm has broken over the hills: a catastrophic flood is coming down the river. Get off the river and its banks"
+                    }
+                    _ => "A storm in the hills: a major flood is coming down the river. Keep off the fords and the low banks",
                 }),
                 Event::SweptAway { regiments } => news.push(if regiments == 1 {
                     "The flash flood swept a regiment out of the ford: some drowned, the rest washed up downstream"
