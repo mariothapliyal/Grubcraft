@@ -178,6 +178,10 @@ pub struct HudState {
     /// the ring as it would be ordered now.
     pub wall_mode: crate::wall_tool::WallMode,
     pub ring_preview: Option<crate::wall_tool::RingPreview>,
+    /// Conquest: the wall tool drags a curve: the points so far, and the
+    /// curve as it would be ordered now.
+    pub wall_drag: Option<crate::drawn_tool::Drag>,
+    pub drag_preview: Option<crate::wall_tool::DragPreview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
     /// Conquest: the build menu shows its second page (a faction with more
@@ -1926,7 +1930,7 @@ const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or b
 const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps. O draws a ring.";
 
 /// The build-menu tooltip of a bridge.
-const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+const BRIDGE_TIP: &str = "Draw a bridge across a river: press on the near bank and drag to the far bank for a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
 
 /// The build-menu tooltip of a hidden trap.
 const TRAP_TIP: &str = "A hidden trap, laid like any building on one tile. Only you can see it. The first enemy regiment to walk onto it springs it, and it is gone. Nothing can be built on it. See the guide for what this one does.";

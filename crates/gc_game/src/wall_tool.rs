@@ -14,19 +14,29 @@
 //! tiles are drawn as faint blue slabs, and a right-click on one sends the
 //! selected workers to work the plans; Ctrl+right-click drops its line.
 //!
+//! Press and drag instead of clicking and the tool draws a smooth curve
+//! (`drawn_tool` has the points; the check and the orders are the
+//! simulation's `Command::DrawLine` and `Command::PlanLine`): the ghost
+//! follows the mouse and letting go sends the order. Shift keeps the
+//! straight lines and the 15 degree steps. In ring mode a drag closes into
+//! a smooth loop.
+//!
 //! A bridge (docs/26-fortifications.md, "Bridges") is drawn with the same
-//! tool, but only as a straight line from bank to bank: no blueprints, no
-//! ring, the far end is turned to the nearer axis, and it snaps to the ends
-//! of your own bridges rather than to walls, towers and gates.
+//! tool: dragged from bank to bank it bends gently and has no corners, and a
+//! click on each bank draws it straight (turned to the nearer axis). `[` and
+//! `]` choose how wide it is. No blueprints, no ring, and it snaps to the
+//! ends of your own bridges rather than to walls, towers and gates.
 
 use gc_sim::blueprints::MAX_PLANS;
+use gc_sim::drawn::{BRIDGE_WIDTHS, DrawnPath, STANDARD};
 use gc_sim::structures::{GATE, Role};
-use gc_sim::walls::{MAX_WALL_TILES, WallTile};
+use gc_sim::walls::{Line, MAX_WALL_TILES, WallTile};
 use gc_sim::{BuildingId, BuildingStats, Command, Refusal};
 use glam::Vec2;
 use winit::keyboard::KeyCode;
 
 use crate::buildings::{self, Fit};
+use crate::drawn_tool::{self, Drag, centre_half};
 use crate::hud::Armed;
 use crate::ring_tool::{self, GateSpot, Piece, Tile};
 use crate::{Running, color_of, from_fx_vec};
@@ -149,13 +159,80 @@ fn fit_of(tile: &WallTile, open: Fit) -> Fit {
 }
 
 /// What the wall tool is set to while it is armed (`hud.wall_mode`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WallMode {
     /// Plan the wall as a blueprint instead of ordering a worker to build it.
     pub blueprint: bool,
     /// Drawing a ring, with the corners clicked so far; `None` is the line
     /// tool.
     pub ring: Option<Vec<Tile>>,
+    /// A bridge's width: which of [`BRIDGE_WIDTHS`].
+    pub width: usize,
+}
+
+impl Default for WallMode {
+    fn default() -> Self {
+        WallMode {
+            blueprint: false,
+            ring: None,
+            width: BRIDGE_WIDTHS
+                .iter()
+                .position(|&w| w == STANDARD)
+                .unwrap_or(0),
+        }
+    }
+}
+
+impl WallMode {
+    /// The width a bridge is drawn, in tiles.
+    pub fn bridge_width(&self) -> u8 {
+        BRIDGE_WIDTHS[self.width.min(BRIDGE_WIDTHS.len() - 1)]
+    }
+}
+
+/// What a drag preview was worked out from; while it stays the same, so
+/// does the preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DragKey {
+    path: DrawnPath,
+    width: u8,
+    blueprint: bool,
+    building: BuildingId,
+    tick: u32,
+}
+
+/// What the tool shows for a drag as it would be ordered now: the
+/// simulation's check of the curve and the tiles to draw, each with the
+/// line it lies along.
+pub struct DragPreview {
+    pub piece: Piece,
+    ghost: Vec<(Tile, Fit, [i32; 4])>,
+    key: DragKey,
+}
+
+/// A name for the bridge width at place `index` of [`BRIDGE_WIDTHS`].
+pub fn width_name(index: usize) -> &'static str {
+    ["Narrow", "Standard", "Wide"][index.min(2)]
+}
+
+/// `path` for a bridge of even `width`, its centre line moved onto the tile
+/// edges across the way it runs, so the bridge is that many rows wide and
+/// not one more or less. An odd width keeps tile centres.
+pub fn for_width(path: DrawnPath, width: u8) -> DrawnPath {
+    if width % 2 == 1 {
+        return path;
+    }
+    let n = usize::from(path.len);
+    let (a, b) = (path.points[0], path.points[n - 1]);
+    let along_x = (b.0 - a.0).abs() >= (b.1 - a.1).abs();
+    let mut out = path;
+    for k in 0..n {
+        let (x, y) = &mut out.points[k];
+        // Odd is a tile's centre: on to its far edge.
+        let v = if along_x { y } else { x };
+        *v = (*v + 1) & !1;
+    }
+    out
 }
 
 /// What the ring preview was worked out from; while it stays the same, so
@@ -229,7 +306,16 @@ impl Running {
                 continue;
             }
             let rect = [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)];
-            if let Some([x0, y0, x1, y1]) = s.line {
+            let drawn = s.drawing.and_then(|id| self.world.drawing(id));
+            if let Some(d) = drawn {
+                // A drawn curve: its two end tiles.
+                let (a, b) = d.path.ends();
+                for end in [a, b] {
+                    if s.tile == end {
+                        out.push(Anchor { rect, joins: true });
+                    }
+                }
+            } else if let Some([x0, y0, x1, y1]) = s.line {
                 // Each end once, from the tile that is the end.
                 for end in [(x0, y0), (x1, y1)] {
                     if s.tile == end {
@@ -303,11 +389,143 @@ impl Running {
         to: Tile,
     ) -> Result<Vec<WallTile>, Refusal> {
         let side = self.sandbox.side;
+        if self.buildings.is_bridge(building) {
+            let line = self.bridge_click_line(from, to);
+            return self.world.line_plan(side, building, &line);
+        }
         if blueprint {
             self.world.blueprint(side, building, from, to)
         } else {
             self.world.wall_plan(side, building, from, to)
         }
+    }
+
+    /// The bridge a click on each bank draws: straight, as wide as chosen.
+    fn bridge_click_line(&self, from: Tile, to: Tile) -> Line {
+        let width = self.hud.wall_mode.bridge_width();
+        Line {
+            path: for_width(DrawnPath::straight(from, to), width),
+            width,
+            old: false,
+        }
+    }
+
+    /// The press that may start a drag: the tile it is on (snapped to your
+    /// own works, as a click is).
+    pub fn begin_wall_drag(&mut self) {
+        if !matches!(self.hud.armed, Some(Armed::Wall(..))) {
+            return;
+        }
+        let Some(at) = self.ground_under_cursor() else {
+            return;
+        };
+        let max = self.heightmap.tiles as i32 - 1;
+        let t = snap_tile(at, &self.wall_anchors());
+        self.hud.wall_drag = Some(Drag::new((t.0.clamp(0, max), t.1.clamp(0, max))));
+    }
+
+    /// The path `drag` draws with the mouse where it is: a curve through the
+    /// points dropped (a loop in ring mode), or with Shift a straight line
+    /// in 15 degree steps. None until it has travelled far enough to be a
+    /// drag.
+    fn drag_path(&self, drag: &Drag) -> Option<DrawnPath> {
+        if !drag.live {
+            return None;
+        }
+        let at = self.ground_under_cursor()?;
+        let max = self.heightmap.tiles as i32 - 1;
+        let end = if self.input.shift {
+            (at.x.floor() as i32, at.y.floor() as i32)
+        } else {
+            snap_tile(at, &self.wall_anchors())
+        };
+        let end = (end.0.clamp(0, max), end.1.clamp(0, max));
+        let start = (i32::from(drag.raw[0].0) / 2, i32::from(drag.raw[0].1) / 2);
+        let ring = self.hud.wall_mode.ring.is_some();
+        let bridge = self.bridge_armed();
+        let path = if self.input.shift && !ring {
+            let to = if bridge {
+                axis_lock(start, end)
+            } else {
+                clamp_end(start, lock_angle(start, end))
+            };
+            let to = (to.0.clamp(0, max), to.1.clamp(0, max));
+            if to == start {
+                return None;
+            }
+            DrawnPath::straight(start, to)
+        } else {
+            drawn_tool::path(&drag.raw, centre_half(end), ring)?
+        };
+        Some(if bridge {
+            for_width(path, self.hud.wall_mode.bridge_width())
+        } else {
+            path
+        })
+    }
+
+    /// The simulation's check of the drag as it would be ordered now, with
+    /// the tiles to draw. `old` is the last frame's, kept while nothing it
+    /// was worked out from has changed.
+    fn drag_preview(&self, building: BuildingId, old: Option<DragPreview>) -> Option<DragPreview> {
+        let drag = self.hud.wall_drag.as_ref()?;
+        let path = self.drag_path(drag)?;
+        let bridge = self.bridge_armed();
+        let width = if bridge {
+            self.hud.wall_mode.bridge_width()
+        } else {
+            1
+        };
+        let blueprint = self.hud.wall_mode.blueprint;
+        let key = DragKey {
+            path,
+            width,
+            blueprint,
+            building,
+            // Rebuilt once a second: the ground changes slowly enough.
+            tick: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
+        };
+        if let Some(old) = old.filter(|o| o.key == key) {
+            return Some(old);
+        }
+        let line = Line {
+            path,
+            width,
+            old: false,
+        };
+        let side = self.sandbox.side;
+        let plan = if blueprint {
+            self.world.line_blueprint(side, building, &line)
+        } else {
+            self.world.line_plan(side, building, &line)
+        };
+        let samples = path.samples();
+        let chord = |t| path.chord(&samples, t).map(i32::from);
+        let open = if blueprint { Fit::Blueprint } else { Fit::Open };
+        let ghost = match &plan {
+            Ok(tiles) => (tiles.iter())
+                .map(|t| (t.tile, fit_of(t, open), chord(t.tile)))
+                .collect(),
+            Err(_) => {
+                let tiles = if bridge {
+                    path.band(width)
+                } else {
+                    path.wall_tiles()
+                };
+                (tiles.into_iter())
+                    .map(|t| (t, Fit::Refused, chord(t)))
+                    .collect()
+            }
+        };
+        let (a, b) = path.ends();
+        Some(DragPreview {
+            piece: Piece {
+                line: [a.0, a.1, b.0, b.1],
+                plan,
+            },
+            ghost,
+            key,
+        })
     }
 
     fn wall_preview(&self, building: BuildingId) -> Option<Piece> {
@@ -444,11 +662,29 @@ impl Running {
             });
             return true;
         }
+        if matches!(code, KeyCode::BracketLeft | KeyCode::BracketRight) {
+            if !self.buildings.is_bridge(building) {
+                return false;
+            }
+            let last = BRIDGE_WIDTHS.len() - 1;
+            let now = self.hud.wall_mode.width;
+            self.hud.wall_mode.width = if code == KeyCode::BracketLeft {
+                now.saturating_sub(1)
+            } else {
+                (now + 1).min(last)
+            };
+            let w = self.hud.wall_mode.bridge_width();
+            self.say(format!(
+                "Bridge width: {}, {w} tiles across. [ narrower, ] wider.",
+                width_name(self.hud.wall_mode.width)
+            ));
+            return true;
+        }
         if self.buildings.is_bridge(building) && matches!(code, KeyCode::KeyB | KeyCode::KeyO) {
             self.say(if code == KeyCode::KeyB {
                 "A bridge is built by workers at once: it has no blueprints.".into()
             } else {
-                "A bridge is a straight line from bank to bank: no rings.".into()
+                "A bridge goes from bank to bank: no rings.".into()
             });
             return true;
         }
@@ -496,15 +732,41 @@ impl Running {
         let Some(Armed::Wall(id, _)) = self.hud.armed else {
             self.hud.wall_preview = None;
             self.hud.ring_preview = None;
+            self.hud.wall_drag = None;
+            self.hud.drag_preview = None;
             self.hud.wall_mode = WallMode::default();
             return;
         };
+        // A drag follows the mouse while the button is held.
+        let at = self.ground_under_cursor();
+        if self.input.left_down.is_none() {
+            self.hud.wall_drag = None;
+        } else if let (Some(drag), Some(at)) = (self.hud.wall_drag.as_mut(), at) {
+            drag.advance(at);
+        }
+        let old = self.hud.drag_preview.take();
+        self.hud.drag_preview = self.drag_preview(id, old);
         let colour = color_of(&self.parties, self.sandbox.side);
         let hm = &self.heightmap;
         let ground = |x, z| hm.height_at(x, z).max(hm.water_level());
         let blueprint = self.hud.wall_mode.blueprint;
         let open = if blueprint { Fit::Blueprint } else { Fit::Open };
         let look = self.buildings.wall_look(id, false);
+        if let Some(drag) = &self.hud.drag_preview {
+            self.hud.wall_preview = None;
+            self.hud.ring_preview = None;
+            for &(tile, fit, line) in &drag.ghost {
+                buildings::push_wall_ghost(
+                    line,
+                    look,
+                    std::iter::once((tile, fit)),
+                    colour,
+                    ground,
+                    &mut self.instances,
+                );
+            }
+            return;
+        }
         if self.hud.wall_mode.ring.is_some() {
             self.hud.wall_preview = None;
             let old = self.hud.ring_preview.take();
@@ -619,6 +881,15 @@ impl Running {
     /// the next sends the order (or plans the wall), and the wall goes on
     /// from its end. In a ring, each click is a corner.
     pub fn finish_walling(&mut self, building: BuildingId) {
+        if let Some(mut drag) = self.hud.wall_drag.take() {
+            if let Some(at) = self.ground_under_cursor() {
+                drag.advance(at);
+            }
+            if drag.live {
+                return self.finish_drag(building, &drag);
+            }
+        }
+        self.hud.drag_preview = None;
         if self.hud.wall_mode.ring.is_some() {
             return self.click_ring(building);
         }
@@ -643,6 +914,21 @@ impl Running {
             } else {
                 "Your walls already stand there.".into()
             });
+            return;
+        }
+        if self.buildings.is_bridge(building) {
+            // Bridges are always drawn lines, as wide as chosen.
+            let Some(w) = self.nearest_worker(buildings::centre_of(from, 1, 1)) else {
+                return;
+            };
+            let line = self.bridge_click_line(from, to);
+            self.orders([Command::DrawLine {
+                regiment: Some(w),
+                building,
+                path: line.path,
+                width: line.width,
+            }]);
+            self.hud.armed = Some(Armed::Wall(building, None));
             return;
         }
         // The tool keeps both ends within the map, so these fit.
@@ -673,6 +959,74 @@ impl Running {
             to: to16,
         }]);
         self.hud.armed = Some(Armed::Wall(building, Some(to)));
+    }
+
+    /// The button is let go after a drag: check the curve and send it (or
+    /// plan it as a blueprint). In ring mode it is a loop.
+    fn finish_drag(&mut self, building: BuildingId, drag: &Drag) {
+        let Some(path) = self.drag_path(drag) else {
+            return self.say("Drag a little further to draw it.".into());
+        };
+        let ring = self.hud.wall_mode.ring.is_some();
+        let bridge = self.buildings.is_bridge(building);
+        let width = if bridge {
+            self.hud.wall_mode.bridge_width()
+        } else {
+            1
+        };
+        let blueprint = self.hud.wall_mode.blueprint;
+        let line = Line {
+            path,
+            width,
+            old: false,
+        };
+        let side = self.sandbox.side;
+        let plan = if blueprint {
+            self.world.line_blueprint(side, building, &line)
+        } else {
+            self.world.line_plan(side, building, &line)
+        };
+        match plan {
+            Err(why) => return self.say(self.why_now(building, why).into()),
+            Ok(plan) => {
+                if let Some(why) = plan.iter().find_map(|t| t.fits.err()) {
+                    return self.say(self.why_now(building, why).into());
+                }
+                if plan.is_empty() {
+                    return self.say(if blueprint {
+                        "Those tiles are already walled or planned.".into()
+                    } else {
+                        "Your walls already stand there.".into()
+                    });
+                }
+            }
+        }
+        let (a, b) = path.ends();
+        if blueprint {
+            self.orders([Command::PlanLine { building, path }]);
+        } else {
+            let regiment = if self.buildings.is_grown(building) {
+                None
+            } else {
+                let Some(w) = self.nearest_worker(buildings::centre_of(a, 1, 1)) else {
+                    return;
+                };
+                Some(w)
+            };
+            self.orders([Command::DrawLine {
+                regiment,
+                building,
+                path,
+                width,
+            }]);
+        }
+        // An open wall goes on from its end with the next click.
+        let goes_on = !ring && !bridge && !path.closed();
+        self.hud.armed = Some(Armed::Wall(building, goes_on.then_some(b)));
+        if ring {
+            self.hud.wall_mode.ring = Some(Vec::new());
+        }
+        self.hud.drag_preview = None;
     }
 
     /// A click while drawing a ring: the first corner again closes and
@@ -782,6 +1136,9 @@ impl Running {
             return None;
         };
         let blueprint = self.hud.wall_mode.blueprint;
+        if let Some(drag) = &self.hud.drag_preview {
+            return self.drag_hint(id, &drag.piece);
+        }
         if let Some(ring) = &self.hud.wall_mode.ring {
             let Some(preview) = self.hud.ring_preview.as_ref().filter(|_| !ring.is_empty()) else {
                 return Some(ring_start_hint(blueprint));
@@ -803,7 +1160,7 @@ impl Running {
         let bridge = self.buildings.is_bridge(id);
         if from.is_none() {
             return Some(if bridge {
-                bridge_start_hint()
+                bridge_start_hint(self.hud.wall_mode.bridge_width())
             } else if self.buildings.is_fieldwork(id) {
                 fieldwork_start_hint(self.buildings.name(id))
             } else {
@@ -834,6 +1191,42 @@ impl Running {
             price.as_deref(),
             clear,
             self.buildings.is_grown(id),
+        ))
+    }
+
+    /// The line shown while a curve is dragged: its length and price, or
+    /// why it can't go up.
+    fn drag_hint(&self, id: BuildingId, piece: &Piece) -> Option<String> {
+        let stats = self.buildings.stats.get(usize::from(id))?;
+        let plan = match &piece.plan {
+            Ok(plan) => plan,
+            Err(why) => return Some(self.why_now(id, *why).into()),
+        };
+        if let Some(why) = plan.iter().find_map(|t| t.fits.err())
+            && why != Refusal::Overgrown
+        {
+            return Some(self.why_now(id, why).into());
+        }
+        let n = plan.len();
+        let (grub, marrow) = wall_price(stats, n as u32);
+        let price = (!self.hud.wall_mode.blueprint).then(|| buildings::price_text(grub, marrow));
+        let clear = if plan.iter().any(|t| t.fits.is_err()) {
+            ", ground to clear"
+        } else {
+            ""
+        };
+        let bridge = self.buildings.is_bridge(id).then(|| {
+            (
+                width_name(self.hud.wall_mode.width),
+                self.hud.wall_mode.bridge_width(),
+            )
+        });
+        Some(drag_hint_line(
+            n,
+            price.as_deref(),
+            clear,
+            self.buildings.is_grown(id),
+            bridge,
         ))
     }
 
@@ -878,10 +1271,42 @@ fn ghost_tiles(piece: &Piece, open: Fit) -> Vec<(Tile, Fit)> {
     }
 }
 
-/// The hint before a bridge has a start.
-fn bridge_start_hint() -> String {
-    "Draw a straight bridge from bank to bank: click the near bank - right-click or Esc to stop"
-        .into()
+/// The hint before a bridge has a start; `width` is the width chosen.
+fn bridge_start_hint(width: u8) -> String {
+    let index = BRIDGE_WIDTHS.iter().position(|&w| w == width).unwrap_or(0);
+    format!(
+        "Drag a bridge from bank to bank, or click both banks - [ ] width: {}, {width} - right-click or Esc to stop",
+        width_name(index)
+    )
+}
+
+/// The hint while a curve is dragged: what it covers and costs, and how to
+/// let go. `price` is `None` for a blueprint; `bridge` is the width's name
+/// and size.
+fn drag_hint_line(
+    n: usize,
+    price: Option<&str>,
+    clear: &str,
+    grown: bool,
+    bridge: Option<(&str, u8)>,
+) -> String {
+    let tiles = buildings::plural(n, "tile", "tiles");
+    let head = match bridge {
+        Some((name, w)) => format!("{name} bridge, {w} wide: {n} {tiles}"),
+        None => format!("{n} {tiles}"),
+    };
+    let cost = match price {
+        Some(price) => format!(", {price}"),
+        None => ", paid as workers build them".into(),
+    };
+    let then = if price.is_none() {
+        "let go to plan"
+    } else if grown {
+        "let go: it grows on its own"
+    } else {
+        "let go to build"
+    };
+    format!("{head}{cost}{clear} - {then} - Shift for straight - right-click to stop")
 }
 
 /// A refusal in a bridge's words.
@@ -896,7 +1321,7 @@ fn bridge_why(why: Refusal) -> &'static str {
 /// The hint before stakes or a barricade (`name`) has a start.
 fn fieldwork_start_hint(name: &str) -> String {
     format!(
-        "Click where the {name} starts, then where it ends or bends - right-click or Esc to stop"
+        "Drag the {name} along a curve, or click where it starts and bends - right-click or Esc to stop"
     )
 }
 
@@ -912,9 +1337,9 @@ fn fieldwork_why(why: Refusal) -> &'static str {
 /// The hint before a line has a start.
 fn start_hint(blueprint: bool) -> String {
     if blueprint {
-        "Blueprint: click where the wall starts - B builds instead, O ring - right-click or Esc to stop"
+        "Blueprint: drag a curve or click corners - Shift: straight - B builds instead, O ring - right-click or Esc to stop"
     } else {
-        "Click where the wall starts - B plans a blueprint, O ring - right-click or Esc to stop"
+        "Drag a curve or click corners - Shift: straight - B plans a blueprint, O ring - right-click or Esc to stop"
     }
     .into()
 }
@@ -922,7 +1347,9 @@ fn start_hint(blueprint: bool) -> String {
 /// The hint before a ring has a first corner.
 fn ring_start_hint(blueprint: bool) -> String {
     let what = if blueprint { "Ring blueprint" } else { "Ring" };
-    format!("{what}: click the first corner - O goes back to lines - right-click or Esc to stop")
+    format!(
+        "{what}: click each corner, or drag round for a smooth loop - O goes back to lines - right-click or Esc to stop"
+    )
 }
 
 /// The hint while a ring is drawn: its size and price (or that blueprints
@@ -1019,7 +1446,15 @@ mod tests {
         for line in [
             start_hint(false),
             start_hint(true),
-            bridge_start_hint(),
+            bridge_start_hint(4),
+            drag_hint_line(
+                32,
+                Some("320 Grub, 100 Marrow"),
+                ", ground to clear",
+                false,
+                Some(("Standard", 4)),
+            ),
+            drag_hint_line(32, None, ", ground to clear", true, None),
             fieldwork_start_hint("Coffin Barricade"),
             fieldwork_start_hint("Shard Stakes"),
             ring_start_hint(true),
@@ -1029,6 +1464,32 @@ mod tests {
         ] {
             assert!(line.len() <= 150, "{} chars: {line}", line.len());
             assert!(line.is_ascii(), "{line}");
+        }
+    }
+
+    #[test]
+    fn an_even_bridge_sits_on_tile_edges_and_an_odd_one_on_centres() {
+        let path = DrawnPath::straight((10, 10), (25, 10));
+        assert_eq!(for_width(path, 3), path);
+        let even = for_width(path, 4);
+        // Along x: y moves to the edge between rows 10 and 11, x stays.
+        assert_eq!(even.points()[0], (21, 22));
+        assert_eq!(even.points()[1], (51, 22));
+        let down = for_width(DrawnPath::straight((10, 10), (10, 25)), 4);
+        assert_eq!(down.points()[0], (22, 21));
+    }
+
+    #[test]
+    fn the_width_keys_run_over_the_widths() {
+        let mode = WallMode::default();
+        assert_eq!(mode.bridge_width(), STANDARD);
+        for (i, &w) in BRIDGE_WIDTHS.iter().enumerate() {
+            let m = WallMode {
+                width: i,
+                ..WallMode::default()
+            };
+            assert_eq!(m.bridge_width(), w);
+            assert!(!width_name(i).is_empty());
         }
     }
 
