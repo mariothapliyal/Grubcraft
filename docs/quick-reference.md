@@ -13,7 +13,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Regiments**
 - Left-click selects; drag a box; `Shift` adds or removes. Double-click select by type: not built.
 - Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing).
-- `Q` then click: move. `W` then click: attack. `Esc` cancels.
+- `Shift`+right-click: queue a move or an attack after the regiment's current orders (up to four; more are refused). Any order without `Shift` replaces the queue. A dotted line runs on through the queued stops (red for advances).
+- `Q` then click: move. `W` then click: attack; a click on open ground advances there instead. `A` (Advance) then click: attack-move, which marches but stops to fight any enemy within 12 tiles, then marches on. `Shift` on the click queues it and keeps the tool armed. `Esc` cancels. While a hero panel is shown (`Shift+H` test), `A` is the hero's first ability instead.
+- Every move shows a fading plate at once where the regiment will stand.
 - `R` cycles formation: Line, Tight, Loose, Shield wall (shields only). `F` does the same while no hero owns `F`.
 - `Z` Brace (spears and pikes; again lifts). `V` Fall back (8 tiles at half pace). `E` Burn (set nearby woods alight). `X` Torches (night only). `C` Plant stakes (Conquest).
 - `O` cycles army shape for group moves: Line, Deep, Hammer, Square, Plain, then saved Mine 1 to 3. `Shift+O` saves the selection's shape.
