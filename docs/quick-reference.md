@@ -13,7 +13,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Regiments**
 - Left-click selects; drag a box; `Shift` adds or removes. Double-click select by type: not built.
 - Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing).
-- `Q` then click: move. `W` then click: attack. `Esc` cancels.
+- `Shift`+right-click: queue a move or an attack after the regiment's current orders (up to four; more are refused). Each player can have 32 regiments with queued orders or on an attack-move at once; beyond that a queued order is refused and an attack-move marches plainly. Any order without `Shift` replaces the queue. A dotted line runs on through the queued stops (red for advances).
+- `Q` then click: move. `W` then click: attack; a click on open ground advances there instead. `A` (Advance) then click: attack-move, which marches but stops to fight any enemy within 12 tiles, then marches on. `Shift` on the click queues it and keeps the tool armed. `Esc` cancels. While a hero panel is shown (`Shift+H` test), `A` is the hero's first ability instead.
+- Every move shows a fading plate at once where the regiment will stand.
 - `R` cycles formation: Line, Tight, Loose, Shield wall (shields only). `F` does the same while no hero owns `F`.
 - `Z` Brace (spears and pikes; again lifts). `V` Fall back (8 tiles at half pace). `E` Burn (set nearby woods alight). `X` Torches (night only). `C` Plant stakes (Conquest).
 - `O` cycles army shape for group moves: Line, Deep, Hammer, Square, Plain, then saved Mine 1 to 3. `Shift+O` saves the selection's shape.
@@ -70,12 +72,12 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Grub:** from seeps. A seep holds 7,500; then dregs at 25% of the rate, for good. Pays for most things.
 - **Marrow:** from veins (3,000 each, no regrowth, dregs at 25%). Pays for tier upgrades, elite units, monsters, hero revival and most research.
 - **Top bar:** Grub, Marrow, Supply used/cap, clock, and a line "Upkeep 80%" in amber once upkeep bites. A faction meter sits beside them.
-- **Harvest:** a full seep (5 workers) gives about 200 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands carry 10 Grub in 9 s; a Marrow load (5) takes 12 s.
+- **Harvest:** five Hands on a seep near the hall give about 240 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands fill 10 Grub in 6 s; a Marrow load (5) takes 8 s. Choir: one Resonator (175 Grub) tunes one seep for about 109 Grub a minute, and a Siphon one vein for about 40 Marrow; chords add 10% to 30%.
 - **Upkeep** (Grub only): supply used 0 to 60 = 100%; 61 to 100 = 75%; 101 to 150 = 55%.
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 2 Resonators, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 400 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 
@@ -94,7 +96,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Buildings per faction** (tier, cost Grub/Marrow)
 - **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Palisade T1 10/0 per tile; Gate T1 60/0.
 - **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
-- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 150/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
+- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
 - **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
 
 **Walls** [docs/26-fortifications.md]
@@ -106,8 +108,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - **Ember Clans** (Shogun): Hands carry Grub to the hall or a Granary. **Honor** meter: +5 when an enemy regiment routs against yours, +10 for a win while outnumbered, +2 a minute per Shrine held, -5 when yours routs. Spent on Edicts. Tight formation gives +15% defence when still.
 - **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Tier-1 regiments evolve on the field (15 s cocoon).
-- **Shard Choir** (chords): Resonators tune seeps with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +60% Grub to tuned seeps there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
-- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 40 Grub + 1.2 per tile of straight-line distance. **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
+- **Shard Choir** (chords): Each Resonator tunes one seep with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +30% Grub to the seeps they tune there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
+- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 37 Grub + 1.1 per tile of straight-line distance (about 81 at 40 tiles). **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
 - **Heroes:** up to three per faction, not in the game yet (section 8).
 - **Field Battle generals:** each side's general rides with one regiment. Select it to see "Your general rides here: guard him". His death panics nearby regiments. [docs/37-commander.md]
 

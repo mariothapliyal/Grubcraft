@@ -245,6 +245,7 @@ pub(super) fn slot_move(regiment: RegimentHandle, to: Vec2, facing: Vec2, pace: 
             to,
             facing: Some(facing),
             pace,
+            hunt: false,
         },
         priority: 1,
         group: 1,

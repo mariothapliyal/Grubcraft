@@ -194,8 +194,15 @@ pub struct Unit {
     /// routes and tithes").
     #[serde(default)]
     pub trade: Option<Trade>,
+    /// Workers: gathering speed in percent of the usual (100 if unset).
+    #[serde(default = "usual_speed")]
+    pub gather_percent: u16,
     pub abilities: Vec<Ability>,
     pub stats: Stats,
+}
+
+fn usual_speed() -> u16 {
+    100
 }
 
 /// What a trading unit's delivery pays at a full-rate trade post.

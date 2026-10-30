@@ -41,7 +41,10 @@
 //! Conquest, your stores. The bottom bar has a minimap (click or drag to move the camera, right-click
 //! to send the selection there) and an army tray of regiment cards (click to
 //! select, Shift-click to toggle, double-click to centre). The command grid
-//! has Q (move) and W (attack), each followed by a left-click, and R (formation).
+//! has Q (move), W (attack; on open ground it advances) and A (advance), each
+//! followed by a left-click, and R (formation). Hold Shift on a right-click
+//! (or the click after Q, W or A) to queue the order after the ones a
+//! regiment already has, up to four; an order without Shift replaces them.
 //! Badges on the screen edge point at your regiments and buildings under attack,
 //! ambushes and routs that are out of view; click one or press Space to look there.
 //! Shift+H previews the hero panel (there are no heroes yet).
@@ -50,7 +53,8 @@
 //! selection there side by side, facing the way they travel; right-drag to
 //! draw the line they form instead (its length sets their frontage; they face
 //! away from the camera side of the line); a big selection forms several
-//! lines. Right-click an enemy regiment to attack it; archers (each army's
+//! lines. Shift+right-click queues a march or an attack behind the current
+//! orders. Right-click an enemy regiment to attack it; archers (each army's
 //! back two rows) also shoot enemies in range on their own, and blocks that
 //! touch fight. R (or F) changes the selection's formation (not while locked in
 //! melee): Line, Tight (stronger to hold, cramped for swinging blades),
@@ -327,6 +331,14 @@ const DOUBLE_TAP: Duration = Duration::from_millis(350);
 const ATTACK_PICK_TILES: f32 = 1.5;
 /// How long the marker under an attacked regiment shows.
 const ATTACK_MARK: Duration = Duration::from_millis(700);
+/// How long a just-given order's ghost plate shows, fading as it goes.
+const ORDER_MARK: Duration = Duration::from_millis(800);
+/// A route ending this near the mark is the order's own.
+const ORDER_ROUTED_TILES: f32 = 2.0;
+/// Plate colour of an attack-move (the tint of its route too).
+const ORDER_HUNT_COLOR: [u8; 3] = [150, 40, 30];
+/// How much lighter a queued order's plate is.
+const ORDER_QUEUED_LIFT: u8 = 50;
 /// Banner over a shaken regiment: wavering (blinking amber), routing (white)
 /// or shattered (grey). Height above the ground and size, in tiles.
 const BANNER_LIFT: f32 = 1.9;
@@ -871,6 +883,8 @@ struct Running {
     last_group_key: Option<(usize, Instant)>,
     /// The enemy regiment last ordered attacked, marked on the ground briefly.
     attack_mark: Option<(RegimentHandle, Instant)>,
+    /// Orders just given, drawn as fading ghost plates from the click on.
+    order_marks: Vec<OrderMark>,
     sim_clock: Duration,
     /// Game speed, an index into `SPEEDS`, and whether the game is paused (P).
     speed: usize,
@@ -1379,6 +1393,20 @@ impl MemoryTimeline {
 /// Radians per second the view turns while `,` or `.` is held.
 const KEY_TURN_RATE: f32 = 1.0;
 
+/// An order the player has just given: where, and how it is to be drawn
+/// for the first moments.
+struct OrderMark {
+    regiment: RegimentHandle,
+    at: Instant,
+    target: Vec2,
+    facing: Vec2,
+    /// Block width and depth, tiles.
+    size: [f32; 2],
+    color: [u8; 3],
+    /// Shift-queued: no straight line from the regiment, it has a route.
+    queued: bool,
+}
+
 #[derive(Default)]
 struct Input {
     cursor: Option<PhysicalPosition<f64>>,
@@ -1721,6 +1749,7 @@ impl App {
             control_groups: Default::default(),
             last_group_key: None,
             attack_mark: None,
+            order_marks: Vec::new(),
             sim_clock: Duration::ZERO,
             speed: NORMAL_SPEED,
             paused: false,
@@ -2120,6 +2149,8 @@ impl ApplicationHandler for App {
                         // The grid's keys leave Cmd/Ctrl/Alt chords to the system.
                         KeyCode::KeyQ if grid_key => r.battle_press(hud::SLOT_MOVE),
                         KeyCode::KeyW if grid_key => r.battle_press(hud::SLOT_ATTACK),
+                        // A advances (attack-move), unless a hero owns the key.
+                        KeyCode::KeyA if grid_key => r.battle_press(hud::SLOT_ADVANCE),
                         // The hero's fourth ability owns F while a hero is shown.
                         KeyCode::KeyF if grid_key && r.hud.hero_shown() => {}
                         // Otherwise F stays as R's twin until the Ultimate slot has an ability.
@@ -2317,7 +2348,7 @@ impl Running {
                     .then(|| self.ground_under_cursor())
                     .flatten();
             }
-            // Q or W was pressed: this click says where (or at whom).
+            // Q, W or A was pressed: this click says where (or at whom).
             (MouseButton::Left, ElementState::Released)
                 if self.hud.armed.is_some() && !self.hud_wants_mouse() =>
             {
@@ -2421,8 +2452,10 @@ impl Running {
                     return;
                 }
                 let target = body.or_else(|| plain.and_then(|p| self.enemy_at(p)));
+                // Shift queues a move or an attack after the current orders.
+                let queue = self.input.shift;
                 if let Some(target) = target {
-                    self.issue_attack(target);
+                    self.issue_attack(target, queue);
                 } else if let Some(building) = drag
                     .is_none()
                     .then(|| self.enemy_building_under_cursor())
@@ -2430,7 +2463,7 @@ impl Running {
                 {
                     self.issue_siege(building);
                 } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
-                    self.issue_group_order(order);
+                    self.issue_march(order, false, queue);
                 }
                 self.input.right_down = None;
             }
@@ -2516,19 +2549,103 @@ impl Running {
 
     /// Send the selection to carry out `order`.
     fn issue_group_order(&mut self, order: GroupOrder) {
+        self.issue_march(order, false, false);
+    }
+
+    /// Send the selection to march as `order` says. `hunt` makes it an
+    /// attack-move (stop and fight enemies met on the way); `queue` (Shift)
+    /// puts it after what each regiment is already doing instead of
+    /// replacing it. The order's mark shows at once, before the simulation
+    /// has heard of it.
+    pub fn issue_march(&mut self, order: GroupOrder, hunt: bool, queue: bool) {
+        // Nothing queues while the armies deploy: an order places.
+        let queue = queue && !self.world.deploying();
         self.plan_order(order);
         if !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
         }
-        self.human_orders
-            .extend(self.group_commands.iter().map(|&command| PlayerCommand {
+        let now = Instant::now();
+        for i in 0..self.group_commands.len() {
+            let command = self.group_commands[i];
+            let gc_sim::Command::MoveTo {
+                regiment,
+                target,
+                facing,
+                files,
+                pace,
+            } = command
+            else {
+                self.human_orders.push(PlayerCommand {
+                    player: self.sandbox.side,
+                    command,
+                });
+                continue;
+            };
+            self.mark_order(regiment, target, facing, files, hunt, queue, now);
+            let step = gc_sim::orders::Step::Move {
+                target,
+                facing,
+                files,
+                pace,
+                hunt,
+            };
+            let command = gc_sim::Command::of_step(regiment, step, queue);
+            self.human_orders.push(PlayerCommand {
                 player: self.sandbox.side,
                 command,
-            }));
+            });
+        }
     }
 
-    /// Send the selection to attack `target`.
-    fn issue_attack(&mut self, target: RegimentHandle) {
+    /// Remember where a regiment was just ordered to, to draw it at once.
+    #[allow(clippy::too_many_arguments)]
+    fn mark_order(
+        &mut self,
+        regiment: RegimentHandle,
+        target: gc_fixed::FxVec2,
+        facing: Option<gc_fixed::Angle>,
+        files: u16,
+        hunt: bool,
+        queued: bool,
+        at: Instant,
+    ) {
+        let Some(r) = self.world.regiments.get(regiment) else {
+            return;
+        };
+        let size = self.plate_size(&r, files);
+        let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
+        let mut color = if hunt {
+            ORDER_HUNT_COLOR
+        } else {
+            [cr / 2, cg / 2, cb / 2]
+        };
+        if queued {
+            color = color.map(|c| c.saturating_add(ORDER_QUEUED_LIFT));
+        }
+        self.order_marks.push(OrderMark {
+            regiment,
+            at,
+            target: from_fx_vec(target),
+            facing: angle_vec(facing.unwrap_or(r.facing)),
+            size,
+            color,
+            queued,
+        });
+    }
+
+    /// The ground regiment `r` covers drawn up `files` wide (its frontage
+    /// now, for 0): width and depth in tiles.
+    fn plate_size(&self, r: &gc_sim::RegimentView, files: u16) -> [f32; 2] {
+        let stats = &self.units.stats[r.unit as usize];
+        let files = if files == 0 { r.frontage } else { files };
+        let (width, depth) = stats.block_size_in(r.formation, files, r.models);
+        [fx_to_f32(width), fx_to_f32(depth)]
+    }
+
+    /// Send the selection to attack `target` (after what they are doing,
+    /// if `queue`).
+    fn issue_attack(&mut self, target: RegimentHandle, queue: bool) {
+        let queue = queue && !self.world.deploying();
         if !self.selected.is_empty() {
             self.attack_mark = Some((target, Instant::now()));
             self.ui_sound(sounds::UiSound::Attack);
@@ -2536,7 +2653,11 @@ impl Running {
         self.human_orders
             .extend(self.selected.iter().map(|&regiment| PlayerCommand {
                 player: self.sandbox.side,
-                command: gc_sim::Command::Attack { regiment, target },
+                command: gc_sim::Command::of_step(
+                    regiment,
+                    gc_sim::orders::Step::Attack { target },
+                    queue,
+                ),
             }));
     }
 
@@ -2621,6 +2742,44 @@ impl Running {
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
+    /// The plates of orders given in the last moments, fading out, and for
+    /// any whose regiment has no route yet (the order is still on its way
+    /// through the lockstep) a dotted line straight to it.
+    fn push_order_marks(&mut self) {
+        self.order_marks.retain(|m| m.at.elapsed() < ORDER_MARK);
+        let mut dots = 0;
+        for i in 0..self.order_marks.len() {
+            let m = &self.order_marks[i];
+            let fade = 1.0 - m.at.elapsed().as_secs_f32() / ORDER_MARK.as_secs_f32();
+            let [r, g, b] = m.color;
+            let color = [r, g, b, (160.0 * fade) as u8];
+            // The route that ends at the mark is the sim's answer; until
+            // then a straight line stands in for it.
+            let routed = self
+                .world
+                .route(m.regiment)
+                .last()
+                .is_some_and(|&p| from_fx_vec(p).distance(m.target) < ORDER_ROUTED_TILES);
+            let line = (!m.queued && !routed)
+                .then(|| self.world.regiments.get(m.regiment))
+                .flatten()
+                .map(|r| drawn_position(&self.prev_positions, self.alpha, &r));
+            let (target, facing, size) = (m.target, m.facing, m.size);
+            self.instances.push(BoxInstance {
+                pos: target.to_array(),
+                facing: facing.to_array(),
+                size: [size[0], PLATE_HEIGHT, size[1]],
+                color,
+                lift: 0.0,
+            });
+            if let Some(from) = line
+                && !push_dots(&mut self.instances, from, target, color, &mut dots)
+            {
+                return;
+            }
+        }
+    }
+
     /// Ghost plates where each regiment of a planned order will stand.
     fn push_order_preview(&mut self) {
         let [cr, cg, cb] = color_of(&self.parties, self.sandbox.side);
@@ -2638,13 +2797,11 @@ impl Running {
             let Some(r) = self.world.regiments.get(regiment) else {
                 continue;
             };
-            let stats = &self.units.stats[r.unit as usize];
-            let files = if files == 0 { r.frontage } else { files };
-            let (width, depth) = stats.block_size_in(r.formation, files, r.models);
+            let [width, depth] = self.plate_size(&r, files);
             self.instances.push(BoxInstance {
                 pos: from_fx_vec(target).to_array(),
                 facing: angle_vec(facing.unwrap_or(r.facing)).to_array(),
-                size: [fx_to_f32(width), PLATE_HEIGHT, fx_to_f32(depth)],
+                size: [width, PLATE_HEIGHT, depth],
                 color: [cr / 2, cg / 2, cb / 2, 160],
                 lift: 0.0,
             });
@@ -3337,6 +3494,7 @@ impl Running {
             self.plan_order(order);
             self.push_order_preview();
         }
+        self.push_order_marks();
         // The unit viewer shows one model on a bare field: none of the
         // battlefield is drawn behind it.
         let viewing = self.viewer.is_some();
@@ -5821,8 +5979,9 @@ impl Running {
         }
     }
 
-    /// Dotted lines along the routes of the selected regiments, with a plate
-    /// where each will stop.
+    /// Dotted lines along the routes of the selected regiments, on through
+    /// each queued step, with a plate where each leg ends. Attack-move legs
+    /// are red.
     fn push_routes(&mut self) {
         let mut dots = 0;
         for &h in &self.selected {
@@ -5830,27 +5989,31 @@ impl Running {
                 continue;
             };
             let [cr, cg, cb] = color_of(&self.parties, r.owner);
-            let color = [cr, cg, cb, 160];
+            let plain = [cr, cg, cb, 160];
+            let [hr, hg, hb] = ORDER_HUNT_COLOR.map(|c| c.saturating_add(ORDER_QUEUED_LIFT));
+            let hunt = [hr, hg, hb, 190];
             let mut from = drawn_position(&self.prev_positions, self.alpha, &r);
+            // The legs, each ending in a plate: the sim's route (to a
+            // march's end), then every queued march.
             let route = self.world.route(h);
-            for (k, &p) in route.iter().enumerate() {
-                let to = from_fx_vec(p);
-                let leg = to - from;
-                let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
-                for s in 1..=steps {
-                    if dots == MAX_ROUTE_DOTS {
-                        return;
-                    }
-                    dots += 1;
-                    self.instances.push(BoxInstance {
-                        pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
-                        facing: [0.0, 1.0],
-                        size: ROUTE_DOT,
-                        color,
-                        lift: 0.0,
-                    });
+            let queue = self.world.regiments.queued(h).unwrap_or_default();
+            let marches = queue.iter().filter_map(|step| match step {
+                gc_sim::orders::Step::Move { target, hunt, .. } => {
+                    Some((from_fx_vec(target), hunt, true))
                 }
-                if k + 1 == route.len() {
+                gc_sim::orders::Step::Attack { .. } => None,
+            });
+            let legs = route
+                .iter()
+                .enumerate()
+                .map(|(k, &p)| (from_fx_vec(p), r.hunting, k + 1 == route.len()))
+                .chain(marches);
+            for (to, hunting, end) in legs {
+                let color = if hunting { hunt } else { plain };
+                if !push_dots(&mut self.instances, from, to, color, &mut dots) {
+                    return;
+                }
+                if end {
                     self.instances.push(BoxInstance {
                         pos: to.to_array(),
                         facing: [0.0, 1.0],
@@ -8353,6 +8516,32 @@ fn drawn_pose(
     )
 }
 
+/// Dots from `from` to `to` (neither end included) in `color`, counted in
+/// `dots`; false once [`MAX_ROUTE_DOTS`] are down.
+fn push_dots(
+    instances: &mut Vec<BoxInstance>,
+    from: Vec2,
+    to: Vec2,
+    color: [u8; 4],
+    dots: &mut usize,
+) -> bool {
+    let leg = to - from;
+    let steps = (leg.length() / ROUTE_DOT_SPACING) as usize;
+    for s in 1..=steps {
+        if *dots == MAX_ROUTE_DOTS {
+            return false;
+        }
+        *dots += 1;
+        instances.push(BoxInstance {
+            pos: (from + leg * (s as f32 / (steps + 1) as f32)).to_array(),
+            facing: [0.0, 1.0],
+            size: ROUTE_DOT,
+            color,
+            lift: 0.0,
+        });
+    }
+    true
+}
 /// Just the position of [`drawn_pose`], for the many callers that need no
 /// facing (the minimap runs it over every regiment each frame).
 fn drawn_position(

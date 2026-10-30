@@ -279,7 +279,7 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("R-click", "March or attack"),
             ("R-drag", "Draw the line"),
             ("Q", "Move, then click"),
-            ("W", "Attack, then click"),
+            ("W, A", "Attack, advance; Shift queues"),
             ("S", "Workers clear land, then drag"),
             ("Wall", "Click twice to draw; Shift: 15 deg"),
             ("R or F", "Next formation"),

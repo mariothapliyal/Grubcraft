@@ -610,7 +610,7 @@ impl Marshal {
             .filter(|r| !self.mans(r.handle))
             .partition(|r| self.out.contains(&r.handle));
         let face = home.map_or(Vec2::Y, |h| (rally - h).normalize_or(Vec2::Y));
-        march(s, &staying, rally, face, &mut self.wants, 1);
+        march(s, &staying, rally, face, &mut self.wants, 1, false);
         if !matches!(self.goal, Goal::Heart(_)) {
             self.holders.clear();
         }
@@ -631,6 +631,7 @@ impl Marshal {
                     (at - mid).normalize_or(face),
                     &mut self.wants,
                     2,
+                    true,
                 );
             }
             Goal::Heart(at) => self.hold_heart(s, &going, at),
@@ -642,6 +643,9 @@ impl Marshal {
                 let there = mid.distance(at) <= AT_TARGET
                     || going.iter().any(|r| r.pos.distance(at) <= AT_TARGET / 2.0);
                 if !there {
+                    // A plain march: as an attack-move, a wave turned on
+                    // every defender it met short of the base and six-player
+                    // games stalled (none ended in 120 minutes).
                     march(
                         s,
                         &going,
@@ -649,6 +653,7 @@ impl Marshal {
                         (at - mid).normalize_or(face),
                         &mut self.wants,
                         3,
+                        false,
                     );
                 } else {
                     self.knock_down(s, &going, at, s.now < self.raid_until);
@@ -1057,6 +1062,7 @@ impl Marshal {
                     to: spot,
                     facing: Some(out),
                     pace: 0.0,
+                    hunt: false,
                 },
                 priority: 2,
                 group: 0,
@@ -1198,8 +1204,16 @@ fn threat_to_home(s: &Sense, army: &[&Seen], home: Option<Vec2>) -> Option<(Vec2
 }
 
 /// March `regiments` abreast to `to`, facing `face`, at the pace of the
-/// slowest.
-fn march(s: &Sense, regiments: &[&Seen], to: Vec2, face: Vec2, wants: &mut Vec<Want>, group: u32) {
+/// slowest; `hunt`: as an attack-move, fighting what they meet on the way.
+fn march(
+    s: &Sense,
+    regiments: &[&Seen],
+    to: Vec2,
+    face: Vec2,
+    wants: &mut Vec<Want>,
+    group: u32,
+    hunt: bool,
+) {
     if regiments.is_empty() {
         return;
     }
@@ -1221,6 +1235,7 @@ fn march(s: &Sense, regiments: &[&Seen], to: Vec2, face: Vec2, wants: &mut Vec<W
                 to: spot,
                 facing: Some(face),
                 pace,
+                hunt,
             },
             priority: ROUTINE,
             group: u32::MAX - group,

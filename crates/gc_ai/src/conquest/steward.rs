@@ -918,9 +918,10 @@ impl Steward {
                 .map(|b| (b, self.housing_spot(s, look, b)))
         };
         // The Choir: a tuner by each node near its buildings not yet tuned,
-        // Grub first, Marrow once it wants it.
+        // Grub first, Marrow once it wants it; past two tuned nodes, only
+        // once it has somewhere to train an army.
         let tune = || {
-            if s.kit.economy != EconomyStyle::Tuned {
+            if s.kit.economy != EconomyStyle::Tuned || (production == 0 && look.served.len() >= 2) {
                 return None;
             }
             [Resource::Grub, Resource::Marrow]
@@ -1060,17 +1061,29 @@ impl Steward {
     }
 
     /// The Choir's next node of `r` to tune: the nearest to home of those
-    /// near its buildings that none of its tuners (finished or going up)
-    /// reaches.
+    /// near its buildings that no tuner works and none of its tuners going
+    /// up reaches (a tuner works one node, so a finished one in reach may
+    /// already have its own).
     fn tune_site(&self, s: &Sense, look: &Look, r: Resource) -> Option<Vec2> {
         let home = self.home?;
         let economy = s.world.economy()?;
-        economy
+        let free: Vec<Vec2> = economy
             .nodes()
             .filter(|n| n.resource == r && n.left > LOW / 2)
-            .filter(|n| !self.untunable.contains(&n.index))
+            .filter(|n| !self.untunable.contains(&n.index) && n.tuner.is_none())
             .map(|n| v2(n.at))
-            .filter(|&p| !look.mine.iter().any(|m| m.reaches(r, p)))
+            .collect();
+        // A tuner going up will work one node, the nearest free one it
+        // reaches.
+        let claimed: Vec<Vec2> = (look.mine.iter().filter(|m| !m.finished()))
+            .filter_map(|m| {
+                (free.iter().copied())
+                    .filter(|&p| m.reaches(r, p))
+                    .min_by(|a, b| a.distance(m.at()).total_cmp(&b.distance(m.at())))
+            })
+            .collect();
+        free.into_iter()
+            .filter(|p| !claimed.contains(p))
             .filter(|&p| look.mine.iter().any(|m| m.at().distance(p) <= SERVE))
             .min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
     }
@@ -1475,6 +1488,11 @@ impl Steward {
 /// whose workers only build, the workers its tuned nodes stand for.
 fn working(s: &Sense, look: &Look) -> usize {
     match s.kit.economy {
+        // A tuned node counts as a full node's workers: the thresholds
+        // that read this (when to want Marrow, build production, tier up)
+        // are tuned to the number of nodes worked, and a tuned seep now
+        // brings in about half what five workers do (docs/29, faction
+        // rebalance: lowering this left the Choir without Marrow).
         EconomyStyle::Tuned => look
             .served
             .iter()

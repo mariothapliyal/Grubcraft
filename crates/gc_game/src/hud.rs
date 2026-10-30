@@ -48,6 +48,8 @@ pub fn move_order(p: Vec2) -> GroupOrder {
 pub enum Armed {
     Move,
     Attack,
+    /// Advance (A): march there, fighting any enemy met on the way.
+    AttackMove,
     /// Conquest: where a worker lays this building.
     Lay(gc_sim::BuildingId),
     /// Conquest: a wall of this building, drawn by clicking its start and
@@ -64,6 +66,9 @@ pub enum Armed {
 /// Slots of the command grid, row by row (docs/08-ui-ux.md#screen-layout-1080p-reference).
 pub const SLOT_MOVE: usize = 0;
 pub const SLOT_ATTACK: usize = 1;
+/// Advance (A): attack-move. Shares its slot with a hero's first ability,
+/// which wins while a hero is shown.
+pub const SLOT_ADVANCE: usize = 4;
 /// Burn (E): set the woods beside each selected regiment alight, in the
 /// slot Hold keeps for itself until that order arrives.
 pub const SLOT_BURN: usize = 2;
@@ -85,7 +90,7 @@ const LABELS: [&str; GRID_SLOTS] = [
     "Attack",
     "Burn",
     "Formation",
-    "Skill 1",
+    "Advance",
     "Skill 2",
     "Skill 3",
     "Ultimate",
@@ -101,7 +106,7 @@ const ICONS: [Icon; GRID_SLOTS] = [
     Icon::Attack,
     Icon::Fire,
     Icon::Formation,
-    Icon::Ring,
+    Icon::Attack,
     Icon::Ring,
     Icon::Ring,
     Icon::Ultimate,
@@ -113,11 +118,11 @@ const ICONS: [Icon; GRID_SLOTS] = [
 
 /// One line on each battle slot's tooltip.
 const TIPS: [&str; GRID_SLOTS] = [
-    "March the selected regiments to a spot. Then click the ground.",
-    "Send the selection against an enemy. Then click the enemy.",
+    "March the selected regiments to a spot. Then click the ground. Shift queues it after their other orders.",
+    "Send the selection against an enemy. Then click the enemy (or open ground, to advance there). Shift queues it.",
     "Set the woods or scrub beside the selection alight. The fire spreads with the wind and burns anyone in it; rain puts it out.",
     "Change the formation: Line, Tight, Loose, Shield wall.",
-    "A hero ability. Needs a hero.",
+    "March to a spot, but stop and fight any enemy met on the way, then march on. Then click the ground. Shift queues it.",
     "A hero ability. Needs a hero.",
     "A hero ability. Needs a hero.",
     "A hero's ultimate. Needs a hero.",
@@ -168,7 +173,7 @@ pub struct HudState {
     /// Mouse events collected since the last frame (position is filled in
     /// when the HUD runs).
     input: HudInput,
-    /// Q or W was pressed: the next left click says where to go or whom to
+    /// Q, W or A was pressed: the next left click says where to go or whom to
     /// attack.
     pub armed: Option<Armed>,
     /// Conquest: the wall as it would be drawn now, worked out once a
@@ -867,6 +872,7 @@ impl Running {
         });
         grid[SLOT_MOVE].state = ready(has_orders);
         grid[SLOT_ATTACK].state = ready(has_orders);
+        grid[SLOT_ADVANCE].state = ready(has_orders);
         grid[SLOT_FORMATION].state = ready(has_orders);
         let has_spears = self.selected.iter().any(|&h| {
             self.world
@@ -904,6 +910,7 @@ impl Running {
         match hud.armed {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
+            Some(Armed::AttackMove) => grid[SLOT_ADVANCE].state = SlotState::Armed,
             Some(Armed::Lay(_) | Armed::Wall(..) | Armed::Clear | Armed::Power(_)) | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
@@ -1294,12 +1301,16 @@ impl Running {
         if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
             return;
         }
+        // A hero shown owns this slot for its first ability.
+        if slot == SLOT_ADVANCE && self.hud.hero_shown() {
+            return;
+        }
         match slot {
-            SLOT_MOVE | SLOT_ATTACK => {
-                let want = if slot == SLOT_MOVE {
-                    Armed::Move
-                } else {
-                    Armed::Attack
+            SLOT_MOVE | SLOT_ATTACK | SLOT_ADVANCE => {
+                let want = match slot {
+                    SLOT_MOVE => Armed::Move,
+                    SLOT_ATTACK => Armed::Attack,
+                    _ => Armed::AttackMove,
                 };
                 // Pressing it again puts it down.
                 self.hud.armed = (self.hud.armed != Some(want)).then_some(want);
@@ -1314,11 +1325,12 @@ impl Running {
         }
     }
 
-    /// The click after Q or W: send the selection there, or at the enemy there.
+    /// The click after Q, W or A: send the selection there, or at the enemy there.
     pub fn finish_armed_order(&mut self) {
         let Some(armed) = self.hud.armed else {
             return;
         };
+        let shift = self.input.shift;
         // A click that finds nothing to attack keeps the order armed.
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
@@ -1326,15 +1338,24 @@ impl Running {
             Armed::Clear => return self.finish_clearing(),
             Armed::Power(power) => return self.finish_power(power),
             Armed::Move => match self.ground_under_cursor() {
-                Some(p) => self.issue_group_order(move_order(p)),
+                Some(p) => self.issue_march(move_order(p), false, shift),
                 None => return,
             },
-            Armed::Attack => match self.enemy_under_cursor() {
-                Some(target) => self.issue_attack(target),
+            Armed::AttackMove => match self.ground_under_cursor() {
+                Some(p) => self.issue_march(move_order(p), true, shift),
                 None => return,
+            },
+            // An enemy there is attacked; open ground is advanced on.
+            Armed::Attack => match (self.enemy_under_cursor(), self.ground_under_cursor()) {
+                (Some(target), _) => self.issue_attack(target, shift),
+                (None, Some(p)) => self.issue_march(move_order(p), true, shift),
+                (None, None) => return,
             },
         }
-        self.hud.armed = None;
+        // With Shift held the order stays armed, to queue the next one.
+        if !shift {
+            self.hud.armed = None;
+        }
     }
 
     fn own_regiment(&self, id: u32) -> Option<gc_sim::RegimentHandle> {

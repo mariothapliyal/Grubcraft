@@ -160,11 +160,11 @@ fn rosters_follow_the_design_rules() {
                     "{at}: only workers build"
                 );
             }
-            // Only the Concord's Caravan trades, for 40 Grub and 1.2 a tile.
+            // Only the Concord's Caravan trades, for 37 Grub and 1.1 a tile.
             let caravan = faction == FactionDef::CarrionConcord && u.stats.name == "Caravan";
             assert_eq!(
                 u.trade.as_ref().map(|t| (t.base, t.per_tile_tenths)),
-                caravan.then_some((40, 12)),
+                caravan.then_some((37, 11)),
                 "{at}: trade"
             );
             assert!(!u.abilities.is_empty(), "{at}: no abilities");
