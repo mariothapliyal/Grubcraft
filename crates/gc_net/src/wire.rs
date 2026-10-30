@@ -69,7 +69,6 @@ impl Writer {
         self.var(u64::from(h.generation));
     }
 
-    /// A building's handle, laid out as a regiment's.
     /// A drawn path: how many points, which are corners, then each point.
     pub fn path(&mut self, p: &gc_sim::drawn::DrawnPath) {
         self.u8(p.len);
@@ -80,6 +79,7 @@ impl Writer {
         }
     }
 
+    /// A building's handle, laid out as a regiment's.
     pub fn structure(&mut self, h: StructureHandle) {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));

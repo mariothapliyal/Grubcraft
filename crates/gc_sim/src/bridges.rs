@@ -135,8 +135,9 @@ impl Conquest {
     /// The new tiles of `player`'s bridge `b` drawn along `line` (see
     /// [`crate::drawn::DrawnPath::band`]), each with whether it can go up
     /// there. The centre line bends gently or not at all (no corners) and
-    /// is at most [`MAX_BRIDGE_LENGTH`] long; the tiles at both ends are
-    /// dry land a regiment can walk on or a bridge of `player`'s, so a gap
+    /// is at most [`MAX_BRIDGE_LENGTH`] long; the tile at either end, and
+    /// most of the deck across it, is dry land a regiment can walk on or a
+    /// bridge of `player`'s, so a gap
     /// can be drawn again from deck to deck. Tiles where `player` already
     /// has a bridge are left out, as walls leave out their own tiles, and
     /// every other tile must be water or open ground with nothing built or
@@ -220,13 +221,14 @@ impl Conquest {
         nav: &Nav,
         terrain: &Terrain,
     ) -> Result<Laying, Refusal> {
-        if path.has_corners() || !path.bends_gently() {
+        let curve = path.curve();
+        if path.has_corners() || !curve.bends_gently() {
             return Err(Refusal::Crooked);
         }
-        if path.length() > MAX_BRIDGE_LENGTH * i64::from(drawn::SUB) {
+        if curve.length() > MAX_BRIDGE_LENGTH * i64::from(drawn::SUB) {
             return Err(Refusal::Unknown);
         }
-        let tiles = path.band(width);
+        let tiles = curve.band(width);
         let area = crate::walls::tiles_area(&tiles);
         let area = [area[0] - 1, area[1] - 1, area[2] + 2, area[3] + 2];
         let s = &self.structures;
@@ -239,8 +241,13 @@ impl Conquest {
         let water = |(x, y): (i32, i32)| terrain.tile_under_water(x, y);
         let ground = |(x, y): (i32, i32)| nav.walkable_ground(x, y);
         let bank = |t: (i32, i32)| owned(t) || (ground(t) && !water(t));
-        for end in path.band_ends(width) {
-            if end.is_empty() || !end.iter().all(|&t| bank(t)) {
+        // Each end on the bank: the tile it is drawn to, and most of the
+        // deck across it (a deck slanting off a straight shore hangs a
+        // corner over the water).
+        let (first, last) = path.ends();
+        for (end, at) in curve.band_ends(&tiles).iter().zip([first, last]) {
+            let ashore = end.iter().filter(|&&t| bank(t)).count();
+            if !bank(at) || ashore * 2 < end.len() {
                 return Err(Refusal::Rough);
             }
         }

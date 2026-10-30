@@ -293,7 +293,7 @@
             armour: Structure,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Raises a Braced Glass Span on resonant stone anchors with prow-shaped footings: more than three times a plain span's toughness, and it sheds debris instead of catching it.",
+            effect: "Raises a Braced Glass Span on resonant stone anchors with prow-shaped footings: more than three times a plain span's toughness, and, once rivers carry debris, it will shed it instead of catching it.",
         ),
         (
             name: "Shard Stakes",

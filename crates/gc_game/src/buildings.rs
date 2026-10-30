@@ -1523,12 +1523,13 @@ pub fn push(
         return;
     };
     let right = Vec2::new(-across.y, across.x);
-    // The tiles of each drawn bridge, so a wide deck rails only its edges.
-    // Sorted for a binary search; no allocation on a map with no bridges.
-    let mut bridged: Vec<(u32, (i32, i32))> = structures
+    // The bridge tiles, so a wide deck rails only its edges (where one
+    // drawing meets another, as a mended gap does, too). Sorted for a
+    // binary search; no allocation on a map with no bridges.
+    let mut bridged: Vec<(i32, i32)> = structures
         .iter()
         .filter(|s| table.is_bridge(s.building))
-        .filter_map(|s| s.drawing.map(|d| (d, s.tile)))
+        .map(|s| s.tile)
         .collect();
     bridged.sort_unstable();
     for s in structures.iter().filter(|s| shown(s)) {
@@ -1556,10 +1557,7 @@ pub fn push(
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
             if model.is_none() {
-                let joined = |tile| {
-                    s.drawing
-                        .is_some_and(|d| bridged.binary_search(&(d, tile)).is_ok())
-                };
+                let joined = |tile| bridged.binary_search(&tile).is_ok();
                 push_bridge_tile(&s, [r, g, b, look.glow], team, &joined, out);
             }
         } else if matches!(stats.role, Role::Stakes | Role::Barricade) {

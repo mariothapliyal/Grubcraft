@@ -353,7 +353,7 @@
             armour: Structure,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Raises a Braced Timber Bridge on stone-footed piers with pointed cutwaters facing upstream: more than three times a plain bridge's toughness, and it sheds debris instead of catching it. Raised a span at a time; it stays open meanwhile.",
+            effect: "Raises a Braced Timber Bridge on stone-footed piers with pointed cutwaters facing upstream: more than three times a plain bridge's toughness, and, once rivers carry debris, it will shed it instead of catching it. Raised a span at a time; it stays open meanwhile.",
         ),
         (
             name: "Stake Line",

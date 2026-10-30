@@ -327,7 +327,7 @@
             armour: Structure,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Raises a Braced Bone Causeway on iron-shod stone footings with cutwaters facing upstream: more than three times a plain causeway's toughness, and it sheds debris instead of catching it.",
+            effect: "Raises a Braced Bone Causeway on iron-shod stone footings with cutwaters facing upstream: more than three times a plain causeway's toughness, and, once rivers carry debris, it will shed it instead of catching it.",
         ),
         (
             name: "Bone Stakes",

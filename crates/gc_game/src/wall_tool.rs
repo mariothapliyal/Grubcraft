@@ -474,9 +474,18 @@ impl Running {
             Ok(tiles) => (tiles.iter())
                 .map(|t| (t.tile, fit_of(t, open), chord(t.tile)))
                 .collect(),
+            // Far too long or not a path at all: no tiles to show in red.
+            Err(_)
+                if path.check().is_err()
+                    || curve.length()
+                        > 4 * gc_sim::walls::MAX_DRAWN_TILES as i64
+                            * i64::from(gc_sim::drawn::SUB) =>
+            {
+                Vec::new()
+            }
             Err(_) => {
                 let tiles = if bridge {
-                    path.band(width)
+                    curve.band(width)
                 } else {
                     path.wall_tiles()
                 };

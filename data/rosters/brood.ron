@@ -275,7 +275,7 @@
             armour: Living,
             footprint: (1, 1),
             flags: [Line],
-            effect: "Roots a Ribbed Chitin Span on hardened carapace piers with pointed prows: more than three times a plain span's toughness, and it sheds debris instead of catching it.",
+            effect: "Roots a Ribbed Chitin Span on hardened carapace piers with pointed prows: more than three times a plain span's toughness, and, once rivers carry debris, it will shed it instead of catching it.",
         ),
         (
             name: "Spine Stakes",

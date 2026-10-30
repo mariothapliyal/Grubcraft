@@ -39,6 +39,9 @@ const MAX_BEND_COS: i128 = 9613;
 /// About how many samples the curve takes a tile.
 const SAMPLES_PER_TILE: i32 = 4;
 
+/// The furthest apart two points in a row of a path may be, in tiles.
+pub const MAX_SEGMENT_TILES: i32 = 96;
+
 /// A bridge's width across, in tiles: narrow, standard or wide. Even the
 /// narrow one clears the widest walking unit (the Brood's Broodmother
 /// Bulk, 2.7 tiles) all along, round its bends too.
@@ -147,13 +150,19 @@ impl DrawnPath {
     }
 
     /// A refusal for a path that isn't one: fewer than two points, too
-    /// many, or two in a row at the same place.
+    /// many, two in a row at the same place, or two in a row more than
+    /// [`MAX_SEGMENT_TILES`] apart (which also keeps the curve's sums well
+    /// inside 64 bits).
     pub fn check(&self) -> Result<(), Refusal> {
         let n = usize::from(self.len);
         if !(2..=MAX_POINTS).contains(&n) {
             return Err(Refusal::Unknown);
         }
-        if self.points().windows(2).any(|w| w[0] == w[1]) {
+        let far = |a: (i16, i16), b: (i16, i16)| {
+            let d = (i32::from(b.0) - i32::from(a.0)).abs();
+            d.max((i32::from(b.1) - i32::from(a.1)).abs()) > 2 * MAX_SEGMENT_TILES
+        };
+        if (self.points().windows(2)).any(|w| w[0] == w[1] || far(w[0], w[1])) {
             return Err(Refusal::Unknown);
         }
         Ok(())
@@ -340,6 +349,57 @@ impl Curve {
         through([a[0], a[1], b[0], b[1]], tile)
     }
 
+    /// The tiles a bridge `width` tiles across covers along the curve:
+    /// every tile whose centre lies less than half `width` from the centre
+    /// line, ordered along it (by the nearest sample, then row, then
+    /// column).
+    pub fn band(&self, width: u8) -> Vec<(i32, i32)> {
+        let s = &self.samples;
+        let half = i64::from(width) * i64::from(SUB) / 2;
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for p in s {
+            x0 = x0.min(p.x);
+            y0 = y0.min(p.y);
+            x1 = x1.max(p.x);
+            y1 = y1.max(p.y);
+        }
+        let reach = half as i32 + SUB;
+        let (tx0, ty0) = ((x0 - reach).div_euclid(SUB), (y0 - reach).div_euclid(SUB));
+        let (tx1, ty1) = ((x1 + reach).div_euclid(SUB), (y1 + reach).div_euclid(SUB));
+        let mut tiles: Vec<(usize, i32, i32)> = Vec::new();
+        for ty in ty0..=ty1 {
+            for tx in tx0..=tx1 {
+                if let Some(k) = within(s, centre_sub((tx, ty)), half) {
+                    tiles.push((k, ty, tx));
+                }
+            }
+        }
+        tiles.sort_unstable();
+        tiles.into_iter().map(|(_, y, x)| (x, y)).collect()
+    }
+
+    /// The tiles of `band` (see [`Curve::band`]) right across each end of
+    /// the curve: those whose centres lie within half a tile of its first
+    /// point, along the way it runs there, and of its last. Where a bridge
+    /// meets the bank, all of these must be ashore.
+    pub fn band_ends(&self, band: &[(i32, i32)]) -> [Vec<(i32, i32)>; 2] {
+        let s = &self.samples;
+        let n = s.len();
+        [(0, 1.min(n - 1)), (n - 1, n.saturating_sub(2))].map(|(e, next)| {
+            let p = (i128::from(s[e].x), i128::from(s[e].y));
+            let d = (i128::from(s[next].x) - p.0, i128::from(s[next].y) - p.1);
+            let half = i128::from(SUB / 2);
+            (band.iter().copied())
+                .filter(|&t| {
+                    let c = centre_sub(t);
+                    let v = (i128::from(c.0) - p.0, i128::from(c.1) - p.1);
+                    let along = v.0 * d.0 + v.1 * d.1;
+                    along * along <= half * half * (d.0 * d.0 + d.1 * d.1)
+                })
+                .collect()
+        })
+    }
+
     /// Whether `tile`'s centre lies on the higher side of the curve
     /// (higher rows across a path running east, lower columns across one
     /// running south).
@@ -399,57 +459,10 @@ impl DrawnPath {
         out.into_iter().map(|(t, _)| t).collect()
     }
 
-    /// The tiles a bridge `width` tiles across covers along the path:
-    /// every tile whose centre lies less than half `width` from the centre
-    /// line, ordered along it (by the nearest sample, then row, then
-    /// column).
+    /// The tiles a bridge `width` tiles across covers along the path (see
+    /// [`Curve::band`]).
     pub fn band(&self, width: u8) -> Vec<(i32, i32)> {
-        let s = self.samples();
-        let half = i64::from(width) * i64::from(SUB) / 2;
-        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
-        for p in &s {
-            x0 = x0.min(p.x);
-            y0 = y0.min(p.y);
-            x1 = x1.max(p.x);
-            y1 = y1.max(p.y);
-        }
-        let reach = half as i32 + SUB;
-        let (tx0, ty0) = ((x0 - reach).div_euclid(SUB), (y0 - reach).div_euclid(SUB));
-        let (tx1, ty1) = ((x1 + reach).div_euclid(SUB), (y1 + reach).div_euclid(SUB));
-        let mut tiles: Vec<(usize, i32, i32)> = Vec::new();
-        for ty in ty0..=ty1 {
-            for tx in tx0..=tx1 {
-                if let Some(k) = within(&s, centre_sub((tx, ty)), half) {
-                    tiles.push((k, ty, tx));
-                }
-            }
-        }
-        tiles.sort_unstable();
-        tiles.into_iter().map(|(_, y, x)| (x, y)).collect()
-    }
-
-    /// The tiles of a bridge `width` across at either end of the path: those
-    /// whose centres lie less than half `width` from its first point, and
-    /// from its last.
-    pub fn band_ends(&self, width: u8) -> [Vec<(i32, i32)>; 2] {
-        let half = i64::from(width) * i64::from(SUB) / 2;
-        let n = self.points().len();
-        [0, n - 1].map(|k| {
-            let (px, py) = self.at(k);
-            let (cx, cy) = ((px as i32).div_euclid(SUB), (py as i32).div_euclid(SUB));
-            let r = i32::from(width);
-            let mut out = Vec::new();
-            for ty in cy - r..=cy + r {
-                for tx in cx - r..=cx + r {
-                    let c = centre_sub((tx, ty));
-                    let c = (i64::from(c.0), i64::from(c.1));
-                    if (c.0 - px).pow(2) + (c.1 - py).pow(2) < half * half {
-                        out.push((tx, ty));
-                    }
-                }
-            }
-            out
-        })
+        self.curve().band(width)
     }
 
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {

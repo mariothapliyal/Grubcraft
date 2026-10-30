@@ -300,6 +300,19 @@ fn a_bridge_follows_a_drawn_curve_at_the_width_picked() {
     // Ending in the water.
     let short = DrawnPath::new(&[c((24, 20)), c((31, 22))], |_| true).unwrap();
     assert_eq!(refused(short, STANDARD), Err(Refusal::Rough));
+    // From the last tile of one bank to the first of the other, as a click
+    // on each bank (or the computer player) draws it: every width fits.
+    for width in gc_sim::drawn::BRIDGE_WIDTHS {
+        let shore = DrawnPath::straight((RIVER.start - 1, 40), (RIVER.end, 40));
+        let plan = w.line_plan(0, BRIDGE, &bridge(shore, width));
+        assert!(plan.is_ok(), "width {width} from the shore: {plan:?}");
+        let slant = DrawnPath::straight((RIVER.start - 1, 40), (RIVER.end, 44));
+        let plan = w.line_plan(0, BRIDGE, &bridge(slant, width));
+        assert!(
+            plan.is_ok(),
+            "width {width} slanting from the shore: {plan:?}"
+        );
+    }
 }
 
 #[test]

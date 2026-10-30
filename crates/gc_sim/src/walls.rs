@@ -420,7 +420,10 @@ impl Conquest {
             return Err(Refusal::Unknown);
         }
         let path = line.path;
-        path.check()?;
+        // The old order's two ends may be one tile: a wall a tile long.
+        if !line.old {
+            path.check()?;
+        }
         if b.is_bridge() {
             return self.bridge_line(player, b, line, nav, terrain);
         }
@@ -429,8 +432,14 @@ impl Conquest {
             let (from, to) = path.ends();
             wall_tiles(from, to).ok_or(Refusal::Unknown)?
         } else {
-            if !path.bends_gently() {
+            let curve = path.curve();
+            if !curve.bends_gently() {
                 return Err(Refusal::Crooked);
+            }
+            // Far too long to be worth laying out tile by tile (a diagonal
+            // has a tile for every 1.42 tiles of length at worst).
+            if curve.length() > 2 * MAX_DRAWN_TILES as i64 * i64::from(drawn::SUB) {
+                return Err(Refusal::Unknown);
             }
             let tiles = path.wall_tiles();
             if tiles.len() > MAX_DRAWN_TILES {
@@ -512,9 +521,13 @@ impl Conquest {
         let Ok(laying) = self.wall_plan(player, building, line, nav, regs, terrain) else {
             return false;
         };
-        if laying.tiles.is_empty() || laying.tiles.iter().any(|t| t.fits.is_err()) {
+        if laying.tiles.is_empty()
+            || laying.tiles.iter().any(|t| t.fits.is_err())
+            || self.structures.free_slots() < laying.tiles.len()
+        {
             return false;
         }
+        // Only a line that is laid is remembered.
         let drawing = self
             .structures
             .drawings
