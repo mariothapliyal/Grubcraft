@@ -165,6 +165,7 @@ impl Steward {
                     .then(|| self.wall(s, look, home, toward, spare))
                     .flatten()
                     .or_else(|| self.traps(s, look, home, toward, spare))
+                    .or_else(|| self.raise_bridge(s, look, spare))
             });
         if let Some((order, worker)) = order {
             // There is attention for it (checked above), so it is given.
@@ -282,6 +283,37 @@ impl Steward {
             .is_some_and(|b| b.stats.flags & GROWN != 0);
         let worker = self.hands(s, look, grown, tile)?;
         self.engineer.raised += 1;
+        let order = Command::RaiseWall {
+            structure: h,
+            regiment: worker,
+        };
+        Some((order, worker))
+    }
+
+    /// Once rich, raise its own finished bridge a level (braced, then
+    /// reinforced piers), so the crossing its armies need stands up to
+    /// blows: the whole joined bridge, paid now.
+    fn raise_bridge(&self, s: &Sense, look: &Look, spare: u32) -> Option<Order> {
+        if spare < RICH {
+            return None;
+        }
+        let (tile, h, raise) = look
+            .mine
+            .iter()
+            .filter(|m| m.finished() && m.stats.role == Role::Bridge)
+            .find_map(|m| {
+                let raise = s.world.wall_level(s.party, m.view.handle).ok()?;
+                (raise.afford && spare >= raise.grub + RICH / 2).then_some((
+                    m.view.tile,
+                    m.view.handle,
+                    raise,
+                ))
+            })?;
+        let grown = s
+            .kit
+            .building(raise.to)
+            .is_some_and(|b| b.stats.flags & GROWN != 0);
+        let worker = self.hands(s, look, grown, tile)?;
         let order = Command::RaiseWall {
             structure: h,
             regiment: worker,

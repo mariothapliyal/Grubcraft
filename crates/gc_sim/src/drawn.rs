@@ -39,10 +39,16 @@ const MAX_BEND_COS: i128 = 9613;
 /// About how many samples the curve takes a tile.
 const SAMPLES_PER_TILE: i32 = 4;
 
-/// A bridge's width across, in tiles: narrow, standard or wide.
-pub const BRIDGE_WIDTHS: [u8; 3] = [2, 3, 4];
+/// A bridge's width across, in tiles: narrow, standard or wide. Even the
+/// narrow one clears the widest walking unit (the Brood's Broodmother
+/// Bulk, 2.7 tiles) all along, round its bends too.
+pub const BRIDGE_WIDTHS: [u8; 3] = [3, 4, 5];
 
-/// The width a bridge drawn without one (`Command::BuildWall`) has.
+/// The width a bridge drawn with the old two-end order
+/// (`Command::BuildWall`) has: the two lanes it always had.
+pub const OLD_WIDTH: u8 = 2;
+
+/// The narrowest width a player may pick.
 pub const NARROW: u8 = BRIDGE_WIDTHS[0];
 
 /// The width a bridge is drawn with unless the player picks another.
@@ -491,7 +497,7 @@ fn within(s: &[Sample], c: (i32, i32), half: i64) -> Option<usize> {
         let cross = ab.0 * ap.1 - ab.1 * ap.0;
         let len = i128::from(isqrt(len2.min(i128::from(i64::MAX)) as i64)).max(1);
         let half_tile = i128::from(SUB / 2);
-        let reach = h * len + half_tile * (ab.0.abs() + ab.1.abs() - len);
+        let reach = h * len + 3 * half_tile * (ab.0.abs() + ab.1.abs() - len);
         let inside = if cross >= 0 {
             cross < reach
         } else {

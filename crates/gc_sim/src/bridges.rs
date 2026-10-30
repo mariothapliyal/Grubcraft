@@ -28,6 +28,23 @@ impl Structures {
         self.stats_of(i).is_bridge()
     }
 
+    /// The level of bridge slot `i`'s piers: 1 plain, 2 braced, 3
+    /// reinforced (stone-footed, with cutwaters), counted down its chain of
+    /// upgrades to the plain bridge; 0 for anything that isn't a bridge.
+    pub fn pier_level(&self, i: usize) -> u8 {
+        if !self.is_bridge(i) {
+            return 0;
+        }
+        let mut b = self.stats_of(i);
+        let mut level = 1;
+        // The data has no loops in its levels; three is the top anyway.
+        while let (Some(from), true) = (b.upgrades_from, level < 3) {
+            level += 1;
+            b = &self.buildings()[usize::from(from)];
+        }
+        level
+    }
+
     /// Whether a builder can reach unfinished bridge slot `j`: it was laid
     /// on dry ground (the banks at either end), or it is next to a
     /// finished tile of a bridge.
@@ -138,6 +155,9 @@ impl Conquest {
         terrain: &Terrain,
     ) -> Result<Laying, Refusal> {
         if !line.old {
+            if !drawn::BRIDGE_WIDTHS.contains(&line.width) {
+                return Err(Refusal::Unknown);
+            }
             return self.bridge_band(player, b, line.path, line.width, nav, terrain);
         }
         let (from, to) = line.path.ends();
@@ -204,9 +224,6 @@ impl Conquest {
         nav: &Nav,
         terrain: &Terrain,
     ) -> Result<Laying, Refusal> {
-        if !drawn::BRIDGE_WIDTHS.contains(&width) {
-            return Err(Refusal::Unknown);
-        }
         if path.has_corners() || !path.bends_gently() {
             return Err(Refusal::Crooked);
         }

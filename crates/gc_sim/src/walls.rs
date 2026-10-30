@@ -270,7 +270,7 @@ impl Line {
     pub fn straight(from: (i32, i32), to: (i32, i32)) -> Line {
         Line {
             path: DrawnPath::straight(from, to),
-            width: drawn::NARROW,
+            width: drawn::OLD_WIDTH,
             old: true,
         }
     }

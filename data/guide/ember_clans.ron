@@ -206,11 +206,35 @@
         (
             name: "Timber Bridge",
             summary: "A bridge two tiles wide you draw straight across a river: click the near bank, then the far bank. Hands build it out from the bank a plank-span at a time, and anyone can cross it. Break or burn a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            notes: [
+                ("Braced Timber Bridge", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
                 (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
                 (icon: Move, text: "A Hand builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
+        (
+            name: "Braced Timber Bridge",
+            summary: "Level 2 of the Timber Bridge: cross-bracing and doubled pilings under the deck, twice as tough. Select a bridge and press U: the whole joined bridge is paid now and a Hand raises it a span at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Stone-Footed Bridge", "More than three times as tough, and debris glances off its cutwaters."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Stone-Footed Bridge",
+            summary: "Level 3, the top: stone-footed piers with pointed cutwaters facing upstream, more than three times a plain bridge's toughness, and it sheds debris instead of catching it. Needs a Castle Keep. Select a Braced Timber Bridge and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
             ],
         ),
         (

@@ -21,6 +21,9 @@ const HALL: u16 = 0;
 const BRIDGE: u16 = 1;
 const WALL: u16 = 2;
 const GATE_3: u16 = 3;
+/// The bridge's next two levels: braced piers, then reinforced.
+const BRACED: u16 = 4;
+const REINFORCED: u16 = 5;
 const MAP: u32 = 80;
 /// The river runs north to south over these columns, deep (no ford).
 const RIVER: core::ops::Range<i32> = 30..34;
@@ -113,6 +116,18 @@ fn world() -> World {
                 depth: 3,
                 hp: 1000,
                 flags: GATE,
+                ..line
+            },
+            BuildingStats {
+                role: Role::Bridge,
+                upgrades_from: Some(BRIDGE),
+                hp: 600,
+                ..line
+            },
+            BuildingStats {
+                role: Role::Bridge,
+                upgrades_from: Some(BRACED),
+                hp: 1000,
                 ..line
             },
         ],
@@ -254,12 +269,13 @@ fn a_bridge_follows_a_drawn_curve_at_the_width_picked() {
         let plan = w.line_plan(0, BRIDGE, &bridge(crossing(), width)).unwrap();
         let t = tiles(&plan);
         // The clearance check: wide enough all along, round the bend too,
-        // for a block of soldiers several files across. Square tiles under
-        // a slanting deck leave it a little less than its width at worst.
+        // for a block of soldiers several files across, and even the
+        // narrow one for the widest walking unit, the Broodmother Bulk
+        // (2.7 tiles).
         let least = narrowest(&crossing(), &t);
         eprintln!("width {width}: {least:.2} tiles across at the narrowest");
         assert!(
-            least >= f32::from(width) - 0.8,
+            least >= f32::from(width) - 0.25 && least >= 2.7,
             "width {width}: {least} tiles at the narrowest"
         );
         // Every tile joins the deck edge to edge (no corner-only step).
@@ -277,7 +293,8 @@ fn a_bridge_follows_a_drawn_curve_at_the_width_picked() {
     assert!(deck[0] < deck[1] && deck[1] < deck[2], "{deck:?}");
     // No other width, no sharp bend, no corner, nor too long.
     let refused = |path: DrawnPath, width: u8| w.line_plan(0, BRIDGE, &bridge(path, width));
-    assert_eq!(refused(crossing(), 5), Err(Refusal::Unknown));
+    assert_eq!(refused(crossing(), 2), Err(Refusal::Unknown));
+    assert_eq!(refused(crossing(), 6), Err(Refusal::Unknown));
     let sharp = DrawnPath::new(&[c((24, 20)), c((32, 20)), c((32, 30))], |_| false).unwrap();
     assert_eq!(refused(sharp, STANDARD), Err(Refusal::Crooked));
     let corner = DrawnPath::new(&[c((22, 20)), c((32, 24)), c((42, 30))], |_| true).unwrap();
@@ -306,7 +323,10 @@ fn a_full_army_crosses_a_curved_bridge_dry_shod() {
     let s = w.structures().unwrap();
     let deck: Vec<_> = s.iter().filter(|v| v.building == BRIDGE).collect();
     assert_eq!(deck.len(), plan.len());
-    assert!(deck.iter().all(gc_sim::StructureView::finished), "built across");
+    assert!(
+        deck.iter().all(gc_sim::StructureView::finished),
+        "built across"
+    );
     // Four full regiments in line march over from the west bank to the
     // east, and nobody wades.
     let army: Vec<_> = (0..4)
@@ -524,7 +544,7 @@ fn the_land_remembers_each_line_drawn_on_it() {
         w.tick(&[]);
         w.state_hash()
     };
-    assert_ne!(hash(2), hash(3));
+    assert_ne!(hash(3), hash(4));
 }
 
 #[test]
@@ -547,4 +567,44 @@ fn a_curved_plan_is_dropped_whole() {
     let (a, b) = ((p.line[0], p.line[1]), (p.line[2], p.line[3]));
     assert!(order(&mut w, 0, Command::DropPlan { from: a, to: b }));
     assert!(w.plans().is_empty());
+}
+
+#[test]
+fn a_bridge_is_raised_to_braced_then_reinforced_piers_and_stays_open() {
+    let mut w = world();
+    let worker = spawn(&mut w, 0, WORKER, 21, 20);
+    assert!(draw(&mut w, worker, crossing(), STANDARD));
+    run(&mut w, 240);
+    // A regiment stands on the middle of the bridge while it is raised.
+    let foot = spawn(&mut w, 0, FOOT, 32, 24);
+    for (to, hp) in [(BRACED, 600), (REINFORCED, 1000)] {
+        let s = w.structures().unwrap();
+        let tile = s.iter().find(|v| v.drawing.is_some()).unwrap().handle;
+        let n = s.iter().filter(|v| v.drawing.is_some()).count();
+        let raise = w.wall_level(0, tile).unwrap();
+        assert_eq!((raise.to, raise.tiles), (to, n), "the whole bridge goes up");
+        assert!(order(
+            &mut w,
+            0,
+            Command::RaiseWall {
+                structure: tile,
+                regiment: Some(worker),
+            }
+        ));
+        for _ in 0..300 * TICKS_PER_SECOND {
+            w.tick(&[]);
+            assert!(!w.terrain().wet(position(&w, foot)), "the deck stays open");
+        }
+        let s = w.structures().unwrap();
+        let deck: Vec<_> = s.iter().filter(|v| v.drawing.is_some()).collect();
+        assert!(
+            deck.iter().all(|v| v.building == to && v.max_hp == hp),
+            "raised to {to}"
+        );
+        // Still remembered as the same drawn line.
+        assert!(deck.iter().all(|v| v.drawing == deck[0].drawing));
+    }
+    let s = w.structures().unwrap();
+    let top = s.iter().find(|v| v.drawing.is_some()).unwrap().handle;
+    assert_eq!(s.pier_level(top.index as usize), 3);
 }

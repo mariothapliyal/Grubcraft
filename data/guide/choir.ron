@@ -144,11 +144,35 @@
         (
             name: "Glass Span",
             summary: "A span of grown glass two tiles wide you draw straight across a river: click the near bank, then the far bank. It needs no power. Workers build it out from the bank a tile at a time, and anyone can cross it. Shatter a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            notes: [
+                ("Braced Glass Span", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
                 (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
                 (icon: Move, text: "A worker builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
+        (
+            name: "Braced Glass Span",
+            summary: "Level 2 of the Glass Span: braced glass struts under the deck, twice as tough. Select a span and press U: the whole joined span is paid now and raised a tile at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Anchored Glass Span", "More than three times as tough, and debris glances off its footings."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Anchored Glass Span",
+            summary: "Level 3, the top: resonant stone anchors with prow-shaped footings, more than three times a plain span's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Braced Glass Span and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
             ],
         ),
         (

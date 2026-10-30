@@ -549,9 +549,18 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if [Role::Bridge, Role::Stakes, Role::Barricade]
         .iter()
         .any(|&r| b.role == r as u8)
-        && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE || b.upgrades_from != NONE)
+        && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE)
     {
         return Err("a bridge or field work is drawn as a line, and is nothing more");
+    }
+    // A bridge goes up levels (braced, then reinforced piers); a field
+    // work doesn't.
+    if [Role::Stakes, Role::Barricade]
+        .iter()
+        .any(|&r| b.role == r as u8)
+        && b.upgrades_from != NONE
+    {
+        return Err("a field work has no levels");
     }
     if b.trap > TRAP_NEST || (b.role == Role::Trap as u8) != (b.trap != TRAP_NONE) {
         return Err("a trap, and only a trap, has a known trap kind");
@@ -625,7 +634,7 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
     let levels = |r: &BuildingRecord| r.flags & (BUILDING_LINE | BUILDING_GATE) != 0;
     if levels(b) || levels(from) {
         let kind = BUILDING_LINE | BUILDING_PASS | BUILDING_GROWN | BUILDING_GATE;
-        if b.flags & kind != from.flags & kind {
+        if b.flags & kind != from.flags & kind || b.role != from.role {
             return Err("a wall's or gate's level upgrades from one of the same kind");
         }
         if from.faction != b.faction || from.tier > b.tier {

@@ -2593,6 +2593,11 @@ mod tests {
                 continue;
             }
             let faction = table.faction(b).expect("a bridge has a faction");
+            // Its braced and reinforced levels are raised, not built.
+            if table.stats[usize::from(b)].upgrades_from.is_some() {
+                assert!(!table.buildable(faction).any(|x| x == b));
+                continue;
+            }
             assert!(!seen.contains(&faction), "two bridges for {faction:?}");
             seen.push(faction);
             assert!(table.is_wall(b), "a bridge is drawn as a line");

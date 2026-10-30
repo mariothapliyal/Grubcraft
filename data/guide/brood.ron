@@ -165,11 +165,35 @@
         (
             name: "Chitin Span",
             summary: "A span of chitin plates two tiles wide you draw straight across a river: click the near bank, then the far bank. Gnawers build it out from the bank a plate at a time, and anyone can cross it. Break a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            notes: [
+                ("Ribbed Chitin Span", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
                 (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
                 (icon: Move, text: "A Gnawer builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
+        (
+            name: "Ribbed Chitin Span",
+            summary: "Level 2 of the Chitin Span: ribbed chitin struts grown under the deck, twice as tough. Select a span and press U: the whole joined span is paid now and Gnawers raise it a plate at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Rooted Chitin Span", "More than three times as tough, and debris glances off its prows."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Rooted Chitin Span",
+            summary: "Level 3, the top: hardened carapace piers with pointed prows, more than three times a plain span's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Ribbed Chitin Span and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
             ],
         ),
         (
