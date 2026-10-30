@@ -504,6 +504,9 @@ struct Options {
     fx: Option<fx_demo::Mode>,
     /// Open on a siege staged in the sandbox, to look at (`--siege`).
     siege: bool,
+    /// Open on regiments marching through every gate in the sandbox,
+    /// looking at the `n`th (`--gate-march n`, 0 to 5).
+    gate_march: Option<usize>,
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
@@ -540,6 +543,7 @@ fn parse_args() -> Options {
         distance: None,
         fx: None,
         siege: false,
+        gate_march: None,
         fell_demo: false,
         hamlet_demo: false,
         render: RendererOptions::default(),
@@ -624,6 +628,13 @@ fn parse_args() -> Options {
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--gate-march" => value
+                .parse()
+                .map(|v| {
+                    opts.gate_march = Some(v);
+                    opts.menu = Some(false);
+                })
+                .is_ok(),
             "--conquest" => {
                 let choice = conquest::choice_of(&value);
                 choice.map(|c| opts.conquest = Some(c)).is_some()
@@ -838,11 +849,15 @@ struct Running {
     arrows: field::Arrows,
     /// Blows on buildings, shots at them, and buildings coming down.
     siege: siege::Siege,
+    /// How far open each gate's door leaves are drawn.
+    gate_swings: buildings::GateSwings,
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
+    /// How far `--gate-march` has staged its march, and the gate looked at.
+    gate_scene: Option<(u8, usize)>,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1722,8 +1737,10 @@ impl App {
             ambient: ambient::Ambient::new(opts.fell_demo, opts.hamlet_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
+            gate_swings: buildings::GateSwings::default(),
             aftermath: aftermath::Aftermath::default(),
             siege_scene: None,
+            gate_scene: None,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1868,6 +1885,10 @@ impl App {
             if opts.siege {
                 r.start_match(MatchKind::Sandbox { roster: true });
                 r.siege_scene = Some(0);
+            }
+            if let Some(n) = opts.gate_march {
+                r.start_match(MatchKind::Sandbox { roster: true });
+                r.gate_scene = Some((0, n));
             }
         }
         Ok(())
@@ -2733,15 +2754,21 @@ impl Running {
     /// Expand a group order for the current selection into
     /// `self.group_commands` (one move per regiment), arranged in the
     /// chosen army shape.
-    fn plan_order(&mut self, order: GroupOrder) {
+    fn plan_order(&mut self, mut order: GroupOrder) {
         self.fill_group();
         self.group_commands.clear();
-        gc_sim::arrange::arranged_move(
-            &mut self.group,
-            order,
-            self.army_shapes.arrangement(),
-            &mut self.group_commands,
-        );
+        // Alt on a dragged line draws it deep: the drag is the front, every
+        // regiment keeps its frontage and those that don't fit stand behind
+        // (one regiment alone just goes there, as it stands).
+        let how = if self.input.alt && order.width.is_some() {
+            if self.group.len() < 2 {
+                order.width = None;
+            }
+            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+        } else {
+            self.army_shapes.arrangement()
+        };
+        gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -3393,6 +3420,7 @@ impl Running {
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
+        self.stage_gate_march();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -3646,6 +3674,7 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            self.puppets.faced_about(r.handle, r.abouts);
             // Manning a wall, the soldiers stand on its tiles.
             // At the head of a ladder they stand in their block, lifted to
             // the wall top, with ladders against the wall below them.
@@ -6960,6 +6989,10 @@ impl Running {
                 let art = art.as_ref()?;
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
+            |s| {
+                art.as_ref()
+                    .is_some_and(|art| art.looks.leaf_of(s.building).is_some())
+            },
             |h| siege.flash(h),
             across,
             &mut self.instances,
@@ -7248,6 +7281,97 @@ impl Running {
                 }
                 self.human_orders.extend(orders);
                 self.siege_scene = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Stage `--gate-march`: every gate in a wall run east to west, a
+    /// regiment south of each marching through it to the north, and the
+    /// camera low over the one looked at.
+    fn stage_gate_march(&mut self) {
+        const APART: i32 = 10;
+        const MARCH: f32 = 9.0;
+        let Some((step, looked)) = self.gate_scene else {
+            return;
+        };
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let unit = |name: &str| self.units.names.iter().position(|n| n == name);
+        let gates: Vec<BuildingId> = (0..self.buildings.len() as BuildingId)
+            .filter(|&b| self.buildings.is_gate(b))
+            .collect();
+        let focus = self.camera.focus.round();
+        let (x0, row) = (focus.x as i32 - APART * 3, focus.y as i32);
+        let gate_x = |k: usize| x0 + APART * k as i32;
+        let north = gc_fixed::Angle::of_vec(fx_vec(Vec2::NEG_Y));
+        match step {
+            0 => {
+                let (Some(palisade), Some(soldiers)) =
+                    (building("Palisade"), unit("Yari Ashigaru"))
+                else {
+                    self.gate_scene = None;
+                    return;
+                };
+                let mut spawn = |building, tile: (i32, i32), turn| {
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnStructure {
+                            building,
+                            tile: (tile.0 as i16, tile.1 as i16),
+                            turn,
+                        },
+                    });
+                };
+                let mut gaps = Vec::new();
+                for (k, &id) in gates.iter().enumerate() {
+                    // Turned a quarter, a gate runs east to west.
+                    spawn(id, (gate_x(k), row), 1);
+                    gaps.extend(gate_x(k)..gate_x(k) + 3);
+                }
+                for x in x0 - APART..gate_x(gates.len()) + APART {
+                    if !gaps.contains(&x) {
+                        spawn(palisade, (x, row), 0);
+                    }
+                }
+                for k in 0..gates.len() {
+                    let at = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5 + MARCH);
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnRegiment {
+                            unit: soldiers as UnitId,
+                            position: fx_vec(at),
+                            facing: north,
+                        },
+                    });
+                }
+                let k = looked.min(gates.len() - 1);
+                self.camera.focus = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5);
+                self.camera.distance = 16.0;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                self.gate_scene = Some((1, looked));
+            }
+            // A few seconds to settle, then march.
+            1 if self.world.regiments.iter().filter(|r| r.owner == 0).count() >= gates.len() => {
+                let orders = (self.world.regiments.iter())
+                    .filter(|r| r.owner == 0)
+                    .map(|r| {
+                        let p = from_fx_vec(r.position);
+                        PlayerCommand {
+                            player: 0,
+                            command: gc_sim::Command::MoveTo {
+                                regiment: r.handle,
+                                target: fx_vec(Vec2::new(p.x, p.y - 2.0 * MARCH)),
+                                facing: Some(north),
+                                files: 0,
+                                pace: gc_fixed::Fx::ZERO,
+                            },
+                        }
+                    });
+                self.human_orders.extend(orders);
+                self.gate_scene = None;
             }
             _ => {}
         }
@@ -7576,6 +7700,7 @@ impl Running {
         let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
+        self.gate_swings.update(structures.iter(), time);
         // The building being placed: its finished model, see-through in the
         // colour that says whether it fits.
         if let Some((view, [r, g, b, _])) = ghost
@@ -7628,24 +7753,38 @@ impl Running {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
-                let still = art.clips.pose(model, Action::Idle, time);
-                let height = art.looks.top(model);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let along = !self.buildings.is_bridge(s.building);
+                // A still model at `pos`, `lift` above the ground there.
+                let mut push = |model: usize, pos: Vec2, facing: Vec2, lift: f32| {
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(model), at),
+                        art.clips.pose(model, Action::Idle, time),
+                    ) else {
+                        return;
+                    };
+                    art.buckets[model * LODS + lod].push(SoldierInstance {
+                        pos: pos.to_array(),
+                        facing: facing.to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                };
+                let leaf = art.looks.leaf_shown(&s);
                 for (centre, facing, lift) in art.looks.spots(&s, model, along, &ground) {
                     let (centre, lift) = (centre + shake, lift + rise);
-                    let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
-                    if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                        art.buckets[model * LODS + lod].push(SoldierInstance {
-                            pos: centre.to_array(),
-                            facing: facing.to_array(),
-                            frames: pose.rows,
-                            flags: models::pose_flags(pose, highlight, false),
-                            color: [r, g, b, gc_render::TONE_NEUTRAL],
-                            lift,
-                            scale: 1.0,
-                            ..Default::default()
-                        });
+                    push(model, centre, facing, lift);
+                    let Some(leaf) = leaf else { continue };
+                    // On the gate's floor, wherever the ground is.
+                    let floor = ground(centre.x, centre.y) + lift;
+                    let swing = self.gate_swings.swing(s.handle);
+                    for (at, way) in buildings::leaf_spots(centre, facing, leaf.hinge, swing) {
+                        push(leaf.model, at, way, floor - ground(at.x, at.y));
                     }
                 }
             }
@@ -8580,9 +8719,15 @@ fn pose_between(
     alpha: f32,
 ) -> (Vec2, Vec2) {
     match prev {
+        // A block that faced about this tick (its facing flipped, where a
+        // turn moves it a few degrees) shows its new facing at once.
         Some((h, prev, prev_facing)) if h == handle => (
             prev.lerp(cur, alpha),
-            prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
+            if prev_facing.dot(cur_facing) < -0.5 {
+                cur_facing
+            } else {
+                prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing)
+            },
         ),
         _ => (cur, cur_facing),
     }

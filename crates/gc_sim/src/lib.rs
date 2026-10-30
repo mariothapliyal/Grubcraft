@@ -74,7 +74,7 @@ pub use morale::MoraleState;
 use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
-pub use regiments::{Order, RegimentHandle, RegimentView, Regiments};
+pub use regiments::{ABOUT_FACE_TICKS, Order, RegimentHandle, RegimentView, Regiments};
 pub use stances::Stances;
 use structures::Work;
 pub use structures::{
@@ -125,7 +125,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 62;
+pub const SIM_VERSION: u32 = 63;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {

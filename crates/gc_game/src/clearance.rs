@@ -37,23 +37,7 @@ const BAND: (f32, f32) = (0.1, 1.2);
 const FLOOR_BELOW: f32 = 0.6;
 
 /// Problems found and owned: what fails, what fixes it, and the passages.
-const KNOWN: &[(What, &str, &[&str])] = &[
-    // The gate models have their door leaves modelled shut across the
-    // doorway, so troops are drawn walking through closed doors (the
-    // game draws its own leaves, open or shut, beside the model).
-    (
-        What::Model,
-        "gate models: open the doorway",
-        &[
-            "Gate",
-            "Yagura Gatehouse",
-            "Maw Gate",
-            "Chitin Maw",
-            "Iron Gate",
-            "Gate of Debts",
-        ],
-    ),
-];
+const KNOWN: &[(What, &str, &[&str])] = &[];
 
 /// Which measure of a passage fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
