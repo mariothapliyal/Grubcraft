@@ -34,6 +34,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
 8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
 9. Holding until bloodied, first wave at the restart: regiments can't rout or waver until they are down to a breaking point below half strength (about 35 to 45%, lower for veterans, varied a little per regiment); shock works by killing men ([in brief](#holding-until-bloodied-in-brief)).
+10. The world remembers the new features, first wave at the restart: every bridge, curved wall, dam, jam and flood scar the restart adds stays on the land for the rest of a Conquest match, so later battles are fought on ground the earlier ones shaped ([in brief](#the-world-remembers-the-new-features)).
 
 ## What it covers
 
@@ -48,6 +49,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 - **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
 - **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
 - **Holding until bloodied** (Mario, 2026-10-30, for the restart): a morale redesign so regiments hold until they have lost most of their men. See [Holding until bloodied in brief](#holding-until-bloodied-in-brief).
+- **The world remembers the new features** (Mario, 2026-10-30): the "living campaign map" idea folded into idea 2, a world that remembers. See [The world remembers the new features](#the-world-remembers-the-new-features).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
@@ -168,6 +170,31 @@ Work is grouped into **eleven threads, one per area of code**. A thread keeps it
 **Cost tiers** are relative, for planning: **M** is two or three pull requests, mostly Sonnet. **L** is four to six pull requests, or fewer with an Opus lead on hard code. **XL** is seven or more pull requests, long-lived.
 
 **Models and effort** follow the project rules: Opus leads anything that changes the simulation, netcode or replays; Sonnet leads render, audio and tools. **3D modelling runs on Sonnet 5.5 alone** (Mario, 2026-10-23): models, rigs, moves, bakes and re-bakes, with no Opus supervisor and no Haiku builders. Low effort is never used. Extra-high or max needs Mario's go first; option C may be worth suggesting it.
+
+## The world remembers the new features
+
+Mario (2026-10-30): the "living campaign map" idea (regions that keep their history, battles that start on ground shaped by the past) is not a new system. It folds into idea 2, **a world that remembers**, which is already built. Every restart feature that changes the land must be remembered the same way.
+
+**What is remembered today (checked 2026-10-30).** A Conquest match is one long game on one map, so its "battles" are the fights within it, and the world's memory is the match's own state:
+- **In the simulation, for the whole match:** cleared and burnt woods, scrub and thicket (cover and growth, through the one ground-change path in [32](32-changing-land.md)); rubble of fallen buildings until it settles; bridge decks, stakes, barricades, walls, gates and their levels and damage; flood height, summer low water and frozen water; soaked ground. Every change mid-match feeds the ground's `changes` digest in the state hash, so every machine and every replay agrees on it.
+- **On screen only, rebuilt from the simulation's events:** felled, scorched, trodden and soaked ground and stumps ([35](35-ground-marks.md), on the Conquest map since #289), the fallen and spent arrows, trophies and torn banners. Trodden tracks heal over minutes; the rest stays.
+- **Not built yet:** save games and "Restage this battle" (the copying pieces are in `gc_sim::fork`), the Campaign ([19](19-campaign.md), design only, whose regions would carry this memory from battle to battle), and enemy buildings remembered as last seen in fog.
+
+**The requirement.** Each new feature below keeps its state in the simulation (the terrain or the building it belongs to), changes it only through the ground-change path or a building's own state, so it reaches the `changes` digest, and keeps it until something in the game undoes it, never on a timer the player can't see:
+
+| Feature | What the land remembers | Until |
+|---|---|---|
+| Drawn bridges | The drawn path, width, each span's level (plain, braced, reinforced), damage, burnt and fallen tiles | Repaired, rebuilt or upgraded |
+| Curved walls and palisades | The drawn path and each tile's level, damage and breaches | Repaired or rebuilt |
+| Dams (idea 24) | Built, open or shut spillway, damage; a **broken dam** stays broken, with its rubble in the river and the river running at its new level downstream and its old one upstream | Rebuilt |
+| Debris and jams (idea 25) | Each jam where it caught, its size, and the water backed up behind it; logs and wreckage stranded on banks and shallows | Cleared by workers, burnt, or carried on by the next high water |
+| Water-engine flood damage (idea 25) | Spans swept away, palisade and field works torn out, banks scoured (shore tiles lost to the river), mud and silt left on the floodplain (soft ground), drowned woods knocked flat | Rebuilt; silt dries and woods regrow only on the slow season clock |
+
+**Real use.** The point is the next fight on the same ground. A column that crossed a braced bridge in spring finds the same bridge, damaged or upgraded, in autumn. An army that broke a dam to flood the valley meets a river it can wade below the dam and a lake it can't cross above it, and both sides' routes, fords and pathfinding see the change straight away (the nav reopen hook). A jam left on a pier keeps the water high upstream until someone clears it, so it is both a hazard and a ford-closer either side can use. Computer players read the remembered state as they read the land today: they cross the bridges that stand, clear jams in their way, rebuild what they need and avoid ground the flood has made soft.
+
+**How each feature proves it.** Its pull requests add one remembered-state test (make the change, play on, check the state is still there and its digest is in the hash) and extend a golden replay so a later fight in the same match uses the changed ground. Save games, "Restage this battle" and the Campaign, when they are built, take this same state through `gc_sim::fork` rather than a second record, so nothing has to be remembered twice. The on-screen marks for the new features (broken dam rubble, stranded logs, flood silt) are added to [35](35-ground-marks.md)'s grid by whichever thread builds the feature.
+
+**Who and when.** No thread of its own: each feature's owner (T6 for bridges and walls, the dam and water-engine threads for ideas 24 and 25) builds its part in its own pull requests, at the restart. Haiku helpers update the docs, guides and quick reference (the guide line: "the land remembers what was done to it").
 
 ## Waves
 
