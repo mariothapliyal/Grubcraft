@@ -101,8 +101,8 @@ fn turns_on_the_spot_before_marching_backwards() {
     let r = view(&w, h);
     assert_eq!(r.position, FxVec2::from_ints(50, 80));
     assert!(r.facing.delta_to(SOUTH).abs() <= 2, "{:?}", r.facing);
-    // 180 degrees at 60/s is 3 s of turning (not counting the last 45 while
-    // walking), then 10 s of marching.
+    // 180 degrees at 60/s: 1.5 s of turning on the spot, then it wheels the
+    // last 90 as it marches 30 tiles at 3 tiles/s.
     let secs = ticks / TICKS_PER_SECOND;
     assert!((11..=14).contains(&secs), "took {secs} s");
 }
