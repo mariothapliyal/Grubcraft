@@ -32,6 +32,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 5. Smaller extras: lightning as a game event, burning buildings lighting the ground, Highland snow, and ambient polish (supply carts, forge sparks, more fauna).
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
+8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, and models generated from a timber kit ([in brief](#dynamic-bridges-in-brief)).
 
 ## What it covers
 
@@ -44,6 +45,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 - **Idea 22, clearing land to expand** (Mario, 2026-10-23): trees and scrub stand in the way of a growing base, with the full mechanics, animations and planning. See [Idea 22 in brief](#idea-22-in-brief).
 
 - **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
+- **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
 
@@ -58,6 +60,31 @@ Mario (2026-10-23): "Make it so that tree/scrub etc clearance is a thing for exp
 - **Settled (2026-10-24, T9's design note, [32](32-changing-land.md)):** scrub 3 s, woods 8 s, thicket 15 s a tile for one worker; woods pay 3 Grub, thicket 5. Shared rules built first; Mario chose all four faction twists as proposed, built next.
 - **On screen.** Workers chop with their own moves, trees shake and fall, logs pile up, and stumps and bare earth stay behind. The moves and models are Sonnet 3D work.
 - **How it works.** One runtime ground-change command updates a tile's cover and, for thicket, the walking grid through T1's reopen hook. It goes through the lockstep like every other order, and burning woods, flooded fords and siege rubble reuse it later.
+
+## Dynamic bridges in brief
+
+Mario (2026-10-30), for the restart: bridges must be **truly dynamic**. Wood only for now, but drawn almost freely, with gentle curves, a little variation in width, and models more sophisticated than today's straight line of one-tile timber tiles (#302, #318, and two lanes in #319). Built from **a kit of pieces put together by a generator**, the way the grown terrain is: nothing complex, but honest generation.
+
+**What the player does**
+- **Draw the path.** Drag from bank to bank; the bridge follows the drag as a smooth curve (a few control points, smoothed). Bends are gentle, about 15 degrees per two tiles at most, so it reads like a real timber bridge and never zig-zags. The preview shows the curved deck, its cost and any tile it can't use before you confirm.
+- **Pick a width.** Narrow, standard or wide (about 1.5, 2 and 3 tiles across), standard by default. The deck also varies a little on its own (a few percent wider at the piers, narrower mid-span), seeded so every player sees the same bridge.
+- **Everything else stays as now:** workers build it out from the bank, it costs Grub by the tile covered, and tiles burn and fall one by one, dropping whoever stands on them into the river.
+
+**How it works (simulation)**
+- The order carries the path (control points in fixed-point) and the width, so it goes through the lockstep like any order and replays stay exact.
+- The sim turns the curve into **deck tiles**: every tile the deck covers, joined edge to edge (no corner-only steps) so soldiers can always walk it. Each tile is still a bridge building slot, so building, fire, falling and the walking grid (`Nav::set_bridged_all`) work as today. This replaces #319's fixed second lane with width from the drawn path.
+- Rules: both ends on land, every tile over water or shore, a length cap, and the bend limit. Computer players keep drawing straight paths (a curve with no bend) and may bend round rocks later.
+- Bumps SIM_VERSION, FORMAT and PROTOCOL; goldens re-blessed.
+
+**How it looks (generation from a kit)**
+- **The kit** (Sonnet 5.5 alone, 3D, one timber material with the stronger bake): bank abutments (log cribs that meet the ground), trestle piers in three heights, stringer beams, plank modules in a few lengths and wear levels, rail posts, rails, rope, lantern posts, team cloth, and burnt and broken versions of the deck and rails.
+- **The generator** walks the curve: a pier every few metres, its height from the water depth under it (tall in the channel, short in shallows, none on the banks); planks laid across the direction of travel with small seeded changes in length, angle and colour; rails and rope following the curve along both outer edges; a slight rise over the middle of long spans; abutments sunk into the banks at the ground height. Seeded from the bridge's id, so it is the same on every machine.
+- Pieces appear in order as tiles finish, and burn or fall with the tile they sit on.
+
+**Who and when**
+- Owner: T6 (fortifications), Opus lead for the sim, the order and the drawing tool. Sonnet 5.5 alone for the kit models; a Sonnet helper for the generator and its drawing code; Haiku for docs, guides and the quick reference. Size M to L, three PRs: (1) curved path and width in the sim, with the drawing tool and preview; (2) the kit and the generator; (3) polish: wear, broken pieces, lanterns lit at night, computer players bending round rocks.
+- Starts in the first wave after the restart, once #319 is settled. Runs alongside the dedicated pathfinding thread: deck tiles are ordinary walkable tiles, so it does not touch route search. Later it fits ideas 24 and 25: dams reuse the kit and piers, and floating debris can jam against the piers.
+- Other materials (Concord bone, Choir glass, Brood chitin) are kit variants for later.
 
 ## How the work is split
 
