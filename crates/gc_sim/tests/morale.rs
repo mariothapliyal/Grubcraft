@@ -174,9 +174,11 @@ fn routing_twice_shatters_a_regiment() {
     }
 }
 
+/// Hit from behind, a regiment's nerve goes faster than hit in front (it
+/// then breaks the moment it is down to its breaking point).
 #[test]
-fn rear_attacks_break_a_regiment_faster() {
-    let ticks_to_rout = |from_behind: bool| {
+fn rear_attacks_spend_nerve_faster() {
+    let nerve_after = |from_behind: bool| {
         let mut w = world();
         // Skitterlings face north; spearmen hit them from the front (north)
         // or from behind (south).
@@ -186,11 +188,14 @@ fn rear_attacks_break_a_regiment_faster() {
         } else {
             spawn(&mut w, 0, SPEARS, 100, 97, SOUTH);
         }
-        until(&mut w, skitters, MoraleState::Routing, 20 * 200).expect("never broke")
+        for _ in 0..4 * 20 {
+            w.tick(&[]);
+        }
+        w.regiments.get(skitters).unwrap().morale_points
     };
-    let front = ticks_to_rout(false);
-    let rear = ticks_to_rout(true);
-    assert!(rear < front, "rear {rear} ticks, front {front} ticks");
+    let front = nerve_after(false);
+    let rear = nerve_after(true);
+    assert!(rear < front, "rear {rear} points, front {front} points");
 }
 
 #[test]
@@ -235,3 +240,4 @@ fn routers_stay_on_the_map() {
         }
     }
 }
+

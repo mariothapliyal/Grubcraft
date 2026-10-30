@@ -165,6 +165,9 @@ pub struct Card {
     pub max_models: u16,
     /// Morale points, 0 to 100.
     pub morale: u8,
+    /// Its breaking point, percent of full strength, marked on the health
+    /// bar; 0 or 100 for none.
+    pub break_at: u8,
     pub state: CardState,
     pub engaged: bool,
     pub selected: bool,
@@ -213,6 +216,10 @@ pub struct Selection<'a> {
     pub max_models: u32,
     /// Morale points, 0 to 100 (the mean of a selection).
     pub morale: u8,
+    /// One regiment's breaking point, percent of full strength, marked on
+    /// the health bar; 0 for none (several regiments, or one that can
+    /// break at any strength).
+    pub break_at: u8,
     pub state: CardState,
     /// The formation they stand in; empty when it varies or is not known.
     pub formation: &'a str,
@@ -558,6 +565,18 @@ pub(crate) fn rgb(c: [u8; 3]) -> Color {
 pub(crate) fn ink_meter(draw: &mut DrawList, r: Rect, frac: f32, color: Color) {
     draw.rect(r, theme::INK);
     draw.meter(r.inset(2), frac, color, theme::LINEN_DK);
+}
+
+/// A tick on health bar `r` at the breaking point, `percent` of full
+/// strength (docs/05, "Morale"): the regiment can't rout above it. Nothing
+/// for 0 or 100.
+fn break_mark(draw: &mut DrawList, r: Rect, percent: u8) {
+    if percent == 0 || percent >= 100 {
+        return;
+    }
+    let inner = r.inset(2);
+    let x = inner.x + inner.w * i32::from(percent) / 100;
+    draw.rect(Rect::new(x - 1, r.y - 2, 2, r.h + 4), theme::INK);
 }
 
 impl Hud {
@@ -1409,6 +1428,9 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
         ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
+        if label == "Health" {
+            break_mark(draw, Rect::new(bar_x, y, bar_w, 12), s.break_at);
+        }
         let pct = format!("{}%", (frac * 100.0).round() as i32);
         draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
         y += 22;
@@ -1686,6 +1708,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         health,
         health_color(health),
     );
+    break_mark(draw, Rect::new(inner.x, y, inner.w, 8), c.break_at);
     y += 10;
     let morale_color = match c.state {
         CardState::Steady => theme::WOAD,
@@ -2719,6 +2742,7 @@ mod tests {
             models: 40,
             max_models: 60,
             morale: 80,
+            break_at: 40,
             state: CardState::Steady,
             formation: "Line",
             ground: "In mud: slow, no charges",

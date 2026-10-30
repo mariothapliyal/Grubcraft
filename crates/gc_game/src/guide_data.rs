@@ -652,7 +652,11 @@ fn stat_facts(facts: &mut Facts, s: &Stats, hero: bool) {
     if s.never_routs || hero {
         fact(facts, "Morale", "Never routs");
     } else {
-        fact(facts, "Morale", s.morale.to_string());
+        let holds = match gc_sim::morale::grade_break(s.morale) {
+            100 => String::new(),
+            at => format!(", holds until about {at}% strength"),
+        };
+        fact(facts, "Morale", format!("{}{holds}", s.morale));
     }
     let mut traits = Vec::new();
     if s.mass != Mass::Medium {

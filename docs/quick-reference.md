@@ -115,6 +115,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
+- **Routing:** a regiment can't waver or rout until it is down to its breaking point: about 45% strength for levies (morale under 55), 40% for line troops, 35% for elite (morale 70+), give or take 5, and 5 lower with its general near. Workers can break at any strength. Charges and flank attacks break regiments by killing men faster. The tick on a regiment card's health bar marks it.
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
