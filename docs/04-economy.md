@@ -39,7 +39,7 @@ All four economies were tuned so that a **fully developed seep produces about 20
 | Faction | To saturate one seep | Ceiling | Main risk |
 |---|---|---|---|
 | Ember Clans | 5 Hands (250 Grub) + optional Granary | about 240/min | Hands killed in transit |
-| Brood | 5 Gnawers (250 Grub, 5 larvae) + vein link | 200/min | Pustule killed, vein cut |
+| Brood | 5 Gnawers (250 Grub, 5 larvae) + vein link | about 230/min | Pustule killed, vein cut |
 | Choir | 1 Resonator (175 Grub) per seep | about 109/min, up to about 140/min in a large chord | One pylon breaks the chord |
 | Concord | n/a (trade-based) | ~200/min per 3-caravan route of average length | Caravans raided |
 
@@ -63,6 +63,8 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 | Workers | 5 Hands | 4 Gnawers + 3 larvae | 3 Tuners | 4 Clerks + 1 Caravan |
 | Grub / Marrow | 300 / 0 | 300 / 0 | 300 / 0 | 300 / 0 |
 | Supply cap | 12 | 12 | 12 | 12 |
+
+*Brood swarm (2026-10-31, faction rebalance PR 3): Gnawers fill a load in 87% of the time (`gather_percent: 115`), so a seep of five brings in about 230 Grub a minute, and Brood regiments are cheaper and weaker one by one (docs/17). In 96 headless AI-vs-AI Conquest games for each Brood pair, on the holding-until-bloodied morale rules, the Brood has about 2.3 times the Clans' soldiers by minute 10 (about 200 to 87; it was 1.5 times) and trades level (0.97 to 0.99 worth killed per worth lost). Its income by minute 10 is about 2,080 Grub, where the Clans take about 3,350, because it spends larvae on regiments rather than Gnawers. Its first army (450 worth) is ready at about 6:15 (was 5:25), well after a Clans player's first two regiments.*
 
 Every start position has 2 Grub seeps and 1 Marrow vein within its natural base area, a "natural expansion" with 2 more seeps nearby, and a Grubfolk hamlet within reach.
 
