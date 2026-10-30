@@ -2730,15 +2730,21 @@ impl Running {
     /// Expand a group order for the current selection into
     /// `self.group_commands` (one move per regiment), arranged in the
     /// chosen army shape.
-    fn plan_order(&mut self, order: GroupOrder) {
+    fn plan_order(&mut self, mut order: GroupOrder) {
         self.fill_group();
         self.group_commands.clear();
-        gc_sim::arrange::arranged_move(
-            &mut self.group,
-            order,
-            self.army_shapes.arrangement(),
-            &mut self.group_commands,
-        );
+        // Alt on a dragged line draws it deep: the drag is the front, every
+        // regiment keeps its frontage and those that don't fit stand behind
+        // (one regiment alone just goes there, as it stands).
+        let how = if self.input.alt && order.width.is_some() {
+            if self.group.len() < 2 {
+                order.width = None;
+            }
+            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+        } else {
+            self.army_shapes.arrangement()
+        };
+        gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -3643,6 +3649,7 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            self.puppets.faced_about(r.handle, r.abouts);
             // Manning a wall, the soldiers stand on its tiles.
             // At the head of a ladder they stand in their block, lifted to
             // the wall top, with ladders against the wall below them.
@@ -8577,9 +8584,15 @@ fn pose_between(
     alpha: f32,
 ) -> (Vec2, Vec2) {
     match prev {
+        // A block that faced about this tick (its facing flipped, where a
+        // turn moves it a few degrees) shows its new facing at once.
         Some((h, prev, prev_facing)) if h == handle => (
             prev.lerp(cur, alpha),
-            prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
+            if prev_facing.dot(cur_facing) < -0.5 {
+                cur_facing
+            } else {
+                prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing)
+            },
         ),
         _ => (cur, cur_facing),
     }
