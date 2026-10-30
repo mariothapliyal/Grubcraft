@@ -33,7 +33,8 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
 8. Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
-9. The world remembers the new features, first wave at the restart: every bridge, curved wall, dam, jam and flood scar the restart adds stays on the land for the rest of a Conquest match, so later battles are fought on ground the earlier ones shaped ([in brief](#the-world-remembers-the-new-features)).
+9. Holding until bloodied, first wave at the restart: regiments can't rout or waver until they are down to a breaking point below half strength (about 35 to 45%, lower for veterans, varied a little per regiment); shock works by killing men ([in brief](#holding-until-bloodied-in-brief)).
+10. The world remembers the new features, first wave at the restart: every bridge, curved wall, dam, jam and flood scar the restart adds stays on the land for the rest of a Conquest match, so later battles are fought on ground the earlier ones shaped ([in brief](#the-world-remembers-the-new-features)).
 
 ## What it covers
 
@@ -47,6 +48,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 
 - **Idea 23, living waterways** (Mario, 2026-10-25): rivers that vary with the seasons, currents and flash floods. Planned in [38](38-living-waterways.md), to be built later.
 - **Dynamic bridges** (Mario, 2026-10-30, for the restart): drawn timber bridges with gentle curves and a choice of width, generated from a kit of pieces. See [Dynamic bridges in brief](#dynamic-bridges-in-brief).
+- **Holding until bloodied** (Mario, 2026-10-30, for the restart): a morale redesign so regiments hold until they have lost most of their men. See [Holding until bloodied in brief](#holding-until-bloodied-in-brief).
 - **The world remembers the new features** (Mario, 2026-10-30): the "living campaign map" idea folded into idea 2, a world that remembers. See [The world remembers the new features](#the-world-remembers-the-new-features).
 
 Not in it: faction depth stages 7 to 9 (Tithe, Brood metamorphosis, heroes). They fit in any wave from 2 on without clashing with this plan if Mario wants them.
@@ -106,6 +108,46 @@ Once the dynamic water engine (idea 25: seasonal flow and volume, minor to catas
 - **Readable and fair.** Strain and jams show on the bridge (creaking, logs piling up, water foaming at the piers), and computer players clear jams, repair their own bridges and use dumped debris against yours.
 - All of it runs in the sim from seeded, fixed-point state, so it stays deterministic in multiplayer and replays.
 - Other materials (Concord bone, Choir glass, Brood chitin) are kit variants for later.
+
+## Holding until bloodied in brief
+
+Mario (2026-10-30), for the restart: routing is far too easy. Regiments waver and break at around 80% strength, and that is absurd. A regiment should hold, even after heavy shock like a cavalry charge, until it has lost a lot of men: it breaks somewhere below half strength (30 to 50%), later for seasoned and veteran troops, with some variation. Shock should work mostly by **killing men**: a charge cuts a regiment down fast, so it reaches its breaking point sooner, but it does not break a regiment that still has most of its men.
+
+**Why it happens today (`gc_sim/src/morale.rs`)**
+- Morale is a pool of points (the unit's stat, 50 to 80) that routs at zero, whatever the strength. Most of the drain is not casualties but steady pressure: 4.2 points a second hit in the rear, 2.1 hit in the flank, 2.1 pinned, 1.4 or 2.8 outnumbered two or three to one, plus one-off knocks (a friend routing nearby 8, an ambush 20, the general falling 10, a flash flood 25). Casualties cost only 0.9 points per percent of the regiment lost.
+- So a few seconds of flank or rear pressure, or a nearby rout, empties a regiment that has barely lost anyone, and it wavers below 25 points no matter how many men it has.
+- Measured on 2026-10-30 (Ember stats, flat ground, no generals, `gc_sim` probe): Yari Ashigaru in an even frontal fight wavered at 68% and broke at 46%; against two Yari regiments they wavered at **82%** and broke at **64%**; held in front with Mounted Samurai in the rear they wavered at 79% and broke at 46% after only 9 s; Katana Samurai (morale 80) caught front and rear wavered at **88%** and broke at **69%**. In real battles the knocks stack (nearby routs, the general falling, ambushes), which is how regiments end up breaking near 80%.
+
+**The new rule: nerve and a breaking point**
+- Each regiment keeps its morale points, renamed **nerve** in the docs, drained and restored by the same things as today. What changes is what nerve can do: **a regiment cannot rout until it is down to its breaking point**, a share of its full strength. Above it, nerve can run out, but the regiment holds (steady, maybe grim), and it routs the moment it reaches its breaking point with no nerve left. A regiment that still has nerve at its breaking point fights on below it until its nerve runs out. So pressure decides *how soon after* the breaking point a regiment goes, and casualties decide *when it can*.
+- **Breaking points** by grade, from the unit's morale stat (first pass, tuned with the faction table):
+  - Levy and light troops (morale under 55, workers aside): 45%.
+  - Line troops (55 to 69): 40%.
+  - Elite troops (70 and up, such as Katana and Mounted Samurai): 35%.
+  - **Veterancy** (docs/05, three ranks from kills, not built yet and built with this): each rank takes 5 points off, so a rank 3 elite regiment can only break at 20%. A first cut counts kills per regiment in the sim; ranks show as chevrons on the banner and card.
+  - **Variation:** each regiment rolls up to 5 points either way when it is raised, seeded from the match seed and its handle, so the same regiment breaks at the same point on every machine and in replays. Its general near it takes 5 points off while he lives.
+  - A hard cap: **no regiment ever routs above 50% strength.** Concord undead still never rout, and Steadfast and summoned regiments still hold at the edge.
+- **Wavering** follows the breaking point too: a regiment wavers (15% less damage, the flickering banner) only when its nerve is low **and** it is within 10 points of its breaking point. A regiment at 80% is never seen wavering.
+- **Below the breaking point,** casualties cost twice the nerve they do now, so a badly cut-down regiment does not fight to the last man unless it is winning.
+- **Rallying, shattering and rout chains** work as today. A rallied regiment is by definition under its breaking point, so it breaks again when its rallied nerve runs out. A friend routing nearby still costs nerve, but can only start a chain among regiments already down to their breaking points, so one rout no longer topples a healthy line.
+- **Shock works by killing men.** Charges keep their weight and ploughing (docs/05), flank and rear blows still land 1.4 and 1.8 times as hard, and pinned regiments still fall into disorder and take more damage, so a cavalry charge in the rear still wrecks a regiment fast. The flank, rear, pinned and outnumbered drains stay, so a hard-pressed regiment arrives at its breaking point with no nerve left and goes at once, while a fresh one fighting a fair fight can hold well below it.
+
+**Real use (what changes in play)**
+- **Cavalry charge on spears, rear:** the spears lose men quickly to the 1.8 rear blows and the plough, and break when they reach about 40% (35 to 45 with the roll), not at 80% after a few seconds of shock. A charge that only grazes them leaves them fighting.
+- **Line against line:** both lines grind down to around 30 to 40% before one breaks. Fights last longer and cost more men, so the battle pace (`BATTLE_PACE_PERCENT` 70, docs/05) may need raising back to keep fights near 105 to 140 s; measured, not guessed.
+- **Flanking still wins:** a flanked regiment loses men faster and breaks sooner after its breaking point, and the regiments beside it are no longer knocked over by its rout unless they are bloodied too. Envelopment becomes about killing, which is what Mario asked for.
+- **Ambushes, floods, a fallen general:** they still cost nerve and men, but they only break regiments that are already down to their breaking points. The ambush's main bite becomes its volley and charge damage.
+- **AI:** the computer players read wavering and morale points today (`gc_ai` captain roles, helpers and the battle estimator). They must learn that strength is now the main signal: pull back a regiment near its breaking point, not one at 80%, and the estimator must stop expecting early routs. Their AI-only battles are rerun before merging.
+- **Readable:** the regiment card shows strength with a small tick at the breaking point, and the banner flickers only when it is close; the guide and quick reference explain the rule in one line.
+
+**Checks (the project's real-play rules)**
+- A new headless stress test in `gc_sim/tests/morale.rs` with real roster stats prints the strength at which each side breaks in the same cases as above, plus a nearby rout and a lone cavalry charge, and fails if any regiment routs above 50% or a fresh line wavers above 60%.
+- The faction table (both seed sets), battle length, the golden replays and the AI-only Conquest games are rerun; `SIM_VERSION` bumped and goldens re-blessed.
+- The batched playtest records a cavalry charge into a line and an even line fight, before and after, and reports the rout points as numbers.
+
+**Who and when**
+- First wave at the restart. Owner: the soldier combat area (T4 owns `morale.rs`, `combat.rs` and `regiments.rs`), Opus lead at high effort since it moves balance; Haiku for the faction tables, goldens, guides and the quick reference. Two PRs: (1) the breaking point, wavering, variation, the AI and the stress test; (2) veterancy ranks with chevrons. `/simplify` and `/code-review` on Opus before each merge.
+- It touches combat balance, so it merges before or after the dynamic bridges and pathfinding work, never alongside a faction table someone else is running.
 
 ## How the work is split
 
