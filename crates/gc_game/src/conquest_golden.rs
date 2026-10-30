@@ -349,7 +349,7 @@ impl Match {
     pub fn new() -> Match {
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(0, 0);
+        let map = conquest::make_map(0, 0, 0);
         let units = conquest::unit_stats(&data);
         let nav = map.sim_nav_costs();
         let setup = MatchSetup {
