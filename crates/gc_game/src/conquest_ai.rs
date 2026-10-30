@@ -1040,13 +1040,14 @@ mod tests {
         // Traps come last, once Grub piles up: a quick win may come first,
         // so one of the two games is enough for them.
         let mut traps = 0;
-        // Whether a General walls depends on how its game goes (about one
-        // Clans mirror in five), so the first seed that walls counts: a
-        // known one first, then the rest of 1 to 12.
-        for (f, known) in [(Faction::EmberClans, 2), (Faction::CarrionConcord, 8)] {
+        // Whether a General walls depends on how its game goes (a Clans
+        // General seldom does: with frontage, one mirror in 25 of seeds 1
+        // to 25), so the first seed that walls counts: a known one first,
+        // then the rest of 1 to 30.
+        for (f, known) in [(Faction::EmberClans, 25), (Faction::CarrionConcord, 8)] {
             let mut last = String::new();
             let walled = core::iter::once(known)
-                .chain((1..=12).filter(|&s| s != known))
+                .chain((1..=30).filter(|&s| s != known))
                 .find_map(|seed| {
                     let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
                     let most = (played.sides.iter()).fold(Works::default(), |m, s| m.most(s.works));
@@ -1057,7 +1058,7 @@ mod tests {
                     walls.then_some(most)
                 });
             let most = walled
-                .unwrap_or_else(|| panic!("{f:?}: no General walled in seeds 1 to 12: {last}"));
+                .unwrap_or_else(|| panic!("{f:?}: no General walled in seeds 1 to 30: {last}"));
             traps += most.traps;
         }
         assert!(traps >= 1, "no traps laid in either game");

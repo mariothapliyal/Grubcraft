@@ -917,6 +917,8 @@ impl Match {
             .filter(|r| r.owner == p && r.unit == fighter && !r.engaged)
             .flat_map(|r| walls.iter().map(move |t| (r, t)))
             .filter(|(r, t)| self.world.climb_check(r.handle, t.handle).is_ok())
+            // Close by: one sent from across the field is caught on the way.
+            .filter(|(r, t)| (r.position - t.centre()).length() < Fx::from_int(24))
             .min_by_key(|(r, t)| (r.position - t.centre()).length_sq_raw())
             .map(|(r, t)| (r.handle, t.handle));
         if let Some((regiment, structure)) = pick {
