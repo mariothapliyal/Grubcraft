@@ -116,6 +116,8 @@ struct Front {
     raise: Vec<(i32, i32)>,
     /// The whole line, end to end.
     line: Line,
+    /// Whether its gate was ordered (not given up for wall).
+    gated: bool,
 }
 
 /// The ring carried on from the front wall round home.
@@ -127,6 +129,10 @@ struct Ring {
     pieces: Vec<Line>,
     /// When it last laid out its pieces again to mend a breach.
     mended: u32,
+    /// The front gate's ground, kept clear so the town has a way out.
+    gap: Option<Line>,
+    /// Whether it has ever closed (so a gap in it now is a breach).
+    closed: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -214,7 +220,11 @@ impl Steward {
         let late = s.now >= wall_after(s.caution);
         // Most pressing first: a breach in its ring, a way to the enemy,
         // then field works, then the wall and its ring, then traps.
-        let breached = self.engineer.ring.is_some() && !s.world.walled_town(s.party);
+        let breached = self
+            .engineer
+            .ring
+            .as_ref()
+            .is_some_and(|r| r.closed && !s.world.walled_town(s.party));
         let order = (full && breached)
             .then(|| self.ring(s, look, home, spare))
             .flatten()
@@ -310,7 +320,9 @@ impl Steward {
                 return None;
             }
             let w = self.builder_at(s, look, tile)?;
-            self.engineer.front.as_mut()?.gate = None;
+            let front = self.engineer.front.as_mut()?;
+            front.gate = None;
+            front.gated = true;
             let order = Command::Build {
                 regiment: w,
                 building: gate.id,
@@ -387,7 +399,9 @@ impl Steward {
             return None;
         }
         if self.engineer.ring.is_none() {
-            if look.tier < 2 {
+            // A faction with gates rings its home only through a gate.
+            let gated = front.gated || s.kit.gate().is_none();
+            if look.tier < 2 || !gated {
                 return None;
             }
             // Laid out below, as a ring not yet walled.
@@ -395,14 +409,15 @@ impl Steward {
                 corners: ring_corners(front.line, home),
                 pieces: Vec::new(),
                 mended: 0,
+                gap: front.gated.then_some(front.middle),
+                closed: false,
             });
         }
+        let walled = s.world.walled_town(s.party);
         let ring = self.engineer.ring.as_mut()?;
-        if ring.pieces.is_empty()
-            && !s.world.walled_town(s.party)
-            && s.now >= ring.mended + LINE_RETRY
-        {
-            ring.pieces = ring_pieces(ring.corners);
+        ring.closed |= walled;
+        if ring.pieces.is_empty() && !walled && s.now >= ring.mended + LINE_RETRY {
+            ring.pieces = ring_pieces(ring.corners, ring.gap);
             ring.mended = s.now;
         }
         if spare < u32::from(wall.stats.cost_grub) * PIECE as u32 {
@@ -789,6 +804,7 @@ fn plan_front(
                 pieces.sort_by_key(|&(a, _)| (a.0 - mx).abs() + (a.1 - my).abs());
                 return Some(Front {
                     line: across(mid, up, WALL_HALF),
+                    gated: false,
                     pieces,
                     gate: gate_at,
                     crowded: None,
@@ -818,16 +834,29 @@ fn ring_corners(((x0, y0), (x1, y1)): Line, home: Vec2) -> Line {
 }
 
 /// The ring's pieces: each side of the rectangle `corners` in pieces of
-/// [`PIECE`] tiles, side by side.
-fn ring_pieces(((x0, y0), (x1, y1)): Line) -> Vec<Line> {
+/// up to [`PIECE`] tiles, side by side, leaving the tiles of `gap` (its
+/// front gate's) clear.
+fn ring_pieces(((x0, y0), (x1, y1)): Line, gap: Option<Line>) -> Vec<Line> {
+    let in_gap = |(x, y): (i32, i32)| {
+        gap.is_some_and(|((ax, ay), (bx, by))| {
+            (ax.min(bx)..=ax.max(bx)).contains(&x) && (ay.min(by)..=ay.max(by)).contains(&y)
+        })
+    };
     let mut pieces = Vec::new();
     let mut side = |from: (i32, i32), step: (i32, i32), len: i32| {
-        let mut d = 0;
-        while d < len {
-            let end = (d + PIECE - 1).min(len - 1);
-            let at = |k: i32| (from.0 + step.0 * k, from.1 + step.1 * k);
-            pieces.push((at(d), at(end)));
-            d = end + 1;
+        let at = |k: i32| (from.0 + step.0 * k, from.1 + step.1 * k);
+        let mut run: Option<i32> = None;
+        for k in 0..=len {
+            let open = k < len && !in_gap(at(k));
+            if let Some(start) = run
+                && (!open || k - start == PIECE)
+            {
+                pieces.push((at(start), at(k - 1)));
+                run = None;
+            }
+            if open && run.is_none() {
+                run = Some(k);
+            }
         }
     };
     side((x0, y0), (1, 0), x1 - x0 + 1);

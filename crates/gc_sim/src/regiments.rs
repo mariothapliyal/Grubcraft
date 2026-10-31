@@ -1136,7 +1136,16 @@ impl Regiments {
     /// to `full`.
     pub(crate) fn mend(&mut self, i: usize, amount: u16, full: u16) {
         let models = usize::from(self.models[i]);
-        for h in &mut self.hp[i * MAX_MODELS as usize..][..models] {
+        let general = self.general[i].map(usize::from);
+        let hp = &mut self.hp[i * MAX_MODELS as usize..][..models];
+        for (k, h) in hp.iter_mut().enumerate() {
+            // A general is tougher than his men (see `generals`).
+            let full = if general == Some(k) {
+                (u32::from(full) * crate::generals::GENERAL_HP_PERCENT / 100)
+                    .min(u32::from(u16::MAX)) as u16
+            } else {
+                full
+            };
             if *h < full {
                 *h = h.saturating_add(amount).min(full);
             }

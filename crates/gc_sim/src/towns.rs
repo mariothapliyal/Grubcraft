@@ -227,10 +227,12 @@ impl Structures {
                 if bit(inside, n) || bit(wall, n) {
                     continue;
                 }
-                // Ground nobody walks on (as a wall can't be laid on it).
+                // Ground nobody walks on (as a wall can't be laid on it),
+                // but a bridge's deck, which anyone crosses.
                 let (tx, ty) = (x0 + nx, y0 + ny);
                 let at = FxVec2::new(Fx::from_int(tx), Fx::from_int(ty));
-                if nav.deep_ground(tx, ty) && !terrain.on_deck(at) || !nav.walkable_ground(tx, ty) {
+                let rough = nav.deep_ground(tx, ty) || !nav.walkable_ground(tx, ty);
+                if rough && !terrain.on_deck(at) {
                     continue;
                 }
                 set(inside, n);
