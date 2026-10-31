@@ -2720,6 +2720,23 @@ mod tests {
         assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
+    /// Whether `block` holds a barrier inside a loop (`in_loop` once inside one).
+    fn barrier_in_loop(block: &naga::Block, in_loop: bool) -> bool {
+        use naga::Statement as S;
+        block.iter().any(|s| match s {
+            S::ControlBarrier(_) | S::MemoryBarrier(_) => in_loop,
+            S::Block(b) => barrier_in_loop(b, in_loop),
+            S::If { accept, reject, .. } => {
+                barrier_in_loop(accept, in_loop) || barrier_in_loop(reject, in_loop)
+            }
+            S::Switch { cases, .. } => cases.iter().any(|c| barrier_in_loop(&c.body, in_loop)),
+            S::Loop {
+                body, continuing, ..
+            } => barrier_in_loop(body, true) || barrier_in_loop(continuing, true),
+            _ => false,
+        })
+    }
+
     #[test]
     fn shaders_validate() {
         for src in [
@@ -2752,6 +2769,18 @@ mod tests {
                     !holds_struct(c.ty),
                     "constant {:?} holds a struct: make it a function (Metal cannot build it)",
                     c.name
+                );
+            }
+            // Windows' software GPU (WARP) miscompiles a barrier inside a
+            // loop: it writes to a stray address, crashing the game or
+            // corrupting its memory now and then (the Windows smoke run,
+            // October 2026). Keep barriers in straight-line code.
+            let functions = module.functions.iter().map(|(_, f)| f);
+            for f in functions.chain(module.entry_points.iter().map(|e| &e.function)) {
+                assert!(
+                    !barrier_in_loop(&f.body, false),
+                    "{:?} has a barrier inside a loop (WARP miscompiles it)",
+                    f.name
                 );
             }
             // Macs run the shaders as Metal: they must translate to it too,
