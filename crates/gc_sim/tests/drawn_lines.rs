@@ -613,3 +613,83 @@ fn a_bridge_is_raised_to_braced_then_reinforced_piers_and_stays_open() {
     let top = s.iter().find(|v| v.drawing.is_some()).unwrap().handle;
     assert_eq!(s.pier_level(top.index as usize), 3);
 }
+
+#[test]
+fn a_wall_with_a_sharp_corner_seals_the_corner() {
+    let mut w = world();
+    // From the north edge south to (60, 40), a sharp corner, then east to
+    // the east edge: it shuts off the north-east of the map.
+    let corner = c((60, 40));
+    let path = DrawnPath::new(&[c((60, 0)), corner, c((79, 40))], |k| k == 1).unwrap();
+    assert!(path.has_corners());
+    let wall = Line::drawn(path, 1);
+    let plan = tiles(&w.line_plan(0, WALL, &wall).unwrap());
+    assert!(plan.contains(&(60, 40)), "the corner tile is walled");
+    // Every tile touches the next, corners included: no gap at the turn.
+    for &(x, y) in &plan {
+        let touches = plan
+            .iter()
+            .filter(|&&(a, b)| (a, b) != (x, y) && (a - x).abs() <= 1 && (b - y).abs() <= 1)
+            .count();
+        assert!(touches >= 1, "{x},{y} stands alone");
+    }
+    let workers: Vec<_> = (0..4)
+        .map(|k| spawn(&mut w, 0, WORKER, 50, 10 + 10 * k))
+        .collect();
+    assert!(order(
+        &mut w,
+        0,
+        Command::DrawLine {
+            regiment: Some(workers[0]),
+            building: WALL,
+            path,
+            width: 1,
+        }
+    ));
+    let first = (w.structures().unwrap().iter())
+        .find(|v| v.building == WALL)
+        .unwrap();
+    for &k in &workers[1..] {
+        order(
+            &mut w,
+            0,
+            Command::Construct {
+                regiment: k,
+                structure: first.handle,
+            },
+        );
+    }
+    run(&mut w, 300);
+    assert!(
+        (w.structures().unwrap().iter())
+            .filter(|v| v.building == WALL)
+            .all(|v| v.finished()),
+        "walled"
+    );
+    // An enemy regiment shut in the corner, sent out past it, can't get
+    // through: not along either side and not across the corner.
+    let enemy = spawn(&mut w, 1, FOOT, 70, 20);
+    assert!(order(
+        &mut w,
+        1,
+        Command::MoveTo {
+            regiment: enemy,
+            target: FxVec2::from_ints(50, 60),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    let mut out = false;
+    let start = position(&w, enemy);
+    let mut moved = Fx::ZERO;
+    for _ in 0..90 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        let p = position(&w, enemy);
+        out |= p.x < Fx::from_int(59) || p.y > Fx::from_int(42);
+        moved = moved.max((p - start).length());
+    }
+    assert!(!out, "an enemy got past the corner");
+    // It did try: it went some way from where it stood.
+    assert!(moved > Fx::from_int(3), "the enemy never moved ({moved:?})");
+}

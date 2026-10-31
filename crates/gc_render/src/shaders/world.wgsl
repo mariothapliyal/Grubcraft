@@ -2066,35 +2066,31 @@ fn cs_pose(
     @builtin(local_invocation_index) bone: u32,
 ) {
     let k = group.y * POSE_ROW + group.x;
-    if k >= jobs.count.w {
-        return;
-    }
+    // The last row of workgroups runs past the soldiers.
+    let live = k < jobs.count.w;
     let job = jobs.job[find_job(k, true)];
     let nth = k - job.pose.w;
     let soldier = job.run.x + nth;
     let bones = job.pose.y;
     let slot = job.pose.x + nth * bones + bone;
     let i = soldier * INSTANCE_WORDS;
-    let fit = job.pose.z;
+    let fit = select(0u, job.pose.z, live);
+    let fitted = fit != 0u;
 
-    // No thread may leave before the barriers below on its own: Direct3D's
-    // shader compiler rejects a barrier after a return that depends on the
-    // thread (the bone), and one bad pipeline blacks out every frame.
-    // `k` and `fit` are the same for the whole workgroup. FXC cannot see
-    // that `rigged` is too, so its barrier stays unconditional.
-    if fit == 0u {
-        if bone < bones {
-            pose_unfitted(i, slot, bone);
-        }
-        return;
-    }
-
+    // Nothing may return before the last barrier below, not even a whole
+    // workgroup: Windows' software GPU (WARP) crashes compiling a barrier
+    // after a return (see `shaders_validate`), and Direct3D's shader
+    // compiler rejects one after a return that depends on the thread (the
+    // bone). So a workgroup past the soldiers, or posing an unfitted model,
+    // runs through the barriers with nothing to do and leaves after them.
+    // FXC cannot see that `rigged` is the same for the whole workgroup, so
+    // its barrier stays unconditional.
     // The fit: the skeleton's joints, how deep they nest and where its poses
     // start, then the model's fixes.
     let head = anim[fit];
     let joints_at = head.x;
     let joints = head.y;
-    let deepest = head.z;
+    let deepest = select(0u, head.z, fitted);
     let poses = Poses(head.w, joints);
     let joint = anim[joints_at + min(bone, joints - 1u)];
     let parent = joint.x;
@@ -2102,7 +2098,7 @@ fn cs_pose(
     let masks = joint.z;
 
     var local = mat4x4<f32>();
-    if bone < joints {
+    if fitted && bone < joints {
         let base = instance_layer(i, 0u);
         var p = layer_pose(poses, base, bone);
         for (var l = 1u; l <= POSE_LAYERS; l++) {
@@ -2125,7 +2121,7 @@ fn cs_pose(
     }
     // Parents before children: one depth at a time.
     for (var d = 0u; d <= deepest; d++) {
-        if bone < joints && depth == d {
+        if fitted && bone < joints && depth == d {
             if parent == 255u {
                 pose_globals[bone] = anim_matrix(fit + 2u) * local;
             } else {
@@ -2139,11 +2135,17 @@ fn cs_pose(
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
-    let rigged = feet > 0.0 || look > 0.0;
+    let rigged = fitted && (feet > 0.0 || look > 0.0);
     if rigged && bone == 0u {
         fit_rig(i, rig, feet, look);
     }
     workgroupBarrier();
+    if !fitted {
+        if live && bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
     if bone > joints || bone >= bones {
         return;
     }

@@ -24,10 +24,9 @@ enum Felt {
 /// 90 strong); under [`OUT`] it has cleared.
 const IN: u8 = 80;
 const OUT: u8 = 40;
-/// Rain from this strength is a storm (where the picture's lightning
-/// starts); it is rain again under [`CALMER`].
-// Rounded up, as the picture storms from `STORM_AT` and over.
-const STORM: u8 = (crate::atmosphere::STORM_AT * 255.0) as u8 + 1;
+/// Rain from this strength is a storm (where lightning starts); it is
+/// rain again under [`CALMER`].
+const STORM: u8 = gc_sim::sky::STORM;
 const CALMER: u8 = STORM - 40;
 
 impl Felt {
@@ -106,7 +105,14 @@ pub(crate) struct SkyNews {
     /// the tick of the last warning.
     near: [bool; 2],
     warned: [Option<u32>; 2],
+    /// Tiles lightning set alight lately, with the tick (see
+    /// [`SkyNews::struck`]).
+    lit: Vec<(i32, i32, u32)>,
 }
+
+/// A fire newly near within this long of a bolt lighting a tile near the
+/// same place is told as the bolt's doing.
+const LIT_FOR: u32 = 2 * FIRE_EVERY;
 
 /// What a fire can be near, in [`SkyNews::near`]'s order, and its news.
 const BASE: usize = 0;
@@ -114,6 +120,10 @@ const TROOPS: usize = 1;
 const FIRE_NEWS: [&str; 2] = [
     "Fire! It is spreading near your base",
     "Fire! It is spreading near your troops",
+];
+const LIGHTNING_NEWS: [&str; 2] = [
+    "Lightning! It set the woods alight near your base",
+    "Lightning! It set the woods alight near your troops",
 ];
 
 impl SkyNews {
@@ -128,37 +138,66 @@ impl SkyNews {
         weather_news(was, now)
     }
 
+    /// Lightning set the tile `(x, y)` alight at `tick`.
+    pub(crate) fn struck(&mut self, x: i32, y: i32, tick: u32) {
+        self.lit.push((x, y, tick));
+    }
+
     /// The fires' news at `tick`: woods or scrub newly burning near the
     /// viewer's buildings (`base`, footprints) or regiments (`troops`, in
-    /// tiles); the base first.
+    /// tiles); the base first. Told as lightning's doing when a tile it
+    /// lit lately (see [`SkyNews::struck`]) is near the same place.
     pub(crate) fn fires(
         &mut self,
         tick: u32,
         fires: &[Burn],
-        mut troops: impl Iterator<Item = (f32, f32)>,
-        mut base: impl Iterator<Item = Foot>,
+        troops: impl Iterator<Item = (f32, f32)>,
+        base: impl Iterator<Item = Foot>,
     ) -> Option<&'static str> {
         if !tick.is_multiple_of(FIRE_EVERY) {
             return None;
         }
+        self.lit.retain(|&(.., at)| tick < at + LIT_FOR);
         let r = FIRE_NEAR as f32;
+        let centre = |x: i32, y: i32| (x as f32 + 0.5, y as f32 + 0.5);
         let mut now = [false; 2];
+        let mut by_lightning = [false; 2];
         if !fires.is_empty() {
-            now[BASE] = base.any(|f| burning_in(fires, f, r).next().is_some());
-            now[TROOPS] = troops.any(|(x, y)| {
+            for f in base {
+                now[BASE] |= burning_in(fires, f, r).next().is_some();
+                by_lightning[BASE] |=
+                    (self.lit.iter()).any(|&(x, y, _)| crate::conquest::near(f, centre(x, y), r));
+                if now[BASE] && (by_lightning[BASE] || self.lit.is_empty()) {
+                    break;
+                }
+            }
+            let close = |(x, y): (f32, f32), (bx, by): (f32, f32)| {
+                let (dx, dy) = (bx - x, by - y);
+                dx * dx + dy * dy <= r * r
+            };
+            for (x, y) in troops {
                 let square = [x.floor() as i32, y.floor() as i32, 1, 1];
-                burning_in(fires, square, r).any(|b| {
-                    let (dx, dy) = (b.x as f32 + 0.5 - x, b.y as f32 + 0.5 - y);
-                    dx * dx + dy * dy <= r * r
-                })
-            });
+                now[TROOPS] |=
+                    burning_in(fires, square, r).any(|b| close((x, y), centre(b.x, b.y)));
+                by_lightning[TROOPS] |=
+                    (self.lit.iter()).any(|&(lx, ly, _)| close((x, y), centre(lx, ly)));
+                if now[TROOPS] && (by_lightning[TROOPS] || self.lit.is_empty()) {
+                    break;
+                }
+            }
         }
         let was = std::mem::replace(&mut self.near, now);
         let place = (0..2).find(|&i| {
             now[i] && !was[i] && !self.warned[i].is_some_and(|t| tick < t + FIRE_QUIET)
         })?;
         self.warned[place] = Some(tick);
-        Some(FIRE_NEWS[place])
+        Some(
+            if by_lightning[place] {
+                LIGHTNING_NEWS
+            } else {
+                FIRE_NEWS
+            }[place],
+        )
     }
 }
 
@@ -290,5 +329,36 @@ mod tests {
             at(2 * s, &[burn(22, 12), burn(30, 12), burn(38, 12)]),
             Some(FIRE_NEWS[BASE])
         );
+    }
+
+    #[test]
+    fn a_fire_lightning_lit_is_told_as_lightning() {
+        let mut news = SkyNews::default();
+        let troops = [(50.0, 50.0)];
+        let base = [[10, 10, 3, 3]];
+        let s = TICKS_PER_SECOND;
+        // A bolt lights woods by the troops a tick after a whole second, as
+        // the sim's do; the next look tells it as the bolt's.
+        news.struck(52, 50, s + 1);
+        let mut at = |tick, fires: &[Burn]| {
+            news.fires(tick, fires, troops.iter().copied(), base.iter().copied())
+        };
+        assert_eq!(at(2 * s, &[burn(52, 50)]), Some(LIGHTNING_NEWS[TROOPS]));
+        // A fire set by hand near the base meanwhile is no bolt's.
+        assert_eq!(
+            at(3 * s, &[burn(13, 12), burn(52, 50)]),
+            Some(FIRE_NEWS[BASE])
+        );
+    }
+
+    #[test]
+    fn a_bolt_far_off_does_not_take_a_fire_near_the_troops() {
+        let mut news = SkyNews::default();
+        let troops = [(50.0, 50.0)];
+        let s = TICKS_PER_SECOND;
+        news.struck(200, 200, s + 1);
+        let fires = [burn(52, 50), burn(200, 200)];
+        let said = news.fires(2 * s, &fires, troops.iter().copied(), [].into_iter());
+        assert_eq!(said, Some(FIRE_NEWS[TROOPS]));
     }
 }

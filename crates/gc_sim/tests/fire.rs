@@ -31,7 +31,11 @@ fn woods(x0: u32, x1: u32, y0: u32, y1: u32) -> Vec<u8> {
 }
 
 fn world(cover: &[u8], sky: Sky<'static>) -> World {
-    World::new(&MatchSetup {
+    World::new(&setup(cover, sky))
+}
+
+fn setup<'a>(cover: &'a [u8], sky: Sky<'static>) -> MatchSetup<'a> {
+    MatchSetup {
         seed: 5,
         capacities: Capacities::default(),
         units: &DRILL_UNITS,
@@ -49,7 +53,7 @@ fn world(cover: &[u8], sky: Sky<'static>) -> World {
         champions: false,
         sky,
         generals: false,
-    })
+    }
 }
 
 fn spawn(w: &mut World, player: u8, x: i32, y: i32, facing: Angle) -> RegimentHandle {
@@ -284,4 +288,85 @@ fn summer_woods_burn_faster_and_winter_ones_slower() {
     assert!(summer > plain, "summer {summer}, no seasons {plain}");
     let (winter, plain) = (spread(YEAR, 185), spread(0, 185));
     assert!(winter < plain, "winter {winter}, no seasons {plain}");
+}
+
+/// A storm (rain of `strength`) from the start, still air.
+fn storm(strength: u8) -> &'static [Spell] {
+    Box::leak(Box::new([Spell {
+        at: 0,
+        weather: Weather {
+            kind: WeatherKind::Rain,
+            strength,
+            cloud: 255,
+            wind: (0, 0),
+        },
+    }]))
+}
+
+/// The lightning told over `seconds`: the second of each, the tile, and
+/// whether it caught.
+fn strikes(w: &mut World, seconds: u32) -> Vec<(u32, i32, i32, bool)> {
+    let mut seen = Vec::new();
+    for t in 0..seconds * SECOND {
+        w.tick(&[]);
+        for e in w.events() {
+            if let Event::Lightning { x, y, caught } = *e {
+                seen.push((t / SECOND, x, y, caught));
+            }
+        }
+    }
+    seen
+}
+
+fn stormy(seed: u64, cover: &[u8], strength: u8) -> World {
+    World::new(&MatchSetup {
+        seed,
+        ..setup(
+            cover,
+            Sky {
+                spells: storm(strength),
+                ..Sky::STILL
+            },
+        )
+    })
+}
+
+#[test]
+fn a_storm_throws_lightning_that_fires_dry_woods_only() {
+    let cover = woods(0, MAP, 0, MAP);
+    let mut caught_any = false;
+    for seed in 1..=8 {
+        let seen = strikes(&mut stormy(seed, &cover, 240), 90);
+        // About one strike in ten seconds, each on the map.
+        assert!((2..=25).contains(&seen.len()), "{seen:?}");
+        for &(s, x, y, caught) in &seen {
+            assert!((0..MAP as i32).contains(&x) && (0..MAP as i32).contains(&y));
+            // Woods everywhere: a strike fires them while the ground is
+            // dry (3 wet a second of a storm this strong: 33 seconds to
+            // reach `DAMP_WET`), never after. (One on a tile burning or
+            // burnt out already doesn't catch either.)
+            assert!(!caught || s < 33, "second {s}: {seen:?}");
+            caught_any |= caught;
+        }
+    }
+    assert!(caught_any);
+    // The same match strikes the same tiles.
+    assert_eq!(
+        strikes(&mut stormy(3, &cover, 240), 90),
+        strikes(&mut stormy(3, &cover, 240), 90)
+    );
+    // Rain short of a storm throws none.
+    assert!(strikes(&mut stormy(3, &cover, 180), 120).is_empty());
+}
+
+#[test]
+fn lightning_prefers_the_woods() {
+    // A quarter of the map wooded: more than half the strikes hit it.
+    let cover = woods(0, MAP / 2, 0, MAP / 2);
+    let seen = strikes(&mut stormy(5, &cover, 255), 600);
+    let in_woods = (seen.iter())
+        .filter(|&&(_, x, y, _)| x < MAP as i32 / 2 && y < MAP as i32 / 2)
+        .count();
+    assert!(seen.len() > 30, "{}", seen.len());
+    assert!(in_woods * 2 > seen.len(), "{in_woods} of {}", seen.len());
 }

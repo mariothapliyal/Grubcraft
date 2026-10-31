@@ -312,6 +312,10 @@ fn check(
     if regs.led[i] {
         drain -= i32::from(generals::LEAD * SCALE);
     }
+    // Inside its own walled town it stands firmer (see [`crate::towns`]).
+    if regs.in_town[i] {
+        drain -= i32::from(crate::towns::TOWN_STEADY * SCALE);
+    }
     tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left. A

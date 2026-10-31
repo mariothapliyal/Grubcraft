@@ -846,6 +846,10 @@ pub(crate) mod tests {
                     assert!(ground.walkable(at), "not on walkable ground: {why}");
                     assert!(ground.inside(at, 3.0), "at the edge: {why}");
                     assert!(!ground.water(at), "in water: {why}");
+                    // The sim refuses a spawn on a blocked nav cell.
+                    let side = map.tiles as usize * 2;
+                    let cell = (at.y * 2.0) as usize * side + (at.x * 2.0) as usize;
+                    assert!(nav[cell] != 0, "on a blocked nav cell: {why}");
                     for &(other, v, b) in &spawns[i + 1..] {
                         assert!(
                             at.distance(b) > 3.0,

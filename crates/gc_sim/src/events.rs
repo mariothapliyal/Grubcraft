@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
+use crate::PlayerId;
 use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
@@ -126,6 +127,10 @@ pub enum Event {
     /// The tile `(x, y)` caught fire (see [`crate::fire`]): it burns until
     /// it is cleared, burnt.
     Kindled { x: i32, y: i32 },
+    /// A storm's lightning struck the tile `(x, y)` (see
+    /// [`crate::fire::Fires::lightning`]), and set it alight if `caught`
+    /// (a [`Event::Kindled`] for it comes too).
+    Lightning { x: i32, y: i32, caught: bool },
     /// The rivers rose over the fords and shut them (`closed`), or went
     /// down and opened them again (see [`crate::flood`]).
     Flooded { closed: bool },
@@ -152,6 +157,9 @@ pub enum Event {
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
+    /// A player's walls closed round its main building (`walled`), or its
+    /// ring was breached (see [`crate::towns`]).
+    Town { player: PlayerId, walled: bool },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -220,6 +228,11 @@ impl Events {
         self.list.push(Event::Kindled { x, y });
     }
 
+    /// Tell of lightning striking the tile `(x, y)`.
+    pub(crate) fn lightning(&mut self, x: i32, y: i32, caught: bool) {
+        self.list.push(Event::Lightning { x, y, caught });
+    }
+
     /// Tell of the fords shutting in a flood, or opening again.
     pub(crate) fn flooded(&mut self, closed: bool) {
         self.list.push(Event::Flooded { closed });
@@ -248,6 +261,15 @@ impl Events {
     /// riding a river this tick.
     pub(crate) fn debris_struck(&mut self, owners: u8) {
         self.list.push(Event::DebrisStruck { owners });
+    }
+
+    /// Tell of walled towns closed and breached at this tick's survey.
+    pub(crate) fn towns(&mut self, changed: &[(PlayerId, bool)]) {
+        (self.list).extend(
+            changed
+                .iter()
+                .map(|&(player, walled)| Event::Town { player, walled }),
+        );
     }
 
     /// Tell of a new season.
@@ -359,8 +381,11 @@ impl Events {
                     to: regs.morale_state[i],
                 });
             }
+            // (Not with a foe cut down later in the same tick: its lock
+            // goes next tick.)
             if let Some(foe) = regs.engaged[i]
                 && !b.engaged
+                && regs.resolve(foe).is_some()
             {
                 list.push(Event::Contact { regiment, foe });
             }

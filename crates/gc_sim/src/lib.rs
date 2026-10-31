@@ -54,6 +54,7 @@ mod state;
 pub mod structures;
 pub mod terrain;
 pub mod towers;
+pub mod towns;
 pub mod traps;
 pub mod twists;
 pub mod veins;
@@ -128,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 71;
+pub const SIM_VERSION: u32 = 77;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1132,6 +1133,11 @@ impl World {
         true
     }
 
+    /// Whether player `p` has a walled town (see [`towns`]).
+    pub fn walled_town(&self, p: PlayerId) -> bool {
+        self.structures().is_some_and(|s| s.towns().walled(p))
+    }
+
     /// The buildings on the field (Conquest only).
     pub fn structures(&self) -> Option<&Structures> {
         Some(&self.conquest.as_ref()?.structures)
@@ -1782,6 +1788,7 @@ impl World {
             &self.stances,
             &self.terrain,
             &self.vision,
+            &self.nav,
             self.tick,
         );
         self.combat.push_lines(
@@ -1844,8 +1851,15 @@ impl World {
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
                 self.sky.air(),
             );
-            if self.tick.is_multiple_of(TICKS_PER_SECOND) && self.flood.rivers.floodplain_shut() {
-                (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
+            if self.tick.is_multiple_of(towns::SURVEY_TICKS) {
+                (conquest.structures).survey_towns(&self.nav, &self.terrain, &mut self.regiments);
+                self.events.towns(&conquest.structures.towns.changed);
+            }
+            if self.tick.is_multiple_of(TICKS_PER_SECOND) {
+                towns::mend_in_towns(&conquest.structures.towns, &mut self.regiments, &self.units);
+                if self.flood.rivers.floodplain_shut() {
+                    (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
+                }
             }
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);
@@ -2013,6 +2027,12 @@ impl World {
                 let Some(stats) = self.units.get(unit as usize) else {
                     return false;
                 };
+                // On the map and on ground a soldier can stand on: a
+                // regiment set down off the edge, in deep water or inside
+                // a cliff would fall or be stuck from its first tick.
+                if !self.nav.standable(pc.player, position) {
+                    return false;
+                }
                 // Inside your zone while deploying, if you have one.
                 if self.deploying()
                     && self
@@ -3133,10 +3153,17 @@ impl World {
         self.fires.burning()
     }
 
-    /// One tick of the fires (before the fallen are taken off the field,
+    /// One tick of the fires, a storm's lightning first (before the fallen are taken off the field,
     /// so those the fire kills fall with the rest): the tiles that burn out
     /// go through the ground change as burnt.
     fn burn(&mut self) {
+        let strike =
+            (self.fires).lightning(self.tick, &self.terrain, self.sky.weather(), self.sky.wet());
+        if let Some((x, y, caught)) = strike
+            && !self.scratch
+        {
+            self.events.lightning(x, y, caught);
+        }
         self.fires.update(
             self.tick,
             &self.terrain,

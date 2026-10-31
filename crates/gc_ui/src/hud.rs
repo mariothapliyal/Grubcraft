@@ -2587,6 +2587,7 @@ mod tests {
             resonance: 0,
             chords: 0,
             honor: None,
+            walled: false,
             clock_secs: 14 * 60 + 32,
         }
     }

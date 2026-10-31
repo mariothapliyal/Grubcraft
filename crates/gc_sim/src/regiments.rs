@@ -363,6 +363,18 @@ regiment_fields! {
     ploughed: u8 = 0,
     /// The charger that ploughed into it.
     ploughed_by: Option<RegimentHandle> = None,
+    /// Room along each side of its block (front, right flank, left flank,
+    /// rear) taken by foes' strikers since its last turn, in quarters of a
+    /// tile (up to 63): one striker per soldier's width of side (see
+    /// `combat::strikers`). Kept narrow for the sim's memory budget.
+    room_taken: [u8; 4] = [0; 4],
+    /// Crowded out, under orders to attack: going round its foe to a less
+    /// crowded side (see `combat::Round`).
+    round: Option<core::num::NonZeroU8> = None,
+    /// Turns in a row it was locked in a fight with nobody able to strike
+    /// (no room on the foe's side, or only a corner touching); while going
+    /// round, ticks spent on the way.
+    crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
     braced: bool = false,
@@ -395,6 +407,9 @@ regiment_fields! {
     /// Led this tick by its side's general, near him (see
     /// [`crate::generals`]).
     led: bool = false,
+    /// Standing in its own side's walled town, as of the last survey
+    /// (see [`crate::towns`]).
+    in_town: bool = false,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
@@ -1004,6 +1019,11 @@ impl Regiments {
         if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
         }
+        if self.attack_target[i] != Some(target) {
+            // Going round only the foe it was going round (see
+            // `combat::Round`): an order repeated keeps it on its way.
+            self.round[i] = None;
+        }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
         self.braced[i] = false;
@@ -1110,6 +1130,26 @@ impl Regiments {
         let hp = &self.hp[i * MAX_MODELS as usize..][..models];
         let lost: u32 = hp.iter().rev().take(count).map(|&h| u32::from(h)).sum();
         self.take_damage(i, lost);
+    }
+
+    /// Each wounded soldier of slot `i` gets `amount` hit points back, up
+    /// to `full`.
+    pub(crate) fn mend(&mut self, i: usize, amount: u16, full: u16) {
+        let models = usize::from(self.models[i]);
+        let general = self.general[i].map(usize::from);
+        let hp = &mut self.hp[i * MAX_MODELS as usize..][..models];
+        for (k, h) in hp.iter_mut().enumerate() {
+            // A general is tougher than his men (see `generals`).
+            let full = if general == Some(k) {
+                (u32::from(full) * crate::generals::GENERAL_HP_PERCENT / 100)
+                    .min(u32::from(u16::MAX)) as u16
+            } else {
+                full
+            };
+            if *h < full {
+                *h = h.saturating_add(amount).min(full);
+            }
+        }
     }
 
     /// The last `count` soldiers of slot `i` lose `amount` hit points
@@ -1263,6 +1303,7 @@ impl Regiments {
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
+            in_town: self.in_town[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
             hunting: plan.hunt.is_some(),
@@ -1730,6 +1771,8 @@ pub struct RegimentView {
     /// Standing on a wall's walkway (see [`crate::manning`]; its soldiers
     /// stand on the tiles [`crate::World::wall_tiles`] names).
     pub on_wall: bool,
+    /// Inside its own walled town at the last survey (see [`crate::towns`]).
+    pub in_town: bool,
     /// On a wall at the head of a ladder, fighting its way onto it.
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).

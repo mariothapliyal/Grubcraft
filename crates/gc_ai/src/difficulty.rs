@@ -172,7 +172,8 @@ pub struct Knobs {
     /// Reads what the ground does in a fight (docs/18-ai.md, "Reading the
     /// ground"): holds a hill rather than attack up one, shelters from
     /// better archers in a wood, keeps its cavalry out of the trees, and
-    /// crosses water at a ford, together.
+    /// crosses water at a ford, together; and sets woods an enemy stands
+    /// in alight when it can ([`crate::firing`]).
     pub read_ground: bool,
     /// Plays its part in a team game (docs/18-ai.md, "Team games"): weighs
     /// the fight against the enemies coming at its side, not every army on

@@ -154,9 +154,12 @@ fn he_falls_only_once_his_regiment_is_cut_down_to_him() {
     units[SKITTERS as usize].morale = 100;
     let mut w = world_with(&units);
     let guards = spawn(&mut w, 0, GUARDS, 100, 100, NORTH);
+    // Three, one behind: with frontage only the men touching him strike,
+    // and two in front alone wear it down so slowly that it breaks first.
     let foes = [
         spawn(&mut w, 1, SKITTERS, 100, 90, SOUTH),
         spawn(&mut w, 1, SKITTERS, 112, 90, SOUTH),
+        spawn(&mut w, 1, SKITTERS, 100, 110, NORTH),
     ];
     w.tick(&foes.map(|regiment| PlayerCommand {
         player: 1,

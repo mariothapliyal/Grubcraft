@@ -140,7 +140,20 @@ fn melee(
     tested: impl FnOnce(&mut UnitStats),
     mine: Formation,
     theirs: Formation,
+    from: ((i32, i32), Angle),
+    ticks: u32,
+) -> (u32, u32, u32) {
+    melee_in(tested, mine, theirs, from, 0, ticks)
+}
+
+/// [`melee`], with the dummy re-formed `files` wide as it walks in (0
+/// keeps its own).
+fn melee_in(
+    tested: impl FnOnce(&mut UnitStats),
+    mine: Formation,
+    theirs: Formation,
     ((x, y), facing): ((i32, i32), Angle),
+    files: u16,
     ticks: u32,
 ) -> (u32, u32, u32) {
     let units = units(tested);
@@ -149,7 +162,17 @@ fn melee(
     let foe = spawn(&mut w, 1, DUMMY, x, y, facing);
     assert!(form(&mut w, 0, me, mine));
     assert!(form(&mut w, 1, foe, theirs));
-    assert!(march(&mut w, 1, foe, 100, 100, Fx::ONE));
+    assert!(order(
+        &mut w,
+        1,
+        Command::MoveTo {
+            regiment: foe,
+            target: FxVec2::from_ints(100, 100),
+            facing: None,
+            files,
+            pace: Fx::ONE,
+        },
+    ));
     let full = hp(&w, foe);
     until_engaged(&mut w, me);
     let first = full - hp(&w, foe);
@@ -325,13 +348,14 @@ fn only_shields_form_a_wall() {
 #[test]
 fn a_shield_wall_guards_its_front_and_nothing_else() {
     // Hit points the shield regiment loses; it can't turn to face a flank
-    // attack.
+    // attack. The dummy comes on in single file, so as many of it reach
+    // the wall's shorter flank as the line's (frontage).
     let taken = |formation, from| {
         let shields = |u: &mut UnitStats| {
             u.shield = true;
             u.turn_rate = 0;
         };
-        melee(shields, formation, Formation::Line, from, FIGHT).2
+        melee_in(shields, formation, Formation::Line, from, 1, FIGHT).2
     };
     let front = |f| taken(f, AHEAD);
     let flank = |f| taken(f, RIGHT);

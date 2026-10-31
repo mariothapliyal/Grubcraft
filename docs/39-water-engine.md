@@ -288,7 +288,7 @@ Built 2026-10-31. Stage 3 is split in two: 3a is the debris itself and the logs 
 - **Drawn.** Each piece is the bare snag trunk lying on the water along its way, in wet bark, sitting lower once grounded (`gc_game::river_debris`), only where the viewer sees.
 - *Simpler than the plan:* felled logs and rafts wait for 3b's orders. Snags slow wading rather than adding path cost (the walkable grid has no per-ford cost yet), and pieces never stick to each other in open water. Natural logs come from Major floods only as the plan says, so most matches see few.
 - **Tests.** `gc_sim/tests/debris.rs`: a burnt bank wood topples logs that ride down and strike troops wading the lower ford, then ground there; a snag slows wading until a flood lifts it; a catastrophic flood tears logs off wooded banks with never more than 8 floating; the same seed sends the same logs down.
-- `SIM_VERSION` 70. Only the river-storm golden moves: its Major flood now washes logs down the Rushbrook (screenshots in project files, `screenshots/water-engine/stage3a-*`).
+- `SIM_VERSION` 76 (main reached 75 first). Only the river-storm golden moves: its Major flood now washes logs down the Rushbrook (screenshots in project files, `screenshots/water-engine/stage3a-*`).
 
 ## Built: stage 3b, felling and rafts
 

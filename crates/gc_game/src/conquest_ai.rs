@@ -228,16 +228,26 @@ mod tests {
         pub stakes: u32,
         pub traps: u32,
         pub bridges: u32,
+        /// Areas of thicket it ordered cleared (a count of orders, kept
+        /// over the match rather than standing at once).
+        pub clears: u32,
         /// Bolt and blast towers (docs/26 stage 5).
         pub bolts: u32,
         pub blasts: u32,
+        /// Towers raised to level 2.
+        pub raised: u32,
+        /// 1 once its walls closed round its hall: a walled town.
+        pub walled: u32,
     }
 
     impl Works {
         /// Side `p`'s works now.
         fn of(world: &World, p: PlayerId) -> Works {
             use gc_sim::structures::{GATE, Role, TowerShot};
-            let mut w = Works::default();
+            let mut w = Works {
+                walled: u32::from(world.walled_town(p)),
+                ..Works::default()
+            };
             let Some(st) = world.structures() else {
                 return w;
             };
@@ -246,6 +256,9 @@ mod tests {
                 let Some(b) = table.get(usize::from(v.building)) else {
                     continue;
                 };
+                if b.role == Role::Defence && b.upgrades_from.is_some() {
+                    w.raised += 1;
+                }
                 let n = match b.role {
                     Role::Wall if b.flags & GATE != 0 => &mut w.gates,
                     Role::Wall => &mut w.walls,
@@ -274,8 +287,11 @@ mod tests {
                 stakes: self.stakes.max(o.stakes),
                 traps: self.traps.max(o.traps),
                 bridges: self.bridges.max(o.bridges),
+                clears: self.clears.max(o.clears),
                 bolts: self.bolts.max(o.bolts),
                 blasts: self.blasts.max(o.blasts),
+                raised: self.raised.max(o.raised),
+                walled: self.walled.max(o.walled),
             }
         }
     }
@@ -496,6 +512,13 @@ mod tests {
         while world.verdict().is_none() && world.tick_count() < end {
             cmds.clear();
             minds.tick(&world, &mut cmds);
+            for c in &cmds {
+                if let (gc_sim::Command::Clear { .. }, Some(w)) =
+                    (c.command, works.get_mut(usize::from(c.player)))
+                {
+                    w.clears += 1;
+                }
+            }
             world.tick(&cmds);
             let t = world.tick_count();
             if first_contact.is_none()
@@ -1080,6 +1103,34 @@ mod tests {
         }
     }
 
+    /// Generals cut through thicket (docs/41, step 6): where a belt of it
+    /// runs the whole map between the starts, some General sends workers
+    /// to grub out a path through it.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_cut_a_path_through_thicket_that_cuts_them_off() {
+        use gc_map::def::{CoverKind, CoverOp, Shape};
+        let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
+        // A belt of thicket from corner to corner across the middle, about
+        // five tiles wide.
+        def.cover.push(CoverOp {
+            shape: Shape::Line {
+                a: (0, 127),
+                b: (127, 0),
+                half_width: 2,
+            },
+            kind: CoverKind::Thicket,
+        });
+        let map = Map::from_def(&def);
+        let f = Faction::EmberClans;
+        let played = play_map(map, &[f, f], &[Difficulty::General], 8, 20, None, &[]);
+        assert!(
+            played.sides.iter().any(|s| s.works.clears >= 1),
+            "nobody cut a path: {}",
+            played.report()
+        );
+    }
+
     /// Generals fortify (docs/26-fortifications.md, stage 8): in a
     /// one-on-one on Ribcage Pass some side draws a front wall with a gate
     /// and a barricade at its rally point, and some General lays traps on
@@ -1100,18 +1151,25 @@ mod tests {
         // a blast tower behind its hall, or a bolt tower once it has seen
         // riders or monsters, in one of its games at least.
         let mut towers = 0;
+        // Once at tier 2 with Marrow to spare it raises a tower to level 2.
+        let mut raised = 0;
+        // Then carries the wall on round its hall: a walled town.
+        let mut walled_towns = 0;
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
-        // moves where things get built), so the first seed that walls
-        // counts: a known one first, then the rest of 1 to 24.
+        // moves where things get built, and with frontage about one in 25),
+        // so the first seed that walls counts: a known one first, then the
+        // rest of 1 to 30.
         for (f, known) in [(Faction::EmberClans, 14), (Faction::CarrionConcord, 8)] {
             let walled = core::iter::once(known)
-                .chain((1..=24).filter(|&s| s != known))
+                .chain((1..=30).filter(|&s| s != known))
                 .any(|seed| {
                     let most;
                     (most, last) = general(f, seed);
                     traps += most.traps;
                     towers += most.bolts + most.blasts;
+                    raised += most.raised;
+                    walled_towns += most.walled;
                     most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
             assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
@@ -1125,9 +1183,12 @@ mod tests {
             (most, last) = general(Faction::EmberClans, seed);
             traps += most.traps;
             towers += most.bolts + most.blasts;
+            raised += most.raised;
         }
         assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         assert!(towers >= 1, "no bolt or blast tower put up in any game");
+        assert!(raised >= 1, "no tower raised to level 2 in any game");
+        assert!(walled_towns >= 1, "no General closed a ring round its hall");
         let played = play(
             0,
             0,
@@ -1156,8 +1217,10 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
+        // An hour: since frontage a base under siege holds a little longer
+        // (seed 7 ended by the Heart at 46 minutes).
         for (factions, seed) in pairs.iter().zip([7, 8]) {
-            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 45);
+            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }

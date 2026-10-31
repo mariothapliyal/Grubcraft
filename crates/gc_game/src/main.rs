@@ -261,6 +261,8 @@ const SOLDIER_HEIGHT: f32 = 0.95;
 /// begins, and its colour before the light: pale, for the sun and the sky to
 /// colour.
 const MIST_BANK: f32 = 0.3;
+/// Tiles from the camera's focus a storm's bolt is seen flash and heard.
+const THUNDER_REACH: f32 = 160.0;
 const MIST_EDGE: f32 = 3.0;
 const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
@@ -521,6 +523,8 @@ struct Options {
     /// Open on regiments marching through every gate in the sandbox,
     /// looking at the `n`th (`--gate-march n`, 0 to 5).
     gate_march: Option<usize>,
+    /// `--wall-scene`: a Stone Wall south of a hall, archers manning it.
+    wall_scene: bool,
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
@@ -559,6 +563,7 @@ fn parse_args() -> Options {
         fx: None,
         siege: false,
         gate_march: None,
+        wall_scene: false,
         fell_demo: false,
         hamlet_demo: false,
         render: RendererOptions::default(),
@@ -575,6 +580,11 @@ fn parse_args() -> Options {
         }
         if flag == "--sandbox" {
             opts.sandbox = true;
+            continue;
+        }
+        if flag == "--wall-scene" {
+            opts.wall_scene = true;
+            opts.menu = Some(false);
             continue;
         }
         if flag == "--siege" {
@@ -880,6 +890,9 @@ struct Running {
     siege_scene: Option<u8>,
     /// How far `--gate-march` has staged its march, and the gate looked at.
     gate_scene: Option<(u8, usize)>,
+    /// How far `--wall-scene` has staged its manned wall: 0 to place it,
+    /// 1 to send the archers up.
+    wall_scene: Option<u8>,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1789,6 +1802,7 @@ impl App {
             aftermath: aftermath::Aftermath::default(),
             siege_scene: None,
             gate_scene: None,
+            wall_scene: None,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1938,6 +1952,14 @@ impl App {
             if opts.siege {
                 r.start_match(MatchKind::Sandbox { roster: true });
                 r.siege_scene = Some(0);
+            }
+            if opts.wall_scene {
+                // In a Conquest match (`--conquest`), so its soldiers man walls.
+                if opts.conquest.is_none() {
+                    let setup = conquest::quick_conquest(0, r.menu.settings(), opts.seed);
+                    r.start_match(MatchKind::Battle(setup));
+                }
+                r.wall_scene = Some(0);
             }
             if let Some(n) = opts.gate_march {
                 r.start_match(MatchKind::Sandbox { roster: true });
@@ -3481,6 +3503,30 @@ impl Running {
         }
     }
 
+    /// Where regiment `h`'s soldiers stand on the wall it mans: on a kit
+    /// wall with a walkway (the Ember Stone Wall), on the walkway's deck
+    /// behind it, inside the fort; on another kit wall, on its runs' top;
+    /// else on the wall's top (see `buildings::wall_slots`). Ladders still
+    /// lean on the wall itself (`buildings::ladder_props`).
+    fn manned_slots(&self, h: gc_sim::RegimentHandle) -> Vec<puppets::WallSlot> {
+        let Some(structures) = self.world.structures() else {
+            return Vec::new();
+        };
+        let looks = self.art.as_ref().map(|a| &a.looks);
+        let mut sides = buildings::WallSides::new(&self.world, &self.buildings);
+        (self.world.wall_tiles(h).iter())
+            .filter_map(|&t| structures.get(t))
+            .map(|s| buildings::manned_slot(&self.buildings, looks, &mut sides, &s))
+            .collect()
+    }
+
+    /// The top of kit wall tile `s`'s runs, where ladders against it reach
+    /// (`None` for any other building: its slab's stand height).
+    fn kit_top(&self, s: &StructureView) -> Option<f32> {
+        let art = self.art.as_ref()?;
+        Some(art.looks.top(art.looks.wall_kit_for(s.building)?.run()))
+    }
+
     /// How far up a regiment's marks sit: the wall top (or deck) it stands
     /// on, else the ground.
     fn mark_lift(&self, r: &gc_sim::RegimentView) -> f32 {
@@ -3529,6 +3575,7 @@ impl Running {
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
         self.stage_gate_march();
+        self.stage_wall_scene();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -3800,13 +3847,18 @@ impl Running {
                 .then(|| buildings::ladder_props(&self.world, &self.buildings, r.handle, pos))
                 .flatten();
             if let Some((_, _, top)) = ladder {
-                self.puppets.stand_on_ladder(r.handle, top);
+                // On a kit wall, the head of the ladder is its runs' top.
+                let kit_top = (self.world.wall_tiles(r.handle).first())
+                    .and_then(|&t| self.world.structures()?.get(t))
+                    .and_then(|s| self.kit_top(&s));
+                self.puppets
+                    .stand_on_ladder(r.handle, kit_top.unwrap_or(top));
             } else if r.on_wall
                 || self.puppets.on_wall(r.handle)
                 || self.puppets.on_ladder(r.handle)
             {
-                let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
-                self.puppets.stand_on_wall(r.handle, slots);
+                let slots = self.manned_slots(r.handle);
+                self.puppets.stand_on_wall(r.handle, slots.into_iter());
             }
             // How workers clear a tile, and where its trees should fall from
             // (the regiment's centre, when the viewer sees it; else straight
@@ -6377,6 +6429,8 @@ impl Running {
         let mut shown = Vec::new();
         let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
+        // What happened while catching up online is old news.
+        let old_news = self.online.is_some() && self.menu.net().catching_up();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -6542,6 +6596,14 @@ impl Running {
                     "The rivers have gone down: the fords are open again"
                 }),
                 Event::Season { season } => news.push(season_news(season)),
+                // Only a side's own town is told of.
+                Event::Town { player, walled } if player == self.sandbox.side => {
+                    news.push(if walled {
+                        "Your walls close round your hall: a Walled Town. Buildings inside take a quarter less from regiments, and your troops inside stand firmer and mend"
+                    } else {
+                        "Your town's ring is breached: the Walled Town is lost until it is closed again"
+                    });
+                }
                 Event::FlashFlood { stage } => news.push(match stage {
                     gc_sim::rivers::Stage::Coming => {
                         "A flash flood is coming down the river: get off the fords"
@@ -6582,6 +6644,26 @@ impl Running {
                 } else {
                     "The water is back up: the summer fords are deep again"
                 }),
+                // A storm's bolt flashes the sky and thunders as far as it
+                // is heard, and is drawn where it struck if that is seen.
+                Event::Lightning { x, y, caught } => {
+                    if caught {
+                        self.sky_news.struck(x, y, self.world.tick_count());
+                    }
+                    let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    let far = at.distance(focus) / THUNDER_REACH;
+                    if far < 1.0 && !old_news {
+                        self.atmosphere.strike(far);
+                        if (self.reveal_all || self.fog.sees_tile((x, y)))
+                            && !self.menu.settings().clarity
+                            && self.viewer.is_none()
+                        {
+                            let ground = self.heightmap.height_at(at.x, at.y);
+                            self.effects
+                                .strike_at(glam::Vec3::new(at.x, ground, at.y), distance);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -6601,10 +6683,9 @@ impl Running {
         }
         // Kept up while catching up online, but what happened then is old
         // news.
-        let catching_up = self.online.is_some() && self.menu.net().catching_up();
         let mut sky = Vec::new();
         self.weather_and_fire_news(&mut sky);
-        if !catching_up {
+        if !old_news {
             news.extend(sky);
         }
         // Said together, so none hides another from the same tick.
@@ -6617,7 +6698,8 @@ impl Running {
     }
 
     /// A storm, fog or snow coming in or clearing, and woods catching fire
-    /// near the viewer's troops or base, since the last tick.
+    /// (by lightning or not) near the viewer's troops or base, since the
+    /// last tick.
     fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
         let world = &self.world;
         let side = self.sandbox.side;
@@ -7594,6 +7676,91 @@ impl Running {
         }
     }
 
+    /// Stage `--wall-scene`: a Clan Hall, a Stone Wall south of it (a
+    /// straight stretch, then a diagonal one), and archers inside sent up
+    /// onto its walkway, the camera close over it: to see a raised kit wall
+    /// manned in a real match.
+    fn stage_wall_scene(&mut self) {
+        let Some(step) = self.wall_scene else {
+            return;
+        };
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let focus = self.camera.focus.round();
+        // South of the start, clear of the hall already there.
+        let (x0, row) = (focus.x as i32 - 4, focus.y as i32 + 10);
+        let (Some(hall), Some(wall), Some(archers)) = (
+            building("Clan Hall"),
+            building("Stone Wall"),
+            self.units.names.iter().position(|n| n == "Yumi Ashigaru"),
+        ) else {
+            self.wall_scene = None;
+            return;
+        };
+        match step {
+            0 => {
+                let mut spawn = |building, tile: (i32, i32)| {
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnStructure {
+                            building,
+                            tile: (tile.0 as i16, tile.1 as i16),
+                            turn: 0,
+                        },
+                    });
+                };
+                spawn(hall, (x0 + 2, row - 12));
+                for x in x0..x0 + 8 {
+                    spawn(wall, (x, row));
+                }
+                for k in 1..5 {
+                    spawn(wall, (x0 + 7 + k, row + k));
+                }
+                self.human_orders.push(PlayerCommand {
+                    player: 0,
+                    command: gc_sim::Command::SpawnRegiment {
+                        unit: archers as UnitId,
+                        position: fx_vec(Vec2::new(x0 as f32 + 4.0, row as f32 - 4.0)),
+                        facing: gc_fixed::Angle::of_vec(fx_vec(Vec2::Y)),
+                    },
+                });
+                self.camera.focus = Vec2::new(x0 as f32 + 5.0, row as f32);
+                self.camera.distance = 14.0;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                self.wall_scene = Some(1);
+            }
+            1 => {
+                // The middle of the straight stretch (the camera has moved).
+                let mut tiles: Vec<_> = (self.world.structures().into_iter())
+                    .flat_map(gc_sim::Structures::iter)
+                    .filter(|s| s.building == wall && s.owner == 0)
+                    .map(|s| (s.tile.1, s.tile.0, s.handle))
+                    .collect();
+                tiles.sort_unstable_by_key(|t| (t.0, t.1));
+                let target = tiles.get(4).map(|t| t.2);
+                let regiment = (self.world.regiments.iter())
+                    .find(|r| r.owner == 0 && usize::from(r.unit) == archers)
+                    .map(|r| r.handle);
+                if let (Some(structure), Some(regiment)) = (target, regiment) {
+                    if let Err(why) = self.world.man_check(regiment, structure) {
+                        eprintln!("wall scene: the archers can't man the wall: {why:?}");
+                    }
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::ManWall {
+                            regiment,
+                            structure,
+                        },
+                    });
+                    self.wall_scene = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Stage `--gate-march`: every gate in a wall run east to west, a
     /// regiment south of each marching through it to the north, and the
     /// camera low over the one looked at.
@@ -8086,6 +8253,8 @@ impl Running {
             }
             walled.sort_unstable();
         }
+        // Which side of each kit wall is outside.
+        let mut sides = buildings::WallSides::new(&self.world, b);
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -8103,16 +8272,13 @@ impl Running {
                 };
                 kit.pieces(&tile, &mut pieces);
             } else if let Some(kit) = art.looks.wall_kit_for(s.building) {
-                let piece = s.line.and_then(|line| buildings::wall_piece(line, s.tile));
-                let (centre, dir, len) = piece
-                    .map_or((buildings::centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
-                        (p.centre, p.dir, p.len)
-                    });
+                let (centre, dir, len) = buildings::kit_piece(&s);
                 let tile = wall_kit::Tile {
                     s: &s,
                     centre,
                     dir,
                     len,
+                    out: sides.out(&s, centre, dir),
                     walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
                 };
                 kit.pieces(&tile, &mut pieces);

@@ -133,6 +133,18 @@ impl State for RegimentHandle {
     }
 }
 
+impl State for core::num::NonZeroU8 {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.get().write(out);
+    }
+    fn read(input: &mut &[u8]) -> Option<Self> {
+        core::num::NonZeroU8::new(u8::read(input)?)
+    }
+    fn hash(&self, h: &mut StateHasher) {
+        self.get().hash(h);
+    }
+}
+
 impl<T: State> State for Option<T> {
     fn write(&self, out: &mut Vec<u8>) {
         self.is_some().write(out);
@@ -202,6 +214,26 @@ impl State for Strike {
     }
 }
 
+impl<T: State, const N: usize> State for [T; N] {
+    fn write(&self, out: &mut Vec<u8>) {
+        for v in self {
+            v.write(out);
+        }
+    }
+    fn read(input: &mut &[u8]) -> Option<Self> {
+        let mut out = [T::read(input)?; N];
+        for v in out.iter_mut().skip(1) {
+            *v = T::read(input)?;
+        }
+        Some(out)
+    }
+    fn hash(&self, h: &mut StateHasher) {
+        for v in self {
+            v.hash(h);
+        }
+    }
+}
+
 /// A value of `v`'s type that differs from it, for tests that check every
 /// field reaches the state hash: `v`'s bytes with one bit flipped, the
 /// first flip that still reads back as a value.
@@ -209,16 +241,20 @@ impl State for Strike {
 pub(crate) fn other<T: State>(v: T) -> T {
     let mut bytes = Vec::new();
     v.write(&mut bytes);
-    // Room for a value where `v` has none (`None` becoming `Some`).
+    // Room for a value where `v` has none (`None` becoming `Some`), padded
+    // with zeros, then with ones for types that can't be zero.
     let flips = bytes.len() * 8;
-    bytes.resize(bytes.len() + 16, 0);
-    for bit in 0..flips {
-        let mut b = bytes.clone();
-        b[bit / 8] ^= 1 << (bit % 8);
-        if let Some(w) = T::read(&mut &b[..])
-            && w != v
-        {
-            return w;
+    for pad in [0, 1] {
+        let mut padded = bytes.clone();
+        padded.resize(bytes.len() + 16, pad);
+        for bit in 0..flips {
+            let mut b = padded.clone();
+            b[bit / 8] ^= 1 << (bit % 8);
+            if let Some(w) = T::read(&mut &b[..])
+                && w != v
+            {
+                return w;
+            }
         }
     }
     panic!("no other value of this type");

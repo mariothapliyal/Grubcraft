@@ -53,6 +53,9 @@ pub struct TopBar {
     /// Clans: the Honor meter (0 to 100), shown whenever there is one: a
     /// side whose meter is Honor shows it even at 0.
     pub honor: Option<u32>,
+    /// Its walls close round its main building: a walled town (see
+    /// `gc_sim::towns`).
+    pub walled: bool,
     /// Match time.
     pub clock_secs: u32,
 }
@@ -303,6 +306,11 @@ pub(crate) fn draw_resources(draw: &mut DrawList, area: Rect, t: &TopBar) {
         let value = format!("{honor}/{HONOR_FULL}");
         items.push(Box::new(move |d, x| {
             top_item(d, x, y, limit, "Honor", &value, color)
+        }));
+    }
+    if t.walled {
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Town", "Walled", theme::WODE)
         }));
     }
     if t.upkeep_percent < 100 {

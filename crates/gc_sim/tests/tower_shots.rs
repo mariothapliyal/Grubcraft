@@ -33,6 +33,11 @@ const OBELISK: u16 = 5;
 const HARPOON: u16 = 6;
 const BLOATER: u16 = 7;
 const HOROKU: u16 = 8;
+/// A plain arrow tower and its level 2, with fire arrows.
+const ARROWS: u16 = 9;
+const ARROWS_2: u16 = 10;
+/// A hall, for a side's tier.
+const HALL: u16 = 11;
 
 fn bolt(quirk: Quirk) -> TowerAttack {
     TowerAttack {
@@ -52,6 +57,17 @@ fn blast(quirk: Quirk) -> TowerAttack {
         reload_ticks: 6 * TICKS_PER_SECOND as u16,
         shots: 6,
         shot: TowerShot::Blast,
+        quirk,
+    }
+}
+
+fn arrows(quirk: Quirk, range: i32) -> TowerAttack {
+    TowerAttack {
+        range: Fx::from_int(range),
+        damage: 5,
+        reload_ticks: 2 * TICKS_PER_SECOND as u16,
+        shots: 2,
+        shot: TowerShot::Arrows,
         quirk,
     }
 }
@@ -125,6 +141,21 @@ fn conquest() -> World {
         tower(bolt(Quirk::Drags)),
         tower(blast(Quirk::Acid)),
         tower(blast(Quirk::Burns)),
+        tower(arrows(Quirk::None, 30)),
+        BuildingStats {
+            upgrades_from: Some(ARROWS),
+            cost_grub: 0,
+            build_ticks: 200,
+            hp: 1500,
+            ..tower(arrows(Quirk::Kindles, 34))
+        },
+        BuildingStats {
+            role: Role::Main,
+            width: 4,
+            depth: 4,
+            attack: None,
+            ..tower(arrows(Quirk::None, 30))
+        },
     ];
     let kinds = [ConquestUnit::default(); 3];
     assert!(w.conquest(&ConquestSetup {
@@ -393,4 +424,25 @@ fn a_horoku_towers_fire_pots_leave_burning_ground() {
     let pools = w.structures().unwrap().pools();
     assert_eq!(pools.len(), 1);
     assert!(!pools[0].acid);
+}
+
+#[test]
+fn a_tower_goes_up_to_level_2_and_shoots_further() {
+    let mut w = conquest();
+    put_up(&mut w, 1, HALL, 30, 30);
+    let t = put_up(&mut w, 1, ARROWS, 40, 40);
+    // Out of level 1's reach, within level 2's.
+    let r = spawn(&mut w, 0, SPEARS, 41, 73);
+    assert!(first_volley(&mut w, t, 3 * TICKS_PER_SECOND).is_empty());
+    assert_eq!(w.can_upgrade(1, t).map(|_| ()), Ok(()));
+    assert!(order(&mut w, 1, Command::Upgrade { structure: t }));
+    let kind = |w: &World| w.structures().unwrap().get(t).unwrap().building;
+    for _ in 0..400 {
+        if kind(&w) == ARROWS_2 {
+            break;
+        }
+        w.tick(&[]);
+    }
+    assert_eq!(kind(&w), ARROWS_2, "the upgrade finishes");
+    assert_eq!(first_volley(&mut w, t, 3 * TICKS_PER_SECOND), vec![r]);
 }

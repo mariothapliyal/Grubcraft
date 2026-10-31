@@ -263,7 +263,7 @@ guarding rich fields came with step 1.
   in, and when it clears: "Fog is rolling in: troops see much less far.
   Watch for ambushes", "A storm is coming in: ...", "The fog has lifted".
   Weather comes in at strength 80 (the sim's spells are 90 to 255) and has
-  cleared under 40; rain is a storm from 192 (where the picture's lightning
+  cleared under 40; rain is a storm from 192 (where lightning
   starts) and rain again under 152. The give either way means the sim's
   slow fades and small wobbles are told once. The weather a match starts in
   isn't told, nor is a new match told the last one's weather.
@@ -329,6 +329,161 @@ seasons. Render only: nothing in the simulation changed.
 - **Tests.** `each_season_shows_through_its_middle_and_crosses_over_at_its_edges`
   and `the_season_is_drawn_and_the_ice_comes_in_over_seconds`; the shader
   validation test covers the shaders.
+
+## Step 6 as built: lightning
+
+*2026-10-31.* Step 6 comes in two parts. This is the first: storms throw
+lightning that can set dry woods alight. The computer players burning and
+clearing woods is the second (below).
+
+- **In the simulation** (`Fires::lightning` in `gc_sim/src/fire.rs`).
+  Rain of strength 192 or more is a storm (`sky::STORM`). Once a second in
+  a storm, a roll made from the match seed and the tick (no random stream
+  moves) gives a 1 in 10 chance of a bolt (`STRIKE_PERMILLE`), so about
+  one every ten seconds over the whole map. The bolt looks at up to 4 tiles
+  picked the same way and takes the first with woods or thicket on it, the
+  tallest thing about, or the last one tried. On a quarter-wooded map well
+  over half the strikes hit the woods.
+- **Only dry woods catch.** The struck tile catches if anything burnable
+  grows there and the ground is still drier than `DAMP_WET` (the wetness
+  where fire stops spreading). A storm wets the ground fast (3 of 1000 a
+  second), so a bolt fires the woods only in the first half minute or so
+  of a storm that comes in over dry ground, and the fire spreads only a
+  little before the rain soaks it. Summer, when the ground has dried
+  out, is when it matters. Snow never storms, so winter has no lightning.
+- **`Event::Lightning { x, y, caught }`** tells of each strike (with a
+  `Kindled` for the tile if it caught). It isn't told in scratch worlds.
+- **In the picture.** A strike within 160 tiles of the camera's focus
+  (`THUNDER_REACH`) flashes the sky, and thunder follows, later and
+  softer the further it struck (`Atmosphere::strike`). If the viewer sees
+  the tile, the bolt is drawn there (`Effects::strike_at`), not under
+  Clarity. The picture's own flashes, at random places near the camera,
+  carry on between them as before, and wait a full gap after a real one.
+- **News.** A fire that comes near your base or troops within two
+  seconds of a bolt setting a tile alight near the same place is told as
+  "Lightning! It set the woods alight near your base" (or "troops")
+  instead of "Fire! ..." (`SkyNews::struck`). A bolt elsewhere on the map
+  doesn't take the credit for a fire near you.
+- **Not drawn** while a weather is chosen by hand (F12, `--weather`: no
+  flash or thunder) or in the unit viewer (no bolt). The picture's storm
+  starts where the sim's does (`STORM_AT` is `sky::STORM` over 255).
+- **SIM_VERSION 70.** Three golden replays have storms and were blessed
+  again: `field-flood-1v1`, `field-night-rain-1v1` and
+  `field-river-storm-1v1`. The lobby's **Rain** is strength 200, a storm,
+  so a Rain match throws lightning too.
+
+### Real use
+
+- **A summer storm can burn a wood.** In Conquest with seasons, a storm in
+  summer coming over dry land can fire the woods an army waits in. The
+  news line says so if it is near your troops or base. Get out of the
+  trees, or keep clear of the scorched open ground it leaves.
+- **Rain keeps it small.** Once the storm has been going for half a
+  minute, bolts only flash. A patch burnt by lightning is a few tiles, not
+  a forest.
+
+### Checks
+
+- `a_storm_throws_lightning_that_fires_dry_woods_only` (eight matches: a
+  strike every ten seconds or so, on the map, caught only while the
+  ground is dry, the same strikes when played again, none in rain short
+  of a storm) and `lightning_prefers_the_woods`, in `gc_sim/tests/fire.rs`.
+- `a_fire_lightning_lit_is_told_as_lightning` and
+  `a_bolt_far_off_does_not_take_a_fire_near_the_troops` in `sky_news`.
+- In a real Field Battle with the lobby's Rain: a bolt struck the edge of
+  a wood in view and the tile burned
+  (`screenshots/living-land-step6/` in project files).
+
+## Step 6 as built: the computer players and fire
+
+*2026-10-31.* The second half of step 6.
+
+- **Burning woods on an enemy** (`gc_ai/src/firing.rs`, `Mind::fire_woods`).
+  In a Field Battle, every 2 seconds after its other orders, a Veteran,
+  General or Warlord looks for a fire to set (it reads the ground). It
+  needs all of these:
+  - one of its regiments standing on open ground, free, not broken and
+    not burning;
+  - an enemy it sees, or saw lately (one hiding in the woods counts),
+    within 16 tiles, standing in woods, scrub or thicket;
+  - the tile its torches would catch (the nearest burnable tile within a
+    tile of its block, as the sim picks it) on the way to the enemy, and
+    woods running unbroken from there to the enemy;
+  - ground dry enough to catch;
+  - no wind of any strength blowing the fire back at the burner;
+  - none of its own side or allies in the woods, or fighting, within 6
+    tiles (plus their size) of the line the fire runs along, and none
+    close to the enemy (3 tiles between the two blocks' sizes).
+  
+  It takes the nearest such pair and orders `Command::Burn`, which costs
+  an order as a person's would, then sets no other fire for 20 seconds.
+  The journal notes it. A Recruit never does.
+- **Smoking out a hidden army** (`firing::quarry`, `firing::smoke_out`,
+  `Mind::smoke_out`). Left alone, a General's attack goes into the woods
+  all at once, and then its own men in there stop any fire. So when it
+  knows of an enemy in woods (seen, or seen going in) within 40 tiles of
+  its army, no deeper than 12 tiles from the woods' edge on its side,
+  with none of its own fighting it and the weather letting fire burn, it
+  smokes it out instead, for 45 seconds at most and then not again for
+  as long:
+  - none of its regiments goes on into those woods (they stop where they
+    are), and any of its own in there and free marches out;
+  - its nearest regiment on open ground marches to the woods' edge
+    facing the enemy, and the fire is set from there as above.
+- **Cutting a path through thicket** (the Engineer, Conquest). Every 90
+  seconds it looks for the cheapest way from home to the nearest enemy
+  start, with each thicket tile costed at 12 tiles of open ground
+  (`Terrain::thicket_on_way`, a search over the map's tiles; it doesn't
+  squeeze diagonally between two tiles it can't walk). If that way crosses
+  thicket, a spare worker is sent to clear the first 6 tiles of it, cut
+  three tiles wide (`Command::Clear`, at most 16 a side; on a diagonal
+  way only as far as it stays three across). Thicket on rock or deep
+  water is no way at all. No second worker is sent while the first is
+  still clearing, and other works don't take a clearing worker. The next
+  look finds what is left. It comes right after the bridge, before field works,
+  for any mind that fortifies (Veteran and up).
+- **Not done.** In Conquest, minds still don't march their own troops out
+  of a fire (they do in Field Battles), so they don't set any either. The
+  path is cut toward the nearest other start, as the bridge is, which in a
+  team game may be an ally's. The computer players don't light
+  fires to block a way or to cover a retreat.
+
+### Real use
+
+- **Hiding in the woods has a price.** In a Field Battle, an army waiting
+  in a wood for an ambush can be burned out by a computer player that has seen it go in,
+  if the weather is dry and the wind isn't against it. Keep watch on the
+  wood's edge, or wait where it is wet.
+- **Thicket belts don't wall a computer player in.** Where thicket forces
+  a long march round, a General's workers cut a gap through it, which
+  opens a new way in for both sides.
+
+### Checks
+
+- `a_mind_sets_the_woods_alight_on_an_enemy_in_them` (a General burns, a
+  Recruit doesn't) and
+  `not_on_its_own_troops_nor_in_the_rain_nor_into_the_wind`, in
+  `gc_ai/tests/fire.rs`.
+- `a_path_is_cut_where_the_way_round_is_long_and_not_where_it_is_short`
+  (`Terrain`) and `a_path_is_cut_round_the_first_tiles_of_thicket_three_wide`
+  (the Engineer).
+- `ai_only_generals_cut_a_path_through_thicket_that_cuts_them_off`
+  (release, CI): a belt of thicket across Ribcage Pass, and some General
+  orders it cleared (each side cleared twice in 20 minutes).
+- `a_general_smokes_out_an_army_in_the_woods_rather_than_go_in`: its
+  army 20 tiles back, an enemy seen marching into a wood; it burns them
+  out, and none of its regiments enters the woods first.
+- Real match, before smoking out was added: the General sent several
+  regiments into the wood together, and with its own men in there it
+  never burned (only one moment in 13 minutes had a regiment of its on
+  open ground within reach). That is why smoking out was built.
+- Real match, with it (Field Battle against a General, dry weather, my
+  army hiding in the tall grass along the river near its line): at 3:39
+  the General ordered a Burn (read back from the saved replay); the
+  grass burned along the bank and my army broke and ran. Played again on
+  the build after the code review's fixes: Burn at 3:37, the grass burned
+  and my army was down to 23 of 61 soldiers. Screenshots in project
+  files, `screenshots/living-land-step6b/`.
 
 ## Not in this plan
 
