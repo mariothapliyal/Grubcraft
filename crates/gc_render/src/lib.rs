@@ -2730,7 +2730,8 @@ mod tests {
             S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => in_loop,
             S::Block(b) => check(b, in_loop),
             S::If { accept, reject, .. } => check(accept, in_loop) || check(reject, in_loop),
-            S::Switch { cases, .. } => cases.iter().any(|c| check(&c.body, in_loop)),
+            // naga's HLSL writes a switch with one body as a one-pass loop.
+            S::Switch { cases, .. } => cases.iter().any(|c| check(&c.body, true)),
             S::Loop {
                 body, continuing, ..
             } => check(body, true) || check(continuing, true),

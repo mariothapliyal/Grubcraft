@@ -1781,6 +1781,8 @@ const RIG_FIXES: u32 = 10u;
 var<workgroup> pose_fix: array<mat4x4<f32>, RIG_FIXES>;
 // A joint missing from the rig.
 const NO_JOINT: u32 = 255u;
+// A root joint's parent (`gc_assets::anim::ROOT`).
+const ROOT_PARENT: u32 = 255u;
 
 fn translation(t: vec3<f32>) -> mat4x4<f32> {
     return mat4x4<f32>(
@@ -2082,8 +2084,9 @@ fn cs_pose(
     pose_parents[bone] = parent;
     workgroupBarrier();
     var chain = local;
-    var up = parent;
-    for (var n = 1u; n < POSE_GROUP && up != NO_JOINT; n++) {
+    // The threads past the last joint have no chain to walk.
+    var up = select(ROOT_PARENT, parent, bone < joints);
+    for (var n = 1u; n < POSE_GROUP && up != ROOT_PARENT; n++) {
         chain = pose_globals[up] * chain;
         up = pose_parents[up];
     }
