@@ -560,6 +560,19 @@ impl Look {
         }
     }
 
+    /// This look with nothing the weather or season left on the land: no
+    /// wet, snow, dry grass, turned woods or ice (the unit viewer's).
+    pub fn bare_land(&self) -> Look {
+        Look {
+            wet: 0.0,
+            snow: 0.0,
+            dry: 0.0,
+            autumn: 0.0,
+            ice: 0.0,
+            ..*self
+        }
+    }
+
     /// The same light for competitive play (the Clarity setting): no
     /// vignette, no film grain and no heavy grading, so colours, team
     /// banners and fog of war read the same in every look. The light itself

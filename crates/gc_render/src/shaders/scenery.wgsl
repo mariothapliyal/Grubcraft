@@ -322,11 +322,11 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
         let xz = left * detailed.x + in.facing * detailed.z;
         n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));
     }
-    // The season, near and far alike.
+    // The season, near and far alike (conifers keep their needles).
     if in.kind == DETAIL_BROADLEAF {
-        albedo = seasonal_leaves(albedo, in.leaf, DETAIL_BROADLEAF, in.at + in.local.xz * 0.15);
-    } else if in.kind == DETAIL_FOLIAGE || (in.kind == DETAIL_NONE && in.leafy > 0.5) {
-        albedo = seasonal_leaves(albedo, 1.0, DETAIL_FOLIAGE, in.at);
+        albedo = autumn_leaves(albedo, in.leaf, in.at);
+    } else if in.kind == DETAIL_FOLIAGE {
+        albedo = seasonal_foliage(albedo);
     }
     albedo *= 1.0 - OCCLUDED_DARK * in.occ;
     albedo *= 1.0 - WET_DARK * drench(n);
@@ -343,34 +343,41 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     return vec4<f32>(veil(c, in.world.xz), 1.0);
 }
 
-// The season on leaves (`leaf` of the surface is leaf): broadleaf woods turn
-// gold, orange and red in the autumn, each tree its own colour (`at` is
-// where it stands); grass and bushes go to straw in a dry summer and winter, and
-// brown a little in the autumn. Conifers keep their needles.
-fn seasonal_leaves(albedo: vec3<f32>, leaf: f32, kind: u32, at: vec2<f32>) -> vec3<f32> {
+// How bright a leaf's own colour is, to carry its light and dark over to
+// a season's colour.
+fn leaf_bright(albedo: vec3<f32>) -> f32 {
+    return clamp(luma(albedo) * 6.0, 0.35, 1.2);
+}
+
+// Autumn on a broadleaf tree's leaves (`leaf` how much of the surface is
+// leaf): gold, orange or red, each tree its own colour (`at` is where it
+// stands), and a few turn late and stay green.
+fn autumn_leaves(albedo: vec3<f32>, leaf: f32, at: vec2<f32>) -> vec3<f32> {
     let turned = g.air.w;
-    let parched = g.haze.w;
-    if leaf < 0.02 || kind == DETAIL_CONIFER || (turned <= 0.0 && parched <= 0.0) {
+    if leaf < 0.02 || turned <= 0.0 {
         return albedo;
     }
-    let bright = clamp(dot(albedo, vec3<f32>(0.3, 0.6, 0.1)) * 6.0, 0.35, 1.2);
-    var out = albedo;
-    if kind == DETAIL_BROADLEAF && turned > 0.0 {
-        let pick = vnoise(at * 0.45 + vec2<f32>(13.0, 0.0));
-        let gold = srgb_to_linear(vec3<f32>(0.78, 0.58, 0.14));
-        let orange = srgb_to_linear(vec3<f32>(0.8, 0.36, 0.08));
-        let red = srgb_to_linear(vec3<f32>(0.58, 0.13, 0.06));
-        var hue = mix(gold, orange, smoothstep(0.3, 0.55, pick));
-        hue = mix(hue, red, smoothstep(0.6, 0.8, pick));
-        // A few trees turn late and are still green.
-        let late = smoothstep(0.15, 0.05, vnoise(at * 0.83 + vec2<f32>(41.0, 3.0)));
-        out = mix(out, hue * bright, leaf * turned * 0.85 * (1.0 - late));
-    }
-    if kind == DETAIL_FOLIAGE {
-        let straw = srgb_to_linear(vec3<f32>(0.6, 0.5, 0.25));
-        let brown = srgb_to_linear(vec3<f32>(0.5, 0.34, 0.16));
-        let goal = mix(straw, brown, turned / max(turned + parched, 1e-3));
-        out = mix(out, goal * bright, leaf * max(parched * 0.75, turned * 0.4));
-    }
-    return out;
+    let pick = vnoise(at * 0.45 + vec2<f32>(13.0, 0.0));
+    var hue = mix(AUTUMN_GOLD, AUTUMN_ORANGE, smoothstep(0.3, 0.55, pick));
+    hue = mix(hue, AUTUMN_RED, smoothstep(0.6, 0.8, pick));
+    let late = smoothstep(0.15, 0.05, vnoise(at * 0.83 + vec2<f32>(41.0, 3.0)));
+    return mix(albedo, hue * leaf_bright(albedo), leaf * turned * 0.85 * (1.0 - late));
 }
+
+// The season on grass and bushes: straw in a dry summer and winter, brown
+// a little in the autumn.
+fn seasonal_foliage(albedo: vec3<f32>) -> vec3<f32> {
+    let turned = g.air.w;
+    let parched = g.haze.w;
+    if turned <= 0.0 && parched <= 0.0 {
+        return albedo;
+    }
+    let goal = mix(STRAW, AUTUMN_BROWN, turned / max(turned + parched, 1e-3));
+    return mix(albedo, goal * leaf_bright(albedo), max(parched * 0.75, turned * 0.4));
+}
+
+// Season colours (linear).
+const AUTUMN_GOLD = vec3<f32>(0.579, 0.302, 0.013);
+const AUTUMN_ORANGE = vec3<f32>(0.612, 0.106, 0.004);
+const AUTUMN_RED = vec3<f32>(0.301, 0.011, 0.002);
+const AUTUMN_BROWN = vec3<f32>(0.218, 0.093, 0.018);

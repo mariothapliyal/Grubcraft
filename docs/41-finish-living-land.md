@@ -236,12 +236,13 @@ seasons. Render only: nothing in the simulation changed.
   late and stay green. Conifers keep their needles. The grass browns a
   little and bushes go brown.
 - **Winter**: a thin snow lies whatever the weather (`WINTER_SNOW`, 0.35
-  of a full cover: patches on flat ground, a dusting on trees and roofs),
-  and real snowfall builds on it as before. The grass is dead and pale.
+  of a full cover: patches on flat ground, a dusting on trees and roofs).
+  It is the least the lying snow melts to: it settles in as winter comes,
+  real snowfall builds on it as before, and it melts away in the spring. The grass is dead and pale.
   Frozen water (`Look::ice`, from the simulation's frozen water, the same
   state that lets armies cross the shallows) is drawn as a pale, cloudy,
   cracked sheet of ice that hides the ripples and the bed, with snow
-  drifted on it when snow lies. The ice comes in and goes over about 6
+  lying on it in the same patches as on the bank. The ice comes in and goes over about 6
   seconds (`ICE_SETTLE`).
 - **Crossing over.** Each season is full through its middle and crosses
   to the next over a fifth of a season either side of its edge

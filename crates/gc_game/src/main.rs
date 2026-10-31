@@ -706,10 +706,10 @@ fn parse_args() -> Options {
             "--weather" => gc_render::Weather::from_name(&value)
                 .map(|w| opts.weather = Some(w))
                 .is_some(),
-            "--season" => ["spring", "summer", "autumn", "winter"]
-                .iter()
-                .position(|s| s.eq_ignore_ascii_case(value.trim()))
-                .map(|k| opts.season = Some(k as f32 + 0.5))
+            "--season" => gc_sim::sky::Season::ALL
+                .into_iter()
+                .find(|s| format!("{s:?}").eq_ignore_ascii_case(value.trim()))
+                .map(|s| opts.season = Some(s as usize as f32 + 0.5))
                 .is_some(),
             "--air" => gc_map::def::Land::ALL
                 .into_iter()
@@ -4356,11 +4356,7 @@ impl Running {
         );
         // The unit viewer shows a model as made, not as the last rain left it.
         if self.viewer.is_some() {
-            look.wet = 0.0;
-            look.snow = 0.0;
-            look.dry = 0.0;
-            look.autumn = 0.0;
-            look.ice = 0.0;
+            look = look.bare_land();
         }
         self.renderer.set_look(look);
         // The water rises in a flood (docs/32-changing-land.md) and drops

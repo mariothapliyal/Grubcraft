@@ -129,6 +129,12 @@ const SNOW_SETTLE: f32 = 50.0;
 /// Under this much snow the ground is bare to the eye, so it is none.
 const SNOW_BARE: f32 = 0.06;
 const SNOW_MELT: f32 = 240.0;
+/// How far a value eased with a time constant of `settle` seconds moves
+/// toward its target in `dt` seconds (0 none to 1 all the way).
+fn ease(dt: f32, settle: f32) -> f32 {
+    1.0 - (-dt.max(0.0) / settle).exp()
+}
+
 /// Seconds for the water to ice over once it freezes, or open once it thaws.
 const ICE_SETTLE: f32 = 6.0;
 /// How much snow lies through the depth of winter with none falling.
@@ -201,13 +207,9 @@ impl SkyView {
     /// The sky the simulation's `world` has now.
     pub fn of(world: &gc_sim::World) -> SkyView {
         SkyView {
-            year: world.season().map(|at| {
-                let season = gc_sim::sky::Season::ALL
-                    .iter()
-                    .position(|&s| s == at.season)
-                    .unwrap_or(0);
-                season as f32 + at.into as f32 / at.length.max(1) as f32
-            }),
+            year: world
+                .season()
+                .map(|at| at.season as usize as f32 + at.into as f32 / at.length as f32),
             frozen: world.terrain().frozen(),
             ..SkyView::at(world.weather(), world.daylight())
         }
@@ -595,7 +597,7 @@ impl Atmosphere {
         };
         let shares = match &mut self.shares {
             Some(now) => {
-                let k = 1.0 - (-dt.max(0.0) / SETTLE).exp();
+                let k = ease(dt, SETTLE);
                 for (n, t) in now.iter_mut().zip(target) {
                     *n += (t - *n) * k;
                 }
@@ -609,7 +611,7 @@ impl Atmosphere {
             self.fade = sky.amount.clamp(0.0, 1.0);
             self.leaving = (Weather::Clear, 0.0);
         } else {
-            let k = 1.0 - (-dt.max(0.0) / WEATHER_SETTLE).exp();
+            let k = ease(dt, WEATHER_SETTLE);
             if self.weather != Weather::Clear {
                 self.fade += (1.0 - self.fade) * k;
             }
@@ -629,13 +631,29 @@ impl Atmosphere {
         } else {
             DRY_SETTLE
         };
-        self.soaked += (rain - self.soaked) * (1.0 - (-dt.max(0.0) / settle).exp());
+        self.soaked += (rain - self.soaked) * ease(dt, settle);
         // Dry, not a trace of wet for ever.
         if rain == 0.0 && self.soaked < DRY_BELOW {
             self.soaked = 0.0;
         }
+        // The seasons on the land follow the match's own year (or
+        // `--season`), not a weather or look chosen by hand.
+        let (year, frozen) = match self.season_flag {
+            Some(flag) => (Some(Year::at(flag)), Year::at(flag).winter > 0.5),
+            None => (
+                self.sky.and_then(|sky| sky.year).map(Year::at),
+                self.sky.is_some_and(|sky| sky.frozen),
+            ),
+        };
+        let ice = if frozen { 1.0 } else { 0.0 };
+        self.ice += (ice - self.ice) * ease(dt, ICE_SETTLE);
+        if (self.ice - ice).abs() < 1e-3 {
+            self.ice = ice;
+        }
         // Snow settles while it falls and stays while it eases, melts slowly
-        // once it has stopped and quickly under rain.
+        // once it has stopped and quickly under rain. Winter's frost is a
+        // thin snow that lies whatever the weather: the least it melts to.
+        let frost = year.map_or(0.0, |y| y.winter * WINTER_SNOW);
         let snowfall = [self.leaving, (self.weather, self.fade)]
             .into_iter()
             .filter(|&(weather, _)| weather == Weather::Snow)
@@ -647,11 +665,13 @@ impl Atmosphere {
             (snowfall, SNOW_SETTLE)
         } else if snowfall > 0.0 {
             (self.settled, SNOW_SETTLE)
+        } else if self.settled < frost {
+            (frost, SNOW_SETTLE)
         } else {
-            (0.0, SNOW_MELT)
+            (frost, SNOW_MELT)
         };
-        self.settled += (target - self.settled) * (1.0 - (-dt.max(0.0) / settle).exp());
-        if snowfall == 0.0 && self.settled < SNOW_BARE {
+        self.settled += (target - self.settled) * ease(dt, settle);
+        if snowfall == 0.0 && frost == 0.0 && self.settled < SNOW_BARE {
             self.settled = 0.0;
         }
         let stormy = self.weather == Weather::Rain && self.fade >= STORM_AT;
@@ -682,21 +702,9 @@ impl Atmosphere {
             .in_weather(self.weather, self.fade * share);
         look.wet = self.soaked * share;
         look.snow = self.settled * share;
-        // The seasons on the land: they follow the match's own year, not a
-        // weather or look chosen by hand.
-        let year = self.season_flag.or(self.sky.and_then(|sky| sky.year));
-        let frozen = match self.season_flag {
-            Some(flag) => Year::at(flag).winter > 0.5,
-            None => self.sky.is_some_and(|sky| sky.frozen),
-        };
-        let ease = 1.0 - (-dt.max(0.0) / ICE_SETTLE).exp();
-        self.ice += (f32::from(u8::from(frozen)) - self.ice) * ease;
         if let Some(year) = year {
-            let year = Year::at(year);
             look.dry = year.dry;
             look.autumn = year.autumn;
-            // Winter's frost lies as a thin snow whatever the weather.
-            look.snow = look.snow.max(year.winter * WINTER_SNOW * share);
         }
         look.ice = self.ice;
         // The sky shows the simulation's whole cover as well as the cloud a
@@ -1458,12 +1466,23 @@ mod tests {
         });
         let first = frame(&mut atmosphere, 0.1);
         assert!(first.ice > 0.0 && first.ice < 0.1, "{}", first.ice);
-        assert!((first.snow - WINTER_SNOW).abs() < 1e-4, "{}", first.snow);
+        assert!(first.snow > 0.0 && first.snow < 0.01, "{}", first.snow);
         let mut look = first;
-        for _ in 0..300 {
+        for _ in 0..3000 {
             look = frame(&mut atmosphere, 0.1);
         }
-        assert!(look.ice > 0.99);
+        assert_eq!(look.ice, 1.0);
+        assert!((look.snow - WINTER_SNOW).abs() < 0.01, "{}", look.snow);
+        // Spring thaws it: the ice goes, and the frost melts away.
+        atmosphere.follow(SkyView {
+            year: Some(0.5),
+            frozen: false,
+            ..summer
+        });
+        for _ in 0..30000 {
+            look = frame(&mut atmosphere, 0.1);
+        }
+        assert_eq!((look.ice, look.snow), (0.0, 0.0));
         // A match without seasons is green and open.
         let mut plain = Atmosphere::new(None, None);
         plain.follow(sim_sky(WeatherKind::Clear, 0, 0, 12));
