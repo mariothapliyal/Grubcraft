@@ -417,13 +417,26 @@ mod tests {
         temper: Option<u32>,
         openings: &[Option<&'static Opening>],
     ) -> Played {
+        let map = conquest::make_map(choice, tiles, seed);
+        play_map(map, factions, levels, seed, max_minutes, temper, openings)
+    }
+
+    /// [`play_with`] on a map already made (a shipped def with a tweak, say).
+    pub(crate) fn play_map(
+        map: Map,
+        factions: &[Faction],
+        levels: &[Difficulty],
+        seed: u64,
+        max_minutes: u32,
+        temper: Option<u32>,
+        openings: &[Option<&'static Opening>],
+    ) -> Played {
         let trace = std::env::var("AI_TRACE").unwrap_or_default();
         // AI_TRACE=2 also prints every journal entry as it is written.
         let journal = trace == "2";
         let trace = journal || trace == "1";
         let data = crate::data::load();
         let table = Table::new(&data);
-        let map = conquest::make_map(choice, tiles, seed);
         let units = conquest::unit_stats(&data);
         let nav = map.sim_nav_costs();
         let teams: Vec<u8> = (0..factions.len() as u8).collect();
@@ -1029,6 +1042,49 @@ mod tests {
         for side in &played.sides {
             assert_eq!(side.raids, 0);
             assert!(side.lens.iter().all(|l| !l.starts_with("  raid    ")));
+        }
+    }
+
+    /// Generals bridge (docs/26-fortifications.md): where a deep river, with
+    /// no ford, runs the whole map between the starts, some General draws a
+    /// bridge across it.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_generals_bridge_a_river_that_cuts_them_off() {
+        use gc_map::def::{Mode, Shape, TerrainOp};
+        let mut def = gc_map::shipped("ribcage_pass").expect("shipped");
+        // A river from corner to corner across the middle, about seven
+        // tiles wide and a quarter tile deep, over the ribs and the ford.
+        def.terrain.push(TerrainOp {
+            shape: Shape::Line {
+                a: (0, 127),
+                b: (127, 0),
+                half_width: 3,
+            },
+            mode: Mode::Set,
+            height: 4,
+            edge: 0,
+        });
+        let map = Map::from_def(&def);
+        let nav = map.sim_nav_costs();
+        let (a, b) = (map.starts()[0], map.starts()[1]);
+        assert!(
+            gc_match::terrain_view::ai_terrain(&map, &nav).cut_off(
+                Vec2::new(a.0 as f32, a.1 as f32),
+                [Vec2::new(b.0 as f32, b.1 as f32)]
+            ),
+            "the river cuts the starts off"
+        );
+        let f = Faction::EmberClans;
+        let played = play_map(map, &[f, f], &[Difficulty::General], 8, 35, None, &[]);
+        // Both sides are cut off, so both bridge (a deck is 3 to 5 tiles
+        // wide, so a bridge is at least three tiles).
+        for (p, side) in played.sides.iter().enumerate() {
+            assert!(
+                side.works.bridges >= 3,
+                "side {p} built no bridge: {}",
+                played.report()
+            );
         }
     }
 

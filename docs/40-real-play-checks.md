@@ -51,13 +51,13 @@ tick (p50, p99, max) and the whole scenario. The report is printed and
 saved to `target/stress/report.txt` (CI keeps it as the `stress-report`
 artifact). The whole suite takes about two seconds.
 
-| Scenario | What it plays | Checks (first run) |
+| Scenario | What it plays | Checks (last measured) |
 |---|---|---|
-| `gate` | 200 Ember soldiers (4 spear, 3 sword, 2 bow regiments and horse) march through one Gate in a Palisade across the map | all through and standing within 75 s (52 s), no soldier lost |
-| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (49 s; a routed regiment, running from the archers, no longer counts as part of the column), no regiment strays off the deck into the river |
+| `gate` | 200 Ember soldiers (4 spear, 3 sword, 2 bow regiments and horse) march through one Gate in a Palisade across the map | all through and standing within 75 s (49 s), no soldier lost |
+| `bridge` | a column of 6 regiments crosses a two-lane Timber Bridge over a deep river while 3 archer regiments shoot from the far bank | all across within 70 s (44 s; a routed regiment, running from the archers, no longer counts as part of the column), no regiment strays off the deck into the river |
 | `queued-orders` | 4 Ember regiments get, in one tick, a march up to their Gate, a Shift-queued march through it and a Shift-queued attack on an enemy regiment beyond | the enemy beaten within 100 s (26 s), every regiment that fought did so through the Gate (3 of 4 fought), none lost |
-| `forest-retreat` | 6 regiments fall back west through 16 tiles of woods broken by thicket, 6 foot regiments chasing from 24 tiles behind; the player re-sends any that stop | every regiment out, fallen or caught within 85 s (55 s), at least half get out (6 of 6, 95 of 132 soldiers). Since regiments hold until bloodied (2026-10-30), one the pursuers catch fights it out instead of running at the first blows, so a caught regiment no longer has to get out in time: 20 s, 5 of 6 out, 85 soldiers |
-| `ai-walls` | a General (Ember) on Ribcage Pass against an Ember base walled all round with a Palisade and a Gate | it hits the wall and gets inside within 10 minutes (5:42, 5:55) |
+| `forest-retreat` | 6 regiments fall back west through 16 tiles of woods broken by thicket, 6 foot regiments chasing from 24 tiles behind; the player re-sends any that stop | every regiment out, fallen or caught within 85 s, at least half get out (before regiments held until bloodied: 43 s, 6 of 6 out, 108 of 132 soldiers). Since regiments hold until bloodied (2026-10-30), one the pursuers catch fights it out instead of running at the first blows, so a caught regiment no longer has to get out in time: 20 s, 5 of 6 out, 104 soldiers |
+| `ai-walls` | a General (Ember) on Ribcage Pass against an Ember base walled all round with a Palisade and a Gate | it hits the wall and gets inside within 10 minutes (5:11, 5:23) |
 
 Checks are on what the simulation decides (ticks, positions, losses), the
 same on every machine, so they don't flake. Time is held only to each
@@ -72,7 +72,8 @@ morale) updates its limit in the same pull request and says why.
    budget, and `run(&Real, &mut Report)`; the game data is loaded once for
    the suite) and list it in `SCENARIOS` in `stress/mod.rs`.
 2. Build the world with `arena::Arena` (a flat map: paint `river`, `woods`,
-   `thicket`; `world()` gives a two-player Conquest world with every
+   `thicket` on it and the game's own map maker, gc_map, makes it, with
+   the same banks, cover and blocking rules as a real map; `world()` gives a two-player Conquest world with every
    faction's units and buildings) or any gc_map map, as `ai-walls` does.
    `Real` looks units and buildings up by name; `spawn` and `put_up` set
    the field up (untimed), `move_to`, `attack_nearest` and `grid` give

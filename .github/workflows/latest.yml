@@ -11,10 +11,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# If main moves again while this is running, drop the older run.
+# One run at a time. A running build always finishes and publishes; if main
+# moves several times meanwhile, GitHub keeps only the newest waiting run.
+# (Cancelling in progress meant busy days never published a build at all.)
 concurrency:
   group: latest-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
