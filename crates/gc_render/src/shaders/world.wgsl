@@ -2022,28 +2022,25 @@ fn cs_pose(
     @builtin(local_invocation_index) bone: u32,
 ) {
     let k = group.y * POSE_ROW + group.x;
-    if k >= jobs.count.w {
-        return;
-    }
+    // The last row of workgroups runs past the soldiers.
+    let live = k < jobs.count.w;
     let job = jobs.job[find_job(k, true)];
     let nth = k - job.pose.w;
     let soldier = job.run.x + nth;
     let bones = job.pose.y;
     let slot = job.pose.x + nth * bones + bone;
     let i = soldier * INSTANCE_WORDS;
-    let fit = job.pose.z;
+    let fit = select(0u, job.pose.z, live);
 
-    // No thread may leave before the barriers below on its own: Direct3D's
-    // shader compiler rejects a barrier after a return that depends on the
-    // thread (the bone), and one bad pipeline blacks out every frame.
-    // `k` and `fit` are the same for the whole workgroup. FXC cannot see
-    // that `rigged` is too, so its barrier stays unconditional.
-    if fit == 0u {
-        if bone < bones {
-            pose_unfitted(i, slot, bone);
-        }
-        return;
-    }
+    // No thread may return before the last barrier below, not even a whole
+    // workgroup: Windows' software GPU (WARP) crashes compiling a barrier
+    // after a return (see `shaders_validate`), and Direct3D's shader
+    // compiler rejects one after a return that depends on the thread. So an
+    // unfitted model or a workgroup past the soldiers runs through the
+    // barriers with nothing to do and leaves after them. FXC cannot see that
+    // `rigged` is the same for the whole workgroup, so its barrier stays
+    // unconditional.
+    let fitted = fit != 0u;
 
     // The fit: the skeleton's joints and where its poses start, then the
     // model's fixes.
@@ -2056,7 +2053,7 @@ fn cs_pose(
     let masks = joint.z;
 
     var local = mat4x4<f32>();
-    if bone < joints {
+    if fitted && bone < joints {
         let base = instance_layer(i, 0u);
         var p = layer_pose(poses, base, bone);
         for (var l = 1u; l <= POSE_LAYERS; l++) {
@@ -2085,13 +2082,13 @@ fn cs_pose(
     workgroupBarrier();
     var chain = local;
     // The threads past the last joint have no chain to walk.
-    var up = select(ROOT_PARENT, parent, bone < joints);
+    var up = select(ROOT_PARENT, parent, fitted && bone < joints);
     for (var n = 1u; n < POSE_GROUP && up != ROOT_PARENT; n++) {
         chain = pose_globals[up] * chain;
         up = pose_parents[up];
     }
     workgroupBarrier();
-    if bone < joints {
+    if fitted && bone < joints {
         pose_globals[bone] = anim_matrix(fit + 2u) * chain;
     }
     workgroupBarrier();
@@ -2100,11 +2097,17 @@ fn cs_pose(
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
-    let rigged = feet > 0.0 || look > 0.0;
+    let rigged = fitted && (feet > 0.0 || look > 0.0);
     if rigged && bone == 0u {
         fit_rig(i, rig, feet, look);
     }
     workgroupBarrier();
+    if !fitted {
+        if live && bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
     if bone > joints || bone >= bones {
         return;
     }

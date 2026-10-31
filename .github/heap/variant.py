@@ -1,7 +1,48 @@
 # TEMPORARY: patches cs_pose for one crash-hunt variant. Removed before merge.
 import sys, re
-v = sys.argv[1]
+v = sys.argv[1].rstrip("2")
 p = "crates/gc_render/src/shaders/world.wgsl"
+if v == "x":  # main's posing (depth loop), only the early returns moved
+    import subprocess
+    subprocess.run(["git", "checkout", "origin/main", "--", p, "crates/gc_render/src/soldiers.rs"], check=True)
+    s = open(p, encoding="utf-8").read()
+    def sub(a, b):
+        global s
+        assert a in s, a
+        s = s.replace(a, b, 1)
+    sub("""    if k >= jobs.count.w {
+        return;
+    }
+""", "    let live = k < jobs.count.w;\n")
+    sub("    let fit = job.pose.z;\n", "    let fit = select(0u, job.pose.z, live);\n    let fitted = fit != 0u;\n")
+    sub("""    if fit == 0u {
+        if bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
+""", "")
+    sub("    let deepest = head.z;", "    let deepest = select(0u, head.z, fitted);")
+    sub("""    var local = mat4x4<f32>();
+    if bone < joints {""", """    var local = mat4x4<f32>();
+    if fitted && bone < joints {""")
+    sub("        if bone < joints && depth == d {", "        if fitted && bone < joints && depth == d {")
+    sub("    let rigged = feet > 0.0 || look > 0.0;", "    let rigged = fitted && (feet > 0.0 || look > 0.0);")
+    sub("""    workgroupBarrier();
+    if bone > joints || bone >= bones {""", """    workgroupBarrier();
+    if !fitted {
+        if live && bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
+    if bone > joints || bone >= bones {""")
+    open(p, "w", encoding="utf-8").write(s)
+    print("variant x applied")
+    raise SystemExit(0)
+if v == "y":  # the branch as it is
+    print("variant y applied")
+    raise SystemExit(0)
 s = open(p, encoding="utf-8").read()
 start = s.index("fn cs_pose(")
 end = s.index("// Pose one vertex of one soldier", start)
