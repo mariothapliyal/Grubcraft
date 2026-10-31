@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         heap: [full]
-        skip: ['4', '4b', s4, s4b]
+        skip: [a, b, c, d]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -49,8 +49,6 @@ jobs:
           $dir = Split-Path $exe
           New-Item -ItemType Directory -Force -Path diag | Out-Null
           $cmds = 'sxd av; sxd eh; sxd ch; g; .echo ===CRASH===; .lastevent; r; kv 40; q'
-          $env:GC_DIAG_SKIP = '${{ matrix.skip }}'.TrimEnd('b').TrimStart('s')
-          if ('${{ matrix.skip }}'.StartsWith('s')) { $env:GC_DIAG_ENTRY = 'cs_pose_storage' }
           $crashes = 0
           for ($i = 1; $i -le 8; $i++) {
             $app = Join-Path $env:RUNNER_TEMP "gc-$i"

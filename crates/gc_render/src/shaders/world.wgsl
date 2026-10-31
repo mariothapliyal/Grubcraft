@@ -1769,6 +1769,9 @@ fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
     return mat3x4<f32>(t[0], t[1], t[2]);
 }
 
+// A soldier's joints' own matrices (each relative to its parent), and then
+// their matrices in the model's space.
+var<workgroup> pose_locals: array<mat4x4<f32>, POSE_GROUP>;
 var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
 
 // A soldier's rig fixes (see `rig_of` in soldiers.rs): 0 drops the whole
@@ -1982,76 +1985,6 @@ fn fit_rig(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
     }
 }
 
-// TEMP heap diag: fit_rig with no dynamically indexed local (no
-// indexable temps for WARP's JIT).
-fn leg_rise(leg: u32, pos: vec2<f32>, left: vec2<f32>, facing: vec2<f32>, here: f32, scale: f32, feet: f32) -> f32 {
-    let hip = joint_at(rig_joint(leg, 0u));
-    let knee = joint_at(rig_joint(leg, 1u));
-    let ankle = joint_at(rig_joint(leg, 2u));
-    let reach = length(knee - hip) + length(ankle - knee);
-    let xz = pos + (left * ankle.x + facing * ankle.z) * scale;
-    let dy = clamp((ground_at(xz) - here) / scale, -0.4 * reach, 0.4 * reach);
-    return dy * planted(ankle.y, reach) * feet;
-}
-
-fn look_step(rig_z: u32, k: u32, share: f32, total: f32, yaw: f32, pitch: f32, state: ptr<function, LookState>) {
-    let j = rig_joint(rig_z, k);
-    if j == NO_JOINT {
-        return;
-    }
-    (*state).done += share / total;
-    let now = look_turn(yaw * (*state).done, pitch * (*state).done);
-    let pivot = ((*state).turned * vec4<f32>(joint_at(j), 1.0)).xyz;
-    (*state).turned = turn_about(pivot, now * transpose((*state).was)) * (*state).turned;
-    (*state).was = now;
-    pose_fix[7u + k] = (*state).turned;
-}
-
-struct LookState {
-    turned: mat4x4<f32>,
-    was: mat3x3<f32>,
-    done: f32,
-}
-
-fn fit_rig_flat(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
-    let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
-    let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
-    let scale = bitcast<f32>(instances[i + 8u]);
-    let extra = instances[i + 15u];
-    var rise = vec2<f32>(0.0);
-    if feet > 0.0 {
-        let here = ground_at(pos);
-        let left = vec2<f32>(facing.y, -facing.x);
-        rise = vec2<f32>(
-            leg_rise(rig.x, pos, left, facing, here, scale, feet),
-            leg_rise(rig.y, pos, left, facing, here, scale, feet),
-        );
-    }
-    let drop_by = min(0.0, min(rise.x, rise.y));
-    let drop = translation(vec3<f32>(0.0, drop_by, 0.0));
-    for (var f = 0u; f < RIG_FIXES; f++) {
-        pose_fix[f] = drop;
-    }
-    if feet > 0.0 {
-        bend_leg(rig.x, 1u, rise.x - drop_by, drop);
-        bend_leg(rig.y, 4u, rise.y - drop_by, drop);
-    }
-    if look <= 0.0 {
-        return;
-    }
-    let yaw = f32(bitcast<i32>(extra << 24u) >> 24u) / 127.0 * 1.5707964 * look;
-    let pitch = f32(bitcast<i32>(extra << 16u) >> 24u) / 127.0 * 0.7853982 * look;
-    let shares = select(vec3<f32>(0.3, 0.3, 0.4), vec3<f32>(0.0), vec3<u32>(rig_joint(rig.z, 0u), rig_joint(rig.z, 1u), rig_joint(rig.z, 2u)) == vec3<u32>(NO_JOINT));
-    let total = shares.x + shares.y + shares.z;
-    if total <= 0.0 {
-        return;
-    }
-    var state = LookState(drop, look_turn(0.0, 0.0), 0.0);
-    look_step(rig.z, 0u, shares.x, total, yaw, pitch, &state);
-    look_step(rig.z, 1u, shares.y, total, yaw, pitch, &state);
-    look_step(rig.z, 2u, shares.z, total, yaw, pitch, &state);
-}
-
 // A model without a fitted skeleton: each bone straight from its frames,
 // whole-body layers mixed in.
 fn pose_unfitted(i: u32, slot: u32, bone: u32) {
@@ -2077,10 +2010,10 @@ fn pose_unfitted(i: u32, slot: u32, bone: u32) {
 // A model posed from bone rows blends its layers' matrices (a layer it
 // cannot hold, an additive one, is skipped). A model fitted to a skeleton
 // mixes each joint's pose from its layers (a layer only moves the joints its
-// mask covers; an additive layer adds its change on top), builds the joints'
-// matrices parent by parent, depth by depth (the roots taking the model's
-// `pre`, from the skeleton's space to its own), and ends each with its
-// bone's fix: `pre * global * post`.
+// mask covers; an additive layer adds its change on top), builds each
+// joint's matrix up its chain of parents (the root taking the model's `pre`,
+// from the skeleton's space to its own), and ends each with its bone's fix:
+// `pre * global * post`.
 @compute @workgroup_size(POSE_GROUP)
 fn cs_pose(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -2110,16 +2043,15 @@ fn cs_pose(
         return;
     }
 
-    // The fit: the skeleton's joints, how deep they nest and where its poses
-    // start, then the model's fixes.
+    // The fit: the skeleton's joints and where its poses start, then the
+    // model's fixes. (The skeleton also records how deep each joint nests;
+    // posing no longer needs it.)
     let head = anim[fit];
     let joints_at = head.x;
     let joints = head.y;
-    let deepest = head.z;
     let poses = Poses(head.w, joints);
     let joint = anim[joints_at + min(bone, joints - 1u)];
     let parent = joint.x;
-    let depth = joint.y;
     let masks = joint.z;
 
     var local = mat4x4<f32>();
@@ -2144,39 +2076,32 @@ fn cs_pose(
         }
         local = pose_matrix(p);
     }
-    // Parents before children: one depth at a time.
-    for (var d = 0u; d <= deepest; d++) {
-        if bone < joints && depth == d {
-            if parent == 255u {
-                pose_globals[bone] = anim_matrix(fit + 2u) * local;
-            } else {
-                if GC_DIAG == 3u {
-                    pose_globals[bone] = local;
-                } else {
-                    pose_globals[bone] = pose_globals[parent] * local;
-                }
-            }
+    // Each joint then multiplies its way up its own chain of parents to the
+    // root. No barrier may sit inside a loop here: Windows' software GPU
+    // (WARP) miscompiles one, writing to a stray address and crashing the
+    // game or corrupting its memory (the Windows smoke run, October 2026).
+    pose_locals[bone] = local;
+    workgroupBarrier();
+    if bone < joints {
+        var global = local;
+        var up = parent;
+        for (var n = 1u; n < POSE_GROUP && up != NO_JOINT; n++) {
+            global = pose_locals[up] * global;
+            up = anim[joints_at + up].x;
         }
-        if GC_DIAG != 4u {
-            workgroupBarrier();
-        }
+        pose_globals[bone] = anim_matrix(fit + 2u) * global;
     }
+    workgroupBarrier();
     // The rig's fixes: the body dropped and the legs bent to stand on the
     // ground, the upper body turned to look.
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
-    let rigged = (feet > 0.0 || look > 0.0) && GC_DIAG != 2u;
+    let rigged = feet > 0.0 || look > 0.0;
     if rigged && bone == 0u {
-        if GC_DIAG == 1u {
-            fit_rig_flat(i, rig, feet, look);
-        } else {
-            fit_rig(i, rig, feet, look);
-        }
+        fit_rig(i, rig, feet, look);
     }
-    if GC_DIAG != 4u {
-        workgroupBarrier();
-    }
+    workgroupBarrier();
     if bone > joints || bone >= bones {
         return;
     }
@@ -2611,92 +2536,4 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         c = mix(c, cl.rgb, cl.a);
     }
     return vec4<f32>(c, 1.0);
-}
-
-// TEMP heap diag.
-override GC_DIAG: u32 = 0u;
-@compute @workgroup_size(64)
-fn cs_noop() {}
-
-// TEMP heap diag: cs_pose with no workgroup memory (globals kept in the
-// palette, rig fixes left out).
-fn palette_matrix(slot: u32) -> mat4x4<f32> {
-    let r = palette_bone(slot);
-    return transpose(mat4x4<f32>(r[0], r[1], r[2], vec4<f32>(0.0, 0.0, 0.0, 1.0)));
-}
-
-@compute @workgroup_size(POSE_GROUP)
-fn cs_pose_storage(
-    @builtin(workgroup_id) group: vec3<u32>,
-    @builtin(local_invocation_index) bone: u32,
-) {
-    let k = group.y * POSE_ROW + group.x;
-    if k >= jobs.count.w {
-        return;
-    }
-    let job = jobs.job[find_job(k, true)];
-    let nth = k - job.pose.w;
-    let soldier = job.run.x + nth;
-    let bones = job.pose.y;
-    let base_slot = job.pose.x + nth * bones;
-    let slot = base_slot + bone;
-    let i = soldier * INSTANCE_WORDS;
-    let fit = job.pose.z;
-    if fit == 0u {
-        if bone < bones {
-            pose_unfitted(i, slot, bone);
-        }
-        return;
-    }
-    let head = anim[fit];
-    let joints_at = head.x;
-    let joints = head.y;
-    let deepest = head.z;
-    let poses = Poses(head.w, joints);
-    let joint = anim[joints_at + min(bone, joints - 1u)];
-    let parent = joint.x;
-    let depth = joint.y;
-    let masks = joint.z;
-    var local = mat4x4<f32>();
-    if bone < joints {
-        let base = instance_layer(i, 0u);
-        var p = layer_pose(poses, base, bone);
-        for (var l = 1u; l <= POSE_LAYERS; l++) {
-            let layer = instance_layer(i, l);
-            if layer.weight <= 0.0 || ((masks >> layer.mask) & 1u) == 0u {
-                continue;
-            }
-            let o = layer_pose(poses, layer, bone);
-            if layer.additive {
-                let id = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-                p.r = normalize(quat_mul(quat_nlerp(id, o.r, layer.weight), p.r));
-                p.ts = vec4<f32>(p.ts.xyz + o.ts.xyz * layer.weight, p.ts.w * mix(1.0, o.ts.w, layer.weight));
-            } else {
-                p.r = quat_nlerp(p.r, o.r, layer.weight);
-                p.ts = mix(p.ts, o.ts, layer.weight);
-            }
-        }
-        local = pose_matrix(p);
-    }
-    for (var d = 0u; d <= deepest; d++) {
-        if bone < joints && depth == d {
-            var g = anim_matrix(fit + 2u) * local;
-            if parent != 255u {
-                g = palette_matrix(base_slot + parent) * local;
-            }
-            write_palette(slot, matrix_rows(g));
-        }
-        if GC_DIAG != 4u {
-            storageBarrier();
-        }
-    }
-    if bone > joints || bone >= bones {
-        return;
-    }
-    if bone == joints {
-        write_palette(slot, matrix_rows(translation(vec3<f32>(0.0))));
-        return;
-    }
-    let post = anim_matrix(fit + 5u + bone * 3u);
-    write_palette(slot, matrix_rows(palette_matrix(slot) * post));
 }
