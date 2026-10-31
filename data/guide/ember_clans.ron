@@ -164,6 +164,7 @@
         ),
         (
             name: "Fire-Arrow Watchtower",
+            blurb: "Level 2 of the Watchtower: more range, damage and hit points, and fire arrows that set woods alight. Press V.",
             summary: "Level 2 of the Watchtower, upgraded in place. Its two archers hit for 6 a shot (up from 5), reach 36 tiles (up from 32) and have 1500 hit points (up from 1000). Its fire arrows set woods and scrub alight. It costs 75 Grub and 50 Marrow. Press V on a finished Watchtower (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -187,6 +188,7 @@
         ),
         (
             name: "Great Ballista Yagura",
+            blurb: "Level 2 of the Ballista Yagura: more range, damage and hit points for its heavy bolts. Press V on one at tier 2.",
             summary: "Level 2 of the Ballista Yagura, upgraded in place. Its bolt hits for 52 (up from 40), reaches 38 tiles (up from 34) and the tower has 1350 hit points (up from 900). It still fires one bolt every 5 seconds down a file of soldiers. It costs 105 Grub and 50 Marrow. Press V on a finished Ballista Yagura (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -210,6 +212,7 @@
         ),
         (
             name: "Great Horoku Tower",
+            blurb: "Level 2 of the Horoku Tower: more range, damage and hit points for its fire-pots. Press V on one at tier 2.",
             summary: "Level 2 of the Horoku Tower, upgraded in place. It fires six shots every 6 seconds, 6 damage each (up from 5), reaches 40 tiles (up from 36) and has 1350 hit points (up from 900). Its fire-pots still set woods and scrub alight. It costs 120 Grub and 75 Marrow. Press V on a finished Horoku Tower (tier 2); it takes 30 seconds.",
             notes: [],
             tips: [

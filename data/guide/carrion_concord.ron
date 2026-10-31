@@ -120,6 +120,7 @@
         ),
         (
             name: "Toll House",
+            blurb: "Level 2 of the Tollgate: more range, damage and hit points; it still earns Grub as it hits. Press V at tier 2.",
             summary: "Level 2 of the Tollgate, upgraded in place. Its two crossbows hit for 6 a shot (up from 5), reach 34 tiles (up from 30) and the tower has 1500 hit points (up from 1000). It still earns 1 Grub for every 4 damage it deals. It costs 85 Grub and 50 Marrow. Press V on a finished Tollgate (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -143,6 +144,7 @@
         ),
         (
             name: "Debt Collector's Bolt",
+            blurb: "Level 2 of the Collector's Bolt: more range, damage and hit points; kills still pay Grub. Press V at tier 2.",
             summary: "Level 2 of the Collector's Bolt, upgraded in place. Its bolt hits for 49 (up from 38), reaches 38 tiles (up from 34) and the tower has 1425 hit points (up from 950). Each soldier it kills still pays 3 Grub. It costs 110 Grub and 50 Marrow. Press V on a finished Collector's Bolt (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -166,6 +168,7 @@
         ),
         (
             name: "Ossuary Catapult",
+            blurb: "Level 2 of the Corpse Catapult: more range, damage and hit points; its kills still rise as Bone Pikes. Press V.",
             summary: "Level 2 of the Corpse Catapult, upgraded in place. It fires six shots every 6 seconds, 6 damage each (up from 5), reaches 40 tiles (up from 36) and has 1350 hit points (up from 900). It still raises Bone Pikes from every 10 soldiers it kills. It costs 125 Grub and 75 Marrow. Press V on a finished Corpse Catapult (tier 2); it takes 30 seconds.",
             notes: [],
             tips: [

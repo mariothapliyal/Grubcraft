@@ -110,6 +110,7 @@
         ),
         (
             name: "Great Bell Tower",
+            blurb: "Level 2 of the Bell Tower: more range, damage and hit points; it still silences abilities. Press V at tier 2.",
             summary: "Level 2 of the Bell Tower, upgraded in place. Its beam hits for 13 (up from 10), reaches 34 tiles (up from 30) and the tower has 1350 hit points (up from 900). It still tolls every 20 seconds to silence enemy abilities within 10 tiles. It costs 90 Grub and 50 Marrow. Press V on a finished Bell Tower (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -133,6 +134,7 @@
         ),
         (
             name: "Prism Spire",
+            blurb: "Level 2 of the Prism Lance: more range, damage and hit points for its piercing beam. Press V at tier 2. Needs power.",
             summary: "Level 2 of the Prism Lance, upgraded in place. Its bolt hits for 42 (up from 32), reaches 38 tiles (up from 34) and the tower has 1200 hit points (up from 800). Its beam still runs on through 3 more regiments. It needs power. It costs 115 Grub and 50 Marrow. Press V on a finished Prism Lance (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -156,6 +158,7 @@
         ),
         (
             name: "Choral Obelisk",
+            blurb: "Level 2 of the Chord Obelisk: more range, damage and hit points; it still throws foes into disorder. Press V.",
             summary: "Level 2 of the Chord Obelisk, upgraded in place. It fires six shots every 5 seconds, 5 damage each (up from 4), reaches 40 tiles (up from 36) and has 1275 hit points (up from 850). Its sound burst still throws regiments into disorder. It needs power. It costs 120 Grub and 75 Marrow. Press V on a finished Chord Obelisk (tier 2); it takes 30 seconds.",
             notes: [],
             tips: [

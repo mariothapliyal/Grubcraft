@@ -109,6 +109,7 @@
         ),
         (
             name: "Spine Bastion",
+            blurb: "Level 2 of the Spine Mound: more range, damage and hit points against ground and air. Press V on one at tier 2.",
             summary: "Level 2 of the Spine Mound, upgraded in place. Its spines hit for 13 (up from 10), reach 34 tiles (up from 30) and the tower has 1350 hit points (up from 900). It still flings spines at ground and air. It costs 60 Grub and 50 Marrow. Press V on a finished Spine Mound (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -132,6 +133,7 @@
         ),
         (
             name: "Harpoon Gullet",
+            blurb: "Level 2 of the Harpoon Maw: more range, damage and hit points; it still drags its target in. Press V at tier 2.",
             summary: "Level 2 of the Harpoon Maw, upgraded in place. Its bolt hits for 42 (up from 32), reaches 36 tiles (up from 32) and the tower has 1425 hit points (up from 950). Its harpoon still drags the regiment it hits 3 tiles in. It costs 95 Grub and 50 Marrow. Press V on a finished Harpoon Maw (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
@@ -155,6 +157,7 @@
         ),
         (
             name: "Acid Gorger",
+            blurb: "Level 2 of the Acid Bloater: more range, damage and hit points; it still leaves acid pools. Press V at tier 2.",
             summary: "Level 2 of the Acid Bloater, upgraded in place. It fires six shots every 6 seconds, 5 damage each (up from 4), reaches 40 tiles (up from 36) and has 1275 hit points (up from 850). Its acid pool still eats at enemies standing in it. It costs 115 Grub and 75 Marrow. Press V on a finished Acid Bloater (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
