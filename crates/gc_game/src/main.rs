@@ -6818,9 +6818,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
-        // Below Conquest's top bar.
+        // Below Conquest's top bar, and the faction power buttons under it.
         let top = if self.match_started && self.showroom.is_none() {
-            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+            let powers = if !self.menu_open && self.offered_powers().next().is_some() {
+                gc_ui::powers::ROW_BOTTOM
+            } else {
+                0
+            };
+            (gc_ui::hud::TOP_BAR_HEIGHT + powers) as f32 * self.ui_scale()
         } else {
             0.0
         };
