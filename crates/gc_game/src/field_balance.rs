@@ -25,10 +25,11 @@ fn setup(a: F, b: F, map_seed: u64) -> MatchStart {
             s
         })
         .collect();
-    let mut settings = LobbySettings::default();
-    settings.map_seed = map_seed;
     MatchStart {
-        settings,
+        settings: LobbySettings {
+            map_seed,
+            ..LobbySettings::default()
+        },
         players,
         local_player: 0,
         seed: None,
