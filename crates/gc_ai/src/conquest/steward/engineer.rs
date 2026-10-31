@@ -12,7 +12,9 @@
 //!   once it has seen enemy riders or monsters;
 //! - a few hidden **traps** on the approach once Grub piles up;
 //! - a **bridge** over the narrowest water on the way to its enemies when
-//!   water cuts it off from all of them.
+//!   water cuts it off from all of them;
+//! - a **path cut through thicket** on the way to the nearest enemy where
+//!   grubbing it out beats marching round (docs/41, step 6).
 //!
 //! Its level says which of these it does ([`Fortify`]); its personality's
 //! caution how soon and how much. Manning the walls and assaulting the
@@ -75,6 +77,17 @@ const TRAPS: u8 = 2;
 /// Longest bridge it draws, tiles.
 const BRIDGE_LONGEST: i32 = 16;
 
+/// A tile of thicket costs this many tiles of open ground to cross, when
+/// it weighs cutting a path against marching round: about what one worker
+/// takes to grub it out, in a regiment's march.
+const PER_THICKET: u32 = 12;
+/// Ticks between its looks for thicket in the way (the search is the
+/// whole map's).
+const CLEAR_EVERY: u32 = 90 * TICKS_PER_SECOND;
+/// The most thicket tiles along the way it orders cleared at once; the
+/// path is cut three tiles wide round them.
+const CLEAR_RUN: usize = 6;
+
 /// A straight line of tiles, from one tile to another.
 type Line = ((i32, i32), (i32, i32));
 
@@ -119,6 +132,8 @@ pub(super) struct Engineer {
     /// crossing and its tiles, or none where it needs or can draw none (or
     /// has drawn it).
     bridge: Option<Option<(Line, u32)>>,
+    /// When it next looks for thicket in the way.
+    next_clear: u32,
 }
 
 impl Steward {
@@ -167,6 +182,7 @@ impl Steward {
         let order = (full)
             .then(|| self.bridge(s, look, home, spare))
             .flatten()
+            .or_else(|| self.clear_way(s, look, home))
             .or_else(|| {
                 let rally = rally?;
                 ((look.tier >= 2 || late)
@@ -500,6 +516,52 @@ impl Steward {
     }
 }
 
+impl Steward {
+    /// Where thicket stands on the cheapest way to the nearest enemy start
+    /// (crossing it costed at [`PER_THICKET`]), send a spare worker to cut
+    /// a path three tiles wide through the first few tiles of it. Every
+    /// [`CLEAR_EVERY`]; the next look finds what is left.
+    fn clear_way(&mut self, s: &Sense, look: &Look, home: Vec2) -> Option<Order> {
+        if s.now < self.engineer.next_clear {
+            return None;
+        }
+        self.engineer.next_clear = s.now + CLEAR_EVERY;
+        let target = super::super::nearest_other_start(s, home)?;
+        let way = s.terrain.thicket_on_way(home, target, PER_THICKET);
+        let run = clear_run(&way)?;
+        let ((x0, y0), (x1, y1)) = run;
+        let at = Vec2::new((x0 + x1) as f32 * 0.5 + 0.5, (y0 + y1) as f32 * 0.5 + 0.5);
+        let w = self.builder(s, look, at)?;
+        let order = Command::Clear {
+            regiment: w,
+            tile: (x0 as i16, y0 as i16),
+            size: ((x1 - x0 + 1) as u8, (y1 - y0 + 1) as u8),
+        };
+        Some((order, Some(w)))
+    }
+}
+
+/// The area to clear for the thicket tiles `way` (in order along the
+/// way): round the first [`CLEAR_RUN`] of them, a tile wider each side,
+/// at most [`gc_sim::clearing::MAX_CLEAR_SIDE`] a side; as its corner
+/// tiles.
+fn clear_run(way: &[(i32, i32)]) -> Option<Line> {
+    let first = *way.first()?;
+    let side = gc_sim::clearing::MAX_CLEAR_SIDE;
+    let (mut lo, mut hi) = ((first.0 - 1, first.1 - 1), (first.0 + 1, first.1 + 1));
+    for &(x, y) in way.iter().take(CLEAR_RUN) {
+        let (nlo, nhi) = (
+            (lo.0.min(x - 1), lo.1.min(y - 1)),
+            (hi.0.max(x + 1), hi.1.max(y + 1)),
+        );
+        if nhi.0 - nlo.0 + 1 > side || nhi.1 - nlo.1 + 1 > side {
+            break;
+        }
+        (lo, hi) = (nlo, nhi);
+    }
+    Some(((lo.0.max(0), lo.1.max(0)), hi))
+}
+
 /// An order for the economy's hands, and the worker it sends (to leave
 /// alone a while), if any.
 type Order = (Command, Option<RegimentHandle>);
@@ -728,6 +790,17 @@ mod tests {
         assert!(!upright(Vec2::new(0.3, -1.0)));
         assert_eq!(across(Vec2::new(10.5, 20.5), true, 2), ((10, 18), (10, 22)));
         assert_eq!(across(Vec2::new(10.5, 20.5), false, 2), ((8, 20), (12, 20)));
+    }
+
+    #[test]
+    fn a_path_is_cut_round_the_first_tiles_of_thicket_three_wide() {
+        assert_eq!(clear_run(&[]), None);
+        assert_eq!(clear_run(&[(5, 5)]), Some(((4, 4), (6, 6))));
+        // A run going east: the first six, a tile round them.
+        let way: Vec<_> = (10..20).map(|x| (x, 7)).collect();
+        assert_eq!(clear_run(&way), Some(((9, 6), (16, 8))));
+        // Never off the map's corner.
+        assert_eq!(clear_run(&[(0, 0)]), Some(((0, 0), (1, 1))));
     }
 
     #[test]
