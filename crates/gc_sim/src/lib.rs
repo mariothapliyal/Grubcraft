@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 67;
+pub const SIM_VERSION: u32 = 69;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -156,8 +156,9 @@ pub struct Capacities {
 impl Capacities {
     /// The most regiments a match may reserve room for: far past any
     /// battle, and what anything reading a match from outside (a replay
-    /// file) refuses beyond.
-    pub const MAX_REGIMENTS: u32 = 1 << 16;
+    /// file) refuses beyond. One short of 65,536, so a regiment's index
+    /// and an end marker both fit in 16 bits.
+    pub const MAX_REGIMENTS: u32 = u16::MAX as u32;
 }
 
 /// The largest map a match may be on, in tiles a side: far past any battle
@@ -1008,6 +1009,7 @@ impl World {
             setup.map_tiles,
             setup.capacities.regiments as usize,
             terrain.thicket(),
+            nav::going_of(&terrain, setup.map_tiles),
         );
         nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
@@ -2665,6 +2667,7 @@ impl World {
     /// growing are left as they are.
     pub(crate) fn change_ground(&mut self, tiles: impl IntoIterator<Item = (i32, i32, bool)>) {
         let mut thicket = Vec::new();
+        let mut going = Vec::new();
         for (x, y, burnt) in tiles {
             // Nothing to change (and no copy of a shared terrain made)
             // where nothing grows.
@@ -2677,6 +2680,7 @@ impl World {
             if was == Growth::Thicket {
                 thicket.push([x, y, 1, 1]);
             }
+            going.push((x, y, self.terrain.going_percent(x, y)));
             if !self.scratch {
                 self.events.cleared(x, y, was, burnt);
             }
@@ -2686,6 +2690,10 @@ impl World {
         }
         if !thicket.is_empty() {
             self.nav.set_built_all(&thicket, false, &self.regiments);
+        }
+        // Routes price the ground anew: open where woods stood.
+        if !going.is_empty() {
+            self.nav.set_going(&going, &self.regiments);
         }
     }
 

@@ -316,6 +316,7 @@ pub(crate) fn patches(m: &[bool], n: usize) -> Vec<Vec<usize>> {
 
 /// Where the seeds of a map's fields come from: one stream, drawn in a
 /// fixed order.
+#[derive(Clone)]
 pub(crate) struct Seeds(pub(crate) Pcg32);
 
 impl Seeds {

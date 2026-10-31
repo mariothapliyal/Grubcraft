@@ -127,6 +127,19 @@ impl Nav {
         }
     }
 
+    /// The going on each of `tiles` (`(x, y, percent)`, those on the map)
+    /// is now as given (see [`super::going_of`]): woods cleared or burnt
+    /// out. Only costs change, so the portals stay put and only routes
+    /// passing near the changed tiles are found again.
+    pub(crate) fn set_going(&mut self, tiles: &[(i32, i32, u8)], regs: &Regiments) {
+        for v in 0..self.grids.len() {
+            let work = self.search.work;
+            let changed = Arc::make_mut(&mut self.grids[v]).regoing(tiles, &mut self.search);
+            self.search.work = work;
+            self.reroute_near(v, &changed, 0, false, regs);
+        }
+    }
+
     /// The gate standing on `tiles` (put up with [`Nav::set_built`], so a
     /// wall to everyone until now), owned by `owner`, goes from letting
     /// through as `was` says to as `now` does. From the first gate that
@@ -351,16 +364,66 @@ impl Grid {
         if self.built[i] > opened {
             BLOCKED
         } else if self.is_bridged(i) {
-            DECK
+            super::price(DECK, 100)
         } else if self.is_flooded(i) {
             BLOCKED
         } else if self.ground[i] == BLOCKED && self.is_exposed(i) {
-            super::SHALLOWS
+            self.priced(i, super::SHALLOWS)
         } else if self.frozen && self.ground[i] == FORD {
-            OPEN
+            self.priced(i, OPEN)
         } else {
-            self.ground[i]
+            self.priced(i, self.ground[i])
         }
+    }
+
+    /// Set the going on each of `tiles` (`(x, y, percent)`) and bring the
+    /// costs and links up to date, searching in `search`'s room. Returns
+    /// the boxes of cells whose cost changed. No change while the grid has
+    /// no going and every tile keeps its whole pace.
+    fn regoing(&mut self, tiles: &[(i32, i32, u8)], search: &mut Search) -> Vec<[i32; 4]> {
+        let side = self.side / CELLS_PER_TILE;
+        let on_map = |&&(x, y, _): &&(i32, i32, u8)| self.cells([x, y, 1, 1]).is_some();
+        if self.going.is_empty() {
+            if tiles.iter().filter(on_map).all(|&(_, _, g)| g == 100) {
+                return Vec::new();
+            }
+            self.going = vec![100; (side * side) as usize];
+        }
+        let mut dirty = vec![false; (self.sectors * self.sectors) as usize];
+        let mut boxes = Vec::new();
+        for &(x, y, g) in tiles {
+            let Some(cells) = self.cells([x, y, 1, 1]) else {
+                continue;
+            };
+            let t = (y * side + x) as usize;
+            if self.going[t] == g {
+                continue;
+            }
+            self.going[t] = g;
+            for c in self.cells_in(cells).collect::<Vec<_>>() {
+                let cost = self.cell_cost(c as usize);
+                if cost != self.cost[c as usize] {
+                    self.cost[c as usize] = cost;
+                    dirty[self.sector_of(c) as usize] = true;
+                }
+            }
+            boxes.push(cells);
+        }
+        if !dirty.contains(&true) {
+            return Vec::new();
+        }
+        self.relink_costs(&dirty, search);
+        boxes
+    }
+
+    /// Link the sectors marked `dirty` again after only cell costs changed
+    /// (portals stay put), searching in `search`'s room.
+    fn relink_costs(&mut self, dirty: &[bool], search: &mut Search) {
+        let old = OldGraph::take(self);
+        let partner = self.place_portals(Some((&old, [0, 0, 0, 0])));
+        self.relink(&partner, &old, dirty, search);
+        self.node_room = self.node_room();
+        search.fit(self);
     }
 
     /// Freeze the fords (`on`) or thaw them and bring the links up to
@@ -401,11 +464,7 @@ impl Grid {
         if boxes.is_empty() {
             return boxes;
         }
-        let old = OldGraph::take(self);
-        let partner = self.place_portals(Some((&old, [0, 0, 0, 0])));
-        self.relink(&partner, &old, &dirty, search);
-        self.node_room = self.node_room();
-        search.fit(self);
+        self.relink_costs(&dirty, search);
         boxes
     }
 
@@ -880,6 +939,18 @@ mod tests {
         }
     }
 
+    /// The costs of a grid with no slow going, as the map would give
+    /// them (in steps of open ground), to build it afresh from.
+    fn unpriced(g: &Grid) -> Vec<u8> {
+        assert!(g.going.is_empty());
+        let back = |c: u8| {
+            (0..=u8::MAX)
+                .find(|&m| super::super::price(m, 100) == c)
+                .expect("a map cost")
+        };
+        g.cost.iter().map(|&c| back(c)).collect()
+    }
+
     /// Every part of the grid that routes read.
     fn same(a: &Grid, b: &Grid) {
         assert!(a.cost == b.cost, "costs differ");
@@ -926,7 +997,7 @@ mod tests {
                 standing.push([x, y, w, d]);
                 build_on(&mut g, [x, y, w, d], true);
             }
-            let mut fresh = Grid::build(&g.cost, side);
+            let mut fresh = Grid::build(&unpriced(&g), side);
             fresh.ground.clone_from(&g.ground);
             fresh.built.clone_from(&g.built);
             same(&g, &fresh);
@@ -951,7 +1022,7 @@ mod tests {
         for b in [wall, gate, house] {
             assert!(g.set_built(b, true, &mut search).is_some());
         }
-        let mut walled = Grid::build(&g.cost, side);
+        let mut walled = Grid::build(&unpriced(&g), side);
         walled.ground.clone_from(&g.ground);
         walled.built.clone_from(&g.built);
         same(&g, &walled);
@@ -1067,7 +1138,7 @@ mod tests {
                 let mut g = Grid::build(&ground, side);
                 let mut search = Search::for_grid(&g);
                 assert!(g.set_built([x, y, 2, 3], true, &mut search).is_some());
-                let mut fresh = Grid::build(&g.cost, side);
+                let mut fresh = Grid::build(&unpriced(&g), side);
                 fresh.ground.clone_from(&g.ground);
                 fresh.built.clone_from(&g.built);
                 same(&g, &fresh);
@@ -1093,7 +1164,7 @@ mod tests {
             }
         }
         let check = |g: &Grid| {
-            let mut fresh = Grid::build(&g.cost, side);
+            let mut fresh = Grid::build(&unpriced(g), side);
             fresh.ground.clone_from(&g.ground);
             fresh.built.clone_from(&g.built);
             same(g, &fresh);
@@ -1169,14 +1240,18 @@ mod tests {
         for c in g.cells_in([x0, y0, x1, y1]).collect::<Vec<_>>() {
             let c = c as usize;
             g.built[c] = if on { g.built[c] + 1 } else { g.built[c] - 1 };
-            g.cost[c] = if g.built[c] > 0 { BLOCKED } else { g.ground[c] };
+            g.cost[c] = if g.built[c] > 0 {
+                BLOCKED
+            } else {
+                g.priced(c, g.ground[c])
+            };
         }
         g.measure_clearance_in(0, 0, g.side, g.side);
         let near_only = g.renumber_near(near, &was_open);
         if !near_only {
             g.number_areas();
         }
-        let fresh = Grid::build(&g.cost, g.side);
+        let fresh = Grid::build(&unpriced(g), g.side);
         same_areas(g, &fresh);
         near_only
     }
