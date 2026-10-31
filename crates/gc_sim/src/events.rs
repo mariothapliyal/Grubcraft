@@ -126,6 +126,10 @@ pub enum Event {
     /// The tile `(x, y)` caught fire (see [`crate::fire`]): it burns until
     /// it is cleared, burnt.
     Kindled { x: i32, y: i32 },
+    /// A storm's lightning struck the tile `(x, y)` (see
+    /// [`crate::fire::Fires::lightning`]), and set it alight if `caught`
+    /// (a [`Event::Kindled`] for it comes too).
+    Lightning { x: i32, y: i32, caught: bool },
     /// The rivers rose over the fords and shut them (`closed`), or went
     /// down and opened them again (see [`crate::flood`]).
     Flooded { closed: bool },
@@ -214,6 +218,11 @@ impl Events {
     /// Tell of the tile `(x, y)` catching fire.
     pub(crate) fn kindled(&mut self, x: i32, y: i32) {
         self.list.push(Event::Kindled { x, y });
+    }
+
+    /// Tell of lightning striking the tile `(x, y)`.
+    pub(crate) fn lightning(&mut self, x: i32, y: i32, caught: bool) {
+        self.list.push(Event::Lightning { x, y, caught });
     }
 
     /// Tell of the fords shutting in a flood, or opening again.

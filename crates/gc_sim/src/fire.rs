@@ -4,6 +4,10 @@
 //! in it, and lights the night round it. A tile that burns out goes
 //! through the one ground change (`World::change_ground`) as burnt: open,
 //! scorched ground from then on.
+//!
+//! Storms throw lightning (docs/41-finish-living-land.md, step 6): now and
+//! then a bolt reaches the ground somewhere on the map, likeliest in the
+//! woods, and sets the tile it hits alight if the ground is still dry.
 
 use alloc::vec::Vec;
 
@@ -13,7 +17,7 @@ use crate::combat::Block;
 use crate::hash::StateHasher;
 use crate::nav::DIRS;
 use crate::regiments::Regiments;
-use crate::sky::{WET_FULL, Weather, WeatherKind};
+use crate::sky::{STORM, WET_FULL, Weather, WeatherKind};
 use crate::structures::footprint_centre;
 use crate::terrain::{Growth, Terrain};
 use crate::{TICKS_PER_SECOND, UnitStats, morale};
@@ -32,6 +36,13 @@ pub const BURN_HP: u32 = 4;
 pub const MAX_BURNS: u32 = 6;
 /// Morale points a regiment in fire loses a second.
 pub const BURN_MORALE: i16 = 3;
+
+/// The chance a second, in thousandths, that a storm throws a bolt that
+/// reaches the ground somewhere on the map: one every ten seconds or so.
+pub const STRIKE_PERMILLE: u32 = 100;
+/// Tiles a bolt looks at for one to strike: the first with woods or
+/// thicket on it (the tallest thing about) takes it, else the last.
+const STRIKE_TRIES: i32 = 4;
 
 /// How long a tile of `growth` burns, in ticks (0: it doesn't).
 pub fn burn_ticks(growth: Growth) -> u16 {
@@ -194,6 +205,41 @@ impl Fires {
         self.ever = true;
         self.kindled.push((x, y));
         true
+    }
+
+    /// Once a second in a storm, maybe a bolt of lightning: the tile it
+    /// hits, and whether that caught (it does if anything burnable grows
+    /// there and the ground is still drier than [`DAMP_WET`]: early in a
+    /// storm that comes in over dry land).
+    pub(crate) fn lightning(
+        &mut self,
+        tick: u32,
+        terrain: &Terrain,
+        weather: Weather,
+        wet: u16,
+    ) -> Option<(i32, i32, bool)> {
+        let side = terrain.growth_side() as i32;
+        let storm = weather.kind == WeatherKind::Rain && weather.strength >= STORM;
+        if !storm || side == 0 || !tick.is_multiple_of(TICKS_PER_SECOND) {
+            return None;
+        }
+        // Rolls salted with tiles off the map, so none is a spread's roll.
+        if self.roll(tick, -1, -1, -1, -1) % 1000 >= STRIKE_PERMILLE {
+            return None;
+        }
+        let mut hit = (0, 0);
+        for k in 0..STRIKE_TRIES {
+            let r = self.roll(tick, -2, -1 - k, -2, -1 - k);
+            hit = ((r % side as u32) as i32, ((r >> 16) % side as u32) as i32);
+            if matches!(
+                terrain.growth(hit.0, hit.1),
+                Growth::Woods | Growth::Thicket
+            ) {
+                break;
+            }
+        }
+        let caught = wet < DAMP_WET && self.kindle(terrain, hit.0, hit.1);
+        Some((hit.0, hit.1, caught))
     }
 
     /// The burnable tile regiment `i` would fire: the nearest its centre

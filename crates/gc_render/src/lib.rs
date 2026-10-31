@@ -2720,6 +2720,74 @@ mod tests {
         assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
+    /// Whether `block` of `module` reaches a barrier after a `return` (once
+    /// `returned`) on some path: branches each start from the flag before
+    /// them, a loop's body is read twice (its next pass follows a return in
+    /// this one), and a called function is read for its own returns before
+    /// its barriers (which go back to the caller).
+    fn barrier_after_return(
+        module: &naga::Module,
+        block: &naga::Block,
+        returned: &mut bool,
+    ) -> bool {
+        use naga::Statement as S;
+        let check = |b, returned: &mut bool| barrier_after_return(module, b, returned);
+        block.iter().any(|s| match s {
+            S::Return { .. } | S::Kill => {
+                *returned = true;
+                false
+            }
+            // `workgroupUniformLoad` is a barrier on each side of a load.
+            S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => {
+                *returned
+            }
+            S::Block(b) => check(b, returned),
+            S::If { accept, reject, .. } => {
+                let (mut a, mut r) = (*returned, *returned);
+                let found = check(accept, &mut a) || check(reject, &mut r);
+                *returned = a || r;
+                found
+            }
+            S::Switch { cases, .. } => {
+                let before = *returned;
+                cases.iter().any(|c| {
+                    let mut here = before;
+                    let found = check(&c.body, &mut here);
+                    *returned |= here;
+                    found
+                })
+            }
+            S::Loop {
+                body, continuing, ..
+            } => (0..2).any(|_| check(body, returned) || check(continuing, returned)),
+            S::Call { function, .. } => {
+                check(&module.functions[*function].body, &mut returned.clone())
+            }
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn barrier_after_return_cases() {
+        let reaches = |body: &str| {
+            let src = format!(
+                "var<workgroup> w: u32;\nfn helper(a: u32) {{ if a > 1u {{ return; }} workgroupBarrier(); }}\n\
+                 @compute @workgroup_size(1) fn main(@builtin(local_invocation_index) a: u32) {{ {body} }}"
+            );
+            let module = naga::front::wgsl::parse_str(&src).expect("test shader parses");
+            barrier_after_return(&module, &module.entry_points[0].function.body, &mut false)
+        };
+        assert!(reaches("if a > 0u { return; } workgroupBarrier();"));
+        assert!(reaches(
+            "loop { workgroupBarrier(); if a > 0u { return; } }"
+        ));
+        assert!(reaches("helper(a);"));
+        assert!(!reaches("workgroupBarrier(); if a > 0u { return; }"));
+        assert!(!reaches(
+            "if a > 0u { return; } else { workgroupBarrier(); }"
+        ));
+    }
+
     #[test]
     fn shaders_validate() {
         for src in [
@@ -2752,6 +2820,19 @@ mod tests {
                     !holds_struct(c.ty),
                     "constant {:?} holds a struct: make it a function (Metal cannot build it)",
                     c.name
+                );
+            }
+            // A barrier after a return in `cs_pose`, even one the whole
+            // workgroup takes, crashed Windows' software GPU (WARP): compiling
+            // it, WARP wrote 512 MB past a table, so the game crashed or
+            // corrupted its memory now and then (the Windows smoke run,
+            // October 2026; 22 of 32 runs under a memory checker, none once
+            // the returns moved after the barriers).
+            for e in &module.entry_points {
+                assert!(
+                    !barrier_after_return(&module, &e.function.body, &mut false),
+                    "{} reaches a barrier after a return (it has crashed WARP)",
+                    e.name
                 );
             }
             // Macs run the shaders as Metal: they must translate to it too,
