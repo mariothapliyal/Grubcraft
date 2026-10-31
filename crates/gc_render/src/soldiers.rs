@@ -701,6 +701,7 @@ pub(crate) fn make(
                     "GC_DIAG",
                     std::env::var("GC_DIAG_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0),
                 )],
+                zero_initialize_workgroup_memory: std::env::var("GC_DIAG_SKIP").as_deref() != Ok("nozero"),
                 ..Default::default()
             },
             cache: None,
@@ -709,7 +710,7 @@ pub(crate) fn make(
     // TEMP heap diag: swap a compute shader for an empty one.
     let skip = std::env::var("GC_DIAG_SKIP").unwrap_or_default();
     let pick = |name: &'static str, entry: &'static str| if skip == name { "cs_noop" } else { entry };
-    let pose_pipeline = compute_pipeline("soldier posing", pick("pose", "cs_pose"));
+    let pose_pipeline = compute_pipeline("soldier posing", if skip == "storage" { "cs_pose_storage" } else { pick("pose", "cs_pose") });
     let skin_pipeline = compute_pipeline("soldier skinning", pick("skin", "cs_skin"));
     let pipeline = |label, vs, target: crate::Target<'_>, cull_mode, buffers: &[_]| {
         let (targets, fs) = target.color();

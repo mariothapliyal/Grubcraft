@@ -2613,3 +2613,84 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
 override GC_DIAG: u32 = 0u;
 @compute @workgroup_size(64)
 fn cs_noop() {}
+
+// TEMP heap diag: cs_pose with no workgroup memory (globals kept in the
+// palette, rig fixes left out).
+fn palette_matrix(slot: u32) -> mat4x4<f32> {
+    let r = palette_bone(slot);
+    return transpose(mat4x4<f32>(r[0], r[1], r[2], vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+}
+
+@compute @workgroup_size(POSE_GROUP)
+fn cs_pose_storage(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) bone: u32,
+) {
+    let k = group.y * POSE_ROW + group.x;
+    if k >= jobs.count.w {
+        return;
+    }
+    let job = jobs.job[find_job(k, true)];
+    let nth = k - job.pose.w;
+    let soldier = job.run.x + nth;
+    let bones = job.pose.y;
+    let base_slot = job.pose.x + nth * bones;
+    let slot = base_slot + bone;
+    let i = soldier * INSTANCE_WORDS;
+    let fit = job.pose.z;
+    if fit == 0u {
+        if bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
+    let head = anim[fit];
+    let joints_at = head.x;
+    let joints = head.y;
+    let deepest = head.z;
+    let poses = Poses(head.w, joints);
+    let joint = anim[joints_at + min(bone, joints - 1u)];
+    let parent = joint.x;
+    let depth = joint.y;
+    let masks = joint.z;
+    var local = mat4x4<f32>();
+    if bone < joints {
+        let base = instance_layer(i, 0u);
+        var p = layer_pose(poses, base, bone);
+        for (var l = 1u; l <= POSE_LAYERS; l++) {
+            let layer = instance_layer(i, l);
+            if layer.weight <= 0.0 || ((masks >> layer.mask) & 1u) == 0u {
+                continue;
+            }
+            let o = layer_pose(poses, layer, bone);
+            if layer.additive {
+                let id = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                p.r = normalize(quat_mul(quat_nlerp(id, o.r, layer.weight), p.r));
+                p.ts = vec4<f32>(p.ts.xyz + o.ts.xyz * layer.weight, p.ts.w * mix(1.0, o.ts.w, layer.weight));
+            } else {
+                p.r = quat_nlerp(p.r, o.r, layer.weight);
+                p.ts = mix(p.ts, o.ts, layer.weight);
+            }
+        }
+        local = pose_matrix(p);
+    }
+    for (var d = 0u; d <= deepest; d++) {
+        if bone < joints && depth == d {
+            var g = anim_matrix(fit + 2u) * local;
+            if parent != 255u {
+                g = palette_matrix(base_slot + parent) * local;
+            }
+            write_palette(slot, matrix_rows(g));
+        }
+        storageBarrier();
+    }
+    if bone > joints || bone >= bones {
+        return;
+    }
+    if bone == joints {
+        write_palette(slot, matrix_rows(translation(vec3<f32>(0.0))));
+        return;
+    }
+    let post = anim_matrix(fit + 5u + bone * 3u);
+    write_palette(slot, matrix_rows(palette_matrix(slot) * post));
+}
