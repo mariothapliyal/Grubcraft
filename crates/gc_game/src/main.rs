@@ -168,6 +168,7 @@ mod lights;
 #[cfg(test)]
 mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod drawn_tool;
 mod guide_data;
 mod hud;
 mod lens;
@@ -2375,6 +2376,8 @@ impl Running {
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
+                // The wall tool: a drag from here draws a curve.
+                self.begin_wall_drag();
                 // Choosing ground to clear: the drag starts on the ground.
                 self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
                     .then(|| self.ground_under_cursor())
@@ -6815,9 +6818,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
-        // Below Conquest's top bar.
+        // Below Conquest's top bar, and the faction power buttons under it.
         let top = if self.match_started && self.showroom.is_none() {
-            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+            let powers = if !self.menu_open && self.offered_powers().next().is_some() {
+                gc_ui::powers::ROW_BOTTOM
+            } else {
+                0
+            };
+            (gc_ui::hud::TOP_BAR_HEIGHT + powers) as f32 * self.ui_scale()
         } else {
             0.0
         };

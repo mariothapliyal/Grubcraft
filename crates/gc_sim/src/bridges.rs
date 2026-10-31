@@ -10,11 +10,12 @@ use alloc::vec::Vec;
 
 use crate::conquest::Conquest;
 use crate::conquest::overlaps;
+use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{BuildingId, LINE, Refusal, StructureHandle, Structures};
+use crate::structures::{BuildingStats, LINE, Refusal, Structures};
 use crate::terrain::Terrain;
-use crate::walls::{WallTile, line_area, wall_tiles};
+use crate::walls::{Laying, Line, MAX_BRIDGE_LENGTH, WallTile};
 use crate::{PlayerId, UnitStats};
 
 /// Hit points each soldier on a bridge tile that falls loses: as for a
@@ -27,15 +28,31 @@ impl Structures {
         self.stats_of(i).is_bridge()
     }
 
-    /// Whether a builder can reach unfinished bridge slot `j`: it is an
-    /// end of the line it was drawn in (on land), or next to a finished
-    /// tile of a bridge.
+    /// The level of bridge slot `i`'s piers: 1 plain, 2 braced, 3
+    /// reinforced (stone-footed, with cutwaters), counted down its chain of
+    /// upgrades to the plain bridge; 0 for anything that isn't a bridge.
+    pub fn pier_level(&self, i: usize) -> u8 {
+        if !self.is_bridge(i) {
+            return 0;
+        }
+        let mut b = self.stats_of(i);
+        let mut level = 1;
+        // The data has no loops in its levels; three is the top anyway.
+        while let (Some(from), true) = (b.upgrades_from, level < 3) {
+            level += 1;
+            b = &self.buildings()[usize::from(from)];
+        }
+        level
+    }
+
+    /// Whether a builder can reach unfinished bridge slot `j`: it was laid
+    /// on dry ground (the banks at either end), or it is next to a
+    /// finished tile of a bridge.
     pub(crate) fn reachable_deck(&self, j: usize) -> bool {
-        let [x, y, _, _] = self.footprint(j);
-        let [x0, y0, x1, y1] = self.line[j].map(i32::from);
-        if (x, y) == (x0, y0) || (x, y) == (x1, y1) {
+        if self.ashore[j] {
             return true;
         }
+        let [x, y, _, _] = self.footprint(j);
         self.standing().any(|k| {
             let [kx, ky, _, _] = self.footprint(k);
             (kx - x).abs() + (ky - y).abs() == 1 && self.is_bridge(k) && self.finished(k)
@@ -114,64 +131,106 @@ pub(crate) fn wash_up(
     bank
 }
 
-/// One of a bridge's two lanes: the line it was laid along (stored on each
-/// of its tiles) and the tiles still to put up.
-pub(crate) struct Lane {
-    pub line: [i16; 4],
-    pub tiles: Vec<WallTile>,
-}
-
 impl Conquest {
-    /// The new tiles of `player`'s bridge drawn along `tiles` (in the box
-    /// `area`), each with whether it can go up there. A bridge is two
-    /// lanes wide, the line drawn and one beside it (the next tile east
-    /// of a line running north to south, south of one running west to
-    /// east, or the other side when that one won't do); see
-    /// [`Conquest::bridge_lanes`] for what each lane needs.
-    pub(crate) fn bridge_line(
-        &self,
-        player: PlayerId,
-        tiles: &[(i32, i32)],
-        area: [i32; 4],
-        nav: &Nav,
-        terrain: &Terrain,
-    ) -> Result<Vec<WallTile>, Refusal> {
-        let lanes = self.bridge_lanes(player, tiles, area, nav, terrain)?;
-        Ok(lanes.into_iter().flat_map(|l| l.tiles).collect())
-    }
-
-    /// The two lanes of `player`'s bridge drawn along `tiles`, lower
-    /// coordinates first. Each lane is a straight line (a corner step is
-    /// too narrow to cross) over some water, each end on dry land a
-    /// regiment can walk on or on a bridge of `player`'s, so a gap in one
+    /// The new tiles of `player`'s bridge `b` drawn along `line` (see
+    /// [`crate::drawn::DrawnPath::band`]), each with whether it can go up
+    /// there. The centre line bends gently or not at all (no corners) and
+    /// is at most [`MAX_BRIDGE_LENGTH`] long; the tile at either end, and
+    /// most of the deck across it, is dry land a regiment can walk on or a
+    /// bridge of `player`'s, so a gap
     /// can be drawn again from deck to deck. Tiles where `player` already
     /// has a bridge are left out, as walls leave out their own tiles, and
     /// every other tile must be water or open ground with nothing built or
-    /// bridged on it. The lower lane is stored running towards higher
-    /// coordinates and the upper one back, so a tile knows its side.
-    pub(crate) fn bridge_lanes(
+    /// bridged on it, and something new must be over water.
+    ///
+    /// A bridge drawn the old way (`Command::BuildWall`) runs straight
+    /// along a row or column, two tiles wide: the tiles drawn and those
+    /// beside them to the east or south, or to the west or north when only
+    /// that side will do.
+    pub(crate) fn bridge_line(
         &self,
         player: PlayerId,
-        tiles: &[(i32, i32)],
-        area: [i32; 4],
+        b: BuildingStats,
+        line: &Line,
         nav: &Nav,
         terrain: &Terrain,
-    ) -> Result<[Lane; 2], Refusal> {
-        let (Some(&first), Some(&last)) = (tiles.first(), tiles.last()) else {
-            return Err(Refusal::Unknown);
-        };
-        if first.0 != last.0 && first.1 != last.1 {
+    ) -> Result<Laying, Refusal> {
+        if !line.old {
+            if !drawn::BRIDGE_WIDTHS.contains(&line.width) {
+                return Err(Refusal::Unknown);
+            }
+            return self.bridge_band(player, b, line.path, line.width, nav, terrain);
+        }
+        let (from, to) = line.path.ends();
+        if from.0 != to.0 && from.1 != to.1 {
             return Err(Refusal::Crooked);
         }
-        // Along x, the lanes lie a row apart; along y, a column apart.
-        let across = if first.1 == last.1 { (0, 1) } else { (1, 0) };
-        let shift = |(x, y): (i32, i32), k: i32| (x + across.0 * k, y + across.1 * k);
-        let area = [
-            area[0] - across.0,
-            area[1] - across.1,
-            area[2] + 2 * across.0,
-            area[3] + 2 * across.1,
-        ];
+        // The centre line runs along the edge between the tiles drawn and
+        // the next row (or column) to one side.
+        let side = |up: bool| {
+            let k = if up { 2 } else { 0 };
+            let at = |(x, y): (i32, i32)| {
+                if from.1 == to.1 {
+                    ((2 * x + 1) as i16, (2 * y + k) as i16)
+                } else {
+                    ((2 * x + k) as i16, (2 * y + 1) as i16)
+                }
+            };
+            let path = DrawnPath::new(&[at(from), at(to)], |_| true).ok_or(Refusal::Unknown)?;
+            self.bridge_band(player, b, path, line.width, nav, terrain)
+        };
+        let clear = |l: &Result<Laying, Refusal>| {
+            l.as_ref()
+                .is_ok_and(|l| l.tiles.iter().all(|t| t.fits.is_ok()))
+        };
+        // Beside a lane of this bridge already standing first (a gap in one
+        // lane is mended on its own), else the side it will go up on.
+        let s = &self.structures;
+        let beside = |dy: i32| {
+            let (ax, ay, bx, by) = if from.1 == to.1 {
+                (from.0, from.1 + dy, to.0, to.1 + dy)
+            } else {
+                (from.0 + dy, from.1, to.0 + dy, to.1)
+            };
+            let area = crate::walls::tiles_area(&[(ax, ay), (bx, by)]);
+            s.own_in(player, LINE, area).any(|i| s.is_bridge(i))
+        };
+        let below = beside(1);
+        if below || beside(-1) {
+            return side(below);
+        }
+        let up = side(true);
+        if clear(&up) {
+            return up;
+        }
+        let down = side(false);
+        if clear(&down) || up.is_err() && down.is_ok() {
+            return down;
+        }
+        up
+    }
+
+    /// [`Conquest::bridge_line`] for a bridge `width` tiles across along
+    /// `path`.
+    fn bridge_band(
+        &self,
+        player: PlayerId,
+        b: BuildingStats,
+        path: DrawnPath,
+        width: u8,
+        nav: &Nav,
+        terrain: &Terrain,
+    ) -> Result<Laying, Refusal> {
+        let curve = path.curve();
+        if path.has_corners() || !curve.bends_gently() {
+            return Err(Refusal::Crooked);
+        }
+        if curve.length() > MAX_BRIDGE_LENGTH * i64::from(drawn::SUB) {
+            return Err(Refusal::Unknown);
+        }
+        let tiles = curve.band(width);
+        let area = crate::walls::tiles_area(&tiles);
+        let area = [area[0] - 1, area[1] - 1, area[2] + 2, area[3] + 2];
         let s = &self.structures;
         let own: Vec<[i32; 4]> = (s.own_in(player, LINE, area))
             .filter(|&i| s.is_bridge(i))
@@ -182,94 +241,40 @@ impl Conquest {
         let water = |(x, y): (i32, i32)| terrain.tile_under_water(x, y);
         let ground = |(x, y): (i32, i32)| nav.walkable_ground(x, y);
         let bank = |t: (i32, i32)| owned(t) || (ground(t) && !water(t));
-        let lane = |step: i32| -> Result<Vec<WallTile>, Refusal> {
-            if !bank(shift(first, step)) || !bank(shift(last, step)) {
+        // Each end on the bank: the tile it is drawn to, and most of the
+        // deck across it (a deck slanting off a straight shore hangs a
+        // corner over the water).
+        let (first, last) = path.ends();
+        for (end, at) in curve.band_ends(&tiles).iter().zip([first, last]) {
+            let ashore = end.iter().filter(|&&t| bank(t)).count();
+            if !bank(at) || ashore * 2 < end.len() {
                 return Err(Refusal::Rough);
             }
-            Ok(tiles
-                .iter()
-                .map(|&t| shift(t, step))
-                .filter(|&t| !owned(t))
-                .map(|tile| WallTile {
-                    tile,
-                    // Unfinished bridges count as built (see `settle_decks`).
-                    fits: nav.deck_footing(tile.0, tile.1).and_then(|()| {
-                        if water(tile) || ground(tile) {
-                            Ok(())
-                        } else {
-                            Err(Refusal::Rough)
-                        }
-                    }),
-                })
-                .collect())
-        };
-        let drawn = lane(0)?;
-        // The other lane goes beside a lane of this bridge already
-        // standing (a gap in one lane is mended on its own), else to the
-        // higher coordinates if it will go up there, else to the lower.
-        let beside = |step: i32| tiles.iter().any(|&t| owned(shift(t, step)));
-        let clear = |l: &Result<Vec<WallTile>, Refusal>| {
-            l.as_ref().is_ok_and(|l| l.iter().all(|t| t.fits.is_ok()))
-        };
-        let up = lane(1);
-        let step = if beside(1) || !beside(-1) && (clear(&up) || up.is_ok() && !clear(&lane(-1))) {
-            1
-        } else {
-            -1
-        };
-        let other = if step == 1 { up } else { lane(-1) }?;
-        // Something new over water, in one lane or the other.
-        if !drawn.iter().chain(&other).any(|t| water(t.tile)) {
+        }
+        let plan: Vec<WallTile> = tiles
+            .into_iter()
+            .filter(|&t| !owned(t))
+            .map(|tile| WallTile {
+                tile,
+                // Unfinished bridges count as built (see `settle_decks`).
+                fits: nav.deck_footing(tile.0, tile.1).and_then(|()| {
+                    if water(tile) || ground(tile) {
+                        Ok(())
+                    } else {
+                        Err(Refusal::Rough)
+                    }
+                }),
+            })
+            .collect();
+        // Something new over water.
+        if !plan.iter().any(|t| water(t.tile)) {
             return Err(Refusal::Rough);
         }
-        // The lower lane is the one with the lower row or column; the
-        // line is stored running towards higher coordinates there and
-        // back on the upper lane.
-        let (lo, hi, lo_row) = if step == 1 {
-            (drawn, other, 0)
-        } else {
-            (other, drawn, -1)
-        };
-        let (a, b) = (first.min(last), first.max(last));
-        let line = |from: (i32, i32), to: (i32, i32), row: i32| {
-            let (f, t) = (shift(from, row), shift(to, row));
-            [f.0, f.1, t.0, t.1].map(|v| v as i16)
-        };
-        Ok([
-            Lane {
-                line: line(a, b, lo_row),
-                tiles: lo,
-            },
-            Lane {
-                line: line(b, a, lo_row + 1),
-                tiles: hi,
-            },
-        ])
-    }
-
-    /// Lay both lanes of `player`'s bridge drawn from `from` to `to` (see
-    /// [`Conquest::bridge_lanes`]; the caller has checked every tile), and
-    /// the handles of the first and last tile laid.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn found_bridge(
-        &mut self,
-        player: PlayerId,
-        building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
-        nav: &mut Nav,
-        regs: &Regiments,
-        terrain: &Terrain,
-    ) -> Option<(StructureHandle, StructureHandle)> {
-        let tiles = wall_tiles(from, to)?;
-        let lanes = self.bridge_lanes(player, &tiles, line_area(from, to), nav, terrain);
-        let mut ends = None;
-        for lane in lanes.ok()?.iter().filter(|l| !l.tiles.is_empty()) {
-            let (a, b) =
-                self.structures
-                    .found_wall(player, building, &lane.tiles, lane.line, nav, regs)?;
-            ends = Some(ends.map_or((a, b), |(first, _)| (first, b)));
-        }
-        ends
+        Ok(Laying {
+            stats: b,
+            tiles: plan,
+            path,
+            width,
+        })
     }
 }

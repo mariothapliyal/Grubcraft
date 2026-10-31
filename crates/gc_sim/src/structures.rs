@@ -539,8 +539,11 @@ pub struct StructureView {
     /// lets its own side through unless it is Locked.
     pub open: bool,
     /// A tile of a drawn wall: the ends of the line it was drawn in, in
-    /// tiles, `[x0, y0, x1, y1]` (None for any other building).
+    /// tiles, `[x0, y0, x1, y1]` (None for any other building). On a curve,
+    /// the line along the curve near it (see [`crate::drawn::DrawnPath::chord`]).
     pub line: Option<[i32; 4]>,
+    /// A tile laid along a drawn line: which (see [`crate::World::drawing`]).
+    pub drawing: Option<u32>,
 }
 
 impl StructureView {
@@ -817,6 +820,13 @@ pub struct Structures {
     /// Drawn walls, by slot (see [`crate::walls`]): the ends of the line
     /// each tile was drawn in, in tiles (zero for other buildings).
     pub(crate) line: Vec<[i16; 4]>,
+    /// Drawn tiles, by slot: the drawing each was laid along
+    /// ([`crate::drawn::NO_DRAWING`] for none), and whether it was laid on
+    /// dry ground (a bridge's builders reach it from the bank).
+    pub(crate) drawing: Vec<u32>,
+    pub(crate) ashore: Vec<bool>,
+    /// Every line drawn in the match (see [`crate::drawn`]).
+    pub(crate) drawings: crate::drawn::Drawings,
 }
 
 /// The match's building table, each made sane, and with no tier upgrade
@@ -912,6 +922,9 @@ impl Structures {
             gate_door: vec![Door::default(); n],
             gate_hold: vec![0; n],
             line: vec![[0; 4]; n],
+            drawing: vec![crate::drawn::NO_DRAWING; n],
+            ashore: vec![false; n],
+            drawings: crate::drawn::Drawings::default(),
         }
     }
 
@@ -982,6 +995,8 @@ impl Structures {
             gate: self.is_gate(i).then_some(self.gate[i]),
             open: self.gate_door[i].others,
             line: self.is_line(i).then(|| self.line[i].map(i32::from)),
+            drawing: (self.is_line(i) && self.drawing[i] != crate::drawn::NO_DRAWING)
+                .then_some(self.drawing[i]),
         }
     }
 
@@ -1434,6 +1449,8 @@ impl Structures {
         self.gate_door[i] = Door::default();
         self.gate_hold[i] = 0;
         self.line[i] = [0; 4];
+        self.drawing[i] = crate::drawn::NO_DRAWING;
+        self.ashore[i] = false;
         if self.buildings[building as usize].walked_through() {
             let at = self.walked_tiles.partition_point(|&(t, _)| t < tile);
             self.walked_tiles.insert(at, (tile, index));
@@ -1945,6 +1962,8 @@ impl Structures {
             h.u8(self.seen[i]);
             if self.is_line(i) {
                 self.line[i].iter().for_each(|&v| h.u16(v as u16));
+                h.u32(self.drawing[i]);
+                h.u8(u8::from(self.ashore[i]));
             }
             if self.stats_of(i).flags & LARVAE != 0 {
                 h.u8(self.larvae[i]);
@@ -1967,6 +1986,7 @@ impl Structures {
             }
         }
         h.u32(self.build_percent);
+        self.drawings.hash_into(h);
         for &r in &self.resonance {
             h.u32(r);
         }
