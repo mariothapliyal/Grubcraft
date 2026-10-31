@@ -2109,6 +2109,8 @@ fn ground_word(world: &gc_sim::World, p: gc_fixed::FxVec2) -> &'static str {
         if terrain.height(p) >= i32::from(terrain.water_level()) {
             // Dry land the water has risen over.
             "In flood water: slow, no charges"
+        } else if terrain.snagged(p) {
+            "In a ford snagged with logs: slower still, no charges"
         } else if terrain.deep(p) {
             "In a river that is up: slower still, no charges"
         } else {

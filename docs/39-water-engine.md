@@ -274,6 +274,22 @@ Built 2026-10-30.
 - **Stress scenario.** `gc_sim/tests/floodplain.rs` runs a retreat through a flooding valley: three regiments on a low meadow when a catastrophic flood comes over it all reach dry ground within a minute of it shutting, none is left on shut ground, and the meadow opens again after.
 - `SIM_VERSION` 68 (main reached 67 first). No golden moves: the river storm's Major wets about 290 floodplain tiles but shuts none, and nobody walks on them.
 
+## Built: stage 3a, debris on the rivers
+
+Built 2026-10-31. Stage 3 is split in two: 3a is the debris itself and the logs nature puts in; 3b adds the players' orders (Dump into the river, and the fell-in toggle on Clear), which need new commands.
+
+- **The pool.** `rivers::debris`: 48 places (`POOL`), 8 kept for the wrecks of stage 4. When the other 40 are full the oldest grounded piece rots away first, then the oldest floating one. Only logs go in for now (mass 1); rafts, wrecks and rubble have their kinds and masses ready.
+- **Logs from floods.** While a stretch's water stands Major or more over its line (half a tile, measured at its middle) and a Major or catastrophic front is running, it gives up a log from one of its wooded banks at once, then one every 30 seconds (catastrophic water: every 10). The stretches take turns going first, so when the cap is reached no one stretch always wins. At most 8 natural logs float at once. Each stretch keeps 4 wooded bank places, found when the match starts, one per quarter of its reach; a log comes off one that is still wooded. The woods stay (it is deadfall).
+- **Logs from fires.** A wood burning out beside a river topples a log in one time in three.
+- **Drift.** A floating piece goes tile by tile down the river's reach (the way the flood fronts run, so it rides the same water), where the flow points if that goes down the reach, else to the neighbour nearest the river's end. Its pace is the river's (half a tile a second slow, one steady, two fast), up to twice that as the water rises to a full flood. It leaves the map where the river ends.
+- **Grounding and snags.** A piece checks whether it grounds as it comes onto each tile, and once a second wherever it is: it grounds on frozen water, under the line, or on a ford that isn't fast with under `FLOAT_RISE` (0.15 tile) of water over the line, and floats off once the water is up. Grounded mass of 4 or more on one ford is a snag: wading it is slow as deep water (`Terrain::snagged`; `Terrain::deep` and the walking pace share one rule, the selection panel says "In a ford snagged with logs") until a flood lifts them off. So logs pile up at fords after a flood and come down together in the next.
+- **Strikes.** A floating piece passing within a regiment's block (half its side and half a tile) where the regiment is wading, not on a bridge or wall and not being swept away, takes off 3 hit points per mass per tile a second of its pace, throws it into disorder and shakes it (3 morale), once per piece (each piece remembers the last 6 regiments it struck). `Event::DebrisStruck` names the players struck; the news line tells ours at most every 10 seconds.
+- **The minds.** A ford with a floating piece coming down on it within 24 tiles of reach joins the fords the computer players keep off (`Rivers::threatened`).
+- **Drawn.** Each piece is the bare snag trunk lying on the water along its way, in wet bark, sitting lower once grounded (`gc_game::river_debris`), only where the viewer sees.
+- *Simpler than the plan:* felled logs and rafts wait for 3b's orders. Snags slow wading rather than adding path cost (the walkable grid has no per-ford cost yet), and pieces never stick to each other in open water. Natural logs come from Major floods only as the plan says, so most matches see few.
+- **Tests.** `gc_sim/tests/debris.rs`: a burnt bank wood topples logs that ride down and strike troops wading the lower ford, then ground there; a snag slows wading until a flood lifts it; a catastrophic flood tears logs off wooded banks with never more than 8 floating; the same seed sends the same logs down.
+- `SIM_VERSION` 76 (main reached 75 first). Only the river-storm golden moves: its Major flood now washes logs down the Rushbrook (screenshots in project files, `screenshots/water-engine/stage3a-*`).
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**

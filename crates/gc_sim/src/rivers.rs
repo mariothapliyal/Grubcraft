@@ -44,6 +44,8 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+pub mod debris;
+
 use crate::TICKS_PER_SECOND;
 use crate::flood::FLOOD_RISE;
 use crate::hash::StateHasher;
@@ -199,6 +201,8 @@ pub struct Rivers {
     /// (both kept for their room).
     turn: Turn,
     runs: Vec<[i32; 4]>,
+    /// The debris riding the rivers (stage 3, see [`debris`]).
+    debris: debris::Debris,
 }
 
 /// A stretch of river.
@@ -632,6 +636,7 @@ impl Rivers {
             .chain(plains.iter().map(|p| p.runs.len()))
             .sum();
         let (groups_n, plains_n) = (groups.len(), plains.len());
+        let banks = debris::banks_of(terrain, n, &reach, &stretch_of, count);
         Rivers {
             seed,
             side: n,
@@ -661,6 +666,7 @@ impl Rivers {
                 ..Turn::default()
             },
             runs: Vec::with_capacity(runs),
+            debris: debris::Debris::new(banks, groups_n),
         }
     }
 
@@ -861,6 +867,7 @@ impl Rivers {
             swell: self.swell.clone(),
             fronts: [None; MAX_FRONTS],
             most: 0,
+            snags: Vec::with_capacity(self.ford_tiles.len()),
         })
     }
 
@@ -1161,7 +1168,7 @@ impl Rivers {
         let mut list = core::mem::take(&mut self.threat_room);
         list.clear();
         for (g, group) in self.groups.iter().enumerate() {
-            if self.shut[g] || self.coming[g] {
+            if self.shut[g] || self.coming[g] || self.debris.fouled[g] {
                 list.extend_from_slice(&group.fords);
             }
         }
@@ -1200,6 +1207,7 @@ impl Rivers {
             h.u32(f.delay);
             h.u8(u8::from(f.warned));
         }
+        self.debris.hash_into(h);
     }
 }
 
@@ -1214,6 +1222,9 @@ pub(crate) struct RiverWater {
     fronts: [Option<Front>; MAX_FRONTS],
     /// The most it raises the water anywhere, height units.
     most: u16,
+    /// The ford tiles snagged with debris, as `(y, x)`, sorted (see
+    /// [`debris`]).
+    snags: Vec<(i32, i32)>,
 }
 
 impl RiverWater {
@@ -1221,6 +1232,11 @@ impl RiverWater {
     /// above the line need ask.
     pub(crate) fn most(&self) -> u16 {
         self.most
+    }
+
+    /// Whether tile `(x, y)` is a ford snagged with debris: slow to wade.
+    pub(crate) fn snagged(&self, x: i32, y: i32) -> bool {
+        self.snags.binary_search(&(y, x)).is_ok()
     }
 
     /// How far it raises the water on tile `(x, y)`.

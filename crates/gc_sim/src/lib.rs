@@ -129,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 75;
+pub const SIM_VERSION: u32 = 76;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1775,6 +1775,10 @@ impl World {
             &self.stances,
         );
         self.burn();
+        let struck = (self.flood.rivers).strike(&mut self.regiments, &self.units, &self.terrain);
+        if struck != 0 && !self.scratch {
+            self.events.debris_struck(struck);
+        }
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.sweep_fords();
             self.wade_out();
@@ -3094,6 +3098,10 @@ impl World {
         self.fires.kindled.clear();
         if !self.fires.burnt.is_empty() {
             let burnt = core::mem::take(&mut self.fires.burnt);
+            // Woods burnt out on a bank may topple into the river.
+            for &(x, y) in &burnt {
+                (self.flood.rivers).topple(&self.terrain, x, y, self.tick);
+            }
             self.change_ground(burnt.iter().map(|&(x, y)| (x, y, true)));
             // Put back, so the list keeps its room.
             self.fires.burnt = burnt;
@@ -3209,6 +3217,10 @@ impl World {
         let (coming, stage, water) = (turn.coming, turn.stage, turn.water);
         if water && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_water(copy);
+        }
+        let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
+        if snags && let Some(copy) = self.terrain.rivers_mut() {
+            self.flood.rivers.write_snags(copy);
         }
         if coming && !self.scratch {
             self.events.flash(rivers::Stage::Coming);
