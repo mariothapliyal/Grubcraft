@@ -161,6 +161,16 @@ fn reach(s: Shape, edge: i32, last: i64) -> (i64, i64, i64, i64) {
 impl Map {
     /// The map a description makes.
     pub fn from_def(def: &MapDef) -> Map {
+        Map::build(def, true)
+    }
+
+    /// [`Map::from_def`] without grown land's trails, for placing the
+    /// sites the trails are worn between.
+    pub(crate) fn from_def_untrodden(def: &MapDef) -> Map {
+        Map::build(def, false)
+    }
+
+    fn build(def: &MapDef, trails: bool) -> Map {
         let tiles = def.size.tiles();
         let side = i64::from(tiles) * UNIT + 1;
         let last = side - 1;
@@ -263,6 +273,11 @@ impl Map {
         map.players = def.players;
         map.objects = place_objects(def, tiles);
         map.set_pieces.clone_from(&def.set_pieces);
+        // Grown land's trails are worn between its sites once they stand.
+        if let (Some(g), Some(spec), true) = (&grown, def.grown, trails) {
+            crate::grown::trails::wear(&mut map, spec.seed, g.mirrored);
+            map.settle_growth();
+        }
         map
     }
 }
