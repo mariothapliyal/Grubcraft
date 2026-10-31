@@ -163,6 +163,8 @@ mod fx_demo;
 #[cfg(test)]
 mod goldens;
 mod ground_look;
+#[cfg(test)]
+mod headless;
 mod land;
 mod lights;
 #[cfg(test)]

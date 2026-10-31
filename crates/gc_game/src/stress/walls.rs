@@ -2,15 +2,15 @@
 //! with a Palisade and a Gate, on Ribcage Pass: it has to get its army
 //! through or over the wall, the way a player would.
 
-use gc_ai::{Difficulty, Minds};
+use gc_ai::Difficulty;
 use gc_data::Faction;
 use gc_sim::structures::{Role, StructureView};
-use gc_sim::{BuildingStats, Capacities, MatchSetup, TICKS_PER_SECOND, Victories, World};
+use gc_sim::{BuildingStats, TICKS_PER_SECOND, Victories, World};
 
 use super::arena::{Real, put_up};
 use super::{Report, Scenario};
 use crate::conquest;
-use crate::conquest_ai::mind_for;
+use crate::headless::Headless;
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "ai-walls",
@@ -29,36 +29,13 @@ const LIMIT_MINUTES: u32 = 10;
 
 fn run(real: &Real, report: &mut Report) {
     // A shipped map: it keeps its own size whatever size is asked for.
-    let map = conquest::make_map(MAP, 0, SEED);
-    let nav = map.sim_nav_costs();
-    let mut world = World::new(&MatchSetup {
-        seed: SEED,
-        capacities: Capacities::default(),
-        units: &real.units,
-        map_tiles: map.tiles,
-        nav: &nav,
-        teams: &[0, 1],
-        ground: map.ground(),
-        champions: false,
-        sky: gc_sim::Sky::STILL,
-        generals: true,
-    });
+    let game = Headless::new(real, conquest::make_map(MAP, 0, SEED), &FACTIONS, SEED);
     let victories = Victories {
         annihilation: true,
         heart: false,
     };
-    let plan = conquest::plan(
-        &real.table,
-        &real.data,
-        &map,
-        &FACTIONS,
-        gc_ui::lobby::Tempo::Standard,
-        victories,
-    );
-    assert!(world.conquest(&plan.setup()));
-    let opening = conquest::opening(&real.data, &real.table, &map, &world, &FACTIONS);
-    let stats = report.tick(&mut world, &opening);
-    assert_eq!(stats.commands_applied as usize, opening.len());
+    let mut world = game.world(&game.plan(gc_ui::lobby::Tempo::Standard, victories));
+    game.open(&mut world, |w, orders| report.tick(w, orders));
 
     // Wall the defender's main building all round, the Gate on the side
     // facing the attacker, at the nearest distance where the whole ring
@@ -66,7 +43,7 @@ fn run(real: &Real, report: &mut Report) {
     let main = (world.structures().unwrap().iter())
         .find(|s| s.owner == 0 && real.table.stats[usize::from(s.building)].role == Role::Main)
         .expect("the defender's main building");
-    let foe = map.starts()[1];
+    let foe = game.map.starts()[1];
     let palisade = real.building("Palisade");
     let gate = real.building("Gate");
     let ring = (GAPS)
@@ -82,19 +59,8 @@ fn run(real: &Real, report: &mut Report) {
     report.metric("wall pieces (gate included)", pieces.len());
     report.metric("tiles from the main building to the wall", ring.gap);
 
-    let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
-    let sides: Vec<(Faction, u8)> = FACTIONS.iter().copied().zip([0, 1]).collect();
-    minds.add(mind_for(
-        &real.data,
-        &real.table,
-        &map,
-        1,
-        &sides,
-        Difficulty::General,
-        7,
-        SEED,
-        None,
-    ));
+    let mut minds = game.minds();
+    minds.add(game.mind(1, Difficulty::General, 7, None));
 
     let inside = |w: &World| {
         (w.regiments.iter()).any(|r| {
