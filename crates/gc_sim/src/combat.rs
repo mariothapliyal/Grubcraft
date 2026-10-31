@@ -1227,7 +1227,7 @@ impl Combat {
                 let marching = regs.marching(j);
                 if marching
                     && along > Fx::ZERO
-                    && regs.stepped[j]
+                    && regs.stepped(j)
                     && them.forward.dot(dir) > Fx::from_ratio(7, 10)
                 {
                     return;
@@ -1522,7 +1522,7 @@ impl Combat {
             }
             if regs.morale_state[i].broken() {
                 regs.crowd[i] = Fx::ZERO;
-                regs.crowded[i] = false;
+                regs.set_crowded(i, false);
                 regs.disorder[i] = 0;
                 continue;
             }
@@ -1544,9 +1544,9 @@ impl Combat {
                     }
                 });
                 regs.crowd[i] = into.min(SATURATED);
-                regs.crowded[i] = deepest > PUSHING;
+                regs.set_crowded(i, deepest > PUSHING);
             }
-            if regs.crowded[i] {
+            if regs.crowded(i) {
                 regs.disorder(i);
             } else {
                 regs.disorder[i] = regs.disorder[i].saturating_sub(1);

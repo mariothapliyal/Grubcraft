@@ -91,6 +91,10 @@ const GHOST: u8 = 200;
 /// It looks for friends to keep its spacing from at most every this
 /// many ticks, keeping up its last step aside in between.
 const KEEP_EVERY: u8 = 4;
+/// The parts of [`Regiments::keep`]: ticks to the next look, and two flags.
+const KEEP_APART: u8 = 0x3F;
+const KEEP_STEPPED: u8 = 0x40;
+const KEEP_CROWDED: u8 = 0x80;
 
 /// Ticks between looks at whether the way ahead has cleared, while queuing.
 const RECHECK: u8 = 4;
@@ -319,21 +323,19 @@ regiment_fields! {
     /// How deep the block overlaps its friends, in tiles (see
     /// `Combat::crowding`).
     crowd: Fx = Fx::ZERO,
-    /// Whether the block overlaps a friend's past [`crate::combat::PUSHING`]
-    /// (see `Combat::crowding`): both fall out of order.
-    crowded: bool = false,
-    /// How far it marched on its last step (zero if it stood), so friends
-    /// behind can tell a block filing on ahead from one stopped in the
-    /// way (see `Combat::keep_apart`).
-    stepped: bool = false,
     /// Ticks it has been kept from marching on by friends (see
     /// [`UNSTICK_TICKS`]); from [`GHOST`] up, the ticks left (above
     /// `GHOST`) it marches on through them.
     stuck: u8 = 0,
-    /// Ticks before it looks again for friends to keep its spacing from:
-    /// [`KEEP_EVERY`] apart, or longer with none near (see
-    /// `Combat::keep_apart`).
-    apart: u8 = 0,
+    /// Keeping its spacing, packed in a byte to save sim memory:
+    /// [`KEEP_APART`] the ticks before it looks again for friends to keep
+    /// its spacing from ([`KEEP_EVERY`] apart, or longer with none near, see
+    /// `Combat::keep_apart`); [`KEEP_STEPPED`] whether it marched on its
+    /// last step, so friends behind can tell a block filing on ahead from
+    /// one stopped in the way; [`KEEP_CROWDED`] whether it overlaps a
+    /// friend past [`crate::combat::PUSHING`] (see `Combat::crowding`), so
+    /// both fall out of order.
+    keep: u8 = 0,
     /// The step aside it last found it needed, kept up between looks.
     aside: i16 = 0,
     /// Ticks left until it is back in order (0: in order).
@@ -892,6 +894,38 @@ impl Regiments {
     }
 
     /// Whether slot `j` has a move order and isn't fighting.
+    /// Whether regiment `j` marched on its last step (see [`KEEP_STEPPED`]).
+    pub(crate) fn stepped(&self, j: usize) -> bool {
+        self.keep[j] & KEEP_STEPPED != 0
+    }
+
+    /// Whether regiment `j` overlaps a friend past
+    /// [`crate::combat::PUSHING`] (see [`KEEP_CROWDED`]).
+    pub(crate) fn crowded(&self, j: usize) -> bool {
+        self.keep[j] & KEEP_CROWDED != 0
+    }
+
+    pub(crate) fn set_crowded(&mut self, j: usize, crowded: bool) {
+        self.set_keep(j, KEEP_CROWDED, crowded);
+    }
+
+    fn set_keep(&mut self, j: usize, flag: u8, on: bool) {
+        self.keep[j] = if on {
+            self.keep[j] | flag
+        } else {
+            self.keep[j] & !flag
+        };
+    }
+
+    fn apart(&self, j: usize) -> u8 {
+        self.keep[j] & KEEP_APART
+    }
+
+    fn set_apart(&mut self, j: usize, ticks: u8) {
+        debug_assert!(ticks <= KEEP_APART);
+        self.keep[j] = (self.keep[j] & !KEEP_APART) | ticks.min(KEEP_APART);
+    }
+
     pub(crate) fn marching(&self, j: usize) -> bool {
         self.target[j].is_some() && self.engaged[j].is_none()
     }
@@ -1314,7 +1348,7 @@ impl Regiments {
                 continue;
             }
             let was = self.position[i];
-            self.stepped[i] = false;
+            self.set_keep(i, KEEP_STEPPED, false);
             // Falling back ends when time runs out, wherever it got to.
             if self.falling_back[i] > 0 {
                 self.falling_back[i] -= 1;
@@ -1335,7 +1369,7 @@ impl Regiments {
                 self.stuck[i] = 0;
                 // Staggered, so a whole army ordered at once doesn't all
                 // look on the same ticks.
-                self.apart[i] = i as u8 % KEEP_EVERY;
+                self.set_apart(i, i as u8 % KEEP_EVERY);
                 self.aside[i] = 0;
             }
             if self.engaged[i].is_none() && !self.braced[i] {
@@ -1460,8 +1494,8 @@ impl Regiments {
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
                 let aside = if ghost || tight || self.engaged[i].is_some() {
                     Fx::ZERO
-                } else if self.apart[i] > 0 {
-                    self.apart[i] -= 1;
+                } else if self.apart(i) > 0 {
+                    self.set_apart(i, self.apart(i) - 1);
                     Fx::from_raw(i32::from(self.aside[i])).clamp(-step, step)
                 } else {
                     let (aside, wait) =
@@ -1471,7 +1505,7 @@ impl Regiments {
                         "a step aside of half a tile or more"
                     );
                     self.aside[i] = aside.raw().clamp(i16::MIN.into(), i16::MAX.into()) as i16;
-                    self.apart[i] = wait;
+                    self.set_apart(i, wait);
                     aside
                 };
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
@@ -1506,7 +1540,7 @@ impl Regiments {
                     let following = |j: usize| {
                         self.marching(j)
                             && !(1..PATIENCE).contains(&self.held[j])
-                            && self.stepped[j]
+                            && self.stepped(j)
                     };
                     match found {
                         Ok(j) if following(j) => {
@@ -1570,7 +1604,7 @@ impl Regiments {
                     continue;
                 }
                 let stepped = (self.position[i] - was).dot(dir).max(Fx::ZERO);
-                self.stepped[i] = stepped > Fx::ZERO;
+                self.set_keep(i, KEEP_STEPPED, stepped > Fx::ZERO);
                 if ghost {
                     self.stuck[i] -= 1;
                     if self.stuck[i] < GHOST {
