@@ -394,12 +394,12 @@ impl Running {
                     self.arm_wall(b);
                     self.say(if self.buildings.is_bridge(b) {
                         format!(
-                            "Click the near bank, then the far bank: a {} runs straight",
+                            "Drag from the near bank to the far bank: a {} bends gently ([ ] width)",
                             self.buildings.name(b)
                         )
                     } else {
                         format!(
-                            "Click where the {} starts, then where it ends or bends",
+                            "Drag to draw a {} as a curve, or click where it starts and bends",
                             self.buildings.name(b)
                         )
                     });

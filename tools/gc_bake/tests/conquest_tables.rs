@@ -54,10 +54,10 @@ fn references_stay_inside_the_faction() {
                 assert_eq!(from.faction(), b.faction(), "{}", b.name());
             }
         }
-        // Each faction's main building upgrades twice, and so does its
-        // drawn wall (levels 2 and 3); each gate (every faction's but the
-        // Choir's) has its gatehouse.
-        assert_eq!(upgrades, 4 * Faction::ALL.len() + 3);
+        // Each faction's main building upgrades twice, and so do its
+        // drawn wall and its bridge (levels 2 and 3); each gate (every
+        // faction's but the Choir's) has its gatehouse.
+        assert_eq!(upgrades, 6 * Faction::ALL.len() + 3);
         for u in data.conquest_units {
             if u.trained_at != NONE {
                 let at = &data.buildings[usize::from(u.trained_at)];

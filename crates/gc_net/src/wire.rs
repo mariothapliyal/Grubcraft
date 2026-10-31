@@ -75,6 +75,16 @@ impl Writer {
         self.var(u64::from(h.generation));
     }
 
+    /// A drawn path: how many points, which are corners, then each point.
+    pub fn path(&mut self, p: &gc_sim::drawn::DrawnPath) {
+        self.u8(p.len);
+        self.var(u64::from(p.corners));
+        for &(x, y) in p.points() {
+            self.var(u64::from(x as u16));
+            self.var(u64::from(y as u16));
+        }
+    }
+
     /// A building's handle, laid out as a regiment's.
     pub fn structure(&mut self, h: StructureHandle) {
         self.var(u64::from(h.index));
@@ -183,6 +193,23 @@ impl<'a> Reader<'a> {
             index: self.var_as()?,
             generation: self.var_as()?,
         })
+    }
+
+    /// A drawn path, as [`Writer::path`] writes it.
+    pub fn path(&mut self) -> Option<gc_sim::drawn::DrawnPath> {
+        let len = usize::from(self.u8()?);
+        if len > gc_sim::drawn::MAX_POINTS {
+            return None;
+        }
+        let mut p = gc_sim::drawn::DrawnPath {
+            len: len as u8,
+            corners: self.var_as()?,
+            ..Default::default()
+        };
+        for k in 0..len {
+            p.points[k] = (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16);
+        }
+        Some(p)
     }
 
     pub fn structure(&mut self) -> Option<StructureHandle> {
@@ -463,6 +490,29 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                 w.var(u64::from(v as u16));
             }
         }
+        Command::DrawLine {
+            regiment,
+            building,
+            path,
+            width,
+        } => {
+            // A grown wall, with no worker, has a tag of its own.
+            match regiment {
+                Some(r) => {
+                    w.u8(39);
+                    w.handle(r);
+                }
+                None => w.u8(40),
+            }
+            w.var(u64::from(building));
+            w.path(&path);
+            w.u8(width);
+        }
+        Command::PlanLine { building, path } => {
+            w.u8(43);
+            w.var(u64::from(building));
+            w.path(&path);
+        }
         Command::PlanWall { building, from, to } => {
             w.u8(29);
             w.var(u64::from(building));
@@ -690,6 +740,16 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             building: r.var_as()?,
             from: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
             to: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+        },
+        tag @ (39 | 40) => Command::DrawLine {
+            regiment: if tag == 39 { Some(r.handle()?) } else { None },
+            building: r.var_as()?,
+            path: r.path()?,
+            width: r.u8()?,
+        },
+        43 => Command::PlanLine {
+            building: r.var_as()?,
+            path: r.path()?,
         },
         29 => Command::PlanWall {
             building: r.var_as()?,
@@ -1006,6 +1066,30 @@ mod tests {
                 building: 4,
                 from: (7, 7),
                 to: (7, 1),
+            },
+            Command::DrawLine {
+                regiment: Some(RegimentHandle {
+                    index: 3,
+                    generation: 2,
+                }),
+                building: 7,
+                path: gc_sim::drawn::DrawnPath::new(&[(1, 3), (-9, 40), (61, 22)], |k| k == 1)
+                    .unwrap(),
+                width: 3,
+            },
+            Command::DrawLine {
+                regiment: None,
+                building: 2,
+                path: gc_sim::drawn::DrawnPath::straight((4, 4), (9, 2)),
+                width: 1,
+            },
+            Command::PlanLine {
+                building: 5,
+                path: gc_sim::drawn::DrawnPath::new(
+                    &[(1, 1), (9, 1), (9, 9), (1, 9), (1, 1)],
+                    |_| false,
+                )
+                .unwrap(),
             },
             Command::PlanWall {
                 building: 1,
