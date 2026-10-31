@@ -1667,6 +1667,18 @@ pub fn shown_to(
 /// `across` is the way the camera looks along the ground, so the bars face
 /// it.
 #[allow(clippy::too_many_arguments)]
+/// Every bridge tile, sorted for a binary search (so a deck rails only its
+/// outer edges); no allocation on a map with no bridges.
+pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
+    let mut bridged: Vec<(i32, i32)> = structures
+        .iter()
+        .filter(|s| table.is_bridge(s.building))
+        .map(|s| s.tile)
+        .collect();
+    bridged.sort_unstable();
+    bridged
+}
+
 pub fn push(
     world: &World,
     table: &Table,
@@ -1686,12 +1698,7 @@ pub fn push(
     // The bridge tiles, so a wide deck rails only its edges (where one
     // drawing meets another, as a mended gap does, too). Sorted for a
     // binary search; no allocation on a map with no bridges.
-    let mut bridged: Vec<(i32, i32)> = structures
-        .iter()
-        .filter(|s| table.is_bridge(s.building))
-        .map(|s| s.tile)
-        .collect();
-    bridged.sort_unstable();
+    let bridged = bridge_tiles(structures, table);
     for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 12 > MAX_BOX_INSTANCES {
             return;

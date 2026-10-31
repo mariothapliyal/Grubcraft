@@ -61,6 +61,8 @@ pub struct Tile<'a> {
 }
 
 /// The bottoms of the short, mid and tall piers below the drawn plane.
+/// Water deeper than the tallest takes the tallest, which then stops short
+/// of the bed (rare: bridges are drawn over rivers, not lakes).
 const PIER_REACH: [f32; 3] = [0.6, 1.1, 1.7];
 
 /// Water at least this deep (in tiles) under a tile's middle takes a pier;
@@ -129,9 +131,12 @@ impl BridgeKit {
         // of a curving deck meet edge to edge.
         let along = snap(t.dir);
         let across = Vec2::new(-along.y, along.x);
-        // The tile's place along the bridge and across it.
+        // The map axis the bridge runs along, the same way for every lane
+        // whichever way it was drawn, and the tile's place along it, so the
+        // pier rows and lantern posts of side-by-side lanes line up.
         let step = |v: Vec2| (v.x as i32, v.y as i32);
-        let (ax, ay) = step(along);
+        let axis = along.abs();
+        let (ax, ay) = step(axis);
         let row = s.tile.0 * ax + s.tile.1 * ay;
         let level = usize::from(t.level.clamp(1, 3));
         let depth = floor - (t.bed)(centre);
@@ -196,9 +201,14 @@ impl BridgeKit {
             put(rail, centre, facing);
             let lantern = level >= 2 && row.rem_euclid(LANTERN_EVERY) == 0;
             let post = if lantern { self.lantern } else { self.post };
-            put(post, centre - along * 0.5, facing);
-            if !neighbour(along) {
-                put(self.post, centre + along * 0.5, facing);
+            put(post, centre - axis * 0.5, facing);
+            // A closing post where the deck ends, unless it carries on
+            // straight or steps aside on a curve.
+            if ![axis, axis + across, axis - across]
+                .into_iter()
+                .any(neighbour)
+            {
+                put(self.post, centre + axis * 0.5, facing);
             }
         }
     }

@@ -7872,11 +7872,7 @@ impl Running {
         }
         // The bridge tiles, so the timber kit rails only a deck's outer
         // edges. Sorted for a binary search; empty on a map with no bridges.
-        let mut bridged: Vec<(i32, i32)> = (structures.iter())
-            .filter(|s| art.looks.kit_for(s.building).is_some())
-            .map(|s| s.tile)
-            .collect();
-        bridged.sort_unstable();
+        let bridged = buildings::bridge_tiles(structures, &self.buildings);
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -7896,8 +7892,10 @@ impl Running {
                 kit.pieces(&tile, &mut pieces);
                 let (shake, rise) = self.siege.jolt(s.handle);
                 for p in &pieces {
+                    // Shaken as one: every piece keeps the height it has
+                    // unshaken, wherever the jolt puts it.
                     let pos = p.at + shake;
-                    let lift = p.lift + rise;
+                    let lift = ground(p.at.x, p.at.y) + p.lift + rise - ground(pos.x, pos.y);
                     let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
                     let (Some(lod), Some(pose)) = (
                         art.view.place(art.looks.top(p.model), at),
@@ -7916,9 +7914,7 @@ impl Running {
                         ..Default::default()
                     });
                 }
-                continue;
-            }
-            if let Some(model) = art.looks.model_of(&s) {
+            } else if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let along = !self.buildings.is_bridge(s.building);
