@@ -105,7 +105,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Walls** [docs/26-fortifications.md]
 - Level 1 cheap; level 2 adds a walkway (about 15 Grub a tile more); level 3 adds battlements and the faction twist (20 Grub + 5 Marrow a tile more, needs tier 2).
 - Ember: Palisade, Stone Wall, Castle Wall. Concord: Bone Fence, Ossuary Wall, Mausoleum Wall. Choir: Light Curtain, Glass Wall, Singing Wall. Brood: Resin Ridge, Chitin Wall, Thorn Bulwark.
-- Wall looks: the Palisade and the Concord's three walls are built from kits along the drawn curve (log or bone runs, posts at the joints, tall end posts where the wall stops, broken runs below half hit points, charred Palisade logs below a fifth, braces behind the Palisade). Other walls are still plain slabs.
+- Wall looks: the Palisade, the Stone Wall and the Concord's three walls are built from kits along the drawn curve (log or bone runs, posts at the joints, tall end posts where the wall stops, broken runs below half hit points, charred Palisade logs below a fifth, braces behind the Palisade). The Stone Wall is the palisade on a stone footing with iron bands and a walkway behind, where men manning it stand. Fronts face away from your nearest hall. Other walls are still plain slabs.
+- Drawing walls: drag for a curve; turn sharply mid-drag (over 40 degrees) for a corner; click for a straight piece from the last end. Bridges bend gently only.
 - Raise a stretch with `U`; a worker raises it tile by tile.
 
 ## 4. Factions [docs/03-factions.md]

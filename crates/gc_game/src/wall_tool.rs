@@ -431,7 +431,7 @@ impl Running {
             }
             DrawnPath::straight(start, to)
         } else {
-            drawn_tool::path(&drag.raw, centre_half(end), ring)?
+            drawn_tool::path(&drag.raw, centre_half(end), ring, !bridge)?
         };
         Some(path)
     }

@@ -1716,6 +1716,113 @@ pub fn shown_to(
     move |s| (reveal_all && !table.is_trap(s.building)) || s.seen_by(side)
 }
 
+/// Where wall tile `s`'s kit pieces are laid: the middle of its piece of
+/// the line, the way it runs and how long it is; a tile with no line, a
+/// tile at its centre running east.
+pub fn kit_piece(s: &StructureView) -> (Vec2, Vec2, f32) {
+    (s.line.and_then(|line| wall_piece(line, s.tile)))
+        .map_or((centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
+            (p.centre, p.dir, p.len)
+        })
+}
+
+/// Which side of each drawn wall is outside its owner's fort, worked out
+/// once a drawing and kept: a kit wall's front, and the walkway men on a
+/// Stone Wall stand on, go by it. It reads every hall (main building or
+/// outpost) whether or not the viewer has seen it, so a wall faces the same
+/// way on every screen and never turns as the fog lifts.
+pub struct WallSides<'a> {
+    world: &'a World,
+    halls: Vec<(PlayerId, Vec2)>,
+    /// Drawing id, and whether its inside is on the left of the way it
+    /// was drawn (`None`: its owner has no hall).
+    known: Vec<(u32, Option<bool>)>,
+}
+
+impl<'a> WallSides<'a> {
+    pub fn new(world: &'a World, table: &Table) -> WallSides<'a> {
+        let halls = (world.structures().into_iter())
+            .flat_map(gc_sim::Structures::iter)
+            .filter(|s| {
+                (table.stats.get(usize::from(s.building)))
+                    .is_some_and(|st| matches!(st.role, Role::Main | Role::Outpost))
+            })
+            .map(|s| (s.owner, centre_of(s.tile, s.width, s.depth)))
+            .collect();
+        WallSides {
+            world,
+            halls,
+            known: Vec::new(),
+        }
+    }
+
+    /// The way out of the fort at wall tile `s`, whose piece of the line
+    /// has its middle at `centre` and runs along `dir` (the way the line
+    /// was drawn): square to it. `None` when its owner has no hall.
+    pub fn out(&mut self, s: &StructureView, centre: Vec2, dir: Vec2) -> Option<Vec2> {
+        let left = Vec2::new(-dir.y, dir.x);
+        let inside_left = match s.drawing {
+            Some(id) => match self.known.iter().find(|k| k.0 == id) {
+                Some(k) => k.1,
+                None => {
+                    let side = (self.world.drawing(id))
+                        .and_then(|d| inside_left(&d.path, self.nearest_hall(d.owner, centre)?));
+                    self.known.push((id, side));
+                    side
+                }
+            },
+            // Not laid along a drawing: by the tile's own line.
+            None => {
+                let to_hall = self.nearest_hall(s.owner, centre)? - centre;
+                let d = left.dot(to_hall);
+                (d.abs() > 1e-3).then_some(d > 0.0)
+            }
+        }?;
+        Some(if inside_left { -left } else { left })
+    }
+
+    fn nearest_hall(&self, owner: PlayerId, near: Vec2) -> Option<Vec2> {
+        (self.halls.iter())
+            .filter(|h| h.0 == owner)
+            .map(|h| h.1)
+            .min_by(|a, b| {
+                a.distance_squared(near)
+                    .total_cmp(&b.distance_squared(near))
+            })
+    }
+}
+
+/// Whether the inside of drawn line `path` is on the left of the way it was
+/// drawn: for a closed loop, the side its middle is on; for an open line,
+/// the side `hall` is on where the line passes nearest it. `None` if it
+/// can't tell (the hall right on the line).
+pub fn inside_left(path: &gc_sim::drawn::DrawnPath, hall: Vec2) -> Option<bool> {
+    let sub = gc_sim::drawn::SUB as f32;
+    let pts: Vec<Vec2> = (path.samples().iter())
+        .map(|p| Vec2::new(p.x as f32, p.y as f32) / sub)
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    if path.closed() {
+        let area: f32 = pts.windows(2).map(|w| cross(w[0], w[1])).sum();
+        return (area.abs() > 1e-3).then_some(area > 0.0);
+    }
+    let k = (0..pts.len()).min_by(|&a, &b| {
+        pts[a]
+            .distance_squared(hall)
+            .total_cmp(&pts[b].distance_squared(hall))
+    })?;
+    let (a, b) = if k + 1 < pts.len() {
+        (pts[k], pts[k + 1])
+    } else {
+        (pts[k - 1], pts[k])
+    };
+    let c = cross(b - a, hall - pts[k]);
+    (c.abs() > 1e-3).then_some(c > 0.0)
+}
+
 /// Every bridge tile, sorted for a binary search (so a deck rails only its
 /// outer edges); no allocation on a map with no bridges.
 pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
@@ -2752,6 +2859,31 @@ pub fn wall_slot(table: &Table, s: &StructureView) -> crate::puppets::WallSlot {
     }
 }
 
+/// Where men manning wall tile `s` stand: on a kit wall with a walkway (the
+/// Ember Stone Wall), on the walkway's deck behind it, inside the fort; on
+/// another kit wall, on its runs' top; else as [`wall_slot`] has it.
+pub fn manned_slot(
+    table: &Table,
+    looks: Option<&Looks>,
+    sides: &mut WallSides<'_>,
+    s: &StructureView,
+) -> crate::puppets::WallSlot {
+    let mut slot = wall_slot(table, s);
+    let Some((looks, kit)) = looks.and_then(|l| l.wall_kit_for(s.building).map(|k| (l, k))) else {
+        return slot;
+    };
+    if kit.has_walkway() {
+        // As the kit is laid.
+        let (centre, dir, _) = kit_piece(s);
+        let front = crate::wall_kit::front(dir, sides.out(s, centre, dir));
+        slot.centre = centre - front * crate::wall_kit::WALKWAY_BACK;
+        slot.lift = crate::wall_kit::WALKWAY_DECK;
+    } else {
+        slot.lift = looks.top(kit.run());
+    }
+    slot
+}
+
 /// The places regiment `h`'s soldiers stand on the wall it is manning
 /// (see [`World::wall_tiles`]): piece centres, with how high each top is.
 /// Empty unless it is on a wall.
@@ -3389,8 +3521,15 @@ mod tests {
             looks.stages[0][FINISHED].is_some(),
             "the Clan Hall has no model"
         );
-        // The drawn Palisade and the bone walls are built from their kits.
-        for name in ["Palisade", "Bone Fence", "Ossuary Wall", "Mausoleum Wall"] {
+        // The drawn Palisade, Stone Wall and the bone walls are built from
+        // their kits.
+        for name in [
+            "Palisade",
+            "Stone Wall",
+            "Bone Fence",
+            "Ossuary Wall",
+            "Mausoleum Wall",
+        ] {
             let b = table.named(name);
             assert!(looks.wall_kit_for(b).is_some(), "{name} has no wall kit");
             assert!(looks.stages[usize::from(b)].iter().all(Option::is_none));
@@ -4097,5 +4236,43 @@ mod tests {
         let mut full = vec![BoxInstance::default(); MAX_BOX_INSTANCES];
         push_aim_ring(Vec2::ZERO, 12.0, 140, &mut full);
         assert_eq!(full.len(), MAX_BOX_INSTANCES);
+    }
+
+    #[test]
+    fn a_wall_line_is_inside_on_its_halls_side_all_along() {
+        use gc_sim::drawn::DrawnPath;
+        let c = |x: i32, y: i32| ((2 * x + 1) as i16, (2 * y + 1) as i16);
+        // A line drawn east at y = 20, the hall to its north (lower y).
+        let east = DrawnPath::new(&[c(0, 20), c(30, 20)], |_| true).unwrap();
+        let west = DrawnPath::new(&[c(30, 20), c(0, 20)], |_| true).unwrap();
+        let hall = Vec2::new(10.0, 10.0);
+        // Left of east (math axes: (-d.y, d.x) = (0, 1)) is +y: the hall is
+        // on the right. Drawn west, on the left.
+        assert_eq!(inside_left(&east, hall), Some(false));
+        assert_eq!(inside_left(&west, hall), Some(true));
+        // Either way, the outside is south (+y), as `WallSides::out` works it.
+        let out = |path: &DrawnPath, dir: Vec2| {
+            let left = Vec2::new(-dir.y, dir.x);
+            if inside_left(path, hall).unwrap() {
+                -left
+            } else {
+                left
+            }
+        };
+        assert_eq!(out(&east, Vec2::X), Vec2::Y);
+        assert_eq!(out(&west, Vec2::NEG_X), Vec2::Y);
+        // A spur pointing straight at the hall still picks one side, once.
+        let spur = DrawnPath::new(&[c(10, 40), c(11, 14)], |_| true).unwrap();
+        assert!(inside_left(&spur, hall).is_some());
+        // A loop round the hall: inside is its middle, whichever way round.
+        let ring: Vec<_> = [(0, 0), (20, 0), (20, 20), (0, 20), (0, 0)]
+            .iter()
+            .map(|&(x, y)| c(x, y))
+            .collect();
+        let back: Vec<_> = ring.iter().rev().copied().collect();
+        let a = DrawnPath::new(&ring, |_| false).unwrap();
+        let b = DrawnPath::new(&back, |_| false).unwrap();
+        assert!(a.closed() && b.closed());
+        assert_ne!(inside_left(&a, hall), inside_left(&b, hall));
     }
 }
