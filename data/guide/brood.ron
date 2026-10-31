@@ -107,6 +107,7 @@
         ),
         (
             name: "Harpoon Maw",
+            blurb: "Bolt tower: a heavy bolt down a file of soldiers that drags its target 3 tiles toward the tower.",
             summary: "Bolt tower: one heavy bolt every 6 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers. Its harpoon drags the regiment it hits 3 tiles toward the tower and halts it, unless that regiment is locked in melee or standing on a wall.",
             blurb: "Bolt tower: a heavy bolt through a file of soldiers that drags the regiment it hits 3 tiles toward it.",
             notes: [],
@@ -118,6 +119,7 @@
         ),
         (
             name: "Acid Bloater",
+            blurb: "Blast tower: shells packed blocks and leaves acid pools. Blind within 8 tiles, so guard it.",
             summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. It leaves a pool of acid for 6 seconds that eats at any enemy standing in it.",
             blurb: "Blast tower: shells packed blocks and leaves acid pools. Cannot hit enemies within 8 tiles.",
             notes: [],

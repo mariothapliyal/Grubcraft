@@ -565,15 +565,22 @@ pub struct Looks {
     kit: Option<crate::bridge_kit::BridgeKit>,
     /// By building type, whether it is a bridge.
     bridges: Vec<bool>,
+    /// By building type, the kit a drawn wall is built from, if it has one.
+    wall_kits: Vec<Option<crate::wall_kit::WallKit>>,
 }
 
 /// By building type, the model of each stage: its own, or for a tower with
 /// none its faction's cheapest arrow tower's (until its own is made).
-fn stages_of(table: &Table, models: &Models<'_>) -> Vec<[Option<usize>; STAGES]> {
+fn stages_of(
+    table: &Table,
+    models: &Models<'_>,
+    wall_kits: &[Option<crate::wall_kit::WallKit>],
+) -> Vec<[Option<usize>; STAGES]> {
     let own: Vec<[Option<usize>; STAGES]> = (table.names.iter().zip(&table.stats))
-        .map(|(name, stats)| {
+        .zip(wall_kits)
+        .map(|((name, stats), kit)| {
             core::array::from_fn(|k| {
-                if boxed_line(stats) || stats.is_bridge() {
+                if boxed_line(stats) || stats.is_bridge() || kit.is_some() {
                     return None;
                 }
                 models.by_name(&stage_name(name, k))
@@ -624,13 +631,18 @@ impl Looks {
                 (Some(f32::from(top) / scale), Some(half / scale))
             })
             .unzip();
+        let wall_kits: Vec<_> = (table.names.iter())
+            .map(|name| crate::wall_kit::WallKit::for_wall(models, name))
+            .collect();
         Looks {
             // A drawn wall with a model of its own (the Palisade) shows it
             // along its line (`model_spots`); the rest, and stakes and
             // barricades, are drawn as boxes. A bridge has no model of its
             // own: it is built from the timber kit's pieces (`kit`), or
             // drawn as boxes without them.
-            stages: stages_of(table, models),
+            // A wall built from a kit (`wall_kits`) leaves its one-piece
+            // models unused, unless its kit is missing.
+            stages: stages_of(table, models, &wall_kits),
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
@@ -647,7 +659,13 @@ impl Looks {
             walls,
             kit: crate::bridge_kit::BridgeKit::new(models),
             bridges: table.stats.iter().map(BuildingStats::is_bridge).collect(),
+            wall_kits,
         }
+    }
+
+    /// The kit that builds drawn wall type `building`, if it has one.
+    pub fn wall_kit_for(&self, building: BuildingId) -> Option<&crate::wall_kit::WallKit> {
+        self.wall_kits.get(usize::from(building))?.as_ref()
     }
 
     /// The timber kit that builds bridge type `building`, or `None` for
@@ -3246,8 +3264,9 @@ mod tests {
             let own: Vec<_> = (0..STAGES)
                 .map(|k| models.by_name(&stage_name(&table.names[i], k)))
                 .collect();
-            // Bridges are built from the timber kit.
-            if stats.is_bridge() {
+            // Bridges are built from the timber kit, and some walls from
+            // wall kits.
+            if stats.is_bridge() || looks.wall_kits[i].is_some() {
                 continue;
             }
             if own.iter().any(Option::is_some) {
@@ -3330,9 +3349,10 @@ mod tests {
         let still = models.models.iter().filter(|m| m.is_still()).count();
         // Stakes and barricades are drawn as boxes: a model their name would
         // find is left unused.
-        let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(_, s)| boxed_line(s))
-            .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
+        // And the walls built from a wall kit leave their one-piece models.
+        let unused = (table.names.iter().zip(&table.stats).zip(&looks.wall_kits))
+            .filter(|((_, s), kit)| boxed_line(s) || kit.is_some())
+            .flat_map(|((n, _), _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
         // So is the old one-tile bridge model.
@@ -3347,6 +3367,19 @@ mod tests {
             .iter()
             .filter(|m| m.is_still() && m.name().starts_with("Bridge "))
             .count();
+        // And the wall kits' pieces (assets-src/buildings/wall-kits.ron:
+        // "Palisade Kit Run A", "Bone Fence Kit L3 Run B", ...): a generator
+        // lays them along each drawn wall, so none dresses a building by name.
+        let kit = kit
+            + models
+                .models
+                .iter()
+                .filter(|m| {
+                    m.is_still()
+                        && (m.name().starts_with("Palisade Kit ")
+                            || m.name().starts_with("Bone Fence Kit "))
+                })
+                .count();
         assert_eq!(
             dressed.len() + unused + bridge + kit,
             still,
@@ -3356,16 +3389,12 @@ mod tests {
             looks.stages[0][FINISHED].is_some(),
             "the Clan Hall has no model"
         );
-        // The drawn Palisade shows its own textured model at every stage.
-        let palisade = (0..table.len() as BuildingId)
-            .find(|&b| table.name(b) == "Palisade")
-            .unwrap();
-        assert!(
-            looks.stages[usize::from(palisade)]
-                .iter()
-                .all(Option::is_some),
-            "the Palisade is drawn without its model"
-        );
+        // The drawn Palisade and the bone walls are built from their kits.
+        for name in ["Palisade", "Bone Fence", "Ossuary Wall", "Mausoleum Wall"] {
+            let b = table.named(name);
+            assert!(looks.wall_kit_for(b).is_some(), "{name} has no wall kit");
+            assert!(looks.stages[usize::from(b)].iter().all(Option::is_none));
+        }
         assert!(
             looks.crews.iter().all(Option::is_some),
             "a faction lacks its worker"
