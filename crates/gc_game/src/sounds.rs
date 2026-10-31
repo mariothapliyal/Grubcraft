@@ -26,6 +26,7 @@ use gc_platform::logln;
 use gc_render::HitStyle;
 use gc_sim::champions::Outcome;
 use gc_sim::events::{Event, VolleyId};
+use gc_sim::structures::TowerShot;
 use gc_sim::{
     MoraleState, PlayerId, RegimentHandle, Shooter, StructureHandle, TICKS_PER_SECOND, UnitId,
     World,
@@ -1128,6 +1129,7 @@ impl Sounds {
                     volley, shooter, ..
                 } => {
                     let flying = world.volleys().find(|v| v.id == volley);
+                    let kind = flying.map_or(TowerShot::Arrows, |v| v.kind);
                     self.flights.push((volley, flying.map_or(0, |v| v.shots)));
                     let regiment = shooter.regiment();
                     self.hushed = !heard
@@ -1141,7 +1143,33 @@ impl Sounds {
                             .map(|r| from_fx_vec(r.position))
                     });
                     if let Some(from) = from {
-                        self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
+                        // A tower's bolt or blast is loosed with the siege
+                        // engines' heavy launch, a blast lower and louder.
+                        match kind {
+                            TowerShot::Arrows => {
+                                self.play_at(SoundId::ArrowRelease, from, 0.8, 1.0, PRI_ARROWS);
+                            }
+                            TowerShot::Bolt => {
+                                self.play_at_speed(
+                                    SoundId::SiegeLaunch,
+                                    from,
+                                    0.7,
+                                    1.2,
+                                    PRI_ARROWS,
+                                    1.3,
+                                );
+                            }
+                            TowerShot::Blast => {
+                                self.play_at_speed(
+                                    SoundId::SiegeLaunch,
+                                    from,
+                                    0.9,
+                                    1.3,
+                                    PRI_ARROWS,
+                                    0.85,
+                                );
+                            }
+                        }
                     }
                 }
                 // A Bell Tower tolls: no bell is recorded, so the low tone
@@ -1154,14 +1182,27 @@ impl Sounds {
                     let at = crate::buildings::centre_of(st.tile, st.width, st.depth);
                     self.play_at(SoundId::Waver, at, 1.0, 1.5, PRI_MORALE);
                 }
-                Event::Landed { volley, at, .. } => {
+                Event::Landed {
+                    volley, at, kind, ..
+                } => {
                     let shots = match self.flights.iter().position(|f| f.0 == volley) {
                         Some(k) => self.flights.swap_remove(k).1,
                         None => 0,
                     };
                     self.hushed = !heard;
-                    let gain = 0.5 + 0.5 * (f32::from(shots) / 16.0).min(1.0);
-                    self.play_at(SoundId::ArrowImpact, from_fx_vec(at), gain, 1.0, PRI_ARROWS);
+                    let at = from_fx_vec(at);
+                    match kind {
+                        TowerShot::Arrows => {
+                            let gain = 0.5 + 0.5 * (f32::from(shots) / 16.0).min(1.0);
+                            self.play_at(SoundId::ArrowImpact, at, gain, 1.0, PRI_ARROWS);
+                        }
+                        TowerShot::Bolt => {
+                            self.play_at_speed(SoundId::ArrowImpact, at, 1.0, 1.2, PRI_ARROWS, 0.7);
+                        }
+                        TowerShot::Blast => {
+                            self.play_at(SoundId::SiegeImpact, at, 0.9, 1.4, PRI_BLOWS);
+                        }
+                    }
                 }
                 _ => {}
             }

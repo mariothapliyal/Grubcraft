@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 68;
+pub const SIM_VERSION: u32 = 69;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1084,6 +1084,7 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
+        self.combat.reserve_towers();
         // Conquest's commanders will be its heroes.
         self.generals = None;
         self.events
@@ -1785,12 +1786,18 @@ impl World {
         if let Some(conquest) = &mut self.conquest {
             conquest.towers(
                 &mut self.combat,
-                &self.regiments,
+                &mut self.regiments,
+                &self.units,
+                &self.nav,
                 &self.stances,
                 &self.terrain,
                 &self.vision,
                 self.tick,
             );
+            // Burning ground sets the growth under it alight.
+            for (x, y) in conquest.structures.kindle.drain(..) {
+                self.fires.kindle(&self.terrain, x, y);
+            }
             conquest.update(
                 &mut self.regiments,
                 &self.units,

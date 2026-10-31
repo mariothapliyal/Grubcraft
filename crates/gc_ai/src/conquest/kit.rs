@@ -5,7 +5,7 @@
 //! nothing of factions.
 
 use gc_sim::structures::{
-    BuildingStats, DROP_OFF_GRUB, GATE, LARVAE, LINE, Role, TRADE_POST, VEINS,
+    BuildingStats, DROP_OFF_GRUB, GATE, LARVAE, LINE, Role, TRADE_POST, TowerShot, VEINS,
 };
 use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
@@ -192,12 +192,20 @@ impl Kit {
             .min_by_key(|b| b.stats.cost_grub)
     }
 
-    /// The cheapest defence tower it can put up at `tier`.
+    /// The cheapest arrow tower it can put up at `tier`.
     pub fn tower(&self, tier: u8) -> Option<&KitBuilding> {
+        self.tower_of(tier, TowerShot::Arrows)
+    }
+
+    /// The cheapest defence tower that looses `shot` it can put up at
+    /// `tier` (docs/26 stage 5: bolts against monsters and riders, blasts
+    /// against packed blocks and siege).
+    pub fn tower_of(&self, tier: u8, shot: TowerShot) -> Option<&KitBuilding> {
         self.buildings
             .iter()
             .filter(|b| b.stats.role == Role::Defence && b.stats.tier <= tier.max(1))
             .filter(|b| b.stats.upgrades_from.is_none())
+            .filter(|b| b.stats.attack.is_some_and(|a| a.shot == shot))
             .min_by_key(|b| b.price())
     }
 

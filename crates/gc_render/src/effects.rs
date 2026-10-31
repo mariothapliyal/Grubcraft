@@ -291,6 +291,131 @@ impl Effects {
         }
     }
 
+    /// Burning ground over the square of half-width `half` round `pos`, for
+    /// `dt` seconds, at `strength` (0 to 1; a dying fire is weaker): low
+    /// flames and embers scattered over it, a little smoke, and one light.
+    pub fn ground_fire(&mut self, pos: Vec3, half: f32, strength: f32, dt: f32) {
+        if strength <= 0.0 {
+            return;
+        }
+        self.glow(Glow {
+            pos: pos + Vec3::Y * 0.5,
+            color: [255, 140, 50],
+            radius: 2.0 + half * 2.0,
+            strength: strength.min(1.0) * 1.2,
+            needs_dark: true,
+            seed: None,
+            placed: false,
+        });
+        let area = half * half * 4.0;
+        for _ in 0..self.count(area * 2.2 * strength * dt) {
+            let at = Vec2::new(self.rng.between(-half, half), self.rng.between(-half, half));
+            let size = self.rng.between(0.25, 0.45);
+            let shape = if self.rng.unit() < 0.5 {
+                Shape::Glow
+            } else {
+                self.puff()
+            };
+            let (seed, spin) = (self.rng.byte(), self.spin(6));
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.05, at.y),
+                vel: Vec3::new(0.0, self.rng.between(0.5, 1.2), 0.0),
+                life: self.rng.between(0.5, 0.9),
+                size: [size, size * 0.2],
+                color: [255, 176, 62, 190],
+                color_end: [255, 48, 8, 0],
+                drag: 1.0,
+                lift: 1.2,
+                shape,
+                flags: flags::ADDITIVE | flags::FLICKER,
+                spin,
+                seed,
+                ..Particle::default()
+            });
+        }
+        for _ in 0..self.count(area * 0.3 * strength * dt) {
+            let at = Vec2::new(self.rng.between(-half, half), self.rng.between(-half, half));
+            let shape = self.puff();
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.5, at.y),
+                vel: Vec3::new(0.0, self.rng.between(0.4, 0.8), 0.0),
+                life: self.rng.between(1.2, 2.0),
+                size: [0.5, 0.9],
+                drag: 0.6,
+                shape,
+                flags: flags::SOFT | flags::WIND,
+                seed: self.rng.byte(),
+                ..fading([70, 64, 60], 70)
+            });
+        }
+        self.embers(pos, half, area * 0.5 * strength * dt);
+    }
+
+    /// A pool of acid on the square of half-width `half` round `pos`, for
+    /// `dt` seconds, at `strength` (0 to 1): a flat, glowing, sickly green
+    /// patch on the ground with a few bubbles rising.
+    pub fn acid_pool(&mut self, pos: Vec3, half: f32, strength: f32, dt: f32) {
+        if strength <= 0.0 {
+            return;
+        }
+        let area = half * half * 4.0;
+        // Wide flat blobs that overlap into a patch, each living about as
+        // long as the gap between frames needs to keep it unbroken.
+        for _ in 0..self.count(area * 5.0 * dt) {
+            let at = Vec2::new(self.rng.between(-half, half), self.rng.between(-half, half));
+            let alpha = (150.0 * strength) as u8;
+            let shape = self.puff();
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.04, at.y),
+                life: 0.7,
+                size: [self.rng.between(0.7, 1.0), self.rng.between(0.6, 0.9)],
+                color: [120, 190, 30, alpha],
+                color_end: [90, 150, 20, 0],
+                shape,
+                flags: flags::GROUND | flags::SOFT,
+                seed: self.rng.byte(),
+                ..Particle::default()
+            });
+        }
+        for _ in 0..self.count(area * 1.5 * dt) {
+            let at = Vec2::new(self.rng.between(-half, half), self.rng.between(-half, half));
+            self.out.push(Particle {
+                pos: pos + Vec3::new(at.x, 0.06, at.y),
+                life: 0.7,
+                size: [self.rng.between(0.5, 0.8), 0.4],
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE | flags::FLICKER,
+                seed: self.rng.byte(),
+                ..fading([150, 230, 40], (90.0 * strength) as u8)
+            });
+        }
+        self.motes(pos, half, [170, 240, 60], area * 0.4 * strength * dt);
+    }
+
+    /// A blast tower's round coming down at `pos`: a burst of fire, a
+    /// shock ring, dust and a few embers.
+    pub fn blast(&mut self, pos: Vec3, reach: f32) {
+        self.dust_burst(pos, reach * 0.6, 8.0, [120, 100, 80]);
+        self.ring(pos + Vec3::Y * 0.1, [255, 160, 70], reach);
+        for _ in 0..self.count(10.0) {
+            let dir = self.rng.disc();
+            self.out.push(Particle {
+                pos: pos + Vec3::Y * 0.2,
+                vel: Vec3::new(dir.x * 2.0, self.rng.between(0.5, 2.0), dir.y * 2.0),
+                life: self.rng.between(0.35, 0.7),
+                size: [reach * 0.3, reach * 0.08],
+                color: [255, 190, 80, 220],
+                color_end: [255, 50, 10, 0],
+                drag: 2.0,
+                shape: Shape::Glow,
+                flags: flags::ADDITIVE,
+                seed: self.rng.byte(),
+                ..Particle::default()
+            });
+        }
+        self.embers(pos, reach * 0.4, 8.0);
+    }
+
     /// A soft glow that rises from `pos` and fades: a mended wall.
     pub fn glow_puff(&mut self, pos: Vec3, color: [u8; 3]) {
         for _ in 0..self.count(1.0) {

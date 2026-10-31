@@ -20,7 +20,7 @@
 
 use gc_sim::structures::{GATE, GROWN, Refusal, Role, StructureHandle};
 use gc_sim::walls::WallTile;
-use gc_sim::{BuildingId, Command, Mass, RegimentHandle, TICKS_PER_SECOND};
+use gc_sim::{BuildingId, Command, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::{Look, Sense, Steward};
@@ -72,6 +72,9 @@ const STAKE_LINES: usize = 2;
 const TRAPS_OUT: f32 = 22.0;
 const TRAP_GRUB: u32 = 300;
 const TRAPS: u8 = 2;
+/// When it puts its towers up though no front wall line has fitted, ticks
+/// (15 minutes).
+const TOWERS_ANYWAY: u32 = 15 * 60 * TICKS_PER_SECOND;
 /// Longest bridge it draws, tiles.
 const BRIDGE_LONGEST: i32 = 16;
 
@@ -119,6 +122,18 @@ pub(super) struct Engineer {
     /// crossing and its tiles, or none where it needs or can draw none (or
     /// has drawn it).
     bridge: Option<Option<(Line, u32)>>,
+}
+
+impl Engineer {
+    /// Whether its front wall is all drawn (its gate laid and every piece
+    /// drawn or given up), or it has given up looking for a line: towers
+    /// come after the wall, so they don't take its Grub or its ground.
+    pub(super) fn walled(&self, now: u32) -> bool {
+        match &self.front {
+            Some(f) => f.gate.is_none() && f.pieces.is_empty(),
+            None => self.next_line > now && now >= TOWERS_ANYWAY,
+        }
+    }
 }
 
 impl Steward {
@@ -412,7 +427,7 @@ impl Steward {
     /// regiment waiting at the rally point plants a line of stakes, up to
     /// [`STAKE_LINES`].
     fn stakes(&mut self, s: &Sense, look: &Look, rally: Vec2) -> Option<Order> {
-        if self.engineer.staked.len() >= STAKE_LINES || !heavy_foes(s) {
+        if self.engineer.staked.len() >= STAKE_LINES || !crate::conquest::spymaster::heavy_foes(s) {
             return None;
         }
         let b = s.kit.works(Role::Stakes)?;
@@ -639,12 +654,6 @@ fn own_wall_at(look: &Look, tile: (i32, i32)) -> Option<StructureHandle> {
                 && m.stats.flags & GATE == 0
         })
         .map(|m| m.view.handle)
-}
-
-/// Whether it has seen enemy riders or monsters (heavy regiments, which
-/// stakes stop).
-fn heavy_foes(s: &Sense) -> bool {
-    crate::conquest::spymaster::enemy_army(s).any(|r| s.view.unit(r).stats.mass == Mass::Heavy)
 }
 
 /// The shortest bridge (from bank to bank) that fits over the water on

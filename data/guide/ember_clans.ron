@@ -148,6 +148,26 @@
             ],
         ),
         (
+            name: "Ballista Yagura",
+            summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers, then whoever attacks your buildings. Right-click an enemy with it selected to pick its target. A shield wall does not stop the bolt.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Strong against columns, monsters and cavalry, since each bolt runs down a whole file."),
+                (icon: Spear, text: "Weak against wide lines of small soldiers, so keep spears in front of it."),
+                (icon: Flag, text: "Place it where enemy columns will march, so each bolt has a file to run down."),
+            ],
+        ),
+        (
+            name: "Horoku Tower",
+            summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Its fire-pots leave burning ground for 8 seconds and set woods alight.",
+            notes: [],
+            tips: [
+                (icon: Spear, text: "Guard it with spears close by, since nothing within 8 tiles of it can be hit."),
+                (icon: Alarm, text: "Burning ground hurts enemies standing in it, so it is best against crowds that stay put."),
+                (icon: Hammer, text: "Clear woods and scrub around it, since its fire-pots set them alight."),
+            ],
+        ),
+        (
             name: "Palisade",
             summary: "A wall you draw: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. Shift keeps it straight in 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker. Fire Arrows burn it and rams break it.",
             notes: [
