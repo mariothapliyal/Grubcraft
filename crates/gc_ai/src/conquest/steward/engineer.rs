@@ -549,7 +549,7 @@ fn clear_run(way: &[(i32, i32)]) -> Option<Line> {
     let first = *way.first()?;
     let side = gc_sim::clearing::MAX_CLEAR_SIDE;
     let (mut lo, mut hi) = ((first.0 - 1, first.1 - 1), (first.0 + 1, first.1 + 1));
-    for &(x, y) in way.iter().take(CLEAR_RUN) {
+    for &(x, y) in way.iter().take(CLEAR_RUN).skip(1) {
         let (nlo, nhi) = (
             (lo.0.min(x - 1), lo.1.min(y - 1)),
             (hi.0.max(x + 1), hi.1.max(y + 1)),

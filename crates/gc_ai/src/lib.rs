@@ -369,20 +369,18 @@ impl Mind {
     /// (see [`firing`]). Not a Recruit's trick; one fire every
     /// [`firing::AFTER_BURN`] at most.
     fn fire_woods(&mut self, view: &Perception, world: &World) {
-        if self.difficulty == Difficulty::Recruit || view.tick < self.next_burn {
+        if !self.knobs.read_ground || view.tick < self.next_burn {
             return;
         }
         self.next_burn = view.tick + firing::LOOK_TICKS;
-        let Some(burn) = firing::pick(view, world, self.party) else {
+        let Some(burner) = firing::pick(view, world, self.party) else {
             return;
         };
         // It costs an order, as a person's would.
-        if !self.orders.give(
-            view.tick,
-            Command::Burn {
-                regiment: burn.burner,
-            },
-        ) {
+        if !self
+            .orders
+            .give(view.tick, Command::Burn { regiment: burner })
+        {
             return;
         }
         self.next_burn = view.tick + firing::AFTER_BURN;

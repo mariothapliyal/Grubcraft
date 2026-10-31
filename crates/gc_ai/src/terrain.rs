@@ -639,7 +639,7 @@ impl Terrain {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
         let n = self.map_tiles as i32;
-        if self.side == 0 || self.growth.is_empty() || self.under.is_empty() {
+        if self.side == 0 || self.under.is_empty() {
             return Vec::new();
         }
         let thicket = |t: usize| self.growth[t] == Growth::Thicket as u8;
@@ -650,48 +650,61 @@ impl Terrain {
             (p.x.floor() as i32).clamp(0, n - 1) + (p.y.floor() as i32).clamp(0, n - 1) * n
         };
         let (start, goal) = (tile(from) as usize, tile(to) as usize);
-        // A tile's cost to step onto, in tenths of an open tile, read at
-        // its first cell as the walkable grid has it; thicket at what it
-        // costs to clear.
-        let step = |t: usize| -> Option<u32> {
-            let (x, y) = self.tile_cell(t);
-            let c = (y * self.side + x) as usize;
-            if thicket(t) {
-                Some(10 * per_thicket + 10 * u32::from(self.under[c].max(OPEN)))
-            } else {
-                match self.cost[c] {
-                    BLOCKED => None,
-                    FORD if self.frozen => Some(10),
-                    c => Some(10 * u32::from(c)),
+        // Each tile's cost to step onto, in tenths of an open tile (none
+        // where it can't be), read at its first cell as the walkable grid
+        // has it; thicket at what it costs to clear.
+        const NO_WAY: u32 = u32::MAX;
+        let step: Vec<u32> = (0..self.growth.len())
+            .map(|t| {
+                let (x, y) = self.tile_cell(t);
+                let c = (y * self.side + x) as usize;
+                if thicket(t) {
+                    10 * per_thicket + 10 * u32::from(self.under[c].max(OPEN))
+                } else {
+                    match self.cost[c] {
+                        BLOCKED => NO_WAY,
+                        FORD if self.frozen => 10,
+                        c => 10 * u32::from(c),
+                    }
                 }
-            }
+            })
+            .collect();
+        // A*, guessing what is left as open ground the shortest way (no
+        // step costs less).
+        let (gx, gy) = (goal as i32 % n, goal as i32 / n);
+        let guess = |x: i32, y: i32| {
+            let (dx, dy) = ((x - gx).unsigned_abs(), (y - gy).unsigned_abs());
+            10 * dx.max(dy) + 4 * dx.min(dy)
         };
         let mut best = vec![u32::MAX; self.growth.len()];
         let mut came = vec![u32::MAX; self.growth.len()];
         let mut todo = BinaryHeap::new();
         best[start] = 0;
         todo.push(Reverse((0u32, start)));
-        while let Some(Reverse((d, t))) = todo.pop() {
+        while let Some(Reverse((f, t))) = todo.pop() {
             if t == goal {
                 break;
             }
-            if d > best[t] {
+            let (d, x, y) = (best[t], t as i32 % n, t as i32 / n);
+            if f > d + guess(x, y) {
                 continue;
             }
-            let (x, y) = (t as i32 % n, t as i32 / n);
             for (dx, dy) in STEPS {
                 let (nx, ny) = (x + dx, y + dy);
                 if nx < 0 || ny < 0 || nx >= n || ny >= n {
                     continue;
                 }
                 let u = (ny * n + nx) as usize;
-                let Some(c) = step(u) else { continue };
+                let c = step[u];
+                if c == NO_WAY {
+                    continue;
+                }
                 // Diagonals cost 1.4 times, and don't squeeze between two
                 // tiles that can't be stepped on.
                 let c = if dx != 0 && dy != 0 {
-                    let side_a = (y * n + nx) as usize;
-                    let side_b = (ny * n + x) as usize;
-                    if step(side_a).is_none() || step(side_b).is_none() {
+                    if step[(y * n + nx) as usize] == NO_WAY
+                        || step[(ny * n + x) as usize] == NO_WAY
+                    {
                         continue;
                     }
                     c * 14 / 10
@@ -701,7 +714,7 @@ impl Terrain {
                 if d + c < best[u] {
                     best[u] = d + c;
                     came[u] = t as u32;
-                    todo.push(Reverse((d + c, u)));
+                    todo.push(Reverse((d + c + guess(nx, ny), u)));
                 }
             }
         }
