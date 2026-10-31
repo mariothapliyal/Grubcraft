@@ -175,6 +175,36 @@ pub struct Attack {
     pub damage: u16,
     pub reload: f64,
     pub shots: u8,
+    /// What it looses (docs/26 stage 5): arrows unless said.
+    #[serde(default)]
+    pub shot: Shot,
+    /// What its hits do besides hurt.
+    #[serde(default)]
+    pub quirk: Quirk,
+}
+
+/// What a tower looses (docs/26, stage 5).
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Shot {
+    #[default]
+    Arrows,
+    Bolt,
+    Blast,
+}
+
+/// What a tower's hits do besides hurt (docs/26, stage 5).
+#[derive(Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Quirk {
+    #[default]
+    None,
+    Burns,
+    Collects,
+    /// The soldiers it kills rise as the named unit of its own roster.
+    Raises(String),
+    Pierces,
+    Disorders,
+    Drags,
+    Acid,
 }
 
 #[derive(Deserialize)]

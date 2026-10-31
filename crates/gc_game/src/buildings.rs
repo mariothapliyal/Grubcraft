@@ -7,7 +7,7 @@ use gc_assets::model::Models;
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::structures::{Armour, Role, TowerAttack};
+use gc_sim::structures::{Armour, Role, TowerAttack, TowerShot};
 use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, HeartView, PlayerId, Refusal, Resource,
     StructureHandle, StructureView, World,
@@ -288,6 +288,9 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
             damage: b.attack_damage,
             reload_ticks: b.attack_reload_ticks,
             shots: b.attack_shots,
+            // Validated when the table is loaded.
+            shot: TowerShot::from_u8(b.shot).unwrap_or_default(),
+            quirk: gc_sim::structures::Quirk::from_kind(b.quirk, b.trap_unit).unwrap_or_default(),
         }),
         field: b.field_tiles,
         tunes: match b.tunes {
@@ -564,6 +567,42 @@ pub struct Looks {
     bridges: Vec<bool>,
 }
 
+/// By building type, the model of each stage: its own, or for a tower with
+/// none its faction's cheapest arrow tower's (until its own is made).
+fn stages_of(table: &Table, models: &Models<'_>) -> Vec<[Option<usize>; STAGES]> {
+    let own: Vec<[Option<usize>; STAGES]> = (table.names.iter().zip(&table.stats))
+        .map(|(name, stats)| {
+            core::array::from_fn(|k| {
+                if boxed_line(stats) || stats.is_bridge() {
+                    return None;
+                }
+                models.by_name(&stage_name(name, k))
+            })
+        })
+        .collect();
+    let mut stages = own.clone();
+    for (i, stats) in table.stats.iter().enumerate() {
+        if stats.attack.is_none() || own[i].iter().any(Option::is_some) {
+            continue;
+        }
+        // The cheapest first-level arrow tower of its faction that has a
+        // model of its own.
+        let stand_in = (table.stats.iter().enumerate())
+            .filter(|&(j, s)| {
+                table.factions[j] == table.factions[i]
+                    && s.upgrades_from.is_none()
+                    && s.attack.is_some_and(|a| a.shot == TowerShot::Arrows)
+                    && own[j].iter().any(Option::is_some)
+            })
+            .min_by_key(|&(_, s)| u32::from(s.cost_grub) + u32::from(s.cost_marrow))
+            .map(|(j, _)| j);
+        if let Some(j) = stand_in {
+            stages[i] = own[j];
+        }
+    }
+    stages
+}
+
 impl Looks {
     pub fn new(table: &Table, models: &Models<'_>) -> Looks {
         let scale = gc_assets::model::POSITION_SCALE;
@@ -591,16 +630,7 @@ impl Looks {
             // barricades, are drawn as boxes. A bridge has no model of its
             // own: it is built from the timber kit's pieces (`kit`), or
             // drawn as boxes without them.
-            stages: (table.names.iter().zip(&table.stats))
-                .map(|(name, stats)| {
-                    core::array::from_fn(|k| {
-                        if boxed_line(stats) || stats.is_bridge() {
-                            return None;
-                        }
-                        models.by_name(&stage_name(name, k))
-                    })
-                })
-                .collect(),
+            stages: stages_of(table, models),
             crews: (table.factions.iter())
                 .map(|&f| models.by_name(worker_of(f)))
                 .collect(),
@@ -3202,6 +3232,43 @@ mod tests {
         assert_eq!(stage_of(100), FINISHED);
         assert_eq!(stage_name("Clan Hall", 0), "Clan Hall #1");
         assert_eq!(stage_name("Clan Hall", FINISHED), "Clan Hall");
+    }
+
+    /// A tower with no model of its own shows its faction's cheapest arrow
+    /// tower (all four stages); one with a model of its own keeps it.
+    #[test]
+    fn modelless_towers_stand_in_for_the_arrow_tower() {
+        let data = crate::data::load();
+        let table = Table::new(&data);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        for (i, stats) in table.stats.iter().enumerate() {
+            let own: Vec<_> = (0..STAGES)
+                .map(|k| models.by_name(&stage_name(&table.names[i], k)))
+                .collect();
+            // Bridges are built from the timber kit.
+            if stats.is_bridge() {
+                continue;
+            }
+            if own.iter().any(Option::is_some) {
+                assert!(
+                    own.iter()
+                        .zip(&looks.stages[i])
+                        .all(|(o, s)| o.is_none() || o == s),
+                    "{} lost its own model",
+                    table.names[i]
+                );
+                continue;
+            }
+            // A tower with no model of its own still stands as one.
+            if stats.attack.is_some() {
+                assert!(
+                    looks.stages[i].iter().any(Option::is_some),
+                    "{} has no look",
+                    table.names[i]
+                );
+            }
+        }
     }
 
     /// Every building model in the pack dresses a building (or one of its

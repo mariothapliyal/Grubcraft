@@ -2,7 +2,7 @@
 
 Keep this file current: any PR that changes something a player sees updates it in the same PR, like the in-game guides.
 
-Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-30). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
+Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-31). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
 
 Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment** = a block of soldiers. **Worker** = Hands, Gnawers, Tuners, Ledger Clerks.
 
@@ -97,10 +97,10 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Upgrade: select the finished main building, press `V`. It keeps working while upgrading. While upgrading the same slot reads "Cancel" (75%). Gates upgrade with `V` to "Gatehouse" (Yagura Gatehouse, Gate of Debts, Chitin Maw). The Choir builds no gates.
 
 **Buildings per faction** (tier, cost Grub/Marrow)
-- **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Palisade T1 10/0 per tile; Gate T1 60/0.
-- **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
-- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
-- **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
+- **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Ballista Yagura T1 175/0 (bolt tower); Horoku Tower T2 200/50 (blast tower); Palisade T1 10/0 per tile; Gate T1 60/0.
+- **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Harpoon Maw T1 160/0 (bolt tower); Acid Bloater T2 190/50 (blast tower); Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
+- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Prism Lance T1 190/0 (bolt tower, needs power); Chord Obelisk T2 200/50 (blast tower, needs power); Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
+- **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Collector's Bolt T1 185/0 (bolt tower); Corpse Catapult T2 210/50 (blast tower); Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
 
 **Walls** [docs/26-fortifications.md]
 - Level 1 cheap; level 2 adds a walkway (about 15 Grub a tile more); level 3 adds battlements and the faction twist (20 Grub + 5 Marrow a tile more, needs tier 2).
@@ -135,7 +135,18 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Bridges** (drawn bank to bank over water along a gentle curve, three to five tiles wide, 3 Grub a tile; the land remembers every line): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are built from the timber kit, tile by tile: a planked deck (patched, weathered, broken when badly hurt), rope rails and posts on its outer edges, log cribs on the banks and timber piers in the water reaching the river bed; level 2 adds braced piers, timber rails and lantern posts; level 3 stone piers with cutwaters. Raise a finished bridge with `U` like a wall: level 2 braced piers (3 Grub, 3 s a tile, 600 hp; tier 1), level 3 reinforced piers (4 Grub + 1 Marrow, 4 s a tile, 1000 hp; tier 2). Names: Braced Timber Bridge / Stone-Footed Bridge, Braced Bone / Iron-Shod Causeway, Braced / Anchored Glass Span, Ribbed / Rooted Chitin Span. The AI raises its own bridges when rich.
 - **Field works:** Stakes and Barricades, drawn with the wall tool. Spearmen and archers plant stakes with `C` (about 10 s).
 - **Hidden traps** (one per faction; only its owner sees it): Spike Pit (Clans), Grave Hands (Concord), Shard Mine (Choir), Burrow Nest (Brood).
-- **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32). Bolt and Blast towers are not built.
+- **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32).
+- **Bolt towers** (tier 1, no Marrow; range 32 to 34): one heavy bolt every 5 s (6 s for Harpoon Maw) that runs down a single file of soldiers, never killing deeper than the target's ranks. Twice as hard on big (heavy) soldiers: monsters, riders, engines. Shoot siege first, then big soldiers, then whoever attacks your buildings, then the nearest. A shield wall does not stop a bolt. Weak against wide lines of small soldiers; strong against columns, monsters and cavalry.
+  - Ember Clans: Ballista Yagura (175), no quirk.
+  - Carrion Concord: Collector's Bolt (185): each soldier it kills pays you 3 Grub.
+  - Shard Choir: Prism Lance (190, needs power): the beam runs on through up to 3 more regiments in line behind.
+  - Brood: Harpoon Maw (160, range 32): drags the regiment it hits 3 tiles toward it and halts it, unless that regiment is in melee or on a wall.
+- **Blast towers** (tier 2, 50 Marrow; range 36): six shots every 6 s (Chord Obelisk 5 s) into the fullest enemy block in range; the more packed, the harder (up to 1.75x). Half splashes on up to 4 other enemy regiments within 2 tiles of the target. Siege first. They cannot hit anything within 8 tiles of them, so guard them with troops. A shield wall does not stop them.
+  - Ember Clans: Horoku Tower (200 + 50): fire-pots leave burning ground (4 tiles across) for 8 s and set woods and scrub alight.
+  - Carrion Concord: Corpse Catapult (210 + 50): every 10 soldiers it kills rise beside it as 10 Bone Pikes, yours for 30 s.
+  - Shard Choir: Chord Obelisk (200 + 50, needs power): every regiment its burst hits is thrown into disorder.
+  - Brood: Acid Bloater (190 + 50): leaves an acid pool (4 tiles across) for 6 s.
+- Burning ground and acid hurt only the owner's enemies, once a second, and shake morale like fire.
 
 ## 6. World: weather, seasons, fire, floods, rivers [docs/32-changing-land.md, docs/38-living-waterways.md]
 
@@ -172,7 +183,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Built** (confirmed in code or marked "Built" in the docs)
 - Conquest economy: workers, buildings, upgrades, supply, upkeep, tempo, Annihilation, Titan's Heart, fog of war, seasons, weather.
 - Battle: formations, Brace, Fall back, army shapes, control groups, ride view, Commander View, sieges, fire, floods and flash floods, currents, summer fords, ambushes, night torches.
-- Fortifications: towers fire; drawn walls for all factions; blueprints and ring tool; wall levels 1 to 3; manning; ladders; gates and gatehouses; bridges; field works; Plant stakes; hidden traps.
+- Fortifications: towers fire; Bolt and Blast towers (eight, two per faction; see section 5); drawn walls for all factions; blueprints and ring tool; wall levels 1 to 3; manning; ladders; gates and gatehouses; bridges; field works; Plant stakes; hidden traps.
 - Factions: Honor and its Edicts (Ancestral Return needs a Shrine), Brood larvae and root-veins, Choir chords and Resonance (Overclock, Phase Shift), Concord caravans.
 - Building looks: the 46 faction buildings use the stronger 2026-10-23 bake with surface detail (docs/31); gatehouses keep their first bake.
 - Interface: top bar, command grid, build menu, tooltips, Marshal's Scroll, Guide, minimap, idle-worker button, hand-over to an ally.
@@ -182,7 +193,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Orders: Hold, Skirmish, Run, Column and Wedge; double-click select by type; `Tab` sub-groups.
 - Concord Tithe contracts (Raise the Bound, Indenture, Foreclose, Hire Militia); Choir Silence the Chord.
 - Research at Granary, Forge and Harmonics Lab (costs not designed yet).
-- Bolt and Blast towers; tower levels; Walled Town defence bonus (no "built" marker).
+- Tower levels; Walled Town defence bonus (no "built" marker).
 - Tuners' repair (10 HP/s).
 - Titan Events (Tremor, Marrow Bloom, Heartbeat, Gut Fog): no code found for Heartbeat, Marrow Bloom or Gut Fog; no lobby toggle found.
 - Grubfolk market, rumours and mercenaries; allied resource trading (10% tax).
