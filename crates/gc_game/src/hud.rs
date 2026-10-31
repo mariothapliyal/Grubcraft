@@ -184,6 +184,10 @@ pub struct HudState {
     /// the ring as it would be ordered now.
     pub wall_mode: crate::wall_tool::WallMode,
     pub ring_preview: Option<crate::wall_tool::RingPreview>,
+    /// Conquest: the wall tool drags a curve: the points so far, and the
+    /// curve as it would be ordered now.
+    pub wall_drag: Option<crate::drawn_tool::Drag>,
+    pub drag_preview: Option<crate::wall_tool::DragPreview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
     /// Conquest: the build menu shows its second page (a faction with more
@@ -538,7 +542,7 @@ impl Running {
     fn selection_info(&self, side: PlayerId) -> Option<(String, Selection<'static>)> {
         let mut n = 0u16;
         let (mut models, mut max_models, mut morale) = (0u32, 0u32, 0u32);
-        let mut break_at = 0;
+        let (mut break_at, mut rank) = (0, 0);
         let mut state = CardState::Steady;
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
@@ -581,7 +585,7 @@ impl Running {
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
-            break_at = r.break_at;
+            (break_at, rank) = (r.break_at, r.rank);
             // The worst of them: routing over wavering over steady.
             state = state.max(card_state(r.morale));
         }
@@ -601,6 +605,7 @@ impl Running {
             max_models,
             morale: (morale / u32::from(n)) as u8,
             break_at: if n == 1 { break_at } else { 0 },
+            rank: if n == 1 { rank } else { 0 },
             state,
             formation: match self.selection_formation() {
                 Some(Some(f)) => f.name(),
@@ -803,8 +808,10 @@ impl Running {
         };
         let conquest = self.conquest_match();
         let plantable = conquest && !self.plantable().is_empty();
-        // The order tabs over the selected banners, where the field has room.
-        let mut tabs: Vec<(gc_ui::Rect, UiOrder)> = Vec::new();
+        // The order tabs over the selected banners, where the field has room,
+        // and veterans' chevrons over theirs (above the tab, if it has one).
+        let mut tabs: Vec<(gc_sim::RegimentHandle, gc_ui::Rect, UiOrder)> = Vec::new();
+        let mut chevrons: Vec<([i32; 2], u8)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
             for &h in &self.selected {
@@ -819,7 +826,30 @@ impl Running {
                 };
                 let tab = gc_ui::Rect::new(x as i32 - 9, y as i32 - 18, 18, 18);
                 if field.intersect(tab) == Some(tab) {
-                    tabs.push((tab, order_of(f.doing)));
+                    tabs.push((h, tab, order_of(f.doing)));
+                }
+            }
+            for r in self.world.regiments.iter() {
+                if r.rank == 0
+                    || !(r.owner == side || self.reveal_all || self.world.sees(side, r.handle))
+                {
+                    continue;
+                }
+                let Some([x, y]) = project_ahead(view_proj, self.banner_top(&r), screen) else {
+                    continue;
+                };
+                let bottom = tabs
+                    .iter()
+                    .find(|t| t.0 == r.handle)
+                    .map_or(y as i32, |t| t.1.y - 2);
+                let stack = gc_ui::Rect::new(
+                    x as i32 - 7,
+                    bottom - 5 * i32::from(r.rank),
+                    15,
+                    5 * i32::from(r.rank) + 1,
+                );
+                if field.intersect(stack) == Some(stack) {
+                    chevrons.push(([x as i32, bottom], r.rank));
                 }
             }
         }
@@ -908,6 +938,7 @@ impl Running {
                 max_models: self.units.stats[r.unit as usize].models,
                 morale: r.morale_points,
                 break_at: r.break_at,
+                rank: r.rank,
                 state: card_state(r.morale),
                 engaged: r.engaged,
                 selected: picked(h),
@@ -1141,8 +1172,13 @@ impl Running {
             hud.draw.border(r, 1, [170, 255, 180, 230]);
         }
         // Over each selected regiment's banner: what it is doing.
-        for &(tab, order) in &tabs {
+        for &(_, tab, order) in &tabs {
             orders::draw_tab(&mut hud.draw, tab, order);
+        }
+        for &([x, y], rank) in &chevrons {
+            // Ink under gold, so they read on grass and sky alike.
+            gc_ui::hud::draw_chevrons(&mut hud.draw, x + 1, y + 1, rank, gc_ui::ui::theme::INK);
+            gc_ui::hud::draw_chevrons(&mut hud.draw, x, y, rank, gc_ui::ui::theme::WELD_HI);
         }
         // The regiment the mouse rests on: its card, after the delay.
         let hover_card = hover.and_then(|(h, enemy)| {
@@ -2089,7 +2125,7 @@ const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or b
 const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps. O draws a ring.";
 
 /// The build-menu tooltip of a bridge.
-const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+const BRIDGE_TIP: &str = "Draw a bridge across a river: press on the near bank and drag to the far bank for a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
 
 /// The build-menu tooltip of a hidden trap.
 const TRAP_TIP: &str = "A hidden trap, laid like any building on one tile. Only you can see it. The first enemy regiment to walk onto it springs it, and it is gone. Nothing can be built on it. See the guide for what this one does.";
