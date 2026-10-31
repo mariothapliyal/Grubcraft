@@ -407,6 +407,9 @@ regiment_fields! {
     /// Led this tick by its side's general, near him (see
     /// [`crate::generals`]).
     led: bool = false,
+    /// Standing in its own side's walled town, as of the last survey
+    /// (see [`crate::towns`]).
+    in_town: bool = false,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
@@ -1127,6 +1130,17 @@ impl Regiments {
         let hp = &self.hp[i * MAX_MODELS as usize..][..models];
         let lost: u32 = hp.iter().rev().take(count).map(|&h| u32::from(h)).sum();
         self.take_damage(i, lost);
+    }
+
+    /// Each wounded soldier of slot `i` gets `amount` hit points back, up
+    /// to `full`.
+    pub(crate) fn mend(&mut self, i: usize, amount: u16, full: u16) {
+        let models = usize::from(self.models[i]);
+        for h in &mut self.hp[i * MAX_MODELS as usize..][..models] {
+            if *h < full {
+                *h = h.saturating_add(amount).min(full);
+            }
+        }
     }
 
     /// The last `count` soldiers of slot `i` lose `amount` hit points
