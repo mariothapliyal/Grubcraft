@@ -46,6 +46,9 @@ const FAINT: UnitId = 4;
 const SHAKEN: UnitId = 5;
 /// Morale 30: steady until the first real blow.
 const NERVOUS: UnitId = 6;
+/// The drill spears with long spears (`reach`): cavalry keeps off their
+/// points.
+const POINTS: UnitId = 7;
 
 fn units() -> Vec<UnitStats> {
     let mut table = DRILL_UNITS.to_vec();
@@ -55,6 +58,10 @@ fn units() -> Vec<UnitStats> {
             ..DRILL_UNITS[SPEARS as usize]
         });
     }
+    table.push(UnitStats {
+        reach: true,
+        ..DRILL_UNITS[SPEARS as usize]
+    });
     table
 }
 
@@ -396,12 +403,12 @@ fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
         // Two spears facing north with cavalry on the far wing; enemy
         // cavalry comes from the east, at the spears' flank, and enemy
         // spears from the north.
-        let mut ai = row(&[SPEARS, SPEARS], 126.0, 150.0, NORTH);
+        let mut ai = row(&[POINTS, POINTS], 126.0, 150.0, NORTH);
         ai.push(at(CAVALRY, 106.0, 152.0, NORTH));
         let foe = vec![
             at(CAVALRY, 174.0, 147.0, WEST),
             at(CAVALRY, 178.0, 156.0, WEST),
-            at(SPEARS, 124.0, 104.0, SOUTH),
+            at(POINTS, 124.0, 104.0, SOUTH),
         ];
         let drill = Drill {
             ground: Ground::open(),
@@ -434,7 +441,7 @@ fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
                     continue;
                 };
                 let (ours, theirs) = if r.owner == AI { (r, o) } else { (o, r) };
-                if theirs.unit == CAVALRY && ours.unit == SPEARS && r.owner == FOE {
+                if theirs.unit == CAVALRY && ours.unit == POINTS && r.owner == FOE {
                     charges += 1;
                     let turning =
                         f.seconds() - locked_at[ours.handle.index as usize] < TURN_SECONDS;
@@ -450,7 +457,7 @@ fn spears_turn_to_meet_cavalry_and_its_cavalry_keeps_off_spears() {
                 // up, not feeding cavalry into spears.
                 let mopping_up = f.mind.captain().finishing || theirs.strength() < 0.5;
                 if ours.unit == CAVALRY
-                    && theirs.unit == SPEARS
+                    && theirs.unit == POINTS
                     && r.owner == AI
                     && !mopping_up
                     && !before.was_engaged(theirs)

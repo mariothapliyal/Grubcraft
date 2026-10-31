@@ -226,8 +226,8 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
     assert_eq!((r.models, r.files), (24, 24));
 }
 
-/// A wavering regiment put on the field mid-fight routs sooner than a
-/// fresh one would, and a routing one runs.
+/// A battered, wavering regiment put on the field mid-fight routs sooner
+/// than one with its nerve would, and a routing one runs.
 #[test]
 fn morale_carries_over() {
     let fight = |points: u8, state: MoraleState| {
@@ -239,7 +239,9 @@ fn morale_carries_over() {
             facing: NORTH,
             files: 8,
             formation: Formation::Line,
-            models: 24,
+            // A quarter strength: below any breaking point, so its nerve
+            // decides when it breaks.
+            models: 6,
             morale_points: points,
             morale: state,
             hidden: false,

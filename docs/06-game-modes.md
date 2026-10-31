@@ -18,6 +18,8 @@ Two modes at launch, and a third, the **Campaign**, planned to follow. All of th
 
 *Built (2026-10-30, map sizes): the lobby's **Size** setting (Small, Medium or Large) now sizes Conquest's made maps too, Classic: Random, Plains, Mixed and Wild, which were all 768 tiles a side before. Small is 320 tiles with four starts, the corners (two players, or a compact four). Medium is 448 (the default), also four starts with more room. Large is 640 with six starts. Two players start across the map, about 1:15 apart on foot on Small, 1:45 on Medium and 3:20 on Large (the old 768 was about 4:00; foot marches about 3 tiles a second). Ribcage Pass (128 tiles) and The Four Teeth (256 tiles) keep their own size, and the Size stepper is hidden for them. The lobby won't start with more players than the size takes, and says so ("A Small map is for at most 4 players"). Replays from before keep the 768 map they were recorded on. Details: [07 · Conquest maps and recipes](07-world-and-maps.md#conquest-maps-and-recipes).*
 
+*Built (2026-10-30, grown land): Conquest's made maps also come on grown land (Living Land), **Land: Random, Plains, Mixed and Wild**, at the same sizes, and a new Conquest lobby starts on Land: Random. Rivers, fords, currents, flash floods and the water engine now reach Conquest. The Classic maps stay in the list. Details: [41 · Step 1 as built](41-finish-living-land.md#step-1-as-built).*
+
 ### Flow of a match
 1. **Lobby:** map, teams, factions, colours, Tempo, victory conditions, Titan Events on/off.
 2. **Opening (0 to 5 min):** workers out, first structures, scout, first regiments. Creep a camp with your hero.

@@ -54,6 +54,9 @@ const RICH: u32 = 500;
 /// How long to wait before looking again for a front wall line where none
 /// fitted (a Choir's power fields grow), ticks.
 const LINE_RETRY: u32 = 60 * TICKS_PER_SECOND;
+/// How long it waits for troops to clear the gate's ground before it
+/// walls the middle instead.
+const GATE_WAIT: u32 = 30 * TICKS_PER_SECOND;
 /// The barricade: tiles across, and how far in front of the rally point.
 const BARRICADE_HALF: i32 = 2;
 const BARRICADE_OUT: f32 = 4.0;
@@ -83,6 +86,8 @@ struct Front {
     pieces: Vec<Line>,
     /// Where the gate goes and its turn, until laid.
     gate: Option<((i32, i32), u8)>,
+    /// When troops first stood on the gate's ground, while they do.
+    crowded: Option<u32>,
     /// The gate's three tiles along the line: walled instead if the gate
     /// can't go there.
     middle: Line,
@@ -219,7 +224,16 @@ impl Steward {
             }
             // Its ground taken meanwhile: the wall is drawn through the
             // middle instead.
-            if s.world.can_lay(s.party, gate.id, tile, turn).is_err() {
+            let laid = s.world.can_lay(s.party, gate.id, tile, turn);
+            // Troops standing there move on: it waits a while for them.
+            if laid == Err(Refusal::Crowded) {
+                let front = self.engineer.front.as_mut()?;
+                let since = *front.crowded.get_or_insert(s.now);
+                if s.now < since + GATE_WAIT {
+                    return None;
+                }
+            }
+            if laid.is_err() {
                 let front = self.engineer.front.as_mut()?;
                 front.gate = None;
                 front.pieces.insert(0, front.middle);
@@ -582,6 +596,7 @@ fn plan_front(
                 return Some(Front {
                     pieces,
                     gate: gate_at,
+                    crowded: None,
                     middle: (at(-1), at(1)),
                     raise: if gate.is_some() {
                         vec![at(-gap), at(gap)]

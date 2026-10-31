@@ -542,6 +542,7 @@ impl Running {
     fn selection_info(&self, side: PlayerId) -> Option<(String, Selection<'static>)> {
         let mut n = 0u16;
         let (mut models, mut max_models, mut morale) = (0u32, 0u32, 0u32);
+        let mut break_at = 0;
         let mut state = CardState::Steady;
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
@@ -584,6 +585,7 @@ impl Running {
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
+            break_at = r.break_at;
             // The worst of them: routing over wavering over steady.
             state = state.max(card_state(r.morale));
         }
@@ -602,6 +604,7 @@ impl Running {
             models,
             max_models,
             morale: (morale / u32::from(n)) as u8,
+            break_at: if n == 1 { break_at } else { 0 },
             state,
             formation: match self.selection_formation() {
                 Some(Some(f)) => f.name(),
@@ -908,6 +911,7 @@ impl Running {
                 models: r.models,
                 max_models: self.units.stats[r.unit as usize].models,
                 morale: r.morale_points,
+                break_at: r.break_at,
                 state: card_state(r.morale),
                 engaged: r.engaged,
                 selected: picked(h),
