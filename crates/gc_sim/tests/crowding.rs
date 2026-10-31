@@ -178,7 +178,7 @@ fn it_waits_only_so_long_behind_a_friend_standing_in_the_way() {
 }
 
 #[test]
-fn marching_friends_pass_through_each_other() {
+fn marching_friends_pass_each_other() {
     let mut w = world(&nav(false));
     let a = spawn(&mut w, 0, 32, 20, SOUTH);
     let b = spawn(&mut w, 0, 32, 40, NORTH);
@@ -192,33 +192,36 @@ fn marching_friends_pass_through_each_other() {
 }
 
 /// Ticks for `b` to march 30 tiles north, with or without a friend standing
-/// in the way.
-fn march_time(friend_in_the_way: bool) -> u32 {
+/// in the way, and the ticks either spent out of order.
+fn march_time(friend_in_the_way: bool) -> (u32, u32) {
     let mut w = world(&nav(false));
-    if friend_in_the_way {
-        spawn(&mut w, 0, 32, 30, NORTH);
-    }
+    let friend = friend_in_the_way.then(|| spawn(&mut w, 0, 32, 30, NORTH));
     let b = spawn(&mut w, 0, 32, 45, NORTH);
     order(&mut w, move_to(b, 32, 15));
+    let mut disordered = 0;
     for t in 0..60 * 20 {
         w.tick(&[]);
-        if !w.regiments.get(b).unwrap().moving {
-            return t;
+        let rb = w.regiments.get(b).unwrap();
+        let rf = friend.and_then(|f| w.regiments.get(f));
+        disordered += u32::from(rb.disorder > 0) + u32::from(rf.is_some_and(|f| f.disorder > 0));
+        if !rb.moving {
+            return (t, disordered);
         }
     }
     panic!("never arrived");
 }
 
 #[test]
-fn pushing_through_a_friend_is_slow() {
-    let free = march_time(false);
-    let pushing = march_time(true);
-    // Through a block a few tiles deep, at down to 40% pace: a second or
-    // two lost, not a stop.
+fn a_friend_standing_in_the_way_is_gone_round() {
+    let (free, _) = march_time(false);
+    let (round, disordered) = march_time(true);
+    // It steps aside round the block (docs/29, unit spacing): a second or
+    // so lost, and neither falls out of order.
     assert!(
-        pushing > free + 20 && pushing < free + 10 * 20,
-        "{pushing} ticks pushing through vs {free} free"
+        round >= free && round < free + 3 * 20,
+        "{round} ticks going round vs {free} free"
     );
+    assert_eq!(disordered, 0, "fell out of order going round");
 }
 
 #[test]
@@ -226,9 +229,14 @@ fn friends_pushing_through_each_other_fall_out_of_order_and_re_form() {
     let mut w = world(&nav(false));
     let standing = spawn(&mut w, 0, 32, 30, NORTH);
     let b = spawn(&mut w, 0, 32, 45, NORTH);
-    order(&mut w, move_to(b, 32, 10));
+    // Ordered onto the friend's very spot it pushes in (keeping its
+    // spacing never takes it off its goal), then marches on out of it.
+    order(&mut w, move_to(b, 32, 30));
     let mut both = false;
-    for _ in 0..30 * 20 {
+    for t in 0..30 * 20 {
+        if t == 10 * 20 {
+            order(&mut w, move_to(b, 32, 10));
+        }
         w.tick(&[]);
         let (s, m) = (
             w.regiments.get(standing).unwrap(),

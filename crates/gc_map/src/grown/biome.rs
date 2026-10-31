@@ -58,7 +58,7 @@ const THICKET_MAX_SIDE: i32 = 11;
 /// How much of a habitat stands under trees, and how much of it is tall
 /// grass, in thousandths (the prototype's `CANOPY` and `TALL`), by
 /// `Habitat as usize`.
-const CANOPY: [(i32, i32); 19] = [
+const CANOPY: [(i32, i32); 23] = [
     (20, 150),  // FlowerMeadow
     (50, 120),  // Grassland
     (220, 200), // ScrubEdge (and all the rest of it is tall grass, see `dress`)
@@ -78,6 +78,10 @@ const CANOPY: [(i32, i32); 19] = [
     (0, 0),     // BoneDrift
     (0, 0),     // RibField
     (20, 50),   // DyingGrass
+    (0, 0),     // GravelBar
+    (0, 1000),  // ReedBed
+    (0, 0),     // Beach
+    (0, 0),     // Trail
 ];
 
 /// `exp(-d / scale)` for `d` in quarter tiles, by repeated multiplication
@@ -430,6 +434,108 @@ fn habitats(h: &Grid, biome: &[u8], f: &Fields, seeds: &mut Seeds, sym: Sym) -> 
     out
 }
 
+/// The layers [`riverside`] dresses, tile by tile.
+struct Out<'a> {
+    hab: &'a mut [Habitat],
+    cover: &'a mut [u8],
+    thicket: &'a mut [bool],
+    land: &'a mut [u8],
+}
+
+/// How far (tiles) round a bank tile [`riverside`] looks for water.
+const RING: i32 = 4;
+/// How far (tiles) from the water the shore dressing reaches.
+const BANK: i32 = 3;
+/// How far (tiles) a gravel bar spreads round the bend it lies in.
+const BAR_REACH: i32 = 2;
+/// The points of a circle [`RING`] tiles across, as offsets.
+fn ring() -> Vec<(i32, i32)> {
+    (0..32)
+        .map(|k| {
+            let a = Angle((k * 2048) as u16);
+            let (c, s) = (a.cos().raw(), a.sin().raw());
+            let round = |v: i32| (RING * v + ONE / 2).div_euclid(ONE);
+            (round(c), round(s))
+        })
+        .collect()
+}
+
+/// Riverside dressing (docs/27, "Rivers and shores"; docs/41 step 3), on
+/// the dry, low ground right beside the water: shingle on the inside of a
+/// river's bends, where the water wraps round the bank; and on gently
+/// sloping lake shores, sand where the sun falls and reeds in patches
+/// where it doesn't. Gravel and sand are open ground; reeds are tall grass to hide
+/// in. A start's clearing (`keep`) is left as it is.
+fn riverside(h: &Grid, water: &Water, wet_tile: &[bool], keep: &[bool], f: &Fields, out: Out) {
+    let n = h.n as i32;
+    let ring = ring();
+    let at = |x: i32, y: i32| (y * n + x) as usize;
+    // Low, dry, gentle ground within a few tiles of the water.
+    let bank = |i: usize| {
+        !wet_tile[i]
+            && !keep[i]
+            && f.dist_w.v[i] <= tiles(BANK)
+            && h.v[i] <= WATER_LINE + pct(90)
+            && f.slope[i] <= pct(60)
+    };
+    // Where the water wraps round more than half of a bank tile right by
+    // a river: the inside of a bend, where the river drops its shingle.
+    let mut bend = vec![false; (n * n) as usize];
+    for y in RING..n - RING {
+        for x in RING..n - RING {
+            let i = at(x, y);
+            if !bank(i) || f.dist_w.v[i] > ONE * 3 / 2 {
+                continue;
+            }
+            let river: i32 = (ring.iter())
+                .map(|&(dx, dy)| at(x + dx, y + dy))
+                .map(|j| i32::from(water.river[j] && !water.lake[j]))
+                .sum();
+            bend[i] = river * 100 >= 53 * ring.len() as i32;
+        }
+    }
+    let r = BAR_REACH;
+    let near_lake = far_from(&water.lake, h.n, BANK + 1);
+    for y in RING..n - RING {
+        for x in RING..n - RING {
+            let i = at(x, y);
+            if !bank(i) {
+                continue;
+            }
+            let near =
+                |m: &[bool], r: i32| (-r..=r).any(|dy| (-r..=r).any(|dx| m[at(x + dx, y + dy)]));
+            let new = if near(&bend, r) {
+                // The bar spreads over the low bank round the bend.
+                Habitat::GravelBar
+            } else if near_lake.v[i] <= tiles(BANK) && f.slope[i] < pct(35) {
+                // Lake shores: sand where the sun falls, reeds in patches
+                // where it doesn't.
+                if f.sunny[i] > -pct(20) && f.patch.v[i] < pct(60) {
+                    Habitat::Beach
+                } else if f.patch.v[i] > pct(30) {
+                    Habitat::ReedBed
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+            out.hab[i] = new;
+            out.thicket[i] = false;
+            // A river valley stays a valley.
+            if out.land[i] != Land::Valley as u8 {
+                out.land[i] = new.land() as u8;
+            }
+            // All tall grass or none, as its canopy row says.
+            out.cover[i] = if CANOPY[new as usize].1 > 0 {
+                Cover::Grass
+            } else {
+                Cover::Open
+            } as u8;
+        }
+    }
+}
+
 /// Drop every knot of thicket wider or taller than [`THICKET_MAX_SIDE`]
 /// tiles, so thicket is only ever small stands, never a wall.
 pub(super) fn drop_long_thicket(thick: &mut [bool], n: usize) {
@@ -572,6 +678,13 @@ pub(super) fn dress(
             land[i] = Land::Valley as u8;
         }
     }
+    let out = Out {
+        hab: &mut hab,
+        cover: &mut cover,
+        thicket: &mut thicket,
+        land: &mut land,
+    };
+    riverside(h, water, &wet_tile, keep, &f, out);
     Dress {
         cover,
         thicket,
@@ -712,7 +825,7 @@ mod tests {
 
     #[test]
     fn habitats_and_land_agree_and_show_up() {
-        let mut seen = [0usize; 19];
+        let mut seen = [0usize; 23];
         let mut total = 0usize;
         for w in [Wildness::Plains, Wildness::Mixed, Wildness::Wild] {
             for seed in [1, 2, 3, 4, 5, 6] {
@@ -728,8 +841,12 @@ mod tests {
         for (k, hb) in Habitat::ALL.iter().enumerate() {
             println!("{hb:?}: {:.2}%", 100.0 * seen[k] as f64 / total as f64);
         }
+        // Trails are worn in once the sites are placed, and the made-up
+        // drainage here has no lakes for reeds or beaches.
         for (k, hb) in Habitat::ALL.iter().enumerate() {
-            assert!(seen[k] > 0, "{hb:?} never appears");
+            if !matches!(hb, Habitat::Trail | Habitat::ReedBed | Habitat::Beach) {
+                assert!(seen[k] > 0, "{hb:?} never appears");
+            }
         }
     }
 
@@ -759,7 +876,7 @@ mod tests {
         let Ok(dir) = std::env::var("GC_BIOME_DUMP") else {
             return;
         };
-        const RGB: [[i32; 3]; 19] = [
+        const RGB: [[i32; 3]; 23] = [
             [150, 175, 80],
             [118, 148, 74],
             [104, 128, 66],
@@ -779,6 +896,10 @@ mod tests {
             [216, 206, 178],
             [176, 160, 128],
             [160, 156, 104],
+            [176, 168, 150],
+            [120, 140, 80],
+            [214, 200, 150],
+            [150, 120, 90],
         ];
         for (name, w) in [
             ("plains", Wildness::Plains),

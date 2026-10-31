@@ -292,11 +292,11 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0xf798_2e56_9277_ddfc);
-        assert_eq!(hash(GROWN + 2), 0xa641_0256_1301_c7c4);
-        assert_eq!(hash(GROWN + 3), 0x6ed2_be3e_a937_fa04);
+        assert_eq!(hash(GROWN + 1), 0x3da9_8726_78fc_399a);
+        assert_eq!(hash(GROWN + 2), 0x578d_13c7_0514_9c14);
+        assert_eq!(hash(GROWN + 3), 0xc066_8667_d169_3f40);
         // Measured fairness: the start search, its settling on the true
         // walks and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0x0545_d40d_0dd4_b11b);
+        assert_eq!(hash(MEASURED + 2), 0x5857_1669_2429_96ac);
     }
 }

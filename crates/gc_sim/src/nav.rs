@@ -73,6 +73,14 @@ pub const SHALLOWS: u8 = FORD;
 /// ground, which a frozen ford costs (see [`Nav::set_frozen`]).
 pub const FORD: u8 = 3;
 pub const OPEN: u8 = 1;
+/// The map's cost of a cell on a steep slope.
+pub const STEEP: u8 = 2;
+/// The map gives each cell's cost in steps of open ground ([`OPEN`] 1,
+/// [`FORD`] 3); the grid prices it in tenths of one, so that slow going
+/// (woods, soft ground) can cost a little more than open ground: a cell
+/// costs the map's cost times this, over the share of its pace the
+/// ground lets a regiment keep (see [`price`]).
+pub const OPEN_COST: u32 = 10;
 /// The widest berth (cells from a block's centre that routes keep clear of
 /// blocked ground) any regiment asks for: 8 tiles.
 pub const MAX_BERTH: u8 = 16;
@@ -81,7 +89,7 @@ pub const MAX_BERTH: u8 = 16;
 const GRAPH_BERTH: u8 = 8;
 /// Most a cell's cost is raised by being close to blocked ground: on the
 /// very edge of open ground a step costs this much more than in the open.
-const WALL_COST: u32 = 4;
+const WALL_COST: u32 = 4 * OPEN_COST;
 /// [`WALL_COST`] shared out over a berth: `WALL_PENALTY[berth][short]` is
 /// what a cell `short` cells closer to blocked ground than `berth` adds to
 /// a step's cost (worked out once, as searches ask for it constantly).
@@ -125,9 +133,11 @@ const FILL_PORTALS: usize = 16;
 /// Upper bound on cells in one route before smoothing.
 const CHAIN_CAPACITY: usize = 32_768;
 const NONE: u32 = u32::MAX;
-/// Searches trust their distance estimate this much (in quarters): a little
-/// over 1 finds routes within a quarter of the shortest, much faster.
-const GREED: u32 = 5;
+/// Searches trust their distance estimate this much (in quarters). 4 is
+/// plain A*, which finds the cheapest route: with ground priced by pace,
+/// a greedier search (5 finds routes within a quarter of the cheapest,
+/// faster) walked straight into woods it should have gone round.
+const GREED: u32 = 4;
 
 /// The eight neighbours; the last four are diagonals.
 pub(crate) const DIRS: [(i32, i32); 8] = [
@@ -157,6 +167,11 @@ struct Grid {
     cost: Vec<u8>,
     /// The ground's own cost of each cell, as the map gave it.
     ground: Vec<u8>,
+    /// The share of its pace (percent) a regiment keeps on each tile, row
+    /// by row, for what grows there and how it holds the feet (see
+    /// [`going_of`]); empty while every tile keeps it all. Prices the
+    /// cells with [`price`].
+    going: Vec<u8>,
     /// Buildings standing on each cell (see [`Nav::set_built`]).
     built: Vec<u8>,
     /// Doors open on each cell, to the sides walking this grid (see
@@ -234,6 +249,23 @@ impl Grid {
     /// Whether a finished bridge spans cell `c` (an index into the grid).
     fn is_bridged(&self, c: usize) -> bool {
         self.bridged.get(c).is_some_and(|&n| n > 0)
+    }
+
+    /// The share of its pace (percent) a regiment keeps on cell `c`'s
+    /// tile (see [`Grid::going`]).
+    fn going_at(&self, c: usize) -> u8 {
+        if self.going.is_empty() {
+            return 100;
+        }
+        let (x, y) = self.xy(c as u32);
+        let tiles = self.side / CELLS_PER_TILE;
+        self.going[((y / CELLS_PER_TILE) * tiles + x / CELLS_PER_TILE) as usize]
+    }
+
+    /// What cell `c` costs to cross on ground the map costs `ground` (see
+    /// [`price`]).
+    fn priced(&self, c: usize, ground: u8) -> u8 {
+        price(ground, self.going_at(c))
     }
 
     fn open_cell(&self, c: u32) -> bool {
@@ -318,7 +350,8 @@ impl Grid {
     }
 
     /// Cost of one step between neighbouring cells: 10 straight and 14
-    /// diagonal on open ground, scaled by the cells' weights for `berth`.
+    /// diagonal times [`OPEN_COST`] on open ground, scaled by the cells'
+    /// weights for `berth`.
     fn step_cost(&self, a: u32, b: u32, diagonal: bool, berth: u8) -> u32 {
         let base = if diagonal { 7 } else { 5 };
         base * (self.weight(a, berth) + self.weight(b, berth))
@@ -331,12 +364,12 @@ impl Grid {
         (ax - bx).abs().max((ay - by).abs())
     }
 
-    /// Cheapest possible cost between two cells (ground of cost 1 all the way).
+    /// Cheapest possible cost between two cells (open ground all the way).
     fn estimate(&self, a: u32, b: u32) -> u32 {
         let (ax, ay) = self.xy(a);
         let (bx, by) = self.xy(b);
         let (dx, dy) = ((ax - bx).unsigned_abs(), (ay - by).unsigned_abs());
-        10 * dx.max(dy) + 4 * dx.min(dy)
+        OPEN_COST * (10 * dx.max(dy) + 4 * dx.min(dy))
     }
 
     /// Whether cell (x, y) is on the map, at least `need` from blocked
@@ -467,6 +500,33 @@ impl Grid {
             }
         }
         true
+    }
+
+    /// What walking straight from `p` to `q` costs a regiment wanting
+    /// `berth`, in the units of [`Grid::step_cost`]: the weights of the
+    /// cells under it, sampled every cell along its longer axis. Adds the
+    /// cells sampled to `work`.
+    fn segment_cost(&self, p: FxVec2, q: FxVec2, berth: u8, work: &mut u32) -> u32 {
+        let cells = |v: Fx| i64::from(v.raw()) * i64::from(CELLS_PER_TILE);
+        let (dx, dy) = (cells(q.x - p.x), cells(q.y - p.y));
+        // Samples: one a cell along the longer axis, and both ends.
+        let n = (dx.abs().max(dy.abs()) >> 16).max(1);
+        *work += n as u32 + 1;
+        let mut sum = 0u64;
+        for k in 0..=n {
+            let at = FxVec2::new(
+                Fx::from_raw((i64::from(p.x.raw()) + i64::from((q.x - p.x).raw()) * k / n) as i32),
+                Fx::from_raw((i64::from(p.y.raw()) + i64::from((q.y - p.y).raw()) * k / n) as i32),
+            );
+            let w = u64::from(self.weight(self.cell_at(at), berth));
+            // The ends count half, as a step's two cells do.
+            sum += if k == 0 || k == n { w } else { 2 * w };
+        }
+        // A step of one cell costs 5 x (its two weights); the walk is
+        // `length` cells long over `n` steps.
+        let length = (q - p).length();
+        let length_cells = i64::from(length.raw()) * i64::from(CELLS_PER_TILE);
+        (sum as i64 * 5 * length_cells / (n << 16)).clamp(0, i64::from(u32::MAX)) as u32
     }
 
     /// The nearest open cell to `c` within `radius` cells (in the given
@@ -1059,17 +1119,19 @@ impl Nav {
     /// tiles across ([`CELLS_PER_TILE`] cells per tile). Empty means an open
     /// plane with no obstacles.
     pub fn new(costs: &[u8], map_tiles: u32, regiments: usize) -> Nav {
-        Nav::standing(costs, map_tiles, regiments, core::iter::empty())
+        Nav::standing(costs, map_tiles, regiments, core::iter::empty(), Vec::new())
     }
 
     /// [`Nav::new`] with something already standing on each of `standing`'s
     /// tiles (`[x, y, w, d]`, those on the map), as a building would
-    /// ([`Nav::set_built`]): thicket, which clearing takes away.
+    /// ([`Nav::set_built`]): thicket, which clearing takes away; and the
+    /// tiles' `going` (see [`going_of`]; empty for all open going).
     pub(crate) fn standing(
         costs: &[u8],
         map_tiles: u32,
         regiments: usize,
         standing: impl Iterator<Item = [i32; 4]>,
+        going: Vec<u8>,
     ) -> Nav {
         let grid = (!costs.is_empty()).then(|| {
             let side = map_tiles as i32 * CELLS_PER_TILE;
@@ -1078,7 +1140,7 @@ impl Nav {
                 (side * side) as usize,
                 "the nav grid must have {side} x {side} cells"
             );
-            Arc::new(Grid::build_standing(costs, side, standing))
+            Arc::new(Grid::build_standing(costs, side, standing, going))
         });
         Nav::on(grid.into_iter().collect(), regiments)
     }
@@ -1500,6 +1562,15 @@ impl Nav {
         }
     }
 
+    /// The waypoint stored beyond the one [`Nav::steer`] gives slot `i`,
+    /// if there is one.
+    pub(crate) fn after_next(&self, i: usize) -> Option<FxVec2> {
+        let n = usize::from(self.way_next[i]) + 1;
+        (matches!(self.route[i], Route::Waypoints | Route::Rerouting)
+            && n < usize::from(self.way_len[i]))
+        .then(|| self.way[i * MAX_WAYPOINTS + n])
+    }
+
     /// Regiment slot `i` reached the waypoint [`Nav::steer`] gave it. The
     /// rest of a route that stops short of its goal is searched for while
     /// the regiment walks its last stretch, so it doesn't stop for it.
@@ -1661,11 +1732,40 @@ impl Nav {
     }
 }
 
-/// Find a route from `from` to `to` for a regiment wanting `berth` (cells
-/// kept between its centre and blocked ground, where there is room),
-/// writing waypoints into `out`. Returns how many, and whether they stop
-/// short of the goal (more to search for later); `None` when there is no
-/// way there.
+/// What a cell costs to cross, in [`OPEN_COST`]s: the map's cost
+/// `ground` ([`BLOCKED`] stays blocked) over the share of its pace
+/// (`going`, percent) the ground lets a regiment keep there.
+fn price(ground: u8, going: u8) -> u8 {
+    if ground == BLOCKED {
+        return BLOCKED;
+    }
+    let going = u32::from(going.max(1));
+    // Steep ground and fords cost about what they slow a regiment, and a
+    // little more: climbing takes up to 40% of its pace, wading 40% and
+    // leaves it fighting in the water.
+    let base = match ground {
+        STEEP => OPEN_COST * 3 / 2,
+        FORD => OPEN_COST * 2,
+        g => u32::from(g) * OPEN_COST,
+    };
+    // Rounded to the nearest whole cost.
+    ((base * 100 + going / 2) / going).clamp(1, u32::from(u8::MAX)) as u8
+}
+
+/// The share of its pace (percent) a regiment keeps on each of a
+/// `map_tiles`-wide map's tiles, row by row, for what grows there (see
+/// [`Terrain::going_percent`]); empty when it keeps all of it everywhere.
+pub(crate) fn going_of(terrain: &crate::Terrain, map_tiles: u32) -> Vec<u8> {
+    let t = map_tiles as i32;
+    let going: Vec<u8> = (0..t * t)
+        .map(|i| terrain.going_percent(i % t, i / t))
+        .collect();
+    if going.iter().all(|&g| g == 100) {
+        return Vec::new();
+    }
+    going
+}
+
 /// The grid of `grids` that `party`'s regiments walk, as `view` says.
 fn grid_for<'a>(
     grids: &'a [Arc<Grid>],
@@ -1676,6 +1776,11 @@ fn grid_for<'a>(
     grids.get(usize::from(v)).map(|g| &**g)
 }
 
+/// Find a route from `from` to `to` for a regiment wanting `berth` (cells
+/// kept between its centre and blocked ground, where there is room),
+/// writing waypoints into `out`. Returns how many, and whether they stop
+/// short of the goal (more to search for later); `None` when there is no
+/// way there.
 fn find(
     grid: &Grid,
     s: &mut Search,
@@ -1715,13 +1820,24 @@ fn find(
     let mut truncated = false;
     let mut via_portals = false;
     let (start_sector, goal_sector) = (grid.sector_of(start), grid.sector_of(goal));
+    // A straight leg is only taken unsearched over ground no slower than
+    // its quicker end (not across a wood or a ford between two open
+    // fields): whether to go through or round is the search's to weigh,
+    // and smoothing's (see `smooth`).
+    let worst = |a: u32, b: u32| grid.cost[a as usize].min(grid.cost[b as usize]);
     let straight = |s: &mut Search, a: u32, b: u32| {
-        grid.line_within(a, b, grid.need(a, b, berth), u8::MAX, &mut s.work)
+        grid.line_within(a, b, grid.need(a, b, berth), worst(a, b), &mut s.work)
     };
     // Where the march starts: here, or the open cell stepped out to.
     let start_point = if lead { grid.centre(start) } else { from };
     let need = grid.need(start, goal, berth);
-    if grid.segment_within(start_point, goal_point, need, u8::MAX, &mut s.work) {
+    if grid.segment_within(
+        start_point,
+        goal_point,
+        need,
+        worst(start, goal),
+        &mut s.work,
+    ) {
         s.chain.push(goal);
     } else if start_sector == goal_sector && s.sector(grid, start_sector, start, Some(goal), berth)
     {
@@ -1953,15 +2069,30 @@ fn smooth(
     // The least room along the chain from the anchor to `k`, up to `berth`.
     let room = |c: u32| grid.need(c, c, berth);
     let mut least = room(s.chain[0]).min(room(s.chain[1]));
+    // What walking the chain costs from its start to the anchor and to
+    // `k`: a straight leg is taken only where it costs no more than the
+    // chain it replaces, so it cuts corners but never across a wood or a
+    // ford the search went round. Each step is priced once, as `k` comes
+    // to it (`walked` is the last priced).
+    let mut g_anchor = 0u32;
+    let mut g_k = chain_step(grid, &s.chain, &mut s.work, 1, berth);
+    let mut walked = 1;
+    // What walking to `k + 1` costs, once priced.
+    let mut next: Option<u32> = None;
     while k < len {
         if k + 1 < len {
             let need = least.min(room(s.chain[k + 1]));
             if grid.span(s.chain[anchor], s.chain[k + 1]) <= SMOOTH_REACH && {
+                let g = g_k.saturating_add(chain_step(grid, &s.chain, &mut s.work, k + 1, berth));
+                (next, walked) = (Some(g), k + 1);
                 let (a, b) = (point(s, anchor), point(s, k + 1));
+                let chain = g - g_anchor;
                 grid.segment_within(a, b, need, u8::MAX, &mut s.work)
+                    && grid.segment_cost(a, b, berth, &mut s.work) <= chain + chain / 32
             } {
                 least = need;
                 k += 1;
+                g_k = next.take().unwrap_or(g_k);
                 continue;
             }
         }
@@ -1990,12 +2121,38 @@ fn smooth(
         out[n] = b;
         n += 1;
         anchor = k;
+        g_anchor = g_k;
         k += 1;
         if k < len {
             least = room(s.chain[anchor]).min(room(s.chain[k]));
+            g_k = match next.take() {
+                Some(g) => g,
+                None => {
+                    walked = k;
+                    g_k.saturating_add(chain_step(grid, &s.chain, &mut s.work, k, berth))
+                }
+            };
         }
     }
+    // A route cut short still pays for pricing its whole chain, as when
+    // the chain was priced up front.
+    for j in walked + 1..len {
+        chain_step(grid, &s.chain, &mut s.work, j, berth);
+    }
     (n, partial)
+}
+
+/// What walking from `chain[k - 1]` to `chain[k]` costs a regiment wanting
+/// `berth`: a step, or a straight leg between portals.
+fn chain_step(grid: &Grid, chain: &[u32], work: &mut u32, k: usize, berth: u8) -> u32 {
+    let (a, b) = (chain[k - 1], chain[k]);
+    if grid.span(a, b) == 1 {
+        let (ax, ay) = grid.xy(a);
+        let (bx, by) = grid.xy(b);
+        grid.step_cost(a, b, ax != bx && ay != by, berth)
+    } else {
+        grid.segment_cost(grid.centre(a), grid.centre(b), berth, work)
+    }
 }
 
 impl Grid {
@@ -2003,17 +2160,24 @@ impl Grid {
     /// standing on it.
     #[cfg(test)]
     fn build(costs: &[u8], side: i32) -> Grid {
-        Grid::build_standing(costs, side, core::iter::empty())
+        Grid::build_standing(costs, side, core::iter::empty(), Vec::new())
     }
 
     /// The grid of the cells' `costs` with something standing on each of
-    /// `standing`'s tiles, as a building would (see [`Nav::standing`]).
-    fn build_standing(costs: &[u8], side: i32, standing: impl Iterator<Item = [i32; 4]>) -> Grid {
+    /// `standing`'s tiles, as a building would, and the tiles' `going`
+    /// (see [`Nav::standing`]).
+    fn build_standing(
+        costs: &[u8],
+        side: i32,
+        standing: impl Iterator<Item = [i32; 4]>,
+        going: Vec<u8>,
+    ) -> Grid {
         let n = (side * side) as usize;
         let mut grid = Grid {
             side,
-            cost: costs.to_vec(),
+            cost: Vec::new(),
             ground: costs.to_vec(),
+            going,
             built: vec![0; n],
             opened: Vec::new(),
             flooded: Vec::new(),
@@ -2033,6 +2197,7 @@ impl Grid {
             edge_cost: Vec::new(),
             node_room: 0,
         };
+        grid.cost = (0..n).map(|i| grid.priced(i, grid.ground[i])).collect();
         for t in standing {
             let Some([x0, y0, x1, y1]) = grid.cells(t) else {
                 continue;
