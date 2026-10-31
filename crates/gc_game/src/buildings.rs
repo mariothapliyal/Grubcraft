@@ -587,22 +587,30 @@ fn stages_of(
             })
         })
         .collect();
+    let has_model = |j: usize| own.get(j).is_some_and(|o| o.iter().any(Option::is_some));
     let mut stages = own.clone();
     for (i, stats) in table.stats.iter().enumerate() {
-        if stats.attack.is_none() || own[i].iter().any(Option::is_some) {
+        if stats.attack.is_none() || has_model(i) {
             continue;
         }
-        // The cheapest first-level arrow tower of its faction that has a
-        // model of its own.
-        let stand_in = (table.stats.iter().enumerate())
-            .filter(|&(j, s)| {
-                table.factions[j] == table.factions[i]
-                    && s.upgrades_from.is_none()
-                    && s.attack.is_some_and(|a| a.shot == TowerShot::Arrows)
-                    && own[j].iter().any(Option::is_some)
-            })
-            .min_by_key(|&(_, s)| u32::from(s.cost_grub) + u32::from(s.cost_marrow))
-            .map(|(j, _)| j);
+        // A tower's level 2 looks like its level 1; else the cheapest
+        // first-level arrow tower of its faction that has a model of its
+        // own.
+        let level_1 = stats
+            .upgrades_from
+            .map(usize::from)
+            .filter(|&f| has_model(f));
+        let stand_in = level_1.or_else(|| {
+            (table.stats.iter().enumerate())
+                .filter(|&(j, s)| {
+                    table.factions[j] == table.factions[i]
+                        && s.upgrades_from.is_none()
+                        && s.attack.is_some_and(|a| a.shot == TowerShot::Arrows)
+                        && has_model(j)
+                })
+                .min_by_key(|&(_, s)| u32::from(s.cost_grub) + u32::from(s.cost_marrow))
+                .map(|(j, _)| j)
+        });
         if let Some(j) = stand_in {
             stages[i] = own[j];
         }

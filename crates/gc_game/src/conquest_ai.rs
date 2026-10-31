@@ -234,6 +234,8 @@ mod tests {
         /// Bolt and blast towers (docs/26 stage 5).
         pub bolts: u32,
         pub blasts: u32,
+        /// Towers raised to level 2.
+        pub raised: u32,
     }
 
     impl Works {
@@ -249,6 +251,9 @@ mod tests {
                 let Some(b) = table.get(usize::from(v.building)) else {
                     continue;
                 };
+                if b.role == Role::Defence && b.upgrades_from.is_some() {
+                    w.raised += 1;
+                }
                 let n = match b.role {
                     Role::Wall if b.flags & GATE != 0 => &mut w.gates,
                     Role::Wall => &mut w.walls,
@@ -280,6 +285,7 @@ mod tests {
                 clears: self.clears.max(o.clears),
                 bolts: self.bolts.max(o.bolts),
                 blasts: self.blasts.max(o.blasts),
+                raised: self.raised.max(o.raised),
             }
         }
     }
@@ -1139,6 +1145,8 @@ mod tests {
         // a blast tower behind its hall, or a bolt tower once it has seen
         // riders or monsters, in one of its games at least.
         let mut towers = 0;
+        // Once at tier 2 with Marrow to spare it raises a tower to level 2.
+        let mut raised = 0;
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
         // moves where things get built, and with frontage about one in 25),
@@ -1152,6 +1160,7 @@ mod tests {
                     (most, last) = general(f, seed);
                     traps += most.traps;
                     towers += most.bolts + most.blasts;
+                    raised += most.raised;
                     most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
             assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
@@ -1165,9 +1174,11 @@ mod tests {
             (most, last) = general(Faction::EmberClans, seed);
             traps += most.traps;
             towers += most.bolts + most.blasts;
+            raised += most.raised;
         }
         assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         assert!(towers >= 1, "no bolt or blast tower put up in any game");
+        assert!(raised >= 1, "no tower raised to level 2 in any game");
         let played = play(
             0,
             0,

@@ -205,6 +205,7 @@ pub enum Quirk {
     Disorders,
     Drags,
     Acid,
+    Kindles,
 }
 
 #[derive(Deserialize)]

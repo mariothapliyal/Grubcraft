@@ -322,6 +322,7 @@ impl Conquest {
                     s.lay_pool(owner, attack.quirk == Quirk::Acid, hit.at);
                 }
             }
+            Quirk::Kindles => s.kindle_at(hit.at.x.floor_int(), hit.at.y.floor_int()),
         }
     }
 }
@@ -489,6 +490,14 @@ impl Structures {
         }
     }
 
+    /// Set the ground at a tile alight, if the kindle queue has room: it
+    /// never grows past what it reserved.
+    pub(crate) fn kindle_at(&mut self, x: i32, y: i32) {
+        if self.kindle.len() < self.kindle.capacity() {
+            self.kindle.push((x, y));
+        }
+    }
+
     /// Lay a pool where a tower of `owner`'s hit landed at `at` (acid, or
     /// burning ground), while there is room; burning ground sets the growth
     /// it covers alight (see [`Structures::kindle`]).
@@ -512,9 +521,7 @@ impl Structures {
             let (cx, cy) = (at.x.floor_int(), at.y.floor_int());
             for y in cy - r..=cy + r {
                 for x in cx - r..=cx + r {
-                    if self.kindle.len() < self.kindle.capacity() {
-                        self.kindle.push((x, y));
-                    }
+                    self.kindle_at(x, y);
                 }
             }
         }
