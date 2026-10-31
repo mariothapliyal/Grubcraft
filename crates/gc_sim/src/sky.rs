@@ -453,6 +453,10 @@ fn scale(v: Fx, percent: u8) -> Fx {
 /// takes about 25 seconds.
 pub const EASE_EVERY: u32 = 2;
 
+/// Rain from this strength is a storm: it throws lightning (see
+/// [`crate::fire::Fires::lightning`]), and the picture flashes with it.
+pub const STORM: u8 = 192;
+
 /// How wet the ground is, from bone dry (0) to soaked through: the sky
 /// keeps it (rain wets it, anything else dries it) and
 /// [`crate::Terrain::soak`] turns tiles soft by it.

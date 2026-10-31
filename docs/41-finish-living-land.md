@@ -263,7 +263,7 @@ guarding rich fields came with step 1.
   in, and when it clears: "Fog is rolling in: troops see much less far.
   Watch for ambushes", "A storm is coming in: ...", "The fog has lifted".
   Weather comes in at strength 80 (the sim's spells are 90 to 255) and has
-  cleared under 40; rain is a storm from 192 (where the picture's lightning
+  cleared under 40; rain is a storm from 192 (where lightning
   starts) and rain again under 152. The give either way means the sim's
   slow fades and small wobbles are told once. The weather a match starts in
   isn't told, nor is a new match told the last one's weather.
@@ -286,6 +286,61 @@ guarding rich fields came with step 1.
   opening weather is quiet, a new kind is told after the old fades, and a
   fire near troops then the base is told once each, with the quiet time,
   and a fire spreading from the troops to the base is told again.
+
+## Step 6 as built: lightning
+
+*2026-10-31.* Step 6 comes in two parts. This is the first: storms throw
+lightning that can set dry woods alight. The computer players burning and
+clearing woods is the second.
+
+- **In the simulation** (`Fires::lightning` in `gc_sim/src/fire.rs`).
+  Rain of strength 192 or more is a storm (`sky::STORM`). Once a second in
+  a storm, a roll made from the match seed and the tick (no random stream
+  moves) gives a 1 in 10 chance of a bolt (`STRIKE_PERMILLE`), so about
+  one every ten seconds over the whole map. The bolt looks at up to 4 tiles
+  picked the same way and takes the first with woods or thicket on it, the
+  tallest thing about, or the last one tried. On a quarter-wooded map well
+  over half the strikes hit the woods.
+- **Only dry woods catch.** The struck tile catches if anything burnable
+  grows there and the ground is still drier than `DAMP_WET` (the wetness
+  where fire stops spreading). A storm wets the ground fast (3 of 1000 a
+  second), so a bolt fires the woods only in the first half minute or so
+  of a storm that comes in over dry ground, and the fire spreads only a
+  little before the rain soaks it. Summer, when the ground has dried
+  out, is when it matters. Snow never storms, so winter has no lightning.
+- **`Event::Lightning { x, y, caught }`** tells of each strike (with a
+  `Kindled` for the tile if it caught). It isn't told in scratch worlds.
+- **In the picture.** A strike within 160 tiles of the camera's focus
+  (`THUNDER_REACH`) flashes the sky, and thunder follows, later and
+  softer the further it struck (`Atmosphere::strike`). If the viewer sees
+  the tile, the bolt is drawn there (`Effects::strike_at`), not under
+  Clarity. The picture's own flashes, at random places near the camera,
+  carry on between them as before, and wait a full gap after a real one.
+- **News.** A fire that comes near your base or troops on the second a
+  bolt set woods alight is told as "Lightning! It set the woods alight
+  near your base" (or "troops") instead of "Fire! ...".
+- **SIM_VERSION 68.** Three golden replays have storms and were blessed
+  again: `field-flood-1v1`, `field-night-rain-1v1` and
+  `field-river-storm-1v1`. The lobby's **Rain** is strength 200, a storm,
+  so a Rain match throws lightning too.
+
+### Real use
+
+- **A summer storm can burn a wood.** In Conquest with seasons, a storm in
+  summer coming over dry land can fire the woods an army waits in. The
+  news line says so if it is near your troops or base. Get out of the
+  trees, or keep clear of the scorched open ground it leaves.
+- **Rain keeps it small.** Once the storm has been going for half a
+  minute, bolts only flash. A patch burnt by lightning is a few tiles, not
+  a forest.
+
+### Checks
+
+- `a_storm_throws_lightning_that_fires_dry_woods_only` (eight matches: a
+  strike every ten seconds or so, on the map, caught exactly while the
+  ground is dry, the same strikes when played again, none in rain short
+  of a storm) and `lightning_prefers_the_woods`, in `gc_sim/tests/fire.rs`.
+- `a_fire_lightning_lit_is_told_as_lightning` in `sky_news`.
 
 ## Not in this plan
 

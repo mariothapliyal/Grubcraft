@@ -24,10 +24,9 @@ enum Felt {
 /// 90 strong); under [`OUT`] it has cleared.
 const IN: u8 = 80;
 const OUT: u8 = 40;
-/// Rain from this strength is a storm (where the picture's lightning
-/// starts); it is rain again under [`CALMER`].
-// Rounded up, as the picture storms from `STORM_AT` and over.
-const STORM: u8 = (crate::atmosphere::STORM_AT * 255.0) as u8 + 1;
+/// Rain from this strength is a storm (where lightning starts); it is
+/// rain again under [`CALMER`].
+const STORM: u8 = gc_sim::sky::STORM;
 const CALMER: u8 = STORM - 40;
 
 impl Felt {
@@ -115,6 +114,10 @@ const FIRE_NEWS: [&str; 2] = [
     "Fire! It is spreading near your base",
     "Fire! It is spreading near your troops",
 ];
+const LIGHTNING_NEWS: [&str; 2] = [
+    "Lightning! It set the woods alight near your base",
+    "Lightning! It set the woods alight near your troops",
+];
 
 impl SkyNews {
     /// The weather's news after a tick, if it turned.
@@ -130,11 +133,13 @@ impl SkyNews {
 
     /// The fires' news at `tick`: woods or scrub newly burning near the
     /// viewer's buildings (`base`, footprints) or regiments (`troops`, in
-    /// tiles); the base first.
+    /// tiles); the base first. Told as lightning's doing if a bolt set
+    /// woods alight this tick (`lightning`): a fire newly near then is its.
     pub(crate) fn fires(
         &mut self,
         tick: u32,
         fires: &[Burn],
+        lightning: bool,
         mut troops: impl Iterator<Item = (f32, f32)>,
         mut base: impl Iterator<Item = Foot>,
     ) -> Option<&'static str> {
@@ -158,7 +163,7 @@ impl SkyNews {
             now[i] && !was[i] && !self.warned[i].is_some_and(|t| tick < t + FIRE_QUIET)
         })?;
         self.warned[place] = Some(tick);
-        Some(FIRE_NEWS[place])
+        Some(if lightning { LIGHTNING_NEWS } else { FIRE_NEWS }[place])
     }
 }
 
@@ -252,7 +257,13 @@ mod tests {
         let troops = [(50.0, 50.0)];
         let base = [[10, 10, 3, 3]];
         let mut at = |tick, fires: &[Burn]| {
-            news.fires(tick, fires, troops.iter().copied(), base.iter().copied())
+            news.fires(
+                tick,
+                fires,
+                false,
+                troops.iter().copied(),
+                base.iter().copied(),
+            )
         };
         let s = TICKS_PER_SECOND;
         // Far from both: nothing.
@@ -280,7 +291,13 @@ mod tests {
         let troops = [(30.0, 12.0)];
         let base = [[10, 10, 3, 3]];
         let mut at = |tick, fires: &[Burn]| {
-            news.fires(tick, fires, troops.iter().copied(), base.iter().copied())
+            news.fires(
+                tick,
+                fires,
+                false,
+                troops.iter().copied(),
+                base.iter().copied(),
+            )
         };
         let s = TICKS_PER_SECOND;
         assert_eq!(at(0, &[burn(38, 12)]), Some(FIRE_NEWS[TROOPS]));
@@ -289,6 +306,28 @@ mod tests {
         assert_eq!(
             at(2 * s, &[burn(22, 12), burn(30, 12), burn(38, 12)]),
             Some(FIRE_NEWS[BASE])
+        );
+    }
+
+    #[test]
+    fn a_fire_lightning_lit_is_told_as_lightning() {
+        let mut news = SkyNews::default();
+        let troops = [(50.0, 50.0)];
+        let s = TICKS_PER_SECOND;
+        let mut at = |tick, fires: &[Burn], lightning| {
+            news.fires(
+                tick,
+                fires,
+                lightning,
+                troops.iter().copied(),
+                [].into_iter(),
+            )
+        };
+        // A bolt far off lit woods: nothing near, nothing said.
+        assert_eq!(at(0, &[burn(100, 100)], true), None);
+        assert_eq!(
+            at(s, &[burn(52, 50), burn(100, 100)], true),
+            Some(LIGHTNING_NEWS[TROOPS])
         );
     }
 }

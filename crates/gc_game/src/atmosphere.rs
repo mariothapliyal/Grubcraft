@@ -257,6 +257,18 @@ impl Storm {
         STRIKE_GAP.0 + (STRIKE_GAP.1 - STRIKE_GAP.0) * unit
     }
 
+    /// A flash now, and its thunder after it: the further the stroke (0
+    /// nearest, 1 furthest), the later and the softer. The next flash of
+    /// the storm's own is a full gap off.
+    fn flash(&mut self, far: f32) {
+        self.age = Some(0.0);
+        self.next = self.gap();
+        self.rolling.push((
+            THUNDER_LAG.0 + (THUNDER_LAG.1 - THUNDER_LAG.0) * far,
+            1.0 - 0.55 * far,
+        ));
+    }
+
     /// Move on `dt` seconds, `stormy` or not, and say how bright the sky
     /// is with lightning now (0 none, 1 the brightest). A flash that has
     /// begun plays out whatever the weather does.
@@ -264,15 +276,9 @@ impl Storm {
         if stormy {
             self.next -= dt;
             if self.next <= 0.0 {
-                self.age = Some(0.0);
                 self.struck = true;
-                self.next = self.gap();
-                // The further the stroke, the later and the softer its thunder.
                 let far = self.unit();
-                self.rolling.push((
-                    THUNDER_LAG.0 + (THUNDER_LAG.1 - THUNDER_LAG.0) * far,
-                    1.0 - 0.55 * far,
-                ));
+                self.flash(far);
             }
         }
         for (left, _) in &mut self.rolling {
@@ -481,6 +487,14 @@ impl Atmosphere {
     /// be drawn (and thunder, when there is some) with the flash.
     pub fn take_strike(&mut self) -> bool {
         std::mem::take(&mut self.storm.struck)
+    }
+
+    /// A bolt the simulation threw (`gc_sim::events::Event::Lightning`),
+    /// `far` from the viewer (0 at their feet, 1 at the edge of hearing):
+    /// the sky flashes and the thunder follows. Its bolt is drawn where it
+    /// struck, not by [`Atmosphere::take_strike`].
+    pub fn strike(&mut self, far: f32) {
+        self.storm.flash(far.clamp(0.0, 1.0));
     }
 
     /// The next thunder that has reached the viewer since this was last
