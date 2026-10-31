@@ -128,6 +128,11 @@ macro_rules! regiment_fields {
             /// orders and attack-move (see [`crate::orders`]).
             plan: Vec<PlanIndex>,
             plans: Plans,
+            /// Why its nerve is going: `morale::WHY_` bits, for the screen
+            /// only. Nothing in the sim reads it, so it is kept out of the
+            /// hash and snapshots (a loaded game shows no reasons until the
+            /// next knock or check).
+            pub(crate) why: Vec<u16>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -144,6 +149,7 @@ macro_rules! regiment_fields {
                     hp: vec![0; n * MAX_MODELS as usize],
                     plan: vec![NO_PLAN; n],
                     plans: Plans::with_capacity(n),
+                    why: vec![0; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -153,6 +159,7 @@ macro_rules! regiment_fields {
             fn reset_slot(&mut self, i: usize) {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
                 self.plans.release(&mut self.plan[i]);
+                self.why[i] = 0;
                 $(self.$name[i] = $free;)*
             }
 
@@ -160,6 +167,7 @@ macro_rules! regiment_fields {
             fn copy_slot(&mut self, from: &Regiments, i: usize) {
                 let m = MAX_MODELS as usize;
                 self.hp[i * m..][..m].copy_from_slice(&from.hp[i * m..][..m]);
+                self.why[i] = from.why[i];
                 $(self.$name[i] = from.$name[i];)*
                 // The same players hold the same plans in both worlds.
                 let copied = self.set_plan(i, from.plan(i));
@@ -1167,6 +1175,61 @@ impl Regiments {
         }
     }
 
+    /// What regiment `h` is doing, what holds it up and why its nerve is
+    /// going, for the screen (docs/29, "Clear orders and feedback"). Kept
+    /// out of [`RegimentView`] so the sim's and the AI's many reads of it
+    /// don't pay for it.
+    pub fn feedback(&self, h: RegimentHandle) -> Option<Feedback> {
+        let i = self.resolve(h)?;
+        Some(Feedback {
+            doing: self.doing(i),
+            waiting: self.waiting(i),
+            why: self.why[i],
+        })
+    }
+
+    /// What regiment `i` is doing, for the screen.
+    fn doing(&self, i: usize) -> Doing {
+        if self.morale_state[i].broken() {
+            Doing::Running
+        } else if self.falling_back[i] > 0 {
+            Doing::FallingBack
+        } else if self.engaged[i].is_some() {
+            Doing::Fighting
+        } else if self.attack_target[i].is_some() {
+            Doing::Attacking
+        } else if self.plan(i).hunt.is_some() {
+            Doing::Advancing
+        } else if self.braced[i] {
+            Doing::Braced
+        } else if self.target[i].is_some() && self.march_left[i] > 0 {
+            Doing::ForcedMarch
+        } else if self.target[i].is_some() {
+            Doing::Marching
+        } else {
+            Doing::Holding
+        }
+    }
+
+    /// What is holding regiment `i` up, if anything, for the screen.
+    fn waiting(&self, i: usize) -> Option<Waiting> {
+        if self.morale_state[i].broken() {
+            None
+        } else if self.trapped_left[i] > 0 {
+            Some(Waiting::Trapped)
+        } else if self.engaged[i].is_some() && self.why[i] & morale::WHY_PINNED != 0 {
+            Some(Waiting::Pinned)
+        } else if self.engaged[i].is_some() && self.driven_pace(i) > 0 {
+            Some(Waiting::DrivenBack)
+        } else if self.target[i].is_some() && self.disorder[i] > 0 {
+            Some(Waiting::Reforming)
+        } else if self.target[i].is_some() && self.files[i] < self.frontage[i].min(self.models[i]) {
+            Some(Waiting::FilingThrough)
+        } else {
+            None
+        }
+    }
+
     /// Live regiments in index order, for presentation and tests.
     pub fn iter(&self) -> impl Iterator<Item = RegimentView> + '_ {
         (0..self.alive.len())
@@ -1487,6 +1550,60 @@ pub struct RegimentView {
     pub abouts: u8,
     /// Orders queued behind the current one ([`Regiments::queued`] has them).
     pub queued: u8,
+}
+
+/// What a regiment is doing and why, as the screen shows it (see
+/// [`Regiments::feedback`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Feedback {
+    /// What it is doing.
+    pub doing: Doing,
+    /// What is holding it up, if anything.
+    pub waiting: Option<Waiting>,
+    /// Why its nerve is going: [`morale`]'s `WHY_` bits (flanked, rear,
+    /// outnumbered, ally broke nearby and so on). Shown while it wavers or
+    /// runs.
+    pub why: u16,
+}
+
+/// What a regiment is doing, as the screen shows it (docs/29, "Clear orders
+/// and feedback"). Derived from its state each time it is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Doing {
+    /// Standing where it was put, no order left.
+    Holding,
+    /// Walking to an ordered spot.
+    Marching,
+    /// Walking with a march power driving it faster.
+    ForcedMarch,
+    /// Going for an ordered enemy.
+    Attacking,
+    /// On an attack-move: marching, fighting whatever it meets on the way.
+    Advancing,
+    /// In melee.
+    Fighting,
+    /// Spears set against a charge.
+    Braced,
+    /// Pulling out of a fight in good order.
+    FallingBack,
+    /// Routing or shattered: not taking orders.
+    Running,
+}
+
+/// What is holding a regiment up, as the screen shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waiting {
+    /// Driven back against something with nowhere to give ground.
+    Pinned,
+    /// Losing its melee and giving ground.
+    DrivenBack,
+    /// Out of order (pushed through friends, ploughed, tripped by a trap or
+    /// a flood) and re-forming its ranks.
+    Reforming,
+    /// Squeezed into a column through tight ground.
+    FilingThrough,
+    /// Held fast by a trap.
+    Trapped,
 }
 
 impl RegimentView {

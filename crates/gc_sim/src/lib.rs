@@ -73,7 +73,9 @@ pub use morale::MoraleState;
 use powers::Cast;
 pub use powers::{Meter, PowerEffect, PowerStats, PowerTarget};
 pub use production::Production;
-pub use regiments::{ABOUT_FACE_TICKS, Order, RegimentHandle, RegimentView, Regiments};
+pub use regiments::{
+    ABOUT_FACE_TICKS, Doing, Feedback, Order, RegimentHandle, RegimentView, Regiments, Waiting,
+};
 pub use stances::Stances;
 use structures::Work;
 pub use structures::{
@@ -3150,7 +3152,12 @@ impl World {
             self.regiments.vanish_from_fight(i);
             self.leave_off(h);
             self.regiments.disorder(i);
-            morale::shift(&mut self.regiments, i, -rivers::SWEPT_AWAY_MORALE);
+            morale::shake(
+                &mut self.regiments,
+                i,
+                rivers::SWEPT_AWAY_MORALE,
+                morale::WHY_WATER,
+            );
             let (cx, cy) = self.flood.rivers.carried(&self.terrain, x, y);
             let to = FxVec2::new(Fx::from_int(cx) + Fx::HALF, Fx::from_int(cy) + Fx::HALF);
             // Washed up there, or failing any bank near it, back by the ford.
