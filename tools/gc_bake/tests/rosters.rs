@@ -49,7 +49,7 @@ fn check_ability(file: &str, owner: &str, a: &Ability) {
 fn supply_range(class: Class) -> std::ops::RangeInclusive<u8> {
     match class {
         Class::Worker => 1..=1,
-        Class::Light => 3..=3,
+        Class::Light => 2..=3,
         Class::Spear | Class::Ranged => 3..=4,
         Class::Heavy => 4..=5,
         Class::Cavalry => 5..=5,

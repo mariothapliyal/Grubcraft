@@ -1561,7 +1561,7 @@ mod tests {
             .collect();
         assert_eq!(evo.len(), 4);
         let spit = evo.iter().find(|u| u.name == "Spitters").unwrap();
-        assert_eq!(spit.cost, "60 Grub, 20 Marrow, 15 s in the cocoon");
+        assert_eq!(spit.cost, "50 Grub, 15 Marrow, 15 s in the cocoon");
         // A unit.
         let yari = find(&d, 0, false, "Yari Ashigaru");
         assert_eq!(fact_of(&yari.facts, "Cost"), "120 Grub");
