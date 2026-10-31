@@ -154,7 +154,10 @@ fn the_floodplain_is_the_low_land_beside_the_river() {
     assert!(rivers.on_floodplain(40, TERRACE.end - 1));
     assert!(!rivers.on_floodplain(40, TERRACE.end));
     assert!(!rivers.on_floodplain(40, RIDGE));
-    assert!(!rivers.on_floodplain(40, HOLLOW.end - 1), "the flood can't cross the ridge");
+    assert!(
+        !rivers.on_floodplain(40, HOLLOW.end - 1),
+        "the flood can't cross the ridge"
+    );
     assert!(!rivers.on_floodplain(40, 62), "the river itself");
     // Each tile reads the stretch of the river beside it.
     assert_eq!(
