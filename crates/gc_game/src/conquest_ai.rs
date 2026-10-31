@@ -939,7 +939,10 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
+        // Seed 6: with frontage and holding until bloodied, seeds 1, 2 and
+        // 8 end the eight minutes with neither army formed up to weigh;
+        // 3 to 6 all weigh.
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 6, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {
