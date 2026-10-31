@@ -257,12 +257,12 @@ impl Events {
         self.list.push(Event::SweptAway { regiments });
     }
 
-<<<<<<< HEAD
     /// Tell of the regiments of `owners` (a bit each) struck by debris
     /// riding a river this tick.
     pub(crate) fn debris_struck(&mut self, owners: u8) {
         self.list.push(Event::DebrisStruck { owners });
-=======
+    }
+
     /// Tell of walled towns closed and breached at this tick's survey.
     pub(crate) fn towns(&mut self, changed: &[(PlayerId, bool)]) {
         (self.list).extend(
@@ -270,7 +270,6 @@ impl Events {
                 .iter()
                 .map(|&(player, walled)| Event::Town { player, walled }),
         );
->>>>>>> origin/main
     }
 
     /// Tell of a new season.
