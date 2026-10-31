@@ -107,6 +107,8 @@ fn world() -> World {
                     damage: 1,
                     reload_ticks: 20,
                     shots: 1,
+                    shot: gc_sim::structures::TowerShot::Arrows,
+                    quirk: gc_sim::structures::Quirk::None,
                 }),
                 ..palisade
             },

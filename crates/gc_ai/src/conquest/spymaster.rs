@@ -151,6 +151,12 @@ pub fn army_of<'a>(s: &'a Sense, owner: u8) -> impl Iterator<Item = &'a Seen> + 
     known(s).filter(move |r| r.owner == owner)
 }
 
+/// Whether it has seen enemy riders or monsters (heavy regiments, which
+/// stakes stop and bolt towers answer).
+pub fn heavy_foes(s: &Sense) -> bool {
+    enemy_army(s).any(|r| s.view.unit(r).stats.mass == gc_sim::Mass::Heavy)
+}
+
 /// The fighting regiments of all its enemies that it knows of.
 pub fn enemy_army<'a>(s: &'a Sense) -> impl Iterator<Item = &'a Seen> + 'a {
     known(s).filter(|r| s.view.hostile(s.party, r.owner))
