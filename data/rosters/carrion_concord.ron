@@ -472,7 +472,7 @@
         (
             tier: 1,
             class: Spear,
-            cost: (grub: 110, marrow: 0),
+            cost: (grub: 125, marrow: 0),
             supply: 3,
             train_time: 18.0,
             from: Building("Ossuary"),
@@ -512,7 +512,7 @@
         (
             tier: 1,
             class: Ranged,
-            cost: (grub: 140, marrow: 0),
+            cost: (grub: 150, marrow: 0),
             supply: 4,
             train_time: 24.0,
             from: Building("Guildhall"),

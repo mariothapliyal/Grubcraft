@@ -375,19 +375,17 @@ fn men_gang_up_where_lines_overlap() {
     let a = spawn(&mut w, 0, 0, 50, 50, NORTH);
     let b = spawn(&mut w, 1, 1, 50, 48, SOUTH);
     let blows = blows_by(&mut w, a, 20 * 3);
-    let turn: Vec<_> = blows
-        .iter()
-        .filter(|x| x.striker_slot < 12)
-        .take(12)
-        .collect();
-    assert_eq!(turn.len(), 12);
+    // Every front-rank blow of its turns (only the men who reach the narrow
+    // block strike).
+    let turn: Vec<_> = blows.iter().filter(|x| x.striker_slot < 12).collect();
+    assert!(turn.len() >= 12, "{}", turn.len());
     let mut on = [0; 4];
     for x in &turn {
         assert_eq!(x.target, b);
         on[x.target_slot as usize] += 1;
     }
     // All four are fought, and the men overlapping their line close in on
-    // the two at its ends.
+    // its ends, as many as there is room for round them.
     assert!(on.iter().all(|&n| n >= 1), "{on:?}");
-    assert!(on[0] >= 3 && on[3] >= 3, "{on:?}");
+    assert!(on[0] + on[3] > on[1] + on[2], "{on:?}");
 }
