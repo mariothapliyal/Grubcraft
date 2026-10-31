@@ -31,8 +31,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `A` Work plans (build your planned walls). `F1` selects the next idle worker; with none idle, `F1` opens the Marshal's Scroll.
 
 **Wall tool** (armed from the build menu)
-- Click a start, click again for each piece; right-click or `Esc` ends. `Shift` locks 15-degree steps.
-- `B` plans a blueprint (paid later). `O` ring tool: click corners; `Enter` or the first corner closes it.
+- Press and drag to draw a smooth curve; let go to order it. Click a start, click again for each sharp corner; right-click or `Esc` ends. `Shift` keeps lines straight, in 15-degree steps.
+- Bridge: drag bank to bank (gentle curve, no corners); `[` and `]` pick narrow, standard or wide (3, 4 or 5 tiles).
+- `B` plans a blueprint (paid later). `O` ring tool: click corners, or drag round for a smooth loop; `Enter` or the first corner closes it.
 
 **Selected building** (Conquest card)
 - The grid shows what it trains (`Q` first), with prices. A queue holds five; clicking the queue removes the last one.
@@ -128,7 +129,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Drawn walls:** wall tool; built tile by tile; snaps to wall ends, towers and gates within 1.5 tiles.
 - **Gates:** Auto (opens for you and allies), Locked (shut to all), Open (held). Enemy routes treat a shut gate as wall.
 - **Manning:** with foot or archers, right-click your raised (level 2 or 3) wall to man it. Right-click an enemy raised wall to climb ladders; `Ctrl`+right-click sieges it instead.
-- **Bridges** (straight, over water, two tiles wide, 6 Grub a tile, so 12 Grub a step along the span): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are drawn as the same planked timber bridge with lanterns and your team's cloth for now.
+- **Bridges** (drawn bank to bank over water along a gentle curve, three to five tiles wide, 3 Grub a tile; the land remembers every line): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). For now all four are drawn as a plain planked deck with rails along its outer edges; the generated timber bridge pieces come next. Raise a finished bridge with `U` like a wall: level 2 braced piers (3 Grub, 3 s a tile, 600 hp; tier 1), level 3 reinforced piers (4 Grub + 1 Marrow, 4 s a tile, 1000 hp; tier 2). Names: Braced Timber Bridge / Stone-Footed Bridge, Braced Bone / Iron-Shod Causeway, Braced / Anchored Glass Span, Ribbed / Rooted Chitin Span. The AI raises its own bridges when rich.
 - **Field works:** Stakes and Barricades, drawn with the wall tool. Spearmen and archers plant stakes with `C` (about 10 s).
 - **Hidden traps** (one per faction; only its owner sees it): Spike Pit (Clans), Grave Hands (Concord), Shard Mine (Choir), Burrow Nest (Brood).
 - **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32). Bolt and Blast towers are not built.

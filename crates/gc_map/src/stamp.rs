@@ -69,6 +69,13 @@ fn turn_shape(s: Shape, tiles: i32, n: u32) -> Shape {
             b: turn_point(b, tiles, n),
             half_width,
         },
+        Shape::Rect { min, max } => {
+            let (p, q) = (turn_point(min, tiles, n), turn_point(max, tiles, n));
+            Shape::Rect {
+                min: (p.0.min(q.0), p.1.min(q.1)),
+                max: (p.0.max(q.0), p.1.max(q.1)),
+            }
+        }
     }
 }
 
@@ -109,6 +116,13 @@ fn distance(s: Shape, px: i64, py: i64) -> (i64, i64) {
             };
             (isqrt_u64(d2 as u64) as i64, UNIT * i64::from(half_width))
         }
+        Shape::Rect { min, max } => {
+            // How far outside the box, 0 inside it.
+            let ((x0, y0), (x1, y1)) = (scaled(min), scaled(max));
+            let dx = (x0 - px).max(px - x1).max(0);
+            let dy = (y0 - py).max(py - y1).max(0);
+            (isqrt_u64((dx * dx + dy * dy) as u64) as i64, 0)
+        }
     }
 }
 
@@ -136,6 +150,7 @@ fn reach(s: Shape, edge: i32, last: i64) -> (i64, i64, i64, i64) {
             (a.0.max(b.0), a.1.max(b.1)),
             half_width,
         ),
+        Shape::Rect { min, max } => (min, max, 0),
     };
     let pad = i64::from(r.max(0) + edge.max(0)) + 1;
     let lo = |v: i32| ((i64::from(v) - pad) * UNIT).clamp(0, last);
@@ -366,6 +381,28 @@ mod tests {
               objects: [(kind: Start, at: (20, 20), owner: Some(0)), (kind: Heart, at: (64, 64), once: true)])"
         ))
         .unwrap()
+    }
+
+    /// A rectangle covers exactly its tiles, corners and all, and its
+    /// turned copy covers the turned tiles.
+    #[test]
+    fn a_rect_covers_exactly_its_tiles() {
+        let def = MapDef::parse(
+            "MapDef(name: \"Box\", size: Duel, symmetry: Rot2, players: 2, base: 40, water: 24,
+              cover: [(shape: Rect(min: (10, 20), max: (13, 25)), kind: Thicket)],
+              objects: [])",
+        )
+        .unwrap();
+        let map = Map::from_def(&def);
+        let n = map.tiles as i32;
+        let dense = |x: i32, y: i32| map.is_thicket((y * n + x) as usize);
+        for y in 0..n {
+            for x in 0..n {
+                let here = (10..13).contains(&x) && (20..25).contains(&y);
+                let turned = (n - 13..n - 10).contains(&x) && (n - 25..n - 20).contains(&y);
+                assert_eq!(dense(x, y), here || turned, "tile ({x}, {y})");
+            }
+        }
     }
 
     /// Six players under Rot2: the three starts written on one half give
