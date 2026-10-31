@@ -134,6 +134,9 @@ struct Piece {
     grounded: bool,
     /// Whether it is jammed against a bridge's pier on its tile.
     jammed: bool,
+    /// Whether, jammed, the water has risen to a Minor flood or more at
+    /// its pier since it jammed (it may wash free as the water falls).
+    lifted: bool,
     /// Whether it came onto a new tile last tick (it grounds or not
     /// there at once).
     entered: bool,
@@ -183,9 +186,6 @@ pub struct Debris {
     piers: Vec<piers::Pier>,
     /// Per stretch, how much of its outflow its jams hold back, percent.
     choke: Vec<u8>,
-    /// Per stretch, whether the water at its piers was up (Minor or more)
-    /// this second and the last (see `piers::weigh_piers`).
-    up: Vec<u8>,
     /// What the debris did to bridges this tick, for the world to apply.
     blows: Vec<Blow>,
     /// The players (a bit each) whose bridges debris jammed on this tick,
@@ -213,7 +213,7 @@ impl Debris {
             moving: Vec::new(),
             piers: Vec::new(),
             choke: alloc::vec![0; stretches],
-            up: alloc::vec![0; stretches],
+
             blows: Vec::new(),
             jammed_on: 0,
         }
@@ -314,7 +314,8 @@ impl Debris {
             h.u8(u8::from(p.grounded)
                 | u8::from(p.natural) << 1
                 | u8::from(p.entered) << 2
-                | u8::from(p.jammed) << 3);
+                | u8::from(p.jammed) << 3
+                | u8::from(p.lifted) << 4);
             h.u32(p.born);
             h.u8(p.owner);
             h.u8(p.struck_next);
@@ -329,9 +330,6 @@ impl Debris {
         }
         for &c in &self.choke {
             h.u8(c);
-        }
-        for &u in &self.up {
-            h.u8(u);
         }
     }
 }
@@ -349,6 +347,7 @@ impl Piece {
             pace: Fx::ZERO,
             grounded: false,
             jammed: false,
+            lifted: false,
             entered: false,
             natural,
             owner: NOBODY,
@@ -874,7 +873,7 @@ impl Rivers {
                     .ceil_int()
                     .max(1);
                 regs.take_damage(i, hp as u32);
-                struck |= 1u8.checked_shl(u32::from(regs.owner[i])).unwrap_or(0);
+                struck |= crate::events::owner_bit(regs.owner[i]);
                 if regs.models[i] == 0 {
                     // Gone: no later piece strikes it.
                     break;

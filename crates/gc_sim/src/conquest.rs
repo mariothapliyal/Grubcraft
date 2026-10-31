@@ -663,19 +663,17 @@ impl Conquest {
 
     /// Worker slot `r` clears what grows on `area` (see
     /// [`crate::clearing`]). Refused for a unit that isn't a worker, and
-    /// for an area with nothing to clear.
+    /// for an area with nothing to clear (checked by the caller).
     pub(crate) fn clear(
         &mut self,
         regs: &mut Regiments,
         r: usize,
         area: [i32; 4],
-        terrain: &Terrain,
         work: crate::clearing::Work,
-        jammed: bool,
     ) -> bool {
         let unit = self.unit(regs.unit[r]);
         let fells = work != crate::clearing::Work::Fell || unit.clearing.fells;
-        if !unit.worker || !fells || !(jammed || overgrown(terrain, area)) {
+        if !unit.worker || !fells {
             return false;
         }
         self.stop_work(r);

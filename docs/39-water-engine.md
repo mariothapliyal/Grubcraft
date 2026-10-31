@@ -323,7 +323,7 @@ Built 2026-10-31.
 Built 2026-10-31.
 
 - **Clearing a jam:** the Clear (or Fell in) order takes jams too: drag over the river tiles just above a bridge where debris lies jammed. A worker on the deck or the bank beside it pulls the pieces out one at a time, 4 seconds a mass point (`UNJAM_SECONDS`, at the match's tempo), and each piece dragged ashore pays 1 Grub of timber (`UNJAM_GRUB`). Overgrown ground in the area is cleared first. An area with nothing growing and no jam is refused as before (`World::clearable`).
-- **Jams hold in steady water.** A jam of 3 mass or less washes free only when the water at its stretch falls back below a Minor flood after being up (stage 4a let small jams go every second in steady water, so rafts sent one at a time could never build a jam). Per stretch, whether the water was up this second and the last is kept (hashed).
+- **Jams hold in steady water.** A jam of 3 mass or less washes free only when the water at its stretch falls back below a Minor flood after being up (stage 4a let small jams go every second in steady water, so rafts sent one at a time could never build a jam). Each jammed piece remembers whether the water at its pier has been up since it jammed (hashed).
 - **News:** when debris jams on a player's bridge they are told (`Event::BridgeJammed`), at most once every 30 seconds: "Debris has jammed against one of our bridges: send workers to Clear it before the river rises".
 - **The burst:** a jam holds back its stretch's outflow, so the water there stands higher; when the jam lets go (cleared, washed free or its tile falls) the held water runs on down at once. No separate burst front is added.
 - **Formats:** `SIM_VERSION` 79; no new commands. The river Conquest golden and the river storm move.

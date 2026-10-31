@@ -351,6 +351,7 @@ impl Clearing {
     ) -> bool {
         let side = terrain.growth_side();
         let dump = job.work == Work::Dump;
+        let jams = rivers.any_jam();
         let left = |t: u32| {
             if dump {
                 // Until the raft goes in, when the order ends.
@@ -361,7 +362,7 @@ impl Clearing {
                 |d: &Done| matches!(*d, Done::Tile { x: dx, y: dy, .. } if (dx, dy) == (x, y));
             // A jam lying in the river is cleared a piece at a time.
             terrain.growth(x, y) != Growth::Open && !self.done.iter().any(cleared)
-                || rivers.jam_piece_at(x, y).is_some()
+                || jams && rivers.jam_piece_at(x, y).is_some()
         };
         if job.at.is_some_and(|t| !left(t)) {
             job.next();
@@ -415,7 +416,7 @@ impl Clearing {
         let growth = terrain.growth(x, y);
         // Pulling a piece out of a jam (docs/39 section 4), once the
         // tile's own growth is gone.
-        let jam = (growth == Growth::Open)
+        let jam = (jams && growth == Growth::Open)
             .then(|| rivers.jam_piece_at(x, y))
             .flatten();
         // Felling a bank tile into the river: woods and thicket only.

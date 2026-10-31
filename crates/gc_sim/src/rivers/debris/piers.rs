@@ -46,10 +46,7 @@ const SWEPT: u32 = 10_000;
 /// A jam this heavy or lighter washes free once the water falls back
 /// below a Minor flood (it holds in steady water).
 pub const WASH_FREE_MASS: u8 = 3;
-/// A stretch's high water (Minor or more at a pier) this second and the
-/// last.
-const UP_NOW: u8 = 2;
-const UP_BEFORE: u8 = 1;
+
 /// Seconds workers take to pull a piece out of a jam, per mass point
 /// (the Clear order, at Standard tempo).
 pub const UNJAM_SECONDS: u32 = 4;
@@ -154,7 +151,7 @@ impl Rivers {
                 return false;
             }
             p.jammed = true;
-            self.debris.jammed_on |= 1u8.checked_shl(u32::from(pier.owner)).unwrap_or(0);
+            self.debris.jammed_on |= crate::events::owner_bit(pier.owner);
             p.next = p.tile;
             p.tile = from;
             p.along = JAMMED_ALONG;
@@ -177,10 +174,6 @@ impl Rivers {
     /// strains hurt piers and catastrophic water sweeps weak spans away.
     pub(super) fn weigh_piers(&mut self, lift: i32) {
         self.debris.choke.fill(0);
-        // Last second's high water becomes what was.
-        for u in &mut self.debris.up {
-            *u = u8::from(*u & UP_NOW != 0);
-        }
         for k in 0..self.debris.piers.len() {
             let pier = self.debris.piers[k];
             let i = pier.tile;
@@ -188,17 +181,12 @@ impl Rivers {
             let rise = self.water_on(lift, i as usize);
             let band = (rise >= i32::from(Band::Minor.crest()))
                 .then(|| Band::of(u16::try_from(rise).unwrap_or(u16::MAX)));
-            let was_up = self.debris.up.get(s).is_some_and(|&u| u & UP_BEFORE != 0);
-            if band.is_some()
-                && let Some(u) = self.debris.up.get_mut(s)
-            {
-                *u |= UP_NOW;
-            }
             let jam = self.jam_on(i);
             if jam > 0 {
+                let lifted = self.lift_jam(i, band.is_some());
                 match band {
                     // The water falling back loosens a small jam.
-                    None if was_up && jam <= WASH_FREE_MASS => self.wash_free(i),
+                    None if lifted && jam <= WASH_FREE_MASS => self.wash_free(i),
                     None => {}
                     Some(band) => {
                         let push = PUSH_PER_TEN_THOUSAND
@@ -249,11 +237,14 @@ impl Rivers {
     /// Whether a jam lies on any tile of `area` (north-west tile, width,
     /// depth).
     pub(crate) fn jammed_in(&self, [x, y, w, d]: [i32; 4]) -> bool {
-        let n = self.side as u32;
-        (self.debris.pieces.iter().flatten()).any(|p| {
-            let (px, py) = ((p.tile % n) as i32, (p.tile / n) as i32);
-            p.jammed && (x..x + w).contains(&px) && (y..y + d).contains(&py)
-        })
+        self.any_jam()
+            && (y..y + d).any(|ty| (x..x + w).any(|tx| self.jam_piece_at(tx, ty).is_some()))
+    }
+
+    /// Whether any piece is jammed anywhere (so a worker's area is worth
+    /// searching for jams).
+    pub(crate) fn any_jam(&self) -> bool {
+        (self.debris.pieces.iter().flatten()).any(|p| p.jammed)
     }
 
     /// Workers pull a piece out of the jam lying on tile `(x, y)` and drag
@@ -275,11 +266,25 @@ impl Rivers {
         core::mem::take(&mut self.debris.jammed_on)
     }
 
+    /// Marks the jam on the pier on tile `i` lifted if the water is `up`
+    /// there; whether it has been since it jammed.
+    fn lift_jam(&mut self, i: u32, up: bool) -> bool {
+        let mut lifted = false;
+        for p in self.debris.pieces.iter_mut().flatten() {
+            if p.jammed && p.next == i {
+                p.lifted |= up;
+                lifted |= p.lifted;
+            }
+        }
+        lifted
+    }
+
     /// The jam on the pier on tile `i` breaks up and floats on, past it.
     fn wash_free(&mut self, i: u32) {
         for p in self.debris.pieces.iter_mut().flatten() {
             if p.jammed && p.next == i {
                 p.jammed = false;
+                p.lifted = false;
                 p.tile = i;
                 p.along = gc_fixed::Fx::ZERO;
                 p.entered = false;

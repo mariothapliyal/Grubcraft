@@ -166,6 +166,12 @@ pub enum Event {
     Town { player: PlayerId, walled: bool },
 }
 
+/// The bit player `p` has in an owners mask (`DebrisStruck`,
+/// `BridgeJammed`).
+pub fn owner_bit(p: PlayerId) -> u8 {
+    1u8.checked_shl(u32::from(p)).unwrap_or(0)
+}
+
 /// Each regiment slot as it stood before the tick.
 #[derive(Clone, Copy)]
 struct Before {

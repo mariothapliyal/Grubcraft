@@ -2464,11 +2464,10 @@ impl World {
                     Command::Fell { .. } => clearing::Work::Fell,
                     _ => clearing::Work::Clear,
                 };
-                // A jam in the river can be cleared too (docs/39 section 4).
-                let jammed = self.flood.rivers.jammed_in(area);
+                let clearable = self.clearable(area);
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
-                    (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) => {
-                        c.clear(&mut self.regiments, r, area, &self.terrain, work, jammed)
+                    (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) && clearable => {
+                        c.clear(&mut self.regiments, r, area, work)
                     }
                     _ => false,
                 }
