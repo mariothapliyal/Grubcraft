@@ -153,6 +153,7 @@ pub(crate) const DIRS: [(i32, i32); 8] = [
 
 #[path = "nav_reblock.rs"]
 mod reblock;
+use reblock::Areas;
 pub(crate) use reblock::Door;
 
 /// The walkable map and its portal graph. Built when the match starts, and
@@ -195,7 +196,7 @@ struct Grid {
     /// [`CLEAR_CAP`].
     clear: Vec<u8>,
     /// Connected area of each open cell (1, 2, ...); 0 for cells not open.
-    area: Vec<u32>,
+    area: Areas,
     /// The highest area number given out so far (areas brought up to date
     /// near a change take numbers above it).
     areas: u32,
@@ -539,7 +540,7 @@ impl Grid {
                 return;
             }
             let cell = self.idx(x, y);
-            if area.is_some_and(|a| self.area[cell as usize] != a) {
+            if area.is_some_and(|a| self.area.get(cell as usize) != a) {
                 return;
             }
             let d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
@@ -574,7 +575,7 @@ impl Grid {
         }
         let r = i32::from(berth - have);
         let (cx, cy) = self.xy(c);
-        let area = self.area[c as usize];
+        let area = self.area.get(c as usize);
         // (distance squared, cell) of the nearest so far.
         let mut best: Option<(i32, u32)> = None;
         for y in cy - r..=cy + r {
@@ -587,7 +588,7 @@ impl Grid {
                 let d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
                 if self.clear[m as usize] >= berth
                     && best.is_none_or(|(near, _)| d < near)
-                    && self.area[m as usize] == area
+                    && self.area.get(m as usize) == area
                     && self.line_open(c, m, work)
                 {
                     best = Some((d, m));
@@ -1807,10 +1808,10 @@ fn find(
         lead = true;
     }
     // A goal on blocked ground or cut off from the start: go as near as we can.
-    let area = grid.area[start as usize];
+    let area = grid.area.get(start as usize);
     let mut goal = grid.cell_at(to);
     let mut goal_point = to;
-    if !grid.open_cell(goal) || grid.area[goal as usize] != area {
+    if !grid.open_cell(goal) || grid.area.get(goal as usize) != area {
         goal = grid.nearest_open(goal, Some(area), SNAP_GOAL, &mut s.work)?;
         goal_point = grid.centre(goal);
     }
@@ -2185,7 +2186,7 @@ impl Grid {
             bridged: Vec::new(),
             frozen: false,
             clear: vec![0; n],
-            area: vec![0; n],
+            area: Areas::new(n),
             areas: 0,
             sectors: (side + SECTOR - 1) / SECTOR,
             node_cell: Vec::new(),
@@ -2415,13 +2416,13 @@ impl Grid {
         }
         for (a, &u) in nodes.iter().enumerate() {
             let cell = self.node_cell[u as usize];
-            let area = self.area[cell as usize];
+            let area = self.area.get(cell as usize);
             wanted.clear();
             wanted.extend(
                 nodes[a + 1..]
                     .iter()
                     .map(|&v| self.node_cell[v as usize])
-                    .filter(|&c| self.area[c as usize] == area),
+                    .filter(|&c| self.area.get(c as usize) == area),
             );
             if wanted.is_empty() {
                 continue;
@@ -2429,7 +2430,7 @@ impl Grid {
             search.reach(self, sec as u32, cell, &wanted);
             for (b, &v) in nodes.iter().enumerate().skip(a + 1) {
                 let to = self.node_cell[v as usize];
-                if self.area[to as usize] != area {
+                if self.area.get(to as usize) != area {
                     continue;
                 }
                 if let Some(c) = search.cost_to(self, sec as u32, to) {

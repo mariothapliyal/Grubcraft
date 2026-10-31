@@ -79,7 +79,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 250 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 350 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 
@@ -149,6 +149,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Reading the rivers [docs/39]:** on grown maps every river has a name ("the Brackwater"). The top bar shows the worst river you can see: up (wading in it is a quarter slower), in flood (its fords shut) or bursting its banks, and whether it is rising or falling. When you see a river rising in flood upstream, the river watch tells you when its crest reaches a ford ("The Brackwater is rising upriver: its crest reaches a ford in about 40 s"). The river's water is drawn as high as it stands.
 - **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a flood front down a river at 6 tiles a second; each ford shuts as it arrives (upper fords first) and opens once the water falls. Sizes: Minor (no ford shuts; 35 in 100), Flood (45), Major (16), Catastrophic (4); wet ground and rain on spring snow make them bigger, a dry summer smaller. Warnings: 8 s before the first ford ("A flash flood is coming down the river"); a Major is told to everyone 15 s ahead and a Catastrophic one 30 s ahead. Troops in a ford the front shuts are swept 10 tiles downstream and 30% drown.
 - **Currents:** wading troops drift downstream; going upstream is slower.
+- **Trails and shores [docs/41 step 3]:** grown maps have worn trails between the bases, villages, camps and standing stones. They are open ground and cross rivers at the fords. River bends have gravel bars and sunny lake shores have sand (both open). Shaded lake shores have reed beds, which are tall grass to hide in.
 - **Clearing** (`S`): scrub 3 s, woods 8 s (3 Grub of timber), thicket 15 s (5 Grub).
 
 ## 7. Game modes and how to start them [docs/06-game-modes.md, docs/08-ui-ux.md, crates/gc_game/src/main.rs]
