@@ -289,6 +289,15 @@ pub fn facing(dir: Vec2, out: Option<Vec2>) -> Vec2 {
     }
 }
 
+/// The way a kit piece along `dir` fronts: `out`, or the fixed way a
+/// line with no fort faces (see [`facing`]).
+pub fn front(dir: Vec2, out: Option<Vec2>) -> Vec2 {
+    out.unwrap_or_else(|| {
+        let f = facing(dir, None);
+        Vec2::new(f.y, -f.x)
+    })
+}
+
 /// Of `dir` and its reverse, the one that puts a piece's +x (its front,
 /// `(f.y, -f.x)`) on the `out` side.
 fn facing_out(dir: Vec2, out: Vec2) -> Vec2 {

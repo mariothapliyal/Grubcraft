@@ -74,18 +74,7 @@ impl Drag {
     }
 }
 
-/// `points` thinned to at most `max`, evenly, keeping the first and last.
-pub fn thin(points: &[Half], max: usize) -> Vec<Half> {
-    if points.len() <= max || max < 2 {
-        return points.to_vec();
-    }
-    let last = points.len() - 1;
-    (0..max)
-        .map(|k| points[(k * last + (max - 1) / 2) / (max - 1)])
-        .collect()
-}
-
-/// As [`thin`], but every point `keep` marks stays (with its mark), and
+/// `points` thinned to at most `max`, keeping the first and last: every point `keep` marks stays (with its mark), and
 /// each stretch between two kept points keeps a share of the room left in
 /// proportion to its length, evenly spread. With more kept points than
 /// room, the kept ones are thinned too. The first and last are taken as
@@ -99,13 +88,15 @@ fn thin_keeping(points: &[Half], keep: &[bool], max: usize) -> (Vec<Half>, Vec<b
         .filter(|&i| keep[i] || i == 0 || i + 1 == n)
         .collect();
     if kept.len() >= max {
-        let only: Vec<Half> = kept.iter().map(|&i| points[i]).collect();
-        let pts = thin(&only, max);
-        let marks = pts
-            .iter()
-            .map(|p| keep[points.iter().position(|q| q == p).unwrap_or(0)])
+        // Thinned by index, so a point the path passes twice keeps its own mark.
+        let last = kept.len() - 1;
+        let idx: Vec<usize> = (0..max)
+            .map(|k| kept[(k * last + (max - 1) / 2) / (max - 1)])
             .collect();
-        return (pts, marks);
+        return (
+            idx.iter().map(|&i| points[i]).collect(),
+            idx.iter().map(|&i| keep[i]).collect(),
+        );
     }
     // Share the room out by each stretch's inner points, largest remainders first.
     let room = max - kept.len();
@@ -148,6 +139,10 @@ fn near(a: Half, b: Half) -> bool {
 /// takes a sharp corner there.
 pub const CORNER_DEGREES: f32 = 40.0;
 
+/// The turns a wall drag takes corners at, sharpest first, until it bends
+/// gently everywhere else: the last puts one at every point.
+const CORNER_STEPS: [f32; 4] = [CORNER_DEGREES, 25.0, 12.0, -1.0];
+
 /// How sharply the line through `a`, `b`, `c` turns at `b`, in degrees.
 fn turn(a: Half, b: Half, c: Half) -> f32 {
     let v = |p: Half, q: Half| Vec2::new(f32::from(q.0 - p.0), f32::from(q.1 - p.1));
@@ -187,42 +182,52 @@ pub fn path(raw: &[Half], end: Half, closed: bool, corners: bool) -> Option<Draw
     }
     let n = pts.len();
     // How sharply it turns at each point (a loop wraps round).
-    let turns: Vec<f32> = (0..n)
+    let mut turns: Vec<f32> = (0..n)
         .map(|i| match (i, closed) {
             (0, false) => 0.0,
             (i, false) if i + 1 == n => 0.0,
             (i, _) => turn(pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]),
         })
         .collect();
-    let mut sharp: Vec<bool> = (turns.iter())
-        .map(|&t| corners && t > CORNER_DEGREES)
-        .collect();
+    // A loop starts at its gentlest point: its start must be smooth.
     if closed {
-        // A loop starts at its gentlest point: its start must be smooth.
         let start = (0..n)
             .min_by(|&a, &b| turns[a].total_cmp(&turns[b]))
             .unwrap_or(0);
         pts.rotate_left(start);
-        sharp.rotate_left(start);
-        sharp[0] = false;
-    } else {
-        sharp[0] = true;
-        sharp[n - 1] = true;
+        turns.rotate_left(start);
     }
-    let room = if closed { MAX_POINTS - 1 } else { MAX_POINTS };
-    let (mut pts, mut sharp) = thin_keeping(&pts, &sharp, room);
-    if closed {
-        sharp[0] = false;
-        pts.push(pts[0]);
-        sharp.push(false);
+    // The path with a corner wherever it turns more than `limit` degrees.
+    let with_corners = |limit: f32| {
+        let mut sharp: Vec<bool> = turns.iter().map(|&t| t > limit).collect();
+        if closed {
+            sharp[0] = false;
+        } else {
+            sharp[0] = true;
+            sharp[n - 1] = true;
+        }
+        let room = if closed { MAX_POINTS - 1 } else { MAX_POINTS };
+        let (mut pts, mut sharp) = thin_keeping(&pts, &sharp, room);
+        if closed {
+            sharp[0] = false;
+            pts.push(pts[0]);
+            sharp.push(false);
+        }
+        DrawnPath::new(&pts, |k| sharp[k])
+    };
+    if !corners {
+        return with_corners(f32::INFINITY);
     }
-    let made = DrawnPath::new(&pts, |k| sharp[k])?;
-    if !corners || made.bends_gently() {
-        return Some(made);
+    // A wall: corners at its sharp turns, then at gentler ones while it
+    // still bends too sharply somewhere, and at last at every point.
+    let mut made = None;
+    for limit in CORNER_STEPS {
+        made = with_corners(limit);
+        if made.is_some_and(|p| p.bends_gently()) {
+            return made;
+        }
     }
-    // Still too sharp somewhere: straight pieces from point to point.
-    let last = pts.len() - 1;
-    DrawnPath::new(&pts, |k| !(closed && (k == 0 || k == last)))
+    made
 }
 
 #[cfg(test)]
@@ -280,13 +285,20 @@ mod tests {
     }
 
     #[test]
-    fn thinning_keeps_both_ends_and_order() {
+    fn thinning_keeps_both_ends_order_and_marked_points() {
         let pts: Vec<Half> = (0..30).map(|k| (k, 0)).collect();
-        let t = thin(&pts, 12);
+        let mut keep = vec![false; 30];
+        keep[17] = true;
+        let (t, marks) = thin_keeping(&pts, &keep, 12);
         assert_eq!(t.len(), 12);
         assert_eq!((t[0], t[11]), (pts[0], pts[29]));
         assert!(t.windows(2).all(|w| w[0].0 < w[1].0));
-        assert_eq!(thin(&pts[..5], 12), pts[..5].to_vec());
+        let k = t
+            .iter()
+            .position(|&p| p == (17, 0))
+            .expect("the marked point stays");
+        assert!(marks[k]);
+        assert_eq!(thin_keeping(&pts[..5], &keep[..5], 12).0, pts[..5].to_vec());
     }
 
     #[test]

@@ -3481,32 +3481,19 @@ impl Running {
         let Some(structures) = self.world.structures() else {
             return Vec::new();
         };
-        let art = self.art.as_ref();
-        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
-        let mut halls = None;
+        let looks = self.art.as_ref().map(|a| &a.looks);
+        let mut sides = buildings::WallSides::new(&self.world, &self.buildings);
         (self.world.wall_tiles(h).iter())
             .filter_map(|&t| structures.get(t))
-            .map(|s| {
-                let mut slot = buildings::wall_slot(&self.buildings, &s);
-                let kit = art.and_then(|a| a.looks.wall_kit_for(s.building).map(|k| (a, k)));
-                let piece = s.line.and_then(|line| buildings::wall_piece(line, s.tile));
-                if let (Some((art, kit)), Some(piece)) = (kit, piece) {
-                    if kit.has_walkway() {
-                        let halls = halls.get_or_insert_with(|| {
-                            buildings::halls(structures, &self.buildings, shown)
-                        });
-                        let out = buildings::wall_out(halls, s.owner, piece.centre, piece.dir);
-                        let f = wall_kit::facing(piece.dir, out);
-                        let front = Vec2::new(f.y, -f.x);
-                        slot.centre = piece.centre - front * wall_kit::WALKWAY_BACK;
-                        slot.lift = wall_kit::WALKWAY_DECK;
-                    } else {
-                        slot.lift = art.looks.top(kit.run());
-                    }
-                }
-                slot
-            })
+            .map(|s| buildings::manned_slot(&self.buildings, looks, &mut sides, &s))
             .collect()
+    }
+
+    /// The top of kit wall tile `s`'s runs, where ladders against it reach
+    /// (`None` for any other building: its slab's stand height).
+    fn kit_top(&self, s: &StructureView) -> Option<f32> {
+        let art = self.art.as_ref()?;
+        Some(art.looks.top(art.looks.wall_kit_for(s.building)?.run()))
     }
 
     /// How far up a regiment's marks sit: the wall top (or deck) it stands
@@ -3828,7 +3815,12 @@ impl Running {
                 .then(|| buildings::ladder_props(&self.world, &self.buildings, r.handle, pos))
                 .flatten();
             if let Some((_, _, top)) = ladder {
-                self.puppets.stand_on_ladder(r.handle, top);
+                // On a kit wall, the head of the ladder is its runs' top.
+                let kit_top = (self.world.wall_tiles(r.handle).first())
+                    .and_then(|&t| self.world.structures()?.get(t))
+                    .and_then(|s| self.kit_top(&s));
+                self.puppets
+                    .stand_on_ladder(r.handle, kit_top.unwrap_or(top));
             } else if r.on_wall
                 || self.puppets.on_wall(r.handle)
                 || self.puppets.on_ladder(r.handle)
@@ -8086,12 +8078,8 @@ impl Running {
             }
             walled.sort_unstable();
         }
-        // What kit walls face away from.
-        let halls = if walled.is_empty() {
-            Vec::new()
-        } else {
-            buildings::halls(structures, b, shown)
-        };
+        // Which side of each kit wall is outside.
+        let mut sides = buildings::WallSides::new(&self.world, b);
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -8109,17 +8097,13 @@ impl Running {
                 };
                 kit.pieces(&tile, &mut pieces);
             } else if let Some(kit) = art.looks.wall_kit_for(s.building) {
-                let piece = s.line.and_then(|line| buildings::wall_piece(line, s.tile));
-                let (centre, dir, len) = piece
-                    .map_or((buildings::centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
-                        (p.centre, p.dir, p.len)
-                    });
+                let (centre, dir, len) = buildings::kit_piece(&s);
                 let tile = wall_kit::Tile {
                     s: &s,
                     centre,
                     dir,
                     len,
-                    out: buildings::wall_out(&halls, s.owner, centre, dir),
+                    out: sides.out(&s, centre, dir),
                     walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
                 };
                 kit.pieces(&tile, &mut pieces);
