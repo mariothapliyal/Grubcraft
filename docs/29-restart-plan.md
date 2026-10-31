@@ -86,7 +86,7 @@ Mario (2026-10-30), for the restart: bridges must be **truly dynamic**. Wood onl
 - Bumps SIM_VERSION, FORMAT and PROTOCOL; goldens re-blessed.
 
 **How it looks (generation from a kit)**
-- **The kit** (Sonnet 5.5 alone, 3D, one timber material with the stronger bake): bank abutments (log cribs that meet the ground), trestle piers in three heights, stringer beams, plank modules in a few lengths and wear levels, rail posts, rails, rope, lantern posts, team cloth, and burnt and broken versions of the deck and rails.
+- **The kit** (Sonnet 5.5 alone, 3D, one timber material with the stronger bake): bank abutments (log cribs that meet the ground), trestle piers in three heights, stringer beams, plank modules in a few lengths and wear levels, rail posts, rails, rope, lantern posts, team cloth, and burnt and broken versions of the deck and rails. *Built 2026-10-31: 23 pieces (three deck patterns plus broken and burnt, stringer, rail post, timber and rope rails, lantern post, log-crib abutment, piers at three levels and three heights, stone cutwaters), laid tile by tile by `gc_game::bridge_kit`: piers reach the river bed, the look follows the bridge level (see docs/26, Look).*
 - **The generator** walks the curve: a pier every few metres, its height from the water depth under it (tall in the channel, short in shallows, none on the banks); planks laid across the direction of travel with small seeded changes in length, angle and colour; rails and rope following the curve along both outer edges; a slight rise over the middle of long spans; abutments sunk into the banks at the ground height. Seeded from the bridge's id, so it is the same on every machine.
 - Pieces appear in order as tiles finish, and burn or fall with the tile they sit on.
 

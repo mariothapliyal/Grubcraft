@@ -27,8 +27,8 @@ const LINE_MODELS: u16 = 9;
 /// (`gc_sim::drawn::BRIDGE_WIDTHS`).
 const BRIDGE_WIDTH: f32 = gc_sim::drawn::BRIDGE_WIDTHS[0] as f32;
 /// How many one-tile bridge models lie side by side in the measure of a
-/// model's deck (two lanes, each with its rail on the outside). Bridges
-/// show no model for now (`buildings::BRIDGE_MODELS`).
+/// model's deck (two lanes, each with its rail on the outside). Drawn
+/// bridges are built from the timber kit's pieces instead (`bridge_kit`).
 const BRIDGE_LANES: f32 = 2.0;
 /// The height band a model's passage must be open in, above its floor or
 /// deck, in tiles: from the ankles to the chest of a man.
