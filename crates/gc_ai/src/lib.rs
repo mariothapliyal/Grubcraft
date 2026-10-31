@@ -157,6 +157,10 @@ pub struct Mind {
     live: bool,
     /// When it next looks for woods to burn on an enemy (see [`firing`]).
     next_burn: u32,
+    /// The enemy hidden in woods it is smoking out, and until when; and
+    /// when it may start on another.
+    smoking: Option<(gc_sim::RegimentHandle, u32)>,
+    next_smoke: u32,
     /// Its economy and army, in Conquest.
     realm: Option<conquest::Realm>,
 }
@@ -219,6 +223,8 @@ impl Mind {
             readings: Vec::new(),
             live: false,
             next_burn: 0,
+            smoking: None,
+            next_smoke: 0,
             realm: None,
         }
     }
@@ -357,12 +363,41 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             self.captain.think(&mut ctx, &mut self.wants);
+            self.smoke_out(view, world);
             flee_fire(view, world, self.party, &mut self.wants);
             self.orders.decide(view, &mut self.wants);
         }
         self.torches(view);
         self.fire_woods(view, world);
         self.orders.release(view.tick, out);
+    }
+
+    /// Smoke out an enemy hidden in woods rather than go in after it (see
+    /// [`firing::smoke_out`]): for [`firing::SMOKE_TICKS`] at most, then
+    /// not again for as long.
+    fn smoke_out(&mut self, view: &Perception, world: &World) {
+        if !self.knobs.read_ground {
+            return;
+        }
+        let keep = (self.smoking).and_then(|(h, until)| (view.tick < until).then_some(h));
+        if keep.is_none() && self.smoking.take().is_some() {
+            self.next_smoke = view.tick + firing::SMOKE_TICKS;
+        }
+        if keep.is_none() && view.tick < self.next_smoke {
+            return;
+        }
+        let Some(on) = firing::quarry(view, world, self.party, keep) else {
+            self.smoking = None;
+            return;
+        };
+        if keep != Some(on) {
+            self.smoking = Some((on, view.tick + firing::SMOKE_TICKS));
+            self.journal.note(
+                view.tick,
+                "Smokes out an enemy hidden in the woods".to_string(),
+            );
+        }
+        firing::smoke_out(view, world, self.party, on, &mut self.wants);
     }
 
     /// Every couple of seconds, after its other orders: set alight woods an

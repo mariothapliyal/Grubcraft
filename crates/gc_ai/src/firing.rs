@@ -8,11 +8,12 @@ use gc_sim::fire::burn_ticks;
 use gc_sim::{PlayerId, RegimentHandle, World};
 use glam::Vec2;
 
+use crate::orders::{Act, Want};
 use crate::perception::{Perception, Seen, segment_distance};
 
 /// How far off an enemy in the woods may be, tiles: the woods from the
 /// burner's edge to it must be one wood all the way.
-const REACH: f32 = 12.0;
+const REACH: f32 = 16.0;
 /// Tiles beyond a regiment's edge it lights the woods from (the sim's
 /// own reach for [`gc_sim::Command::Burn`] is one tile).
 const TINDER: f32 = 1.0;
@@ -139,6 +140,160 @@ pub fn pick(view: &Perception, world: &World, party: PlayerId) -> Option<Regimen
         }
     }
     best.map(|(_, b)| b)
+}
+
+/// How far off, tiles, an enemy hidden in the woods may be for it to
+/// smoke it out rather than go in after it.
+const SMOKE_REACH: f32 = 40.0;
+/// How long it holds its troops out of woods it means to burn, ticks:
+/// long enough to bring a burner to the edge and for the fire to take.
+pub const SMOKE_TICKS: u32 = 45 * gc_sim::TICKS_PER_SECOND;
+/// The priority of its smoking-out orders: above the battle's own, below
+/// marching out of a fire.
+const SMOKE_PRIORITY: u8 = u8::MAX - 1;
+
+/// An enemy hidden in woods that `party` could smoke out: in burnable
+/// ground, within [`SMOKE_REACH`] of one of its regiments, with none of its
+/// own side fighting it. The nearest such, or `keep` while it still is one.
+pub fn quarry(
+    view: &Perception,
+    world: &World,
+    party: PlayerId,
+    keep: Option<RegimentHandle>,
+) -> Option<RegimentHandle> {
+    if !world.weather_lets_fire() || world.terrain().growth_side() == 0 {
+        return None;
+    }
+    let ours: Vec<&Seen> = (view.regiments.iter())
+        .filter(|r| r.owner == party && r.models > 0 && !r.broken())
+        .collect();
+    let friends: Vec<&Seen> = (view.regiments.iter())
+        .filter(|f| !view.hostile(party, f.owner))
+        .collect();
+    let mut best: Option<(f32, RegimentHandle)> = None;
+    for e in (view.regiments.iter().chain(view.remembered()))
+        .filter(|e| view.hostile(party, e.owner) && e.models > 0)
+        .filter(|e| burnable(world, e.pos))
+    {
+        let fought = friends
+            .iter()
+            .any(|f| f.engaged && f.pos.distance(e.pos) < FRIEND_NEAR + f.radius() + e.radius());
+        if fought {
+            continue;
+        }
+        let Some((d, r)) =
+            (ours.iter().map(|r| (r.pos.distance(e.pos), r))).min_by(|a, b| a.0.total_cmp(&b.0))
+        else {
+            continue;
+        };
+        // Near enough, and no deeper in the woods than a fire set from
+        // their edge on that side reaches.
+        let toward = (r.pos - e.pos).normalize_or_zero();
+        if d > SMOKE_REACH || walk_out(world, e.pos, toward).distance(e.pos) > REACH - 4.0 {
+            continue;
+        }
+        let d = if Some(e.handle) == keep { -1.0 } else { d };
+        if best.is_none_or(|(b, _)| d < b) {
+            best = Some((d, e.handle));
+        }
+    }
+    best.map(|(_, h)| h)
+}
+
+/// Smoke out enemy `on`, hidden in the woods: rather than send its troops
+/// in after it, `party` keeps them out of those woods (the ones in there
+/// and free march out, the rest stop short of them) and brings the nearest
+/// regiment on open ground to the woods' edge facing it, so that
+/// [`pick`] can set the fire. Rewrites `wants` to match.
+pub fn smoke_out(
+    view: &Perception,
+    world: &World,
+    party: PlayerId,
+    on: RegimentHandle,
+    wants: &mut Vec<Want>,
+) {
+    let Some(e) = (view.regiments.iter().chain(view.remembered())).find(|e| e.handle == on) else {
+        return;
+    };
+    let near = |p: Vec2| burnable(world, p) && p.distance(e.pos) < FRIEND_CLEAR * 2.0;
+    let target_of = |w: &Want| match w.act {
+        Act::Move { to, .. } => Some(to),
+        Act::Attack(h) => (view.regiments.iter().chain(view.remembered()))
+            .find(|x| x.handle == h)
+            .map(|x| x.pos),
+        _ => None,
+    };
+    let mut burner: Option<(f32, &Seen, Vec2)> = None;
+    for r in view
+        .regiments
+        .iter()
+        .filter(|r| r.owner == party && r.models > 0)
+    {
+        if r.engaged || r.broken() {
+            continue;
+        }
+        let out_of = |w: &Want| w.regiment == r.handle;
+        if burnable(world, r.pos) {
+            // In the woods: out the way it is nearest the edge, away from
+            // the enemy.
+            if r.pos.distance(e.pos) < FRIEND_CLEAR * 2.0 + r.radius() {
+                let away = (r.pos - e.pos).normalize_or(-r.facing);
+                let edge = walk_out(world, r.pos, away);
+                wants.retain(|w| !out_of(w));
+                wants.push(hold(r.handle, edge + away * (r.radius() + 1.0), None));
+            }
+            continue;
+        }
+        // On open ground: never on into those woods.
+        if wants
+            .iter()
+            .any(|w| out_of(w) && target_of(w).is_some_and(near))
+        {
+            wants.retain(|w| !out_of(w));
+            wants.push(hold(r.handle, r.pos, None));
+        }
+        // The burner: the nearest that stands back from the woods' edge on
+        // the way to the enemy.
+        let Some(way) = (r.pos - e.pos).try_normalize() else {
+            continue;
+        };
+        let edge = walk_out(world, e.pos, way);
+        // Its front at the trees (orders count a march done 2 tiles short).
+        let stand = edge + way * (r.half_extent(way) - 1.0).max(0.6);
+        let d = r.pos.distance(stand);
+        if burner.is_none_or(|(b, _, _)| d < b) {
+            burner = Some((d, r, stand));
+        }
+    }
+    if let Some((d, r, stand)) = burner
+        && d > 1.5
+    {
+        wants.retain(|w| w.regiment != r.handle);
+        wants.push(hold(r.handle, stand, (e.pos - stand).try_normalize()));
+    }
+}
+
+/// From `from`, the first point on open ground walking `dir` in half
+/// tiles (at most [`SMOKE_REACH`] tiles out).
+fn walk_out(world: &World, from: Vec2, dir: Vec2) -> Vec2 {
+    (1..=(SMOKE_REACH * 2.0) as i32)
+        .map(|k| from + dir * (k as f32 * 0.5))
+        .find(|&p| !burnable(world, p))
+        .unwrap_or(from + dir * SMOKE_REACH)
+}
+
+fn hold(regiment: RegimentHandle, to: Vec2, facing: Option<Vec2>) -> Want {
+    Want {
+        regiment,
+        act: Act::Move {
+            to,
+            facing,
+            pace: 0.0,
+            hunt: false,
+        },
+        priority: SMOKE_PRIORITY,
+        group: 0,
+    }
 }
 
 #[cfg(test)]

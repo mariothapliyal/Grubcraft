@@ -190,3 +190,61 @@ fn not_on_its_own_troops_nor_in_the_rain_nor_into_the_wind() {
     }];
     assert!(!burns(Difficulty::General, NORTH_WIND, &[], (0, 5)).0);
 }
+
+#[test]
+fn a_general_smokes_out_an_army_in_the_woods_rather_than_go_in() {
+    // Its army well back on open ground south of the wood, an enemy army
+    // in it: it brings a regiment to the edge and burns them out.
+    let cover = wood();
+    let mut world = world(&cover, &[]);
+    world.tick(&[
+        spawn(AI, 26, 60),
+        spawn(AI, 32, 60),
+        spawn(AI, 38, 60),
+        spawn(FIRER, 30, 50),
+        spawn(FIRER, 36, 50),
+    ]);
+    // The enemy is seen marching into the wood, where it hides.
+    let into_wood: Vec<PlayerCommand> = (world.regiments.iter())
+        .filter(|r| r.owner == FIRER)
+        .map(|r| PlayerCommand {
+            player: FIRER,
+            command: Command::MoveTo {
+                regiment: r.handle,
+                target: FxVec2::new(r.position.x, Fx::from_int(38)),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+            },
+        })
+        .collect();
+    world.tick(&into_wood);
+    let mut minds = Minds::new(Terrain::new(&[], MAP).with_cover(cover));
+    minds.add(Mind::new(MindConfig {
+        party: AI,
+        difficulty: Difficulty::General,
+        personality: 0,
+        seed: 3,
+    }));
+    let (mut burned_at, mut went_in) = (None, false);
+    let mut out = Vec::new();
+    for t in 0..90 * gc_sim::TICKS_PER_SECOND {
+        world.tick(&out);
+        out.clear();
+        minds.tick(&world, &mut out);
+        out.retain(|c| c.player == AI);
+        if burned_at.is_none() && !world.fires().is_empty() {
+            burned_at = Some(t / gc_sim::TICKS_PER_SECOND);
+        }
+        went_in |= burned_at.is_none()
+            && world.regiments.iter().any(|r| {
+                r.owner == AI
+                    && world
+                        .terrain()
+                        .growth(r.position.x.floor_int(), r.position.y.floor_int())
+                        != gc_sim::Growth::Open
+            });
+    }
+    assert!(burned_at.is_some(), "it never set the woods alight");
+    assert!(!went_in, "it went into the woods before the fire");
+}
