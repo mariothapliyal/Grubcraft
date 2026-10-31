@@ -143,7 +143,7 @@ What a regiment is doing, and why it is shaken, shows in four places (`gc_ui::or
 
 **Hover card:** rest the mouse on any regiment, yours or a visible enemy, for a short moment (about a third of a second) and a card shows its name, soldiers left, order and note, morale and why. Hovering your own regiment also shows its route.
 
-**Built so far (clear orders and feedback):** the order line (including Advancing for an attack-move and "N queued" for Shift-queued orders), the Why line, the card icon and wavering tab, the banner tab and the hover card, all read from the same simulation reasons. Until the morale redesign lands, "bloodied" means below half strength; then it means down to the breaking point.
+**Built so far (clear orders and feedback):** the order line (including Advancing for an attack-move and "N queued" for Shift-queued orders), the Why line, the card icon and wavering tab, the banner tab and the hover card, all read from the same simulation reasons. "Bloodied" means down to its breaking point (holding until bloodied, [05](05-combat.md#morale)).
 
 ## Readability on the battlefield
 

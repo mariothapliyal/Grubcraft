@@ -14,10 +14,13 @@
 //! - **Arrows:** soldiers x accuracy x damage per volley, from as soon as the
 //!   enemy is in range, and on through the melee; shield walls turn most of
 //!   them.
-//! - **Breaking:** losses cost 0.9 morale per 1% of strength, plus the
-//!   drains for being outnumbered two or three to one, for being below half
-//!   strength, and for being flanked. A side whose morale is spent breaks;
-//!   regiments that never rout fight until they are dead.
+//! - **Breaking:** losses cost 0.9 morale per 1% of strength (twice that
+//!   once worn down to its breaking point), plus the drains for being
+//!   outnumbered two or three to one, for being below half strength, and for
+//!   being flanked. A side breaks once its morale is spent **and** it is down
+//!   to a typical breaking point ([`BREAK_SHARE`], `gc_sim::morale`): a
+//!   regiment with most of its men can't rout. Regiments that never rout
+//!   fight until they are dead.
 //! - **Pace:** blows, volleys and the drains are scaled by the sim's battle
 //!   pace (`combat::BATTLE_PACE_PERCENT`, `VOLLEY_PACE_PERCENT`).
 //!
@@ -39,6 +42,9 @@ const MORALE_PER_PERCENT: f32 = morale::CASUALTY_TENTHS_PER_PERCENT as f32 / mor
 /// shakiest regiments rout first and every rout costs its neighbours 8
 /// points.
 const BREAK_AT: f32 = 6.0;
+/// A side can only break once down to this share of its full hit points:
+/// the line troops' breaking point, the commonest grade.
+const BREAK_SHARE: f32 = morale::LINE_BREAK as f32 / 100.0;
 /// Melee damage multiplier for regiments that reach a flank.
 const FLANK_DAMAGE: f32 = Side::Flank.damage_percent() as f32 / 100.0;
 /// The battle's pace: how hard blows and volleys land, and how fast the
@@ -404,8 +410,10 @@ fn hurt(s: &mut Fighting, f: &Force, damage: f32, drain: f32, t: f32) {
     s.hp -= damage;
     s.routable -= damage * routable_share;
     if s.routable > 0.0 && s.morale != f32::MAX {
-        s.morale -= MORALE_PER_PERCENT * 100.0 * damage / f.hp_full.max(1.0) + drain;
-        if s.morale <= BREAK_AT {
+        let bloodied = s.hp <= f.hp_full * BREAK_SHARE;
+        let per_percent = MORALE_PER_PERCENT * if bloodied { 2.0 } else { 1.0 };
+        s.morale -= per_percent * 100.0 * damage / f.hp_full.max(1.0) + drain;
+        if s.morale <= BREAK_AT && bloodied {
             // The routable regiments run; whatever never routs fights on.
             s.hp -= s.routable;
             s.routable = 0.0;
