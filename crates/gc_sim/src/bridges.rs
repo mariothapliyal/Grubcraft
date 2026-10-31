@@ -13,7 +13,7 @@ use crate::conquest::overlaps;
 use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{BuildingStats, HP_SCALE, LINE, Refusal, StructureHandle, Structures};
+use crate::structures::{BuildingStats, LINE, Refusal, StructureHandle, Structures};
 use crate::terrain::Terrain;
 use crate::walls::{Laying, Line, MAX_BRIDGE_LENGTH, WallTile};
 use crate::{PlayerId, UnitStats};
@@ -75,7 +75,7 @@ impl Structures {
         let Some(i) = self.resolve(h) else {
             return;
         };
-        let whole = u64::from(self.stats_of(i).hp) * u64::from(HP_SCALE);
+        let whole = u64::from(self.whole_hp(i));
         let loss = (whole * u64::from(per_ten_thousand) / 10_000).max(1);
         self.wear_down(i, u32::try_from(loss).unwrap_or(u32::MAX), nav, regs);
     }

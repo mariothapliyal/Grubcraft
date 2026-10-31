@@ -40,6 +40,8 @@ pub const STRAIN_PER_TEN_THOUSAND: [u32; 3] = [50, 12, 0];
 /// Catastrophic water sweeps away a span tile under this much of its hit
 /// points (thousandths), by level: reinforced spans stand.
 pub const SWEEP_BELOW: [u16; 3] = [500, 250, 0];
+/// A blow that sweeps a tile away: all its hit points.
+const SWEPT: u32 = 10_000;
 /// A jam this heavy or lighter washes free once the water falls back.
 pub const WASH_FREE_MASS: u8 = 3;
 /// Where a jammed piece lies: this far from the middle of the tile above
@@ -137,7 +139,7 @@ impl Rivers {
             .clamp(0, i32::from(FLOOD_RISE)) as u32;
         let pace = 100 + 100 * up / u32::from(FLOOD_RISE);
         let blow = STRIKE_PER_TEN_THOUSAND[pier.at()] * u32::from(mass) * pace * pace / 10_000;
-        self.debris.blows.push(Blow::Wear(pier.slot, blow));
+        self.debris.blows.push((pier.slot, blow));
         false
     }
 
@@ -164,7 +166,7 @@ impl Rivers {
                             * PUSH_STAGE[band as usize]
                             * (3 - pier.at() as u32)
                             / 3;
-                        self.debris.blows.push(Blow::Wear(pier.slot, push.max(1)));
+                        self.debris.blows.push((pier.slot, push.max(1)));
                     }
                 }
                 let s = self.stretch_of[i as usize];
@@ -178,13 +180,12 @@ impl Rivers {
                 continue;
             };
             if band == Band::Catastrophic && pier.left < SWEEP_BELOW[pier.at()] {
-                self.debris.blows.push(Blow::Sweep(pier.slot));
-            } else if band >= Band::Major
-                && pier.left < STRAIN_BELOW
-                && STRAIN_PER_TEN_THOUSAND[pier.at()] > 0
-            {
+                self.debris.blows.push((pier.slot, SWEPT));
+            } else {
                 let strain = STRAIN_PER_TEN_THOUSAND[pier.at()];
-                self.debris.blows.push(Blow::Wear(pier.slot, strain));
+                if strain > 0 && band >= Band::Major && pier.left < STRAIN_BELOW {
+                    self.debris.blows.push((pier.slot, strain));
+                }
             }
         }
     }

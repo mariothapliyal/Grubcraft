@@ -3335,11 +3335,7 @@ impl World {
             blows.clear();
             return;
         };
-        for blow in blows.drain(..) {
-            let (slot, per) = match blow {
-                rivers::debris::Blow::Wear(slot, per) => (slot, per),
-                rivers::debris::Blow::Sweep(slot) => (slot, 10_000),
-            };
+        for (slot, per) in blows.drain(..) {
             (c.structures).batter(slot, per, &mut self.nav, &self.regiments);
         }
     }

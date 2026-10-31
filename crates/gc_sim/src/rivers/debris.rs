@@ -187,14 +187,10 @@ pub struct Debris {
     blows: Vec<Blow>,
 }
 
-/// A blow debris or the water strikes a bridge tile.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Blow {
-    /// It loses ten-thousandths of its whole hit points.
-    Wear(crate::structures::StructureHandle, u32),
-    /// It is swept away.
-    Sweep(crate::structures::StructureHandle),
-}
+/// A blow debris or the water strikes a bridge tile: the tile, and the
+/// ten-thousandths of its whole hit points it loses (all of them when
+/// swept away).
+pub(crate) type Blow = (crate::structures::StructureHandle, u32);
 
 impl Debris {
     /// A pool for a map with `stretches` and `groups` of fords, with

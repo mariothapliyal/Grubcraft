@@ -1353,13 +1353,18 @@ impl Structures {
 
     /// Building slot `i`'s hit points left, in thousandths of its whole.
     pub(crate) fn left_permille(&self, i: usize) -> u16 {
-        let whole = u64::from(self.stats_of(i).hp) * u64::from(HP_SCALE);
+        let whole = u64::from(self.whole_hp(i));
         (u64::from(self.hp[i]) * 1000 / whole.max(1)).min(1000) as u16
+    }
+
+    /// Building slot `i`'s full hit points (scaled).
+    pub(crate) fn whole_hp(&self, i: usize) -> u32 {
+        u32::from(self.stats_of(i).hp) * HP_SCALE
     }
 
     /// Whether building slot `i` is below its full hit points.
     pub(crate) fn hurt(&self, i: usize) -> bool {
-        self.hp[i] < u32::from(self.stats_of(i).hp) * HP_SCALE
+        self.hp[i] < self.whole_hp(i)
     }
 
     /// Building slot `i` regrows `per_second` hit points a second, up to
