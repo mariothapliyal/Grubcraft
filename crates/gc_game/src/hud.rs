@@ -126,7 +126,7 @@ const ICONS: [Icon; GRID_SLOTS] = [
 const TIPS: [&str; GRID_SLOTS] = [
     "March the selected regiments to a spot. Then click the ground. Shift queues it after their other orders.",
     "Send the selection against an enemy. Then click the enemy (or open ground, to advance there). Shift queues it.",
-    "Set the woods or scrub beside the selection alight. The fire spreads with the wind and burns anyone in it; rain puts it out.",
+    "Set the woods or scrub beside the selection alight. The fire spreads with the wind and burns anyone in it; rain puts it out. Beside a bridge, it lights the debris jammed against it first: a mass point burns off every 3 s, but the timber deck above burns too.",
     "Change the formation: Line, Tight, Loose, Shield wall.",
     "March to a spot, but stop and fight any enemy met on the way, then march on. Then click the ground. Shift queues it.",
     "A hero ability. Needs a hero.",

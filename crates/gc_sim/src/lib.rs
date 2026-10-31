@@ -129,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 79;
+pub const SIM_VERSION: u32 = 80;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -2191,9 +2191,18 @@ impl World {
                         && !self.regiments.morale_state[i].broken()
                         && self.weather_lets_fire() =>
                 {
-                    self.fires
-                        .tinder(&self.terrain, &self.regiments, &self.units, i)
-                        .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y))
+                    // A jam against a bridge in reach burns first (docs/39,
+                    // "Burning it"), else the woods.
+                    let rivers = &mut self.flood.rivers;
+                    let jam =
+                        fire::Fires::in_reach(&self.regiments, &self.units, i, rivers.unlit_jams());
+                    match jam {
+                        Some((x, y)) => rivers.light_jam(x, y),
+                        None => self
+                            .fires
+                            .tinder(&self.terrain, &self.regiments, &self.units, i)
+                            .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y)),
+                    }
                 }
                 _ => false,
             },
@@ -3332,6 +3341,9 @@ impl World {
         }
         if second && let Some(c) = &self.conquest {
             (self.flood.rivers).set_piers(c.structures.piers(), &self.terrain);
+        }
+        if second && !self.weather_lets_fire() {
+            self.flood.rivers.douse_jams();
         }
         let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
         let jammed = self.flood.rivers.take_jammed();

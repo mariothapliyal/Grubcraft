@@ -188,6 +188,9 @@ pub struct Debris {
     choke: Vec<u8>,
     /// What the debris did to bridges this tick, for the world to apply.
     blows: Vec<Blow>,
+    /// The jams burning, by the river tile of their pier: and the seconds
+    /// the piece burning down in each has burned (stage 4c).
+    fires: Vec<(u32, u8)>,
     /// The players (a bit each) whose bridges debris jammed on this tick,
     /// for the news (not hashed: told and forgotten in the tick).
     jammed_on: u8,
@@ -215,6 +218,7 @@ impl Debris {
             choke: alloc::vec![0; stretches],
 
             blows: Vec::new(),
+            fires: Vec::new(),
             jammed_on: 0,
         }
     }
@@ -331,6 +335,11 @@ impl Debris {
         }
         for &c in &self.choke {
             h.u8(c);
+        }
+        // Only once a jam has burned, so the goldens without one stay put.
+        for &(i, s) in &self.fires {
+            h.u32(i);
+            h.u8(s);
         }
     }
 }

@@ -98,6 +98,16 @@ impl Burn {
     }
 }
 
+/// The nearest of `tiles` block `b` touches or comes within a tile of, by
+/// its centre (ties to the lower row, then column).
+fn nearest(b: &Block, tiles: impl Iterator<Item = (i32, i32)>) -> Option<(i32, i32)> {
+    tiles
+        .map(|(x, y)| (tile_block(x, y), (x, y)))
+        .filter(|(tile, _)| b.touches(tile, Fx::ONE))
+        .min_by_key(|&(tile, (x, y))| ((tile.centre - b.centre).length_sq_raw(), y, x))
+        .map(|(_, t)| t)
+}
+
 /// Tile `(x, y)` as a block, for touching regiments.
 fn tile_block(x: i32, y: i32) -> Block {
     Block::square(footprint_centre([x, y, 1, 1]), Fx::HALF, Fx::HALF)
@@ -255,23 +265,22 @@ impl Fires {
         let b = Block::of(regs, units, i);
         let r = (b.radius() + Fx::ONE).ceil_int();
         let (cx, cy) = (b.centre.x.floor_int(), b.centre.y.floor_int());
-        let mut best: Option<(u64, (i32, i32))> = None;
-        for y in cy - r..=cy + r {
-            for x in cx - r..=cx + r {
-                if terrain.growth(x, y) == Growth::Open || self.is_burning(x, y) {
-                    continue;
-                }
-                let tile = tile_block(x, y);
-                if !b.touches(&tile, Fx::ONE) {
-                    continue;
-                }
-                let d = (tile.centre - b.centre).length_sq_raw();
-                if best.is_none_or(|(e, _)| d < e) {
-                    best = Some((d, (x, y)));
-                }
-            }
-        }
-        best.map(|(_, t)| t)
+        let tiles = (cy - r..=cy + r).flat_map(|y| (cx - r..=cx + r).map(move |x| (x, y)));
+        nearest(
+            &b,
+            tiles.filter(|&(x, y)| terrain.growth(x, y) != Growth::Open && !self.is_burning(x, y)),
+        )
+    }
+
+    /// The nearest of `tiles` regiment `i` can reach to set alight (the
+    /// tiles a [`Fires::tinder`] would look at), if any.
+    pub(crate) fn in_reach(
+        regs: &Regiments,
+        units: &[UnitStats],
+        i: usize,
+        tiles: impl Iterator<Item = (i32, i32)>,
+    ) -> Option<(i32, i32)> {
+        nearest(&Block::of(regs, units, i), tiles)
     }
 
     /// One tick of the fires: each burns down (faster in rain or snow),

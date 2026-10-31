@@ -9,8 +9,8 @@ use gc_sim::clearing::ClearStyle;
 use gc_sim::events::Event;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::rivers::Band;
-use gc_sim::rivers::debris::Kind;
-use gc_sim::rivers::debris::piers::UNJAM_GRUB;
+use gc_sim::rivers::debris::piers::{BURN_SECONDS, UNJAM_GRUB};
+use gc_sim::rivers::debris::{Kind, Seen};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::sky::{Spell, Weather, WeatherKind};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, Role};
@@ -232,12 +232,7 @@ fn rafts_reaching_a_bridge_strike_or_jam_on_its_piers() {
         }
         for _ in 0..20 * SECOND {
             w.tick(&[]);
-            jammed |= w
-                .flood()
-                .rivers()
-                .debris()
-                .pieces(MAP)
-                .any(|p| p.grounded && p.at.x.floor_int() == BRIDGE_X - 1);
+            jammed |= jammed_pieces(&w) > 0;
         }
     }
     let hp = bridge_hp(&w);
@@ -407,25 +402,26 @@ fn rafts_in_a_flood_do_far_more_harm_than_in_a_steady_river() {
 }
 
 /// The pieces jammed against the bridge (lying on the tiles above it).
-fn jammed_pieces(w: &World) -> usize {
+fn jam(w: &World) -> impl Iterator<Item = Seen> + '_ {
     (w.flood().rivers().debris().pieces(MAP))
         .filter(|p| p.grounded && p.at.x.floor_int() == BRIDGE_X - 1)
-        .count()
 }
 
-#[test]
-fn workers_clear_a_jam_a_piece_at_a_time_for_its_timber() {
-    let mut w = world(ClearStyle::STANDARD);
-    bridge(&mut w);
-    // Rafts down one row until two jam on one pier (one alone washes free).
-    let hand = worker(&mut w, 8, 28);
+fn jammed_pieces(w: &World) -> usize {
+    jam(w).count()
+}
+
+/// Rafts down one row until two jam on one pier (one alone washes free);
+/// whether the bridge's owner was told.
+fn jam_up(w: &mut World) -> bool {
+    let hand = worker(w, 8, 28);
     let mut told = false;
     for round in 0..24 {
-        if jammed_pieces(&w) >= 2 {
+        if jammed_pieces(w) >= 2 {
             break;
         }
         assert!(order(
-            &mut w,
+            w,
             Command::Dump {
                 regiment: hand,
                 tile: (8 + round % 4, RIVER.start as i16)
@@ -435,11 +431,19 @@ fn workers_clear_a_jam_a_piece_at_a_time_for_its_timber() {
             w.tick(&[]);
             told |= (w.events().iter())
                 .any(|e| matches!(e, Event::BridgeJammed { owners } if owners & 1 != 0));
-            if jammed_pieces(&w) >= 2 {
+            if jammed_pieces(w) >= 2 {
                 break;
             }
         }
     }
+    told
+}
+
+#[test]
+fn workers_clear_a_jam_a_piece_at_a_time_for_its_timber() {
+    let mut w = world(ClearStyle::STANDARD);
+    bridge(&mut w);
+    let told = jam_up(&mut w);
     let pieces = jammed_pieces(&w);
     assert!(pieces >= 2, "a jam held: {pieces}");
     assert!(told, "the bridge's owner was told");
@@ -471,6 +475,35 @@ fn workers_clear_a_jam_a_piece_at_a_time_for_its_timber() {
         "a Grub of timber a piece"
     );
     assert!(w.clearing_of(clearer).is_none(), "and the order is done");
+}
+
+#[test]
+fn a_jam_set_alight_burns_away_and_the_deck_above_with_it() {
+    let mut w = world(ClearStyle::STANDARD);
+    bridge(&mut w);
+    jam_up(&mut w);
+    let rows: Vec<i32> = jam(&w).map(|p| p.at.y.floor_int()).collect();
+    assert!(rows.len() >= 2, "a jam held: {rows:?}");
+    let mass: u32 = jam(&w).map(|p| u32::from(p.kind.mass())).sum();
+    // Someone on the deck beside it sets it alight.
+    let burner = worker(&mut w, BRIDGE_X, rows[0]);
+    let before = bridge_hp(&w);
+    assert!(order(&mut w, Command::Burn { regiment: burner }));
+    assert_eq!(w.flood().rivers().jam_fires().count(), 1, "it burns");
+    // Nothing more to light there.
+    assert!(!order(&mut w, Command::Burn { regiment: burner }));
+    let seconds = mass * u32::from(BURN_SECONDS);
+    run(&mut w, seconds + 3);
+    assert_eq!(jammed_pieces(&w), 0, "the jam burnt away in {seconds} s");
+    let lost = before - bridge_hp(&w);
+    assert!(lost > 0, "the deck above burned");
+    assert_eq!(
+        w.flood().rivers().jam_fires().count(),
+        0,
+        "and the fire is out"
+    );
+    // Burning took a slice of the deck, not all of it.
+    assert!(deck(&w, rows[0]).is_some(), "the bridge still stands");
 }
 
 #[test]

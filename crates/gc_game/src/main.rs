@@ -3407,7 +3407,7 @@ impl Running {
         }
         self.ui_sound(sounds::UiSound::Move);
         self.say(
-            "Burning the woods beside them, where there are any: fire spreads with the wind".into(),
+            "Burning the woods, or a jam against a bridge, beside them, where there are any: fire spreads with the wind".into(),
         );
     }
 
@@ -4808,6 +4808,24 @@ impl Running {
                 let ground = heightmap.height_at(at.x, at.y);
                 self.effects
                     .blaze(glam::Vec3::new(at.x, ground, at.y), tall, fire_dt);
+            }
+        }
+        // Jams set alight against a bridge's piers (docs/39, "Burning it"):
+        // a low blaze on the water where the viewer sees them.
+        if fx_speed > 0.0 {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let fire_dt = dt.as_secs_f32() * fx_speed;
+            let t = self.world.terrain();
+            for p in self.world.flood().rivers().jam_fires() {
+                let at = from_fx_vec(p);
+                if at.distance_squared(view_focus) > view_distance * view_distance
+                    || !(reveal || fog.sees_tile((at.x.floor() as i32, at.y.floor() as i32)))
+                {
+                    continue;
+                }
+                let water = river_debris::surface(t, heightmap.water_level(), p);
+                self.effects
+                    .blaze(glam::Vec3::new(at.x, water, at.y), 1.6, fire_dt);
             }
         }
         // Pools a tower's hit left (burning ground, acid), those the viewer
@@ -7501,13 +7519,11 @@ impl Running {
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
         let logs = {
             let t = world.terrain();
-            let line = (t.water_line() - i32::from(t.water_level())) as f32
-                / gc_sim::terrain::HEIGHT_UNITS as f32;
             let (reveal, fog) = (self.reveal_all, &self.fog);
             river_debris::extras(
                 world.flood().rivers().debris_seen(),
                 |p| t.river_rise(p),
-                map.water_level() + line,
+                river_debris::still_water(t, map.water_level()),
                 self.scenery.height_of(river_debris::LOG_MODEL),
                 move |tile| reveal || fog.sees_tile(tile),
             )

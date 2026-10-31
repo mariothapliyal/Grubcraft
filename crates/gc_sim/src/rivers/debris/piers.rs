@@ -52,6 +52,13 @@ pub const WASH_FREE_MASS: u8 = 3;
 pub const UNJAM_SECONDS: u32 = 4;
 /// Grub of timber each piece pulled out of a jam pays.
 pub const UNJAM_GRUB: u32 = 1;
+/// Seconds a burning jam takes to burn off a mass point (docs/39, "Burning
+/// it").
+pub const BURN_SECONDS: u8 = 3;
+/// What a burning jam takes off the timber deck above it a second, in
+/// ten-thousandths of its hit points, whatever its level (fire goes for
+/// the deck, not the piers).
+pub const DECK_BURN_PER_TEN_THOUSAND: u32 = 100;
 /// Where a jammed piece lies: this far from the middle of the tile above
 /// the pier towards it, against the pier's upstream face.
 const JAMMED_ALONG: gc_fixed::Fx = gc_fixed::Fx::from_raw(26_214);
@@ -168,11 +175,15 @@ impl Rivers {
         false
     }
 
-    /// One second of the piers, with the map's water `lift`: jams push on
-    /// their tiles while the water is up and the small ones wash free when
-    /// it falls; each stretch is choked by the jams on it; high water
-    /// strains hurt piers and catastrophic water sweeps weak spans away.
+    /// One second of the piers, with the map's water `lift`: burning jams
+    /// burn down and the deck above with them; jams push on their tiles
+    /// while the water is up and the small ones wash free when it falls;
+    /// each stretch is choked by the jams on it; high water strains hurt
+    /// piers and catastrophic water sweeps weak spans away.
     pub(super) fn weigh_piers(&mut self, lift: i32) {
+        if !self.debris.fires.is_empty() {
+            self.burn_jams();
+        }
         self.debris.choke.fill(0);
         for k in 0..self.debris.piers.len() {
             let pier = self.debris.piers[k];
@@ -217,6 +228,84 @@ impl Rivers {
                 }
             }
         }
+    }
+
+    /// One second of the burning jams: each burns down a piece at a time
+    /// ([`BURN_SECONDS`] a mass point) and the deck above it with it, until
+    /// it is gone (or its pier is).
+    fn burn_jams(&mut self) {
+        let mut fires = core::mem::take(&mut self.debris.fires);
+        fires.retain_mut(|(i, seconds)| {
+            let Some(pier) = self.pier_on(*i) else {
+                return false;
+            };
+            let pieces = &mut self.debris.pieces;
+            let Some(k) = pieces
+                .iter()
+                .position(|p| p.is_some_and(|p| p.jammed && p.next == *i))
+            else {
+                return false;
+            };
+            self.debris
+                .blows
+                .push((pier.slot, DECK_BURN_PER_TEN_THOUSAND));
+            *seconds += 1;
+            if pieces[k].is_some_and(|p| *seconds >= BURN_SECONDS * p.kind.mass()) {
+                pieces[k] = None;
+                *seconds = 0;
+            }
+            true
+        });
+        self.debris.fires = fires;
+    }
+
+    /// Rain puts out every burning jam.
+    pub(crate) fn douse_jams(&mut self) {
+        self.debris.fires.clear();
+    }
+
+    /// Whether the jam on the pier on tile `i` burns.
+    fn burns(&self, i: u32) -> bool {
+        self.debris.fires.iter().any(|&(t, _)| t == i)
+    }
+
+    /// The tiles the jams that don't burn yet lie on, for the Burn order.
+    pub(crate) fn unlit_jams(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let n = self.side as u32;
+        (self.debris.piers.iter())
+            .filter(|pier| !self.burns(pier.tile))
+            .filter_map(|pier| {
+                (self.debris.pieces.iter().flatten()).find(|p| p.jammed && p.next == pier.tile)
+            })
+            .map(move |p| ((p.tile % n) as i32, (p.tile / n) as i32))
+    }
+
+    /// Sets the jam lying on tile `(x, y)` alight (the Burn order; the
+    /// world checks the weather). Whether one lay there unlit.
+    pub(crate) fn light_jam(&mut self, x: i32, y: i32) -> bool {
+        let Some(i) = index_in(self.side, x, y) else {
+            return false;
+        };
+        let Some(pier) = (self.debris.pieces.iter().flatten())
+            .find(|p| p.jammed && p.tile == i as u32)
+            .map(|p| p.next)
+            .filter(|&pier| !self.burns(pier))
+        else {
+            return false;
+        };
+        let fires = &mut self.debris.fires;
+        let at = fires.partition_point(|&(t, _)| t < pier);
+        fires.insert(at, (pier, 0));
+        true
+    }
+
+    /// Where each burning jam is (its first piece), in tiles.
+    pub fn jam_fires(&self) -> impl Iterator<Item = gc_fixed::FxVec2> + '_ {
+        (self.debris.fires.iter()).filter_map(|&(i, _)| {
+            (self.debris.pieces.iter().flatten())
+                .find(|p| p.jammed && p.next == i)
+                .map(|p| p.point(self.side))
+        })
     }
 
     /// The piece in a jam lying on river tile `i` (against the pier below
@@ -295,8 +384,10 @@ impl Rivers {
         }
     }
 
-    /// The jam on the pier on tile `i` breaks up and floats on, past it.
+    /// The jam on the pier on tile `i` breaks up and floats on, past it
+    /// (put out, if it burned).
     fn wash_free(&mut self, i: u32) {
+        self.debris.fires.retain(|&(t, _)| t != i);
         for p in self.debris.pieces.iter_mut().flatten() {
             if p.jammed && p.next == i {
                 p.jammed = false;

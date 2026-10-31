@@ -27,6 +27,18 @@ const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
 const WRECK_TIMBERS: usize = 2;
 const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
+/// Where still water stands on a map drawn with water at `level` (tiles),
+/// in tiles: the river's own line over it.
+pub fn still_water(t: &gc_sim::terrain::Terrain, level: f32) -> f32 {
+    level + (t.water_line() - i32::from(t.water_level())) as f32 / HEIGHT_UNITS as f32
+}
+
+/// The river's surface at `at` (tiles), on a map drawn with water at
+/// `level`: where a piece floats.
+pub fn surface(t: &gc_sim::terrain::Terrain, level: f32, at: gc_fixed::FxVec2) -> f32 {
+    still_water(t, level) + f32::from(t.river_rise(at)) / HEIGHT_UNITS as f32
+}
+
 /// The trunks to draw for `pieces`, the still water drawn at `water`
 /// (tiles) and the rivers raising it by `rise` (height units, see
 /// `Terrain::river_rise`), with the trunk model `tall` tiles high; only
