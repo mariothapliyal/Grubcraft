@@ -3280,6 +3280,19 @@ mod tests {
             .iter()
             .filter(|m| m.is_still() && m.name().starts_with("Bridge "))
             .count();
+        // And the wall kits' pieces (assets-src/buildings/wall-kits.ron:
+        // "Palisade Kit Run A", "Bone Fence Kit L3 Run B", ...): a generator
+        // lays them along each drawn wall, so none dresses a building by name.
+        let kit = kit
+            + models
+                .models
+                .iter()
+                .filter(|m| {
+                    m.is_still()
+                        && (m.name().starts_with("Palisade Kit ")
+                            || m.name().starts_with("Bone Fence Kit "))
+                })
+                .count();
         assert_eq!(
             dressed.len() + unused + bridge + kit,
             still,
