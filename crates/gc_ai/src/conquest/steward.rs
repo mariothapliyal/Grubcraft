@@ -289,6 +289,7 @@ impl Steward {
         self.train_workers(s, clicks, &look);
         self.build(s, clicks, &look);
         self.tier_up(s, clicks, &look);
+        self.raise_towers(s, clicks, &look);
         if !soldiers_first {
             self.train_army(s, clicks, &look);
         }
@@ -1344,6 +1345,39 @@ impl Steward {
             },
         ) {
             self.busy.push((main.view.handle, None, s.now));
+        }
+    }
+
+    /// A mind that fortifies in full raises its towers to level 2 once
+    /// it is at tier 2 and has Grub and Marrow to spare, one at a time and
+    /// never while its hall is going up a tier (docs/26 stage 5).
+    fn raise_towers(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+        if s.plan.fortifies != Fortify::Full || self.arming || look.tier < 2 {
+            return;
+        }
+        if look.mine.iter().any(|m| m.view.upgrading.is_some()) {
+            return;
+        }
+        let Some(bank) = s.world.bank(s.party) else {
+            return;
+        };
+        let tower = look.mine.iter().find_map(|m| {
+            if m.stats.role != Role::Defence || !m.finished() {
+                return None;
+            }
+            let to = s.kit.upgrade_of(m.view.building)?;
+            let rich = bank.grub >= u32::from(to.stats.cost_grub) + WORKS_SPARE
+                && bank.marrow >= u32::from(to.stats.cost_marrow) * 2;
+            (rich && s.world.can_upgrade(s.party, m.view.handle).is_ok()).then_some(m.view.handle)
+        });
+        let Some(h) = tower else {
+            return;
+        };
+        if self.is_busy(h) {
+            return;
+        }
+        if clicks.give(s.now, Command::Upgrade { structure: h }) {
+            self.busy.push((h, None, s.now));
         }
     }
 
