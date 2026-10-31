@@ -1847,7 +1847,7 @@ impl Combat {
             if lost > 0
                 && let Some(k) = vs.shooter[v].regiment().and_then(|h| regs.resolve(h))
             {
-                veterancy::credit(regs, units, k, victim, lost);
+                veterancy::credit(regs, units, k, victim, lost, true);
             }
             if let Some(t) = tower {
                 self.tower_hits.push((t, hp));
@@ -2200,7 +2200,7 @@ fn duel(
                 0 if damage == 0 => Outcome::Parried,
                 0 => Outcome::Wounded,
                 men => {
-                    veterancy::credit(regs, units, i, regs.unit[j], men);
+                    veterancy::credit(regs, units, i, regs.unit[j], men, false);
                     if regs.models[j] > 0 {
                         line = Line::of(regs, units, j, side, theirs_last_file);
                     }

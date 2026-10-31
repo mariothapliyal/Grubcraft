@@ -315,11 +315,9 @@ fn check(
     tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left. A
-    // champion's win or loss raises or lowers it for the rest of the battle,
-    // and each veteran rank raises it.
+    // champion's win or loss raises or lowers it for the rest of the battle.
     let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
         + i32::from(regs.party_morale[regs.owner[i] as usize])
-        + i32::from(veterancy::RANK_MORALE * SCALE) * i32::from(veterancy::rank_of(regs, i))
         + if tick < regs.heartened_until[i] {
             i32::from(generals::SPEECH * SCALE)
         } else {

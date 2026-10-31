@@ -164,10 +164,7 @@ impl World {
         let m = MAX_MODELS as usize;
         r.hp[i * m..][models as usize..m].fill(0);
         if stats.morale > 0 {
-            // A veteran's ceiling is higher (see [`crate::veterancy`]).
-            let ceiling =
-                i16::from(stats.morale) + crate::veterancy::RANK_MORALE * i16::from(s.rank.min(3));
-            let points = i16::from(s.morale_points).min(ceiling);
+            let points = i16::from(s.morale_points).min(i16::from(stats.morale));
             r.morale[i] = points * morale::SCALE;
         }
         r.morale_state[i] = s.morale;

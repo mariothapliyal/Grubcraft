@@ -109,10 +109,10 @@ fn killing_earns_ranks_that_lower_the_breaking_point() {
     let start = w.regiments.get(hero).unwrap();
     assert_eq!(start.rank, 0);
     let fresh_break = start.break_at;
-    // Two regiments of spearmen, each worth as much as the hero's band,
+    // Four regiments of spearmen, each worth as much as the hero's band,
     // come at it one after another.
     let mut ranks = vec![0];
-    for wave in 0..2 {
+    for wave in 0..4 {
         let foe = spawn(&mut w, 1, SPEARS, 100, 85, SOUTH);
         attack(&mut w, 1, foe, hero);
         for _ in 0..20 * 120 {
@@ -132,10 +132,8 @@ fn killing_earns_ranks_that_lower_the_breaking_point() {
         );
         ranks.push(me.rank);
     }
-    // Half its worth makes rank 1, its worth rank 2, twice rank 3.
-    assert!(ranks.windows(2).all(|p| p[0] <= p[1]), "ranks {ranks:?}");
-    assert_eq!(ranks[1], 2, "one band's worth killed: {ranks:?}");
-    assert_eq!(*ranks.last().unwrap(), 3, "ranks {ranks:?}");
+    // Its worth makes rank 1, twice rank 2, four times rank 3.
+    assert_eq!(ranks, [0, 1, 2, 2, 3]);
     let me = w.regiments.get(hero).unwrap();
     assert_eq!(me.break_at, fresh_break - 3 * RANK_BREAK);
 }
@@ -154,14 +152,19 @@ fn archers_earn_ranks_from_their_volleys() {
         if rank > 0 && first.is_none() {
             first = Some(t);
         }
-        if rank >= 2 {
+        if rank >= 1 {
             break;
         }
     }
     let rank = w.regiments.get(bows).unwrap().rank;
     let left = w.regiments.get(post).map_or(0, |r| r.models);
     println!("archers: rank {rank} after {first:?} ticks to the first, post down to {left}");
-    // The archers' 64 hit points: 8 spearmen killed is their worth.
-    assert!(rank >= 2, "rank {rank}, post down to {left} of 28");
-    assert!(left <= 28 - 8, "rank {rank} with only {} killed", 28 - left);
+    // The archers' 64 hit points: 8 spearmen killed is their worth, but
+    // volleys count half, so it takes 16.
+    assert_eq!(rank, 1, "post down to {left} of 28");
+    assert!(
+        left <= 28 - 16,
+        "rank {rank} with only {} killed",
+        28 - left
+    );
 }

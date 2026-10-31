@@ -1,10 +1,13 @@
 //! Veterancy (docs/05-combat.md, "Veterancy"; docs/29, "Holding until
 //! bloodied"). A regiment gains experience from the enemy soldiers it
 //! kills, in melee or with its volleys, weighed by their hit points against
-//! its own: killing half its own worth makes it rank 1, its own worth rank
-//! 2, twice its worth rank 3. Each rank adds [`RANK_DAMAGE_PERCENT`] to the
-//! damage it deals, [`RANK_MORALE`] to its morale ceiling, and takes
-//! [`RANK_BREAK`] off its breaking point, so veterans hold longer. Ranks are
+//! its own: killing its own worth makes it rank 1, twice its worth rank 2,
+//! four times its worth rank 3. Kills by volleys count half, as shooting
+//! from afar is safer work. Each rank adds [`RANK_DAMAGE_PERCENT`] to the
+//! damage it deals and takes [`RANK_BREAK`] off its breaking point, so
+//! veterans hold longer. (docs/05's "+10 morale per rank" is that lower
+//! breaking point: a higher morale ceiling on top of it made veterans
+//! nearly unbreakable and stalled Conquest games.) Ranks are
 //! never lost. The screen shows them as chevrons on the banner and card.
 
 use crate::regiments::Regiments;
@@ -12,11 +15,11 @@ use crate::{UnitId, UnitStats};
 
 /// Experience for each rank, in thousandths of the regiment's own full
 /// hit points killed.
-pub(crate) const RANKS: [u16; 3] = [500, 1000, 2000];
+pub(crate) const RANKS: [u16; 3] = [1000, 2000, 4000];
+/// Percent of the experience a kill by a volley earns.
+const SHOT_PERCENT: u64 = 50;
 /// More damage, in percent, for each rank.
 const RANK_DAMAGE_PERCENT: u64 = 10;
-/// More morale ceiling, in points, for each rank.
-pub(crate) const RANK_MORALE: i16 = 10;
 /// Percent off the breaking point for each rank.
 pub const RANK_BREAK: u8 = 5;
 
@@ -48,20 +51,22 @@ pub(crate) fn damage_percent(regs: &Regiments, i: usize) -> u64 {
     rank_damage_percent(rank_of(regs, i))
 }
 
-/// Regiment `killer` killed `men` soldiers of unit `victim`: their hit
-/// points, in thousandths of its own full hit points, go to its
-/// experience.
+/// Regiment `killer` killed `men` soldiers of unit `victim`, with a volley
+/// if `shot`: their hit points, in thousandths of its own full hit points
+/// (half for a volley), go to its experience.
 pub(crate) fn credit(
     regs: &mut Regiments,
     units: &[UnitStats],
     killer: usize,
     victim: UnitId,
     men: u16,
+    shot: bool,
 ) {
     let own = u64::from(regs.full_hp(killer, &units[regs.unit[killer] as usize]));
     let theirs = u64::from(units[victim as usize].hp_per_model);
     // Rounded, so a band that kills its own worth man by man gets there.
-    let gained = (u64::from(men) * theirs * 1000 + own / 2) / own;
+    let share = if shot { SHOT_PERCENT } else { 100 };
+    let gained = (u64::from(men) * theirs * 10 * share + own / 2) / own;
     regs.xp[killer] = (u64::from(regs.xp[killer]) + gained).min(u64::from(u16::MAX)) as u16;
 }
 
@@ -70,13 +75,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ranks_come_at_half_once_and_twice_its_worth() {
+    fn ranks_come_at_once_twice_and_four_times_its_worth() {
         assert_eq!(rank(0), 0);
-        assert_eq!(rank(499), 0);
-        assert_eq!(rank(500), 1);
-        assert_eq!(rank(1000), 2);
-        assert_eq!(rank(1999), 2);
-        assert_eq!(rank(2000), 3);
+        assert_eq!(rank(999), 0);
+        assert_eq!(rank(1000), 1);
+        assert_eq!(rank(2000), 2);
+        assert_eq!(rank(3999), 2);
+        assert_eq!(rank(4000), 3);
         assert_eq!(rank(u16::MAX), 3);
         assert_eq!(rank_damage_percent(3), 130);
         assert_eq!(xp_for(0), 0);
