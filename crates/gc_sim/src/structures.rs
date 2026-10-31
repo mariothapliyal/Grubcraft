@@ -313,6 +313,85 @@ pub const GROWN: u16 = 16384;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 
+/// What a tower looses (docs/26, stage 5; see [`crate::towers`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TowerShot {
+    /// A volley of light shots: the arrow towers.
+    #[default]
+    Arrows = 0,
+    /// One heavy shot that runs down a file of soldiers, and hits big
+    /// soldiers (monsters, riders, engines) twice as hard.
+    Bolt = 1,
+    /// Splash lobbed into packed blocks and the regiments beside them,
+    /// never at anyone close.
+    Blast = 2,
+}
+
+impl TowerShot {
+    pub fn from_u8(v: u8) -> Option<TowerShot> {
+        [TowerShot::Arrows, TowerShot::Bolt, TowerShot::Blast]
+            .get(usize::from(v))
+            .copied()
+    }
+}
+
+/// What a tower's hits do besides hurt (docs/26, stage 5; see
+/// [`crate::towers`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Quirk {
+    #[default]
+    None,
+    /// Fire-pots: burning ground where they land, and growth there alight.
+    Burns,
+    /// Each soldier it kills pays its owner Grub.
+    Collects,
+    /// The soldiers it kills rise beside it as its owner's regiment of
+    /// this unit.
+    Raises(UnitId),
+    /// Its bolt runs on through the enemy regiments in line behind its
+    /// target.
+    Pierces,
+    /// Its hits throw the regiments struck into disorder.
+    Disorders,
+    /// Its hit drags the regiment struck a few steps toward it.
+    Drags,
+    /// Its hits leave a pool of acid for a few seconds.
+    Acid,
+}
+
+impl Quirk {
+    /// Its kind as baked (`gc_data`'s `QUIRK_*`).
+    pub fn kind(self) -> u8 {
+        match self {
+            Quirk::None => 0,
+            Quirk::Burns => 1,
+            Quirk::Collects => 2,
+            Quirk::Raises(_) => 3,
+            Quirk::Pierces => 4,
+            Quirk::Disorders => 5,
+            Quirk::Drags => 6,
+            Quirk::Acid => 7,
+        }
+    }
+
+    /// The quirk of kind `kind` (see [`Quirk::kind`]); `unit` is what a
+    /// tower that raises the dead raises.
+    pub fn from_kind(kind: u8, unit: UnitId) -> Option<Quirk> {
+        Some(match kind {
+            0 => Quirk::None,
+            1 => Quirk::Burns,
+            2 => Quirk::Collects,
+            3 => Quirk::Raises(unit),
+            4 => Quirk::Pierces,
+            5 => Quirk::Disorders,
+            6 => Quirk::Drags,
+            7 => Quirk::Acid,
+            _ => return None,
+        })
+    }
+}
+
 /// A tower's shooting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TowerAttack {
@@ -321,6 +400,8 @@ pub struct TowerAttack {
     pub damage: u16,
     pub reload_ticks: u16,
     pub shots: u8,
+    pub shot: TowerShot,
+    pub quirk: Quirk,
 }
 
 /// What the simulation needs from a building type. The game builds these
@@ -478,6 +559,15 @@ impl BuildingStats {
             h.u16(a.damage);
             h.u16(a.reload_ticks);
             h.u8(a.shots);
+            // Nothing for arrow towers, so the hashes of worlds without
+            // the stage 5 towers stay as they were.
+            if (a.shot, a.quirk) != (TowerShot::Arrows, Quirk::None) {
+                h.u8(a.shot as u8);
+                h.u8(a.quirk.kind());
+                if let Quirk::Raises(unit) = a.quirk {
+                    h.u16(unit);
+                }
+            }
         }
         h.u8(self.field);
         match self.tunes {
@@ -803,15 +893,22 @@ pub struct Structures {
     fog: bool,
     /// Towers, by slot (see [`crate::towers`]): ticks until the next
     /// volley, the regiment its owner told it to shoot, hit points toward
-    /// a Tollgate's next Grub, ticks until a Bell Tower may toll again, and
-    /// ticks of its silence left.
+    /// a Tollgate's next Grub or soldiers toward a Corpse Catapult's next
+    /// raising, ticks until a Bell Tower may toll again, and ticks of its
+    /// silence left.
     pub(crate) reload: Vec<u16>,
     pub(crate) focus: Vec<Option<RegimentHandle>>,
-    pub(crate) toll: Vec<u8>,
+    pub(crate) tally: Vec<u8>,
     pub(crate) bell: Vec<u16>,
     pub(crate) silence: Vec<u16>,
     /// Bells tolled in the last tick, for the events.
     pub(crate) tolled: Vec<StructureHandle>,
+    /// Burning ground and acid the towers' hits left (see
+    /// [`crate::towers::Pool`]).
+    pub(crate) pools: Vec<crate::towers::Pool>,
+    /// Tiles burning ground covers, to be set alight (the world's fires
+    /// take them each tick).
+    pub(crate) kindle: Vec<(i32, i32)>,
     /// Gates, by slot (see [`crate::gates`]): how each is set, whom its
     /// door lets through now, and ticks an Auto gate stays open.
     pub(crate) gate: Vec<GateMode>,
@@ -914,10 +1011,13 @@ impl Structures {
             fog: false,
             reload: vec![0; n],
             focus: vec![None; n],
-            toll: vec![0; n],
+            tally: vec![0; n],
             bell: vec![0; n],
             silence: vec![0; n],
             tolled: Vec::with_capacity(n),
+            pools: Vec::with_capacity(crate::towers::MAX_POOLS),
+            // Each pool covers a 5 x 5 square.
+            kindle: Vec::with_capacity(crate::towers::MAX_POOLS * 25),
             gate: vec![GateMode::Auto; n],
             gate_door: vec![Door::default(); n],
             gate_hold: vec![0; n],
@@ -1442,7 +1542,7 @@ impl Structures {
         };
         self.reload[i] = 0;
         self.focus[i] = None;
-        self.toll[i] = 0;
+        self.tally[i] = 0;
         self.bell[i] = 0;
         self.silence[i] = 0;
         self.gate[i] = GateMode::Auto;
@@ -1990,6 +2090,7 @@ impl Structures {
         for &r in &self.resonance {
             h.u32(r);
         }
+        self.hash_pools(h);
         for r in 0..self.siege.len() {
             match self.siege_of(regs, r) {
                 Some(s) => {

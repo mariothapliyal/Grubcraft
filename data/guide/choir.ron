@@ -107,6 +107,26 @@
             ],
         ),
         (
+            name: "Prism Lance",
+            summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. Its beam runs on through up to 3 more enemy regiments in line behind the target. It shoots siege engines first, then big soldiers. Needs power, so keep it inside a field.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Place it where enemy columns will march, so its beam runs through several regiments."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it does nothing without power."),
+                (icon: Spear, text: "Weak against wide lines of small soldiers, so guard it with spears."),
+            ],
+        ),
+        (
+            name: "Chord Obelisk",
+            summary: "Blast tower: six shots every 5 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Its sound burst throws every regiment it hits into disorder until they re-form. Needs power.",
+            notes: [],
+            tips: [
+                (icon: Charge, text: "Charge the regiments it throws into disorder, since they fight worse until they re-form."),
+                (icon: Spear, text: "Guard it with troops, since nothing within 8 tiles of it can be hit."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it needs power to fire."),
+            ],
+        ),
+        (
             name: "Sanctum of Echoes",
             blurb: "Builds and restores heroes: the Maestro, Refractor and Hollow Bell. Needs power; build it early.",
             summary: "Builds and restores heroes: the Maestro, the Refractor and the Hollow Bell. Needs power. Build it early; the Maestro boosts chords and the others turn fights. Heroes cost Marrow, so keep some in reserve for a replacement.",

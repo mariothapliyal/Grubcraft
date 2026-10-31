@@ -32,8 +32,11 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
 use crate::sky::Air;
-use crate::structures::StructureHandle;
+use crate::structures::{StructureHandle, TowerShot};
 use crate::terrain::Terrain;
+use crate::towers::{
+    BLAST_DENSITY_MAX, BLAST_SPLASH, BOLT_BIG_PERCENT, MAX_SPLASHED, SPLASH_PERCENT, big_to_bolt,
+};
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
 use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation, veterancy};
 
@@ -75,6 +78,10 @@ pub const FALL_BACK_TICKS: u16 = 8 * TICKS_PER_SECOND as u16;
 pub const MISSILE_SPEED: Fx = Fx::ONE;
 /// Volleys in flight at once, across all players.
 pub const MAX_VOLLEYS: usize = 2048;
+/// Room for the tower hits of a tick: every volley landing at once could
+/// be a tower's, and blasts splash a few more (past this a splash goes
+/// untold to the towers' quirks, though it still hurts).
+const TOWER_HITS: usize = 2 * MAX_VOLLEYS;
 /// Room for this many melee blows a tick per regiment the match holds:
 /// about one regiment in twenty strikes on any one tick, with at most a
 /// regiment's worth of soldiers each, so in all but the biggest battles
@@ -423,9 +430,10 @@ pub struct Combat {
     /// Volleys loosed this tick: (volley, shooter, target), for vision
     /// and the tick's events.
     loosed: Vec<(VolleyId, Shooter, RegimentHandle)>,
-    /// Tower volleys that came down this tick: the tower, and the hit
-    /// points they took (a Tollgate's earnings, see [`crate::towers`]).
-    tower_hits: Vec<(StructureHandle, u32)>,
+    /// Tower volleys that came down this tick, one for each regiment they
+    /// fell on (see [`crate::towers`]). No room is kept for them until a
+    /// match has buildings ([`Combat::reserve_towers`]).
+    tower_hits: Vec<TowerHit>,
     /// Volleys that came down this tick, for the tick's events (kept only
     /// while `tell`: a rehearsal's world tells no one).
     landed: Vec<Event>,
@@ -508,7 +516,37 @@ struct Volleys {
     shots: Vec<u16>,
     damage: Vec<u16>,
     accuracy: Vec<u8>,
+    /// What a tower loosed (arrows for every regiment's volley).
+    kind: Vec<TowerShot>,
     free: Vec<u32>,
+}
+
+/// A tower volley that came down on a regiment this tick: what it did, for
+/// the tower's quirks (see [`crate::towers`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TowerHit {
+    pub tower: StructureHandle,
+    pub target: RegimentHandle,
+    /// Where it was aimed.
+    pub at: FxVec2,
+    /// Soldiers it killed, and hit points it took.
+    pub lost: u16,
+    pub hp: u32,
+    /// Whether this is the regiment it was loosed at, not one beside it
+    /// that a blast splashed.
+    pub aimed: bool,
+}
+
+/// What a volley that comes down is, for the damage it does.
+struct Fall {
+    from: FxVec2,
+    aim: FxVec2,
+    shots: u16,
+    damage: u16,
+    accuracy: u8,
+    /// A tower's shots are aimed one by one.
+    tower: bool,
+    kind: TowerShot,
 }
 
 /// A volley about to be loosed (see [`Combat::loose`]).
@@ -522,6 +560,8 @@ pub(crate) struct Shot {
     pub damage: u16,
     /// Percent of shots that land.
     pub accuracy: u8,
+    /// What it is (arrows for any regiment's).
+    pub kind: TowerShot,
 }
 
 /// One volley in flight, for presentation.
@@ -536,6 +576,8 @@ pub struct VolleyView {
     pub launch_tick: u32,
     pub impact_tick: u32,
     pub shots: u16,
+    /// What it is: arrows, or a tower's bolt or blast.
+    pub kind: TowerShot,
 }
 
 impl Combat {
@@ -600,10 +642,11 @@ impl Combat {
                 shots: vec![0; MAX_VOLLEYS],
                 damage: vec![0; MAX_VOLLEYS],
                 accuracy: vec![0; MAX_VOLLEYS],
+                kind: vec![TowerShot::Arrows; MAX_VOLLEYS],
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
             loosed: Vec::with_capacity(MAX_VOLLEYS),
-            tower_hits: Vec::with_capacity(MAX_VOLLEYS),
+            tower_hits: Vec::new(),
             landed: Vec::with_capacity(MAX_VOLLEYS),
             blows: Vec::with_capacity(regiment_capacity * MAX_BLOWS_PER_REGIMENT),
             tell: true,
@@ -632,10 +675,25 @@ impl Combat {
         &self.loosed
     }
 
-    /// The tower volleys that came down in the last tick: the tower, and
-    /// the hit points they took.
-    pub(crate) fn tower_hits(&self) -> &[(StructureHandle, u32)] {
+    /// The tower volleys that came down in the last tick, one for each
+    /// regiment they fell on.
+    pub(crate) fn tower_hits(&self) -> &[TowerHit] {
         &self.tower_hits
+    }
+
+    /// Tell the towers of `hit`, while there is room (always, once
+    /// [`Combat::reserve_towers`] has kept it; a tick never allocates).
+    fn push_hit(&mut self, hit: TowerHit) {
+        if self.tower_hits.len() < self.tower_hits.capacity() {
+            self.tower_hits.push(hit);
+        }
+    }
+
+    /// Keep room for the tower hits a tick can have: a match with
+    /// buildings calls this once, so a field battle's heap holds none.
+    pub(crate) fn reserve_towers(&mut self) {
+        self.tower_hits
+            .reserve_exact(TOWER_HITS - self.tower_hits.capacity());
     }
 
     /// Loose `shot` at regiment slot `j`: it flies at [`MISSILE_SPEED`] to
@@ -668,6 +726,7 @@ impl Combat {
         vs.shots[v] = shot.shots;
         vs.damage[v] = shot.damage;
         vs.accuracy[v] = shot.accuracy;
+        vs.kind[v] = shot.kind;
         true
     }
 
@@ -693,6 +752,7 @@ impl Combat {
                 launch_tick: v.launch[i],
                 impact_tick: v.impact[i],
                 shots: v.shots[i],
+                kind: v.kind[i],
             })
     }
 
@@ -1981,6 +2041,7 @@ impl Combat {
                     .min(u64::from(u16::MAX)) as u16,
                 accuracy: (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100)
                     as u8,
+                kind: TowerShot::Arrows,
             };
             if !self.loose(regs, j, shot, tick) {
                 continue;
@@ -2011,6 +2072,7 @@ impl Combat {
                 target: vs.target[v],
                 at: vs.aim[v],
                 lost,
+                kind: vs.kind[v],
             };
             let Some(j) = regs.resolve(vs.target[v]) else {
                 if self.tell {
@@ -2026,44 +2088,18 @@ impl Combat {
                 }
                 continue;
             }
-            // A tower's shots are aimed one by one, so how close the target
-            // stands makes no odds; a regiment's volley falls on the block.
             let tower = vs.shooter[v].tower();
-            let density = if tower.is_some() {
-                100
-            } else {
-                let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
-                (i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
-                    .clamp(25, 125) as u64
+            let (owner, at) = (vs.owner[v], vs.aim[v]);
+            let fall = Fall {
+                from: vs.from[v],
+                aim: at,
+                shots: vs.shots[v],
+                damage: vs.damage[v],
+                accuracy: vs.accuracy[v],
+                tower: tower.is_some(),
+                kind: vs.kind[v],
             };
-            let side = block.side_facing(vs.from[v]);
-            // Arrows from the front mostly glance off a shield wall, and
-            // trees catch some of those loosed into or out of a wood.
-            let shields = regs.formation[j].arrow_percent(side == Side::Front);
-            // Judged where the arrows were aimed, as the arrows on screen are.
-            let trees = terrain.through_trees(vs.from[v], vs.aim[v]);
-            let expected = u64::from(vs.shots[v])
-                * u64::from(vs.accuracy[v])
-                * density
-                * u64::from(vs.damage[v])
-                * side.damage_percent()
-                * 256
-                / (100 * 100 * 100)
-                * shields
-                * trees
-                / (100 * 100)
-                * VOLLEY_PACE_PERCENT
-                / 100;
-            // A wall's parapet covers those on it, not those still on
-            // their ladders.
-            // Nor are those behind a barricade of their own side's.
-            let expected = if regs.on_wall[j] && !regs.climber[j] {
-                expected * crate::manning::WALL_COVER_PERCENT / 100
-            } else if terrain.sheltered(regs.owner[j], regs.position[j]) {
-                expected * crate::fieldworks::COVER_ARROW_PERCENT / 100
-            } else {
-                expected
-            };
+            let (expected, side) = falls_on(regs, units, terrain, j, &block, &fall);
             let victim = regs.unit[j];
             let (lost, hp) = deal(regs, units, nav, j, expected, side, rng);
             if lost > 0
@@ -2071,11 +2107,61 @@ impl Combat {
             {
                 veterancy::credit(regs, units, k, victim, lost, true);
             }
-            if let Some(t) = tower {
-                self.tower_hits.push((t, hp));
-            }
             if self.tell {
                 self.landed.push(landed(lost));
+            }
+            let Some(t) = tower else {
+                continue;
+            };
+            let hit = |target, (lost, hp), aimed| TowerHit {
+                tower: t,
+                target,
+                at,
+                lost,
+                hp,
+                aimed,
+            };
+            self.push_hit(hit(regs.handle(j), (lost, hp), true));
+            if fall.kind != TowerShot::Blast {
+                continue;
+            }
+            // A blast splashes the enemy regiments beside its target, the
+            // nearest first.
+            let reach = block.radius() + BLAST_SPLASH + self.max_radius;
+            let mut beside = [(u64::MAX, 0usize, block); MAX_SPLASHED];
+            let mut n = 0;
+            let place = placement!(regs, stances);
+            self.each_near(&place, block.centre, reach, Whose::Enemies(owner), |k| {
+                if k == j || regs.models[k] == 0 {
+                    return;
+                }
+                let theirs = Block::of(regs, units, k);
+                if !theirs.touches(&block, BLAST_SPLASH) {
+                    return;
+                }
+                let d = (regs.position[k] - block.centre).length_sq_raw();
+                let entry = (d, k, theirs);
+                if n < MAX_SPLASHED {
+                    beside[n] = entry;
+                    n += 1;
+                } else if let Some(far) = beside.iter_mut().max_by_key(|e| (e.0, e.1))
+                    && (d, k) < (far.0, far.1)
+                {
+                    *far = entry;
+                }
+            });
+            for &(_, k, ref block) in &beside[..n] {
+                let (expected, side) = falls_on(regs, units, terrain, k, block, &fall);
+                let dealt = deal(
+                    regs,
+                    units,
+                    nav,
+                    k,
+                    expected * SPLASH_PERCENT / 100,
+                    side,
+                    rng,
+                );
+                self.push_hit(hit(regs.handle(k), dealt, false));
             }
         }
 
@@ -2158,6 +2244,11 @@ impl Combat {
             if let Shooter::Tower(t) = v.shooter[i] {
                 h.u32(t.index);
                 h.u16(t.generation);
+                // Nothing for arrows, so worlds without the stage 5
+                // towers hash as they did.
+                if v.kind[i] != TowerShot::Arrows {
+                    h.u8(v.kind[i] as u8);
+                }
             }
         }
     }
@@ -2181,6 +2272,82 @@ pub fn heart_percent(state: MoraleState) -> u64 {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
         _ => 100,
     }
+}
+
+/// The damage `fall` does to regiment `j` (its block `block`), in 1/256
+/// hit points before the roll, and the side it comes from. A regiment's
+/// volley falls on the block, so a packed one takes more; a tower's
+/// arrows and bolts are aimed one by one, and its blasts fall on packed
+/// blocks harder still. Arrows from the front mostly glance off a shield
+/// wall; a bolt or blast doesn't. Trees catch some of whatever is loosed
+/// into or out of a wood. A bolt hits big soldiers harder and goes no
+/// deeper than a file.
+fn falls_on(
+    regs: &Regiments,
+    units: &[UnitStats],
+    terrain: &Terrain,
+    j: usize,
+    block: &Block,
+    fall: &Fall,
+) -> (u64, Side) {
+    let packed = || {
+        let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
+        i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1)
+    };
+    let density = match (fall.tower, fall.kind) {
+        (true, TowerShot::Blast) => packed().clamp(25, BLAST_DENSITY_MAX) as u64,
+        (true, _) => 100,
+        (false, _) => packed().clamp(25, 125) as u64,
+    };
+    let side = block.side_facing(fall.from);
+    let shields = match fall.kind {
+        TowerShot::Arrows => regs.formation[j].arrow_percent(side == Side::Front),
+        _ => 100,
+    };
+    // Judged where the shots were aimed, as the shots on screen are.
+    let trees = terrain.through_trees(fall.from, fall.aim);
+    let stats = &units[regs.unit[j] as usize];
+    let big = big_to_bolt(stats);
+    let bolt_percent = if fall.kind == TowerShot::Bolt && big {
+        BOLT_BIG_PERCENT
+    } else {
+        100
+    };
+    let expected = u64::from(fall.shots)
+        * u64::from(fall.accuracy)
+        * density
+        * u64::from(fall.damage)
+        * side.damage_percent()
+        * 256
+        / (100 * 100 * 100)
+        * shields
+        * trees
+        / (100 * 100)
+        * VOLLEY_PACE_PERCENT
+        / 100
+        * bolt_percent
+        / 100;
+    // A bolt runs down one file and stops.
+    let expected = if fall.kind == TowerShot::Bolt {
+        let file = u64::from(formation::ranks(regs.files[j], regs.models[j]))
+            * u64::from(stats.hp_per_model)
+            * 256
+            * bolt_percent
+            / 100;
+        expected.min(file)
+    } else {
+        expected
+    };
+    // A wall's parapet covers those on it, not those still on their
+    // ladders; nor are those behind a barricade of their own side's.
+    let expected = if regs.on_wall[j] && !regs.climber[j] {
+        expected * crate::manning::WALL_COVER_PERCENT / 100
+    } else if terrain.sheltered(regs.owner[j], regs.position[j]) {
+        expected * crate::fieldworks::COVER_ARROW_PERCENT / 100
+    } else {
+        expected
+    };
+    (expected, side)
 }
 
 /// Apply `expected` damage (in 1/256 hit points) to regiment `j`, rolled

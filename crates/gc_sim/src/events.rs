@@ -12,7 +12,7 @@ use gc_fixed::FxVec2;
 use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
-use crate::structures::{StructureHandle, WallTwist};
+use crate::structures::{StructureHandle, TowerShot, WallTwist};
 use crate::terrain::Growth;
 use crate::twists::Twisted;
 use crate::vision::Ambush;
@@ -67,6 +67,8 @@ pub enum Event {
         target: RegimentHandle,
         at: FxVec2,
         lost: u16,
+        /// What came down: arrows, or a tower's bolt or blast.
+        kind: TowerShot,
     },
     /// A regiment lost soldiers this tick, to anything (`lost` is all it
     /// had when it is wiped out; its handle is no longer live then).

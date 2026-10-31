@@ -1084,6 +1084,7 @@ impl World {
             return false;
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
+        self.combat.reserve_towers();
         // Conquest's commanders will be its heroes.
         self.generals = None;
         self.events
@@ -1789,12 +1790,18 @@ impl World {
         if let Some(conquest) = &mut self.conquest {
             conquest.towers(
                 &mut self.combat,
-                &self.regiments,
+                &mut self.regiments,
+                &self.units,
+                &self.nav,
                 &self.stances,
                 &self.terrain,
                 &self.vision,
                 self.tick,
             );
+            // Burning ground sets the growth under it alight.
+            for (x, y) in conquest.structures.kindle.drain(..) {
+                self.fires.kindle(&self.terrain, x, y);
+            }
             conquest.update(
                 &mut self.regiments,
                 &self.units,

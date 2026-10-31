@@ -117,6 +117,26 @@
             ],
         ),
         (
+            name: "Collector's Bolt",
+            summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers, then whoever attacks your buildings. Each soldier it kills pays you 3 Grub. A shield wall does not stop the bolt.",
+            notes: [],
+            tips: [
+                (icon: Grub, text: "Place it on a road where columns march, so every soldier it kills pays 3 Grub."),
+                (icon: Alarm, text: "Strong against columns, monsters and cavalry, but weak against wide lines of small soldiers."),
+                (icon: Spear, text: "Keep spears in front of it, since small soldiers in a wide line will still reach it."),
+            ],
+        ),
+        (
+            name: "Corpse Catapult",
+            summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Every 10 soldiers it kills rise beside it as a regiment of 10 Bone Pikes, yours for 30 seconds.",
+            notes: [],
+            tips: [
+                (icon: Spear, text: "Guard it with troops, since enemies within 8 tiles of it are safe from its shots."),
+                (icon: Heart, text: "Fight near it, since every 10 kills raise Bone Pikes beside it for 30 seconds."),
+                (icon: Hammer, text: "Build it behind your line, since the Bone Pikes it raises are gone after 30 seconds."),
+            ],
+        ),
+        (
             name: "Vault of Names",
             blurb: "Hires and revives heroes: the Magnate, Undertaker and Usurer. Build it early; heroes cost Marrow, so keep a reserve.",
             summary: "Hires and revives heroes: the Magnate, the Undertaker and the Usurer. Build it early; the Magnate pays for itself and the Undertaker multiplies your dead. Heroes cost Marrow, so keep some in reserve for a replacement.",
