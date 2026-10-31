@@ -173,6 +173,7 @@ The instruction-count baseline was re-blessed: drill +3.5%, pathing storm +0.4%,
 | | Before | After |
 |---|---|---|
 | `field-8000pt-2v2` sim heap | 7.98 MiB (8,372,668 B) | 6.86 MiB (7,193,020 B) |
+| the same, on top of #333 | 8.00 MiB (8,388,564 B) | 6.87 MiB (7,208,916 B) |
 | `conquest-6p` sim heap (768-tile map) | 24.14 MiB | 19.64 MiB |
 | Instructions (drill / storm / field) | | +0.13% / +0.40% / +0.22% |
 | `conquest-6p` laying, typical / worst | 6.6 / 13.1 ms | 6.3 / 11.9 ms |
