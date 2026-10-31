@@ -114,9 +114,8 @@ struct Front {
     /// A wall tile of each stretch it raises: either side of the gate, or
     /// the middle of a line with no gate.
     raise: Vec<(i32, i32)>,
-    /// The whole line, end to end, and whether it runs upright.
+    /// The whole line, end to end.
     line: Line,
-    up: bool,
 }
 
 /// The ring carried on from the front wall round home.
@@ -391,11 +390,11 @@ impl Steward {
             if look.tier < 2 {
                 return None;
             }
-            let corners = ring_corners(front.line, front.up, home);
+            // Laid out below, as a ring not yet walled.
             self.engineer.ring = Some(Ring {
-                corners,
-                pieces: ring_pieces(corners),
-                mended: s.now,
+                corners: ring_corners(front.line, home),
+                pieces: Vec::new(),
+                mended: 0,
             });
         }
         let ring = self.engineer.ring.as_mut()?;
@@ -790,7 +789,6 @@ fn plan_front(
                 pieces.sort_by_key(|&(a, _)| (a.0 - mx).abs() + (a.1 - my).abs());
                 return Some(Front {
                     line: across(mid, up, WALL_HALF),
-                    up,
                     pieces,
                     gate: gate_at,
                     crowded: None,
@@ -808,24 +806,15 @@ fn plan_front(
 }
 
 /// The ring's corners: a rectangle round `home` with the front wall
-/// `line` (upright or not) on one side, as far out the other way.
-fn ring_corners(line: Line, up: bool, home: Vec2) -> Line {
+/// `line` on one side, as far out the other way.
+fn ring_corners(((x0, y0), (x1, y1)): Line, home: Vec2) -> Line {
     let (hx, hy) = (home.x.floor() as i32, home.y.floor() as i32);
-    // Across: the axis the line stands out along; along: the line's own.
-    let (h_across, h_along) = if up { (hx, hy) } else { (hy, hx) };
-    let (at, a, b) = if up {
-        (line.0.0, line.0.1.min(line.1.1), line.0.1.max(line.1.1))
-    } else {
-        (line.0.1, line.0.0.min(line.1.0), line.0.0.max(line.1.0))
-    };
-    let d = (at - h_across).abs();
-    let (c0, c1) = (at.min(h_across - d), at.max(h_across + d));
-    let (l0, l1) = (a.min(h_along - d), b.max(h_along + d));
-    if up {
-        ((c0, l0), (c1, l1))
-    } else {
-        ((l0, c0), (l1, c1))
-    }
+    // How far the line stands out from home, across its own run.
+    let d = if x0 == x1 { (x0 - hx).abs() } else { (y0 - hy).abs() };
+    (
+        (x0.min(x1).min(hx - d), y0.min(y1).min(hy - d)),
+        (x0.max(x1).max(hx + d), y0.max(y1).max(hy + d)),
+    )
 }
 
 /// The ring's pieces: each side of the rectangle `corners` in pieces of

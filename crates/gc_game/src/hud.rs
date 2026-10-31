@@ -2092,12 +2092,7 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
         _ if world.swept(r.handle) => "Swept by the flood: losing men",
         _ if dark && r.torches => "Torches lit: seen from afar",
         "" if dark => "In the dark: unseen from afar",
-        "" if world
-            .structures()
-            .is_some_and(|s| s.towns().inside_at(r.owner, r.position)) =>
-        {
-            "In its walled town: stands firmer, its wounded mend"
-        }
+        "" if r.in_town => "In its walled town: stands firmer, its wounded mend",
         word => word,
     }
 }

@@ -1294,6 +1294,7 @@ impl Regiments {
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
+            in_town: self.in_town[i],
             climber: self.climber[i],
             sung: self.sung_left[i] > 0,
             hunting: plan.hunt.is_some(),
@@ -1761,6 +1762,8 @@ pub struct RegimentView {
     /// Standing on a wall's walkway (see [`crate::manning`]; its soldiers
     /// stand on the tiles [`crate::World::wall_tiles`] names).
     pub on_wall: bool,
+    /// Inside its own walled town at the last survey (see [`crate::towns`]).
+    pub in_town: bool,
     /// On a wall at the head of a ladder, fighting its way onto it.
     pub climber: bool,
     /// Slowed by a Choir Singing Wall it struck (see [`crate::twists`]).

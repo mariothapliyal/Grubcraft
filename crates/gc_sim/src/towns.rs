@@ -19,7 +19,7 @@
 use crate::gates::GateMode;
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{GATE, PASS, Role, Structures};
+use crate::structures::{Role, Structures};
 use crate::terrain::Terrain;
 use crate::{MAX_PARTIES, PlayerId, TICKS_PER_SECOND, Vec};
 use alloc::vec;
@@ -58,6 +58,20 @@ pub struct Towns {
     /// Players whose town was walled or breached at the last survey:
     /// `(player, walled)`, for the screen.
     pub(crate) changed: Vec<(PlayerId, bool)>,
+}
+
+impl Towns {
+    /// No room at all, for swapping the towns out during a survey without
+    /// allocating.
+    const fn empty() -> Towns {
+        Towns {
+            walled: [None; MAX_PARTIES],
+            inside: Vec::new(),
+            wall: Vec::new(),
+            queue: Vec::new(),
+            changed: Vec::new(),
+        }
+    }
 }
 
 impl Default for Towns {
@@ -129,7 +143,7 @@ impl Structures {
     /// Find every player's ring again (see the module docs), and mark the
     /// regiments standing inside their own walled town.
     pub(crate) fn survey_towns(&mut self, nav: &Nav, terrain: &Terrain, regs: &mut Regiments) {
-        let mut towns = core::mem::take(&mut self.towns);
+        let mut towns = core::mem::replace(&mut self.towns, Towns::empty());
         towns.changed.clear();
         for p in 0..MAX_PARTIES {
             let was = towns.walled[p].is_some();
@@ -156,9 +170,11 @@ impl Structures {
         terrain: &Terrain,
         towns: &mut Towns,
     ) -> Option<(i32, i32)> {
-        let main = self.standing().find(|&i| {
-            self.owner_of(i) == p && self.finished(i) && self.stats_of(i).role == Role::Main
-        })?;
+        let main = self
+            .finished_of(p)
+            .find(|&i| self.stats_of(i).role == Role::Main)?;
+        // Its standing buildings that take up ground, but the main one.
+        let own = |i: usize| i != main && self.owner_of(i) == p && self.walls_ground(i);
         let mid = self.centre(main);
         let (cx, cy) = (mid.x.floor_int(), mid.y.floor_int());
         let (x0, y0) = (cx - TOWN_REACH, cy - TOWN_REACH);
@@ -174,25 +190,21 @@ impl Structures {
         wall.fill(0);
         // Its own walls and gates, and its other buildings in the way (a
         // ring may run up to a house and on from its far side).
-        let mut walls = 0;
-        for i in self.standing() {
-            if i == main || self.owner_of(i) != p || !self.walls_ground(i) {
-                continue;
-            }
-            let flags = self.flags_of(i);
+        let mut any_wall = false;
+        for i in self.standing().filter(|&i| own(i)) {
             let is_wall = self.stats_of(i).role == Role::Wall;
             let gap = !self.finished(i) && is_wall
-                || flags & GATE != 0 && self.gate[i] == GateMode::Open
-                || flags & PASS != 0 && flags & GATE == 0 && !self.powered(i);
+                || self.is_gate(i) && self.gate[i] == GateMode::Open
+                || self.is_door(i) && !self.is_gate(i) && !self.powered(i);
             if gap {
                 continue;
             }
+            any_wall |= is_wall;
             for t in tiles(self.footprint(i)) {
                 set(wall, t);
-                walls += usize::from(is_wall);
             }
         }
-        if walls == 0 {
+        if !any_wall {
             return None;
         }
         let inside = &mut towns.inside[usize::from(p) * WORDS..][..WORDS];
@@ -228,11 +240,7 @@ impl Structures {
         // Its buildings (not its walls) that the town's ground touches are
         // in the town too.
         for i in self.standing() {
-            if i == main
-                || self.owner_of(i) != p
-                || !self.walls_ground(i)
-                || self.stats_of(i).role == Role::Wall
-            {
+            if !own(i) || self.stats_of(i).role == Role::Wall {
                 continue;
             }
             let [x, y, w, d] = self.footprint(i);
@@ -250,7 +258,10 @@ impl Structures {
 /// Once a second: each wounded soldier of a regiment resting in its own
 /// walled town (not fighting) gets [`TOWN_MEND_HP`] hit points back, up to
 /// his unit's full.
-pub(crate) fn mend_in_towns(regs: &mut Regiments, units: &[crate::UnitStats]) {
+pub(crate) fn mend_in_towns(towns: &Towns, regs: &mut Regiments, units: &[crate::UnitStats]) {
+    if towns.walled.iter().all(Option::is_none) {
+        return;
+    }
     for i in 0..regs.alive.len() {
         if !regs.alive[i] || !regs.in_town[i] || regs.engaged[i].is_some() {
             continue;

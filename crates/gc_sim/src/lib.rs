@@ -1112,12 +1112,12 @@ impl World {
         true
     }
 
-    /// The buildings on the field (Conquest only).
     /// Whether player `p` has a walled town (see [`towns`]).
     pub fn walled_town(&self, p: PlayerId) -> bool {
         self.structures().is_some_and(|s| s.towns().walled(p))
     }
 
+    /// The buildings on the field (Conquest only).
     pub fn structures(&self) -> Option<&Structures> {
         Some(&self.conquest.as_ref()?.structures)
     }
@@ -1818,10 +1818,10 @@ impl World {
                 self.events.towns(&conquest.structures.towns.changed);
             }
             if self.tick.is_multiple_of(TICKS_PER_SECOND) {
-                towns::mend_in_towns(&mut self.regiments, &self.units);
-            }
-            if self.tick.is_multiple_of(TICKS_PER_SECOND) && self.flood.rivers.floodplain_shut() {
-                (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
+                towns::mend_in_towns(&conquest.structures.towns, &mut self.regiments, &self.units);
+                if self.flood.rivers.floodplain_shut() {
+                    (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
+                }
             }
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);

@@ -1113,7 +1113,7 @@ impl Structures {
     }
 
     /// The slots of `owner`'s finished buildings, in index order.
-    fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
         self.standing()
             .filter(move |&i| self.owner[i] == owner && self.finished(i))
     }
@@ -2043,8 +2043,7 @@ impl Structures {
         let armour = self.buildings[self.building[s] as usize].armour;
         let mut damage = base * u64::from(breaker.percent(armour)) / 100;
         // A walled town's buildings stand up better to ordinary regiments.
-        let mid = self.centre(s);
-        if breaker == Breaker::Regiment && self.towns.inside_at(self.owner[s], mid) {
+        if breaker == Breaker::Regiment && self.towns.inside_at(self.owner[s], self.centre(s)) {
             damage = damage * crate::towns::SHELTERED_PERCENT / 100;
         }
         self.hp[s] = self.hp[s].saturating_sub(u32::try_from(damage).unwrap_or(u32::MAX));
