@@ -716,6 +716,27 @@ impl Terrain {
         need != 0 && (need, i as u32) <= (last.1, last.0)
     }
 
+    /// The share of its pace (percent) soldiers on foot keep on tile
+    /// `(x, y)` for what grows there and how the ground holds their feet,
+    /// as the map made it (rain and rubble come and go): what routes price
+    /// the tile at (see [`crate::nav`]). Water and slopes the map's own
+    /// costs price.
+    pub(crate) fn going_percent(&self, x: i32, y: i32) -> u8 {
+        let woods = self
+            .tile_of(x, y)
+            .is_some_and(|i| Cover::from_u8(self.cover[i]) == Cover::Wood);
+        let soft = index_in(self.footing_tiles, x, y)
+            .is_some_and(|i| Footing::from_u8(self.footing[i]) == Footing::Soft);
+        let mut pace = 100;
+        if woods {
+            pace = pace * WOODS_SPEED_PERCENT / 100;
+        }
+        if soft {
+            pace = pace * SOFT_SPEED_PERCENT / 100;
+        }
+        pace as u8
+    }
+
     /// Whether `p` is in soft ground (see [`Footing::Soft`]).
     pub fn soft(&self, p: FxVec2) -> bool {
         self.footing(p) == Footing::Soft
