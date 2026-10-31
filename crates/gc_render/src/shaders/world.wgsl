@@ -2157,7 +2157,9 @@ fn cs_pose(
                 }
             }
         }
-        workgroupBarrier();
+        if GC_DIAG != 4u {
+            workgroupBarrier();
+        }
     }
     // The rig's fixes: the body dropped and the legs bent to stand on the
     // ground, the upper body turned to look.
@@ -2172,7 +2174,9 @@ fn cs_pose(
             fit_rig(i, rig, feet, look);
         }
     }
-    workgroupBarrier();
+    if GC_DIAG != 4u {
+        workgroupBarrier();
+    }
     if bone > joints || bone >= bones {
         return;
     }
@@ -2682,7 +2686,9 @@ fn cs_pose_storage(
             }
             write_palette(slot, matrix_rows(g));
         }
-        storageBarrier();
+        if GC_DIAG != 4u {
+            storageBarrier();
+        }
     }
     if bone > joints || bone >= bones {
         return;
