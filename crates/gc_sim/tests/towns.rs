@@ -196,8 +196,8 @@ fn walls_closed_round_the_hall_make_a_walled_town_until_a_gate_is_opened() {
     let gate = ring(&mut w);
     assert_eq!(survey(&mut w), vec![(0, true)]);
     let towns = w.structures().unwrap().towns();
-    assert!(towns.inside(0, 58, 58) && towns.inside(0, LOW as i32 + 1, 62));
-    assert!(!towns.inside(0, LOW as i32 - 1, 62) && !towns.inside(0, 10, 10));
+    assert!(towns.inside(0, 58, 58) && towns.inside(0, i32::from(LOW) + 1, 62));
+    assert!(!towns.inside(0, i32::from(LOW) - 1, 62) && !towns.inside(0, 10, 10));
     assert!(!towns.inside(1, 58, 58), "the town is its owner's only");
     // A gate set Open is a gap in the ring.
     let open = Command::SetGate {
