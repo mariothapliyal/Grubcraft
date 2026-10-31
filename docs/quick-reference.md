@@ -79,7 +79,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 250 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 350 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 

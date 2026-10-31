@@ -70,7 +70,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 - A Watchtower kills a lone Yari regiment in about 45 s (about 55 s since volleys were slowed to 85%; towers fire from 2026-10-24). The regiment needs about 80 s to topple the tower, so one tower holds off one regiment. Three regiments take it in under 30 s and lose a little over half a regiment.
 
 **Opening at Standard tempo:**
-- The Clans start with 300 Grub and 5 Hands. A Farmstead (80) goes down at about 0:30 and a Dojo (150) at about 1:30.
+- The Clans start with 250 Grub and 5 Hands (300 before the even early game, docs/29). A Farmstead (80) goes down at about 0:30 and a Dojo (150) at about 1:30.
 - Tier 2 (300 Grub, 100 Marrow, 60 s) lands around minute 5 to 6, matching the pacing target in 04.
 - The tier-2 production buildings cost 40 to 60 Marrow each. A tier-2 army therefore competes with the next tier and with elite units for the same scarce Marrow.
 
