@@ -74,3 +74,46 @@ fn players_cannot_order_other_players_regiments() {
     }]);
     assert_eq!(stats.commands_rejected, 1);
 }
+
+#[test]
+fn a_regiment_is_not_set_down_off_the_map_or_on_blocked_ground() {
+    // 64 tiles, two cells to a tile, with a blocked patch (a cliff) at
+    // tiles 20 to 23.
+    const MAP: u32 = 64;
+    let side = MAP as usize * 2;
+    let nav: Vec<u8> = (0..side * side)
+        .map(|c| {
+            let (x, y) = (c % side / 2, c / side / 2);
+            u8::from(!(20..24).contains(&x) || !(20..24).contains(&y))
+        })
+        .collect();
+    let mut w = World::new(&MatchSetup {
+        seed: 3,
+        capacities: Capacities::default(),
+        units: &DRILL_UNITS,
+        map_tiles: MAP,
+        nav: &nav,
+        teams: &[],
+        ground: gc_sim::Ground::FLAT,
+        champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
+    });
+    let spawn = |x: i32, y: i32| PlayerCommand {
+        player: 0,
+        command: Command::SpawnRegiment {
+            unit: 0,
+            position: FxVec2::from_ints(x, y),
+            facing: NORTH,
+        },
+    };
+    let stats = w.tick(&[
+        spawn(10, 10),
+        spawn(-3, 10),
+        spawn(10, 70),
+        spawn(64, 10),
+        spawn(21, 21),
+    ]);
+    assert_eq!((stats.commands_applied, stats.commands_rejected), (1, 4));
+    assert_eq!(w.regiments.iter().count(), 1);
+}

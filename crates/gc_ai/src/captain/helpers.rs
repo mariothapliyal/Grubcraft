@@ -149,14 +149,11 @@ fn clear_of(
     skip: RegimentHandle,
     counts: impl Fn(&Seen) -> bool,
 ) -> bool {
-    let d = to - from;
-    let len2 = d.length_squared().max(1e-6);
     fighting.iter().all(|f| {
-        if f.handle == skip || f.engaged || !counts(f) {
-            return true;
-        }
-        let t = ((f.pos - from).dot(d) / len2).clamp(0.0, 1.0);
-        (from + d * t).distance(f.pos) > f.radius() + 5.0
+        f.handle == skip
+            || f.engaged
+            || !counts(f)
+            || crate::perception::segment_distance(f.pos, from, to) > f.radius() + 5.0
     })
 }
 
