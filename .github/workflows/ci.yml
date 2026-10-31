@@ -1,12 +1,21 @@
 name: CI
 
 on:
+  # Docs-only PRs skip CI (a PR that also changes code still runs it).
   pull_request:
-  push:
-    branches: [main]
-  # The release workflow runs the whole of CI on the tagged commit and
-  # publishes the zips this run builds.
+    paths-ignore: ['docs/**', '**.md']
+  # Pushes to main run this through latest.yml, and version tags through
+  # release.yml, so it has no push trigger of its own: that ran every merge
+  # twice. The free plan runs only 5 macOS jobs at a time, and each run of
+  # this workflow takes 2, so doubled and outdated runs kept the release
+  # build waiting for a Mac.
   workflow_call:
+
+# A new push to a PR cancels that PR's older run. Runs called from
+# latest.yml or release.yml get a group of their own and are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
