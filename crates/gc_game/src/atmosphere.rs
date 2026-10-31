@@ -132,7 +132,7 @@ const SNOW_MELT: f32 = 240.0;
 const RAIN_MELT: f32 = 25.0;
 /// How much of the full rain it takes to storm, and the seconds between
 /// flashes (shortest, longest).
-const STORM_AT: f32 = 0.75;
+pub(crate) const STORM_AT: f32 = 0.75;
 const STRIKE_GAP: (f32, f32) = (5.0, 16.0);
 /// The wind of a weather chosen by hand (F12, `--weather`), tiles a second.
 const PREVIEW_WIND: Vec2 = Vec2::new(0.64, 0.32);
