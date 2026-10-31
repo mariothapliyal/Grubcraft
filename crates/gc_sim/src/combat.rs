@@ -391,7 +391,10 @@ pub struct Combat {
     /// covers, up to `MAX_CELLS_PER_REGIMENT`; bigger ones go in `big`.
     head: Vec<u32>,
     entry_next: Vec<u32>,
-    entry_regiment: Vec<u32>,
+    /// The regiment of each entry: a `u16`, as in the finer hash, to keep
+    /// the sim heap under its budget (regiment slots stay under
+    /// `FINE_EMPTY`).
+    entry_regiment: Vec<u16>,
     entries: usize,
     big: Vec<u32>,
     /// The finer hash: first regiment per bucket, the next in the same
@@ -826,7 +829,7 @@ impl Combat {
                         Self::bucket_of(x, y) * OWNER_SLOTS + regs.owner[i] as usize % OWNER_SLOTS;
                     let e = self.entries;
                     self.entries += 1;
-                    self.entry_regiment[e] = i as u32;
+                    self.entry_regiment[e] = i as u16;
                     self.entry_next[e] = self.head[b];
                     self.head[b] = e as u32;
                 }
