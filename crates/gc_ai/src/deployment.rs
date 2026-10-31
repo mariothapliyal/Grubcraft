@@ -28,6 +28,11 @@ const MISFIT: f32 = 40.0;
 const PER_TILE: f32 = 0.6;
 const PER_DEGREE: f32 = 0.15;
 const PER_RANK: f32 = 4.0;
+/// Cost per tile the anchor stands short of [`EDGE_ROOM`] from the map's
+/// edge, so the deployment zone's ring (24 tiles at least) stays on the map
+/// when there is room.
+const PER_EDGE: f32 = 1.0;
+const EDGE_ROOM: f32 = 34.0;
 /// Costs of standing on ground that is bad but passable, per sample.
 const SLOW: f32 = 1.0;
 const WOODED: f32 = 1.5;
@@ -39,7 +44,7 @@ const SPACE: f32 = 1.0;
 /// The turns tried, degrees, the anchor's distances from the start, tiles,
 /// and the directions round it.
 const TURNS: [f32; 5] = [0.0, 20.0, -20.0, 40.0, -40.0];
-const RINGS: [f32; 7] = [3.0, 6.0, 9.0, 12.0, 16.0, 20.0, 25.0];
+const RINGS: [f32; 9] = [3.0, 6.0, 9.0, 12.0, 16.0, 20.0, 25.0, 32.0, 40.0];
 const BEARINGS: i32 = 12;
 
 /// A regiment's place in a layout: its block's centre across and back from
@@ -133,6 +138,16 @@ fn layout(units: &[UnitStats], army: &[UnitId], ranks: usize) -> Vec<Slot> {
         }
     }
     out
+}
+
+/// What standing with the zone's ring over the map's edge costs.
+fn edge_cost(terrain: &Terrain, anchor: Vec2) -> f32 {
+    let n = terrain.map_tiles() as f32;
+    if n == 0.0 {
+        return 0.0;
+    }
+    let gap = anchor.x.min(anchor.y).min(n - anchor.x).min(n - anchor.y);
+    (EDGE_ROOM - gap).max(0.0) * PER_EDGE
 }
 
 /// Unit `u`'s block in a line, across and deep, tiles.
@@ -293,6 +308,7 @@ pub fn deploy_clear_of(
                         forward: Vec2::from_angle(turn.to_radians()).rotate(forward),
                     };
                     let c = ring * PER_TILE
+                        + edge_cost(terrain, anchor)
                         + turn.abs() * PER_DEGREE
                         + folded
                         + cost_of(terrain, joined, frame, slots, &held);
@@ -411,6 +427,14 @@ mod tests {
             let centre = Vec2::new(corner.0, corner.1);
             let at = deploy_clear_of(&DRILL_UNITS, &army(), centre, Vec2::NEG_Y, &t, &[]);
             assert_placed(&t, &at.placed);
+            // The zone's ring comes in off the edge too.
+            let gap = at
+                .anchor
+                .x
+                .min(at.anchor.y)
+                .min(128.0 - at.anchor.x)
+                .min(128.0 - at.anchor.y);
+            assert!(gap > 12.0, "{corner:?}: {gap}");
         }
     }
 
