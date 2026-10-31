@@ -28,6 +28,18 @@
 //! (the map's rise, the stretch's swell and any front) reaches a full
 //! flood, and opens once it falls under half of one, so the walkable grid
 //! changes twice a flood per ford.
+//!
+//! **The floodplain** (stage 2): land within [`PLAIN_TILES`] of a river
+//! and less than a tile above its line belongs to the stretch of the
+//! river tile nearest it, so the same water rises over it: once the river
+//! stands higher than the land, it is wet (wading ground: slow, no
+//! charges). Each stretch's floodplain is grouped by height (bands of
+//! [`PLAIN_STEP`]); a group shuts on the walkable grid once the water
+//! stands [`WADING_DEPTH`] over it and opens again [`PLAIN_MARGIN`] lower,
+//! weighed once a second, so a big flood switches each group at most
+//! twice. Troops on shut floodplain are hurt and sent to dry ground, and
+//! swept down the river while a front is over it; buildings there lose
+//! [`DROWNED_PERCENT`] of their hit points a second.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -50,6 +62,19 @@ pub const FALL_SECONDS: u32 = 30;
 pub const WARNING_SECONDS: u32 = 8;
 /// A spell of rain at least this strong is a storm.
 pub const STORM_STRENGTH: u8 = 220;
+/// How far from a river its floodplain reaches, tiles.
+pub const PLAIN_TILES: u8 = 6;
+/// The floodplain's height bands, height units.
+pub const PLAIN_STEP: u16 = (HEIGHT_UNITS / 10) as u16;
+/// How deep water over floodplain shuts it, height units: the wading
+/// depth.
+pub const WADING_DEPTH: u16 = crate::flood::WADE_DEPTH;
+/// How far under [`WADING_DEPTH`] the water falls before shut floodplain
+/// opens again, height units.
+pub const PLAIN_MARGIN: u16 = (HEIGHT_UNITS / 10) as u16;
+/// The share of its hit points, in hundredths, a building on shut
+/// floodplain loses each second.
+pub const DROWNED_PERCENT: u32 = 2;
 /// How far down the river a front carries troops it sweeps away, tiles.
 pub const CARRY_TILES: u32 = 10;
 /// The share of a regiment swept away that drowns, in percent (rounded
@@ -146,6 +171,14 @@ pub struct Rivers {
     groups: Arc<[Group]>,
     /// Every ford tile on a river, as `(y, x)`, sorted, with its group.
     ford_tiles: Arc<[((i32, i32), u16)]>,
+    /// The floodplain, one group per stretch and height band.
+    plains: Arc<[Plain]>,
+    /// Every floodplain tile, as `(y, x)`, sorted, with its group and the
+    /// river tile nearest it (as `(x, y)`).
+    plain_tiles: Arc<[PlainTile]>,
+    /// Whether each floodplain group is shut, and how many are.
+    plain_shut: Vec<bool>,
+    plains_shut: u16,
     /// The water in each stretch beyond its normal flow.
     store: Vec<u64>,
     /// How far each stretch's store lifts its water, height units.
@@ -213,6 +246,27 @@ struct Group {
     runs: Vec<[i32; 4]>,
 }
 
+/// Floodplain of one stretch in one height band.
+#[derive(Clone, Debug)]
+struct Plain {
+    stretch: u16,
+    /// The middle of its band, height units above the line.
+    height: u16,
+    /// The furthest up and the nearest the mouth its river tiles lie.
+    first: u16,
+    last: u16,
+    /// Its tiles as runs along each row (`[x, y, w, 1]`).
+    runs: Vec<[i32; 4]>,
+}
+
+/// A floodplain tile: where, its group, and the river tile nearest it.
+#[derive(Clone, Copy, Debug)]
+struct PlainTile {
+    at: (i32, i32),
+    plain: u16,
+    river: (i32, i32),
+}
+
 /// A front running down a river.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Front {
@@ -278,6 +332,9 @@ pub(crate) struct Turn {
     /// Groups whose fords just shut, and just opened.
     shut: Vec<u16>,
     opened: Vec<u16>,
+    /// Floodplain groups that just shut, and just opened.
+    plain_shut: Vec<u16>,
+    plain_opened: Vec<u16>,
 }
 
 /// The way to a neighbour that a flow points.
@@ -570,8 +627,11 @@ impl Rivers {
             .collect();
         ford_tiles.sort_unstable();
         ford_tiles.dedup_by_key(|t| t.0);
-        let runs = groups.iter().map(|g| g.runs.len()).sum();
-        let groups_n = groups.len();
+        let (plains, plain_tiles) = floodplain(terrain, n, &mut reach, &mut stretch_of);
+        let runs = (groups.iter().map(|g| g.runs.len()))
+            .chain(plains.iter().map(|p| p.runs.len()))
+            .sum();
+        let (groups_n, plains_n) = (groups.len(), plains.len());
         Rivers {
             seed,
             side: n,
@@ -583,6 +643,10 @@ impl Rivers {
             threatened: Vec::with_capacity(ford_tiles.len()),
             threat_room: Vec::with_capacity(ford_tiles.len()),
             ford_tiles: ford_tiles.into(),
+            plains: plains.into(),
+            plain_tiles: plain_tiles.into(),
+            plain_shut: alloc::vec![false; plains_n],
+            plains_shut: 0,
             store: alloc::vec![0; count],
             swell: alloc::vec![0; count],
             shut: alloc::vec![false; groups_n],
@@ -592,6 +656,8 @@ impl Rivers {
             turn: Turn {
                 shut: Vec::with_capacity(groups_n),
                 opened: Vec::with_capacity(groups_n),
+                plain_shut: Vec::with_capacity(plains_n),
+                plain_opened: Vec::with_capacity(plains_n),
                 ..Turn::default()
             },
             runs: Vec::with_capacity(runs),
@@ -643,13 +709,52 @@ impl Rivers {
         Some(usize::from(self.ford_tiles[k].1))
     }
 
+    /// The floodplain tile `(x, y)`, if it is one.
+    fn plain_at(&self, x: i32, y: i32) -> Option<&PlainTile> {
+        let k = (self.plain_tiles)
+            .binary_search_by(|t| t.at.cmp(&(y, x)))
+            .ok()?;
+        Some(&self.plain_tiles[k])
+    }
+
     /// Whether the river has shut the ford tile `(x, y)`.
-    pub fn shuts(&self, x: i32, y: i32) -> bool {
+    fn shuts_ford(&self, x: i32, y: i32) -> bool {
         self.group_at(x, y).is_some_and(|g| self.shut[g])
     }
 
-    /// Whether the river has shut the ford tile `(x, y)` and a front is
-    /// over it, so troops there are swept away down the river.
+    /// Whether the river has shut the tile `(x, y)`: a ford, or deep
+    /// water over its floodplain.
+    pub fn shuts(&self, x: i32, y: i32) -> bool {
+        self.shuts_ford(x, y)
+            || self
+                .plain_at(x, y)
+                .is_some_and(|t| self.plain_shut[usize::from(t.plain)])
+    }
+
+    /// Whether the river has shut any floodplain.
+    pub fn floodplain_shut(&self) -> bool {
+        self.plains_shut > 0
+    }
+
+    /// Whether the river has shut any tile: a ford or floodplain.
+    pub fn flooding(&self) -> bool {
+        self.plains_shut > 0 || self.shut()
+    }
+
+    /// How many floodplain groups there are, and how many tiles.
+    pub fn floodplain(&self) -> (usize, usize) {
+        (self.plains.len(), self.plain_tiles.len())
+    }
+
+    /// Whether tile `(x, y)` is floodplain (land beside a river, under a
+    /// tile above its line).
+    pub fn on_floodplain(&self, x: i32, y: i32) -> bool {
+        self.plain_at(x, y).is_some()
+    }
+
+    /// Whether the river has shut the tile `(x, y)` (see
+    /// [`Rivers::shuts`]) and a front is over it, so troops there are
+    /// swept away down the river.
     pub fn carries(&self, x: i32, y: i32) -> bool {
         let Some(i) = crate::terrain::index_in(self.side, x, y) else {
             return false;
@@ -684,7 +789,8 @@ impl Rivers {
         })
     }
 
-    /// The stretch tile `(x, y)` lies in, if it is on a river.
+    /// The stretch tile `(x, y)` lies in, if it is on a river or its
+    /// floodplain.
     pub fn stretch_at(&self, x: i32, y: i32) -> Option<usize> {
         crate::terrain::index_in(self.side, x, y)
             .map(|i| self.stretch_of[i])
@@ -771,9 +877,10 @@ impl Rivers {
     /// Where a front carries something it sweeps away at tile `(x, y)`:
     /// on down the river by its flow, [`CARRY_TILES`] at most, stopping
     /// at still water or the map's edge.
+    /// From floodplain, it is carried from the river tile nearest it.
     pub(crate) fn carried(&self, terrain: &Terrain, x: i32, y: i32) -> (i32, i32) {
         let (flow, n) = (terrain.flow_layer(), self.side);
-        let (mut x, mut y) = (x, y);
+        let (mut x, mut y) = self.plain_at(x, y).map_or((x, y), |t| t.river);
         for _ in 0..CARRY_TILES {
             let Some(i) = crate::terrain::index_in(n, x, y) else {
                 break;
@@ -789,6 +896,17 @@ impl Rivers {
         (x, y)
     }
 
+    /// The runs, to shut or open on the walkable grid, of the floodplain
+    /// the last tick shut (`shut`) or opened.
+    pub(crate) fn changed_plain_runs(&mut self, shut: bool) -> &[[i32; 4]] {
+        let list = if shut {
+            &self.turn.plain_shut
+        } else {
+            &self.turn.plain_opened
+        };
+        gather(&mut self.runs, list, |p| &self.plains[p].runs)
+    }
+
     /// The runs, to shut or open on the walkable grid, of the fords the
     /// last tick shut (`shut`) or opened.
     pub(crate) fn changed_runs(&mut self, shut: bool) -> &[[i32; 4]] {
@@ -797,12 +915,7 @@ impl Rivers {
         } else {
             &self.turn.opened
         };
-        self.runs.clear();
-        for &g in list {
-            self.runs
-                .extend_from_slice(&self.groups[usize::from(g)].runs);
-        }
-        &self.runs
+        gather(&mut self.runs, list, |g| &self.groups[g].runs)
     }
 
     /// One second of the rivers' stores, with rain of `rain` strength
@@ -935,6 +1048,8 @@ impl Rivers {
         turn.water = second;
         turn.shut.clear();
         turn.opened.clear();
+        turn.plain_shut.clear();
+        turn.plain_opened.clear();
         if !any {
             return &self.turn;
         }
@@ -969,33 +1084,23 @@ impl Rivers {
         for (g, group) in self.groups.iter().enumerate() {
             // The highest the water is anywhere on the ford: a front
             // reaches its top first and falls last at its foot.
-            let front = [group.first, group.last]
-                .map(|r| {
-                    fronts_rise(
-                        &self.stretches,
-                        self.fronts.iter().flatten(),
-                        group.stretch,
-                        r,
-                    )
-                })
-                .into_iter()
-                .max()
-                .unwrap_or(0);
-            let water = lift + i32::from(self.swell[usize::from(group.stretch)]) + i32::from(front);
-            let need = if self.shut[g] {
+            let water = lift + i32::from(self.highest(group.stretch, group.first, group.last));
+            let need = (if self.shut[g] {
                 FLOOD_RISE / 2
             } else {
                 FLOOD_RISE
-            };
-            let now = water >= i32::from(need);
-            if now != self.shut[g] {
-                self.shut[g] = now;
-                if now {
-                    self.turn.shut.push(g as u16);
-                } else {
-                    self.turn.opened.push(g as u16);
-                }
-            }
+            })
+            .into();
+            weigh(
+                water >= need,
+                g,
+                &mut self.shut,
+                &mut self.turn.shut,
+                &mut self.turn.opened,
+            );
+        }
+        if second {
+            self.weigh_plains(lift);
         }
         let now_shut = self.shut();
         if now_shut != was_shut {
@@ -1019,6 +1124,35 @@ impl Rivers {
             self.weigh_threats();
         }
         &self.turn
+    }
+
+    /// Shut each floodplain group the water stands [`WADING_DEPTH`] over,
+    /// and open each it has fallen [`PLAIN_MARGIN`] under that, with the
+    /// map's water `lift`.
+    fn weigh_plains(&mut self, lift: i32) {
+        for (p, plain) in self.plains.iter().enumerate() {
+            let water = lift + i32::from(self.highest(plain.stretch, plain.first, plain.last));
+            let mut need = i32::from(plain.height) + i32::from(WADING_DEPTH);
+            if self.plain_shut[p] {
+                need -= i32::from(PLAIN_MARGIN);
+            }
+            let (list, other) = (&mut self.turn.plain_shut, &mut self.turn.plain_opened);
+            if weigh(water >= need, p, &mut self.plain_shut, list, other) {
+                self.plains_shut = if self.plain_shut[p] {
+                    self.plains_shut + 1
+                } else {
+                    self.plains_shut - 1
+                };
+            }
+        }
+    }
+
+    /// The highest the water of `stretch` stands over its line anywhere
+    /// from reach `first` down to `last` (a front reaches the top first
+    /// and falls last at the foot).
+    fn highest(&self, stretch: u16, first: u16, last: u16) -> u16 {
+        let at = |r| water_rise(&self.stretches, &self.swell, self.fronts(), stretch, r);
+        at(first).max(at(last))
     }
 
     /// The fords the minds keep off, again, built in the room kept for
@@ -1050,6 +1184,11 @@ impl Rivers {
         }
         if self.shut() {
             for &s in &self.shut {
+                h.u8(u8::from(s));
+            }
+        }
+        if self.plains_shut > 0 {
+            for &s in &self.plain_shut {
                 h.u8(u8::from(s));
             }
         }
@@ -1163,6 +1302,123 @@ impl Gauge {
             Gauge::Normal
         }
     }
+}
+
+/// Gather into `runs` the runs of each of `list`, by `of`.
+fn gather<'a>(
+    runs: &'a mut Vec<[i32; 4]>,
+    list: &[u16],
+    of: impl Fn(usize) -> &'a [[i32; 4]],
+) -> &'a [[i32; 4]] {
+    runs.clear();
+    for &i in list {
+        runs.extend_from_slice(of(usize::from(i)));
+    }
+    runs
+}
+
+/// Set `shut[i]` to `now`: if that changes it, `i` goes on `shuts` or
+/// `opens`, and returns true.
+fn weigh(
+    now: bool,
+    i: usize,
+    shut: &mut [bool],
+    shuts: &mut Vec<u16>,
+    opens: &mut Vec<u16>,
+) -> bool {
+    if now == shut[i] {
+        return false;
+    }
+    shut[i] = now;
+    if now { shuts } else { opens }.push(i as u16);
+    true
+}
+
+/// The floodplain of the rivers on `terrain`'s map, `n` tiles a side
+/// (see the module docs): its groups, by stretch and height band, and its
+/// tiles, sorted. Each floodplain tile takes the `reach` and `stretch_of`
+/// of the river tile nearest it.
+fn floodplain(
+    terrain: &Terrain,
+    n: i32,
+    reach: &mut [u16],
+    stretch_of: &mut [u16],
+) -> (Vec<Plain>, Vec<PlainTile>) {
+    let at = |x: i32, y: i32| crate::terrain::index_in(n, x, y);
+    let xy = |i: usize| (i as i32 % n, i as i32 / n);
+    let line = i32::from(terrain.water_level());
+    // Out from every river tile over dry land, nearest first.
+    let mut from = alloc::vec![u32::MAX; reach.len()];
+    let mut steps = alloc::vec![0u8; reach.len()];
+    let mut queue: Vec<usize> = (0..reach.len()).filter(|&i| reach[i] != NONE).collect();
+    for &i in &queue {
+        from[i] = i as u32;
+    }
+    let mut found: Vec<(u16, u16, usize)> = Vec::new();
+    let mut head = 0;
+    while let Some(&i) = queue.get(head) {
+        head += 1;
+        if steps[i] >= PLAIN_TILES {
+            continue;
+        }
+        let (x, y) = xy(i);
+        for (dx, dy) in crate::nav::DIRS {
+            let Some(j) = at(x + dx, y + dy) else {
+                continue;
+            };
+            if from[j] != u32::MAX || terrain.tile_under_water(x + dx, y + dy) {
+                continue;
+            }
+            // Only over land a flood could reach: not over a ridge.
+            let above = terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - line;
+            if !(0..HEIGHT_UNITS as i32).contains(&above) {
+                continue;
+            }
+            from[j] = from[i];
+            steps[j] = steps[i] + 1;
+            queue.push(j);
+            let band = above as u16 / PLAIN_STEP;
+            found.push((stretch_of[from[j] as usize], band, j));
+        }
+    }
+    found.sort_unstable_by_key(|&(s, b, j)| (s, b, j));
+    let mut plains: Vec<Plain> = Vec::new();
+    let mut tiles: Vec<PlainTile> = Vec::with_capacity(found.len());
+    for run in found.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+        let (stretch, band) = (run[0].0, run[0].1);
+        let p = plains.len() as u16;
+        let mut cells: Vec<(i32, i32)> = Vec::with_capacity(run.len());
+        let (mut first, mut last) = (0, NONE);
+        for &(_, _, j) in run {
+            let r = from[j] as usize;
+            (first, last) = (first.max(reach[r]), last.min(reach[r]));
+            let (x, y) = xy(j);
+            cells.push((y, x));
+            tiles.push(PlainTile {
+                at: (y, x),
+                plain: p,
+                river: xy(r),
+            });
+        }
+        // (Already in order: `found` is sorted by tile, row by row.)
+        plains.push(Plain {
+            stretch,
+            height: band * PLAIN_STEP + PLAIN_STEP / 2,
+            first,
+            last,
+            runs: crate::flood::runs_of(&cells),
+        });
+    }
+    for t in &tiles {
+        let (y, x) = t.at;
+        let (j, r) = (at(x, y), at(t.river.0, t.river.1));
+        if let (Some(j), Some(r)) = (j, r) {
+            reach[j] = reach[r];
+            stretch_of[j] = stretch_of[r];
+        }
+    }
+    tiles.sort_unstable_by_key(|t| t.at);
+    (plains, tiles)
 }
 
 /// A crest of `crest` once it has run `ran` tiles: an eighth lower every

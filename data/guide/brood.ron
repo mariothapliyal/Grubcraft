@@ -236,7 +236,7 @@
         (
             name: "Skitterlings",
             tagline: "Cheap swarm infantry; evolve into Spitters or Burrowers.",
-            summary: "A fast, cheap swarm of 32 with a good charge. Swarm Instinct cuts the morale lost to casualties by 30%. They run down archers and artillery but lose to heavy infantry and spears. Evolve them at the Chrysalis Chamber once tier 2 arrives.",
+            summary: "A fast, cheap swarm of 32 frail soldiers with a good charge: one loses to almost anyone, so they win by numbers. Swarm Instinct cuts the morale lost to casualties by 30%. They run down archers and artillery but lose to heavy infantry and spears. Evolve them at the Chrysalis Chamber once tier 2 arrives.",
         ),
         (
             name: "Chitin Guard",

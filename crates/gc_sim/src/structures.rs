@@ -1277,6 +1277,40 @@ impl Structures {
         }
     }
 
+    /// One second of floods: each building but a bridge whose middle
+    /// stands on floodplain the river has shut loses
+    /// [`crate::rivers::DROWNED_PERCENT`] of its hit points, and falls at
+    /// none.
+    pub(crate) fn drown(
+        &mut self,
+        rivers: &crate::rivers::Rivers,
+        nav: &mut Nav,
+        regs: &Regiments,
+    ) {
+        // (Allocates only once something falls.)
+        let mut gone = Vec::new();
+        for i in 0..self.hp.len() {
+            if !self.stands(i) || self.stats_of(i).is_bridge() {
+                continue;
+            }
+            let c = self.centre(i);
+            if rivers.shuts(c.x.floor_int(), c.y.floor_int()) {
+                let whole = u32::from(self.stats_of(i).hp) * HP_SCALE;
+                let loss = (whole * crate::rivers::DROWNED_PERCENT / 100).max(1);
+                self.hp[i] = self.hp[i].saturating_sub(loss);
+                if self.hp[i] == 0 {
+                    gone.push(i);
+                }
+            }
+        }
+        // All that fell this second come down together, leaving rubble.
+        for &i in &gone {
+            self.fallen.push(self.handle(i));
+            self.rubble.push(self.footprint(i));
+        }
+        self.remove_all(&gone, nav, regs);
+    }
+
     /// Building slot `i` loses `per_second` hit points a second; whether
     /// that wears it out. A worn-out building is left at its last hit point
     /// for the caller to take down.
