@@ -36,12 +36,15 @@ struct Globals {
     sky_ambient: vec4<f32>,
     // rgb: light from the ground, a: how dark cloud shadows are
     ground_ambient: vec4<f32>,
-    // rgb: air colour toward the sun (HDR)
+    // rgb: air colour toward the sun (HDR), a: how dry the grass is
+    // (`Look::dry`)
     haze: vec4<f32>,
     // x: how quickly the air thins with height, y: ground occlusion strength,
     // z: how thick the air is at the camera, relative to sea level
-    // (exp(-x * camera height))
+    // (exp(-x * camera height)), w: how far the woods have turned
+    // (`Look::autumn`)
     air: vec4<f32>,
+    // rgb: the sky overhead, a: how frozen the water is (`Look::ice`)
     sky_top: vec4<f32>,
     sky_horizon: vec4<f32>,
     // x: how many point lights (lights.rs), y: how much snow lies on the
@@ -201,7 +204,7 @@ fn seen_at(xz: vec2<f32>) -> f32 {
 fn veil(c: vec3<f32>, xz: vec2<f32>) -> vec3<f32> {
     let seen = seen_at(xz);
     let out = clamp((1.0 - seen) / 0.8, 0.0, 1.0);
-    let grey = vec3<f32>(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)));
+    let grey = vec3<f32>(luma(c));
     return mix(c, grey, out * 0.5) * (0.1 + 0.9 * seen);
 }
 
@@ -226,6 +229,14 @@ fn vnoise(p: vec2<f32>) -> f32 {
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3<f32>(2.2));
 }
+
+// A linear colour's brightness (Rec. 709).
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Dry grass: summer's straw and winter's dead grass (linear).
+const STRAW = vec3<f32>(0.325, 0.237, 0.056);
 
 fn ambient_light(n: vec3<f32>) -> vec3<f32> {
     return mix(g.ground_ambient.rgb, g.sky_ambient.rgb, n.y * 0.5 + 0.5);
@@ -376,6 +387,18 @@ const WET_DARK: f32 = 0.24;
 // Settled snow's colour (linear), and how much of it lies on a surface facing
 // `n`: only on what faces up, and thinner the steeper it is.
 const SNOW_ALBEDO = vec3<f32>(0.74, 0.78, 0.86);
+// Ice on frozen water (linear).
+const ICE_ALBEDO = vec3<f32>(0.485, 0.647, 0.754);
+
+// How much of the ground at `xz` lying snow covers (`lying` 0 bare to 1 a
+// blanket): patches that grow into a blanket as more lies.
+fn snow_blanket(xz: vec2<f32>, lying: f32) -> f32 {
+    if lying <= 0.0 {
+        return 0.0;
+    }
+    let edge = mix(1.05, 0.15, lying);
+    return smoothstep(edge, edge + 0.12, fbm(xz * 0.35 + vec2<f32>(71.0, 19.0)));
+}
 // The most snow covers a soldier or a building's top (less than the ground's:
 // a team's colour has to stay readable under it).
 const SNOW_ON_MODELS: f32 = 0.4;
@@ -603,14 +626,14 @@ fn rock_plane(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, ng2: vec2<f32>, ngn: 
 // a stone colour: its own colour is near black (mean 0.01 linear), so it gives
 // the pattern only. Cliffs and scenery rocks share this, to look alike.
 fn rock_pattern(albedo: vec3<f32>) -> f32 {
-    let l = dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let l = luma(albedo);
     return pow(clamp(l / 0.0095, 0.02, 6.0), 0.45);
 }
 
 // A detail texture's colour ratio mostly as light and dark: its own hues would
 // fight the colour it is laid over. `chroma` is how much of the hue is kept.
 fn muted(ratio: vec3<f32>, chroma: f32) -> vec3<f32> {
-    return mix(vec3<f32>(dot(ratio, vec3<f32>(0.2126, 0.7152, 0.0722))), ratio, chroma);
+    return mix(vec3<f32>(luma(ratio)), ratio, chroma);
 }
 
 // Triplanar Rock035 at `p` on a surface facing `ng`: the three projections
@@ -1084,6 +1107,15 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
         grass = grass * look_mult * (255.0 / 128.0);
     }
+    // The season on the grass: straw in a dry summer and dead grass in
+    // winter, in drifts so a field is never one colour. The land's and the
+    // habitat's own shades still show through it.
+    let parched = g.haze.w;
+    if parched > 0.0 {
+        let shade_of = luma(grass) / 0.17;
+        let drift = smoothstep(0.2, 0.8, vnoise(xz * 0.11 + vec2<f32>(5.0, 17.0)));
+        grass = mix(grass, STRAW * clamp(shade_of, 0.6, 1.3), parched * mix(0.4, 0.65, drift));
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     let grass_in = smoothstep(0.16, 0.26, h);
@@ -1232,8 +1264,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let lying = g.light_meta.y;
     if lying > 0.0 {
         let clings = 1.0 - smoothstep(0.08, 0.35, slope);
-        let edge = mix(1.05, 0.15, lying);
-        let blanket = smoothstep(edge, edge + 0.12, fbm(xz * 0.35 + vec2<f32>(71.0, 19.0)));
+        let blanket = snow_blanket(xz, lying);
         let dry_bed = smoothstep(-0.05, 0.02, ground - water_surface(xz));
         let cover = blanket * clings * (1.0 - rock) * (1.0 - 0.6 * fringe) * (1.0 - land_k)
             * (1.0 - 0.8 * wet) * dry_bed;
@@ -1311,8 +1342,26 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
             sky = mix(sky, cl.rgb, cl.a);
         }
         let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
-        let wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
-        c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
+        var wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
+        var cover = clamp(0.5 + depth * 1.5, 0.0, 0.92);
+        // Frozen water: a pale sheet of ice, cracked and cloudy, with snow
+        // lying on it as on the bank. It hides the bed and the ripples, and
+        // is lit flat under the water's own shadow. Only the shallows and
+        // fords freeze (as in the simulation, where only they can be
+        // crossed); deep water stays open, with an icy rim.
+        let frozen = g.sky_top.w * (1.0 - smoothstep(0.3, 0.42, depth));
+        if frozen > 0.0 {
+            let cloudy = 0.8 + 0.35 * vnoise(wp.xz * 0.45 + vec2<f32>(3.0, 29.0));
+            let crack = 1.0 - smoothstep(0.0, 0.03, abs(vnoise(wp.xz * 1.7) - 0.5));
+            var ice = ICE_ALBEDO * cloudy * (1.0 - 0.35 * crack);
+            ice = mix(ice, SNOW_ALBEDO, snow_blanket(wp.xz, g.light_meta.y));
+            let up = vec3<f32>(0.0, 1.0, 0.0);
+            let lit_ice = ice * (g.sun_color.rgb * max(g.sun_dir.y, 0.0) * sun + ambient_light(up));
+            let sheen = sky_color(reflect(-v, up), false) * 0.12;
+            wc = mix(wc, finish(lit_ice + sheen, wp), frozen);
+            cover = mix(cover, 1.0, frozen);
+        }
+        c = mix(c, wc, cover);
     }
     return vec4<f32>(veil(c, xz), 1.0);
 }
