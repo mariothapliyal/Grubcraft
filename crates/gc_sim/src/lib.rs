@@ -128,7 +128,8 @@ pub const SYSTEMS: [&str; 15] = [
 /// the same commands out the same way, whatever else differs, so the
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
-/// replays need blessing (`gc_replay/tests/goldens.rs` checks).
+/// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
+/// `scripts/rules-bump.py`, which takes the next number free on main.
 pub const SIM_VERSION: u32 = 79;
 
 /// A tile in a command, widened.

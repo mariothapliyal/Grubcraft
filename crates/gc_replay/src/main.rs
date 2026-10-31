@@ -8,6 +8,9 @@
 //!   gc_replay info PATH...       describe each replay
 //!   gc_replay compare A B        the first second two machines' recordings
 //!                                of one match disagree (desync reports)
+//!   gc_replay pin                write the goldens' `PINNED` table (in
+//!                                `tests/goldens.rs`) for this build's
+//!                                `SIM_VERSION` and the replays as blessed
 //!
 //! A PATH may be a `.gcr` file or a folder of them. `verify` exits non-zero
 //! when any replay fails, so CI can run it on every platform.
@@ -25,6 +28,9 @@ fn main() -> ExitCode {
         return usage();
     };
     let mut paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    if action == "pin" {
+        return if paths.is_empty() { pin() } else { usage() };
+    }
     if action == "compare" {
         return match &paths[..] {
             [a, b] => compare(a, b),
@@ -62,7 +68,9 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: gc_replay verify [PATH...] | bless PATH... | info PATH... | compare A B");
+    eprintln!(
+        "usage: gc_replay verify [PATH...] | bless PATH... | info PATH... | compare A B | pin"
+    );
     ExitCode::from(2)
 }
 
@@ -288,6 +296,54 @@ fn info(file: &Path) -> bool {
 }
 
 /// Where two recordings of one match, from two machines, first disagree.
+/// Rewrites the `PINNED` table in the goldens test from the repository's
+/// replays as they are now (blessed) and this build's `SIM_VERSION`.
+fn pin() -> ExitCode {
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays");
+    let test = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens.rs");
+    let goldens: Option<Vec<(String, Replay)>> = match gc_replay::files_in(&folder) {
+        Ok(files) => files
+            .iter()
+            .map(|f| Some((f.file_stem()?.to_string_lossy().into_owned(), load(f)?)))
+            .collect(),
+        Err(e) => {
+            eprintln!("{}: {e}", folder.display());
+            None
+        }
+    };
+    let Some(goldens) = goldens else {
+        return ExitCode::FAILURE;
+    };
+    let table = gc_replay::pinned_table(goldens.iter().map(|(n, r)| (n.as_str(), r)));
+    let source = match std::fs::read_to_string(&test) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}: {e}", test.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(start) = source.find("const PINNED") else {
+        eprintln!("no PINNED table in {}", test.display());
+        return ExitCode::FAILURE;
+    };
+    let Some(len) = source[start..].find("\n);").map(|i| i + 3) else {
+        eprintln!("the PINNED table in {} has no end", test.display());
+        return ExitCode::FAILURE;
+    };
+    let new = format!("{}{table}{}", &source[..start], &source[start + len..]);
+    if let Err(e) = std::fs::write(&test, new) {
+        eprintln!("{}: {e}", test.display());
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "pinned {} goldens under sim version {} in {}",
+        goldens.len(),
+        gc_sim::SIM_VERSION,
+        test.display()
+    );
+    ExitCode::SUCCESS
+}
+
 fn compare(a: &Path, b: &Path) -> ExitCode {
     let (Some(ra), Some(rb)) = (load(a), load(b)) else {
         return ExitCode::from(2);
