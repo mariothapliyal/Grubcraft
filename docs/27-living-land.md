@@ -175,12 +175,12 @@ Each stage is playable on its own.
 
 **Still to do for stage 3:**
 
-- A finer search, or seeds rerolled against fairness limits in `gc_mapcheck`, to bring four to six players under about 5%.
-- Then make Measured the default.
+- ~~A finer search, or seeds rerolled against fairness limits, to bring four to six players under about 5%.~~ Done 2026-10-31: a search on the finished land's true walks, and a reroll past 10% ([41](41-finish-living-land.md#step-2-as-built)). Most maps come out under 5%, all under 10%.
+- ~~Then make Measured the default.~~ Done 2026-10-31 for Field Battles; Conquest stays mirrored (its shares are placed on the north and turned for the south).
 - Count cuttable woods near starts (idea 22).
 - Team-aware limits.
 - Store the generator version with the map choice in replays.
-- Move Conquest big maps onto grown land.
+- ~~Move Conquest big maps onto grown land.~~ Done 2026-10-30 ([41](41-finish-living-land.md#step-1-as-built)).
 
 ## Stage 4 as built
 
