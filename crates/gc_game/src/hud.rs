@@ -2348,6 +2348,7 @@ mod tests {
         assert!(tip.contains(&format!("({RAFT_GRUB} Grub")), "{tip}");
         assert!(tip.contains(&format!("At most {SHARE} ")), "{tip}");
         assert!(crate::clearing::DUMP_WHERE.contains(&format!("({RAFT_GRUB} Grub")));
+        assert!(crate::clearing::SHARE_USED.contains(&format!("have {SHARE} ")));
     }
 
     /// A Field Battle's villages, outposts and stones show on the minimap

@@ -128,6 +128,7 @@ impl ConquestUnit {
             h.u8(c.pays[i]);
         }
         h.u8(u8::from(c.burns));
+        h.u8(u8::from(c.fells));
         h.u16(self.gather_percent);
     }
 }

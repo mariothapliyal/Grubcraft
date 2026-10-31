@@ -496,11 +496,26 @@ impl Rivers {
     }
 
     /// Whether `player` may tip a raft into river tile `(x, y)`: it runs,
-    /// and the player has fewer than [`SHARE`] pieces on the water.
+    /// lies along a bank (where a worker on the land can reach it), and the
+    /// player has fewer than [`SHARE`] pieces on the water.
     pub fn takes_raft(&self, terrain: &Terrain, x: i32, y: i32, player: u8) -> bool {
+        self.bank_river(terrain, x, y) && !self.share_used(player)
+    }
+
+    /// Whether `(x, y)` is running river along a bank: some tile beside it
+    /// is not running river.
+    pub fn bank_river(&self, terrain: &Terrain, x: i32, y: i32) -> bool {
+        let n = self.side;
         self.any()
-            && index_in(self.side, x, y).is_some_and(|i| self.runs(terrain, i))
-            && self.debris.owned(player) < SHARE
+            && index_in(n, x, y).is_some_and(|i| self.runs(terrain, i))
+            && (crate::nav::DIRS.iter())
+                .filter_map(|&(dx, dy)| index_in(n, x + dx, y + dy))
+                .any(|j| !self.runs(terrain, j))
+    }
+
+    /// Whether `player` already has [`SHARE`] pieces on the water.
+    pub fn share_used(&self, player: u8) -> bool {
+        self.debris.owned(player) >= SHARE
     }
 
     /// `logs` logs felled off land tile `(x, y)` by `player` go into the
@@ -518,7 +533,7 @@ impl Rivers {
             return;
         };
         for k in 0..logs {
-            if self.debris.owned(player) >= SHARE {
+            if self.share_used(player) {
                 return;
             }
             let r = roll(

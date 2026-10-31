@@ -1255,7 +1255,6 @@ pub(crate) fn main_of(world: &World, k: &Kit, p: PlayerId) -> Option<StructureVi
         .find(|v| v.building == k.main || Some(v.building) == k.keep)
 }
 
-/// Side `p`'s regiments of type `unit`.
 /// The tile nearest `from` that `fits` (nearest first, then north, then
 /// west).
 pub(crate) fn nearest(
@@ -1270,6 +1269,7 @@ pub(crate) fn nearest(
         .min_by_key(|&(x, y)| ((x - from.0).pow(2) + (y - from.1).pow(2), y, x))
 }
 
+/// Side `p`'s regiments of type `unit`.
 pub(crate) fn regiments_of(world: &World, p: PlayerId, unit: UnitId) -> Vec<RegimentHandle> {
     world
         .regiments

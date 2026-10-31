@@ -88,6 +88,11 @@ impl Default for ClearStyle {
     }
 }
 
+/// Tile `t`'s place in [`Clearing`]'s work done, for `work` on it.
+fn key(t: u32, work: Work) -> u32 {
+    t << 2 | work as u32
+}
+
 /// What a worker's order has it do (docs/32 and docs/39, section 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Work {
@@ -191,8 +196,10 @@ pub(crate) enum Done {
 /// Every worker's clearing order, by regiment slot.
 pub(crate) struct Clearing {
     job: alloc::vec::Vec<Option<Job>>,
-    /// Tiles part cleared: the tile (row by row) and work left in
-    /// hundredths of a tick, in tile order.
+    /// Tiles part worked: the [`key`] of the tile and the work done on it,
+    /// and the work left in hundredths of a tick, in key order. Each kind
+    /// of work keeps its own count, so a feller and a clearer on one tile
+    /// don't finish each other's work.
     worked: alloc::vec::Vec<(u32, u32)>,
     /// Scratch: the tiles workers are at, sorted (kept for its room).
     at: alloc::vec::Vec<u32>,
@@ -264,11 +271,15 @@ impl Clearing {
     /// game shows the work with it, and checks the worker is up at the
     /// tile itself. Read only: nothing is changed or hashed.
     pub(crate) fn working_tile(&self, regs: &Regiments, r: usize, side: u32) -> Option<(i32, i32)> {
-        let t = self.live(regs, r)?.at?;
-        if regs.engaged[r].is_some() {
+        let job = self.live(regs, r)?;
+        let t = job.at?;
+        // Tipping a raft swings no tools at the water.
+        if regs.engaged[r].is_some() || job.work == Work::Dump {
             return None;
         }
-        self.worked.binary_search_by_key(&t, |w| w.0).ok()?;
+        (self.worked)
+            .binary_search_by_key(&key(t, job.work), |w| w.0)
+            .ok()?;
         Some(((t % side) as i32, (t / side) as i32))
     }
 
@@ -311,7 +322,7 @@ impl Clearing {
         if !self.worked.is_empty() {
             let at = &mut self.at;
             at.clear();
-            at.extend(self.job.iter().flatten().filter_map(|j| j.at));
+            at.extend((self.job.iter().flatten()).filter_map(|j| j.at.map(|t| key(t, j.work))));
             at.sort_unstable();
             self.worked.retain(|&(t, _)| at.binary_search(&t).is_ok());
         }
@@ -413,10 +424,11 @@ impl Clearing {
             _ => clear_ticks(growth),
         };
         let full = crate::conquest::at_tempo(ticks, self.percent) * HAND;
-        let k = match self.worked.binary_search_by_key(&t, |w| w.0) {
+        let id = key(t, job.work);
+        let k = match self.worked.binary_search_by_key(&id, |w| w.0) {
             Ok(k) => k,
             Err(k) => {
-                self.worked.insert(k, (t, full));
+                self.worked.insert(k, (id, full));
                 k
             }
         };

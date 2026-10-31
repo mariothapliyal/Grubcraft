@@ -1604,13 +1604,14 @@ mod tests {
                 train_ticks: 200,
                 trained_at: Some(0),
                 tier: 1,
-                // A Clerk: no Grub drop-off, and burns what it clears.
+                // A Clerk: no Grub drop-off, burns what it clears and fells
+                // into rivers (not the default, so the round trip shows it).
                 cannot_bank: gc_sim::structures::DROP_OFF_GRUB,
                 clearing: gc_sim::clearing::ClearStyle {
                     pace: [50, 60, 70],
                     pays: [1, 2, 3],
                     burns: true,
-                    fells: false,
+                    fells: true,
                 },
                 ..ConquestUnit::default()
             },

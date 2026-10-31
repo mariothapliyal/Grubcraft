@@ -110,10 +110,14 @@ impl Running {
         if !self.hud.build_menu {
             slots[SLOT_BUILD] = Some(Action::OpenBuild);
             slots[SLOT_CLEAR] = Some(Action::Clear);
-            slots[SLOT_FELL] = crate::conquest::clear_style(faction)
-                .fells
-                .then_some(Action::Fell);
-            slots[SLOT_DUMP] = Some(Action::Dump);
+            // Fell in and Raft sit on Brace's and the stakes' keys, so they
+            // show only for workers alone, and only by a river.
+            if self.selection_all_workers() && self.world.flood().rivers().any() {
+                slots[SLOT_FELL] = crate::conquest::clear_style(faction)
+                    .fells
+                    .then_some(Action::Fell);
+                slots[SLOT_DUMP] = Some(Action::Dump);
+            }
             slots[SLOT_EXPAND] = self.buildings.expansion(faction).map(Action::Lay);
             slots[SLOT_WORK_PLANS] = self.has_plans().then_some(Action::WorkPlans);
             return Some(Card {
@@ -151,7 +155,7 @@ impl Running {
     }
 
     /// Whichever of the regiments `from` stands nearest `spot`.
-    fn nearest_to(
+    pub(crate) fn nearest_to(
         &self,
         from: impl Iterator<Item = RegimentHandle>,
         spot: Vec2,

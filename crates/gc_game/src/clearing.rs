@@ -16,8 +16,10 @@ use crate::scenery::Stood;
 use crate::{Running, color_of};
 
 /// Where a raft can go, and what it costs.
-pub(crate) const DUMP_WHERE: &str =
-    "Click running river to tip a raft in (12 Grub; it rides the current) - Esc to cancel";
+pub(crate) const DUMP_WHERE: &str = "Click running river along a bank to tip a raft in (12 Grub; it rides the current) - Esc to cancel";
+/// Said when your side's share of the water is full.
+pub(crate) const SHARE_USED: &str =
+    "You have 16 logs and rafts on the water already: wait for some to rot away";
 
 /// Overgrown ground that will be cleared: amber.
 const AMBER: [u8; 4] = [235, 170, 40, 130];
@@ -204,11 +206,20 @@ impl Running {
             return;
         };
         let (x, y) = (tile_of(at.x), tile_of(at.y));
-        if !self.world.takes_raft(self.sandbox.side, x, y) {
-            self.say(DUMP_WHERE.into());
+        let side = self.sandbox.side;
+        if !self.world.takes_raft(side, x, y) {
+            let full = self.world.flood().rivers().share_used(side);
+            self.say(if full {
+                SHARE_USED.into()
+            } else {
+                DUMP_WHERE.into()
+            });
             return;
         }
-        let Some(regiment) = self.nearest_worker(at) else {
+        // A worker not already at work, so a second raft doesn't call off
+        // the first; else the nearest.
+        let idle = (self.selected_workers()).filter(|&h| self.world.clearing_of(h).is_none());
+        let Some(regiment) = (self.nearest_to(idle, at)).or_else(|| self.nearest_worker(at)) else {
             return;
         };
         self.orders([Command::Dump {
