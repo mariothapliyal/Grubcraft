@@ -9,8 +9,10 @@
 //! fill out from the middle of its main building across the tiles within
 //! [`TOWN_REACH`] of it: the fill stops at its own finished walls and
 //! gates (a gate set Open is a gap; a Choir curtain without power is
-//! none) and at ground nobody walks on (cliffs, deep water without a
-//! deck). If it reaches the edge of that square, the town is open.
+//! none), at its other buildings in the way, and at ground nobody walks on
+//! (cliffs, deep water without a deck: where a wall can't be laid). If it
+//! reaches the edge of that square, the town is open. Its buildings the
+//! town's ground touches are in it.
 //! Everything is reserved when the Conquest starts, so a survey never
 //! allocates.
 
@@ -161,26 +163,33 @@ impl Structures {
         let (cx, cy) = (mid.x.floor_int(), mid.y.floor_int());
         let (x0, y0) = (cx - TOWN_REACH, cy - TOWN_REACH);
         let side = SIDE as i32;
+        // The square's tiles of footprint `[x, y, w, d]`, by index.
+        let tiles = move |[x, y, w, d]: [i32; 4]| {
+            (y.max(y0)..(y + d).min(y0 + side)).flat_map(move |ty| {
+                (x.max(x0)..(x + w).min(x0 + side))
+                    .map(move |tx| ((ty - y0) * side + (tx - x0)) as usize)
+            })
+        };
         let wall = &mut towns.wall;
         wall.fill(0);
-        // Its own walls and gates.
+        // Its own walls and gates, and its other buildings in the way (a
+        // ring may run up to a house and on from its far side).
         let mut walls = 0;
         for i in self.standing() {
-            if self.owner_of(i) != p || !self.finished(i) || self.stats_of(i).role != Role::Wall {
+            if i == main || self.owner_of(i) != p || !self.walls_ground(i) {
                 continue;
             }
             let flags = self.flags_of(i);
-            let gap = flags & GATE != 0 && self.gate[i] == GateMode::Open
+            let is_wall = self.stats_of(i).role == Role::Wall;
+            let gap = !self.finished(i) && is_wall
+                || flags & GATE != 0 && self.gate[i] == GateMode::Open
                 || flags & PASS != 0 && flags & GATE == 0 && !self.powered(i);
             if gap {
                 continue;
             }
-            let [x, y, w, d] = self.footprint(i);
-            for ty in y.max(y0)..(y + d).min(y0 + side) {
-                for tx in x.max(x0)..(x + w).min(x0 + side) {
-                    set(wall, ((ty - y0) * side + (tx - x0)) as usize);
-                    walls += 1;
-                }
+            for t in tiles(self.footprint(i)) {
+                set(wall, t);
+                walls += usize::from(is_wall);
             }
         }
         if walls == 0 {
@@ -190,9 +199,10 @@ impl Structures {
         inside.fill(0);
         let queue = &mut towns.queue;
         queue.clear();
-        let start = (TOWN_REACH * side + TOWN_REACH) as usize;
-        set(inside, start);
-        queue.push(start as u16);
+        for t in tiles(self.footprint(main)) {
+            set(inside, t);
+            queue.push(t as u16);
+        }
         while let Some(c) = queue.pop() {
             let c = i32::from(c);
             let (dx, dy) = (c % side, c / side);
@@ -205,13 +215,32 @@ impl Structures {
                 if bit(inside, n) || bit(wall, n) {
                     continue;
                 }
+                // Ground nobody walks on (as a wall can't be laid on it).
                 let (tx, ty) = (x0 + nx, y0 + ny);
                 let at = FxVec2::new(Fx::from_int(tx), Fx::from_int(ty));
-                if !nav.walkable_ground(tx, ty) && !terrain.on_deck(at) {
+                if nav.deep_ground(tx, ty) && !terrain.on_deck(at) || !nav.walkable_ground(tx, ty) {
                     continue;
                 }
                 set(inside, n);
                 queue.push(n as u16);
+            }
+        }
+        // Its buildings (not its walls) that the town's ground touches are
+        // in the town too.
+        for i in self.standing() {
+            if i == main
+                || self.owner_of(i) != p
+                || !self.walls_ground(i)
+                || self.stats_of(i).role == Role::Wall
+            {
+                continue;
+            }
+            let [x, y, w, d] = self.footprint(i);
+            let touches = tiles([x - 1, y - 1, w + 2, d + 2]).any(|t| bit(inside, t));
+            if touches {
+                for t in tiles([x, y, w, d]) {
+                    set(inside, t);
+                }
             }
         }
         Some((x0, y0))

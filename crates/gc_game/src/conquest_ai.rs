@@ -236,13 +236,18 @@ mod tests {
         pub blasts: u32,
         /// Towers raised to level 2.
         pub raised: u32,
+        /// 1 once its walls closed round its hall: a walled town.
+        pub walled: u32,
     }
 
     impl Works {
         /// Side `p`'s works now.
         fn of(world: &World, p: PlayerId) -> Works {
             use gc_sim::structures::{GATE, Role, TowerShot};
-            let mut w = Works::default();
+            let mut w = Works {
+                walled: u32::from(world.walled_town(p)),
+                ..Works::default()
+            };
             let Some(st) = world.structures() else {
                 return w;
             };
@@ -286,6 +291,7 @@ mod tests {
                 bolts: self.bolts.max(o.bolts),
                 blasts: self.blasts.max(o.blasts),
                 raised: self.raised.max(o.raised),
+                walled: self.walled.max(o.walled),
             }
         }
     }
@@ -1147,6 +1153,8 @@ mod tests {
         let mut towers = 0;
         // Once at tier 2 with Marrow to spare it raises a tower to level 2.
         let mut raised = 0;
+        // Then carries the wall on round its hall: a walled town.
+        let mut walled_towns = 0;
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
         // moves where things get built, and with frontage about one in 25),
@@ -1161,6 +1169,7 @@ mod tests {
                     traps += most.traps;
                     towers += most.bolts + most.blasts;
                     raised += most.raised;
+                    walled_towns += most.walled;
                     most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
             assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
@@ -1179,6 +1188,7 @@ mod tests {
         assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         assert!(towers >= 1, "no bolt or blast tower put up in any game");
         assert!(raised >= 1, "no tower raised to level 2 in any game");
+        assert!(walled_towns >= 1, "no General closed a ring round its hall");
         let played = play(
             0,
             0,
