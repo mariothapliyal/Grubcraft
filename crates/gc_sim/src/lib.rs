@@ -58,6 +58,7 @@ pub mod traps;
 pub mod twists;
 pub mod veins;
 pub mod verdict;
+pub mod veterancy;
 pub mod vision;
 pub mod walls;
 
