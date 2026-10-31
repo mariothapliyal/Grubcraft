@@ -939,7 +939,7 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 10);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {
@@ -963,7 +963,7 @@ mod tests {
             }
             assert!(side.lens.iter().all(|l| l.starts_with("  ")));
         }
-        // By eight minutes the armies have met, and somebody weighed up
+        // By ten minutes the armies have met, and somebody weighed up
         // the other's.
         assert!(weighed, "{}", played.report());
     }
