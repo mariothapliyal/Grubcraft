@@ -736,7 +736,7 @@ fn speed(flow: &[u8], i: u32) -> Option<u8> {
 /// A piece's place across the channel from a roll: within a third of a
 /// tile of the middle.
 fn across(r: u64) -> i8 {
-    ((r >> 24) % 171) as i8 - 85
+    (((r >> 24) % 171) as i16 - 85) as i8
 }
 
 #[cfg(test)]
