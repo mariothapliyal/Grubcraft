@@ -1769,10 +1769,7 @@ fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
     return mat3x4<f32>(t[0], t[1], t[2]);
 }
 
-// A soldier's joints' matrices: first each one's own (relative to its
-// parent), then in the model's space; and each joint's parent.
 var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
-var<workgroup> pose_parents: array<u32, POSE_GROUP>;
 
 // A soldier's rig fixes (see `rig_of` in soldiers.rs): 0 drops the whole
 // body, 1 to 3 bend the left leg (upper, lower, foot), 4 to 6 the right,
@@ -1781,8 +1778,6 @@ const RIG_FIXES: u32 = 10u;
 var<workgroup> pose_fix: array<mat4x4<f32>, RIG_FIXES>;
 // A joint missing from the rig.
 const NO_JOINT: u32 = 255u;
-// A root joint's parent (`gc_assets::anim::ROOT`).
-const ROOT_PARENT: u32 = 255u;
 
 fn translation(t: vec3<f32>) -> mat4x4<f32> {
     return mat4x4<f32>(
@@ -2012,10 +2007,10 @@ fn pose_unfitted(i: u32, slot: u32, bone: u32) {
 // A model posed from bone rows blends its layers' matrices (a layer it
 // cannot hold, an additive one, is skipped). A model fitted to a skeleton
 // mixes each joint's pose from its layers (a layer only moves the joints its
-// mask covers; an additive layer adds its change on top), builds each
-// joint's matrix up its chain of parents (the root taking the model's `pre`,
-// from the skeleton's space to its own), and ends each with its bone's fix:
-// `pre * global * post`.
+// mask covers; an additive layer adds its change on top), builds the joints'
+// matrices parent by parent, depth by depth (the roots taking the model's
+// `pre`, from the skeleton's space to its own), and ends each with its
+// bone's fix: `pre * global * post`.
 @compute @workgroup_size(POSE_GROUP)
 fn cs_pose(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -2031,25 +2026,26 @@ fn cs_pose(
     let slot = job.pose.x + nth * bones + bone;
     let i = soldier * INSTANCE_WORDS;
     let fit = select(0u, job.pose.z, live);
-
-    // No thread may return before the last barrier below, not even a whole
-    // workgroup: Windows' software GPU (WARP) crashes compiling a barrier
-    // after a return (see `shaders_validate`), and Direct3D's shader
-    // compiler rejects one after a return that depends on the thread. So an
-    // unfitted model or a workgroup past the soldiers runs through the
-    // barriers with nothing to do and leaves after them. FXC cannot see that
-    // `rigged` is the same for the whole workgroup, so its barrier stays
-    // unconditional.
     let fitted = fit != 0u;
 
-    // The fit: the skeleton's joints and where its poses start, then the
-    // model's fixes.
+    // Nothing may return before the last barrier below, not even a whole
+    // workgroup: Windows' software GPU (WARP) crashes compiling a barrier
+    // after a return (see `shaders_validate`), and Direct3D's shader
+    // compiler rejects one after a return that depends on the thread (the
+    // bone). So a workgroup past the soldiers, or posing an unfitted model,
+    // runs through the barriers with nothing to do and leaves after them.
+    // FXC cannot see that `rigged` is the same for the whole workgroup, so
+    // its barrier stays unconditional.
+    // The fit: the skeleton's joints, how deep they nest and where its poses
+    // start, then the model's fixes.
     let head = anim[fit];
     let joints_at = head.x;
     let joints = head.y;
+    let deepest = select(0u, head.z, fitted);
     let poses = Poses(head.w, joints);
     let joint = anim[joints_at + min(bone, joints - 1u)];
     let parent = joint.x;
+    let depth = joint.y;
     let masks = joint.z;
 
     var local = mat4x4<f32>();
@@ -2074,24 +2070,17 @@ fn cs_pose(
         }
         local = pose_matrix(p);
     }
-    // Each joint then multiplies its way up its own chain of parents to the
-    // root (no barrier inside a loop: see `shaders_validate`). `n` only
-    // guards against bad data; the loader rejects parents that loop.
-    pose_globals[bone] = local;
-    pose_parents[bone] = parent;
-    workgroupBarrier();
-    var chain = local;
-    // The threads past the last joint have no chain to walk.
-    var up = select(ROOT_PARENT, parent, fitted && bone < joints);
-    for (var n = 1u; n < POSE_GROUP && up != ROOT_PARENT; n++) {
-        chain = pose_globals[up] * chain;
-        up = pose_parents[up];
+    // Parents before children: one depth at a time.
+    for (var d = 0u; d <= deepest; d++) {
+        if fitted && bone < joints && depth == d {
+            if parent == 255u {
+                pose_globals[bone] = anim_matrix(fit + 2u) * local;
+            } else {
+                pose_globals[bone] = pose_globals[parent] * local;
+            }
+        }
+        workgroupBarrier();
     }
-    workgroupBarrier();
-    if fitted && bone < joints {
-        pose_globals[bone] = anim_matrix(fit + 2u) * chain;
-    }
-    workgroupBarrier();
     // The rig's fixes: the body dropped and the legs bent to stand on the
     // ground, the upper body turned to look.
     let rig = anim[fit + 1u];

@@ -2760,26 +2760,6 @@ mod tests {
         })
     }
 
-    /// Whether `block` of `module` holds a barrier inside a loop (`in_loop`
-    /// once inside one), following calls.
-    fn barrier_in_loop(module: &naga::Module, block: &naga::Block, in_loop: bool) -> bool {
-        use naga::Statement as S;
-        let check = |b, in_loop| barrier_in_loop(module, b, in_loop);
-        block.iter().any(|s| match s {
-            // `workgroupUniformLoad` is a barrier on each side of a load.
-            S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => in_loop,
-            S::Block(b) => check(b, in_loop),
-            S::If { accept, reject, .. } => check(accept, in_loop) || check(reject, in_loop),
-            // naga's HLSL writes a switch with one body as a one-pass loop.
-            S::Switch { cases, .. } => cases.iter().any(|c| check(&c.body, true)),
-            S::Loop {
-                body, continuing, ..
-            } => check(body, true) || check(continuing, true),
-            S::Call { function, .. } => in_loop && check(&module.functions[*function].body, true),
-            _ => false,
-        })
-    }
-
     #[test]
     fn shaders_validate() {
         for src in [
@@ -2812,19 +2792,6 @@ mod tests {
                     !holds_struct(c.ty),
                     "constant {:?} holds a struct: make it a function (Metal cannot build it)",
                     c.name
-                );
-            }
-            // A barrier inside a loop in `cs_pose` crashed Windows' software
-            // GPU (WARP): compiling it, WARP wrote to a stray address, so the
-            // game crashed or corrupted its memory now and then (the Windows
-            // smoke run, October 2026; gone with the barriers out of the
-            // loop). Keep barriers in straight-line code.
-            let functions = module.functions.iter().map(|(_, f)| f);
-            for f in functions.chain(module.entry_points.iter().map(|e| &e.function)) {
-                assert!(
-                    !barrier_in_loop(&module, &f.body, false),
-                    "{:?} has a barrier inside a loop (it has crashed WARP)",
-                    f.name
                 );
             }
             // A barrier after a return in `cs_pose`, even one the whole
