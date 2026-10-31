@@ -405,7 +405,7 @@ clearing woods is the second (below).
   - one of its regiments standing on open ground, free, not broken and
     not burning;
   - an enemy it sees, or saw lately (one hiding in the woods counts),
-    within 12 tiles, standing in woods, scrub or thicket;
+    within 16 tiles, standing in woods, scrub or thicket;
   - the tile its torches would catch (the nearest burnable tile within a
     tile of its block, as the sim picks it) on the way to the enemy, and
     woods running unbroken from there to the enemy;
@@ -418,6 +418,18 @@ clearing woods is the second (below).
   It takes the nearest such pair and orders `Command::Burn`, which costs
   an order as a person's would, then sets no other fire for 20 seconds.
   The journal notes it. A Recruit never does.
+- **Smoking out a hidden army** (`firing::quarry`, `firing::smoke_out`,
+  `Mind::smoke_out`). Left alone, a General's attack goes into the woods
+  all at once, and then its own men in there stop any fire. So when it
+  knows of an enemy in woods (seen, or seen going in) within 40 tiles of
+  its army, no deeper than 12 tiles from the woods' edge on its side,
+  with none of its own fighting it and the weather letting fire burn, it
+  smokes it out instead, for 45 seconds at most and then not again for
+  as long:
+  - none of its regiments goes on into those woods (they stop where they
+    are), and any of its own in there and free marches out;
+  - its nearest regiment on open ground marches to the woods' edge
+    facing the enemy, and the fire is set from there as above.
 - **Cutting a path through thicket** (the Engineer, Conquest). Every 90
   seconds it looks for the cheapest way from home to the nearest enemy
   start, with each thicket tile costed at 12 tiles of open ground
@@ -458,16 +470,18 @@ clearing woods is the second (below).
 - `ai_only_generals_cut_a_path_through_thicket_that_cuts_them_off`
   (release, CI): a belt of thicket across Ribcage Pass, and some General
   orders it cleared (each side cleared twice in 20 minutes).
-- Real match (Field Battle against a General, dry weather, my army hidden
-  in scrub and then in a wood near its line): the General didn't burn us
-  out. It sent several regiments into the wood together, and with its own
-  troops in the woods by us the "none of its own in the way" rule held it
-  back, as it should. Played back move by move, only one moment in the
-  13-minute match had a General regiment on open ground within reach of
-  us in the woods, and its friends were already in there. So the rule
-  works but rarely gets its chance while the General's attack goes in all
-  at once. Holding the attack at the wood's edge to burn first is left
-  for the smarter-generals work.
+- `a_general_smokes_out_an_army_in_the_woods_rather_than_go_in`: its
+  army 20 tiles back, an enemy seen marching into a wood; it burns them
+  out, and none of its regiments enters the woods first.
+- Real match, before smoking out was added: the General sent several
+  regiments into the wood together, and with its own men in there it
+  never burned (only one moment in 13 minutes had a regiment of its on
+  open ground within reach). That is why smoking out was built.
+- Real match, with it (Field Battle against a General, dry weather, my
+  army hiding in the tall grass along the river near its line): at 3:39
+  the General ordered a Burn (read back from the saved replay); the
+  grass burned along the bank and my army broke and ran. Screenshots in
+  project files, `screenshots/living-land-step6b/`.
 
 ## Not in this plan
 
