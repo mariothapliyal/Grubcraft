@@ -395,7 +395,7 @@
         (
             tier: 1,
             class: Light,
-            cost: (grub: 110, marrow: 0),
+            cost: (grub: 100, marrow: 0),
             supply: 3,
             train_time: 20.0,
             from: Building("Forge of Facets"),
@@ -429,7 +429,7 @@
         (
             tier: 1,
             class: Ranged,
-            cost: (grub: 140, marrow: 0),
+            cost: (grub: 125, marrow: 0),
             supply: 4,
             train_time: 24.0,
             from: Building("Forge of Facets"),

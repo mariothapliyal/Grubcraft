@@ -65,6 +65,13 @@ const MIST_FADE: (f32, f32) = (90.0, 190.0);
 /// How far from the camera's focus a bolt may strike (nearest and farthest
 /// radius, in tiles).
 const STRIKE_RADIUS: (f32, f32) = (15.0, 70.0);
+/// A bolt's height over the ground and its radius, in tiles, for a camera
+/// `distance` from its focus: taller and wider the further the camera is,
+/// so it can be seen from up high.
+fn bolt_size(distance: f32) -> (f32, f32) {
+    (35.0 + distance * 0.2, 0.05 + distance * 0.0025)
+}
+
 /// The colour of clods thrown up from the ground.
 const CLOD: [u8; 3] = [92, 74, 52];
 /// Fresh-cut wood, and leaves and torn scrub.
@@ -472,14 +479,20 @@ impl Field {
         fits: impl Fn(Vec2) -> bool,
     ) {
         let radius = (distance * 0.6).clamp(STRIKE_RADIUS.0, STRIKE_RADIUS.1);
-        let top = 35.0 + distance * 0.2;
-        let width = 0.05 + distance * 0.0025;
+        let (top, width) = bolt_size(distance);
         // The camera hangs at least a dozen tiles behind its focus (eight
         // when riding), so a little behind the focus is still well ahead.
         let ahead = |at: Vec2| (at - focus).dot(heading) > -radius * 0.1;
         self.fx.lightning(focus, radius, top, width, ground, |at| {
             ahead(at) && fits(at)
         });
+    }
+
+    /// A bolt of lightning striking `ground` (a point on the land), sized
+    /// for a camera `distance` from its focus as [`Effects::strike`]'s.
+    pub fn strike_at(&mut self, ground: Vec3, distance: f32) {
+        let (top, width) = bolt_size(distance);
+        self.fx.bolt(ground, top, width);
     }
 
     /// The lamps and fires that shone since this was last called.

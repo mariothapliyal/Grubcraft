@@ -259,6 +259,8 @@ const SOLDIER_HEIGHT: f32 = 0.95;
 /// begins, and its colour before the light: pale, for the sun and the sky to
 /// colour.
 const MIST_BANK: f32 = 0.3;
+/// Tiles from the camera's focus a storm's bolt is seen flash and heard.
+const THUNDER_REACH: f32 = 160.0;
 const MIST_EDGE: f32 = 3.0;
 const MIST_TINT: [u8; 3] = [214, 222, 232];
 /// A side's general (see `gc_sim::generals`) stands this much taller than
@@ -6374,6 +6376,8 @@ impl Running {
         let mut shown = Vec::new();
         let mut news = Vec::new();
         let (focus, distance) = self.view_focus();
+        // What happened while catching up online is old news.
+        let old_news = self.online.is_some() && self.menu.net().catching_up();
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -6579,6 +6583,26 @@ impl Running {
                 } else {
                     "The water is back up: the summer fords are deep again"
                 }),
+                // A storm's bolt flashes the sky and thunders as far as it
+                // is heard, and is drawn where it struck if that is seen.
+                Event::Lightning { x, y, caught } => {
+                    if caught {
+                        self.sky_news.struck(x, y, self.world.tick_count());
+                    }
+                    let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    let far = at.distance(focus) / THUNDER_REACH;
+                    if far < 1.0 && !old_news {
+                        self.atmosphere.strike(far);
+                        if (self.reveal_all || self.fog.sees_tile((x, y)))
+                            && !self.menu.settings().clarity
+                            && self.viewer.is_none()
+                        {
+                            let ground = self.heightmap.height_at(at.x, at.y);
+                            self.effects
+                                .strike_at(glam::Vec3::new(at.x, ground, at.y), distance);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -6598,10 +6622,9 @@ impl Running {
         }
         // Kept up while catching up online, but what happened then is old
         // news.
-        let catching_up = self.online.is_some() && self.menu.net().catching_up();
         let mut sky = Vec::new();
         self.weather_and_fire_news(&mut sky);
-        if !catching_up {
+        if !old_news {
             news.extend(sky);
         }
         // Said together, so none hides another from the same tick.
@@ -6614,7 +6637,8 @@ impl Running {
     }
 
     /// A storm, fog or snow coming in or clearing, and woods catching fire
-    /// near the viewer's troops or base, since the last tick.
+    /// (by lightning or not) near the viewer's troops or base, since the
+    /// last tick.
     fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
         let world = &self.world;
         let side = self.sandbox.side;

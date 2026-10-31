@@ -363,6 +363,18 @@ regiment_fields! {
     ploughed: u8 = 0,
     /// The charger that ploughed into it.
     ploughed_by: Option<RegimentHandle> = None,
+    /// Room along each side of its block (front, right flank, left flank,
+    /// rear) taken by foes' strikers since its last turn, in quarters of a
+    /// tile (up to 63): one striker per soldier's width of side (see
+    /// `combat::strikers`). Kept narrow for the sim's memory budget.
+    room_taken: [u8; 4] = [0; 4],
+    /// Crowded out, under orders to attack: going round its foe to a less
+    /// crowded side (see `combat::Round`).
+    round: Option<core::num::NonZeroU8> = None,
+    /// Turns in a row it was locked in a fight with nobody able to strike
+    /// (no room on the foe's side, or only a corner touching); while going
+    /// round, ticks spent on the way.
+    crowded: u8 = 0,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
     braced: bool = false,
@@ -1003,6 +1015,11 @@ impl Regiments {
         };
         if self.owner[i] == self.owner[t] || self.morale_state[i].broken() {
             return false;
+        }
+        if self.attack_target[i] != Some(target) {
+            // Going round only the foe it was going round (see
+            // `combat::Round`): an order repeated keeps it on its way.
+            self.round[i] = None;
         }
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;

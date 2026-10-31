@@ -68,6 +68,8 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 
 *Brood swarm (2026-10-31, faction rebalance PR 3): Gnawers fill a load in 87% of the time (`gather_percent: 115`), so a seep of five brings in about 230 Grub a minute, and Brood regiments are cheaper and weaker one by one (docs/17). In 96 headless AI-vs-AI Conquest games for each Brood pair, on the holding-until-bloodied morale rules, the Brood has about 2.3 times the Clans' soldiers by minute 10 (about 200 to 87; it was 1.5 times) and trades level (0.97 to 0.99 worth killed per worth lost). Its income by minute 10 is about 2,080 Grub, where the Clans take about 3,350, because it spends larvae on regiments rather than Gnawers. Its first army (450 worth) is ready at about 6:15 (was 5:25), well after a Clans player's first two regiments.*
 
+*Even Conquest (2026-10-31, faction rebalance PR 4): Hands fill a load in three quarters of the time (`gather_percent: 135`, was 150): 10 Grub in about 6.7 s and 5 Marrow in about 8.9 s, so five Hands on a seep near the hall bring in about 225 Grub a minute. By minute 10 the Clans take about 3,100 Grub (3,360 at 150), still about 13% more than before PR 1, and their first army is ready at about 3:50. With the regiment prices of docs/17 the Conquest tournament reads Clans 49%, Brood 46%, Choir 52% and Concord 44% over 192 games each (it was 66%, 28%, 35% and 65%). At 150 the Clans won 62% even with the rest of the pass.*
+
 Every start position has 2 Grub seeps and 1 Marrow vein within its natural base area, a "natural expansion" with 2 more seeps nearby, and a Grubfolk hamlet within reach.
 
 ## Upkeep (Warcraft III style)

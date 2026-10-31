@@ -116,6 +116,9 @@ struct Outcome {
     break_at: u8,
     wavered: Option<u32>,
     routed: Option<u32>,
+    /// Attackers that broke first, with frontage a mirror fight can go
+    /// either way: (strength, breaking point) each.
+    foes_routed: Vec<(u32, u8)>,
 }
 
 /// The `defender` stands facing north at (100, 100) and every attacker
@@ -125,8 +128,10 @@ fn fight(name: &str, defender: u16, attackers: &[(u16, (i32, i32), Angle)]) -> O
     let units = units();
     let mut w = world(&units);
     let d = spawn(&mut w, 0, defender, 100, 100, NORTH);
+    let mut foes = Vec::new();
     for &(unit, (x, y), facing) in attackers {
         let a = spawn(&mut w, 1, unit, x, y, facing);
+        foes.push((a, false));
         w.tick(&[PlayerCommand {
             player: 1,
             command: Command::Attack {
@@ -140,9 +145,23 @@ fn fight(name: &str, defender: u16, attackers: &[(u16, (i32, i32), Angle)]) -> O
         break_at,
         wavered: None,
         routed: None,
+        foes_routed: Vec::new(),
     };
     for _ in 0..20 * 240 {
         w.tick(&[]);
+        for (f, gone) in &mut foes {
+            if !*gone
+                && let Some(fv) = w.regiments.get(*f)
+                && fv.morale.broken()
+            {
+                *gone = true;
+                out.foes_routed
+                    .push((strength(&w, &units, *f), fv.break_at));
+            }
+        }
+        if foes.iter().all(|&(_, gone)| gone) {
+            break;
+        }
         let Some(v) = w.regiments.get(d) else { break };
         let now = strength(&w, &units, d);
         if out.wavered.is_none() && v.morale == MoraleState::Wavering {
@@ -160,10 +179,19 @@ fn fight(name: &str, defender: u16, attackers: &[(u16, (i32, i32), Angle)]) -> O
     out
 }
 
-/// It broke in the end (shock works by killing men), and not above its
-/// breaking point or half strength.
+/// It broke in the end (shock works by killing men), or its foes broke
+/// first, and nobody broke above its breaking point or half strength.
 fn holds(o: &Outcome) {
-    let r = o.routed.expect("it never broke");
+    for &(r, at) in &o.foes_routed {
+        assert!(
+            r <= u32::from(BREAK_CAP).min(u32::from(at)),
+            "a foe routed at {r}%, its breaking point {at}%"
+        );
+    }
+    let Some(r) = o.routed else {
+        assert!(!o.foes_routed.is_empty(), "it never broke");
+        return;
+    };
     assert!(
         r <= u32::from(BREAK_CAP),
         "routed at {r}%, above half strength"
