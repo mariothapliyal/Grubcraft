@@ -4,6 +4,7 @@
     buildings: [
         (
             name: "Hive",
+            blurb: "Your starting base: holds 3 larvae, spawns one every 12 seconds and carries Grub from seeps. Hatches all regiments.",
             summary: "Your starting base. It holds 3 larvae and spawns one every 12 seconds, and every regiment hatches from a larva, so larvae often limit your army before Grub does. Its root-veins carry Grub from your seeps. Upgrade to the Great Hive for evolutions, flyers and artillery. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Great Hive", "The gate to the mid game: the Chrysalis Chamber's evolutions, Drone-Moths, the Broodmother Bulk and a second hero. Upgrading uses no Gnawer, but it costs Marrow."),
@@ -16,6 +17,7 @@
         ),
         (
             name: "Great Hive",
+            blurb: "Tier 2 of the Hive: unlocks the Chrysalis Chamber, Moth Roost and Gorge. Keeps spawning larvae while it upgrades.",
             summary: "The Hive's second tier. It keeps spawning larvae while it upgrades, raises your supply cap, and unlocks the Chrysalis Chamber, Moth Roost and Gorge. Upgrade again for the Colossus Maw once your economy is solid.",
             notes: [
                 ("Throne Hive", "The late game: the Colossus Maw monster, the third hero and the top upgrades (not designed yet). Costly in Grub and Marrow, so build it when you hold a second base."),
@@ -28,6 +30,7 @@
         ),
         (
             name: "Throne Hive",
+            blurb: "Tier 3 of the Hive: lets the Gorge hatch the Colossus Maw and opens the third hero slot.",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Gorge hatch the Colossus Maw and opens the third hero slot. Nothing is left to upgrade, so spend on larvae, armies and defence.",
             notes: [],
             tips: [
@@ -38,6 +41,7 @@
         ),
         (
             name: "Pustule",
+            blurb: "Housing that carries root-veins 8 tiles further, so far seeps keep delivering Grub. Build a line of them to expand.",
             summary: "Housing that also carries the root-veins 8 tiles further, so far seeps keep delivering Grub. Kill one and every seep beyond it stops delivering, so guard the chain. Build a line of them to expand, and a few extra for supply.",
             notes: [],
             tips: [
@@ -48,6 +52,7 @@
         ),
         (
             name: "Hatchery Pit",
+            blurb: "Holds 3 more larvae and spawns its own. Build a few when Grub piles up and the Hive has no larvae left.",
             summary: "Holds 3 more larvae and spawns its own every 12 seconds. Each pit raises how fast you can field regiments. Build a few when Grub piles up while the Hive has no larvae left.",
             notes: [],
             tips: [
@@ -58,6 +63,7 @@
         ),
         (
             name: "Chrysalis Chamber",
+            blurb: "Lets tier-1 regiments cocoon into their tier-2 forms anywhere, for extra Grub and Marrow. Tier 2.",
             summary: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field. Tier 2, and each evolution costs extra Grub and Marrow and 15 seconds in the cocoon. Build it to turn swarms into archers, burrowers, reapers or shellbacks.",
             notes: [],
             tips: [
@@ -68,6 +74,7 @@
         ),
         (
             name: "Moth Roost",
+            blurb: "Hatches Drone-Moths: fast flyers whose Spore Bombs spoil archers' aim and who spot burrowed units. Tier 2, needs Marrow.",
             summary: "Lets larvae hatch into Drone-Moths: fast flyers whose Spore Bombs spoil enemy archers' accuracy and whose antennae detect burrowed units. Tier 2 and needs Marrow. Build one to scout, to hunt artillery or to reveal stealth.",
             notes: [],
             tips: [
@@ -78,6 +85,7 @@
         ),
         (
             name: "Gorge",
+            blurb: "Hatches Broodmother Bulks, your long-range artillery, and the Colossus Maw at tier 3. Tier 2, needs Marrow.",
             summary: "Lets larvae hatch into Broodmother Bulks, your long-range artillery, and at tier 3 the Colossus Maw. Tier 2 and needs Marrow. Build it once the front is steady and you want to outrange defenders or crack open a base.",
             notes: [],
             tips: [
@@ -88,6 +96,7 @@
         ),
         (
             name: "Spine Mound",
+            blurb: "A static guard that flings spines at siege engines first, then attackers. Guards vein edges, Pustules and the Hive.",
             summary: "Flings spines at ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap static guard for vein edges, Pustules and your Hive. It is Living, so it regrows while on root-veins, but it will not stop an army. Pair with Shellbacks and Chitin Guard.",
             notes: [],
             tips: [
@@ -97,7 +106,30 @@
             ],
         ),
         (
+            name: "Harpoon Maw",
+            blurb: "Bolt tower: a heavy bolt down a file of soldiers that drags its target 3 tiles toward the tower.",
+            summary: "Bolt tower: one heavy bolt every 6 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers. Its harpoon drags the regiment it hits 3 tiles toward the tower and halts it, unless that regiment is locked in melee or standing on a wall.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Place it where columns will walk into range, since the harpoon pulls them 3 tiles in."),
+                (icon: Brace, text: "Keep spears near it, since a regiment locked in melee cannot be dragged."),
+                (icon: Heart, text: "Living armour, so it regrows on root-veins between fights, like the Spine Mound."),
+            ],
+        ),
+        (
+            name: "Acid Bloater",
+            blurb: "Blast tower: shells packed blocks and leaves acid pools. Blind within 8 tiles, so guard it.",
+            summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. It leaves a pool of acid for 6 seconds that eats at any enemy standing in it.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Acid eats at enemies standing in the pool, so it is best against crowds that stay put."),
+                (icon: Brace, text: "Guard it with Chitin Guard, since nothing within 8 tiles of it can be hit."),
+                (icon: Heart, text: "Living armour, so it regrows on root-veins between fights."),
+            ],
+        ),
+        (
             name: "Queen's Chamber",
+            blurb: "Hatches and revives heroes: the Queen-in-Waiting, Devourer and Whisperer. Build it early; heroes cost Marrow.",
             summary: "Hatches and revives heroes. Build it early: the Queen-in-Waiting, the Devourer and the Whisperer lead the brood and each turns a fight. Heroes cost Marrow too, so keep some in reserve for a replacement.",
             notes: [],
             tips: [
@@ -108,6 +140,7 @@
         ),
         (
             name: "Resin Ridge",
+            blurb: "A wall the Hive grows along its root-veins. It needs no Gnawer and heals on the veins.",
             summary: "A wall the Hive grows: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. It goes only where your root-veins reach, takes no Gnawer and grows every tile at once. It heals on the veins and withers off them.",
             notes: [
                 ("Chitin Wall", "Twice and a half as tough, grown with no Gnawer while the veins reach it."),
@@ -120,6 +153,7 @@
         ),
         (
             name: "Chitin Wall",
+            blurb: "Tier 2 of the Resin Ridge: 2.5 times as tough. Select a ridge and press U; it grows on its own along the veins.",
             summary: "Level 2 of the Resin Ridge: overlapping chitin plates, 2.5 times as tough. Select a ridge and press U: the joined stretch is paid now and grows up on its own while the veins reach it, with no Gnawer.",
             notes: [
                 ("Thorn Bulwark", "The Brood's toughest wall: four times a Resin Ridge. Needs tier 2."),
@@ -132,6 +166,7 @@
         ),
         (
             name: "Thorn Bulwark",
+            blurb: "Tier 3 of the Resin Ridge: 4 times as tough, and each melee blow costs the striker 3 hit points. Needs tier 2.",
             summary: "Level 3, the top: a spined bulwark, 4 times as tough as a Resin Ridge. Needs tier 2. Select a Chitin Wall and press U; it grows on its own while the veins reach it. Its twist: each melee blow on it costs the striker 3 hit points; archers are spared.",
             notes: [],
             tips: [
@@ -142,6 +177,7 @@
         ),
         (
             name: "Maw Gate",
+            blurb: "A gate in your Resin Ridge: your side walks through and enemies don't. Set it Auto, Locked or Open.",
             summary: "A gate in your Resin Ridge: your side walks through and enemies don't. A Gnawer is used up growing it, as for any Brood building. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass).",
             notes: [
                 ("Chitin Maw", "Half as tough again, with a ridge of chitin on top for archers or foot. It grows on its own, with no Gnawer, and the jaws keep working."),
@@ -154,6 +190,7 @@
         ),
         (
             name: "Chitin Maw",
+            blurb: "Tier 2 of the Maw Gate: half as tough again, with a ridge walkway. Select a Maw Gate and press V.",
             summary: "Level 2 of the Maw Gate: a plated arch with a ridge of chitin on top, half as tough again. Select a Maw Gate and press V: it grows on its own, with no Gnawer, and the jaws keep working. Archers or foot can man the ridge, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
@@ -164,6 +201,7 @@
         ),
         (
             name: "Chitin Span",
+            blurb: "Draw a chitin span across a river. Gnawers build it from the bank, and anyone can cross it.",
             summary: "You draw it across a river: drag from bank to bank along a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide (3 to 5 tiles), 3 Grub a tile. Gnawers build it out from the bank a plate at a time. Anyone can cross it; a broken tile drops its troops into the river.",
             notes: [
                 ("Ribbed Chitin Span", "Twice as tough against blows; later, debris in the river too."),
@@ -176,6 +214,7 @@
         ),
         (
             name: "Ribbed Chitin Span",
+            blurb: "Tier 2 of the Chitin Span: twice as tough. Select a span and press U to raise the whole joined bridge.",
             summary: "Level 2 of the Chitin Span: ribbed chitin struts grown under the deck, twice as tough. Select a span and press U: the whole joined span is paid now and Gnawers raise it a plate at a time, and troops keep crossing meanwhile.",
             notes: [
                 ("Rooted Chitin Span", "More than three times as tough, and debris glances off its prows."),
@@ -188,6 +227,7 @@
         ),
         (
             name: "Rooted Chitin Span",
+            blurb: "Tier 3 of the Chitin Span: over three times as tough, and it sheds debris. Needs tier 2; press U on a ribbed span.",
             summary: "Level 3, the top: hardened carapace piers with pointed prows, more than three times a plain span's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Ribbed Chitin Span and press U.",
             notes: [],
             tips: [
@@ -198,6 +238,7 @@
         ),
         (
             name: "Spine Stakes",
+            blurb: "Draw spines that stop enemy riders and beasts dead; foot troops pass at half pace. Wears down each time.",
             summary: "A line of hardened spines you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered. It wears down each time.",
             notes: [],
             tips: [
@@ -208,6 +249,7 @@
         ),
         (
             name: "Husk Barricade",
+            blurb: "Draw a barricade nobody walks through; troops behind it take less from arrows and blows.",
             summary: "A line of piled husks you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front. Enemy troops get no cover from it.",
             notes: [],
             tips: [
@@ -218,6 +260,7 @@
         ),
         (
             name: "Burrow Nest",
+            blurb: "A hidden trap: the first enemy regiment to step on it wakes a Skitterling regiment for you for 30 seconds.",
             summary: "A resin-crusted burrow mound for 40 Grub on one tile. The first enemy regiment to walk onto it wakes the nest: a regiment of Skitterlings bursts out beside it for you and fights for 30 seconds. Your enemies cannot see it, and once it is sprung it is gone.",
             notes: [],
             tips: [

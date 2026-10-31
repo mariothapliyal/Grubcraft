@@ -163,6 +163,8 @@ fn buildings() -> [BuildingStats; 7] {
                 damage: 1,
                 reload_ticks: 40,
                 shots: 1,
+                shot: gc_sim::structures::TowerShot::Arrows,
+                quirk: gc_sim::structures::Quirk::None,
             }),
             ..building(Role::Defence, Armour::Fortified, 2, 900, SILENCES)
         },

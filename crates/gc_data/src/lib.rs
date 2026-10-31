@@ -257,8 +257,9 @@ impl<'a> GameData<'a> {
                 .map_err(|why| DataError::BadConquestUnit(i, why))?;
         }
         for (i, b) in buildings.iter().enumerate() {
-            if b.trap == conquest::TRAP_NEST && usize::from(b.trap_unit) >= conquest_units.len() {
-                return Err(DataError::BadBuilding(i, "its nest names no unit"));
+            let names_unit = b.trap == conquest::TRAP_NEST || b.quirk == conquest::QUIRK_RAISES;
+            if names_unit && usize::from(b.trap_unit) >= conquest_units.len() {
+                return Err(DataError::BadBuilding(i, "its nest or tower names no unit"));
             }
         }
         let powers = table::<PowerRecord>(pack, POWERS_PATH, conquest::POWER_SCHEMA)?;

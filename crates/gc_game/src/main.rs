@@ -214,7 +214,7 @@ use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
-use gc_sim::structures::Breaker;
+use gc_sim::structures::{Breaker, TowerShot};
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, Growth, LOOSE_DEFENCE, MatchSetup,
     MoraleState, PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView,
@@ -952,6 +952,8 @@ struct Running {
     turn_scroll: f32,
     /// Each building's tips, for the HUD's tips card.
     tip_book: guide_data::TipBook,
+    /// Each building's blurb, for its line on the build menu.
+    blurb_book: guide_data::BlurbBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -1409,6 +1411,10 @@ struct Watching {
     /// The first tick whose state differs from the recording's, if any:
     /// the replay was made with other rules (docs/10-replays.md).
     diverged_at: Option<u32>,
+    /// A tick to jump ahead to at once, from `GC_WATCH_FROM=SECONDS` (a
+    /// developer's convenience for looking at a late moment of a long
+    /// match).
+    jump_to: Option<u32>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -1835,6 +1841,7 @@ impl App {
             guide_scroll: 0.0,
             turn_scroll: 0.0,
             tip_book: guide_data::tip_book(),
+            blurb_book: guide_data::blurb_book(),
             reveal_all: false,
             fog: Default::default(),
             river_watch: Default::default(),
@@ -3536,6 +3543,22 @@ impl Running {
         } else {
             0
         };
+        // Jump a replay being watched ahead, once (see `Watching::jump_to`).
+        if let Some(from) = self.watching.as_mut().and_then(|w| w.jump_to.take()) {
+            while self.world.tick_count() < from {
+                let tick = self.world.tick_count();
+                self.pending.clear();
+                if let Some(w) = &self.watching {
+                    self.pending.extend_from_slice(w.replay.commands_at(tick));
+                }
+                self.human_orders.clear();
+                self.step();
+                self.check_replay_divergence();
+                if self.paused {
+                    break;
+                }
+            }
+        }
         while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
             self.pending.clear();
@@ -4707,6 +4730,33 @@ impl Running {
                 let ground = heightmap.height_at(at.x, at.y);
                 self.effects
                     .blaze(glam::Vec3::new(at.x, ground, at.y), tall, fire_dt);
+            }
+        }
+        // Pools a tower's hit left (burning ground, acid), those the viewer
+        // sees, fading out over their last second.
+        if fx_speed > 0.0
+            && let Some(pools) = self.world.structures().map(gc_sim::Structures::pools)
+        {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let pool_dt = dt.as_secs_f32() * fx_speed;
+            let fade = gc_sim::TICKS_PER_SECOND as f32;
+            let reach = fx_to_f32(gc_sim::towers::POOL_REACH);
+            for pool in pools {
+                let at = from_fx_vec(pool.at);
+                if at.distance_squared(view_focus) > view_distance * view_distance
+                    || !(reveal || fog.sees_tile((at.x.floor() as i32, at.y.floor() as i32)))
+                {
+                    continue;
+                }
+                let strength = (f32::from(pool.left) / fade).min(1.0);
+                let ground = heightmap.height_at(at.x, at.y);
+                self.effects.pool(
+                    glam::Vec3::new(at.x, ground, at.y),
+                    reach,
+                    pool.acid,
+                    strength,
+                    pool_dt,
+                );
             }
         }
         let particles = self.effects.frame(
@@ -5938,11 +5988,16 @@ impl Running {
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
         self.start_zoom(120.0);
+        let replay_ticks = replay.ticks;
         self.watching = Some(Watching {
             title: replays::title(&replay.info()),
             replay,
             stats_before,
             diverged_at: None,
+            jump_to: std::env::var("GC_WATCH_FROM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|s| s.saturating_mul(gc_sim::TICKS_PER_SECOND).min(replay_ticks)),
         });
         // A replay is a film: the director frames it until the viewer moves.
         self.director.start(&self.camera);
@@ -6319,14 +6374,19 @@ impl Running {
                     target,
                     at,
                     lost,
+                    kind,
                 } => {
-                    if let Some(flight) = self.arrows.landed(volley, at, in_wood, dry) {
+                    if let Some(flight) = self.arrows.landed(volley, at, kind, in_wood, dry) {
                         self.puppets.shot_down(target, flight.dir, lost);
                         if self.reveal_all || self.world.sees(self.sandbox.side, target) {
                             let p = from_fx_vec(at);
                             let ground = self.heightmap.height_at(p.x, p.y);
-                            self.effects
-                                .arrows_landed(glam::Vec3::new(p.x, ground, p.y), lost.max(2));
+                            let spot = glam::Vec3::new(p.x, ground, p.y);
+                            match kind {
+                                TowerShot::Arrows => self.effects.arrows_landed(spot, lost.max(2)),
+                                TowerShot::Bolt => self.effects.bolt_landed(spot),
+                                TowerShot::Blast => self.effects.blast_landed(spot),
+                            }
                         }
                     }
                 }
@@ -6656,6 +6716,35 @@ impl Running {
             let flight = field::Flight::new(v.launch_tick, v.from, v.aim, |p| {
                 terrain.cover(p) == gc_sim::Cover::Wood
             });
+            let lifted = |t: f32| start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t);
+            // A tower's bolt or blast is one round, straight at its aim.
+            if v.kind != TowerShot::Arrows {
+                let at = flight.from.lerp(flight.aim, flown);
+                let lift = lifted(flown) + flight.arc(v.kind, flown);
+                if v.kind == TowerShot::Bolt {
+                    self.instances.push(BoxInstance {
+                        pos: at.to_array(),
+                        facing: flight.dir.to_array(),
+                        size: field::BOLT_SIZE,
+                        color: field::BOLT_COLOR,
+                        lift,
+                    });
+                } else {
+                    for (size, color, up) in [
+                        (field::BLAST_SIZE, field::BLAST_COLOR, 0.0),
+                        (field::BLAST_FUSE_SIZE, field::BLAST_FUSE_COLOR, 0.3),
+                    ] {
+                        self.instances.push(BoxInstance {
+                            pos: at.to_array(),
+                            facing: flight.dir.to_array(),
+                            size,
+                            color,
+                            lift: lift + up,
+                        });
+                    }
+                }
+                continue;
+            }
             for k in 0..field::ARROWS_PER_VOLLEY.min(v.shots as usize) {
                 // A caught arrow stops in the branches over the archers or
                 // over its target, and hangs there until the volley lands.
@@ -6665,8 +6754,7 @@ impl Running {
                     facing: flight.dir.to_array(),
                     size: field::ARROW_SIZE,
                     color: field::ARROW_COLOR,
-                    lift: start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t)
-                        + flight.arc(t),
+                    lift: lifted(t) + flight.arc(TowerShot::Arrows, t),
                 });
             }
         }
