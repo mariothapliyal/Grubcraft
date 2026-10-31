@@ -107,6 +107,11 @@ pub(super) struct Engineer {
     barricaded: Option<Vec2>,
     /// Looks spent trying for a barricade where none fitted.
     barricade_tries: u8,
+    /// The first tile of the barricade it last ordered, and how many it has
+    /// ordered again because none went up there (the bank ran short before
+    /// the order came through, say).
+    barricade_at: Option<(i32, i32)>,
+    barricade_redone: u8,
     /// Regiments sent to plant stakes.
     staked: Vec<RegimentHandle>,
     traps: u8,
@@ -141,6 +146,17 @@ impl Steward {
         };
         if !clicks.free() {
             return;
+        }
+        // A barricade ordered but never begun is tried again, a few times.
+        if let Some(at) = self.engineer.barricade_at.take() {
+            let begun = look
+                .mine
+                .iter()
+                .any(|m| m.view.tile == at && m.stats.role == Role::Barricade);
+            if !begun && self.engineer.barricade_redone < BARRICADE_TRIES {
+                self.engineer.barricade_redone += 1;
+                self.engineer.barricaded = None;
+            }
         }
         let kept = RESERVE + self.ledger.saving.0.min(SAVING_KEPT);
         let spare = bank.grub.saturating_sub(kept);
@@ -382,6 +398,7 @@ impl Steward {
             self.engineer.barricade_tries = 0;
         }
         let (from, to) = line?;
+        self.engineer.barricade_at = Some(from);
         let order = Command::BuildWall {
             regiment: Some(w),
             building: b.id,
