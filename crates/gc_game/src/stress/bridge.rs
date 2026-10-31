@@ -1,7 +1,7 @@
 //! A column of six Ember regiments crosses a two-lane Timber Bridge over a
 //! deep river while enemy archers on the far bank shoot at it.
 
-use gc_sim::TICKS_PER_SECOND;
+use gc_sim::{MoraleState, TICKS_PER_SECOND};
 
 use super::arena::{
     Arena, EAST, Real, WEST, attack_nearest, centre, grid, move_to, of, put_up, soldiers, spawn,
@@ -70,8 +70,11 @@ fn run(real: &Real, report: &mut Report) {
             })
             .count() as u32;
         // The survivors across and standing (not none left: a column
-        // shot to pieces has not crossed).
-        let mut left = of(&world, &column).peekable();
+        // shot to pieces has not crossed). A routed regiment has left the
+        // column: it runs from the archers until they are gone.
+        let mut left = of(&world, &column)
+            .filter(|v| v.morale != MoraleState::Routing)
+            .peekable();
         if left.peek().is_some()
             && left.all(|v| v.position.x.floor_int() > RIVER.end + 3 && !v.moving)
         {

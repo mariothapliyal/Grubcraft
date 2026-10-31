@@ -279,12 +279,13 @@ fn battles() -> u64 {
         .unwrap_or(120)
 }
 
+/// About 92% over 800 battles (seeds 1001 and 2001, 2026-10-30, after
+/// holding until bloodied and wheeling as they march). 150 battles keep the
+/// bar from hanging on a few unlucky seeds, as 40 did.
 #[test]
-fn the_general_beats_charge_straight_in_seven_times_in_eight() {
-    // 120 battles: on 40 one seed's luck moves it by a tenth (with frontage
-    // the first 40 went 34, the next 80 went 73).
-    let wins = contest(Side::Mind(Difficulty::General), Side::Charge, 1..=120);
-    assert!(wins >= 105, "won {wins} of 120");
+fn the_general_beats_charge_straight_in_nine_times_in_ten() {
+    let wins = contest_parallel(Side::Mind(Difficulty::General), Side::Charge, 1..=150);
+    assert!(wins >= 132, "won {wins} of 150");
 }
 
 #[test]
@@ -297,7 +298,11 @@ fn the_veteran_beats_charge_straight_in_more_often_than_not() {
 /// first (docs/29, "How battles play", item 6), a slow or sloppy order
 /// costs less, and the General's edge over the Veteran fell from about 73%
 /// to about 67% over 450 battles (the AI generals' work in the plan's third
-/// wave is to win it back). 150 battles keep the bar from hanging on a few.
+/// wave is to win it back). With holding until bloodied on top it fell to
+/// 45 to 50%; the General now looks twice as often, closes from 15 tiles
+/// and drops morale targeting (aimed at early wavering, which no longer
+/// happens): about 60% over 800 battles. 150 battles keep the bar from
+/// hanging on a few.
 #[test]
 fn the_general_beats_the_veteran_five_times_in_eight() {
     let general = Side::Mind(Difficulty::General);

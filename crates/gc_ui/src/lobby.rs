@@ -238,9 +238,11 @@ impl TimeOfDay {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WeatherSetting {
     /// Dry and clear all match.
-    #[default]
     Fair,
-    /// Spells of rain, fog and clear sky come and go every few minutes.
+    /// Spells of rain, fog and clear sky come and go every few minutes (and
+    /// in Conquest with seasons, snow in winter and storms in summer). The
+    /// default (docs/41).
+    #[default]
     Changing,
     /// Rain all match: archers reach a little less far.
     Rain,
@@ -565,7 +567,7 @@ impl Default for LobbySettings {
             map_size: MapSize::Medium,
             champions: true,
             time_of_day: TimeOfDay::GoldenHour,
-            weather: WeatherSetting::Fair,
+            weather: WeatherSetting::Changing,
             seasons: YearSetting::Short,
         }
     }
