@@ -1361,14 +1361,14 @@ impl Combat {
             let was_engaged = previous.is_some();
             // Pushed or turned out of reach mid-fight: press back in, unless
             // given another order, standing braced, or the foe is falling
-            // back (it is let go).
+            // back or routing (it is let go: chasing is the hunters' work).
             if best.is_none()
                 && regs.target[i].is_none()
                 && regs.attack_target[i].is_none()
                 && !regs.braced[i]
                 && previous
                     .and_then(|h| regs.resolve(h))
-                    .is_some_and(|j| regs.falling_back[j] == 0)
+                    .is_some_and(|j| regs.falling_back[j] == 0 && !regs.morale_state[j].broken())
             {
                 regs.attack_target[i] = previous;
             }

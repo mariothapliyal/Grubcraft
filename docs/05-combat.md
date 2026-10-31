@@ -112,6 +112,7 @@ Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-de
 - Only regiments with long weapons, the `reach` flag (spears and pikes, such as Yari Ashigaru and Bone Pikes), can brace. A regiment must not be locked in melee, falling back or routing to brace.
 - Bracing halts the regiment where it stands. It stays braced until it gets a move or attack order, falls back or routs. `Z` again lifts the spears. It can be set during deployment too.
 - A braced regiment doesn't press back in after a foe that is pushed out of reach ([Lines that push](#lines-that-push)).
+- No regiment presses back in after a foe that has routed: chasing routers is left to the troops ordered after them.
 - A charge that hits a braced regiment's **front** is not a charge. The charger gets no charge bonus, loses its next blow (stopped dead on the points) and falls into disorder, as in [Pushing through friends](#pushing-through-friends): 20% less melee damage dealt and 20% more taken, fading over 3 s. The braced spears strike at once, and for the next 3 seconds their blows carry a charge bonus equal to the bigger of their own and the charger's: the charge's weight turned back on the charger.
 - A charge into a braced regiment's **flank or rear** is a normal charge.
 - In the drill test, chargers running into braced spears lost about 1.3× as many hit points in the first 3 seconds as against unbraced spears, and the spears lost under half as much.
