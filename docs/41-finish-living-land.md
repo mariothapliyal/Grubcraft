@@ -135,11 +135,6 @@ the Classic choices so old choices keep their numbers;
   (`SWEEP=N` for more seeds), and the AI one-on-one above (first run: wins
   by Annihilation at 25:53 and 32:42, first contact at 7:22 and 6:34).
 
-## Not in this plan
-
-Water levels per tile, dams and debris (docs/39). Three- and five-player
-layouts. A new art pass for the habitats.
-
 ## Step 4 as built
 
 *2026-10-30.*
@@ -176,3 +171,8 @@ layouts. A new art pass for the habitats.
   opening weather is quiet, a new kind is told after the old fades, and a
   fire near troops then the base is told once each, with the quiet time,
   and a fire spreading from the troops to the base is told again.
+
+## Not in this plan
+
+Water levels per tile, dams and debris (docs/39). Three- and five-player
+layouts. A new art pass for the habitats.
