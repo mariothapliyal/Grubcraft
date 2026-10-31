@@ -53,6 +53,7 @@ fn no_standing_regiments_for_parties_past_the_limit() {
         models: 10,
         morale_points: 60,
         morale: gc_sim::MoraleState::Steady,
+        rank: 0,
         hidden: false,
         torches: false,
     };

@@ -21,6 +21,7 @@
 //! ([`WITHER_PER_SECOND`]) until it dies.
 
 use crate::conquest::{Conquest, overgrown, overlaps};
+use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
 use crate::structures::{
@@ -47,14 +48,21 @@ pub const MAX_RAISE_TILES: usize = 128;
 /// diagonal is a staircase of tiles meeting at corners). `None` when it
 /// would cover more than [`MAX_WALL_TILES`].
 pub fn wall_tiles(from: (i32, i32), to: (i32, i32)) -> Option<Vec<(i32, i32)>> {
-    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-    let steps = dx.abs().max(dy.abs());
+    let steps = (to.0 - from.0).abs().max((to.1 - from.1).abs());
     if steps as usize >= MAX_WALL_TILES {
         return None;
     }
+    Some(line_steps(from, to).collect())
+}
+
+/// The tiles of a line from tile `from` to tile `to`, both included, in
+/// order, as [`wall_tiles`] draws it but however long.
+pub(crate) fn line_steps(from: (i32, i32), to: (i32, i32)) -> impl Iterator<Item = (i32, i32)> {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let steps = dx.abs().max(dy.abs());
     // Rounded to the nearest tile, halves away from the start, so the same
     // two ends always give the same tiles.
-    let at = |k: i32, d: i32| {
+    let at = move |k: i32, d: i32| {
         if steps == 0 {
             return 0;
         }
@@ -62,22 +70,7 @@ pub fn wall_tiles(from: (i32, i32), to: (i32, i32)) -> Option<Vec<(i32, i32)>> {
         let q = (n.abs() + steps) / (2 * steps);
         q * n.signum()
     };
-    Some(
-        (0..=steps)
-            .map(|k| (from.0 + at(k, dx), from.1 + at(k, dy)))
-            .collect(),
-    )
-}
-
-/// The box of tiles (`[x, y, width, depth]`) a line drawn from `from` to `to`
-/// lies in.
-pub(crate) fn line_area(from: (i32, i32), to: (i32, i32)) -> [i32; 4] {
-    [
-        from.0.min(to.0),
-        from.1.min(to.1),
-        (to.0 - from.0).abs() + 1,
-        (to.1 - from.1).abs() + 1,
-    ]
+    (0..=steps).map(move |k| (from.0 + at(k, dx), from.1 + at(k, dy)))
 }
 
 /// One tile of a planned wall: where, and whether it can go up.
@@ -166,7 +159,7 @@ impl Structures {
     /// The next tile of `owner`'s walls (or bridges, after a bridge tile)
     /// to build after slot `i`: the nearest with work left (see
     /// [`Structures::wall_work_left`]) within [`CARRY_ON`] tiles of it,
-    /// those drawn in the same line first, then the lowest slot; failing
+    /// those drawn in the same drawing first, then the lowest slot; failing
     /// that the nearest within [`MAX_WALL_TILES`], so a builder at the end
     /// of one line goes back for the rest of the wall. A bridge tile out
     /// over the water is next only once a builder can reach it.
@@ -181,30 +174,35 @@ impl Structures {
                     && self.is_line(j)
                     && self.stats_of(j).role == role
                     && self.wall_work_left(j)
-                    && (!bridge || self.reachable_deck(j))
             })
-            .map(|j| {
+            .filter_map(|j| {
                 let [jx, jy, _, _] = self.footprint(j);
                 let gap = (jx - x).abs().max((jy - y).abs());
+                // The reach check last: it looks round the deck.
+                if gap > MAX_WALL_TILES as i32 || bridge && !self.reachable_deck(j) {
+                    return None;
+                }
                 let far = gap > CARRY_ON;
-                (far, !far && self.line[j] != self.line[i], gap, j)
+                Some((far, !far && self.drawing[j] != self.drawing[i], gap, j))
             })
-            .filter(|&(_, _, gap, _)| gap <= MAX_WALL_TILES as i32)
             .min()
             .map(|(.., j)| j)
     }
 
     /// Lay foundations for `owner`'s wall building `building` on each tile
-    /// of `plan`, the wall drawn from `line`'s first tile to its second, and
-    /// stamp them into the walking grid at once. The first and last tiles
+    /// of `plan`, laid along drawing `drawing` (see [`crate::drawn`]), each
+    /// with the line it runs along and whether it is on dry ground
+    /// (`place`), and stamp them into the walking grid at once. The first and last tiles
     /// laid, or `None`, with nothing laid, when the plan is empty or the
     /// pool hasn't room; the caller has checked each tile.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn found_wall(
         &mut self,
         owner: PlayerId,
         building: BuildingId,
         plan: &[WallTile],
-        line: [i16; 4],
+        drawing: u32,
+        place: impl Fn((i32, i32)) -> ([i16; 4], bool),
         nav: &mut Nav,
         regs: &Regiments,
     ) -> Option<(StructureHandle, StructureHandle)> {
@@ -216,7 +214,8 @@ impl Structures {
         for t in plan {
             let i = self.take_slot(owner, building, t.tile, 0).expect("room");
             self.lay_foundation(i);
-            self.line[i] = line;
+            (self.line[i], self.ashore[i]) = place(t.tile);
+            self.drawing[i] = drawing;
             self.growing[i] = grown;
             let h = self.handle(i);
             ends = Some(ends.map_or((h, h), |(first, _)| (first, h)));
@@ -249,28 +248,100 @@ impl Structures {
     }
 }
 
+/// The longest a drawn wall may be, in tiles of its own.
+pub const MAX_DRAWN_TILES: usize = 96;
+
+/// The longest a drawn bridge may be along its centre line, in tiles.
+pub const MAX_BRIDGE_LENGTH: i64 = 32;
+
+/// What a line is drawn as: the path and, for a bridge, its width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Line {
+    pub path: DrawnPath,
+    /// A bridge's width across in tiles (see [`drawn::BRIDGE_WIDTHS`]);
+    /// ignored for walls.
+    pub width: u8,
+    /// Drawn with the old two-end order (`Command::BuildWall`): a bridge
+    /// turns to the side it fits on.
+    pub old: bool,
+}
+
+impl Line {
+    /// The straight line from tile `from` to tile `to`, as
+    /// `Command::BuildWall` draws it.
+    pub fn straight(from: (i32, i32), to: (i32, i32)) -> Line {
+        Line {
+            path: DrawnPath::straight(from, to),
+            width: drawn::OLD_WIDTH,
+            old: true,
+        }
+    }
+
+    /// A line drawn along `path` (`Command::DrawLine`), a bridge `width`
+    /// tiles across.
+    pub fn drawn(path: DrawnPath, width: u8) -> Line {
+        Line {
+            path,
+            width,
+            old: false,
+        }
+    }
+}
+
+/// The tiles a line covers and how each is laid.
+pub(crate) struct Laying {
+    pub stats: BuildingStats,
+    pub tiles: Vec<WallTile>,
+    /// The path the tiles were found along (a bridge drawn the old way
+    /// may have moved to its other side).
+    pub path: DrawnPath,
+    pub width: u8,
+}
+
+impl Laying {
+    /// The line tile `t` runs along and whether it is on dry ground.
+    pub(crate) fn placer<'a>(
+        &'a self,
+        terrain: &'a Terrain,
+    ) -> impl Fn((i32, i32)) -> ([i16; 4], bool) + 'a {
+        let curve = self.path.curve();
+        let bridge = self.stats.is_bridge();
+        move |t| {
+            let mut line = curve.chord(t);
+            // A bridge tile on the higher side of the way it was drawn
+            // runs back, so each side's rail is on its outer edge (as the
+            // two lanes of a bridge drawn straight always have).
+            if bridge && curve.higher_side(t) {
+                line = [line[2], line[3], line[0], line[1]];
+            }
+            (line, !terrain.tile_under_water(t.0, t.1))
+        }
+    }
+}
+
 impl Conquest {
-    /// The tiles of a wall of type `building` `player` would draw from tile
-    /// `from` to tile `to`, leaving out those its own walls and gates
-    /// already stand on, each with whether it can go up there. Refused as a
-    /// whole for a building that isn't a drawn wall, a line too long, or
-    /// one its owner may not lay now (tier, or the price of all of it).
+    /// The tiles of a wall of type `building` `player` would draw along
+    /// `line`, leaving out those its own walls and gates already stand on,
+    /// each with whether it can go up there. Refused as a whole for a
+    /// building that isn't a drawn wall, a line too long or bent too
+    /// sharply, or one its owner may not lay now (tier, or the price of all
+    /// of it).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn wall_plan(
         &self,
         player: PlayerId,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
-    ) -> Result<Vec<WallTile>, Refusal> {
-        let (b, plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
-        if self.structures.free_slots() < plan.len() {
+    ) -> Result<Laying, Refusal> {
+        let laying = self.wall_fits(player, building, line, nav, regs, terrain)?;
+        if self.structures.free_slots() < laying.tiles.len() {
             return Err(Refusal::NoRoom);
         }
-        let n = plan.len() as u32;
+        let n = laying.tiles.len() as u32;
+        let b = laying.stats;
         if !self.economy.can_afford(
             player,
             u32::from(b.cost_grub) * n,
@@ -278,7 +349,7 @@ impl Conquest {
         ) {
             return Err(Refusal::Price);
         }
-        Ok(plan)
+        Ok(laying)
     }
 
     /// [`Conquest::wall_plan`] as a blueprint (see [`crate::blueprints`]):
@@ -290,22 +361,24 @@ impl Conquest {
         &self,
         player: PlayerId,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
-    ) -> Result<Vec<WallTile>, Refusal> {
-        let (b, mut plan) = self.wall_fits(player, building, from, to, nav, regs, terrain)?;
+    ) -> Result<Laying, Refusal> {
+        let mut laying = self.wall_fits(player, building, line, nav, regs, terrain)?;
+        let b = laying.stats;
         // Nor for a bridge or field work: blueprints are for walls.
         if b.flags & GROWN != 0 || b.role != Role::Wall {
             return Err(Refusal::Unknown);
         }
-        plan.retain(|t| !self.blueprints.planned(player, t.tile));
-        if self.blueprints.room(player) < plan.len() {
+        laying
+            .tiles
+            .retain(|t| !self.blueprints.planned(player, t.tile));
+        if self.blueprints.room(player) < laying.tiles.len() {
             return Err(Refusal::NoRoom);
         }
-        Ok(plan)
+        Ok(laying)
     }
 
     /// [`Conquest::wall_plan`] without the price or room: the tiles not
@@ -316,30 +389,28 @@ impl Conquest {
         &self,
         player: PlayerId,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
-    ) -> Result<(BuildingStats, Vec<WallTile>), Refusal> {
+    ) -> Result<Laying, Refusal> {
         self.may_build(player, building)?;
-        self.wall_line(player, building, from, to, nav, regs, terrain)
+        self.wall_line(player, building, line, nav, regs, terrain)
     }
 
-    /// The tiles of a wall of type `building` drawn from `from` to `to`
-    /// that `player`'s own walls and gates don't already stand on, each with
+    /// The tiles of a wall of type `building` drawn along `line` that
+    /// `player`'s own walls and gates don't already stand on, each with
     /// whether it could go up now.
     #[allow(clippy::too_many_arguments)]
     fn wall_line(
         &self,
         player: PlayerId,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
-    ) -> Result<(BuildingStats, Vec<WallTile>), Refusal> {
+    ) -> Result<Laying, Refusal> {
         let b = *self
             .structures
             .buildings()
@@ -348,11 +419,35 @@ impl Conquest {
         if b.flags & LINE == 0 {
             return Err(Refusal::Unknown);
         }
-        let tiles = wall_tiles(from, to).ok_or(Refusal::Unknown)?;
-        let area = line_area(from, to);
-        if b.is_bridge() {
-            return Ok((b, self.bridge_line(player, &tiles, area, nav, terrain)?));
+        let path = line.path;
+        // The old order's two ends may be one tile: a wall a tile long.
+        if !line.old {
+            path.check()?;
         }
+        if b.is_bridge() {
+            return self.bridge_line(player, b, line, nav, terrain);
+        }
+        let tiles = if line.old {
+            // The old order keeps its old length.
+            let (from, to) = path.ends();
+            wall_tiles(from, to).ok_or(Refusal::Unknown)?
+        } else {
+            let curve = path.curve();
+            if !curve.bends_gently() {
+                return Err(Refusal::Crooked);
+            }
+            // Far too long to be worth laying out tile by tile (a diagonal
+            // has a tile for every 1.42 tiles of length at worst).
+            if curve.length() > 2 * MAX_DRAWN_TILES as i64 * i64::from(drawn::SUB) {
+                return Err(Refusal::Unknown);
+            }
+            let tiles = path.wall_tiles();
+            if tiles.len() > MAX_DRAWN_TILES {
+                return Err(Refusal::Unknown);
+            }
+            tiles
+        };
+        let area = tiles_area(&tiles);
         let own = self.structures.own_walls_in(player, b.role, area);
         let plan: Vec<WallTile> = tiles
             .into_iter()
@@ -362,7 +457,12 @@ impl Conquest {
                 fits: self.wall_tile_fits(player, building, tile, nav, regs, terrain),
             })
             .collect();
-        Ok((b, plan))
+        Ok(Laying {
+            stats: b,
+            tiles: plan,
+            path,
+            width: 1,
+        })
     }
 
     /// Whether a tile of wall `building` can go up at `tile` for `player`
@@ -385,19 +485,19 @@ impl Conquest {
         Ok(())
     }
 
-    /// Worker slot `r`, `player`'s, lays a wall of type `building` from tile
-    /// `from` to tile `to` (see [`Conquest::wall_plan`]), pays for all of
-    /// it and goes to build the tile nearest it; a wall grown along veins
-    /// takes no worker (`r` is `None`) and grows on its own. Refused if
-    /// any tile can't go up, or there is nothing new to build.
+    /// Worker slot `r`, `player`'s, lays a wall of type `building` along
+    /// `line` (see [`Conquest::wall_plan`]), pays for all of it and goes to
+    /// build the tile nearest it; a wall grown along veins takes no worker
+    /// (`r` is `None`) and grows on its own. Refused if any tile can't go
+    /// up, or there is nothing new to build. The line is kept for the rest
+    /// of the match (see [`crate::drawn::Drawing`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay_wall(
         &mut self,
         player: PlayerId,
         r: Option<usize>,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &mut Nav,
         regs: &mut Regiments,
         terrain: &Terrain,
@@ -418,23 +518,33 @@ impl Conquest {
             }
             _ => return false,
         };
-        let Ok(plan) = self.wall_plan(player, building, from, to, nav, regs, terrain) else {
+        let Ok(laying) = self.wall_plan(player, building, line, nav, regs, terrain) else {
             return false;
         };
-        if plan.iter().any(|t| t.fits.is_err()) {
+        if laying.tiles.is_empty()
+            || laying.tiles.iter().any(|t| t.fits.is_err())
+            || self.structures.free_slots() < laying.tiles.len()
+        {
             return false;
         }
-        let line = [from.0, from.1, to.0, to.1].map(|v| v as i16);
-        let ends = if stats.is_bridge() {
-            self.found_bridge(player, building, from, to, nav, regs, terrain)
-        } else {
-            self.structures
-                .found_wall(player, building, &plan, line, nav, regs)
-        };
+        // Only a line that is laid is remembered.
+        let drawing = self
+            .structures
+            .drawings
+            .add(player, laying.path, laying.width);
+        let ends = self.structures.found_wall(
+            player,
+            building,
+            &laying.tiles,
+            drawing,
+            laying.placer(terrain),
+            nav,
+            regs,
+        );
         let Some((a, b)) = ends else {
             return false;
         };
-        let n = plan.len() as u32;
+        let n = laying.tiles.len() as u32;
         self.economy.spend(
             player,
             u32::from(stats.cost_grub) * n,
@@ -442,24 +552,44 @@ impl Conquest {
         );
         // Tiles drawn over the player's own blueprint are no longer planned.
         if !self.blueprints.plans().is_empty() {
-            let tiles: Vec<(i32, i32)> = plan.iter().map(|t| t.tile).collect();
+            let tiles: Vec<(i32, i32)> = laying.tiles.iter().map(|t| t.tile).collect();
             self.blueprints.drop_tiles(player, &tiles);
         }
         let Some(r) = worker else {
             // Grown: every tile grows on its own.
             return true;
         };
-        // The worker starts at the end nearer it and works along.
+        // The worker starts at the end nearer it and works along (a
+        // bridge from the bank: see `Structures::reachable_deck`).
         let here = regs.position[r];
+        let s = &self.structures;
         let gap = |h: &StructureHandle| {
-            let c = self.structures.centre(h.index as usize) - here;
+            let c = s.centre(h.index as usize) - here;
             c.x.abs().max(c.y.abs())
         };
-        let first = if gap(&b) < gap(&a) { b } else { a };
+        let mut first = if gap(&b) < gap(&a) { b } else { a };
+        if stats.is_bridge() && !s.reachable_deck(first.index as usize) {
+            first = if first == a { b } else { a };
+        }
         self.stop_work(r);
         self.structures.send(regs, r, first, Work::Build);
         true
     }
+}
+
+/// The box of tiles (`[x, y, width, depth]`) `tiles` lie in.
+pub(crate) fn tiles_area(tiles: &[(i32, i32)]) -> [i32; 4] {
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for &(x, y) in tiles {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    }
+    if tiles.is_empty() {
+        return [0; 4];
+    }
+    [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
 }
 
 /// What raising a stretch of wall a level would do (see

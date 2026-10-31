@@ -110,6 +110,8 @@ impl Force {
             let s = &u.stats;
             let n = f32::from(r.models);
             let hp = n * f32::from(s.hp_per_model);
+            // A veteran's blows and arrows cut deeper.
+            let veteran = gc_sim::veterancy::rank_damage_percent(r.rank) as f32 / 100.0;
             f.hp += hp;
             f.hp_full += f32::from(r.full) * f32::from(s.hp_per_model);
             f.soldiers += n;
@@ -127,9 +129,10 @@ impl Force {
             if u.class == Class::Ranged {
                 // Archers fight in melee too, badly, if caught; the model
                 // keeps them shooting from behind the line.
-                f.ranged += n * f32::from(s.accuracy) / 100.0 * f32::from(s.missile_damage)
-                    / u.reload_seconds()
-                    * VOLLEY_PACE;
+                f.ranged +=
+                    n * f32::from(s.accuracy) / 100.0 * f32::from(s.missile_damage) * veteran
+                        / u.reload_seconds()
+                        * VOLLEY_PACE;
                 f.range = f.range.max(u.range);
             } else {
                 // The front rank (and a spear block's second); the formation
@@ -137,7 +140,8 @@ impl Force {
                 let front = (s.front_fighters_percent(r.files, r.models)
                     * s.weapon_room_percent(r.formation)) as f32
                     / 10_000.0
-                    * MELEE_PACE;
+                    * MELEE_PACE
+                    * veteran;
                 f.melee_regiments += 1.0;
                 f.front_damage += front * f32::from(s.melee_damage);
                 f.front_damage_attack +=

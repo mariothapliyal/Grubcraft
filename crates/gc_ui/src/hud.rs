@@ -206,6 +206,8 @@ pub struct Card {
     /// Its breaking point, percent of full strength, marked on the health
     /// bar; 0 or 100 for none.
     pub break_at: u8,
+    /// Its veteran rank, 0 to 3, shown as chevrons.
+    pub rank: u8,
     pub state: CardState,
     pub engaged: bool,
     pub selected: bool,
@@ -260,6 +262,9 @@ pub struct Selection<'a> {
     /// the health bar; 0 for none (several regiments, or one that can
     /// break at any strength).
     pub break_at: u8,
+    /// One regiment's veteran rank, 0 to 3, shown as chevrons on the
+    /// banner; 0 for several regiments.
+    pub rank: u8,
     pub state: CardState,
     /// The formation they stand in; empty when it varies or is not known.
     pub formation: &'a str,
@@ -1530,6 +1535,19 @@ fn shape_chip_rects(strip: Rect, chips: &[ShapeChip]) -> (Option<i32>, Vec<Rect>
     out
 }
 
+/// A veteran's `rank` (0 to 3) as chevrons, point up, centred on `cx` and
+/// stacked upward from `bottom`: each 12 pixels wide and 5 tall, 5 apart.
+pub fn draw_chevrons(draw: &mut DrawList, cx: i32, bottom: i32, rank: u8, color: Color) {
+    for n in 0..i32::from(rank.min(3)) {
+        let y = bottom - 5 * (n + 1);
+        for step in 0..6 {
+            // Each arm: a 2 by 2 pixel step down and out from the point.
+            draw.rect(Rect::new(cx - 1 - step, y + step * 4 / 6, 2, 2), color);
+            draw.rect(Rect::new(cx - 1 + step, y + step * 4 / 6, 2, 2), color);
+        }
+    }
+}
+
 /// A pennant: `fill` cloth with a swallowtail point, outlined in ink.
 fn banner(draw: &mut DrawList, r: Rect, fill: Color) {
     let shape = |draw: &mut DrawList, r: Rect, color: Color| {
@@ -1553,17 +1571,14 @@ fn banner(draw: &mut DrawList, r: Rect, fill: Color) {
 fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let banner_rect = Rect::new(r.x, r.y, 50, r.h.min(124));
     banner(draw, banner_rect, rgb(s.color));
-    let ink = if luma(s.color) > 140 {
-        theme::INK
-    } else {
-        theme::LINEN
-    };
+    let ink = ink_on(s.color);
     icons::icon(
         draw,
         Rect::new(banner_rect.x + 7, banner_rect.y + 12, 36, 28),
         s.icon,
         ink,
     );
+    draw_chevrons(draw, banner_rect.x + 25, banner_rect.y + 61, s.rank, ink);
     let x = banner_rect.right() + 12;
     let w = (r.right() - x).max(0);
     if w < 80 {
@@ -1581,6 +1596,13 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     }
     let count = if s.regiments > 1 {
         format!("{} regiments, {} soldiers", s.regiments, s.models)
+    } else if s.rank > 0 {
+        // The rank first, so a narrow panel cuts the count instead.
+        format!(
+            "Veteran rank {}, {}",
+            s.rank,
+            soldiers_text(s.models, s.max_models)
+        )
     } else {
         soldiers_text(s.models, s.max_models)
     };
@@ -1926,6 +1948,16 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         draw.rect(label, theme::INK);
         draw.text_centered(label, 1, theme::LINEN, "ROUT");
     }
+    // A veteran's chevrons, in the portrait's bottom right corner (over
+    // the ROUT label, if it is running).
+    if c.rank > 0 {
+        let bottom = if c.state == CardState::Routing {
+            portrait.bottom() - 19
+        } else {
+            portrait.bottom() - 6
+        };
+        draw_chevrons(draw, portrait.right() - 10, bottom, c.rank, ink_on(c.color));
+    }
     let count = c.models.to_string();
     draw.text(
         inner.right() - text_width(&count, 1),
@@ -1934,6 +1966,16 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         muted_ink(),
         &count,
     );
+}
+
+/// Ink that reads on cloth of colour `c`: dark on a light colour, linen
+/// on a dark one.
+pub(crate) fn ink_on(c: [u8; 3]) -> Color {
+    if luma(c) > 140 {
+        theme::INK
+    } else {
+        theme::LINEN
+    }
 }
 
 pub(crate) fn luma(c: [u8; 3]) -> u32 {
@@ -1945,11 +1987,7 @@ pub(crate) fn luma(c: [u8; 3]) -> u32 {
 pub(crate) fn draw_portrait(draw: &mut DrawList, r: Rect, color: [u8; 3], name: &str, scale: i32) {
     draw.rect(r, rgb(color));
     if let Some(initial) = name.chars().next() {
-        let ink = if luma(color) > 140 {
-            theme::INK
-        } else {
-            theme::LINEN
-        };
+        let ink = ink_on(color);
         draw.text_centered(r, scale, ink, &initial.to_string());
     }
     draw.border(r, 2, theme::INK);
