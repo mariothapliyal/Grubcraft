@@ -16,7 +16,7 @@ use crate::regiments::{RegimentHandle, Regiments};
 use crate::structures::Refusal;
 use crate::structures::{BuildingId, Work};
 use crate::terrain::Terrain;
-use crate::walls::WallTile;
+use crate::walls::{Line, WallTile};
 use crate::{PlayerId, StateHasher, Vec};
 
 /// The most planned tiles a side holds at once.
@@ -32,8 +32,11 @@ pub struct Plan {
     pub owner: PlayerId,
     pub building: BuildingId,
     pub tile: (i32, i32),
-    /// The line it was planned in: its two end tiles.
+    /// The line it runs along: its two end tiles (on a curve, the stretch
+    /// of the curve near it: see [`crate::drawn::DrawnPath::chord`]).
     pub line: [i16; 4],
+    /// The drawing it was planned along (see [`crate::drawn`]).
+    pub drawing: u32,
 }
 
 #[derive(Default)]
@@ -127,6 +130,7 @@ impl Blueprints {
             for v in p.line {
                 h.u16(v as u16);
             }
+            h.u32(p.drawing);
         }
         for w in &self.workers {
             if regs.resolve(*w).is_some() {
@@ -138,48 +142,58 @@ impl Blueprints {
 }
 
 impl Conquest {
-    /// `player` plans a wall of type `building` from tile `from` to tile
-    /// `to` (see [`Conquest::blueprint`]): nothing is paid or laid yet.
-    /// Refused if any tile couldn't go up now, or there is nothing new to
-    /// plan.
+    /// `player` plans a wall of type `building` along `line` (see
+    /// [`Conquest::blueprint`]): nothing is paid or laid yet. Refused if
+    /// any tile couldn't go up now, or there is nothing new to plan.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn plan_wall(
         &mut self,
         player: PlayerId,
         building: BuildingId,
-        from: (i32, i32),
-        to: (i32, i32),
+        line: &Line,
         nav: &Nav,
         regs: &Regiments,
         terrain: &Terrain,
     ) -> bool {
-        let Ok(plan) = self.blueprint(player, building, from, to, nav, regs, terrain) else {
+        let Ok(laying) = self.blueprint(player, building, line, nav, regs, terrain) else {
             return false;
         };
-        if plan.is_empty() || plan.iter().any(|t| t.fits.is_err()) {
+        if laying.tiles.is_empty() || laying.tiles.iter().any(|t| t.fits.is_err()) {
             return false;
         }
-        let line = [from.0, from.1, to.0, to.1].map(|v| v as i16);
-        for t in plan {
+        let drawing = self
+            .structures
+            .drawings
+            .add(player, laying.path, laying.width);
+        let place = laying.placer(terrain);
+        for t in &laying.tiles {
             self.blueprints.add(Plan {
                 owner: player,
                 building,
                 tile: t.tile,
-                line,
+                line: place(t.tile).0,
+                drawing,
             });
         }
         true
     }
 
     /// `player` drops their line planned from `from` to `to` (either way
-    /// round), or, when the two are the same tile, their plan on that
-    /// tile; tiles planned in other lines stay. Refused if there was none.
+    /// round), with the rest of the curve it was drawn along, or, when the
+    /// two are the same tile, their plan on that tile; tiles planned in
+    /// other lines stay. Refused if there was none.
     pub(crate) fn drop_plan(&mut self, player: PlayerId, from: (i32, i32), to: (i32, i32)) -> bool {
         let line = |a: (i32, i32), b: (i32, i32)| [a.0, a.1, b.0, b.1].map(|v| v as i16);
         let (there, back) = (line(from, to), line(to, from));
         let tile = (from == to).then_some(from);
+        let on = |p: &Plan| p.owner == player && (p.line == there || p.line == back);
+        // The drawings those tiles were planned along go whole.
+        let drawings: Vec<u32> = (self.blueprints.plans.iter())
+            .filter(|p| on(p) && p.drawing != crate::drawn::NO_DRAWING)
+            .map(|p| p.drawing)
+            .collect();
         self.blueprints.drop_where(|p| {
-            p.owner == player && (p.line == there || p.line == back || Some(p.tile) == tile)
+            p.owner == player && (on(p) || Some(p.tile) == tile || drawings.contains(&p.drawing))
         })
     }
 
@@ -257,11 +271,13 @@ impl Conquest {
                     tile: plan.tile,
                     fits,
                 };
+                let ashore = !terrain.tile_under_water(plan.tile.0, plan.tile.1);
                 let Some((h, _)) = self.structures.found_wall(
                     player,
                     plan.building,
                     &[tile],
-                    plan.line,
+                    plan.drawing,
+                    |_| (plan.line, ashore),
                     nav,
                     regs,
                 ) else {

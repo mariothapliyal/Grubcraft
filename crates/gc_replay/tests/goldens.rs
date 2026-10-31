@@ -85,6 +85,8 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
         Command::BuildWall { .. } => "BuildWall",
+        Command::DrawLine { .. } => "DrawLine",
+        Command::PlanLine { .. } => "PlanLine",
         Command::PlanWall { .. } => "PlanWall",
         Command::DropPlan { .. } => "DropPlan",
         Command::WorkPlan { .. } => "WorkPlan",
@@ -95,7 +97,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::PlantStakes { .. } => "PlantStakes",
         Command::Burn { .. } => "Burn",
     };
-    const KINDS: [&str; 39] = [
+    const KINDS: [&str; 41] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -126,6 +128,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "FocusTower",
         "SetGate",
         "BuildWall",
+        "DrawLine",
+        "PlanLine",
         "PlanWall",
         "DropPlan",
         "WorkPlan",
@@ -160,9 +164,9 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    64,
+    65,
     &[
-        ("conquest-ribcage-1v1", 0xdd0cf4b8d57b5cd8),
+        ("conquest-ribcage-1v1", 0x5c5bcc549eda7a98),
         ("field-1v1", 0xd57456459f55eaa4),
         ("field-2v2", 0xaf47d42543fa943f),
         ("field-8000pt-2v2", 0x240a9db0f65fe337),

@@ -975,26 +975,41 @@ impl Match {
             i32::from(main.width),
             main.depth.into(),
         ];
-        let fits = |from: (i32, i32), to: (i32, i32)| {
-            self.world.wall_plan(p, b, from, to).is_ok_and(|plan| {
+        // The second side draws its wall with the drawing order
+        // (`Command::DrawLine`), the first with the old one
+        // (`Command::BuildWall`); the tests of `gc_sim` draw the curves.
+        let drawing = p == 1;
+        let fits = |from: (i32, i32)| {
+            let to = (from.0 + WALL_TILES - 1, from.1);
+            let plan = if drawing {
+                self.world.line_plan(p, b, &drawn_straight(from, to))
+            } else {
+                self.world.wall_plan(p, b, from, to)
+            };
+            plan.is_ok_and(|plan| {
                 plan.len() == WALL_TILES as usize && plan.iter().all(|t| t.fits.is_ok())
             })
         };
-        let Some(from) =
-            conquest::ring(foot, 6).find(|&(x, y)| fits((x, y), (x + WALL_TILES - 1, y)))
-        else {
+        let Some(from) = conquest::ring(foot, 6).find(|&t| fits(t)) else {
             return;
         };
         let to = (from.0 + WALL_TILES - 1, from.1);
-        out.push(PlayerCommand {
-            player: p,
-            command: Command::BuildWall {
+        let command = if drawing {
+            Command::DrawLine {
+                regiment: Some(w),
+                building: b,
+                path: drawn_straight(from, to).path,
+                width: 1,
+            }
+        } else {
+            Command::BuildWall {
                 regiment: Some(w),
                 building: b,
                 from: (from.0 as i16, from.1 as i16),
                 to: (to.0 as i16, to.1 as i16),
-            },
-        });
+            }
+        };
+        out.push(PlayerCommand { player: p, command });
         self.sides[usize::from(p)].waller = Some(w);
     }
 
@@ -1017,14 +1032,19 @@ impl Match {
         ) else {
             return;
         };
+        // The second side plans with the drawing order (`Command::PlanLine`).
+        let drawing = p == 1;
         let n = PLAN_TILES;
         let alongside = (1..=3)
             .flat_map(|d| [wy - d, wy + d])
             .map(|y| ((wx, y), (wx + n - 1, y)));
         let fits = |&(from, to): &((i32, i32), (i32, i32))| {
-            self.world
-                .blueprint(p, b, from, to)
-                .is_ok_and(|plan| plan.len() == n as usize && plan.iter().all(|t| t.fits.is_ok()))
+            let plan = if drawing {
+                self.world.line_blueprint(p, b, &drawn_straight(from, to))
+            } else {
+                self.world.blueprint(p, b, from, to)
+            };
+            plan.is_ok_and(|plan| plan.len() == n as usize && plan.iter().all(|t| t.fits.is_ok()))
         };
         let Some((from, to)) = [((ex + 1, wy), (ex + n, wy)), ((wx - 1, wy), (wx - n, wy))]
             .into_iter()
@@ -1034,12 +1054,20 @@ impl Match {
             return;
         };
         let at = |t: (i32, i32)| (t.0 as i16, t.1 as i16);
-        for command in [
+        let first = if drawing {
+            Command::PlanLine {
+                building: b,
+                path: drawn_straight(from, to).path,
+            }
+        } else {
             Command::PlanWall {
                 building: b,
                 from: at(from),
                 to: at(to),
-            },
+            }
+        };
+        for command in [
+            first,
             Command::DropPlan {
                 from: at(to),
                 to: at(to),
@@ -1332,6 +1360,12 @@ pub fn record() -> Replay {
     let mut m = Match::new();
     m.play(u32::MAX);
     m.finish()
+}
+
+/// A wall drawn straight from tile `from` to tile `to` with the drawing
+/// order.
+fn drawn_straight(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
+    gc_sim::walls::Line::drawn(gc_sim::drawn::DrawnPath::straight(from, to), 1)
 }
 
 #[cfg(test)]
