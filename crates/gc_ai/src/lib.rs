@@ -30,6 +30,7 @@ pub mod conquest;
 pub mod deployment;
 pub mod difficulty;
 pub mod estimator;
+pub mod firing;
 pub mod ground;
 pub mod journal;
 pub mod lens;
@@ -154,6 +155,8 @@ pub struct Mind {
     readings: Vec<reading::Reading>,
     /// Playing in real time (see [`Minds::live`]).
     live: bool,
+    /// When it next looks for woods to burn on an enemy (see [`firing`]).
+    next_burn: u32,
     /// Its economy and army, in Conquest.
     realm: Option<conquest::Realm>,
 }
@@ -215,6 +218,7 @@ impl Mind {
             verdict: None,
             readings: Vec::new(),
             live: false,
+            next_burn: 0,
             realm: None,
         }
     }
@@ -331,6 +335,7 @@ impl Mind {
             };
             realm.tick(world, ctx, out);
             self.torches(view);
+            self.fire_woods(view, world);
             self.orders.release(view.tick, out);
             return;
         }
@@ -355,7 +360,36 @@ impl Mind {
             self.orders.decide(view, &mut self.wants);
         }
         self.torches(view);
+        self.fire_woods(view, world);
         self.orders.release(view.tick, out);
+    }
+
+    /// Every couple of seconds, after its other orders: set alight woods an
+    /// enemy stands or hides in, from one of its regiments at their edge
+    /// (see [`firing`]). Not a Recruit's trick; one fire every
+    /// [`firing::AFTER_BURN`] at most.
+    fn fire_woods(&mut self, view: &Perception, world: &World) {
+        if self.difficulty == Difficulty::Recruit || view.tick < self.next_burn {
+            return;
+        }
+        self.next_burn = view.tick + firing::LOOK_TICKS;
+        let Some(burn) = firing::pick(view, world, self.party) else {
+            return;
+        };
+        // It costs an order, as a person's would.
+        if !self.orders.give(
+            view.tick,
+            Command::Burn {
+                regiment: burn.burner,
+            },
+        ) {
+            return;
+        }
+        self.next_burn = view.tick + firing::AFTER_BURN;
+        self.journal.note(
+            view.tick,
+            "Sets the woods alight on an enemy in them".to_string(),
+        );
     }
 
     /// Once a second, in the dark, after its other orders: light the
