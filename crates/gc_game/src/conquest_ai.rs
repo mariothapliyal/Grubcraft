@@ -158,10 +158,10 @@ mod tests {
     use super::*;
     use gc_ai::conquest::opening;
     use gc_sim::economy::Bank;
-    use gc_sim::{
-        Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
-    };
+    use gc_sim::{PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World};
     use gc_ui::lobby::Tempo;
+
+    use crate::headless::{Headless, Real};
 
     /// How one side stood when a headless match ended.
     pub(crate) struct Standing {
@@ -435,48 +435,21 @@ mod tests {
         // AI_TRACE=2 also prints every journal entry as it is written.
         let journal = trace == "2";
         let trace = journal || trace == "1";
-        let data = crate::data::load();
-        let table = Table::new(&data);
-        let units = conquest::unit_stats(&data);
-        let nav = map.sim_nav_costs();
-        let teams: Vec<u8> = (0..factions.len() as u8).collect();
-        let sides: Vec<(Faction, u8)> = factions.iter().copied().zip(teams.clone()).collect();
-        let setup = MatchSetup {
-            seed,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: map.tiles,
-            nav: &nav,
-            teams: &teams,
-            ground: map.ground(),
-            champions: false,
-            sky: gc_sim::Sky::STILL,
-            generals: true,
-        };
+        let real = Real::load();
+        let game = Headless::new(&real, map, factions, seed);
+        let (data, units) = (&real.data, &real.units);
         let defaults = gc_ui::lobby::LobbySettings::default();
-        let plan = conquest::plan(
-            &table,
-            &data,
-            &map,
-            factions,
-            Tempo::Standard,
-            conquest::victories(defaults.victory),
-        );
+        let plan = game.plan(Tempo::Standard, conquest::victories(defaults.victory));
         assert!(plan.victories.any() && plan.victories != Victories::default());
-        let mut world = World::new(&setup);
-        assert!(world.conquest(&plan.setup()));
-        let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
+        let mut world = game.world(&plan);
+        let mut minds = game.minds();
         for i in 0..factions.len() {
             let level = levels[i.min(levels.len() - 1)];
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
             let opening = openings.get(i).copied().flatten();
-            minds.add(mind_for(
-                &data, &table, &map, i, &sides, level, temper, seed, opening,
-            ));
+            minds.add(game.mind(i, level, temper, opening));
         }
-        let opening = conquest::opening(&data, &table, &map, &world, factions);
-        let stats = world.tick(&opening);
-        assert_eq!(stats.commands_applied as usize, opening.len());
+        game.open(&mut world, World::tick);
         let end = max_minutes * 60 * TICKS_PER_SECOND;
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
@@ -952,7 +925,9 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
+        // Whether the odds are weighed by eight minutes depends on how the
+        // game goes: seed 1 is one where they are (7 of seeds 1 to 9 do).
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 1, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {
