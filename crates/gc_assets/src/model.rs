@@ -395,7 +395,71 @@ impl<'a> Models<'a> {
     pub fn clip(&self, model: usize, kind: ClipKind) -> Option<&'a ClipRecord> {
         self.clips_of(model).iter().find(|c| c.kind == kind as u8)
     }
+
+    /// How far ahead of where the pack draws him (tiles, along his facing) a
+    /// soldier is drawn, so that he stands on his position. The baker centres
+    /// a model on its rest pose's bounds, weapon and all, so a man holding a
+    /// spear forward is baked up to three quarters of a tile behind his
+    /// position. A fighting model fitted to a skeleton stands on the
+    /// skeleton's origin, his feet, and is moved so they are drawn at his
+    /// position. That holds only where his feet are what he stands on: the
+    /// origin lies within [`FEET_NEAR`] of the middle of where the rest pose
+    /// touches the ground. Not for beasts and carts whose skeletons sit far
+    /// from their legs. Not for a model with parts on the still bone either,
+    /// since those do not follow the skeleton. 0 for the rest. Sideways
+    /// offsets stay as baked.
+    pub fn feet_shift(&self, model: usize) -> f32 {
+        let (Some(r), Some(fit)) = (self.models.get(model), self.anim.fit(model)) else {
+            return 0.0;
+        };
+        let Some(pre) = self.anim.fixes.get(fit.first_fix as usize) else {
+            return 0.0;
+        };
+        if self.clip(model, ClipKind::Attack).is_none() {
+            return 0.0;
+        }
+        let Some(vs) = self
+            .vertices
+            .get(r.first_vertex as usize..)
+            .and_then(|v| v.get(..r.vertex_count as usize))
+        else {
+            return 0.0;
+        };
+        let still = r.bones.saturating_sub(1);
+        let on_still = |v: &ModelVertex| {
+            v.bones
+                .iter()
+                .zip(v.weights)
+                .any(|(&b, w)| w > 0 && u32::from(b) == still)
+        };
+        if vs.iter().any(on_still) {
+            return 0.0;
+        }
+        let low = r.height * POSITION_SCALE * GROUND_SHARE;
+        let (sum, n) = vs
+            .iter()
+            .filter(|v| f32::from(v.pos[1]) < low)
+            .fold((0.0, 0u32), |(sum, n), v| {
+                (sum + f32::from(v.pos[2]), n + 1)
+            });
+        if n == 0 {
+            return 0.0;
+        }
+        let ground = sum / n as f32 / POSITION_SCALE;
+        let feet = pre[11];
+        if (ground - feet).abs() > FEET_NEAR {
+            return 0.0;
+        }
+        -feet
+    }
 }
+
+/// The share of a model's height its rest pose's lowest vertices lie
+/// within: where it touches the ground ([`Models::feet_shift`]).
+const GROUND_SHARE: f32 = 0.04;
+/// How near the middle of where a model touches the ground its skeleton's
+/// origin must lie (tiles) for the model to stand on it.
+pub const FEET_NEAR: f32 = 0.2;
 
 /// Everything a model pack holds, for writing one.
 #[derive(Default)]

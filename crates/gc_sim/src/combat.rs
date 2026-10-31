@@ -36,7 +36,7 @@ use crate::sky::Air;
 use crate::structures::StructureHandle;
 use crate::terrain::Terrain;
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation, veterancy};
 
 /// Percent of its full weight a melee blow lands with: the one knob for how
 /// long fights last. Below 100, locked lines bleed (and so lose heart, see
@@ -1764,6 +1764,9 @@ impl Combat {
                 .min(u64::from(u32::MAX)) as u32;
             regs.pressing[i] = regs.pressing[i].saturating_add(shove);
             regs.pressed[j] = regs.pressed[j].saturating_add(shove);
+            // A veteran's blows cut deeper (see [`veterancy`]); they push
+            // no harder.
+            let landed = landed * veterancy::damage_percent(regs, i) / 100;
             let blows = (self.tell).then_some(&mut self.blows);
             duel(
                 regs,
@@ -1829,7 +1832,8 @@ impl Combat {
                 owner: regs.owner[i],
                 from: regs.position[i],
                 shots: regs.models[i],
-                damage: stats.missile_damage,
+                damage: (u64::from(stats.missile_damage) * veterancy::damage_percent(regs, i) / 100)
+                    .min(u64::from(u16::MAX)) as u16,
                 accuracy: (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100)
                     as u8,
             };
@@ -1915,7 +1919,13 @@ impl Combat {
             } else {
                 expected
             };
+            let victim = regs.unit[j];
             let (lost, hp) = deal(regs, units, nav, j, expected, side, rng);
+            if lost > 0
+                && let Some(k) = vs.shooter[v].regiment().and_then(|h| regs.resolve(h))
+            {
+                veterancy::credit(regs, units, k, victim, lost, true);
+            }
             if let Some(t) = tower {
                 self.tower_hits.push((t, hp));
             }
@@ -2537,6 +2547,7 @@ fn duel(
                 0 if damage == 0 => Outcome::Parried,
                 0 => Outcome::Wounded,
                 men => {
+                    veterancy::credit(regs, units, i, regs.unit[j], men, false);
                     if regs.models[j] > 0 {
                         line = Line::of(regs, units, j, side, theirs_last_file);
                     }

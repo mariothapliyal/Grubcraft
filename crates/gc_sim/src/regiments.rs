@@ -280,6 +280,10 @@ regiment_fields! {
     /// down to before it can rout or waver (see [`crate::morale`]), rolled
     /// when it is raised.
     break_at: u8 = 0,
+    /// Experience from kills (see [`crate::veterancy`]): the hit points of
+    /// the enemy soldiers it has killed, in thousandths of its own full hit
+    /// points.
+    xp: u16 = 0,
     /// Soldiers lost, and flank (bit 0) or rear (bit 1) hits taken, since the
     /// regiment's last morale check.
     losses: u16 = 0,
@@ -1086,6 +1090,11 @@ impl Regiments {
         (lost, asked - amount)
     }
 
+    /// Regiment `i`'s hit points at full strength (at least 1).
+    pub(crate) fn full_hp(&self, i: usize, stats: &UnitStats) -> u32 {
+        u32::from(self.full_models[i].max(1)) * u32::from(stats.hp_per_model.max(1))
+    }
+
     /// Soldier `k` of regiment `i`'s hit points.
     pub(crate) fn hp_mut(&mut self, i: usize, k: u8) -> &mut u16 {
         &mut self.hp[i * MAX_MODELS as usize + usize::from(k)]
@@ -1176,6 +1185,7 @@ impl Regiments {
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             break_at: morale::break_at_now(self, i),
+            rank: crate::veterancy::rank_of(self, i),
             disorder: self.disorder[i],
             giving_ground: self.driven_pace(i) > 0 && self.engaged[i].is_some(),
             ploughed: if self.plougher(i).is_some() {
@@ -1537,6 +1547,8 @@ pub struct RegimentView {
     /// the percent of its full hit points it must be down to before it can
     /// rout or waver (100 for workers, whose nerve is low by design).
     pub break_at: u8,
+    /// Its veteran rank, 0 to 3, from its kills (see [`crate::veterancy`]).
+    pub rank: u8,
     /// Out of order from pushing through friends: ticks left until it has
     /// re-formed, from [`DISORDER_TICKS`](crate::combat::DISORDER_TICKS)
     /// (full disorder) down to 0 (in order).
