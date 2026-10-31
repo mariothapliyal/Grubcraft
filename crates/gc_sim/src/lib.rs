@@ -1739,7 +1739,7 @@ impl World {
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
                 self.sky.air(),
             );
-            if self.tick.is_multiple_of(TICKS_PER_SECOND) && self.flood.rivers.flooding() {
+            if self.tick.is_multiple_of(TICKS_PER_SECOND) && self.flood.rivers.floodplain_shut() {
                 (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
             }
             for foot in conquest.structures.rubble.drain(..) {

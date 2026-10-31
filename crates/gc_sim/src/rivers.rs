@@ -66,9 +66,9 @@ pub const STORM_STRENGTH: u8 = 220;
 pub const PLAIN_TILES: u8 = 6;
 /// The floodplain's height bands, height units.
 pub const PLAIN_STEP: u16 = (HEIGHT_UNITS / 10) as u16;
-/// How deep water over floodplain shuts it, height units (the wading
-/// depth).
-pub const WADING_DEPTH: u16 = (HEIGHT_UNITS * 35 / 100) as u16;
+/// How deep water over floodplain shuts it, height units: the wading
+/// depth.
+pub const WADING_DEPTH: u16 = crate::flood::WADE_DEPTH;
 /// How far under [`WADING_DEPTH`] the water falls before shut floodplain
 /// opens again, height units.
 pub const PLAIN_MARGIN: u16 = (HEIGHT_UNITS / 10) as u16;
@@ -731,6 +731,11 @@ impl Rivers {
                 .is_some_and(|t| self.plain_shut[usize::from(t.plain)])
     }
 
+    /// Whether the river has shut any floodplain.
+    pub fn floodplain_shut(&self) -> bool {
+        self.plains_shut > 0
+    }
+
     /// Whether the river has shut any tile: a ford or floodplain.
     pub fn flooding(&self) -> bool {
         self.plains_shut > 0 || self.shut()
@@ -1364,15 +1369,16 @@ fn floodplain(
             if from[j] != u32::MAX || terrain.tile_under_water(x + dx, y + dy) {
                 continue;
             }
+            // Only over land a flood could reach: not over a ridge.
+            let above = terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - line;
+            if !(0..HEIGHT_UNITS as i32).contains(&above) {
+                continue;
+            }
             from[j] = from[i];
             steps[j] = steps[i] + 1;
             queue.push(j);
-            let above = terrain.height(gc_fixed::FxVec2::from_ints(x + dx, y + dy)) - line;
-            if (0..HEIGHT_UNITS as i32).contains(&above) {
-                let r = from[j] as usize;
-                let band = above as u16 / PLAIN_STEP;
-                found.push((stretch_of[r], band, j));
-            }
+            let band = above as u16 / PLAIN_STEP;
+            found.push((stretch_of[from[j] as usize], band, j));
         }
     }
     found.sort_unstable_by_key(|&(s, b, j)| (s, b, j));

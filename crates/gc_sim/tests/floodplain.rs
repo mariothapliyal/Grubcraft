@@ -23,6 +23,11 @@ const LOWER: core::ops::Range<i32> = 100..104;
 /// higher terrace (two fifths), then the hills.
 const MEADOW: core::ops::Range<i32> = 68..71;
 const TERRACE: core::ops::Range<i32> = 71..74;
+/// North of it, a ridge, and behind the ridge a hollow as low as the
+/// meadow, close enough but cut off from the river.
+const RIDGE: i32 = 59;
+const HOLLOW: core::ops::Range<i32> = 55..59;
+const MEADOW_ABOVE: u16 = 32;
 
 fn ford(x: i32) -> bool {
     UPPER.contains(&x) || LOWER.contains(&x)
@@ -35,7 +40,8 @@ fn heights() -> Vec<u16> {
             match () {
                 _ if RIVER.contains(&y) && ford(x) => WATER - 40,
                 _ if RIVER.contains(&y) => 20,
-                _ if MEADOW.contains(&y) => WATER + 32,
+                _ if MEADOW.contains(&y) || HOLLOW.contains(&y) => WATER + MEADOW_ABOVE,
+                _ if y == RIDGE => 600,
                 _ if TERRACE.contains(&y) => WATER + 102,
                 _ => 600,
             }
@@ -147,7 +153,8 @@ fn the_floodplain_is_the_low_land_beside_the_river() {
     assert!(rivers.on_floodplain(40, MEADOW.start));
     assert!(rivers.on_floodplain(40, TERRACE.end - 1));
     assert!(!rivers.on_floodplain(40, TERRACE.end));
-    assert!(!rivers.on_floodplain(40, RIVER.start - 1));
+    assert!(!rivers.on_floodplain(40, RIDGE));
+    assert!(!rivers.on_floodplain(40, HOLLOW.end - 1), "the flood can't cross the ridge");
     assert!(!rivers.on_floodplain(40, 62), "the river itself");
     // Each tile reads the stretch of the river beside it.
     assert_eq!(
@@ -168,6 +175,11 @@ fn a_flood_wets_the_meadow_but_shuts_none_of_it() {
     while w.tick_count() < 3 * 60 * SECOND {
         w.tick(&[]);
         wet |= w.terrain().wet(meadow);
+        // Deep wading only where the water stands deep over the meadow,
+        // not wherever the river has risen.
+        let over = w.terrain().river_rise(meadow).saturating_sub(MEADOW_ABOVE);
+        let deep = w.terrain().wet(meadow) && over >= gc_sim::rivers::DEEP_RISE;
+        assert_eq!(w.terrain().deep(meadow), deep, "{over}");
         assert!(!w.terrain().wet(terrace), "the terrace stays dry");
         assert!(!w.flood().rivers().shuts(LOWER.start, MEADOW.start));
         assert!(w.nav().walkable(0, meadow));

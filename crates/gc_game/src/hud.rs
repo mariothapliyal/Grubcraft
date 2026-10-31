@@ -1911,7 +1911,7 @@ fn sky_word(world: &gc_sim::World, gauge: Option<&str>) -> String {
 /// words for the selection panel (docs/32-changing-land.md, stage 3b).
 fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static str {
     let dark = world.air().dark;
-    match ground_word(world.terrain(), r.position) {
+    match ground_word(world, r.position) {
         _ if world.swept(r.handle) => "Swept by the flood: losing men",
         _ if dark && r.torches => "Torches lit: seen from afar",
         "" if dark => "In the dark: unseen from afar",
@@ -1921,8 +1921,13 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
-fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
-    if terrain.wet(p) {
+fn ground_word(world: &gc_sim::World, p: gc_fixed::FxVec2) -> &'static str {
+    let terrain = world.terrain();
+    let rivers = world.flood().rivers();
+    let (x, y) = (p.x.floor_int(), p.y.floor_int());
+    if rivers.on_floodplain(x, y) && rivers.shuts(x, y) {
+        "In deep flood water: hurt every second, get to high ground"
+    } else if terrain.wet(p) {
         if terrain.height(p) >= i32::from(terrain.water_level()) {
             // Dry land the water has risen over.
             "In flood water: slow, no charges"

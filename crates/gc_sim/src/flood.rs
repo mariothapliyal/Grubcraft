@@ -384,7 +384,12 @@ impl Flood {
             return;
         }
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || regs.models[i] == 0 || !self.sweeps(regs.position[i], terrain) {
+            // (Troops on a wall stand above the water.)
+            if !regs.alive[i]
+                || regs.models[i] == 0
+                || regs.on_wall[i]
+                || !self.sweeps(regs.position[i], terrain)
+            {
                 continue;
             }
             regs.take_damage(i, SWEPT_HP);

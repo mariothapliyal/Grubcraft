@@ -772,7 +772,8 @@ impl Terrain {
     }
 
     /// If `p` is in water ([`Terrain::wet`]), how far the rivers raise it
-    /// there (see [`Terrain::river_rise`]), asked after only once.
+    /// there (see [`Terrain::river_rise`]), asked after only once: on land
+    /// they have risen over, no more than the water stands over it.
     fn water_at(&self, p: FxVec2) -> Option<u16> {
         if self.tiles == 0 || self.frozen {
             return None;
@@ -785,7 +786,10 @@ impl Terrain {
             }
             _ => 0,
         };
-        (h < line + i32::from(rise) && !self.on_deck(p)).then_some(rise)
+        // Over land a river has risen over, as far as the water stands
+        // over it, not above the line.
+        let up = (line + i32::from(rise) - h).clamp(0, i32::from(rise)) as u16;
+        (h < line + i32::from(rise) && !self.on_deck(p)).then_some(up)
     }
 
     /// The flow layer, one [`Flow`] byte a tile (empty: still water).

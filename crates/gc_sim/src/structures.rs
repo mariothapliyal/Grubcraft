@@ -1272,6 +1272,8 @@ impl Structures {
         nav: &mut Nav,
         regs: &Regiments,
     ) {
+        // (Allocates only once something falls.)
+        let mut gone = Vec::new();
         for i in 0..self.hp.len() {
             if !self.stands(i) || self.stats_of(i).is_bridge() {
                 continue;
@@ -1279,14 +1281,19 @@ impl Structures {
             let c = self.centre(i);
             if rivers.shuts(c.x.floor_int(), c.y.floor_int()) {
                 let whole = u32::from(self.stats_of(i).hp) * HP_SCALE;
-                self.wear_down(
-                    i,
-                    (whole * crate::rivers::DROWNED_PERCENT / 100).max(1),
-                    nav,
-                    regs,
-                );
+                let loss = (whole * crate::rivers::DROWNED_PERCENT / 100).max(1);
+                self.hp[i] = self.hp[i].saturating_sub(loss);
+                if self.hp[i] == 0 {
+                    gone.push(i);
+                }
             }
         }
+        // All that fell this second come down together, leaving rubble.
+        for &i in &gone {
+            self.fallen.push(self.handle(i));
+            self.rubble.push(self.footprint(i));
+        }
+        self.remove_all(&gone, nav, regs);
     }
 
     /// Building slot `i` loses `per_second` hit points a second; whether
