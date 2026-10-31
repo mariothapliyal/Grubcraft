@@ -44,6 +44,18 @@ pub struct Tile<'a> {
 /// another run (as `buildings::SPOT_SLACK`).
 const SLACK: f32 = 0.15;
 
+/// The eight tiles around a tile.
+const NEIGHBOURS: [(i32, i32); 8] = [
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+];
+
 /// Every how many tiles a palisade has a brace behind it.
 const BRACE_EVERY: usize = 3;
 
@@ -111,16 +123,18 @@ impl WallKit {
         };
         let half = t.dir * (t.len / 2.0);
         let (start, end) = (t.centre - half, t.centre + half);
-        // Is there wall beyond a joint (the next tile along, straight or
-        // stepped aside)?
-        let goes_on = |joint: Vec2, out_way: Vec2| {
-            let beyond = joint + out_way * 0.5;
-            let tile = (beyond.x.floor() as i32, beyond.y.floor() as i32);
-            tile != s.tile && (t.walled)(tile)
+        // Does the wall carry on past a joint: is any of the tile's eight
+        // neighbours on that side walled (straight on, or stepped aside on
+        // a curve)?
+        let goes_on = |way: Vec2| {
+            NEIGHBOURS.iter().any(|&(dx, dy)| {
+                Vec2::new(dx as f32, dy as f32).normalize().dot(way) > 0.3
+                    && (t.walled)((s.tile.0 + dx, s.tile.1 + dy))
+            })
         };
         let ends = [(start, -t.dir), (end, t.dir)];
         for (k, &(joint, way)) in ends.iter().enumerate() {
-            if !goes_on(joint, way) {
+            if !goes_on(way) {
                 put(self.end, joint, t.dir);
             } else if k == 0 {
                 put(self.post, joint, t.dir);
@@ -213,5 +227,37 @@ mod tests {
             out.iter().filter(|p| kit.runs.contains(&p.model)).count(),
             2
         );
+    }
+
+    #[test]
+    fn a_stepped_curve_has_end_posts_only_at_its_two_ends() {
+        let models = crate::models::load().unwrap();
+        let kit = WallKit::for_wall(&models, "Palisade").unwrap();
+        // A wall stepping east, then north-east, then north: every middle
+        // tile has a neighbour each way, though not straight on.
+        let line = [(0, 0), (1, 0), (2, 1), (3, 2), (3, 3), (4, 4), (4, 5)];
+        let walled = |t: (i32, i32)| line.contains(&t);
+        let mut ends = 0;
+        for (i, &tile) in line.iter().enumerate() {
+            let prev = line[i.saturating_sub(1)];
+            let next = line[(i + 1).min(line.len() - 1)];
+            let way = Vec2::new((next.0 - prev.0) as f32, (next.1 - prev.1) as f32);
+            let mut s = crate::buildings::footprint_view(tile, 1, 1, 0);
+            s.built_percent = 100;
+            let t = Tile {
+                s: &s,
+                centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
+                dir: way.normalize(),
+                len: 1.0,
+                walled: &walled,
+            };
+            let mut out = Vec::new();
+            kit.pieces(&t, &mut out);
+            let here = out.iter().filter(|p| p.model == kit.end).count();
+            let first_or_last = i == 0 || i == line.len() - 1;
+            assert_eq!(here, usize::from(first_or_last), "tile {tile:?}");
+            ends += here;
+        }
+        assert_eq!(ends, 2);
     }
 }
