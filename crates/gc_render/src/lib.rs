@@ -2721,14 +2721,17 @@ mod tests {
     }
 
     /// Whether `block` of `module` reaches a barrier after a `return` (once
-    /// `returned`), reading statements in order and following calls (a
-    /// called function's own returns go back to its caller).
+    /// `returned`) on some path: branches each start from the flag before
+    /// them, a loop's body is read twice (its next pass follows a return in
+    /// this one), and a called function is read for its own returns before
+    /// its barriers (which go back to the caller).
     fn barrier_after_return(
         module: &naga::Module,
         block: &naga::Block,
         returned: &mut bool,
     ) -> bool {
         use naga::Statement as S;
+        let check = |b, returned: &mut bool| barrier_after_return(module, b, returned);
         block.iter().any(|s| match s {
             S::Return { .. } | S::Kill => {
                 *returned = true;
@@ -2738,26 +2741,51 @@ mod tests {
             S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => {
                 *returned
             }
-            S::Block(b) => barrier_after_return(module, b, returned),
+            S::Block(b) => check(b, returned),
             S::If { accept, reject, .. } => {
-                barrier_after_return(module, accept, returned)
-                    | barrier_after_return(module, reject, returned)
+                let (mut a, mut r) = (*returned, *returned);
+                let found = check(accept, &mut a) || check(reject, &mut r);
+                *returned = a || r;
+                found
             }
-            S::Switch { cases, .. } => cases
-                .iter()
-                .any(|c| barrier_after_return(module, &c.body, returned)),
+            S::Switch { cases, .. } => {
+                let before = *returned;
+                cases.iter().any(|c| {
+                    let mut here = before;
+                    let found = check(&c.body, &mut here);
+                    *returned |= here;
+                    found
+                })
+            }
             S::Loop {
                 body, continuing, ..
-            } => {
-                barrier_after_return(module, body, returned)
-                    | barrier_after_return(module, continuing, returned)
-            }
+            } => (0..2).any(|_| check(body, returned) || check(continuing, returned)),
             S::Call { function, .. } => {
-                *returned
-                    && barrier_after_return(module, &module.functions[*function].body, &mut true)
+                check(&module.functions[*function].body, &mut returned.clone())
             }
             _ => false,
         })
+    }
+
+    #[test]
+    fn barrier_after_return_cases() {
+        let reaches = |body: &str| {
+            let src = format!(
+                "var<workgroup> w: u32;\nfn helper(a: u32) {{ if a > 1u {{ return; }} workgroupBarrier(); }}\n\
+                 @compute @workgroup_size(1) fn main(@builtin(local_invocation_index) a: u32) {{ {body} }}"
+            );
+            let module = naga::front::wgsl::parse_str(&src).expect("test shader parses");
+            barrier_after_return(&module, &module.entry_points[0].function.body, &mut false)
+        };
+        assert!(reaches("if a > 0u { return; } workgroupBarrier();"));
+        assert!(reaches(
+            "loop { workgroupBarrier(); if a > 0u { return; } }"
+        ));
+        assert!(reaches("helper(a);"));
+        assert!(!reaches("workgroupBarrier(); if a > 0u { return; }"));
+        assert!(!reaches(
+            "if a > 0u { return; } else { workgroupBarrier(); }"
+        ));
     }
 
     #[test]
