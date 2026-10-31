@@ -336,7 +336,7 @@ fn a_worker_draws_a_wall_pays_by_the_tile_and_builds_it_all() {
 #[test]
 fn a_diagonal_wall_stops_a_regiment_as_a_straight_one_does() {
     let mut w = world();
-    let builder = spawn(&mut w, 0, 4, 4);
+    let builder = spawn(&mut w, 0, 8, 8);
     // Corner to corner across the map in two lines: below-left of it is cut
     // off from above-right.
     assert!(draw(&mut w, 0, builder, (0, 47), (23, 24)));
@@ -529,7 +529,7 @@ fn the_choir_walks_through_its_curtain_until_the_power_is_cut() {
         w.wall_plan(0, CURTAIN, (40, 46), (46, 46)).unwrap()[0].fits,
         Err(Refusal::Unpowered)
     );
-    let builder = spawn(&mut w, 0, 4, 4);
+    let builder = spawn(&mut w, 0, 8, 8);
     assert!(draw_as(
         &mut w,
         0,
