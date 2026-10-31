@@ -140,6 +140,7 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+mod bridge_kit;
 mod buildings;
 mod camera;
 mod cinema;
@@ -7104,6 +7105,9 @@ impl Running {
             buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             |s| {
                 let art = art.as_ref()?;
+                if art.looks.kit_for(s.building).is_some() {
+                    return Some(buildings::height_of(gc_sim::structures::Role::Bridge));
+                }
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
             |s| {
@@ -7866,8 +7870,54 @@ impl Running {
                 });
             }
         }
+        // The bridge tiles, so the timber kit rails only a deck's outer
+        // edges. Sorted for a binary search; empty on a map with no bridges.
+        let mut bridged: Vec<(i32, i32)> = (structures.iter())
+            .filter(|s| art.looks.kit_for(s.building).is_some())
+            .map(|s| s.tile)
+            .collect();
+        bridged.sort_unstable();
+        let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
+            if let Some(kit) = art.looks.kit_for(s.building) {
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                let dir = (s.line.and_then(|line| buildings::wall_piece(line, s.tile)))
+                    .map_or(Vec2::X, |p| p.dir);
+                let tile = bridge_kit::Tile {
+                    s: &s,
+                    dir,
+                    level: self.buildings.level(s.building),
+                    joined: &|t| bridged.binary_search(&t).is_ok(),
+                    drawn: &|p: Vec2| ground(p.x, p.y),
+                    bed: &|p: Vec2| hm.height_at(p.x, p.y),
+                };
+                pieces.clear();
+                kit.pieces(&tile, &mut pieces);
+                let (shake, rise) = self.siege.jolt(s.handle);
+                for p in &pieces {
+                    let pos = p.at + shake;
+                    let lift = p.lift + rise;
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(p.model), at),
+                        art.clips.pose(p.model, Action::Idle, time),
+                    ) else {
+                        continue;
+                    };
+                    art.buckets[p.model * LODS + lod].push(SoldierInstance {
+                        pos: pos.to_array(),
+                        facing: p.facing.to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                }
+                continue;
+            }
             if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
