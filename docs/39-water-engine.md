@@ -272,7 +272,7 @@ Built 2026-10-30.
 - **Buildings** whose middle stands on shut floodplain lose `DROWNED_PERCENT` (2%) of their hit points a second and fall at none, leaving rubble; all that fall in one second come off the walkable grid together. Bridges are spared.
 - *Simpler than the plan:* the bands decide nothing themselves; how high the water stands does, so a Flood can wet a low meadow and a long rain on a full river can too. No new map-wide band messages (stage 1a's Major and Catastrophic warnings stand). Siege engines are not yet kept off flooded fords, the floodplain is not yet shown when placing, and the minds keep off shut floodplain only because the walkable grid does (they don't yet stay off floodplain a front is coming down on). Rivers without a ford have no floodplain, as they have no water engine at all yet. Troops sent off shut floodplain go to the nearest open ground, as from a shut ford, which on a wide meadow can be across the river; the pathfinding thread's settling is the place to fix that for both.
 - **Stress scenario.** `gc_sim/tests/floodplain.rs` runs a retreat through a flooding valley: three regiments on a low meadow when a catastrophic flood comes over it all reach dry ground within a minute of it shutting, none is left on shut ground, and the meadow opens again after.
-- `SIM_VERSION` 64. No golden moves: the river storm's Major wets about 290 floodplain tiles but shuts none, and nobody walks on them.
+- `SIM_VERSION` 65. No golden moves: the river storm's Major wets about 290 floodplain tiles but shuts none, and nobody walks on them.
 
 ## 7. Stages (each its own pull request)
 

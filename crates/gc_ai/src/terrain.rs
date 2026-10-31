@@ -549,12 +549,22 @@ impl Terrain {
     /// the ground's own way (buildings aside): reaching any of them needs
     /// a bridge. Never on an open plane.
     pub fn cut_off(&self, home: Vec2, others: impl IntoIterator<Item = Vec2>) -> bool {
-        if self.side == 0 {
-            return false;
-        }
-        let Some(start) = self.open_near(home) else {
+        let Some(seen) = self.ground_of(home) else {
             return false;
         };
+        others
+            .into_iter()
+            .all(|p| self.open_near(p).is_none_or(|c| !seen[c]))
+    }
+
+    /// The open ground joined to the open cell nearest `home`, cell by
+    /// cell, as the ground's own way goes (see [`Terrain::cut_off`]); `None`
+    /// on an open plane or with no open ground near `home`.
+    pub fn ground_of(&self, home: Vec2) -> Option<Vec<bool>> {
+        if self.side == 0 {
+            return None;
+        }
+        let start = self.open_near(home)?;
         let side = self.side as usize;
         let mut seen = vec![false; self.cost.len()];
         let mut todo = vec![start];
@@ -574,9 +584,12 @@ impl Terrain {
                 }
             }
         }
-        others
-            .into_iter()
-            .all(|p| self.open_near(p).is_none_or(|c| !seen[c]))
+        Some(seen)
+    }
+
+    /// Whether `p` is on the ground `joined` (from [`Terrain::ground_of`]).
+    pub fn is_joined(&self, joined: &[bool], p: Vec2) -> bool {
+        self.cell(p).is_none_or(|c| joined[c])
     }
 
     /// The open cell nearest `p` within 4 tiles, if any (any cell on an

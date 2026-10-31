@@ -369,7 +369,7 @@ pub fn posts_of(map: &Map) -> Vec<FxVec2> {
 pub(crate) type Foot = [i32; 4];
 
 /// Whether `p` is within `margin` tiles of footprint `f`.
-fn near(f: Foot, p: (f32, f32), margin: f32) -> bool {
+pub(crate) fn near(f: Foot, p: (f32, f32), margin: f32) -> bool {
     let [x, y, w, d] = f.map(|v| v as f32);
     p.0 > x - margin && p.0 < x + w + margin && p.1 > y - margin && p.1 < y + d + margin
 }
