@@ -7,6 +7,10 @@
 //! - a **front wall** across the way the nearest enemy comes, with a gate
 //!   in the middle, drawn a few tiles at a time out from the gate, and the
 //!   stretches by the gate raised a level once it is rich;
+//! - then, at tier 2, a **ring**: the front wall carried on
+//!   round home as a rectangle, so its walls close round its hall and it
+//!   is a walled town (see `gc_sim::towns`); a breach in it is mended
+//!   before any other work;
 //! - a **barricade** in front of its rally point, mid-game;
 //! - **stakes** planted by spearmen and archers waiting at the rally point
 //!   once it has seen enemy riders or monsters;
@@ -110,12 +114,32 @@ struct Front {
     /// A wall tile of each stretch it raises: either side of the gate, or
     /// the middle of a line with no gate.
     raise: Vec<(i32, i32)>,
+    /// The whole line, end to end.
+    line: Line,
+    /// Whether its gate was ordered (not given up for wall).
+    gated: bool,
+}
+
+/// The ring carried on from the front wall round home.
+#[derive(Clone, Debug)]
+struct Ring {
+    /// The rectangle's corners, west-north and east-south, both in.
+    corners: Line,
+    /// The pieces still to draw, each from tile to tile.
+    pieces: Vec<Line>,
+    /// When it last laid out its pieces again to mend a breach.
+    mended: u32,
+    /// The front gate's ground, kept clear so the town has a way out.
+    gap: Option<Line>,
+    /// Whether it has ever closed (so a gap in it now is a breach).
+    closed: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Engineer {
     next_think: u32,
     front: Option<Front>,
+    ring: Option<Ring>,
     /// No line fitted: look again from then.
     next_line: u32,
     raised: usize,
@@ -194,11 +218,17 @@ impl Steward {
         let spare = bank.grub.saturating_sub(kept);
         let full = s.plan.fortifies == Fortify::Full;
         let late = s.now >= wall_after(s.caution);
-        // Most pressing first: a way to the enemy, then field works, then
-        // the wall, then traps.
-        let order = (full)
-            .then(|| self.bridge(s, look, home, spare))
+        // Most pressing first: a breach in its ring, a way to the enemy,
+        // then field works, then the wall and its ring, then traps.
+        let breached = self
+            .engineer
+            .ring
+            .as_ref()
+            .is_some_and(|r| r.closed && !s.world.walled_town(s.party));
+        let order = (full && breached)
+            .then(|| self.ring(s, look, home, spare))
             .flatten()
+            .or_else(|| full.then(|| self.bridge(s, look, home, spare)).flatten())
             .or_else(|| self.clear_way(s, look, home))
             .or_else(|| {
                 let rally = rally?;
@@ -219,6 +249,7 @@ impl Steward {
                 (look.tier >= 2 || late)
                     .then(|| self.wall(s, look, home, toward, spare))
                     .flatten()
+                    .or_else(|| self.ring(s, look, home, spare))
                     .or_else(|| self.traps(s, look, home, toward, spare))
                     .or_else(|| self.raise_bridge(s, look, spare))
             });
@@ -289,7 +320,9 @@ impl Steward {
                 return None;
             }
             let w = self.builder_at(s, look, tile)?;
-            self.engineer.front.as_mut()?.gate = None;
+            let front = self.engineer.front.as_mut()?;
+            front.gate = None;
+            front.gated = true;
             let order = Command::Build {
                 regiment: w,
                 building: gate.id,
@@ -352,6 +385,76 @@ impl Steward {
             regiment: worker,
         };
         Some((order, worker))
+    }
+
+    /// The ring's next order once its front wall is all drawn and it is
+    /// at tier 2: the front wall carried on round home, a few tiles
+    /// at a time; a piece only part of which fits is drawn tile by tile.
+    /// Breached (no longer a walled town), its pieces are laid out again,
+    /// and the tiles that fell are drawn anew.
+    fn ring(&mut self, s: &Sense, look: &Look, home: Vec2, spare: u32) -> Option<Order> {
+        let wall = s.kit.wall()?;
+        let front = self.engineer.front.as_ref()?;
+        if front.gate.is_some() || !front.pieces.is_empty() {
+            return None;
+        }
+        if self.engineer.ring.is_none() {
+            // A faction with gates rings its home only through a gate.
+            let gated = front.gated || s.kit.gate().is_none();
+            if look.tier < 2 || !gated {
+                return None;
+            }
+            // Laid out below, as a ring not yet walled.
+            self.engineer.ring = Some(Ring {
+                corners: ring_corners(front.line, home),
+                pieces: Vec::new(),
+                mended: 0,
+                gap: front.gated.then_some(front.middle),
+                closed: false,
+            });
+        }
+        let walled = s.world.walled_town(s.party);
+        let ring = self.engineer.ring.as_mut()?;
+        ring.closed |= walled;
+        if ring.pieces.is_empty() && !walled && s.now >= ring.mended + LINE_RETRY {
+            ring.pieces = ring_pieces(ring.corners, ring.gap);
+            ring.mended = s.now;
+        }
+        if spare < u32::from(wall.stats.cost_grub) * PIECE as u32 {
+            return None;
+        }
+        while let Some(&(from, to)) = self.engineer.ring.as_ref()?.pieces.first() {
+            let tiles = s
+                .world
+                .wall_fits(s.party, wall.id, from, to)
+                .unwrap_or_default();
+            let ring = self.engineer.ring.as_mut()?;
+            let crowded = |t: &WallTile| t.fits == Err(Refusal::Crowded);
+            if tiles.iter().any(crowded) && tiles.iter().all(|t| t.fits.is_ok() || crowded(t)) {
+                ring.pieces.rotate_left(1);
+                return None;
+            }
+            if tiles.is_empty() || tiles.iter().any(|t| t.fits.is_err()) {
+                ring.pieces.remove(0);
+                // Drawn tile by tile, but for the tiles that can't be.
+                if from != to {
+                    for t in tiles.iter().rev().filter(|t| t.fits.is_ok()) {
+                        ring.pieces.insert(0, (t.tile, t.tile));
+                    }
+                }
+                continue;
+            }
+            let worker = self.hands(s, look, wall.stats.flags & GROWN != 0, from)?;
+            self.engineer.ring.as_mut()?.pieces.remove(0);
+            let order = Command::BuildWall {
+                regiment: worker,
+                building: wall.id,
+                from: (from.0 as i16, from.1 as i16),
+                to: (to.0 as i16, to.1 as i16),
+            };
+            return Some((order, worker));
+        }
+        None
     }
 
     /// Once rich, raise its own finished bridge a level (braced, then
@@ -700,6 +803,8 @@ fn plan_front(
                 // Nearest the gate first, side by side.
                 pieces.sort_by_key(|&(a, _)| (a.0 - mx).abs() + (a.1 - my).abs());
                 return Some(Front {
+                    line: across(mid, up, WALL_HALF),
+                    gated: false,
                     pieces,
                     gate: gate_at,
                     crowded: None,
@@ -714,6 +819,55 @@ fn plan_front(
         }
     }
     None
+}
+
+/// The ring's corners: a rectangle round `home` with the front wall
+/// `line` on one side, as far out the other way.
+fn ring_corners(((x0, y0), (x1, y1)): Line, home: Vec2) -> Line {
+    let (hx, hy) = (home.x.floor() as i32, home.y.floor() as i32);
+    // How far the line stands out from home, across its own run.
+    let d = if x0 == x1 {
+        (x0 - hx).abs()
+    } else {
+        (y0 - hy).abs()
+    };
+    (
+        (x0.min(x1).min(hx - d), y0.min(y1).min(hy - d)),
+        (x0.max(x1).max(hx + d), y0.max(y1).max(hy + d)),
+    )
+}
+
+/// The ring's pieces: each side of the rectangle `corners` in pieces of
+/// up to [`PIECE`] tiles, side by side, leaving the tiles of `gap` (its
+/// front gate's) clear.
+fn ring_pieces(((x0, y0), (x1, y1)): Line, gap: Option<Line>) -> Vec<Line> {
+    let in_gap = |(x, y): (i32, i32)| {
+        gap.is_some_and(|((ax, ay), (bx, by))| {
+            (ax.min(bx)..=ax.max(bx)).contains(&x) && (ay.min(by)..=ay.max(by)).contains(&y)
+        })
+    };
+    let mut pieces = Vec::new();
+    let mut side = |from: (i32, i32), step: (i32, i32), len: i32| {
+        let at = |k: i32| (from.0 + step.0 * k, from.1 + step.1 * k);
+        let mut run: Option<i32> = None;
+        for k in 0..=len {
+            let open = k < len && !in_gap(at(k));
+            if let Some(start) = run
+                && (!open || k - start == PIECE)
+            {
+                pieces.push((at(start), at(k - 1)));
+                run = None;
+            }
+            if open && run.is_none() {
+                run = Some(k);
+            }
+        }
+    };
+    side((x0, y0), (1, 0), x1 - x0 + 1);
+    side((x0, y1), (1, 0), x1 - x0 + 1);
+    side((x0, y0 + 1), (0, 1), y1 - y0 - 1);
+    side((x1, y0 + 1), (0, 1), y1 - y0 - 1);
+    pieces
 }
 
 /// Its own finished wall tile (not a gate) at `tile`, if one stands

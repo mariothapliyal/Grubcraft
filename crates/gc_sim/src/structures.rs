@@ -913,6 +913,8 @@ pub struct Structures {
     /// Tiles burning ground covers, to be set alight (the world's fires
     /// take them each tick).
     pub(crate) kindle: Vec<(i32, i32)>,
+    /// The walled towns (see [`crate::towns`]).
+    pub(crate) towns: crate::towns::Towns,
     /// Gates, by slot (see [`crate::gates`]): how each is set, whom its
     /// door lets through now, and ticks an Auto gate stays open.
     pub(crate) gate: Vec<GateMode>,
@@ -1022,6 +1024,7 @@ impl Structures {
             pools: Vec::with_capacity(crate::towers::MAX_POOLS),
             // Each pool covers a 5 x 5 square.
             kindle: Vec::with_capacity(crate::towers::MAX_POOLS * 25),
+            towns: Default::default(),
             gate: vec![GateMode::Auto; n],
             gate_door: vec![Door::default(); n],
             gate_hold: vec![0; n],
@@ -1110,7 +1113,7 @@ impl Structures {
     }
 
     /// The slots of `owner`'s finished buildings, in index order.
-    fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn finished_of(&self, owner: PlayerId) -> impl Iterator<Item = usize> + '_ {
         self.standing()
             .filter(move |&i| self.owner[i] == owner && self.finished(i))
     }
@@ -2038,12 +2041,17 @@ impl Structures {
         };
         self.siege_clock[r] = every;
         let armour = self.buildings[self.building[s] as usize].armour;
-        let damage = base * u64::from(breaker.percent(armour)) / 100;
+        let mut damage = base * u64::from(breaker.percent(armour)) / 100;
+        // A walled town's buildings stand up better to ordinary regiments.
+        if breaker == Breaker::Regiment && self.towns.inside_at(self.owner[s], self.centre(s)) {
+            damage = damage * crate::towns::SHELTERED_PERCENT / 100;
+        }
         self.hp[s] = self.hp[s].saturating_sub(u32::try_from(damage).unwrap_or(u32::MAX));
     }
 
     pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
         h.u32(self.buildings.len() as u32);
+        self.towns.hash_into(h);
         for b in &self.buildings {
             b.hash_into(h);
         }
