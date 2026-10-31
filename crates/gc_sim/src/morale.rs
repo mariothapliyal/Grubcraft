@@ -39,7 +39,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{BATTLE_PACE_PERCENT, Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals, veterancy};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -197,21 +197,23 @@ pub(crate) fn breaking_point(stats: &UnitStats, index: u32, generation: u16) -> 
     base + roll - BREAK_SPREAD
 }
 
-/// Regiment `i`'s breaking point as it stands: its own, lowered while its
-/// side's general is near it.
+/// Regiment `i`'s breaking point as it stands: its own, lowered by its
+/// veteran rank (see [`crate::veterancy`]) and while its side's general is
+/// near it.
 pub(crate) fn break_at_now(regs: &Regiments, i: usize) -> u8 {
-    // Workers break at any strength, general or not.
+    // Workers break at any strength, general or rank or not.
     let base = regs.break_at[i];
-    if base >= 100 || !regs.led[i] {
-        base
-    } else {
-        base - LED_BREAK
+    if base >= 100 {
+        return base;
     }
+    let led = if regs.led[i] { LED_BREAK } else { 0 };
+    let ranks = veterancy::RANK_BREAK * veterancy::rank_of(regs, i);
+    base.saturating_sub(led + ranks)
 }
 
 /// Regiment `i`'s hit points left, in percent of its full strength's.
 fn strength_percent(regs: &Regiments, stats: &UnitStats, i: usize) -> u32 {
-    let full = u32::from(regs.full_models[i].max(1)) * u32::from(stats.hp_per_model.max(1));
+    let full = regs.full_hp(i, stats);
     let hp = &regs.hp[i * crate::formation::MAX_MODELS as usize..][..usize::from(regs.models[i])];
     hp.iter().map(|&h| u32::from(h)).sum::<u32>() * 100 / full
 }
@@ -313,9 +315,11 @@ fn check(
     tenths -= drain * BATTLE_PACE_PERCENT as i32 / 100;
     // A battered regiment never gets all its nerve back: the cap falls from
     // the unit's stat at full strength to half of it with nobody left. A
-    // champion's win or loss raises or lowers it for the rest of the battle.
+    // champion's win or loss raises or lowers it for the rest of the battle,
+    // and each veteran rank raises it.
     let cap = i32::from(fresh(stats)) * (full + i32::from(regs.models[i])) / (2 * full)
         + i32::from(regs.party_morale[regs.owner[i] as usize])
+        + i32::from(veterancy::RANK_MORALE * SCALE) * i32::from(veterancy::rank_of(regs, i))
         + if tick < regs.heartened_until[i] {
             i32::from(generals::SPEECH * SCALE)
         } else {
