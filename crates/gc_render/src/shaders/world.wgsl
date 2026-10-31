@@ -1769,10 +1769,10 @@ fn matrix_rows(m: mat4x4<f32>) -> mat3x4<f32> {
     return mat3x4<f32>(t[0], t[1], t[2]);
 }
 
-// A soldier's joints' own matrices (each relative to its parent), and then
-// their matrices in the model's space.
-var<workgroup> pose_locals: array<mat4x4<f32>, POSE_GROUP>;
+// A soldier's joints' matrices: first each one's own (relative to its
+// parent), then in the model's space; and each joint's parent.
 var<workgroup> pose_globals: array<mat4x4<f32>, POSE_GROUP>;
+var<workgroup> pose_parents: array<u32, POSE_GROUP>;
 
 // A soldier's rig fixes (see `rig_of` in soldiers.rs): 0 drops the whole
 // body, 1 to 3 bend the left leg (upper, lower, foot), 4 to 6 the right,
@@ -2044,8 +2044,7 @@ fn cs_pose(
     }
 
     // The fit: the skeleton's joints and where its poses start, then the
-    // model's fixes. (The skeleton also records how deep each joint nests;
-    // posing no longer needs it.)
+    // model's fixes.
     let head = anim[fit];
     let joints_at = head.x;
     let joints = head.y;
@@ -2077,19 +2076,20 @@ fn cs_pose(
         local = pose_matrix(p);
     }
     // Each joint then multiplies its way up its own chain of parents to the
-    // root. No barrier may sit inside a loop here: Windows' software GPU
-    // (WARP) miscompiles one, writing to a stray address and crashing the
-    // game or corrupting its memory (the Windows smoke run, October 2026).
-    pose_locals[bone] = local;
+    // root (no barrier inside a loop: see `shaders_validate`). `n` only
+    // guards against bad data; the loader rejects parents that loop.
+    pose_globals[bone] = local;
+    pose_parents[bone] = parent;
+    workgroupBarrier();
+    var chain = local;
+    var up = parent;
+    for (var n = 1u; n < POSE_GROUP && up != NO_JOINT; n++) {
+        chain = pose_globals[up] * chain;
+        up = pose_parents[up];
+    }
     workgroupBarrier();
     if bone < joints {
-        var global = local;
-        var up = parent;
-        for (var n = 1u; n < POSE_GROUP && up != NO_JOINT; n++) {
-            global = pose_locals[up] * global;
-            up = anim[joints_at + up].x;
-        }
-        pose_globals[bone] = anim_matrix(fit + 2u) * global;
+        pose_globals[bone] = anim_matrix(fit + 2u) * chain;
     }
     workgroupBarrier();
     // The rig's fixes: the body dropped and the legs bent to stand on the

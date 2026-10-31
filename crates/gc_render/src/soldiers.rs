@@ -1329,31 +1329,27 @@ pub(crate) fn upload(
 /// eight half floats each), then what this returns, which starts right after
 /// them, with per model where its fit starts (0 for none):
 ///
-/// - Per skeleton, a vector per joint: its parent (255 for a root), depth,
-///   the masks it is in (one bit each), and its role (low byte), mirror
-///   (next byte) and fix (the third byte, see [`rig_of`]).
-/// - Per fitted model: its skeleton's first joint, joint count, deepest
-///   depth and first pose, then its skeleton's rig ([`rig_of`]), then its
+/// - Per skeleton, a vector per joint: its parent (255 for a root), one
+///   unused, the masks it is in (one bit each), and its role (low byte),
+///   mirror (next byte) and fix (the third byte, see [`rig_of`]).
+/// - Per fitted model: its skeleton's first joint, joint count, one unused
+///   and first pose, then its skeleton's rig ([`rig_of`]), then its
 ///   skeleton-to-model matrix and per bone its fix, three rows of floats
 ///   each.
 fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
     let start = 1 + m.anim.frames.len() as u32;
     let mut out = Vec::new();
     let mut joints_at = Vec::with_capacity(m.anim.skeletons.len());
-    let mut deepest = Vec::with_capacity(m.anim.skeletons.len());
     let mut rigs = Vec::with_capacity(m.anim.skeletons.len());
     for s in 0..m.anim.skeletons.len() {
         joints_at.push(start + out.len() as u32);
         let joints = m.anim.joints_of(s);
-        // The loader has checked that the parents do not loop.
-        let depths = gc_assets::anim::depths(joints).unwrap_or_default();
-        deepest.push(depths.iter().copied().max().map_or(0, u32::from));
         let (head, fixes) = rig_of(joints);
         rigs.push(head);
-        for ((j, depth), fix) in joints.iter().zip(depths).zip(fixes) {
+        for (j, fix) in joints.iter().zip(fixes) {
             out.push([
                 u32::from(j.parent),
-                u32::from(depth),
+                0,
                 u32::from(j.masks),
                 u32::from(j.role) | u32::from(j.mirror) << 8 | u32::from(fix) << 16,
             ]);
@@ -1367,12 +1363,7 @@ fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
             let at = start + out.len() as u32;
             let s = fit.skeleton as usize;
             let skeleton = &m.anim.skeletons[s];
-            out.push([
-                joints_at[s],
-                skeleton.joints,
-                deepest[s],
-                1 + skeleton.first_pose,
-            ]);
+            out.push([joints_at[s], skeleton.joints, 0, 1 + skeleton.first_pose]);
             out.push(rigs[s]);
             let fixes =
                 &m.anim.fixes[fit.first_fix as usize..][..1 + m.models[model].bones as usize];

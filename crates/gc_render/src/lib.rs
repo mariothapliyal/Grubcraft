@@ -2720,19 +2720,21 @@ mod tests {
         assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
-    /// Whether `block` holds a barrier inside a loop (`in_loop` once inside one).
-    fn barrier_in_loop(block: &naga::Block, in_loop: bool) -> bool {
+    /// Whether `block` of `module` holds a barrier inside a loop (`in_loop`
+    /// once inside one), following calls.
+    fn barrier_in_loop(module: &naga::Module, block: &naga::Block, in_loop: bool) -> bool {
         use naga::Statement as S;
+        let check = |b, in_loop| barrier_in_loop(module, b, in_loop);
         block.iter().any(|s| match s {
-            S::ControlBarrier(_) | S::MemoryBarrier(_) => in_loop,
-            S::Block(b) => barrier_in_loop(b, in_loop),
-            S::If { accept, reject, .. } => {
-                barrier_in_loop(accept, in_loop) || barrier_in_loop(reject, in_loop)
-            }
-            S::Switch { cases, .. } => cases.iter().any(|c| barrier_in_loop(&c.body, in_loop)),
+            // `workgroupUniformLoad` is a barrier on each side of a load.
+            S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => in_loop,
+            S::Block(b) => check(b, in_loop),
+            S::If { accept, reject, .. } => check(accept, in_loop) || check(reject, in_loop),
+            S::Switch { cases, .. } => cases.iter().any(|c| check(&c.body, in_loop)),
             S::Loop {
                 body, continuing, ..
-            } => barrier_in_loop(body, true) || barrier_in_loop(continuing, true),
+            } => check(body, true) || check(continuing, true),
+            S::Call { function, .. } => in_loop && check(&module.functions[*function].body, true),
             _ => false,
         })
     }
@@ -2771,15 +2773,16 @@ mod tests {
                     c.name
                 );
             }
-            // Windows' software GPU (WARP) miscompiles a barrier inside a
-            // loop: it writes to a stray address, crashing the game or
-            // corrupting its memory now and then (the Windows smoke run,
-            // October 2026). Keep barriers in straight-line code.
+            // A barrier inside a loop in `cs_pose` crashed Windows' software
+            // GPU (WARP): compiling it, WARP wrote to a stray address, so the
+            // game crashed or corrupted its memory now and then (the Windows
+            // smoke run, October 2026; gone with the barriers out of the
+            // loop). Keep barriers in straight-line code.
             let functions = module.functions.iter().map(|(_, f)| f);
             for f in functions.chain(module.entry_points.iter().map(|e| &e.function)) {
                 assert!(
-                    !barrier_in_loop(&f.body, false),
-                    "{:?} has a barrier inside a loop (WARP miscompiles it)",
+                    !barrier_in_loop(&module, &f.body, false),
+                    "{:?} has a barrier inside a loop (it has crashed WARP)",
                     f.name
                 );
             }
