@@ -452,6 +452,13 @@ impl Table {
         self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
+    /// The type called `name`.
+    #[cfg(test)]
+    pub fn named(&self, name: &str) -> BuildingId {
+        (self.names.iter().position(|n| n == name))
+            .unwrap_or_else(|| panic!("no building called {name}")) as BuildingId
+    }
+
     /// What a worker of `faction` lays from the build menu: every building
     /// of theirs but the main building and its upgrades.
     pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + Clone + '_ {

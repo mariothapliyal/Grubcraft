@@ -1,6 +1,8 @@
 //! A Conquest match with no window, for tests: the game data, the map and
 //! everything a world is made with, then the world, its opening and the
-//! computer players' minds, made the way the game makes them. The AI
+//! computer players' minds, made with the game's own Conquest plan,
+//! opening and minds (on a still sky, every player on a team of their
+//! own). The AI
 //! tests, the soak, the scripted golden match and the stress suite's
 //! AI-against-walls all start their matches here.
 
@@ -22,12 +24,14 @@ pub(crate) struct Headless {
     pub data: GameData<'static>,
     pub table: Table,
     pub map: Map,
-    pub factions: Vec<Faction>,
-    pub seed: u64,
     /// The units' battle stats, by unit id.
     pub units: Vec<UnitStats>,
+    factions: Vec<Faction>,
+    seed: u64,
     nav: Vec<u8>,
     teams: Vec<u8>,
+    /// Each player's faction and team.
+    sides: Vec<(Faction, u8)>,
 }
 
 impl Headless {
@@ -38,6 +42,7 @@ impl Headless {
             units: conquest::unit_stats(&data),
             nav: map.sim_nav_costs(),
             teams: (0..factions.len() as u8).collect(),
+            sides: factions.iter().copied().zip(0..).collect(),
             factions: factions.to_vec(),
             data,
             map,
@@ -80,29 +85,21 @@ impl Headless {
         world
     }
 
-    /// The opening orders for `world`, fresh from [`Headless::world`]:
-    /// give them in its first tick and check the tick with
-    /// [`Headless::opened`].
-    pub fn opening(&self, world: &World) -> Vec<PlayerCommand> {
-        conquest::opening(&self.data, &self.table, &self.map, world, &self.factions)
-    }
-
-    /// Check that the first tick, given `opening`, carried out every order.
-    pub fn opened(stats: TickStats, opening: &[PlayerCommand]) {
+    /// Give `world`, fresh from [`Headless::world`], its opening orders in
+    /// its first tick through `tick` (the caller's own, timed or recorded)
+    /// and check every one was carried out.
+    pub fn open(
+        &self,
+        world: &mut World,
+        tick: impl FnOnce(&mut World, &[PlayerCommand]) -> TickStats,
+    ) {
+        let opening = conquest::opening(&self.data, &self.table, &self.map, world, &self.factions);
+        let stats = tick(world, &opening);
         assert_eq!(
             stats.commands_applied as usize,
             opening.len(),
             "opening orders refused"
         );
-    }
-
-    /// Each player's faction and team.
-    pub fn sides(&self) -> Vec<(Faction, u8)> {
-        self.factions
-            .iter()
-            .copied()
-            .zip(self.teams.clone())
-            .collect()
     }
 
     /// No minds yet, reading this map's terrain.
@@ -124,7 +121,7 @@ impl Headless {
             &self.table,
             &self.map,
             i,
-            &self.sides(),
+            &self.sides,
             level,
             temper,
             self.seed,

@@ -51,9 +51,7 @@ impl Real {
 
     /// The building called `name`.
     pub fn building(&self, name: &str) -> u16 {
-        (0..self.table.stats.len() as u16)
-            .find(|&b| self.table.name(b) == name)
-            .unwrap_or_else(|| panic!("no building called {name}"))
+        self.table.named(name)
     }
 }
 

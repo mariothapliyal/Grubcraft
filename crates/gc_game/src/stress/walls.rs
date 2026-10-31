@@ -27,7 +27,7 @@ const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::EmberClans];
 const GAPS: core::ops::RangeInclusive<i32> = 3..=12;
 const LIMIT_MINUTES: u32 = 10;
 
-fn run(real: &Real, report: &mut Report) {
+fn run(_: &Real, report: &mut Report) {
     // A shipped map: it keeps its own size whatever size is asked for.
     let game = Headless::new(conquest::make_map(MAP, 0, SEED), &FACTIONS, SEED);
     let victories = Victories {
@@ -35,20 +35,19 @@ fn run(real: &Real, report: &mut Report) {
         heart: false,
     };
     let mut world = game.world(&game.plan(gc_ui::lobby::Tempo::Standard, victories));
-    let opening = game.opening(&world);
-    Headless::opened(report.tick(&mut world, &opening), &opening);
+    game.open(&mut world, |w, orders| report.tick(w, orders));
 
     // Wall the defender's main building all round, the Gate on the side
     // facing the attacker, at the nearest distance where the whole ring
     // can go up (seeps and rough ground leave no gap in it).
     let main = (world.structures().unwrap().iter())
-        .find(|s| s.owner == 0 && real.table.stats[usize::from(s.building)].role == Role::Main)
+        .find(|s| s.owner == 0 && game.table.stats[usize::from(s.building)].role == Role::Main)
         .expect("the defender's main building");
     let foe = game.map.starts()[1];
-    let palisade = real.building("Palisade");
-    let gate = real.building("Gate");
+    let palisade = game.table.named("Palisade");
+    let gate = game.table.named("Gate");
     let ring = (GAPS)
-        .map(|gap| Ring::round(&main, &real.table.stats[usize::from(gate)], gap, foe))
+        .map(|gap| Ring::round(&main, &game.table.stats[usize::from(gate)], gap, foe))
         .find(|r| r.fits(&world, palisade, gate))
         .expect("somewhere a closed ring fits");
     // In one tick, so nothing walks onto a tile between the check and

@@ -108,11 +108,9 @@ impl Soak {
         };
         let plan = game.plan(Tempo::Swift, victories);
         let mut world = tagged_alloc::scope(Tag::Sim, || game.world(&plan));
-        let opening = game.opening(&world);
-        Headless::opened(
-            tagged_alloc::scope(Tag::Sim, || world.tick(&opening)),
-            &opening,
-        );
+        game.open(&mut world, |w, orders| {
+            tagged_alloc::scope(Tag::Sim, || w.tick(orders))
+        });
         Soak {
             kits: FACTIONS.map(|f| Kit::of(data, table, f)),
             // Each side's first wave goes at the next side round.

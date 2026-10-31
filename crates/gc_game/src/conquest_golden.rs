@@ -359,7 +359,6 @@ impl Match {
         plan.start[1] = (900, 100);
         let world = game.world(&plan);
         let rec = Recorder::new(&game.setup(), &world, String::new()).conquest(plan);
-        let opening = game.opening(&world);
         let mut m = Match {
             kits: FACTIONS.map(|f| Kit::of(data, table, f)),
             sides: Default::default(),
@@ -369,7 +368,7 @@ impl Match {
             world,
             rec,
         };
-        Headless::opened(m.rec.tick(&mut m.world, &opening), &opening);
+        game.open(&mut m.world, |w, orders| m.rec.tick(w, orders));
         m
     }
 

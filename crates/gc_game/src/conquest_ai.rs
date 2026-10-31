@@ -434,8 +434,7 @@ mod tests {
             let opening = openings.get(i).copied().flatten();
             minds.add(game.mind(i, level, temper, opening));
         }
-        let opening = game.opening(&world);
-        Headless::opened(world.tick(&opening), &opening);
+        game.open(&mut world, World::tick);
         let end = max_minutes * 60 * TICKS_PER_SECOND;
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
