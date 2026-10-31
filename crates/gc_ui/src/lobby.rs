@@ -361,20 +361,27 @@ pub const DEFAULT_MAP: usize = 10;
 
 /// The Conquest maps the lobby offers, and how many starts each has:
 /// first the shipped maps (the game makes them from the shipped maps of
-/// the same names), then the Wilds maps made from the map seed (with up to
-/// six starts),
-/// as wild as the seed picks or as plains, mixed or wild land, at the
+/// the same names), then the maps made from the map seed (with up to six
+/// starts): the Classic Wilds, then grown land (Living Land, docs/41),
+/// each as wild as the seed picks or as plains, mixed or wild land, at the
 /// lobby's size ([`MapSize::conquest_tiles`]), which caps the players
 /// ([`LobbySettings::max_players`]).
-pub const CONQUEST_MAPS: [&str; 6] = [
+pub const CONQUEST_MAPS: [&str; 10] = [
     "Ribcage Pass",
     "The Four Teeth",
     "Classic: Random",
     "Classic: Plains",
     "Classic: Mixed",
     "Classic: Wild",
+    "Land: Random",
+    "Land: Plains",
+    "Land: Mixed",
+    "Land: Wild",
 ];
-pub const CONQUEST_MAP_PLAYERS: [usize; 6] = [2, 4, 6, 6, 6, 6];
+pub const CONQUEST_MAP_PLAYERS: [usize; 10] = [2, 4, 6, 6, 6, 6, 6, 6, 6, 6];
+/// The Conquest map a new lobby starts on: grown land, as wild as the seed
+/// picks (after the shipped maps and the four Classic ones).
+pub const DEFAULT_CONQUEST_MAP: usize = SHIPPED_CONQUEST_MAPS + 4;
 /// How many of [`CONQUEST_MAPS`] are shipped maps, which the map seed and
 /// size don't change; the rest are made from them.
 pub const SHIPPED_CONQUEST_MAPS: usize = 2;
@@ -579,7 +586,7 @@ impl LobbySettings {
             self.mode = mode;
             self.map = match mode {
                 GameMode::FieldBattle => DEFAULT_MAP,
-                GameMode::Conquest => 0,
+                GameMode::Conquest => DEFAULT_CONQUEST_MAP,
             };
         }
     }
@@ -1107,6 +1114,7 @@ mod tests {
     fn conquest_sizes_cap_the_players_on_made_maps_only() {
         let mut s = LobbySettings::default();
         s.set_mode(GameMode::Conquest);
+        s.map = 0;
         assert_eq!((s.max_players(), s.conquest_tiles()), (2, 0));
         s.map = SHIPPED_CONQUEST_MAPS;
         let caps = MapSize::ALL.map(|z| {
@@ -1204,6 +1212,7 @@ mod tests {
         n.edit_slot(2, SlotEdit::Kind(SlotKind::Ai));
         let mut settings = LobbySettings::default();
         settings.set_mode(GameMode::Conquest);
+        settings.map = 0;
         n.edit_settings(settings.clone());
         let why = n.lobby().unwrap().start_blocker().unwrap();
         assert_eq!(why, "Ribcage Pass is for at most 2 players");
@@ -1219,7 +1228,7 @@ mod tests {
             ..Default::default()
         };
         s.set_mode(GameMode::Conquest);
-        assert_eq!(s.map_name(), "Ribcage Pass");
+        assert_eq!(s.map_name(), "Land: Random");
         s.map = 1;
         s.set_mode(GameMode::Conquest);
         assert_eq!(

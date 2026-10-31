@@ -62,7 +62,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `F9` light presets. `F12` weather (Clear, Rain, Snow, Fog). `F10` light-tuning panel (developer tool). `F11` or backquote: dev overlay.
 
 **Command-line flags** [crates/gc_game/src/main.rs]
-- `--sandbox`; `--conquest ribcage_pass|four_teeth`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
+- `--sandbox`; `--conquest ribcage_pass|four_teeth|land-random|land-mixed|...`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
 - `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march N` (a regiment through each gate, looking at the Nth); `--watch REPLAY`.
 - Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
 
@@ -118,6 +118,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
+- **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Falling back, Running), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
@@ -149,7 +150,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Main menu:** Play (Host a game, Join a game), Sandbox, Replays, Unit viewer, Settings, Guide, Exit.
 
-- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
+- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4) / `land-mixed` (any lobby map's name). Made maps: **Land: Random** (the default), **Plains**, **Mixed** and **Wild** on grown land with rivers, fords and woods (docs/41), and the older **Classic: Random**, **Plains**, **Mixed** and **Wild**. Both are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.

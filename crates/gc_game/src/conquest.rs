@@ -30,30 +30,35 @@ use crate::buildings::{self, Table};
 /// side (`gc_ui::lobby::MapSize::conquest_tiles`) from `seed`
 /// (`gc_ui::lobby::conquest_map_seed`). The shipped maps come first, in
 /// the order the lobby lists them (`gc_ui::lobby::CONQUEST_MAPS`), and
-/// keep their own size; then the Wilds maps: as wild as the seed picks,
-/// then plains, mixed and wild land. A choice past the end (from another
-/// build's lobby or replay) gets the last, and a size the Wilds don't
-/// come in the nearest they do; a replay still plays on the map it
-/// stored. (Replays from before the sizes were made at 768.)
+/// keep their own size; then the Classic Wilds maps, then grown land
+/// (docs/41): each as wild as the seed picks, then plains, mixed and wild
+/// land. A choice past the end (from another build's lobby or replay) gets
+/// the last, and a size the made maps don't come in the nearest they do; a
+/// replay still plays on the map it stored. (Replays from before the sizes
+/// were made at 768.)
 pub fn make_map(choice: usize, tiles: u32, seed: u64) -> Map {
     let shipped = gc_map::SHIPPED.len();
     let lands = gc_map::wilds::Wildness::ALL;
-    let choice = choice.min(shipped + lands.len());
-    let Some(land) = choice.checked_sub(shipped) else {
+    let per = 1 + lands.len();
+    let choice = choice.min(shipped + 2 * per - 1);
+    let Some(made) = choice.checked_sub(shipped) else {
         let def = gc_map::shipped(gc_map::SHIPPED[choice].0)
             // The shipped maps parse: gc_map's tests check every one.
             .unwrap_or_else(|| panic!("no shipped Conquest map {choice}"));
         return Map::from_def(&def);
     };
-    let wildness = match land.checked_sub(1) {
+    let wildness = match (made % per).checked_sub(1) {
         None => lands[(seed % lands.len() as u64) as usize],
         Some(k) => lands[k],
     };
     let range = gc_map::conquest::WILDS_TILES;
     let tiles = (tiles as i32).clamp(*range.start(), *range.end());
-    let def = gc_map::conquest::describe_wilds(tiles, seed, wildness)
-        .expect("the size is one describe_wilds makes");
-    Map::from_def(&def)
+    let def = if made < per {
+        gc_map::conquest::describe_wilds(tiles, seed, wildness)
+    } else {
+        gc_map::grown::describe_conquest(tiles, seed, wildness)
+    };
+    Map::from_def(&def.expect("the size is one the made maps come in"))
 }
 
 /// Each of `players` players' start on `map`, in player order. With every
@@ -84,9 +89,15 @@ pub fn player_starts(map: &Map, players: usize) -> Vec<(i32, i32)> {
     }
 }
 
-/// The lobby's Conquest map choice for a shipped map's file name.
+/// The lobby's Conquest map choice for a shipped map's file name, or for a
+/// lobby map's name with only its letters counted (`land-mixed` is
+/// "Land: Mixed").
 pub fn choice_of(file: &str) -> Option<usize> {
-    gc_map::SHIPPED.iter().position(|&(name, _)| name == file)
+    let all: Vec<usize> = (0..gc_ui::lobby::CONQUEST_MAPS.len()).collect();
+    gc_map::SHIPPED
+        .iter()
+        .position(|&(name, _)| name == file)
+        .or_else(|| crate::by_name(&all, |i| gc_ui::lobby::CONQUEST_MAPS[i], file))
 }
 
 /// What a faction power record is to the simulation.
@@ -741,9 +752,9 @@ mod tests {
     #[test]
     fn a_brood_hives_veins_reach_its_base_nodes() {
         let data = data();
-        // Every shipped map, and a Wilds map of every kind of land.
-        let maps = gc_map::SHIPPED.len() + gc_map::wilds::Wildness::ALL.len();
-        for choice in 0..=maps {
+        // Every shipped map, and a Classic and a grown map of every kind of
+        // land.
+        for choice in 0..gc_ui::lobby::CONQUEST_MAPS.len() {
             let map = make_map(choice, MEDIUM, 7);
             let starts = map.starts();
             let factions = vec![Faction::Brood; starts.len()];
@@ -793,9 +804,9 @@ mod tests {
     }
 
     /// The lobby's Conquest maps are gc_map's shipped maps, in its order,
-    /// then one Wilds map for each choice of land.
+    /// then one Classic Wilds map and one grown map for each choice of land.
     #[test]
-    fn the_lobby_lists_the_shipped_maps_then_the_wilds() {
+    fn the_lobby_lists_the_shipped_maps_then_the_wilds_then_grown_land() {
         use gc_ui::lobby::{CONQUEST_MAP_PLAYERS, CONQUEST_MAPS};
         assert_eq!(gc_map::SHIPPED.len(), SHIPPED_CONQUEST);
         for (i, &(file, _)) in gc_map::SHIPPED.iter().enumerate() {
@@ -806,13 +817,26 @@ mod tests {
             );
             assert_eq!(choice_of(file), Some(i));
         }
+        assert_eq!(choice_of("land-mixed"), Some(SHIPPED_CONQUEST + 6));
+        assert_eq!(choice_of("Classic: Wild"), Some(SHIPPED_CONQUEST + 3));
+        assert_eq!(choice_of("nowhere"), None);
         let lands = gc_map::wilds::Wildness::ALL;
         assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST], "Classic: Random");
         for (k, land) in lands.iter().enumerate() {
             let name = format!("Classic: {}", land.name());
             assert_eq!(CONQUEST_MAPS[SHIPPED_CONQUEST + 1 + k], name);
         }
-        assert_eq!(CONQUEST_MAPS.len(), SHIPPED_CONQUEST + 1 + lands.len());
+        let grown = SHIPPED_CONQUEST + 1 + lands.len();
+        assert_eq!(CONQUEST_MAPS[grown], "Land: Random");
+        for (k, land) in lands.iter().enumerate() {
+            let name = format!("Land: {}", land.name());
+            assert_eq!(CONQUEST_MAPS[grown + 1 + k], name);
+        }
+        assert_eq!(CONQUEST_MAPS.len(), grown + 1 + lands.len());
+        assert_eq!(gc_ui::lobby::DEFAULT_CONQUEST_MAP, grown);
+        // Classic choices make Classic land, the rest grown land.
+        assert!(make_map(SHIPPED_CONQUEST + 1, MEDIUM, 5).habitat.is_empty());
+        assert!(!make_map(grown + 1, MEDIUM, 5).habitat.is_empty());
         assert_eq!(CONQUEST_MAP_PLAYERS.len(), CONQUEST_MAPS.len());
         // A Wilds map has six starts at every size, made at the size
         // asked; a choice past the end gets the last, and a size the
@@ -985,7 +1009,8 @@ mod tests {
     /// and every start has a hamlet within a caravan's reach (docs/03).
     #[test]
     fn the_maps_villages_are_the_trade_posts() {
-        for choice in [0, 1, SHIPPED_CONQUEST + 1] {
+        let grown = gc_ui::lobby::DEFAULT_CONQUEST_MAP;
+        for choice in [0, 1, SHIPPED_CONQUEST + 1, grown, grown + 3] {
             let map = make_map(choice, MEDIUM, 3);
             let posts = posts_of(&map);
             let want: Vec<_> = map
@@ -1085,9 +1110,10 @@ mod tests {
 
     #[test]
     fn every_conquest_map_has_its_heart_in_the_middle() {
-        // The shipped maps and one Wilds map (each Wilds map is made the
-        // same way).
-        for choice in 0..=SHIPPED_CONQUEST {
+        // The shipped maps, one Classic map and one grown map (each kind is
+        // made the same way).
+        let grown = gc_ui::lobby::DEFAULT_CONQUEST_MAP;
+        for choice in (0..=SHIPPED_CONQUEST).chain([grown]) {
             let map = make_map(choice, MEDIUM, 3);
             let both = Victories::BOTH;
             let data = data();

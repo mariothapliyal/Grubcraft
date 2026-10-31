@@ -2118,8 +2118,8 @@ mod tests {
         let (lx, ly) = h.text_pos("Leave");
         let (_, my) = h.text_pos("Mode: Conquest");
         assert!(lx < vx && vy > my && vy.abs_diff(ly) < 12);
-        // Ribcage Pass, a shipped map, has its own size: no Size stepper.
-        assert!(!h.has("Size:"));
+        // A new Conquest lobby is on grown land, made at the lobby's size.
+        assert!(h.has("Size:"));
     }
 
     #[test]
@@ -2274,20 +2274,20 @@ mod tests {
         h.click("Play");
         h.click("Mode:");
         assert!(h.has("Mode: Conquest"));
-        assert!(h.has("Map: Ribcage Pass"));
-        h.click("Map: Ribcage Pass");
-        assert!(h.has("Map: The Four Teeth"));
+        assert!(h.has("Map: Land: Random"));
+        h.click("Map: Land: Random");
+        assert!(h.has("Map: Land: Plains"));
         // Back to Field Battle, on its own first map, and back again.
         h.click("Mode: Conquest");
         assert!(h.has("Map: Land: Random"));
         h.click("Mode:");
-        assert!(h.has("Map: Ribcage Pass"));
-        h.click("Map: Ribcage Pass");
+        assert!(h.has("Map: Land: Random"));
+        h.click("Map: Land: Random");
         h.click_last("Host");
         assert_eq!(h.menu.screen(), Screen::Lobby);
         let lobby = h.menu.net.lobby().unwrap();
         assert_eq!(lobby.settings.mode, GameMode::Conquest);
-        assert_eq!(lobby.settings.map_name(), "The Four Teeth");
+        assert_eq!(lobby.settings.map_name(), "Land: Plains");
     }
 
     #[test]
