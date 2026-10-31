@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         heap: [full]
-        skip: [none, pose, skin]
+        skip: [none, pose, skin, nozero]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust

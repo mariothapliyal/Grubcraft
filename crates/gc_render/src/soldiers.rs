@@ -696,7 +696,10 @@ pub(crate) fn make(
             layout: Some(&skin_pipeline_layout),
             module: shader,
             entry_point: Some(entry),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: std::env::var("GC_DIAG_SKIP").as_deref() != Ok("nozero"),
+                ..Default::default()
+            },
             cache: None,
         })
     };
