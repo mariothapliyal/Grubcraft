@@ -61,6 +61,10 @@ const CLEAR_AT: u32 = 100 * TICKS_PER_SECOND;
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
 const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
+/// What each side starts with: the script's own purses, kept apart from
+/// the factions' Conquest starts. The Concord side's Grub comes by
+/// caravan, slowly at first, so it opens with more and the sides arm alike.
+const STARTS: [(u32, u32); 2] = [(300, 0), (900, 100)];
 /// How much later side 1 marches (10 s, from 30, so it still sees and
 /// climbs the other's wall in time once the Clans gathered faster).
 const MARCH_LATER: u32 = 10 * TICKS_PER_SECOND;
@@ -355,9 +359,7 @@ impl Match {
         let mut plan = game.plan(Tempo::Swift, Victories::BOTH);
         // The Concord side plays the Choir's powers.
         plan.meters[1] = Meter::Resonance;
-        // Its Grub comes by caravan, slowly at first: a bigger purse to open
-        // with, so the script's sides arm alike.
-        plan.start[1] = (900, 100);
+        plan.start[..2].copy_from_slice(&STARTS);
         let world = game.world(&plan);
         let rec = Recorder::new(&game.setup(), &world, String::new()).conquest(plan);
         let mut m = Match {
@@ -1378,7 +1380,7 @@ mod tests {
         m.play(u32::MAX);
         for p in 0..2u8 {
             let k = m.kits[usize::from(p)];
-            let start = conquest::start_stores(FACTIONS[usize::from(p)]);
+            let start = STARTS[usize::from(p)];
             let bank = m.world.bank(p).unwrap();
             assert!(
                 m.count(p, k.fighter) >= 3,

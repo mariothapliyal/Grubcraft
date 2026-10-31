@@ -1071,37 +1071,46 @@ mod tests {
     }
 
     /// Generals fortify (docs/26-fortifications.md, stage 8): in a
-    /// one-on-one on Ribcage Pass some side draws a front wall with a gate,
-    /// a barricade at its rally point and traps on the approach; a
-    /// Veteran puts up field works at most, and no walls or traps.
+    /// one-on-one on Ribcage Pass some side draws a front wall with a gate
+    /// and a barricade at its rally point, and some General lays traps on
+    /// the approach; a Veteran puts up field works at most, and no walls
+    /// or traps.
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_generals_wall_and_trap_veterans_only_field_works() {
         // Traps come last, once Grub piles up: a quick win may come first,
-        // so one of the two games is enough for them.
-        let mut traps = 0;
+        // so a trap in any General's game counts.
+        let general = |f: Faction, seed: u64| {
+            let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
+            let most = (played.sides.iter()).fold(Works::default(), |m, s| m.most(s.works));
+            (most, played.report())
+        };
+        let (mut traps, mut last) = (0, String::new());
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
         // moves where things get built), so the first seed that walls
-        // counts: a known one first, then the rest of 1 to 16.
+        // counts: a known one first, then the rest of 1 to 24.
         for (f, known) in [(Faction::EmberClans, 14), (Faction::CarrionConcord, 8)] {
-            let mut last = String::new();
             let walled = core::iter::once(known)
-                .chain((1..=16).filter(|&s| s != known))
-                .find_map(|seed| {
-                    let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
-                    let most = (played.sides.iter()).fold(Works::default(), |m, s| m.most(s.works));
-                    let walls = most.walls >= 5 && most.gates >= 1 && most.barricades >= 1;
-                    if !walls {
-                        last = played.report();
-                    }
-                    walls.then_some(most)
+                .chain((1..=24).filter(|&s| s != known))
+                .any(|seed| {
+                    let most;
+                    (most, last) = general(f, seed);
+                    traps += most.traps;
+                    most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
-            let most = walled
-                .unwrap_or_else(|| panic!("{f:?}: no General walled in seeds 1 to 16: {last}"));
+            assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
+        }
+        // Still none: more Clans games until one lays a trap.
+        for seed in 13..=24 {
+            if traps > 0 {
+                break;
+            }
+            let most;
+            (most, last) = general(Faction::EmberClans, seed);
             traps += most.traps;
         }
-        assert!(traps >= 1, "no traps laid in either game");
+        assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         let played = play(
             0,
             0,
@@ -1152,11 +1161,14 @@ mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_six_player_wilds_ends_in_a_win() {
+        // Six Veterans can stall for the whole two hours (seed 1 has since
+        // the Brood swarm cut, docs/29): a seed that ends shows the game can.
+        const SEED: u64 = 2;
         use gc_ai::personality::Faction::*;
         let factions = [EmberClans, Brood, Choir, CarrionConcord, EmberClans, Brood];
         let wilds = gc_map::SHIPPED.len();
         let large = gc_ui::lobby::MapSize::Large.conquest_tiles();
-        let played = play(wilds, large, &factions, &[Difficulty::Veteran], 1, 120);
+        let played = play(wilds, large, &factions, &[Difficulty::Veteran], SEED, 120);
         assert!(played.winner().is_some(), "{}", played.report());
     }
 

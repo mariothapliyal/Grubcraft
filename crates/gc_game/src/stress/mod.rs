@@ -23,9 +23,12 @@
 
 mod arena;
 mod bridge;
+mod crossing;
 mod forest;
+mod forest_pass;
 mod gate;
 mod orders;
+mod town;
 mod walls;
 
 use std::fmt::Write as _;
@@ -56,6 +59,9 @@ const SCENARIOS: &[Scenario] = &[
     orders::SCENARIO,
     forest::SCENARIO,
     walls::SCENARIO,
+    forest_pass::SCENARIO,
+    crossing::SCENARIO,
+    town::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
