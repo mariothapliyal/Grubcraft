@@ -1601,7 +1601,7 @@ mod tests {
         assert_eq!(fact_of(&yari.facts, "Cost"), "120 Grub");
         assert_eq!(
             fact_of(&yari.facts, "Regiment"),
-            "28 models, 8 hp each (224 in all)"
+            "28 models, 9 hp each (252 in all)"
         );
         assert!(fact_of(&yari.facts, "Weapons").contains("Reach"));
         assert_eq!(fact_of(&yari.links, "Trained at"), "Dojo");

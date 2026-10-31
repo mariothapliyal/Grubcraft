@@ -70,6 +70,8 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 
 *Even Conquest (2026-10-31, faction rebalance PR 4): Hands fill a load in three quarters of the time (`gather_percent: 135`, was 150): 10 Grub in about 6.7 s and 5 Marrow in about 8.9 s, so five Hands on a seep near the hall bring in about 225 Grub a minute. By minute 10 the Clans take about 3,100 Grub (3,360 at 150), still about 13% more than before PR 1, and their first army is ready at about 3:50. With the regiment prices of docs/17 the Conquest tournament reads Clans 49%, Brood 46%, Choir 52% and Concord 44% over 192 games each (it was 66%, 28%, 35% and 65%). At 150 the Clans won 62% even with the rest of the pass.*
 
+*After frontage (2026-10-31, PR 5): `gather_percent: 125`, so 10 Grub take about 7.2 s and 5 Marrow about 9.6 s, and five Hands on a seep near the hall bring in about 210 Grub a minute (still about 9% more than before PR 1). With the hit point changes of [docs/17](17-unit-rosters.md#frontage-pass) the tournament reads Clans 53%, Brood 43%, Choir 48%, Concord 45%.*
+
 Every start position has 2 Grub seeps and 1 Marrow vein within its natural base area, a "natural expansion" with 2 more seeps nearby, and a Grubfolk hamlet within reach.
 
 ## Upkeep (Warcraft III style)

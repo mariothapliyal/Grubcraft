@@ -454,7 +454,7 @@
                 name: "Shardlings",
                 faction: Choir,
                 models: 14,
-                hp_per_model: 12,
+                hp_per_model: 10,
                 files: 6,
                 speed: 3.25,
                 turn_rate: 80.0,
