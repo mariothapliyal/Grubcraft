@@ -378,10 +378,13 @@ pub(super) fn settle(
             for y in from[k].1 - reach..=from[k].1 + reach {
                 for x in from[k].0 - reach..=from[k].0 + reach {
                     let p = (x, y);
-                    // Out of the map or on ground no one stands on: no walk.
-                    if p == at[k] || to(&fields[(k + 1) % START_PLATEAUS], p) == u32::MAX {
+                    // Off the map, on ground no one stands on, or on a start.
+                    let inside = (0..n as i32).contains(&x) && (0..n as i32).contains(&y);
+                    if !inside || standable[super::tile_index(n, p)] == 0 || at.contains(&p) {
                         continue;
                     }
+                    // Walks from the other starts to `p` taken as the same as
+                    // from `p` to them: a guess, checked once a move is made.
                     let mut trial = walk;
                     for j in 0..START_PLATEAUS {
                         if j != k {
@@ -401,10 +404,13 @@ pub(super) fn settle(
             if let Some((s, p)) = best
                 && s + MIN_GAIN < score
             {
-                score = s;
                 at[k] = p;
                 fields[k] = field(p);
                 walk = matrix(&at, &fields);
+                // Scored again on the true walks, so later moves are
+                // weighed against what the land really gives.
+                score =
+                    unfairness(&walk) + (0..START_PLATEAUS).map(|j| moved(at[j], j)).sum::<u32>();
                 any = true;
             }
         }

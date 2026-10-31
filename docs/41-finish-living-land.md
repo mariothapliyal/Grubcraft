@@ -166,9 +166,9 @@ the Classic choices so old choices keep their numbers;
 
 | Size | Before | After | Build time (each) |
 |---|---|---|---|
-| 320 | — | 0.5 to 9.0% | 0.7 to 2.9 s |
-| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 5.3 s (with a reroll) |
-| 768 | — | 0.4 to 6.1%, one Wild map 13.8% | 4.0 to 5.5 s, 9.6 to 10.4 s with a reroll |
+| 320 | — | 0.4 to 9.0% | 0.6 to 2.0 s |
+| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 4.8 s (with a reroll) |
+| 768 | — | 0.4 to 6.1%, one Wild map 13.8% | 3.7 to 5.5 s, about 10 s with a reroll |
 
   The one miss (768, Wild) was still 13.8% after its reroll: the reroll
   keeps the fairer of two maps, it does not promise 10%.

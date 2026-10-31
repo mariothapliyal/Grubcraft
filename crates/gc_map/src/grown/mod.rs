@@ -1590,9 +1590,12 @@ mod load_time {
 mod fairness_probe {
     use super::*;
 
-    /// Measured land's starts walk to their nearest enemies within 10% of
-    /// each other, for every way the lobby hands them out, on the finished
-    /// land as the nav rules walk it.
+    /// On these seeds, Measured land's starts walk to their nearest enemies
+    /// within 10% of each other, for every way the lobby hands them out, on
+    /// the finished land as the nav rules walk it. The limit is a target,
+    /// not a promise (the reroll keeps the fairer of two maps), so a seed
+    /// that drifts over it after a generator change is a reason to look,
+    /// not proof of a bug.
     #[test]
     fn measured_starts_are_within_the_limit() {
         for tiles in [256u32, 320] {

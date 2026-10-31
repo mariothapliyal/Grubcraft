@@ -2113,7 +2113,8 @@ mod tests {
         assert_eq!(victory(&h), Victory::Annihilation);
         // A Field Battle lobby has no Victory row; Conquest does.
         assert!(!h.has("Victory: Annihilation"));
-        h.click("Mode:");
+        // The narrow lobby stepper shows just "Field Battle".
+        h.click("Field Battle");
         assert!(h.has("Mode: Conquest"));
         assert!(h.has("Victory: Annihilation"));
         h.click("Victory: Annihilation");
