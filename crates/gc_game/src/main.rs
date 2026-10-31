@@ -235,6 +235,10 @@ use puppets::{Block, Fighter, Puppets, Soldier};
 static ALLOC: TaggedAlloc = TaggedAlloc;
 
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
+
+/// How long a joiner's opening view waits for the host's deployment zone
+/// before giving up on it.
+const ZONE_LOOK_WAIT: Duration = Duration::from_secs(10);
 const HUMAN: PlayerId = 0;
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
 const TEAM_COLORS: [[u8; 3]; 4] = [
@@ -832,6 +836,12 @@ struct Running {
     pending: Vec<PlayerCommand>,
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
+    /// A joiner's opening view, waiting for the host's deployment zone: the
+    /// side, the way it faces, the focus it was first given and when it began
+    /// waiting. The host
+    /// moves a zone off the start where the ground needs it, and only it
+    /// knows where.
+    zone_look: Option<(PlayerId, Vec2, Vec2, Instant)>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     /// How far between the last two ticks the last frame drew, 0 to 1.
@@ -1735,6 +1745,7 @@ impl App {
             matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
+            zone_look: None,
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
@@ -3559,6 +3570,7 @@ impl Running {
                 self.save_recording();
             }
         }
+        self.look_at_own_zone();
         let alpha = match &self.online {
             // Turns arrive on the host's clock: move smoothly towards the
             // latest one.
@@ -5777,6 +5789,32 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+        // A joiner doesn't deploy: the host's zone, when it arrives, says
+        // where the army really stands.
+        self.zone_look = self
+            .online
+            .as_ref()
+            .filter(|o| !o.host)
+            .map(|_| (set.me, set.my_forward, focus, Instant::now()));
+    }
+
+    /// Once the host's deployment zone for this machine's side arrives, point
+    /// a joiner's camera at it, unless they have already moved the view.
+    fn look_at_own_zone(&mut self) {
+        let Some((side, forward, first, since)) = self.zone_look else {
+            return;
+        };
+        if self.camera.focus != first || since.elapsed() > ZONE_LOOK_WAIT {
+            self.zone_look = None;
+            return;
+        }
+        let Some(zone) = self.world.deploy_zone(side) else {
+            return;
+        };
+        self.zone_look = None;
+        let focus = from_fx_vec(zone.center) + forward * 18.0;
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
     }
 
     /// Seat `parties` for a lobby match, this machine playing `me`, and
