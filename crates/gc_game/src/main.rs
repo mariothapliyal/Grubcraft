@@ -833,6 +833,10 @@ struct Running {
     pending: Vec<PlayerCommand>,
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
+    /// A joiner's opening view, waiting for the host's deployment zone: the
+    /// way the start faces and the focus it was first given. The host moves a
+    /// zone off the start where the ground needs it, and only it knows where.
+    zone_look: Option<(Vec2, Vec2)>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     /// How far between the last two ticks the last frame drew, 0 to 1.
@@ -1745,6 +1749,7 @@ impl App {
             matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
+            zone_look: None,
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
@@ -3571,6 +3576,7 @@ impl Running {
                 self.save_recording();
             }
         }
+        self.look_at_own_zone();
         let alpha = match &self.online {
             // Turns arrive on the host's clock: move smoothly towards the
             // latest one.
@@ -5618,6 +5624,7 @@ impl Running {
             sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
+        self.zone_look = None;
         self.sim_clock = Duration::ZERO;
         self.fresh_puppets();
         self.effects.clear();
@@ -5789,6 +5796,33 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+        // A joiner doesn't deploy: the host's zone, when it arrives, says
+        // where the army really stands.
+        self.zone_look = self
+            .online
+            .as_ref()
+            .filter(|o| !o.host)
+            .map(|_| (set.my_forward, focus));
+    }
+
+    /// Once the host's deployment zone for this machine's side arrives, point
+    /// a joiner's camera at it, unless they have already moved the view or
+    /// the battle has begun without one.
+    fn look_at_own_zone(&mut self) {
+        let Some((forward, first)) = self.zone_look else {
+            return;
+        };
+        if self.camera.focus != first || self.world.battle_ticks() > 0 {
+            self.zone_look = None;
+            return;
+        }
+        let Some(zone) = self.world.deploy_zone(self.sandbox.side) else {
+            return;
+        };
+        self.zone_look = None;
+        let focus = from_fx_vec(zone.center) + forward * 18.0;
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
     }
 
     /// Seat `parties` for a lobby match, this machine playing `me`, and
