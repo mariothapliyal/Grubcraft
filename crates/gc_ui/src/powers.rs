@@ -118,6 +118,11 @@ mod tests {
         (events, over, d)
     }
 
+    #[test]
+    fn text_below_the_row_clears_the_buttons() {
+        assert!(FIELD.y + ROW_BOTTOM > button_rect(FIELD, 0).bottom());
+    }
+
     fn button(state: SlotState) -> PowerButton<'static> {
         PowerButton {
             name: "Overclock",

@@ -198,9 +198,6 @@ pub struct HudState {
     /// The faction power buttons' names and second lines, likewise.
     power_names: [String; POWER_KEYS.len()],
     power_details: [String; POWER_KEYS.len()],
-    /// Whether the faction power buttons are on screen (the overlay's text
-    /// goes below them).
-    pub(crate) powers_row: bool,
     /// A button went down on the bar (or the minimap drag), so its release
     /// is the bar's, wherever the mouse is by then.
     left_held: bool,
@@ -744,10 +741,6 @@ impl Running {
         let mut power_details = std::mem::take(&mut self.hud.power_details);
         let (power_states, powers_shown) =
             self.describe_powers(&mut power_names, &mut power_details);
-        if self.hud.powers_row != (powers_shown > 0) {
-            self.hud.powers_row = powers_shown > 0;
-            self.sandbox.dirty = true;
-        }
         let camera = self.active_camera();
         let (view_proj, plane) = (camera.view_proj(), camera.ground_plane());
 
