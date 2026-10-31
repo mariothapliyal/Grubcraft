@@ -4,6 +4,7 @@
     buildings: [
         (
             name: "Spire",
+            blurb: "Your starting base: trains Tuners and Conductors and powers buildings within 8 tiles. Build the rest around it.",
             summary: "Your starting base. It builds Tuners and Conductors and powers buildings within 8 tiles; almost every other Choir building needs power, so build around it. Upgrade through the Cathedral and Grand Organ for walkers, cavalry, flyers and monsters. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Cathedral", "The mid game: Harmonic Walkers, Glass Striders, the Skyglass Loom's Skyglass, the Conductor and a second hero. It costs Marrow, so build a Siphon first."),
@@ -16,6 +17,7 @@
         ),
         (
             name: "Cathedral",
+            blurb: "Tier 2 of the Spire: unlocks the Skyglass Loom and tier-2 regiments. Keeps working while it upgrades.",
             summary: "The Spire's second tier. It keeps working while it upgrades, raises your supply cap and unlocks the Skyglass Loom and every tier-2 regiment. Upgrade again for the Monolith once your chords are running.",
             notes: [
                 ("Grand Organ", "The late game: the Monolith monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once several chords pay your way."),
@@ -28,6 +30,7 @@
         ),
         (
             name: "Grand Organ",
+            blurb: "Tier 3 of the Spire: lets the Forge of Facets build the Monolith and opens the third hero slot.",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Forge of Facets build the Monolith and opens the third hero slot. Nothing is left to upgrade, so spend on chords, armies and defence.",
             notes: [],
             tips: [
@@ -38,6 +41,7 @@
         ),
         (
             name: "Resonator",
+            blurb: "Makes Grub from its nearest seep with no workers; powers buildings within 6 tiles. Build in triangles for chords.",
             summary: "Tunes its nearest free seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
             notes: [],
             tips: [
@@ -48,6 +52,7 @@
         ),
         (
             name: "Siphon",
+            blurb: "Draws Marrow from a vein within 3 tiles with no workers. Build one on every Marrow vein you hold.",
             summary: "A Resonator built against a Marrow vein (within 3 tiles): it draws Marrow with no workers, and also links chords and powers buildings. Build one on every Marrow vein you hold; tier-2 buildings and units cost Marrow.",
             notes: [],
             tips: [
@@ -58,6 +63,7 @@
         ),
         (
             name: "Forge of Facets",
+            blurb: "Builds every Choir walker and the Monolith. Needs power; raise it as soon as your economy runs.",
             summary: "Builds every Choir regiment that walks: Shardlings, Prism Lancers, Harmonic Walkers, Glass Striders and the Monolith. Needs power. It is the heart of your army, so raise it inside a powered field as soon as the economy runs.",
             notes: [],
             tips: [
@@ -68,6 +74,7 @@
         ),
         (
             name: "Harmonics Lab",
+            blurb: "Nothing to research yet: Choir upgrades are not designed or built. Needs power. Plan one for later.",
             summary: "Meant to research Choir upgrades. No upgrades are designed or built yet, so today it does nothing you can buy. Needs power. Plan one for when research arrives.",
             notes: [
                 ("Research", "Upgrades are planned for the Harmonics Lab. No research, costs or times are designed or built yet, so nothing can be bought here today."),
@@ -79,6 +86,7 @@
         ),
         (
             name: "Skyglass Loom",
+            blurb: "Builds Skyglass, the Choir's flyers, which hit air regiments hard. Tier 2, needs Marrow and power.",
             summary: "Builds Skyglass, the Choir's flyers. Tier 2, needs Marrow and power. Build one to win the air, to hunt artillery and archers, or to counter enemy flyers: Skyglass deal extra damage to air regiments.",
             notes: [],
             tips: [
@@ -89,6 +97,7 @@
         ),
         (
             name: "Bell Tower",
+            blurb: "A beam tower that hits ground and air. When enemies come near it silences their faction powers. Needs power.",
             summary: "A beam tower that hits ground and air. When enemies come within 10 tiles it tolls (at most once every 20 seconds) and silences their faction powers there for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
             notes: [],
             tips: [
@@ -98,7 +107,28 @@
             ],
         ),
         (
+            name: "Prism Lance",
+            summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. Its beam runs on through up to 3 more enemy regiments in line behind the target. It shoots siege engines first, then big soldiers. Needs power, so keep it inside a field.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Place it where enemy columns will march, so its beam runs through several regiments."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it does nothing without power."),
+                (icon: Spear, text: "Weak against wide lines of small soldiers, so guard it with spears."),
+            ],
+        ),
+        (
+            name: "Chord Obelisk",
+            summary: "Blast tower: six shots every 5 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Its sound burst throws every regiment it hits into disorder until they re-form. Needs power.",
+            notes: [],
+            tips: [
+                (icon: Charge, text: "Charge the regiments it throws into disorder, since they fight worse until they re-form."),
+                (icon: Spear, text: "Guard it with troops, since nothing within 8 tiles of it can be hit."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it needs power to fire."),
+            ],
+        ),
+        (
             name: "Sanctum of Echoes",
+            blurb: "Builds and restores heroes: the Maestro, Refractor and Hollow Bell. Needs power; build it early.",
             summary: "Builds and restores heroes: the Maestro, the Refractor and the Hollow Bell. Needs power. Build it early; the Maestro boosts chords and the others turn fights. Heroes cost Marrow, so keep some in reserve for a replacement.",
             notes: [],
             tips: [
@@ -109,7 +139,8 @@
         ),
         (
             name: "Light Curtain",
-            summary: "A wall of light you draw inside your power: click the start, move, click the end; click again to bend it, right-click to finish. Your own troops walk straight through it, so the Choir needs no gates. Enemies can't, until its power is cut and it drops.",
+            blurb: "A wall of light you draw inside your power. Your troops walk through it; enemies can't, until the power fails.",
+            summary: "A wall of light you draw inside your power: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. Shift keeps it straight. Your own troops walk straight through it, so the Choir needs no gates. Enemies can't, until its power is cut and it drops.",
             notes: [
                 ("Glass Wall", "Twice and a half as tough, still open to your own troops. Keep its power safe."),
             ],
@@ -121,6 +152,7 @@
         ),
         (
             name: "Glass Wall",
+            blurb: "Tier 2 of the Light Curtain: 2.5 times as tough, and your troops still pass. Select a curtain and press U.",
             summary: "Level 2 of the Light Curtain: solid crystal, 2.5 times as tough. Your troops still walk through it and it still drops without power. Select a curtain and press U: the joined stretch is paid now and raised a tile at a time.",
             notes: [
                 ("Singing Wall", "The Choir's toughest wall: four times a Light Curtain. Needs tier 2."),
@@ -133,6 +165,7 @@
         ),
         (
             name: "Singing Wall",
+            blurb: "Tier 3 of the Light Curtain: 4 times as tough; its song slows whoever strikes it. Needs tier 2; press U on a Glass Wall.",
             summary: "Level 3, the top: humming crystal, 4 times as tough as a Light Curtain. Needs tier 2. Your troops walk through it; it drops without power. Select a Glass Wall and press U. Its twist: its song slows whoever strikes it for 3 s, to half as many blows and a slower walk.",
             notes: [],
             tips: [
@@ -143,16 +176,44 @@
         ),
         (
             name: "Glass Span",
-            summary: "A span of grown glass two tiles wide you draw straight across a river: click the near bank, then the far bank. It needs no power. Workers build it out from the bank a tile at a time, and anyone can cross it. Shatter a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            blurb: "Draw a glass span across a river. It needs no power; workers build it from the bank, and anyone can cross it.",
+            summary: "You draw it across a river: drag from bank to bank along a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide (3 to 5 tiles), 3 Grub a tile. It needs no power. Workers build it out from the bank. Anyone can cross it; a broken tile drops its troops into the river.",
+            notes: [
+                ("Braced Glass Span", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
-                (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
+                (icon: Hammer, text: "Drag from dry land to dry land; it bends gently. [ and ] pick the width."),
                 (icon: Move, text: "A worker builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
             ],
         ),
         (
+            name: "Braced Glass Span",
+            blurb: "Tier 2 of the Glass Span: twice as tough. Select a span and press U to raise the whole joined bridge.",
+            summary: "Level 2 of the Glass Span: braced glass struts under the deck, twice as tough. Select a span and press U: the whole joined span is paid now and raised a tile at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Anchored Glass Span", "More than three times as tough, and debris glances off its footings."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Anchored Glass Span",
+            blurb: "Tier 3 of the Glass Span: over three times as tough, and it sheds debris. Needs tier 2; press U on a braced span.",
+            summary: "Level 3, the top: resonant stone anchors with prow-shaped footings, more than three times a plain span's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Braced Glass Span and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
             name: "Shard Stakes",
+            blurb: "Draw shards that stop enemy riders and beasts dead; foot troops pass at half pace. Wears down each time.",
             summary: "A line of glass shards set point up that you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered. It wears down each time.",
             notes: [],
             tips: [
@@ -163,6 +224,7 @@
         ),
         (
             name: "Glass Barricade",
+            blurb: "Draw a barricade nobody walks through; troops behind it take less from arrows and blows.",
             summary: "A line of thick glass slabs you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front. Enemy troops get no cover from it.",
             notes: [],
             tips: [
@@ -173,6 +235,7 @@
         ),
         (
             name: "Shard Mine",
+            blurb: "A hidden trap: the first enemy regiment to step on it is stunned for 4 seconds. Gone once sprung.",
             summary: "A half-buried shard for 20 Grub on one tile. The first enemy regiment to walk onto it is stunned for 4 seconds: it halts, falls into disorder and cannot move. It needs no power. Your enemies cannot see it, and once it is sprung it is gone.",
             notes: [],
             tips: [

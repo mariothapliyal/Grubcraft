@@ -83,7 +83,7 @@ Both change smoothly: a new spell of weather first fades the old one's strength 
 
 `MatchSetup::sky` is a `Sky { start, day_ticks, runs, spells }`: the tick of the day at the first tick, the day's length (`DAY_TICKS`, eight hours of play, so an hour of the day takes twenty minutes), whether the clock moves, and a list of spells (`Spell { at, weather }`, each starting at a tick). `Sky::STILL` (a fair 17:00 whose clock stands still) is what tests, the sandbox and old replays have, and it hashes as nothing, so they play as before.
 
-A lobby match builds its sky from the lobby (`gc_match::battle::sky_of`): the **Time of day** sets where the clock starts (Golden hour 17:00, Noon and Overcast 12:00, Dusk 18:00, and the new **Night** 23:00) and the day then passes, so a long dusk battle ends in the dark. The new **Weather** stepper, beside the time of day (on the map-code row, or beside it on a short window) (Fair, Changing, Rain, Snow, Fog), sets the spells: one for the whole match, or for Changing a new spell every three to six minutes drawn from the match seed (`sky::changing`; rain, fog or clear sky, a little over a third clear). Overcast is fair weather under heavy cloud, and keeps the cloud heavy under any weather. Every peer builds the same sky from the lobby settings, and replays store it.
+A lobby match builds its sky from the lobby (`gc_match::battle::sky_of`): the **Time of day** sets where the clock starts (Golden hour 17:00, Noon and Overcast 12:00, Dusk 18:00, and the new **Night** 23:00) and the day then passes, so a long dusk battle ends in the dark. The new **Weather** stepper, beside the time of day (on the map-code row, or beside it on a short window) (Fair, Changing, Rain, Snow, Fog), sets the spells: one for the whole match, or for Changing a new spell every three to six minutes drawn from the match seed (`sky::changing`; rain, fog or clear sky, a little over a third clear). Changing is the lobby's default since 2026-10-30 ([41](41-finish-living-land.md)), so a normal match has weather. Overcast is fair weather under heavy cloud, and keeps the cloud heavy under any weather. Every peer builds the same sky from the lobby settings, and replays store it.
 
 ### What it does in play (stage 1)
 
@@ -211,7 +211,8 @@ Stage 6 turns the year in Conquest: spring, summer, autumn and winter come round
 
 - The top bar has a season chip ("Spring", "Summer: dry", "Autumn: harvest", "Winter: frost"), and a message says what each new season brings (`Event::Season`, told of each season after the first spring). The lighting and ground threads can draw summer grass, autumn leaves, snow and ice from `World::season()` and `Terrain::frozen()`.
 - **Crossing the ice** (2026-10-25, [26](26-fortifications.md) stage 8): routes cost frozen fords and shallows as open ground till the thaw (`Nav::set_frozen`, which reprices each grid's ford cells with `Grid::reprice` and relinks only their sectors), so a march takes the ice where it is shorter, and the computer players' reading of the ground treats it as dry (`gc_ai::Terrain::water` and `cost`), so battle sites and ford crossings follow the season. Deep water stays impassable. `SIM_VERSION` 52.
-- **Not yet:** the computer players don't plan by the season (stocking up before winter); the land's look doesn't change with it yet.
+- **The land's look** (2026-10-31, [41](41-finish-living-land.md) step 5): straw grass in summer, turned broadleaf woods in autumn, a thin snow and ice on the frozen water in winter.
+- **Not yet:** the computer players don't plan by the season (stocking up before winter).
 - No golden changes at stage 6: goldens have no seasons, so `SIM_VERSION` was unchanged then (crossing the ice later bumped it to 52).
 
 ## The one ground change

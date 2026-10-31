@@ -70,7 +70,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 - A Watchtower kills a lone Yari regiment in about 45 s (about 55 s since volleys were slowed to 85%; towers fire from 2026-10-24). The regiment needs about 80 s to topple the tower, so one tower holds off one regiment. Three regiments take it in under 30 s and lose a little over half a regiment.
 
 **Opening at Standard tempo:**
-- The Clans start with 300 Grub and 5 Hands. A Farmstead (80) goes down at about 0:30 and a Dojo (150) at about 1:30.
+- The Clans start with 250 Grub and 5 Hands (300 before the even early game, docs/29). A Farmstead (80) goes down at about 0:30 and a Dojo (150) at about 1:30.
 - Tier 2 (300 Grub, 100 Marrow, 60 s) lands around minute 5 to 6, matching the pacing target in 04.
 - The tier-2 production buildings cost 40 to 60 Marrow each. A tier-2 army therefore competes with the next tier and with elite units for the same scarce Marrow.
 
@@ -105,6 +105,8 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Ancestor Shrine | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes and holds the Honor Edicts. Binds the Oni at tier 3. |
 | Forge | 1 | 175 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Researches weapon and armour upgrades. |
 | Watchtower | 1 | 125 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two archers that shoot at ground and air. Range 32, 2 × 5 damage every 2 s. |
+| Ballista Yagura | 1 | 175 / 0 | 45 s | 900 | Fortified | 2×2 |  | Bolt tower: one heavy bolt every 5 s that runs down a single file of soldiers, twice as hard on big soldiers, and shoots siege first, then big soldiers, then attackers of your buildings. A shield wall does not stop it. Range 34, 1 × 40 damage every 5 s. |
+| Horoku Tower | 2 | 200 / 50 | 50 s | 900 | Fortified | 2×2 |  | Blast tower: lobs shots into the fullest enemy block in range, up to 1.75× harder when packed, half splashing on up to 4 regiments within 2 tiles. Can't hit anything within 8 tiles of it, and siege engines first. Its fire-pots leave burning ground (5×5 tiles, 8 s) and set woods and scrub alight. Range 36, 6 × 5 damage every 6 s. |
 | Palisade | 1 | 10 / 0 a tile | 4 s a tile | 250 a tile | Fortified | 1×1, drawn as a line | Line | A wall you draw at any angle, priced and built a tile at a time ([26](26-fortifications.md#drawn-walls)). Blocks movement; Fire Arrows burn it. |
 | Gate | 1 | 60 / 0 | 20 s | 1,000 | Fortified | 1×3 | Gate | A wall segment that opens for your own and allied regiments. Laid on your Palisade, it replaces that stretch. |
 
@@ -121,6 +123,8 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Moth Roost | 2 | 150 / 40 | 50 s | 1,000 | Living | 3×3 |  | Lets larvae hatch into Drone-Moths. |
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |
 | Spine Mound | 1 | 100 / 0 | 35 s | 900 | Living | 2×2 |  | Flings spines at ground and air. Range 30, 1 × 10 damage every 2 s. |
+| Harpoon Maw | 1 | 160 / 0 | 40 s | 950 | Living | 2×2 |  | Bolt tower: one heavy bolt every 6 s that runs down a single file of soldiers, twice as hard on big soldiers, and shoots siege first, then big soldiers. Its harpoon drags the regiment it hits 3 tiles toward it and halts it, unless that regiment is locked in melee or on a wall. Range 32, 1 × 32 damage every 6 s. |
+| Acid Bloater | 2 | 190 / 50 | 50 s | 850 | Living | 2×2 |  | Blast tower: lobs shots into the fullest enemy block in range, up to 1.75× harder when packed, half splashing on up to 4 regiments within 2 tiles. Can't hit anything within 8 tiles of it, and siege engines first. Leaves a pool of acid (5×5 tiles) for 6 s that eats at enemies standing in it. Range 36, 6 × 4 damage every 6 s. |
 | Queen's Chamber | 1 | 140 / 0 | 45 s | 1,100 | Living | 3×3 |  | Hatches and revives heroes. |
 | Resin Ridge | 1 | 8 / 0 a tile | 5 s a tile | 200 a tile | Living | 1×1, drawn as a line | Line, Grown | Grown by the Hive along its root-veins, every tile at once, with no Gnawer ([26](26-fortifications.md#drawn-walls)). Heals on the veins and withers off them. |
 | Maw Gate | 1 | 55 / 0 | 20 s | 900 | Living | 1×3 | Gate | Chitin jaws that part for your own and allied regiments. Laid on your Resin Ridge, it replaces that stretch. |
@@ -138,6 +142,8 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Harmonics Lab | 1 | 175 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Researches upgrades. |
 | Skyglass Loom | 2 | 160 / 50 | 55 s | 1,100 | Structure | 3×3 |  | Builds Skyglass. |
 | Bell Tower | 1 | 150 / 0 | 40 s | 900 | Fortified | 2×2 |  | A beam that hits ground and air. Every 20 s it tolls, silencing enemy abilities within 10 tiles for 5 s. Range 30, 1 × 10 damage every 2 s. |
+| Prism Lance | 1 | 190 / 0 | 45 s | 800 | Fortified | 2×2 |  | Bolt tower, needs power: one heavy bolt every 5 s that runs down a single file of soldiers, twice as hard on big soldiers, and shoots siege first. Its beam runs on through up to 3 more enemy regiments in line behind the target. Range 34, 1 × 32 damage every 5 s. |
+| Chord Obelisk | 2 | 200 / 50 | 50 s | 850 | Fortified | 2×2 |  | Blast tower, needs power: lobs shots into the fullest enemy block in range, up to 1.75× harder when packed, half splashing on up to 4 regiments within 2 tiles. Can't hit anything within 8 tiles of it, and siege engines first. Its sound burst throws every regiment it hits into disorder. Range 36, 6 × 4 damage every 5 s. |
 | Sanctum of Echoes | 1 | 150 / 0 | 50 s | 1,100 | Structure | 3×3 |  | Builds and restores heroes. |
 | Light Curtain | 1 | 10 / 0 a tile | 3 s a tile | 180 a tile | Fortified | 1×1, drawn as a line | Line, Pass, Needs power | A wall of light drawn inside your power ([26](26-fortifications.md#drawn-walls)). Your own troops walk through it; it drops for everyone without power. |
 
@@ -155,6 +161,8 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Guildhall | 1 | 160 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains living infantry and cavalry. Living regiments reinforce near it. |
 | Lantern Spire | 2 | 160 / 50 | 55 s | 1,000 | Structure | 3×3 |  | Trains Lantern Wraiths. |
 | Tollgate | 1 | 140 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub. Range 30, 2 × 5 damage every 2 s. |
+| Collector's Bolt | 1 | 185 / 0 | 45 s | 950 | Fortified | 2×2 |  | Bolt tower: one heavy bolt every 5 s that runs down a single file of soldiers, twice as hard on big soldiers, and shoots siege first, then big soldiers, then attackers of your buildings. Each soldier it kills pays 3 Grub. Range 34, 1 × 38 damage every 5 s. |
+| Corpse Catapult | 2 | 210 / 50 | 50 s | 900 | Fortified | 2×2 |  | Blast tower: lobs shots into the fullest enemy block in range, up to 1.75× harder when packed, half splashing on up to 4 regiments within 2 tiles. Can't hit anything within 8 tiles of it, and siege engines first. Every 10 soldiers it kills rise beside it as 10 Bone Pikes, yours for 30 s. Range 36, 6 × 5 damage every 6 s. |
 | Vault of Names | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes. |
 | Bone Fence | 1 | 12 / 0 a tile | 4 s a tile | 300 a tile | Fortified | 1×1, drawn as a line | Line | Bone stakes and chain, drawn at any angle ([26](26-fortifications.md#drawn-walls)). Blocks movement. |
 | Iron Gate | 1 | 70 / 0 | 22 s | 1,200 | Fortified | 1×3 | Gate | Iron bars between bone posts that open for your own and allied regiments. Laid on your Bone Fence, it replaces that stretch. |

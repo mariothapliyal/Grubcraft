@@ -26,6 +26,8 @@ const ATTACK: TowerAttack = TowerAttack {
     damage: 5,
     reload_ticks: 2 * TICKS_PER_SECOND as u16,
     shots: 2,
+    shot: gc_sim::structures::TowerShot::Arrows,
+    quirk: gc_sim::structures::Quirk::None,
 };
 
 fn building(role: Role, side: u8, flags: u16, attack: Option<TowerAttack>) -> BuildingStats {

@@ -42,6 +42,8 @@ pub struct Standing {
     /// the state it is in.
     pub morale_points: u8,
     pub morale: MoraleState,
+    /// Its veteran rank, 0 to 3 (see [`crate::veterancy`]).
+    pub rank: u8,
     /// Hidden from every enemy: standing in cover, it starts unseen by
     /// them. Otherwise everyone has seen it for a while, so it is no
     /// surprise to anyone.
@@ -63,6 +65,7 @@ impl Standing {
             models: view.models,
             morale_points: view.morale_points,
             morale: view.morale,
+            rank: view.rank,
             hidden,
             torches: view.torches,
         }
@@ -165,6 +168,7 @@ impl World {
             r.morale[i] = points * morale::SCALE;
         }
         r.morale_state[i] = s.morale;
+        r.xp[i] = crate::veterancy::xp_for(s.rank);
         r.light(h, s.torches);
         if s.morale.broken() {
             r.last_rout[i] = self.tick + 1;

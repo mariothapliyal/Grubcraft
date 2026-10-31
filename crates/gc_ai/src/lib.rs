@@ -27,6 +27,7 @@
 pub mod army;
 pub mod captain;
 pub mod conquest;
+pub mod deployment;
 pub mod difficulty;
 pub mod estimator;
 pub mod ground;

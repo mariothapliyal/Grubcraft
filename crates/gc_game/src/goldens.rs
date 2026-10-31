@@ -1036,7 +1036,8 @@ fn deploy(
         // Every row gets its share of each kind of regiment.
         let row: Vec<_> = raised.iter().copied().skip(k).step_by(rows).collect();
         let centre = start - forward * (k as f32 * ROW_DEPTH);
-        placed.extend(army::deploy(units, &row, centre, forward, minds.terrain()));
+        let rank = army::deploy_clear_of(units, &row, centre, forward, minds.terrain(), &placed);
+        placed.extend(rank.placed);
     }
     placed
 }

@@ -51,6 +51,10 @@ land still shows on top, and none of it shows on rock.
 | Bone drift | plain | pale ripples of bone dust |
 | Rib field | plain | pale bone dust |
 | Dying grass | straw | patches of straw |
+| Gravel bar (2026-10-31) | pale grey | grey gravel and pebbles |
+| Reed bed | olive | damp, darker patches, with dense sedge |
+| Beach | sandy | pale ripples |
+| Trail | worn brown | none (a pattern is drawn tile by tile, and a 2-tile trail would look blocky) |
 
 Standing water (the bog's pools, the mud) is drawn glossy: the same shine the
 faction lands use (`shade_material` with a low roughness), so it mirrors the

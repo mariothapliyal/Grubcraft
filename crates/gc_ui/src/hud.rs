@@ -203,6 +203,11 @@ pub struct Card {
     pub max_models: u16,
     /// Morale points, 0 to 100.
     pub morale: u8,
+    /// Its breaking point, percent of full strength, marked on the health
+    /// bar; 0 or 100 for none.
+    pub break_at: u8,
+    /// Its veteran rank, 0 to 3, shown as chevrons.
+    pub rank: u8,
     pub state: CardState,
     pub engaged: bool,
     pub selected: bool,
@@ -253,6 +258,13 @@ pub struct Selection<'a> {
     pub max_models: u32,
     /// Morale points, 0 to 100 (the mean of a selection).
     pub morale: u8,
+    /// One regiment's breaking point, percent of full strength, marked on
+    /// the health bar; 0 for none (several regiments, or one that can
+    /// break at any strength).
+    pub break_at: u8,
+    /// One regiment's veteran rank, 0 to 3, shown as chevrons on the
+    /// banner; 0 for several regiments.
+    pub rank: u8,
     pub state: CardState,
     /// The formation they stand in; empty when it varies or is not known.
     pub formation: &'a str,
@@ -667,6 +679,18 @@ pub(crate) fn rgb(c: [u8; 3]) -> Color {
 pub(crate) fn ink_meter(draw: &mut DrawList, r: Rect, frac: f32, color: Color) {
     draw.rect(r, theme::INK);
     draw.meter(r.inset(2), frac, color, theme::LINEN_DK);
+}
+
+/// A tick on health bar `r` at the breaking point, `percent` of full
+/// strength (docs/05, "Morale"): the regiment can't rout above it. Nothing
+/// for 0 or 100.
+fn break_mark(draw: &mut DrawList, r: Rect, percent: u8) {
+    if percent == 0 || percent >= 100 {
+        return;
+    }
+    let inner = r.inset(2);
+    let x = inner.x + inner.w * i32::from(percent) / 100;
+    draw.rect(Rect::new(x - 1, r.y - 2, 2, r.h + 4), theme::INK);
 }
 
 impl Hud {
@@ -1511,6 +1535,19 @@ fn shape_chip_rects(strip: Rect, chips: &[ShapeChip]) -> (Option<i32>, Vec<Rect>
     out
 }
 
+/// A veteran's `rank` (0 to 3) as chevrons, point up, centred on `cx` and
+/// stacked upward from `bottom`: each 12 pixels wide and 5 tall, 5 apart.
+pub fn draw_chevrons(draw: &mut DrawList, cx: i32, bottom: i32, rank: u8, color: Color) {
+    for n in 0..i32::from(rank.min(3)) {
+        let y = bottom - 5 * (n + 1);
+        for step in 0..6 {
+            // Each arm: a 2 by 2 pixel step down and out from the point.
+            draw.rect(Rect::new(cx - 1 - step, y + step * 4 / 6, 2, 2), color);
+            draw.rect(Rect::new(cx - 1 + step, y + step * 4 / 6, 2, 2), color);
+        }
+    }
+}
+
 /// A pennant: `fill` cloth with a swallowtail point, outlined in ink.
 fn banner(draw: &mut DrawList, r: Rect, fill: Color) {
     let shape = |draw: &mut DrawList, r: Rect, color: Color| {
@@ -1534,17 +1571,14 @@ fn banner(draw: &mut DrawList, r: Rect, fill: Color) {
 fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let banner_rect = Rect::new(r.x, r.y, 50, r.h.min(124));
     banner(draw, banner_rect, rgb(s.color));
-    let ink = if luma(s.color) > 140 {
-        theme::INK
-    } else {
-        theme::LINEN
-    };
+    let ink = ink_on(s.color);
     icons::icon(
         draw,
         Rect::new(banner_rect.x + 7, banner_rect.y + 12, 36, 28),
         s.icon,
         ink,
     );
+    draw_chevrons(draw, banner_rect.x + 25, banner_rect.y + 61, s.rank, ink);
     let x = banner_rect.right() + 12;
     let w = (r.right() - x).max(0);
     if w < 80 {
@@ -1562,6 +1596,13 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     }
     let count = if s.regiments > 1 {
         format!("{} regiments, {} soldiers", s.regiments, s.models)
+    } else if s.rank > 0 {
+        // The rank first, so a narrow panel cuts the count instead.
+        format!(
+            "Veteran rank {}, {}",
+            s.rank,
+            soldiers_text(s.models, s.max_models)
+        )
     } else {
         soldiers_text(s.models, s.max_models)
     };
@@ -1573,12 +1614,19 @@ fn draw_selection(draw: &mut DrawList, r: Rect, s: &Selection) {
     let bar_x = x + label_w;
     let bar_w = (w - label_w - pct_w).max(20);
     let health = s.models as f32 / s.max_models.max(1) as f32;
-    for (label, frac, color) in [
-        ("Health", health, health_color(health)),
-        (s.state.label(), f32::from(s.morale) / 100.0, s.state.bar()),
+    for (label, frac, color, mark) in [
+        ("Health", health, health_color(health), s.break_at),
+        (
+            s.state.label(),
+            f32::from(s.morale) / 100.0,
+            s.state.bar(),
+            0,
+        ),
     ] {
         draw.text_bold(x, y - 3, 1, theme::INK, label);
-        ink_meter(draw, Rect::new(bar_x, y, bar_w, 12), frac, color);
+        let bar = Rect::new(bar_x, y, bar_w, 12);
+        ink_meter(draw, bar, frac, color);
+        break_mark(draw, bar, mark);
         let pct = format!("{}%", (frac * 100.0).round() as i32);
         draw.text(bar_x + bar_w + 8, y - 3, 1, muted_ink(), &pct);
         y += 22;
@@ -1886,6 +1934,7 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         health,
         health_color(health),
     );
+    break_mark(draw, Rect::new(inner.x, y, inner.w, 8), c.break_at);
     y += 10;
     ink_meter(
         draw,
@@ -1899,6 +1948,16 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         draw.rect(label, theme::INK);
         draw.text_centered(label, 1, theme::LINEN, "ROUT");
     }
+    // A veteran's chevrons, in the portrait's bottom right corner (over
+    // the ROUT label, if it is running).
+    if c.rank > 0 {
+        let bottom = if c.state == CardState::Routing {
+            portrait.bottom() - 19
+        } else {
+            portrait.bottom() - 6
+        };
+        draw_chevrons(draw, portrait.right() - 10, bottom, c.rank, ink_on(c.color));
+    }
     let count = c.models.to_string();
     draw.text(
         inner.right() - text_width(&count, 1),
@@ -1907,6 +1966,16 @@ fn draw_card(draw: &mut DrawList, r: Rect, c: &Card, hot: bool) {
         muted_ink(),
         &count,
     );
+}
+
+/// Ink that reads on cloth of colour `c`: dark on a light colour, linen
+/// on a dark one.
+pub(crate) fn ink_on(c: [u8; 3]) -> Color {
+    if luma(c) > 140 {
+        theme::INK
+    } else {
+        theme::LINEN
+    }
 }
 
 pub(crate) fn luma(c: [u8; 3]) -> u32 {
@@ -1918,11 +1987,7 @@ pub(crate) fn luma(c: [u8; 3]) -> u32 {
 pub(crate) fn draw_portrait(draw: &mut DrawList, r: Rect, color: [u8; 3], name: &str, scale: i32) {
     draw.rect(r, rgb(color));
     if let Some(initial) = name.chars().next() {
-        let ink = if luma(color) > 140 {
-            theme::INK
-        } else {
-            theme::LINEN
-        };
+        let ink = ink_on(color);
         draw.text_centered(r, scale, ink, &initial.to_string());
     }
     draw.border(r, 2, theme::INK);
@@ -2904,6 +2969,7 @@ mod tests {
             models: 40,
             max_models: 60,
             morale: 80,
+            break_at: 40,
             state: CardState::Steady,
             formation: "Line",
             ground: "In mud: slow, no charges",

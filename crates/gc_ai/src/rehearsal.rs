@@ -362,6 +362,7 @@ fn standing(r: &Seen) -> Standing {
         formation: r.formation,
         models: r.models,
         morale_points: r.morale_points,
+        rank: r.rank,
         morale: r.morale,
         hidden: r.hidden,
         torches: r.torches,

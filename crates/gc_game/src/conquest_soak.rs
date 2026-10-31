@@ -24,16 +24,15 @@ use gc_map::Map;
 use gc_platform::tagged_alloc::{self, Tag};
 use gc_sim::structures::StructureView;
 use gc_sim::{
-    Capacities, Command, MatchSetup, PlayerCommand, PlayerId, RegimentHandle, Resource,
-    TICKS_PER_SECOND, Victories, World,
+    Command, PlayerCommand, PlayerId, RegimentHandle, Resource, TICKS_PER_SECOND, Victories, World,
 };
 use gc_ui::lobby::{SHIPPED_CONQUEST_MAPS, Tempo};
 
-use crate::buildings::Table;
 use crate::conquest;
 use crate::conquest_golden::{
     Kit, affords, main_of, nodes_near, own, regiments_of, site, trade_orders,
 };
+use crate::headless::{Headless, Real};
 
 const SEED: u64 = 0x50AC_0006;
 /// "Classic: Mixed": some of every kind of ground.
@@ -98,44 +97,29 @@ struct Minute {
 }
 
 impl Soak {
-    fn new(map: &Map) -> Soak {
-        let data = crate::data::load();
-        let table = Table::new(&data);
-        let units = conquest::unit_stats(&data);
-        let nav = map.sim_nav_costs();
-        let teams: Vec<u8> = (0..PLAYERS as u8).collect();
-        let setup = MatchSetup {
-            seed: SEED,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: map.tiles,
-            nav: &nav,
-            teams: &teams,
-            ground: map.ground(),
-            champions: false,
-            sky: gc_sim::Sky::STILL,
-            generals: true,
-        };
+    fn new(map: Map) -> Soak {
+        let real = Real::load();
+        let game = Headless::new(&real, map, &FACTIONS, SEED);
+        let (data, table) = (&real.data, &real.table);
         // Annihilation only, so the fog is on but nobody wins by holding
         // the Heart and the hour plays out.
         let victories = Victories {
             annihilation: true,
             heart: false,
         };
-        let plan = conquest::plan(&table, &data, map, &FACTIONS, Tempo::Swift, victories);
-        let mut world = tagged_alloc::scope(Tag::Sim, || World::new(&setup));
-        assert!(tagged_alloc::scope(Tag::Sim, || world.conquest(&plan.setup())));
-        let opening = conquest::opening(&data, &table, map, &world, &FACTIONS);
-        let stats = tagged_alloc::scope(Tag::Sim, || world.tick(&opening));
-        assert_eq!(stats.commands_applied as usize, opening.len());
+        let plan = game.plan(Tempo::Swift, victories);
+        let mut world = tagged_alloc::scope(Tag::Sim, || game.world(&plan));
+        game.open(&mut world, |w, orders| {
+            tagged_alloc::scope(Tag::Sim, || w.tick(orders))
+        });
         Soak {
-            kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
+            kits: FACTIONS.map(|f| Kit::of(data, table, f)),
             // Each side's first wave goes at the next side round.
             sides: core::array::from_fn(|p| Side {
                 target: p,
                 going_up: None,
             }),
-            starts: conquest::player_starts(map, PLAYERS),
+            starts: conquest::player_starts(&game.map, PLAYERS),
             world,
             rejected: 0,
         }
@@ -386,7 +370,7 @@ fn conquest_soak() {
         map.starts().len(),
         made.elapsed().as_secs_f64()
     );
-    let mut soak = Soak::new(&map);
+    let mut soak = Soak::new(map);
     println!("min  regts  bldgs   p50 ms   p99 ms   max ms  sim MB  heap MB  process MB");
     let mut rows = Vec::new();
     for _ in 0..minutes {

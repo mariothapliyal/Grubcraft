@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 12;
+pub const BUILDING_SCHEMA: u32 = 13;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 6;
@@ -160,6 +160,32 @@ pub const TRAP_HANDS: u8 = 2;
 pub const TRAP_MINE: u8 = 3;
 /// A burrow nest: a regiment of [`BuildingRecord::trap_unit`] bursts out.
 pub const TRAP_NEST: u8 = 4;
+/// [`BuildingRecord::shot`]: what a tower looses (schema 13, docs/26
+/// stage 5).
+/// Arrows: a volley of light shots.
+pub const SHOT_ARROWS: u8 = 0;
+/// A bolt: one heavy shot that runs down a file of soldiers.
+pub const SHOT_BOLT: u8 = 1;
+/// A blast: splash lobbed into packed blocks, never at anyone close.
+pub const SHOT_BLAST: u8 = 2;
+/// [`BuildingRecord::quirk`]: what a tower's hits do besides hurt
+/// (schema 13, docs/26 stage 5).
+pub const QUIRK_NONE: u8 = 0;
+/// Fire-pots: they leave burning ground, and set growth there alight.
+pub const QUIRK_BURNS: u8 = 1;
+/// Each soldier it kills pays its owner Grub.
+pub const QUIRK_COLLECTS: u8 = 2;
+/// The soldiers it kills rise as its owner's
+/// [`BuildingRecord::trap_unit`].
+pub const QUIRK_RAISES: u8 = 3;
+/// Its shot runs on through every enemy regiment in line behind its target.
+pub const QUIRK_PIERCES: u8 = 4;
+/// Its hits throw the regiments struck into disorder.
+pub const QUIRK_DISORDERS: u8 = 5;
+/// Its hit drags the regiment struck a few steps toward it.
+pub const QUIRK_DRAGS: u8 = 6;
+/// Its hits leave a pool of acid for a few seconds.
+pub const QUIRK_ACID: u8 = 7;
 /// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
 
@@ -221,13 +247,17 @@ pub struct BuildingRecord {
     pub twist: u8,
     /// A `TRAP_*`: what a hidden trap does (schema 12).
     pub trap: u8,
-    /// Always 0.
-    pub pad: u8,
-    /// A burrow nest's regiment, as an index into the Conquest unit table;
-    /// 0 for any other building (schema 12).
+    /// A `SHOT_*`: what a tower looses (schema 13; was padding).
+    pub shot: u8,
+    /// A burrow nest's regiment, or the unit a tower that raises the
+    /// dead raises ([`QUIRK_RAISES`]), as an index into the Conquest unit
+    /// table; 0 for any other building (schema 12, towers from 13).
     pub trap_unit: u16,
+    /// A `QUIRK_*`: what a tower's hits do besides hurt (schema 13; was
+    /// padding).
+    pub quirk: u8,
     /// Always 0 (the record is padded to a multiple of 4 bytes).
-    pub pad2: [u8; 2],
+    pub pad2: u8,
 }
 
 impl BuildingRecord {
@@ -538,7 +568,7 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.width == 0 || b.depth == 0 || b.width > MAX_FOOTPRINT || b.depth > MAX_FOOTPRINT {
         return Err("footprint sides are 1 to 5 tiles");
     }
-    if b.flags & !BUILDING_FLAGS != 0 || b.pad != 0 || b.pad2 != [0; 2] {
+    if b.flags & !BUILDING_FLAGS != 0 || b.pad2 != 0 {
         return Err("unknown building flags");
     }
     if b.twist > TWIST_THORNS {
@@ -553,15 +583,24 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if [Role::Bridge, Role::Stakes, Role::Barricade]
         .iter()
         .any(|&r| b.role == r as u8)
-        && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE || b.upgrades_from != NONE)
+        && (b.flags != BUILDING_LINE || b.twist != TWIST_NONE)
     {
         return Err("a bridge or field work is drawn as a line, and is nothing more");
+    }
+    // A bridge goes up levels (braced, then reinforced piers); a field
+    // work doesn't.
+    if [Role::Stakes, Role::Barricade]
+        .iter()
+        .any(|&r| b.role == r as u8)
+        && b.upgrades_from != NONE
+    {
+        return Err("a field work has no levels");
     }
     if b.trap > TRAP_NEST || (b.role == Role::Trap as u8) != (b.trap != TRAP_NONE) {
         return Err("a trap, and only a trap, has a known trap kind");
     }
-    if b.trap != TRAP_NEST && b.trap_unit != 0 {
-        return Err("only a burrow nest names a unit");
+    if b.trap != TRAP_NEST && b.quirk != QUIRK_RAISES && b.trap_unit != 0 {
+        return Err("only a burrow nest or a tower that raises the dead names a unit");
     }
     if b.trap != TRAP_NONE
         && ((b.width, b.depth) != (1, 1)
@@ -608,6 +647,15 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if shoots != (b.attack_damage > 0 && b.attack_reload_ticks > 0 && b.attack_shots > 0) {
         return Err("a tower needs range, damage, reload and shots, and nothing else has any");
     }
+    if b.shot > SHOT_BLAST || b.quirk > QUIRK_ACID {
+        return Err("unknown tower shot or quirk");
+    }
+    if !shoots && (b.shot != SHOT_ARROWS || b.quirk != QUIRK_NONE) {
+        return Err("only a tower has a shot or a quirk");
+    }
+    if matches!(b.quirk, QUIRK_PIERCES | QUIRK_DRAGS) && b.shot != SHOT_BOLT {
+        return Err("only a bolt tower pierces or drags");
+    }
     Ok(())
 }
 
@@ -629,7 +677,7 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
     let levels = |r: &BuildingRecord| r.flags & (BUILDING_LINE | BUILDING_GATE) != 0;
     if levels(b) || levels(from) {
         let kind = BUILDING_LINE | BUILDING_PASS | BUILDING_GROWN | BUILDING_GATE;
-        if b.flags & kind != from.flags & kind {
+        if b.flags & kind != from.flags & kind || b.role != from.role {
             return Err("a wall's or gate's level upgrades from one of the same kind");
         }
         if from.faction != b.faction || from.tier > b.tier {

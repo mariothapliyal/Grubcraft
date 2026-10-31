@@ -80,12 +80,13 @@ pub const FIELD_MAPS: [&str; 18] = [
 pub const WILDS: usize = 6;
 
 /// The first grown land choice in [`FIELD_MAPS`] (mirrored), as wild as
-/// the seed picks: the one a new lobby starts on. Each
+/// the seed picks. Each
 /// [`wilds::Wildness`] follows it.
 pub const GROWN: usize = WILDS + 1 + wilds::Wildness::ALL.len();
 
 /// The first grown land choice with measured fairness, as wild as the seed
-/// picks. Each [`wilds::Wildness`] follows it.
+/// picks: the one a new lobby starts on. Each [`wilds::Wildness`] follows
+/// it.
 pub const MEASURED: usize = GROWN + 1 + wilds::Wildness::ALL.len();
 
 /// A Field Battle map: the lobby's choice (an index into [`FIELD_MAPS`]),
@@ -291,10 +292,11 @@ mod tests {
         assert_eq!(at_320(4), 0x4810_c8ad_25ff_bc7c);
         // Grown land: erosion and the river lines (and their current) are
         // the parts most likely to drift, and each of the dials.
-        assert_eq!(hash(GROWN + 1), 0xf798_2e56_9277_ddfc);
-        assert_eq!(hash(GROWN + 2), 0xa641_0256_1301_c7c4);
-        assert_eq!(hash(GROWN + 3), 0x6ed2_be3e_a937_fa04);
-        // Measured fairness: the start search and the paired sites.
-        assert_eq!(hash(MEASURED + 2), 0xe091_35fc_34d1_d981);
+        assert_eq!(hash(GROWN + 1), 0x3da9_8726_78fc_399a);
+        assert_eq!(hash(GROWN + 2), 0x578d_13c7_0514_9c14);
+        assert_eq!(hash(GROWN + 3), 0xc066_8667_d169_3f40);
+        // Measured fairness: the start search, its settling on the true
+        // walks and the paired sites.
+        assert_eq!(hash(MEASURED + 2), 0x5857_1669_2429_96ac);
     }
 }

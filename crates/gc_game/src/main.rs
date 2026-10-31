@@ -140,6 +140,7 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+mod bridge_kit;
 mod buildings;
 mod camera;
 mod cinema;
@@ -163,11 +164,14 @@ mod fx_demo;
 #[cfg(test)]
 mod goldens;
 mod ground_look;
+#[cfg(test)]
+mod headless;
 mod land;
 mod lights;
 #[cfg(test)]
 mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod drawn_tool;
 mod guide_data;
 mod hud;
 mod lens;
@@ -186,6 +190,7 @@ mod scars;
 mod scenery;
 mod showroom;
 mod siege;
+mod sky_news;
 mod sounds;
 mod viewer;
 mod wall_tool;
@@ -208,7 +213,7 @@ use gc_sim::arrange::Shape;
 use gc_sim::events::Event;
 use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
-use gc_sim::structures::Breaker;
+use gc_sim::structures::{Breaker, TowerShot};
 use gc_sim::{
     BuildingId, BuildingStats, Capacities, Formation, Growth, LOOSE_DEFENCE, MatchSetup,
     MoraleState, PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView,
@@ -495,6 +500,9 @@ struct Options {
     /// The weather every match opens in (`--weather rain|snow|fog`); F12
     /// steps through them.
     weather: Option<gc_render::Weather>,
+    /// The season the land is drawn in (`--season spring|summer|autumn|
+    /// winter`), whatever the match's year: the picture only.
+    season: Option<f32>,
     /// A land whose air lights the whole map (`--air waste`).
     air: Option<gc_map::def::Land>,
     /// How far the camera starts from the ground (`--distance 14..260`).
@@ -539,6 +547,7 @@ fn parse_args() -> Options {
         viewer: None,
         look: None,
         weather: None,
+        season: None,
         air: None,
         distance: None,
         fx: None,
@@ -698,6 +707,9 @@ fn parse_args() -> Options {
             "--weather" => gc_render::Weather::from_name(&value)
                 .map(|w| opts.weather = Some(w))
                 .is_some(),
+            "--season" => gc_sim::sky::Season::from_name(&value)
+                .map(|s| opts.season = Some(s as usize as f32 + 0.5))
+                .is_some(),
             "--air" => gc_map::def::Land::ALL
                 .into_iter()
                 .find(|l| format!("{l:?}").eq_ignore_ascii_case(value.trim()))
@@ -788,7 +800,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -831,6 +843,10 @@ struct Running {
     pending: Vec<PlayerCommand>,
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
+    /// A joiner's opening view, waiting for the host's deployment zone: the
+    /// way the start faces and the focus it was first given. The host moves a
+    /// zone off the start where the ground needs it, and only it knows where.
+    zone_look: Option<(Vec2, Vec2)>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     /// How far between the last two ticks the last frame drew, 0 to 1.
@@ -935,6 +951,8 @@ struct Running {
     turn_scroll: f32,
     /// Each building's tips, for the HUD's tips card.
     tip_book: guide_data::TipBook,
+    /// Each building's blurb, for its line on the build menu.
+    blurb_book: guide_data::BlurbBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -966,6 +984,8 @@ struct Running {
     /// The battle being recorded, or the replay being watched.
     recording: Option<Recording>,
     watching: Option<Watching>,
+    /// The news line's word on the weather and nearby fires.
+    sky_news: sky_news::SkyNews,
     /// The game data's short hash, for replays.
     data_hash: u64,
     quit: bool,
@@ -1117,11 +1137,20 @@ impl LodView {
     /// when it is worth no drawing: it is neither on screen nor casting a
     /// shadow where one is drawn.
     fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        // A soldier may be drawn forward of his position onto his feet.
         self.cull
-            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .sees(
+                pos + glam::Vec3::Y * (height * 0.5),
+                height + FEET_SHIFT_ROOM,
+            )
             .then(|| self.lod(height, pos))
     }
 }
+
+/// How far beyond its height a soldier's model may reach from his position,
+/// being drawn forward onto his feet ([`gc_assets::model::Models::feet_shift`],
+/// at most 0.74 tiles).
+const FEET_SHIFT_ROOM: f32 = 0.75;
 
 impl Art {
     /// Empty the buckets for a frame seen from `eye` looking along `forward`,
@@ -1381,6 +1410,10 @@ struct Watching {
     /// The first tick whose state differs from the recording's, if any:
     /// the replay was made with other rules (docs/10-replays.md).
     diverged_at: Option<u32>,
+    /// A tick to jump ahead to at once, from `GC_WATCH_FROM=SECONDS` (a
+    /// developer's convenience for looking at a late moment of a long
+    /// match).
+    jump_to: Option<u32>,
 }
 
 /// Process memory recorded at startup milestones, to see what each costs.
@@ -1715,7 +1748,9 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
-            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air).with_weather(opts.weather),
+            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air)
+                .with_weather(opts.weather)
+                .with_season(opts.season),
             cinema: cinema::Cinema::default(),
             was_deploying: false,
             director: director::Director::default(),
@@ -1732,6 +1767,7 @@ impl App {
             matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
+            zone_look: None,
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
@@ -1804,6 +1840,7 @@ impl App {
             guide_scroll: 0.0,
             turn_scroll: 0.0,
             tip_book: guide_data::tip_book(),
+            blurb_book: guide_data::blurb_book(),
             reveal_all: false,
             fog: Default::default(),
             river_watch: Default::default(),
@@ -1828,6 +1865,7 @@ impl App {
             online: None,
             recording: None,
             watching: None,
+            sky_news: sky_news::SkyNews::default(),
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
@@ -2371,6 +2409,8 @@ impl Running {
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
+                // The wall tool: a drag from here draws a curve.
+                self.begin_wall_drag();
                 // Choosing ground to clear: the drag starts on the ground.
                 self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
                     .then(|| self.ground_under_cursor())
@@ -3502,6 +3542,22 @@ impl Running {
         } else {
             0
         };
+        // Jump a replay being watched ahead, once (see `Watching::jump_to`).
+        if let Some(from) = self.watching.as_mut().and_then(|w| w.jump_to.take()) {
+            while self.world.tick_count() < from {
+                let tick = self.world.tick_count();
+                self.pending.clear();
+                if let Some(w) = &self.watching {
+                    self.pending.extend_from_slice(w.replay.commands_at(tick));
+                }
+                self.human_orders.clear();
+                self.step();
+                self.check_replay_divergence();
+                if self.paused {
+                    break;
+                }
+            }
+        }
         while self.sim_clock >= TICK && ticks_this_frame < MAX_TICKS_PER_FRAME {
             self.sim_clock -= TICK;
             self.pending.clear();
@@ -3555,6 +3611,7 @@ impl Running {
                 self.save_recording();
             }
         }
+        self.look_at_own_zone();
         let alpha = match &self.online {
             // Turns arrive on the host's clock: move smoothly towards the
             // latest one.
@@ -4321,8 +4378,7 @@ impl Running {
         );
         // The unit viewer shows a model as made, not as the last rain left it.
         if self.viewer.is_some() {
-            look.wet = 0.0;
-            look.snow = 0.0;
+            look = look.bare_land();
         }
         self.renderer.set_look(look);
         // The water rises in a flood (docs/32-changing-land.md) and drops
@@ -4673,6 +4729,33 @@ impl Running {
                 let ground = heightmap.height_at(at.x, at.y);
                 self.effects
                     .blaze(glam::Vec3::new(at.x, ground, at.y), tall, fire_dt);
+            }
+        }
+        // Pools a tower's hit left (burning ground, acid), those the viewer
+        // sees, fading out over their last second.
+        if fx_speed > 0.0
+            && let Some(pools) = self.world.structures().map(gc_sim::Structures::pools)
+        {
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            let pool_dt = dt.as_secs_f32() * fx_speed;
+            let fade = gc_sim::TICKS_PER_SECOND as f32;
+            let reach = fx_to_f32(gc_sim::towers::POOL_REACH);
+            for pool in pools {
+                let at = from_fx_vec(pool.at);
+                if at.distance_squared(view_focus) > view_distance * view_distance
+                    || !(reveal || fog.sees_tile((at.x.floor() as i32, at.y.floor() as i32)))
+                {
+                    continue;
+                }
+                let strength = (f32::from(pool.left) / fade).min(1.0);
+                let ground = heightmap.height_at(at.x, at.y);
+                self.effects.pool(
+                    glam::Vec3::new(at.x, ground, at.y),
+                    reach,
+                    pool.acid,
+                    strength,
+                    pool_dt,
+                );
             }
         }
         let particles = self.effects.frame(
@@ -5364,6 +5447,8 @@ impl Running {
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
+        // The last match's weather and fires are no news in this one.
+        self.sky_news = sky_news::SkyNews::default();
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
@@ -5600,6 +5685,7 @@ impl Running {
             sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
+        self.zone_look = None;
         self.sim_clock = Duration::ZERO;
         self.fresh_puppets();
         self.effects.clear();
@@ -5771,6 +5857,33 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+        // A joiner doesn't deploy: the host's zone, when it arrives, says
+        // where the army really stands.
+        self.zone_look = self
+            .online
+            .as_ref()
+            .filter(|o| !o.host)
+            .map(|_| (set.my_forward, focus));
+    }
+
+    /// Once the host's deployment zone for this machine's side arrives, point
+    /// a joiner's camera at it, unless they have already moved the view or
+    /// the battle has begun without one.
+    fn look_at_own_zone(&mut self) {
+        let Some((forward, first)) = self.zone_look else {
+            return;
+        };
+        if self.camera.focus != first || self.world.battle_ticks() > 0 {
+            self.zone_look = None;
+            return;
+        }
+        let Some(zone) = self.world.deploy_zone(self.sandbox.side) else {
+            return;
+        };
+        self.zone_look = None;
+        let focus = from_fx_vec(zone.center) + forward * 18.0;
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
     }
 
     /// Seat `parties` for a lobby match, this machine playing `me`, and
@@ -5874,11 +5987,16 @@ impl Running {
         self.camera.focus = focus;
         self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
         self.start_zoom(120.0);
+        let replay_ticks = replay.ticks;
         self.watching = Some(Watching {
             title: replays::title(&replay.info()),
             replay,
             stats_before,
             diverged_at: None,
+            jump_to: std::env::var("GC_WATCH_FROM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|s| s.saturating_mul(gc_sim::TICKS_PER_SECOND).min(replay_ticks)),
         });
         // A replay is a film: the director frames it until the viewer moves.
         self.director.start(&self.camera);
@@ -6255,14 +6373,19 @@ impl Running {
                     target,
                     at,
                     lost,
+                    kind,
                 } => {
-                    if let Some(flight) = self.arrows.landed(volley, at, in_wood, dry) {
+                    if let Some(flight) = self.arrows.landed(volley, at, kind, in_wood, dry) {
                         self.puppets.shot_down(target, flight.dir, lost);
                         if self.reveal_all || self.world.sees(self.sandbox.side, target) {
                             let p = from_fx_vec(at);
                             let ground = self.heightmap.height_at(p.x, p.y);
-                            self.effects
-                                .arrows_landed(glam::Vec3::new(p.x, ground, p.y), lost.max(2));
+                            let spot = glam::Vec3::new(p.x, ground, p.y);
+                            match kind {
+                                TowerShot::Arrows => self.effects.arrows_landed(spot, lost.max(2)),
+                                TowerShot::Bolt => self.effects.bolt_landed(spot),
+                                TowerShot::Blast => self.effects.blast_landed(spot),
+                            }
                         }
                     }
                 }
@@ -6452,6 +6575,14 @@ impl Running {
         if let Some(w) = &watched {
             news.push(w.as_str());
         }
+        // Kept up while catching up online, but what happened then is old
+        // news.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let mut sky = Vec::new();
+        self.weather_and_fire_news(&mut sky);
+        if !catching_up {
+            news.extend(sky);
+        }
         // Said together, so none hides another from the same tick.
         if !news.is_empty() {
             self.say(news.join(". "));
@@ -6459,6 +6590,27 @@ impl Running {
         for b in self.world.blows() {
             self.puppets.struck(b);
         }
+    }
+
+    /// A storm, fog or snow coming in or clearing, and woods catching fire
+    /// near the viewer's troops or base, since the last tick.
+    fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
+        let world = &self.world;
+        let side = self.sandbox.side;
+        news.extend(self.sky_news.weather(world.weather()));
+        let troops = (world.regiments.iter())
+            .filter(|r| r.owner == side)
+            .map(|r| (fx_to_f32(r.position.x), fx_to_f32(r.position.y)));
+        let base = (world
+            .structures()
+            .into_iter()
+            .flat_map(gc_sim::Structures::iter))
+        .filter(|b| b.owner == side)
+        .map(|b| [b.tile.0, b.tile.1, i32::from(b.width), i32::from(b.depth)]);
+        news.extend(
+            self.sky_news
+                .fires(world.tick_count(), world.fires(), troops, base),
+        );
     }
 
     /// Sparks and wounds for the blows soldiers landed on each other since
@@ -6563,6 +6715,35 @@ impl Running {
             let flight = field::Flight::new(v.launch_tick, v.from, v.aim, |p| {
                 terrain.cover(p) == gc_sim::Cover::Wood
             });
+            let lifted = |t: f32| start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t);
+            // A tower's bolt or blast is one round, straight at its aim.
+            if v.kind != TowerShot::Arrows {
+                let at = flight.from.lerp(flight.aim, flown);
+                let lift = lifted(flown) + flight.arc(v.kind, flown);
+                if v.kind == TowerShot::Bolt {
+                    self.instances.push(BoxInstance {
+                        pos: at.to_array(),
+                        facing: flight.dir.to_array(),
+                        size: field::BOLT_SIZE,
+                        color: field::BOLT_COLOR,
+                        lift,
+                    });
+                } else {
+                    for (size, color, up) in [
+                        (field::BLAST_SIZE, field::BLAST_COLOR, 0.0),
+                        (field::BLAST_FUSE_SIZE, field::BLAST_FUSE_COLOR, 0.3),
+                    ] {
+                        self.instances.push(BoxInstance {
+                            pos: at.to_array(),
+                            facing: flight.dir.to_array(),
+                            size,
+                            color,
+                            lift: lift + up,
+                        });
+                    }
+                }
+                continue;
+            }
             for k in 0..field::ARROWS_PER_VOLLEY.min(v.shots as usize) {
                 // A caught arrow stops in the branches over the archers or
                 // over its target, and hangs there until the volley lands.
@@ -6572,8 +6753,7 @@ impl Running {
                     facing: flight.dir.to_array(),
                     size: field::ARROW_SIZE,
                     color: field::ARROW_COLOR,
-                    lift: start.map_or(ARROW_HEIGHT, |top| top + (ARROW_HEIGHT - top) * t)
-                        + flight.arc(t),
+                    lift: lifted(t) + flight.arc(TowerShot::Arrows, t),
                 });
             }
         }
@@ -6780,9 +6960,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
-        // Below Conquest's top bar.
+        // Below Conquest's top bar, and the faction power buttons under it.
         let top = if self.match_started && self.showroom.is_none() {
-            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+            let powers = if !self.menu_open && self.offered_powers().next().is_some() {
+                gc_ui::powers::ROW_BOTTOM
+            } else {
+                0
+            };
+            (gc_ui::hud::TOP_BAR_HEIGHT + powers) as f32 * self.ui_scale()
         } else {
             0.0
         };
@@ -7066,6 +7251,9 @@ impl Running {
             buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             |s| {
                 let art = art.as_ref()?;
+                if art.looks.kit_for(s.building).is_some() {
+                    return Some(buildings::height_of(gc_sim::structures::Role::Bridge));
+                }
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
             |s| {
@@ -7828,9 +8016,51 @@ impl Running {
                 });
             }
         }
+        // The bridge tiles, so the timber kit rails only a deck's outer
+        // edges. Sorted for a binary search; empty on a map with no bridges.
+        let bridged = buildings::bridge_tiles(structures, &self.buildings);
+        let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
-            if let Some(model) = art.looks.model_of(&s) {
+            if let Some(kit) = art.looks.kit_for(s.building) {
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                let dir = (s.line.and_then(|line| buildings::wall_piece(line, s.tile)))
+                    .map_or(Vec2::X, |p| p.dir);
+                let tile = bridge_kit::Tile {
+                    s: &s,
+                    dir,
+                    level: self.buildings.level(s.building),
+                    joined: &|t| bridged.binary_search(&t).is_ok(),
+                    drawn: &|p: Vec2| ground(p.x, p.y),
+                    bed: &|p: Vec2| hm.height_at(p.x, p.y),
+                };
+                pieces.clear();
+                kit.pieces(&tile, &mut pieces);
+                let (shake, rise) = self.siege.jolt(s.handle);
+                for p in &pieces {
+                    // Shaken as one: every piece keeps the height it has
+                    // unshaken, wherever the jolt puts it.
+                    let pos = p.at + shake;
+                    let lift = ground(p.at.x, p.at.y) + p.lift + rise - ground(pos.x, pos.y);
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(p.model), at),
+                        art.clips.pose(p.model, Action::Idle, time),
+                    ) else {
+                        continue;
+                    };
+                    art.buckets[p.model * LODS + lod].push(SoldierInstance {
+                        pos: pos.to_array(),
+                        facing: p.facing.to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                }
+            } else if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let along = !self.buildings.is_bridge(s.building);
@@ -8971,16 +9201,16 @@ mod tests {
     #[test]
     fn the_lobby_offers_the_maps_gc_map_makes() {
         assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
-        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::GROWN);
+        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::MEASURED);
     }
 
     /// A new lobby's two-player battle is on grown land, as wild as the
     /// seed picks, at the standard size for two.
     #[test]
-    fn a_new_lobby_plays_on_grown_land() {
+    fn a_new_lobby_plays_on_measured_grown_land() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
         let wilds = FieldMap {
-            choice: gc_map::GROWN,
+            choice: gc_map::MEASURED,
             tiles: 512,
             seed: 0x6772_7562,
         };

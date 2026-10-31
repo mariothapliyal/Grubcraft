@@ -8,7 +8,9 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::orders::Step;
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, Trap, VEINS, WallTwist};
+use gc_sim::structures::{
+    Armour, Breaker, Quirk, Role, TowerAttack, TowerShot, Trap, VEINS, WallTwist,
+};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
     PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, TradePost,
@@ -69,6 +71,16 @@ impl Writer {
     pub fn handle(&mut self, h: RegimentHandle) {
         self.var(u64::from(h.index));
         self.var(u64::from(h.generation));
+    }
+
+    /// A drawn path: how many points, which are corners, then each point.
+    pub fn path(&mut self, p: &gc_sim::drawn::DrawnPath) {
+        self.u8(p.len);
+        self.var(u64::from(p.corners));
+        for &(x, y) in p.points() {
+            self.var(u64::from(x as u16));
+            self.var(u64::from(y as u16));
+        }
     }
 
     /// A building's handle, laid out as a regiment's.
@@ -134,6 +146,14 @@ impl Writer {
         self.u8(b.trap.kind());
         if let Trap::Nest(unit) = b.trap {
             self.var(u64::from(unit));
+        }
+        // Format 49: what a tower looses, and its quirk.
+        if let Some(a) = b.attack {
+            self.u8(a.shot as u8);
+            self.u8(a.quirk.kind());
+            if let Quirk::Raises(unit) = a.quirk {
+                self.var(u64::from(unit));
+            }
         }
     }
 
@@ -468,6 +488,29 @@ impl Writer {
                     }
                 }
             }
+            Command::DrawLine {
+                regiment,
+                building,
+                path,
+                width,
+            } => {
+                // A grown wall, with no worker, has a tag of its own.
+                match regiment {
+                    Some(r) => {
+                        self.u8(43);
+                        self.handle(r);
+                    }
+                    None => self.u8(44),
+                }
+                self.var(u64::from(building));
+                self.path(&path);
+                self.u8(width);
+            }
+            Command::PlanLine { building, path } => {
+                self.u8(45);
+                self.var(u64::from(building));
+                self.path(&path);
+            }
             Command::PlanWall { building, from, to } => {
                 self.u8(31);
                 self.var(u64::from(building));
@@ -641,6 +684,23 @@ impl<'a> Reader<'a> {
         })
     }
 
+    /// A drawn path, as [`Writer::path`] writes it.
+    pub fn path(&mut self) -> Option<gc_sim::drawn::DrawnPath> {
+        let len = usize::from(self.u8()?);
+        if len > gc_sim::drawn::MAX_POINTS {
+            return None;
+        }
+        let mut p = gc_sim::drawn::DrawnPath {
+            len: len as u8,
+            corners: self.var_as()?,
+            ..Default::default()
+        };
+        for k in 0..len {
+            p.points[k] = (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16);
+        }
+        Some(p)
+    }
+
     pub fn structure(&mut self) -> Option<StructureHandle> {
         Some(StructureHandle {
             index: self.var_as()?,
@@ -706,6 +766,8 @@ impl<'a> Reader<'a> {
                     damage: self.var_as()?,
                     reload_ticks: self.var_as()?,
                     shots: self.u8()?,
+                    shot: TowerShot::Arrows,
+                    quirk: Quirk::None,
                 })
             } else {
                 None
@@ -736,6 +798,18 @@ impl<'a> Reader<'a> {
                     0
                 };
                 b.trap = Trap::from_kind(kind, unit)?;
+            }
+            if format >= 50
+                && let Some(a) = &mut b.attack
+            {
+                a.shot = TowerShot::from_u8(self.u8()?)?;
+                let kind = self.u8()?;
+                let unit = if kind == Quirk::Raises(0).kind() {
+                    self.var_as()?
+                } else {
+                    0
+                };
+                a.quirk = Quirk::from_kind(kind, unit)?;
             }
         } else if b.flags & VEINS != 0 {
             // Before fields were data, root-veins reached 15 tiles from a
@@ -981,6 +1055,20 @@ impl<'a> Reader<'a> {
                 building: self.var_as()?,
                 from: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 to: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+            },
+            tag @ (43 | 44) => Command::DrawLine {
+                regiment: if tag == 43 {
+                    Some(self.handle()?)
+                } else {
+                    None
+                },
+                building: self.var_as()?,
+                path: self.path()?,
+                width: self.u8()?,
+            },
+            45 => Command::PlanLine {
+                building: self.var_as()?,
+                path: self.path()?,
             },
             31 => Command::PlanWall {
                 building: self.var_as()?,
@@ -1247,6 +1335,30 @@ mod tests {
                 building: 5,
                 from: (3, 9),
                 to: (9, 3),
+            },
+            Command::DrawLine {
+                regiment: Some(RegimentHandle {
+                    index: 3,
+                    generation: 2,
+                }),
+                building: 7,
+                path: gc_sim::drawn::DrawnPath::new(&[(1, 3), (-9, 40), (61, 22)], |k| k == 1)
+                    .unwrap(),
+                width: 3,
+            },
+            Command::DrawLine {
+                regiment: None,
+                building: 2,
+                path: gc_sim::drawn::DrawnPath::straight((4, 4), (9, 2)),
+                width: 1,
+            },
+            Command::PlanLine {
+                building: 5,
+                path: gc_sim::drawn::DrawnPath::new(
+                    &[(1, 1), (9, 1), (9, 9), (1, 9), (1, 1)],
+                    |_| false,
+                )
+                .unwrap(),
             },
             Command::RaiseWall {
                 structure: StructureHandle {

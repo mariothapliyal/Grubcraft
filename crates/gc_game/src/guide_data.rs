@@ -27,6 +27,9 @@ pub const MAX_TAGLINE: usize = 80;
 /// The most characters in one building tip, so the tips card stays short.
 #[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_TIP: usize = 100;
+/// The most characters in a building's blurb, its line on the build menu.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const MAX_BLURB: usize = 120;
 
 /// What the roster files say about hiring a hero (docs/17 "Shared rules").
 /// They have no field for it yet, so the Guide labels it a design value.
@@ -303,6 +306,9 @@ pub struct GuideFile {
 #[serde(deny_unknown_fields)]
 pub struct BuildingText {
     pub name: String,
+    /// One line on the build menu's tooltip: what it does, what it unlocks
+    /// or trains, and when to build it.
+    pub blurb: String,
     pub summary: String,
     /// (what, benefit): the main building's tier upgrade (named by the
     /// building it makes) or "Research".
@@ -326,6 +332,22 @@ pub type TipBook = HashMap<String, Vec<(Icon, String)>>;
 
 fn tips_of(text: &BuildingText) -> Vec<(Icon, String)> {
     text.tips.iter().map(|t| (t.icon, ascii(&t.text))).collect()
+}
+
+/// A building's blurb, keyed by the building's name.
+pub type BlurbBook = HashMap<String, String>;
+
+/// Every building's blurb, for the build menu's tooltips. Building names are
+/// unique across factions (a test checks).
+pub fn blurb_book() -> BlurbBook {
+    let mut book = BlurbBook::new();
+    for src in EMBEDDED.guides {
+        let file = parse_guide(src).unwrap_or_else(|e| panic!("data/guide: {e}"));
+        for b in &file.buildings {
+            book.insert(b.name.clone(), ascii(&b.blurb));
+        }
+    }
+    book
 }
 
 /// Every faction's building tips, for the game to show while placing and
@@ -519,10 +541,10 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
             "Drawn like a wall at any angle; blocks walking, and troops of yours within 2 tiles take less damage".into()
         }
         BuildingFlag::Line if b.role == Role::Bridge => {
-            "Drawn straight across water, bank to bank; anyone can cross it, and troops on a tile that falls drop in the river".into()
+            "Drawn bank to bank across water along a gentle curve, three to five tiles wide ([ and ]); anyone can cross it, and troops on a tile that falls drop in the river".into()
         }
         BuildingFlag::Line => {
-            "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
+            "Drawn wall: drag it out as a smooth curve, or click corners for straight sides; paid and built a tile at a time".into()
         }
         BuildingFlag::Pass => {
             "Your side walks through it; without power it drops and anyone can".into()
@@ -652,7 +674,11 @@ fn stat_facts(facts: &mut Facts, s: &Stats, hero: bool) {
     if s.never_routs || hero {
         fact(facts, "Morale", "Never routs");
     } else {
-        fact(facts, "Morale", s.morale.to_string());
+        let holds = match gc_sim::morale::grade_break(s.morale) {
+            100 => String::new(),
+            at => format!(", holds until about {at}% strength"),
+        };
+        fact(facts, "Morale", format!("{}{holds}", s.morale));
     }
     let mut traits = Vec::new();
     if s.mass != Mass::Medium {
@@ -1335,12 +1361,15 @@ mod tests {
         for (name, tips) in &book {
             assert!(!tips.is_empty(), "{name} has no tips");
         }
+        let blurbs = blurb_book();
+        assert_eq!(blurbs.len(), total, "a building has no blurb");
     }
 
     #[test]
     fn guide_text_is_plain_ascii_and_fits() {
         for g in guides() {
             for b in &g.buildings {
+                check_text(&b.name, &b.blurb, MAX_BLURB);
                 check_text(&b.name, &b.summary, MAX_SUMMARY);
                 assert!(
                     (2..=3).contains(&b.tips.len()),
@@ -1557,7 +1586,7 @@ mod tests {
             .collect();
         assert_eq!(evo.len(), 4);
         let spit = evo.iter().find(|u| u.name == "Spitters").unwrap();
-        assert_eq!(spit.cost, "60 Grub, 20 Marrow, 15 s in the cocoon");
+        assert_eq!(spit.cost, "50 Grub, 15 Marrow, 15 s in the cocoon");
         // A unit.
         let yari = find(&d, 0, false, "Yari Ashigaru");
         assert_eq!(fact_of(&yari.facts, "Cost"), "120 Grub");

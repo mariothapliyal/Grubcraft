@@ -15,8 +15,18 @@
 //!   for the rest of the battle when its side's champion wins or loses
 //!   (see [`crate::champions`]).
 //!
-//! Below [`WAVER_BELOW`] points a regiment is *wavering* and deals less
-//! damage. At zero it *routs*: it breaks off, ignores orders and runs from
+//! Nerve alone can't break a regiment that still has most of its men
+//! (docs/29, "Holding until bloodied"). Each regiment has a *breaking
+//! point*, a share of its full hit points rolled when it is raised (see
+//! [`breaking_point`]): above it, its morale holds at the edge of breaking
+//! however hard it is pressed, and it neither wavers nor routs. Shock works
+//! by killing men: a charge or a flank attack cuts it down to its breaking
+//! point sooner, and with its nerve spent it breaks the moment it gets
+//! there. Below its breaking point its losses cost twice the nerve.
+//!
+//! Below [`WAVER_BELOW`] points, and within [`WAVER_MARGIN`] of its
+//! breaking point, a regiment is *wavering* and deals less damage. At zero
+//! it *routs*: it breaks off, ignores orders and runs from
 //! the enemy, a little slower than it marches. Its rout shakes friends
 //! nearby and heartens the enemies who broke it. After [`RALLY_SECONDS`]
 //! with no enemy near, it rallies, wavering. A regiment that routs again
@@ -29,12 +39,33 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{BATTLE_PACE_PERCENT, Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals};
+use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals, veterancy};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
-/// Below this many points a regiment wavers.
+/// Below this many points a regiment wavers, once it is near its breaking
+/// point.
 pub const WAVER_BELOW: i16 = 25;
+/// Breaking points, in percent of full hit points, by the unit's morale
+/// stat: workers and other non-fighters (stat up to [`WORKER_MORALE`])
+/// can break at any strength; levies (under [`LINE_MORALE`]) at 45%, line
+/// troops at 40%, elite troops ([`ELITE_MORALE`] and up) at 35%.
+pub const WORKER_MORALE: u8 = 30;
+pub const LINE_MORALE: u8 = 55;
+pub const ELITE_MORALE: u8 = 70;
+pub const LEVY_BREAK: u8 = 45;
+pub const LINE_BREAK: u8 = 40;
+pub const ELITE_BREAK: u8 = 35;
+/// Each regiment's breaking point is rolled up to this many points either
+/// way when it is raised.
+pub const BREAK_SPREAD: u8 = 5;
+/// Its side's general near it lowers its breaking point this much.
+pub const LED_BREAK: u8 = 5;
+/// No fighting regiment ever routs above this share of its hit points.
+pub const BREAK_CAP: u8 = 50;
+const _: () = assert!(LEVY_BREAK + BREAK_SPREAD <= BREAK_CAP);
+/// A regiment wavers only within this many points above its breaking point.
+pub const WAVER_MARGIN: u8 = 10;
 /// Percent of its usual damage a wavering regiment deals.
 pub const WAVERING_DAMAGE_PERCENT: u64 = 85;
 /// Tenths of a point lost per percent of full strength lost since the last
@@ -69,8 +100,7 @@ pub const WHY_PINNED: u16 = 1 << 2;
 pub const WHY_OUTNUMBERED: u16 = 1 << 3;
 /// Lost many men in the last second.
 pub const WHY_LOSSES: u16 = 1 << 4;
-/// Down to half strength or less (its breaking point, once the morale
-/// redesign lands).
+/// Down to its breaking point (see [`breaking_point`]): it can rout.
 pub const WHY_BLOODIED: u16 = 1 << 5;
 /// A friend nearby broke and ran.
 pub const WHY_ALLY_BROKE: u16 = 1 << 6;
@@ -142,6 +172,52 @@ pub(crate) fn fresh(stats: &UnitStats) -> i16 {
     i16::from(stats.morale) * SCALE
 }
 
+/// The breaking point of a unit with this morale stat before the roll, in
+/// percent of full hit points (100: it can break at any strength).
+pub fn grade_break(morale: u8) -> u8 {
+    match morale {
+        m if m <= WORKER_MORALE => 100,
+        m if m < LINE_MORALE => LEVY_BREAK,
+        m if m < ELITE_MORALE => LINE_BREAK,
+        _ => ELITE_BREAK,
+    }
+}
+
+/// The breaking point of a regiment of this unit raised in pool slot
+/// `index` with `generation`, in percent of its full hit points: its grade's
+/// (see [`LEVY_BREAK`]), moved up to [`BREAK_SPREAD`] either way by a roll
+/// from its handle, so every machine and replay gives it the same one.
+pub(crate) fn breaking_point(stats: &UnitStats, index: u32, generation: u16) -> u8 {
+    let base = grade_break(stats.morale);
+    if base >= 100 {
+        return base;
+    }
+    let h = crate::fire::splitmix(u64::from(index) << 16 | u64::from(generation));
+    let roll = (h % (2 * u64::from(BREAK_SPREAD) + 1)) as u8;
+    base + roll - BREAK_SPREAD
+}
+
+/// Regiment `i`'s breaking point as it stands: its own, lowered by its
+/// veteran rank (see [`crate::veterancy`]) and while its side's general is
+/// near it.
+pub(crate) fn break_at_now(regs: &Regiments, i: usize) -> u8 {
+    // Workers break at any strength, general or rank or not.
+    let base = regs.break_at[i];
+    if base >= 100 {
+        return base;
+    }
+    let led = if regs.led[i] { LED_BREAK } else { 0 };
+    let ranks = veterancy::RANK_BREAK * veterancy::rank_of(regs, i);
+    base.saturating_sub(led + ranks)
+}
+
+/// Regiment `i`'s hit points left, in percent of its full strength's.
+fn strength_percent(regs: &Regiments, stats: &UnitStats, i: usize) -> u32 {
+    let full = regs.full_hp(i, stats);
+    let hp = &regs.hp[i * crate::formation::MAX_MODELS as usize..][..usize::from(regs.models[i])];
+    hp.iter().map(|&h| u32::from(h)).sum::<u32>() * 100 / full
+}
+
 /// Check every regiment whose turn it is this tick.
 pub(crate) fn update(
     regs: &mut Regiments,
@@ -204,13 +280,18 @@ fn check(
     if regs.losses[i] >= 2 && i32::from(regs.losses[i]) * 100 >= full * HEAVY_LOSS_PERCENT {
         why |= WHY_LOSSES;
     }
-    // Below half strength it is bloodied (the breaking point of the morale
-    // redesign will take over this reason when it lands).
-    if i32::from(regs.models[i]) * 2 < full {
+    // How far it is from breaking: its general near it steadies it.
+    let strength = strength_percent(regs, stats, i);
+    let break_at = u32::from(break_at_now(regs, i));
+    let bloodied = strength <= break_at;
+    // Down to its breaking point: it can rout now.
+    if bloodied {
         why |= WHY_BLOODIED;
     }
-    // Wounds shake it as much as deaths: hit points lost, counted in men.
-    let bled = i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT;
+    // Wounds shake it as much as deaths: hit points lost, counted in men,
+    // twice over once it is down to its breaking point.
+    let bled =
+        i32::from(regs.bled[i]) * 100 * CASUALTY_TENTHS_PER_PERCENT * if bloodied { 2 } else { 1 };
     let mut tenths = -(bled / (full * i32::from(stats.hp_per_model.max(1))));
     if regs.engaged[i].is_some() {
         if i32::from(regs.models[i]) * 2 < full {
@@ -243,9 +324,9 @@ fn check(
             0
         };
     let morale = (i32::from(regs.morale[i]) + tenths).clamp(0, cap.max(1)) as i16;
-    // Steadfast, or summoned (see [`crate::powers`]), it holds at the edge
-    // of breaking.
-    let morale = if regs.cant_rout(i) {
+    // Above its breaking point, Steadfast, or summoned (see
+    // [`crate::powers`]), it holds at the edge of breaking.
+    let morale = if !bloodied || regs.cant_rout(i) {
         morale.max(1)
     } else {
         morale
@@ -259,17 +340,14 @@ fn check(
         why
     };
     if morale > 0 {
-        regs.morale_state[i] = steady_or_wavering(morale);
+        regs.morale_state[i] =
+            if morale < WAVER_BELOW * SCALE && strength <= break_at + u32::from(WAVER_MARGIN) {
+                MoraleState::Wavering
+            } else {
+                MoraleState::Steady
+            };
     } else {
         rout(regs, combat, stances, vision, i, tick, map_tiles);
-    }
-}
-
-fn steady_or_wavering(morale: i16) -> MoraleState {
-    if morale < WAVER_BELOW * SCALE {
-        MoraleState::Wavering
-    } else {
-        MoraleState::Steady
     }
 }
 
@@ -333,7 +411,11 @@ fn adjust(morale: &mut i16, state: &mut MoraleState, reasons: &mut u16, points: 
     if points < 0 {
         *reasons |= why;
     }
-    *state = steady_or_wavering(*morale);
+    // Heartened past wavering, it steadies at once; whether a knock sets it
+    // wavering depends on its strength, which its own next check weighs.
+    if *morale >= WAVER_BELOW * SCALE {
+        *state = MoraleState::Steady;
+    }
 }
 
 /// Every friend of regiment `i` within `tiles` of it (not `i` itself) that

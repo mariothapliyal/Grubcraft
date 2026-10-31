@@ -2,7 +2,7 @@
 
 Keep this file current: any PR that changes something a player sees updates it in the same PR, like the in-game guides.
 
-Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-30). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
+Answer "how do I do X in the game?" from this file first. Facts come from `docs/` and the code (checked 2026-10-31). Section 8 lists what is not built yet; check it before promising a feature. Conflicts between sources are at the end of section 8.
 
 Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment** = a block of soldiers. **Worker** = Hands, Gnawers, Tuners, Ledger Clerks.
 
@@ -31,8 +31,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `A` Work plans (build your planned walls). `F1` selects the next idle worker; with none idle, `F1` opens the Marshal's Scroll.
 
 **Wall tool** (armed from the build menu)
-- Click a start, click again for each piece; right-click or `Esc` ends. `Shift` locks 15-degree steps.
-- `B` plans a blueprint (paid later). `O` ring tool: click corners; `Enter` or the first corner closes it.
+- Press and drag to draw a smooth curve; let go to order it. Click a start, click again for each sharp corner; right-click or `Esc` ends. `Shift` keeps lines straight, in 15-degree steps.
+- Bridge: drag bank to bank (gentle curve, no corners); `[` and `]` pick narrow, standard or wide (3, 4 or 5 tiles).
+- `B` plans a blueprint (paid later). `O` ring tool: click corners, or drag round for a smooth loop; `Enter` or the first corner closes it.
 
 **Selected building** (Conquest card)
 - The grid shows what it trains (`Q` first), with prices. A queue holds five; clicking the queue removes the last one.
@@ -78,7 +79,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 250 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 350 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 
@@ -89,16 +90,17 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - A foundation starts at 10% HP. Up to four workers build it (the first full speed, each extra half). Nothing works until finished.
 - Cancel refunds 75%. A destroyed building refunds nothing. Overgrown ground is cleared first and paid when ordered.
 - Choir buildings (except Spire, Resonator, Siphon) must stand in a Choir field. Tier: the main-building tier needed to place it.
+- Hover a build-menu button for its tooltip: a one-line blurb (what it does, what it unlocks or trains, when to build it), then its key. Blurbs live in `data/guide/*.ron` as `blurb`.
 
 **Main building tiers**
 - Clans: Clan Hall, Castle Keep, Daimyo's Citadel. Brood: Hive, Great Hive, Throne Hive. Choir: Spire, Cathedral, Grand Organ. Concord: Counting House, Exchange, Grand Bourse.
 - Upgrade: select the finished main building, press `V`. It keeps working while upgrading. While upgrading the same slot reads "Cancel" (75%). Gates upgrade with `V` to "Gatehouse" (Yagura Gatehouse, Gate of Debts, Chitin Maw). The Choir builds no gates.
 
 **Buildings per faction** (tier, cost Grub/Marrow)
-- **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Palisade T1 10/0 per tile; Gate T1 60/0.
-- **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
-- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
-- **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
+- **Ember Clans:** Clan Hall T1 400/0; Castle Keep T2 300/100; Daimyo's Citadel T3 600/250; Outpost Hall T1 250/0 (cheap, trains nothing); Farmstead T1 80/0; Granary T1 100/0; Dojo T1 150/0; Stables T2 180/40; Ember Workshop T1 160/0 (rams; rocket carts at T2); Kite Loft T2 160/60; Ancestor Shrine T1 150/0; Forge T1 175/0; Watchtower T1 125/0; Ballista Yagura T1 175/0 (bolt tower); Horoku Tower T2 200/50 (blast tower); Palisade T1 10/0 per tile; Gate T1 60/0.
+- **Brood:** Hive T1 300/0; Great Hive T2 300/100; Throne Hive T3 600/250; Pustule T1 40/0; Hatchery Pit T1 120/0; Chrysalis Chamber T2 150/50 (evolutions); Moth Roost T2 150/40; Gorge T2 180/60; Spine Mound T1 100/0; Harpoon Maw T1 160/0 (bolt tower); Acid Bloater T2 190/50 (blast tower); Queen's Chamber T1 140/0; Resin Ridge T1 8/0 per tile; Maw Gate T1 55/0.
+- **Shard Choir:** Spire T1 400/0; Cathedral T2 300/100; Grand Organ T3 600/250; Resonator T1 175/0; Siphon T1 175/0; Forge of Facets T1 160/0; Harmonics Lab T1 175/0; Skyglass Loom T2 160/50; Bell Tower T1 150/0; Prism Lance T1 190/0 (bolt tower, needs power); Chord Obelisk T2 200/50 (blast tower, needs power); Sanctum of Echoes T1 150/0; Light Curtain T1 10/0 per tile.
+- **Carrion Concord:** Counting House T1 400/0; Exchange T2 300/100; Grand Bourse T3 600/250; Waystation T1 200/0; Tenement T1 80/0; Reliquary T1 75/0; Ossuary T1 150/0; Guildhall T1 160/0; Lantern Spire T2 160/50; Tollgate T1 140/0; Collector's Bolt T1 185/0 (bolt tower); Corpse Catapult T2 210/50 (blast tower); Vault of Names T1 150/0; Bone Fence T1 12/0 per tile; Iron Gate T1 70/0.
 
 **Walls** [docs/26-fortifications.md]
 - Level 1 cheap; level 2 adds a walkway (about 15 Grub a tile more); level 3 adds battlements and the faction twist (20 Grub + 5 Marrow a tile more, needs tier 2).
@@ -108,7 +110,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 ## 4. Factions [docs/03-factions.md]
 
 - **Ember Clans** (Shogun): Hands carry Grub to the hall or a Granary. **Honor** meter: +5 when an enemy regiment routs against yours, +10 for a win while outnumbered, +2 a minute per Shrine held, -5 when yours routs. Spent on Edicts. Tight formation gives +15% defence when still.
-- **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Tier-1 regiments evolve on the field (15 s cocoon).
+- **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Gnawers fill a load in 87% of the time (`gather_percent: 115`). A swarm: Brood regiments are cheap and each soldier is weak, so a Brood army has about twice the soldiers of an equal-worth one. Tier-1 regiments evolve on the field (15 s cocoon).
 - **Shard Choir** (chords): Each Resonator tunes one seep with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +30% Grub to the seeps they tune there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
 - **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 37 Grub + 1.1 per tile of straight-line distance (about 81 at 40 tiles). **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
 - **Heroes:** up to three per faction, not in the game yet (section 8).
@@ -118,32 +120,49 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
+- **Routing:** a regiment can't waver or rout until it is down to its breaking point: about 45% strength for levies (morale under 55), 40% for line troops, 35% for elite (morale 70+), give or take 5, and 5 lower with its general near. Workers can break at any strength. Charges and flank attacks break regiments by killing men faster. The tick on a regiment card's health bar marks it.
+- **Veteran ranks:** a regiment earns ranks by killing enemy soldiers, weighed by their hit points against its own: rank 1 at its own worth killed, rank 2 at twice, rank 3 at four times; volley kills count half. Each rank: +10% damage, breaking point 5 lower. Ranks never go. Gold chevrons over the banner, on the card and on the selection banner ("Veteran rank 2").
 - **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Falling back, Running), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
+- Marching pace: woods 85% (heavy units 70%), soft ground 75% (heavy 60%), wading 60%. Routes go round woods and soft ground when that is quicker. Friendly blocks keep about half a tile apart and step round a friend standing in the way; only overlapping a friend ahead slows you, and overlapping past a tile throws both into disorder.
 - Melee hits buildings with the front rank; blows on buildings always land. Fortified buildings take half from regiments. Siege (rams, Mausoleum Engine) take x3.0 vs Fortified. Right-click an enemy building to attack it.
 - Right-click an enemy with a tower selected to focus it.
 - **Drawn walls:** wall tool; built tile by tile; snaps to wall ends, towers and gates within 1.5 tiles.
 - **Gates:** Auto (opens for you and allies), Locked (shut to all), Open (held). Enemy routes treat a shut gate as wall.
 - **Manning:** with foot or archers, right-click your raised (level 2 or 3) wall to man it. Right-click an enemy raised wall to climb ladders; `Ctrl`+right-click sieges it instead.
-- **Bridges** (straight, over water, two tiles wide, 6 Grub a tile, so 12 Grub a step along the span): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are drawn as the same planked timber bridge with lanterns and your team's cloth for now.
+- **Bridges** (drawn bank to bank over water along a gentle curve, three to five tiles wide, 3 Grub a tile; the land remembers every line): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are built from the timber kit, tile by tile: a planked deck (patched, weathered, broken when badly hurt), rope rails and posts on its outer edges, log cribs on the banks and timber piers in the water reaching the river bed; level 2 adds braced piers, timber rails and lantern posts; level 3 stone piers with cutwaters. Raise a finished bridge with `U` like a wall: level 2 braced piers (3 Grub, 3 s a tile, 600 hp; tier 1), level 3 reinforced piers (4 Grub + 1 Marrow, 4 s a tile, 1000 hp; tier 2). Names: Braced Timber Bridge / Stone-Footed Bridge, Braced Bone / Iron-Shod Causeway, Braced / Anchored Glass Span, Ribbed / Rooted Chitin Span. The AI raises its own bridges when rich.
 - **Field works:** Stakes and Barricades, drawn with the wall tool. Spearmen and archers plant stakes with `C` (about 10 s).
 - **Hidden traps** (one per faction; only its owner sees it): Spike Pit (Clans), Grave Hands (Concord), Shard Mine (Choir), Burrow Nest (Brood).
-- **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32). Bolt and Blast towers are not built.
+- **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32).
+- **Bolt towers** (tier 1, no Marrow; range 32 to 34): one heavy bolt every 5 s (6 s for Harpoon Maw) that runs down a single file of soldiers, never killing deeper than the target's ranks. Twice as hard on big (heavy) soldiers: monsters, riders, engines. Shoot siege first, then big soldiers, then whoever attacks your buildings, then the nearest. A shield wall does not stop a bolt. Weak against wide lines of small soldiers; strong against columns, monsters and cavalry.
+  - Ember Clans: Ballista Yagura (175), no quirk.
+  - Carrion Concord: Collector's Bolt (185): each soldier it kills pays you 3 Grub.
+  - Shard Choir: Prism Lance (190, needs power): the beam runs on through up to 3 more regiments in line behind.
+  - Brood: Harpoon Maw (160, range 32): drags the regiment it hits 3 tiles toward it and halts it, unless that regiment is in melee or on a wall.
+- **Blast towers** (tier 2, 50 Marrow; range 36): six shots every 6 s (Chord Obelisk 5 s) into the fullest enemy block in range; the more packed, the harder (up to 1.75x). Half splashes on up to 4 other enemy regiments within 2 tiles of the target. Siege first. They cannot hit anything within 8 tiles of them, so guard them with troops. A shield wall does not stop them.
+  - Ember Clans: Horoku Tower (200 + 50): fire-pots leave burning ground (4 tiles across) for 8 s and set woods and scrub alight.
+  - Carrion Concord: Corpse Catapult (210 + 50): every 10 soldiers it kills rise beside it as 10 Bone Pikes, yours for 30 s.
+  - Shard Choir: Chord Obelisk (200 + 50, needs power): every regiment its burst hits is thrown into disorder.
+  - Brood: Acid Bloater (190 + 50): leaves an acid pool (4 tiles across) for 6 s.
+- Burning ground and acid hurt only the owner's enemies, once a second, and shake morale like fire.
 
 ## 6. World: weather, seasons, fire, floods, rivers [docs/32-changing-land.md, docs/38-living-waterways.md]
 
 - **Time of day** (lobby): Golden hour (17:00), Noon, Overcast (12:00), Dusk (18:00), Night (23:00).
-- **Weather** (lobby): Fair, Changing (a new spell every 3 to 6 min), Rain, Snow, Fog. Fog cuts sight up to 60%; snow 30%; rain 20%; night 45%. Snow slows marching up to 15%. The top bar shows the cut (for example "Fog: sight 40%").
+- **Weather** (lobby): Fair, Changing (a new spell every 3 to 6 min; the default since 2026-10-30), Rain, Snow, Fog. Fog cuts sight up to 60%; snow 30%; rain 20%; night 45%. Snow slows marching up to 15%. The top bar shows the cut (for example "Fog: sight 40%").
+- **Weather and fire news:** the news line says when rain (strength 80+), a storm (rain 192+, where lightning starts; rain again under 152), snow or fog comes in, and when it clears (under 40), once each way. Woods or scrub burning within 10 tiles of your buildings or regiments: "Fire! It is spreading near your base" (or "troops"), each once as it comes near, then not again for 45 s. Not told while catching up online. The weather a match starts in isn't announced. Code: `gc_game/src/sky_news.rs`.
 - **Night:** an unlit regiment in the open is spotted only within 6 tiles (12 when marching). Torches (`X`) light 10 tiles and make a regiment visible.
-- **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed).
+- **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed). The land shows it: straw-coloured grass in summer, gold, orange and red broadleaf woods in autumn, a thin snow and ice on the frozen water in winter (`--season NAME` previews one).
 - **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled (flames only).
 - **Mud and floods:** long rain soaks ground into mud (slow, no charges). Long heavy rain swells rivers and shuts the fords; troops caught on a shut ford lose 12 HP a second and are moved to the bank.
 - **Rivers carry their own water [docs/39]:** each river is cut into 16-tile stretches. Rain on a river fills them and runs on downstream, so a long river's lower fords flood most and drain last.
 - **Reading the rivers [docs/39]:** on grown maps every river has a name ("the Brackwater"). The top bar shows the worst river you can see: up (wading in it is a quarter slower), in flood (its fords shut) or bursting its banks, and whether it is rising or falling. When you see a river rising in flood upstream, the river watch tells you when its crest reaches a ford ("The Brackwater is rising upriver: its crest reaches a ford in about 40 s"). The river's water is drawn as high as it stands.
 - **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a flood front down a river at 6 tiles a second; each ford shuts as it arrives (upper fords first) and opens once the water falls. Sizes: Minor (no ford shuts; 35 in 100), Flood (45), Major (16), Catastrophic (4); wet ground and rain on spring snow make them bigger, a dry summer smaller. Warnings: 8 s before the first ford ("A flash flood is coming down the river"); a Major is told to everyone 15 s ahead and a Catastrophic one 30 s ahead. Troops in a ford the front shuts are swept 10 tiles downstream and 30% drown.
+- **Floodplains [docs/39, stage 2]:** land within 6 tiles of a river and under a tile above its line is the river's floodplain, and the river's own water rises over it. Once the river stands over it, it is wading ground (slow, no charges; a quarter slower again once the water is 0.1 of a tile deep over it; the selection panel says "In flood water"). Water doesn't cross higher ground, so low land behind a ridge stays dry. Where the water stands 0.35 of a tile over it, it shuts like a flooded ford: troops there are hurt each second and sent to dry ground, swept 10 tiles downstream (30% drown) while a flood front is over it, and buildings there lose 2% of their hit points a second and fall to rubble at none (bridges don't). Troops manning a wall there are safe. It opens again once the water is 0.1 of a tile lower. Low meadows go under in a Flood; higher land only in a Major or Catastrophic flood, or a long rain on a full river.
 - **Currents:** wading troops drift downstream; going upstream is slower.
+- **Trails and shores [docs/41 step 3]:** grown maps have worn trails between the bases, villages, camps and standing stones. They are open ground and cross rivers at the fords. River bends have gravel bars and sunny lake shores have sand (both open). Shaded lake shores have reed beds, which are tall grass to hide in.
 - **Clearing** (`S`): scrub 3 s, woods 8 s (3 Grub of timber), thicket 15 s (5 Grub).
 
 ## 7. Game modes and how to start them [docs/06-game-modes.md, docs/08-ui-ux.md, crates/gc_game/src/main.rs]
@@ -152,7 +171,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4) / `land-mixed` (any lobby map's name). Made maps: **Land: Random** (the default), **Plains**, **Mixed** and **Wild** on grown land with rivers, fords and woods (docs/41), and the older **Classic: Random**, **Plains**, **Mixed** and **Wild**. Both are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
-- **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
+- **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI. New lobbies start on **Measured: Random**: grown land with no mirrored half, starts placed so each one's walk to its nearest enemy is within 10% of the others' (any way the lobby hands starts out). Also offered: Land (mirrored grown land), Classic and Random maps. [docs/41]
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000; build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. Win by rout or victory points. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
@@ -164,7 +183,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Built** (confirmed in code or marked "Built" in the docs)
 - Conquest economy: workers, buildings, upgrades, supply, upkeep, tempo, Annihilation, Titan's Heart, fog of war, seasons, weather.
 - Battle: formations, Brace, Fall back, army shapes, control groups, ride view, Commander View, sieges, fire, floods and flash floods, currents, summer fords, ambushes, night torches.
-- Fortifications: towers fire; drawn walls for all factions; blueprints and ring tool; wall levels 1 to 3; manning; ladders; gates and gatehouses; bridges; field works; Plant stakes; hidden traps.
+- Fortifications: towers fire; Bolt and Blast towers (eight, two per faction; see section 5); drawn walls for all factions; blueprints and ring tool; wall levels 1 to 3; manning; ladders; gates and gatehouses; bridges; field works; Plant stakes; hidden traps.
 - Factions: Honor and its Edicts (Ancestral Return needs a Shrine), Brood larvae and root-veins, Choir chords and Resonance (Overclock, Phase Shift), Concord caravans.
 - Building looks: the 46 faction buildings use the stronger 2026-10-23 bake with surface detail (docs/31); gatehouses keep their first bake.
 - Interface: top bar, command grid, build menu, tooltips, Marshal's Scroll, Guide, minimap, idle-worker button, hand-over to an ally.
@@ -174,7 +193,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Orders: Hold, Skirmish, Run, Column and Wedge; double-click select by type; `Tab` sub-groups.
 - Concord Tithe contracts (Raise the Bound, Indenture, Foreclose, Hire Militia); Choir Silence the Chord.
 - Research at Granary, Forge and Harmonics Lab (costs not designed yet).
-- Bolt and Blast towers; tower levels; Walled Town defence bonus (no "built" marker).
+- Tower levels; Walled Town defence bonus (no "built" marker).
 - Tuners' repair (10 HP/s).
 - Titan Events (Tremor, Marrow Bloom, Heartbeat, Gut Fog): no code found for Heartbeat, Marrow Bloom or Gut Fog; no lobby toggle found.
 - Grubfolk market, rumours and mercenaries; allied resource trading (10% tax).

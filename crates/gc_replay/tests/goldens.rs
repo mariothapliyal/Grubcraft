@@ -85,6 +85,8 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::FocusTower { .. } => "FocusTower",
         Command::SetGate { .. } => "SetGate",
         Command::BuildWall { .. } => "BuildWall",
+        Command::DrawLine { .. } => "DrawLine",
+        Command::PlanLine { .. } => "PlanLine",
         Command::PlanWall { .. } => "PlanWall",
         Command::DropPlan { .. } => "DropPlan",
         Command::WorkPlan { .. } => "WorkPlan",
@@ -95,7 +97,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::PlantStakes { .. } => "PlantStakes",
         Command::Burn { .. } => "Burn",
     };
-    const KINDS: [&str; 39] = [
+    const KINDS: [&str; 41] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -126,6 +128,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "FocusTower",
         "SetGate",
         "BuildWall",
+        "DrawLine",
+        "PlanLine",
         "PlanWall",
         "DropPlan",
         "WorkPlan",
@@ -160,23 +164,23 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    63,
+    69,
     &[
-        ("conquest-ribcage-1v1", 0x26e5f3a2594d66e9),
-        ("field-1v1", 0x802f934905d3f03a),
-        ("field-2v2", 0x464cad36eb348e0a),
-        ("field-8000pt-2v2", 0xa7ea9d287b81406b),
-        ("field-brace-1v1", 0xd08e96d6b105668c),
-        ("field-champions-1v1", 0x7e865b8ece2f88c3),
-        ("field-deploy-1v1", 0x9ac5f6ceceb52d48),
-        ("field-fire-1v1", 0x22982dab806a0186),
-        ("field-flood-1v1", 0x83c9a03b8641ed2c),
-        ("field-handover-2v2", 0x456cc0e465ec4ac0),
-        ("field-night-rain-1v1", 0x8e649c9afe33636f),
-        ("field-orders-1v1", 0x5337545a476e7660),
-        ("field-river-storm-1v1", 0x3236f8336d27d194),
-        ("field-woods-1v1", 0x91b760225783ae8b),
-        ("sandbox-tuning", 0x88c6e3ca722fc722),
+        ("conquest-ribcage-1v1", 0x0039b241b6691cb2),
+        ("field-1v1", 0x6dece8f8e379e580),
+        ("field-2v2", 0x6d29da147a8ea169),
+        ("field-8000pt-2v2", 0xba562ecac284c678),
+        ("field-brace-1v1", 0x7d8b65f242c738c9),
+        ("field-champions-1v1", 0x8f643a37810eb55e),
+        ("field-deploy-1v1", 0xd71a8ec5adff37c7),
+        ("field-fire-1v1", 0xd62c6fa990dee583),
+        ("field-flood-1v1", 0x19e542be7a52f186),
+        ("field-handover-2v2", 0x97b9866537d54367),
+        ("field-night-rain-1v1", 0x3a0fa6a60fd458cd),
+        ("field-orders-1v1", 0x32b70199069f5e10),
+        ("field-river-storm-1v1", 0xa9e754c8b5506427),
+        ("field-woods-1v1", 0x371bae9d837d9f69),
+        ("sandbox-tuning", 0xdfe2351a333fdaf8),
     ],
 );
 

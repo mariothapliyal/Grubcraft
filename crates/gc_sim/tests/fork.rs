@@ -137,6 +137,7 @@ fn a_scratch_world_shares_the_map() {
         formation: Formation::Line,
         models: 24,
         morale_points: 60,
+        rank: 0,
         morale: MoraleState::Steady,
         hidden: false,
         torches: false,
@@ -176,6 +177,7 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
         models: 10,
         morale_points: 20,
         morale: MoraleState::Wavering,
+        rank: 0,
         hidden: false,
         torches: false,
     };
@@ -226,8 +228,8 @@ fn a_regiment_goes_on_the_field_as_it_stands() {
     assert_eq!((r.models, r.files), (24, 24));
 }
 
-/// A wavering regiment put on the field mid-fight routs sooner than a
-/// fresh one would, and a routing one runs.
+/// A battered, wavering regiment put on the field mid-fight routs sooner
+/// than one with its nerve would, and a routing one runs.
 #[test]
 fn morale_carries_over() {
     let fight = |points: u8, state: MoraleState| {
@@ -239,9 +241,12 @@ fn morale_carries_over() {
             facing: NORTH,
             files: 8,
             formation: Formation::Line,
-            models: 24,
+            // A quarter strength: below any breaking point, so its nerve
+            // decides when it breaks.
+            models: 6,
             morale_points: points,
             morale: state,
+            rank: 0,
             hidden: false,
             torches: false,
         };
@@ -289,6 +294,7 @@ fn morale_carries_over() {
         models: 24,
         morale_points: 0,
         morale: MoraleState::Routing,
+        rank: 0,
         hidden: false,
         torches: false,
     };
@@ -333,6 +339,7 @@ fn a_match_world_takes_no_regiments_from_outside() {
         models: 10,
         morale_points: 20,
         morale: MoraleState::Steady,
+        rank: 0,
         hidden: false,
         torches: false,
     };

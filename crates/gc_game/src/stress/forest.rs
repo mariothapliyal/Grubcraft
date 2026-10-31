@@ -61,6 +61,11 @@ fn run(real: &Real, report: &mut Report) {
     // how many soldiers: the retreat is over for it then, whatever comes
     // after.
     let mut out_at: Vec<Option<(u32, u16)>> = vec![None; ours.len()];
+    // Caught by the pursuers and made to fight: since regiments hold until
+    // bloodied (docs/05), one caught fights it out where it stands instead
+    // of running at the first blows, so it is no longer a test of the way
+    // through.
+    let mut caught = vec![false; ours.len()];
     let mut in_woods = 0u32;
     let mut done = None;
     for t in 1..=LIMIT_SECONDS * TICKS_PER_SECOND {
@@ -79,7 +84,8 @@ fn run(real: &Real, report: &mut Report) {
             );
         }
         report.tick(&mut world, &orders);
-        let mut left = 0;
+        // Still in the woods: all, and those not caught.
+        let (mut left, mut free) = (0, 0);
         for (i, &r) in ours.iter().enumerate() {
             if out_at[i].is_some() {
                 continue;
@@ -87,16 +93,21 @@ fn run(real: &Real, report: &mut Report) {
             let Some(v) = of(&world, core::slice::from_ref(&r)).next() else {
                 continue;
             };
+            caught[i] |= v.engaged;
             let (x, y) = (v.position.x.floor_int(), v.position.y.floor_int());
             if x < WOODS.start {
                 out_at[i] = Some((t, v.models));
             } else {
                 left += 1;
+                free += usize::from(!caught[i]);
                 in_woods += u32::from(arena.is_woods(x, y));
             }
         }
-        if left == 0 {
+        if free == 0 && done.is_none() {
             done = Some(t);
+        }
+        // Caught regiments that later break free still count as out.
+        if left == 0 {
             break;
         }
     }
@@ -104,12 +115,14 @@ fn run(real: &Real, report: &mut Report) {
     let saved: u32 = got_out.iter().map(|&&(_, n)| u32::from(n)).sum();
     let first_out = got_out.iter().map(|&&(t, _)| t).min();
     report.metric("first regiment out", seconds(first_out));
-    report.metric("every regiment out or fallen", seconds(done));
+    report.metric("every regiment out, fallen or caught", seconds(done));
     report.metric("regiments out", format!("{}/{}", got_out.len(), ours.len()));
+    let fought = (0..ours.len()).filter(|&i| caught[i] && out_at[i].is_none());
+    report.metric("caught and fighting, not out", fought.count());
     report.metric("soldiers out", format!("{saved}/{start}"));
     report.metric("regiment-ticks in the woods", in_woods);
     report.check(
-        format!("every regiment is out of the woods or fallen within {LIMIT_SECONDS} s"),
+        format!("every regiment is out of the woods, fallen or caught within {LIMIT_SECONDS} s"),
         done.is_some(),
     );
     report.check(

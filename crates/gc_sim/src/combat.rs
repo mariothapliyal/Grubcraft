@@ -32,10 +32,13 @@ use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING
 use crate::nav::Nav;
 use crate::regiments::{RegimentHandle, Regiments, Strike, hash_handle};
 use crate::sky::Air;
-use crate::structures::StructureHandle;
+use crate::structures::{StructureHandle, TowerShot};
 use crate::terrain::Terrain;
+use crate::towers::{
+    BLAST_DENSITY_MAX, BLAST_SPLASH, BOLT_BIG_PERCENT, MAX_SPLASHED, SPLASH_PERCENT, big_to_bolt,
+};
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation};
+use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation, veterancy};
 
 /// Percent of its full weight a melee blow lands with: the one knob for how
 /// long fights last. Below 100, locked lines bleed (and so lose heart, see
@@ -75,6 +78,10 @@ pub const FALL_BACK_TICKS: u16 = 8 * TICKS_PER_SECOND as u16;
 pub const MISSILE_SPEED: Fx = Fx::ONE;
 /// Volleys in flight at once, across all players.
 pub const MAX_VOLLEYS: usize = 2048;
+/// Room for the tower hits of a tick: every volley landing at once could
+/// be a tower's, and blasts splash a few more (past this a splash goes
+/// untold to the towers' quirks, though it still hurts).
+const TOWER_HITS: usize = 2 * MAX_VOLLEYS;
 /// Room for this many melee blows a tick per regiment the match holds:
 /// about one regiment in twenty strikes on any one tick, with at most a
 /// regiment's worth of soldiers each, so in all but the biggest battles
@@ -87,6 +94,16 @@ const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
 /// A marching regiment stops short of a friendly block it would overlap by
 /// more than this, in tiles (see [`Combat::friend_in_the_way`]).
 const CROWDING: Fx = Fx::from_ratio(1, 4);
+/// Marching regiments keep at least this much room, in tiles, from the
+/// blocks of their friends (see [`Combat::keep_apart`]).
+const KEEP_GAP: Fx = Fx::from_ratio(1, 2);
+/// ... and start round a friend stopped in their way this far short of it.
+const KEEP_LOOK: Fx = Fx::from_int(6);
+/// A regiment with no friend within this many tiles of the room it keeps
+/// may wait longer before it looks again: until one could have come near,
+/// at most [`KEEP_QUIET_TICKS`].
+const KEEP_QUIET: Fx = Fx::from_int(2);
+const KEEP_QUIET_TICKS: u8 = 8;
 /// A regiment overlapping a friendly block by more than this, in tiles, is
 /// pushing through it (or being pushed through): it slows and falls into
 /// disorder. Neighbours in a line brushing or wheeling into each other
@@ -192,6 +209,15 @@ fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: boo
 const CELL_TILES: i32 = 16;
 const BUCKETS: usize = 1024;
 const EMPTY: u32 = u32::MAX;
+/// A finer hash of each regiment's centre alone (cell edge in tiles, bucket
+/// count), for the spacing look, which runs often over short distances.
+const FINE_TILES: i32 = 4;
+const FINE_BUCKETS: usize = 256;
+/// The end of a fine hash chain. Chains hold 16-bit regiment indexes to
+/// save sim memory, which [`Capacities::MAX_REGIMENTS`] leaves room for.
+///
+/// [`Capacities::MAX_REGIMENTS`]: crate::Capacities::MAX_REGIMENTS
+const FINE_EMPTY: u16 = u16::MAX;
 /// The grid keeps each owner's regiments apart (by `owner % OWNER_SLOTS`) so a
 /// search for enemies skips crowds of its own regiments, and a search for
 /// friends only visits its own and its allies'.
@@ -365,6 +391,11 @@ pub struct Combat {
     entry_regiment: Vec<u32>,
     entries: usize,
     big: Vec<u32>,
+    /// The finer hash: first regiment per bucket, the next in the same
+    /// bucket, and the cell each was filed under (see `each_friend_near`).
+    fine_head: Vec<u16>,
+    fine_next: Vec<u16>,
+    fine_cell: Vec<u16>,
     /// Every live regiment's footprint at the start of this tick.
     blocks: Vec<Block>,
     radius: Vec<Fx>,
@@ -399,9 +430,10 @@ pub struct Combat {
     /// Volleys loosed this tick: (volley, shooter, target), for vision
     /// and the tick's events.
     loosed: Vec<(VolleyId, Shooter, RegimentHandle)>,
-    /// Tower volleys that came down this tick: the tower, and the hit
-    /// points they took (a Tollgate's earnings, see [`crate::towers`]).
-    tower_hits: Vec<(StructureHandle, u32)>,
+    /// Tower volleys that came down this tick, one for each regiment they
+    /// fell on (see [`crate::towers`]). No room is kept for them until a
+    /// match has buildings ([`Combat::reserve_towers`]).
+    tower_hits: Vec<TowerHit>,
     /// Volleys that came down this tick, for the tick's events (kept only
     /// while `tell`: a rehearsal's world tells no one).
     landed: Vec<Event>,
@@ -484,7 +516,37 @@ struct Volleys {
     shots: Vec<u16>,
     damage: Vec<u16>,
     accuracy: Vec<u8>,
+    /// What a tower loosed (arrows for every regiment's volley).
+    kind: Vec<TowerShot>,
     free: Vec<u32>,
+}
+
+/// A tower volley that came down on a regiment this tick: what it did, for
+/// the tower's quirks (see [`crate::towers`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TowerHit {
+    pub tower: StructureHandle,
+    pub target: RegimentHandle,
+    /// Where it was aimed.
+    pub at: FxVec2,
+    /// Soldiers it killed, and hit points it took.
+    pub lost: u16,
+    pub hp: u32,
+    /// Whether this is the regiment it was loosed at, not one beside it
+    /// that a blast splashed.
+    pub aimed: bool,
+}
+
+/// What a volley that comes down is, for the damage it does.
+struct Fall {
+    from: FxVec2,
+    aim: FxVec2,
+    shots: u16,
+    damage: u16,
+    accuracy: u8,
+    /// A tower's shots are aimed one by one.
+    tower: bool,
+    kind: TowerShot,
 }
 
 /// A volley about to be loosed (see [`Combat::loose`]).
@@ -498,6 +560,8 @@ pub(crate) struct Shot {
     pub damage: u16,
     /// Percent of shots that land.
     pub accuracy: u8,
+    /// What it is (arrows for any regiment's).
+    pub kind: TowerShot,
 }
 
 /// One volley in flight, for presentation.
@@ -512,6 +576,8 @@ pub struct VolleyView {
     pub launch_tick: u32,
     pub impact_tick: u32,
     pub shots: u16,
+    /// What it is: arrows, or a tower's bolt or blast.
+    pub kind: TowerShot,
 }
 
 impl Combat {
@@ -525,6 +591,10 @@ impl Combat {
     }
 
     pub fn new(regiment_capacity: usize) -> Combat {
+        debug_assert!(
+            regiment_capacity <= usize::from(FINE_EMPTY),
+            "too many regiments for the fine hash"
+        );
         let none = RegimentHandle {
             index: 0,
             generation: 0,
@@ -536,6 +606,9 @@ impl Combat {
             entry_regiment: vec![0; regiment_capacity * MAX_CELLS_PER_REGIMENT],
             entries: 0,
             big: Vec::with_capacity(regiment_capacity),
+            fine_head: vec![FINE_EMPTY; FINE_BUCKETS],
+            fine_next: vec![FINE_EMPTY; regiment_capacity],
+            fine_cell: vec![0; regiment_capacity],
             blocks: vec![
                 Block {
                     centre: FxVec2::ZERO,
@@ -569,10 +642,11 @@ impl Combat {
                 shots: vec![0; MAX_VOLLEYS],
                 damage: vec![0; MAX_VOLLEYS],
                 accuracy: vec![0; MAX_VOLLEYS],
+                kind: vec![TowerShot::Arrows; MAX_VOLLEYS],
                 free: (0..MAX_VOLLEYS as u32).rev().collect(),
             },
             loosed: Vec::with_capacity(MAX_VOLLEYS),
-            tower_hits: Vec::with_capacity(MAX_VOLLEYS),
+            tower_hits: Vec::new(),
             landed: Vec::with_capacity(MAX_VOLLEYS),
             blows: Vec::with_capacity(regiment_capacity * MAX_BLOWS_PER_REGIMENT),
             tell: true,
@@ -601,10 +675,25 @@ impl Combat {
         &self.loosed
     }
 
-    /// The tower volleys that came down in the last tick: the tower, and
-    /// the hit points they took.
-    pub(crate) fn tower_hits(&self) -> &[(StructureHandle, u32)] {
+    /// The tower volleys that came down in the last tick, one for each
+    /// regiment they fell on.
+    pub(crate) fn tower_hits(&self) -> &[TowerHit] {
         &self.tower_hits
+    }
+
+    /// Tell the towers of `hit`, while there is room (always, once
+    /// [`Combat::reserve_towers`] has kept it; a tick never allocates).
+    fn push_hit(&mut self, hit: TowerHit) {
+        if self.tower_hits.len() < self.tower_hits.capacity() {
+            self.tower_hits.push(hit);
+        }
+    }
+
+    /// Keep room for the tower hits a tick can have: a match with
+    /// buildings calls this once, so a field battle's heap holds none.
+    pub(crate) fn reserve_towers(&mut self) {
+        self.tower_hits
+            .reserve_exact(TOWER_HITS - self.tower_hits.capacity());
     }
 
     /// Loose `shot` at regiment slot `j`: it flies at [`MISSILE_SPEED`] to
@@ -637,6 +726,7 @@ impl Combat {
         vs.shots[v] = shot.shots;
         vs.damage[v] = shot.damage;
         vs.accuracy[v] = shot.accuracy;
+        vs.kind[v] = shot.kind;
         true
     }
 
@@ -662,6 +752,7 @@ impl Combat {
                 launch_tick: v.launch[i],
                 impact_tick: v.impact[i],
                 shots: v.shots[i],
+                kind: v.kind[i],
             })
     }
 
@@ -680,6 +771,64 @@ impl Combat {
         (h >> 22) as usize & (BUCKETS - 1)
     }
 
+    fn fine_cell_of(p: FxVec2) -> (i32, i32) {
+        (
+            p.x.floor_int().div_euclid(FINE_TILES),
+            p.y.floor_int().div_euclid(FINE_TILES),
+        )
+    }
+
+    /// A fine cell packed into 16 bits, a byte a coordinate: cells 256
+    /// apart share a key, which a search over a few cells never meets
+    /// (the distance check sorts out the rest).
+    fn fine_key((cx, cy): (i32, i32)) -> u16 {
+        u16::from(cx as u8) | (u16::from(cy as u8) << 8)
+    }
+
+    fn fine_bucket_of(key: u16) -> usize {
+        let (cx, cy) = (u32::from(key & 0xFF), u32::from(key >> 8));
+        let h = cx.wrapping_mul(0x9E37_79B1) ^ cy.wrapping_mul(0x85EB_CA77);
+        (h >> 21) as usize & (FINE_BUCKETS - 1)
+    }
+
+    /// Call `f(j, squared distance)` for every live regiment friendly to
+    /// `owner` whose centre is within `range` of `p` now, from the finer
+    /// hash (filed at the start of the tick, so it allows for `max_step`).
+    fn each_friend_near(
+        &self,
+        regs: &Placement,
+        owner: PlayerId,
+        p: FxVec2,
+        range: Fx,
+        mut f: impl FnMut(usize, u64),
+    ) {
+        let slack = range + self.max_step;
+        let (x0, y0) = Self::fine_cell_of(p - FxVec2::new(slack, slack));
+        let (x1, y1) = Self::fine_cell_of(p + FxVec2::new(slack, slack));
+        let range_sq = i64::from(range.raw()) * i64::from(range.raw());
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let key = Self::fine_key((x, y));
+                let mut e = self.fine_head[Self::fine_bucket_of(key)];
+                while e != FINE_EMPTY {
+                    let j = e as usize;
+                    e = self.fine_next[j];
+                    // Another cell hashed to the same bucket.
+                    if self.fine_cell[j] != key
+                        || !regs.alive[j]
+                        || regs.stances.hostile(owner, regs.owner[j])
+                    {
+                        continue;
+                    }
+                    let d = (regs.position[j] - p).length_sq_raw();
+                    if d as i64 <= range_sq {
+                        f(j, d);
+                    }
+                }
+            }
+        }
+    }
+
     /// The cells (x0, y0, x1, y1) a circle touches.
     fn cells(p: FxVec2, radius: Fx) -> (i32, i32, i32, i32) {
         let cell = |v: Fx| v.floor_int().div_euclid(CELL_TILES);
@@ -695,6 +844,10 @@ impl Combat {
         self.head.fill(EMPTY);
         self.entries = 0;
         self.big.clear();
+        // Empty only the buckets filed last tick: cheaper than all of them.
+        for i in 0..regs.alive.len() {
+            self.fine_head[Self::fine_bucket_of(self.fine_cell[i])] = FINE_EMPTY;
+        }
         self.max_radius = Fx::ZERO;
         self.max_step = GIVE_GROUND;
         for i in 0..regs.alive.len() {
@@ -704,7 +857,14 @@ impl Combat {
             self.blocks[i] = Block::of(regs, units, i);
             self.radius[i] = self.blocks[i].radius();
             self.max_radius = self.max_radius.max(self.radius[i]);
-            self.max_step = self.max_step.max(regs.marched(i, regs.speed[i]));
+            // A step aside (at most a step, square to the march) adds up
+            // to half again.
+            self.max_step = self.max_step.max(regs.marched(i, regs.speed[i]) * 3 / 2);
+            let key = Self::fine_key(Self::fine_cell_of(regs.position[i]));
+            let b = Self::fine_bucket_of(key);
+            self.fine_cell[i] = key;
+            self.fine_next[i] = self.fine_head[b];
+            self.fine_head[b] = i as u16;
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i] + REACH);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big.push(i as u32);
@@ -1017,9 +1177,9 @@ impl Combat {
                 // on the march pass through each other.
                 let ahead = || {
                     self.marked[j]
-                        && regs.target[j].is_some()
                         && (regs.position[j] - regs.position[i]).dot(dir) > Fx::ZERO
                         && regs.facing[j].to_vec().dot(dir) > Fx::ZERO
+                        && regs.goes_first(j, i)
                 };
                 let holding = regs.engaged[j].is_some()
                     || (patient
@@ -1050,6 +1210,121 @@ impl Combat {
             },
         );
         found.ok_or(gap)
+    }
+
+    /// How far marching regiment `i`, going along `dir`, steps aside this
+    /// tick to keep its spacing from friendly blocks (docs/29, unit
+    /// spacing), square to its way (right positive), at most `most`; and
+    /// how many ticks it may wait before it looks again (`floor` at least).
+    ///
+    /// It steps out of each friend its block comes nearer than
+    /// [`KEEP_GAP`] to beside it, or up to [`KEEP_LOOK`] ahead of it when
+    /// the friend has no order or is fighting: all of the way, or half
+    /// from a friend with an order and not fighting (which steps aside the
+    /// other half itself). So blocks marching side by side push gently
+    /// apart, and one stopped in the way is gone round. A friend with an
+    /// order that stepped forward last tick, ahead and facing about the
+    /// same way, is followed instead (only pushing into it slows, see
+    /// [`Combat::crowding`]). Routers neither keep their spacing nor are
+    /// kept from, and nor is a friend without an order standing on `goal`,
+    /// so a block can squeeze in beside it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn keep_apart(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        i: usize,
+        dir: FxVec2,
+        goal: Option<FxVec2>,
+        most: Fx,
+        floor: u8,
+    ) -> (Fx, u8) {
+        if regs.morale_state[i].broken() || dir == FxVec2::ZERO {
+            return (Fx::ZERO, floor);
+        }
+        let me = Block::of(regs, units, i);
+        let right = FxVec2::new(-dir.y, dir.x);
+        let (my_wide, my_long) = (me.extent_along(right), me.extent_along(dir));
+        // The look runs KEEP_LOOK ahead but no further back or aside than
+        // touching, so search a circle centred half the look ahead.
+        let half = KEEP_LOOK / 2;
+        let centre = me.centre + dir * half;
+        let near = me.radius() + KEEP_GAP + half;
+        // Friends further off than this can't come near enough before it
+        // looks again (see the return).
+        let reach = near + self.max_radius + KEEP_QUIET;
+        let mut push = Fx::ZERO;
+        // Whether no friend is within KEEP_QUIET of the room it keeps.
+        let mut alone = true;
+        self.each_friend_near(
+            &placement!(regs, stances),
+            regs.owner[i],
+            centre,
+            reach,
+            |j, d| {
+                if j == i || regs.morale_state[j].broken() || regs.on_wall[j] {
+                    return;
+                }
+                // Cheap circle test before the rectangles: how far apart
+                // their circles are, past the room it keeps.
+                let room = near + self.radius[j];
+                let r = room.raw() as u64;
+                if d > r * r {
+                    let far = (room + KEEP_QUIET).raw() as u64;
+                    alone &= d > far * far;
+                    return;
+                }
+                alone = false;
+                let them = Block::of(regs, units, j);
+                let d = them.centre - me.centre;
+                let (along, across) = (d.dot(dir), d.dot(right));
+                let wide = my_wide + them.extent_along(right) + KEEP_GAP;
+                let long = my_long + them.extent_along(dir) + KEEP_GAP;
+                if across.abs() >= wide {
+                    return;
+                }
+                let marching = regs.marching(j);
+                if marching
+                    && along > Fx::ZERO
+                    && regs.stepped(j)
+                    && them.forward.dot(dir) > Fx::from_ratio(7, 10)
+                {
+                    return;
+                }
+                // One stopped in the way ahead it starts round in good time.
+                let ahead = if marching { Fx::ZERO } else { KEEP_LOOK };
+                if along >= long + ahead || -along >= long {
+                    return;
+                }
+                if !marching
+                    && goal
+                        .is_some_and(|g| (g - them.centre).length() < me.radius() + them.radius())
+                {
+                    return;
+                }
+                // Away from `j`; dead level, the lower slot gives way to its
+                // right and the higher the other way (its left, or its
+                // right too when the two face each other).
+                let sign = match across.raw().signum() {
+                    0 if i < j || them.forward.dot(dir) < Fx::ZERO => 1,
+                    0 => -1,
+                    s => -s,
+                };
+                let depth = wide - across.abs();
+                let share = if marching { depth / 2 } else { depth };
+                push += share * sign;
+            },
+        );
+        // With no friend near, it needn't look again until one could be:
+        // both may close at a full step a tick.
+        let wait = if alone {
+            (KEEP_QUIET.raw() / (2 * self.max_step.raw()).max(1))
+                .clamp(0, i32::from(KEEP_QUIET_TICKS)) as u8
+        } else {
+            0
+        };
+        (push.clamp(-most, most), wait.max(floor))
     }
 
     /// Whether regiment `i`, marching along `dir`, could stand beside
@@ -1146,14 +1421,14 @@ impl Combat {
             let was_engaged = previous.is_some();
             // Pushed or turned out of reach mid-fight: press back in, unless
             // given another order, standing braced, or the foe is falling
-            // back (it is let go).
+            // back or routing (it is let go: chasing is the hunters' work).
             if best.is_none()
                 && regs.target[i].is_none()
                 && regs.attack_target[i].is_none()
                 && !regs.braced[i]
                 && previous
                     .and_then(|h| regs.resolve(h))
-                    .is_some_and(|j| regs.falling_back[j] == 0)
+                    .is_some_and(|j| regs.falling_back[j] == 0 && !regs.morale_state[j].broken())
             {
                 regs.attack_target[i] = previous;
             }
@@ -1307,24 +1582,31 @@ impl Combat {
             }
             if regs.morale_state[i].broken() {
                 regs.crowd[i] = Fx::ZERO;
+                regs.set_crowded(i, false);
                 regs.disorder[i] = 0;
                 continue;
             }
             if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
                 let me = self.blocks[i];
-                let mut deepest = Fx::ZERO;
+                let (mut deepest, mut into) = (Fx::ZERO, Fx::ZERO);
                 self.each_friend_touching(regs, stances, i, |j| {
                     // Deeper than this changes nothing (see `SATURATED`).
-                    if deepest < SATURATED
+                    if into < SATURATED
                         && !regs.morale_state[j].broken()
-                        && let Some(more) = me.overlap_over(&self.blocks[j], deepest)
+                        && let Some(more) = me.overlap_over(&self.blocks[j], into)
                     {
-                        deepest = more;
+                        deepest = deepest.max(more);
+                        // Only pushing into a friend ahead slows it: the
+                        // one in front marches on, so the two come apart.
+                        if (regs.position[j] - regs.position[i]).dot(me.forward) > Fx::ZERO {
+                            into = into.max(more);
+                        }
                     }
                 });
-                regs.crowd[i] = deepest.min(SATURATED);
+                regs.crowd[i] = into.min(SATURATED);
+                regs.set_crowded(i, deepest > PUSHING);
             }
-            if regs.crowd[i] > PUSHING {
+            if regs.crowded(i) {
                 regs.disorder(i);
             } else {
                 regs.disorder[i] = regs.disorder[i].saturating_sub(1);
@@ -1684,6 +1966,9 @@ impl Combat {
                 .min(u64::from(u32::MAX)) as u32;
             regs.pressing[i] = regs.pressing[i].saturating_add(shove);
             regs.pressed[j] = regs.pressed[j].saturating_add(shove);
+            // A veteran's blows cut deeper (see [`veterancy`]); they push
+            // no harder.
+            let landed = landed * veterancy::damage_percent(regs, i) / 100;
             let blows = (self.tell).then_some(&mut self.blows);
             duel(
                 regs,
@@ -1752,9 +2037,11 @@ impl Combat {
                 owner: regs.owner[i],
                 from: regs.position[i],
                 shots: regs.models[i],
-                damage: stats.missile_damage,
+                damage: (u64::from(stats.missile_damage) * veterancy::damage_percent(regs, i) / 100)
+                    .min(u64::from(u16::MAX)) as u16,
                 accuracy: (u64::from(stats.accuracy) * heart_percent(regs.morale_state[i]) / 100)
                     as u8,
+                kind: TowerShot::Arrows,
             };
             if !self.loose(regs, j, shot, tick) {
                 continue;
@@ -1785,6 +2072,7 @@ impl Combat {
                 target: vs.target[v],
                 at: vs.aim[v],
                 lost,
+                kind: vs.kind[v],
             };
             let Some(j) = regs.resolve(vs.target[v]) else {
                 if self.tell {
@@ -1800,50 +2088,80 @@ impl Combat {
                 }
                 continue;
             }
-            // A tower's shots are aimed one by one, so how close the target
-            // stands makes no odds; a regiment's volley falls on the block.
             let tower = vs.shooter[v].tower();
-            let density = if tower.is_some() {
-                100
-            } else {
-                let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
-                (i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1))
-                    .clamp(25, 125) as u64
+            let (owner, at) = (vs.owner[v], vs.aim[v]);
+            let fall = Fall {
+                from: vs.from[v],
+                aim: at,
+                shots: vs.shots[v],
+                damage: vs.damage[v],
+                accuracy: vs.accuracy[v],
+                tower: tower.is_some(),
+                kind: vs.kind[v],
             };
-            let side = block.side_facing(vs.from[v]);
-            // Arrows from the front mostly glance off a shield wall, and
-            // trees catch some of those loosed into or out of a wood.
-            let shields = regs.formation[j].arrow_percent(side == Side::Front);
-            // Judged where the arrows were aimed, as the arrows on screen are.
-            let trees = terrain.through_trees(vs.from[v], vs.aim[v]);
-            let expected = u64::from(vs.shots[v])
-                * u64::from(vs.accuracy[v])
-                * density
-                * u64::from(vs.damage[v])
-                * side.damage_percent()
-                * 256
-                / (100 * 100 * 100)
-                * shields
-                * trees
-                / (100 * 100)
-                * VOLLEY_PACE_PERCENT
-                / 100;
-            // A wall's parapet covers those on it, not those still on
-            // their ladders.
-            // Nor are those behind a barricade of their own side's.
-            let expected = if regs.on_wall[j] && !regs.climber[j] {
-                expected * crate::manning::WALL_COVER_PERCENT / 100
-            } else if terrain.sheltered(regs.owner[j], regs.position[j]) {
-                expected * crate::fieldworks::COVER_ARROW_PERCENT / 100
-            } else {
-                expected
-            };
+            let (expected, side) = falls_on(regs, units, terrain, j, &block, &fall);
+            let victim = regs.unit[j];
             let (lost, hp) = deal(regs, units, nav, j, expected, side, rng);
-            if let Some(t) = tower {
-                self.tower_hits.push((t, hp));
+            if lost > 0
+                && let Some(k) = vs.shooter[v].regiment().and_then(|h| regs.resolve(h))
+            {
+                veterancy::credit(regs, units, k, victim, lost, true);
             }
             if self.tell {
                 self.landed.push(landed(lost));
+            }
+            let Some(t) = tower else {
+                continue;
+            };
+            let hit = |target, (lost, hp), aimed| TowerHit {
+                tower: t,
+                target,
+                at,
+                lost,
+                hp,
+                aimed,
+            };
+            self.push_hit(hit(regs.handle(j), (lost, hp), true));
+            if fall.kind != TowerShot::Blast {
+                continue;
+            }
+            // A blast splashes the enemy regiments beside its target, the
+            // nearest first.
+            let reach = block.radius() + BLAST_SPLASH + self.max_radius;
+            let mut beside = [(u64::MAX, 0usize, block); MAX_SPLASHED];
+            let mut n = 0;
+            let place = placement!(regs, stances);
+            self.each_near(&place, block.centre, reach, Whose::Enemies(owner), |k| {
+                if k == j || regs.models[k] == 0 {
+                    return;
+                }
+                let theirs = Block::of(regs, units, k);
+                if !theirs.touches(&block, BLAST_SPLASH) {
+                    return;
+                }
+                let d = (regs.position[k] - block.centre).length_sq_raw();
+                let entry = (d, k, theirs);
+                if n < MAX_SPLASHED {
+                    beside[n] = entry;
+                    n += 1;
+                } else if let Some(far) = beside.iter_mut().max_by_key(|e| (e.0, e.1))
+                    && (d, k) < (far.0, far.1)
+                {
+                    *far = entry;
+                }
+            });
+            for &(_, k, ref block) in &beside[..n] {
+                let (expected, side) = falls_on(regs, units, terrain, k, block, &fall);
+                let dealt = deal(
+                    regs,
+                    units,
+                    nav,
+                    k,
+                    expected * SPLASH_PERCENT / 100,
+                    side,
+                    rng,
+                );
+                self.push_hit(hit(regs.handle(k), dealt, false));
             }
         }
 
@@ -1926,6 +2244,11 @@ impl Combat {
             if let Shooter::Tower(t) = v.shooter[i] {
                 h.u32(t.index);
                 h.u16(t.generation);
+                // Nothing for arrows, so worlds without the stage 5
+                // towers hash as they did.
+                if v.kind[i] != TowerShot::Arrows {
+                    h.u8(v.kind[i] as u8);
+                }
             }
         }
     }
@@ -1949,6 +2272,82 @@ pub fn heart_percent(state: MoraleState) -> u64 {
         MoraleState::Wavering => WAVERING_DAMAGE_PERCENT,
         _ => 100,
     }
+}
+
+/// The damage `fall` does to regiment `j` (its block `block`), in 1/256
+/// hit points before the roll, and the side it comes from. A regiment's
+/// volley falls on the block, so a packed one takes more; a tower's
+/// arrows and bolts are aimed one by one, and its blasts fall on packed
+/// blocks harder still. Arrows from the front mostly glance off a shield
+/// wall; a bolt or blast doesn't. Trees catch some of whatever is loosed
+/// into or out of a wood. A bolt hits big soldiers harder and goes no
+/// deeper than a file.
+fn falls_on(
+    regs: &Regiments,
+    units: &[UnitStats],
+    terrain: &Terrain,
+    j: usize,
+    block: &Block,
+    fall: &Fall,
+) -> (u64, Side) {
+    let packed = || {
+        let area = i64::from((block.half_width * block.half_depth).raw()) * 4;
+        i64::from(regs.models[j]) * REFERENCE_AREA_PER_SOLDIER * 100 / area.max(1)
+    };
+    let density = match (fall.tower, fall.kind) {
+        (true, TowerShot::Blast) => packed().clamp(25, BLAST_DENSITY_MAX) as u64,
+        (true, _) => 100,
+        (false, _) => packed().clamp(25, 125) as u64,
+    };
+    let side = block.side_facing(fall.from);
+    let shields = match fall.kind {
+        TowerShot::Arrows => regs.formation[j].arrow_percent(side == Side::Front),
+        _ => 100,
+    };
+    // Judged where the shots were aimed, as the shots on screen are.
+    let trees = terrain.through_trees(fall.from, fall.aim);
+    let stats = &units[regs.unit[j] as usize];
+    let big = big_to_bolt(stats);
+    let bolt_percent = if fall.kind == TowerShot::Bolt && big {
+        BOLT_BIG_PERCENT
+    } else {
+        100
+    };
+    let expected = u64::from(fall.shots)
+        * u64::from(fall.accuracy)
+        * density
+        * u64::from(fall.damage)
+        * side.damage_percent()
+        * 256
+        / (100 * 100 * 100)
+        * shields
+        * trees
+        / (100 * 100)
+        * VOLLEY_PACE_PERCENT
+        / 100
+        * bolt_percent
+        / 100;
+    // A bolt runs down one file and stops.
+    let expected = if fall.kind == TowerShot::Bolt {
+        let file = u64::from(formation::ranks(regs.files[j], regs.models[j]))
+            * u64::from(stats.hp_per_model)
+            * 256
+            * bolt_percent
+            / 100;
+        expected.min(file)
+    } else {
+        expected
+    };
+    // A wall's parapet covers those on it, not those still on their
+    // ladders; nor are those behind a barricade of their own side's.
+    let expected = if regs.on_wall[j] && !regs.climber[j] {
+        expected * crate::manning::WALL_COVER_PERCENT / 100
+    } else if terrain.sheltered(regs.owner[j], regs.position[j]) {
+        expected * crate::fieldworks::COVER_ARROW_PERCENT / 100
+    } else {
+        expected
+    };
+    (expected, side)
 }
 
 /// Apply `expected` damage (in 1/256 hit points) to regiment `j`, rolled
@@ -2190,6 +2589,7 @@ fn duel(
                 0 if damage == 0 => Outcome::Parried,
                 0 => Outcome::Wounded,
                 men => {
+                    veterancy::credit(regs, units, i, regs.unit[j], men, false);
                     if regs.models[j] > 0 {
                         line = Line::of(regs, units, j, side, theirs_last_file);
                     }

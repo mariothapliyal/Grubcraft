@@ -234,10 +234,15 @@ pub(crate) fn unit_stats(data: &GameData) -> Vec<gc_sim::UnitStats> {
 }
 
 /// Grub and Marrow each faction starts with (docs/04-economy.md,
-/// "Starting state"): the same for every faction since the Concord's
-/// extra 100 Grub went (docs/29, faction rebalance).
-pub fn start_stores(_: Faction) -> (u32, u32) {
-    (300, 0)
+/// "Starting state"). The Clans gather fastest, so they start poorer and
+/// the Concord richer, so that first armies come at about the same time
+/// (docs/29, even early game).
+pub fn start_stores(f: Faction) -> (u32, u32) {
+    match f {
+        Faction::EmberClans => (250, 0),
+        Faction::CarrionConcord => (350, 0),
+        Faction::Brood | Faction::Choir => (300, 0),
+    }
 }
 
 /// Each lobby player's faction, in player order.
@@ -369,7 +374,7 @@ pub fn posts_of(map: &Map) -> Vec<FxVec2> {
 pub(crate) type Foot = [i32; 4];
 
 /// Whether `p` is within `margin` tiles of footprint `f`.
-fn near(f: Foot, p: (f32, f32), margin: f32) -> bool {
+pub(crate) fn near(f: Foot, p: (f32, f32), margin: f32) -> bool {
     let [x, y, w, d] = f.map(|v| v as f32);
     p.0 > x - margin && p.0 < x + w + margin && p.1 > y - margin && p.1 < y + d + margin
 }

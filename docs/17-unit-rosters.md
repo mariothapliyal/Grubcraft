@@ -27,7 +27,7 @@ Every unit has one **class**. Class drives soft counters (the [counters table](0
 | Class | What it is | Supply |
 |---|---|---|
 | Worker | Gathers and builds | 1 |
-| Light | Fast, fragile infantry and swarms | 3 |
+| Light | Fast, fragile infantry and swarms | 2 to 3 |
 | Spear | Spear and pike lines, anti-cavalry | 3 to 4 |
 | Heavy | Armoured and elite infantry | 4 to 5 |
 | Ranged | Archers, crossbows, beams, acid | 3 to 4 |
@@ -180,14 +180,14 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 100 / 0 | 3 | 18 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 50 / 28 / 3 | 40 | 64 | |
-| Chitin Guard | 1 | Heavy | 130 / 0 | 4 | 22 | Hive | 12 × 16 | 6 | 2.75 | 70 | 0.9 / 1.0 | 30 / 55 / 4 | 15 | 60 | |
+| Skitterlings | 1 | Light | 70 / 0 | 2 | 13 | Hive | 32 × 5 | 8 | 4.0 | 120 | 0.8 / 0.8 | 45 / 22 / 3 | 40 | 60 | |
+| Chitin Guard | 1 | Heavy | 100 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
-| Spitters | 2 | Ranged | 60 / 20 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 3.5 | 100 | 0.8 / 0.9 | 20 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
-| Burrowers | 2 | Light | 70 / 20 | 3 | 15 | Skitterlings | 16 × 9 | 8 | 4.0 | 110 | 0.8 / 0.8 | 45 / 25 / 3 | 50 | 50 | |
-| Mantid Reapers | 2 | Spear | 80 / 30 | 4 | 15 | Chitin Guard | 12 × 15 | 6 | 3.25 | 90 | 1.0 / 1.1 | 55 / 35 / 6 | 25 | 65 | |
-| Shellbacks | 2 | Heavy | 90 / 30 | 5 | 15 | Chitin Guard | 8 × 30 | 4 | 1.5 | 40 | 1.3 / 1.3 | 25 / 70 / 4 | 0 | 75 | 18, 3, 3.0 s, 40% |
-| Drone-Moths | 2 | Air | 120 / 30 | 3 | 25 | Moth Roost | 6 × 14 | 3 | 7.5 | 150 | 1.6 / 1.6 | 20 / 15 / 2 | 0 | 40 | 5, 4, 8.0 s, 50% |
+| Spitters | 2 | Ranged | 50 / 15 | 3 | 15 | Skitterlings | 16 × 5 | 8 | 3.5 | 100 | 0.8 / 0.9 | 17 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
+| Burrowers | 2 | Light | 60 / 15 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 4.0 | 110 | 0.8 / 0.8 | 38 / 25 / 3 | 50 | 50 | |
+| Mantid Reapers | 2 | Spear | 70 / 25 | 4 | 15 | Chitin Guard | 12 × 11 | 6 | 3.25 | 90 | 1.0 / 1.1 | 47 / 35 / 6 | 25 | 65 | |
+| Shellbacks | 2 | Heavy | 75 / 25 | 5 | 15 | Chitin Guard | 8 × 23 | 4 | 1.5 | 40 | 1.3 / 1.3 | 21 / 70 / 4 | 0 | 75 | 18, 3, 3.0 s, 40% |
+| Drone-Moths | 2 | Air | 100 / 25 | 3 | 25 | Moth Roost | 6 × 11 | 3 | 7.5 | 150 | 1.6 / 1.6 | 17 / 15 / 2 | 0 | 40 | 5, 4, 8.0 s, 50% |
 | Broodmother Bulk | 2 | Artillery | 160 / 60 | 4 | 35 | Gorge | 1 × 380 | 1 | 1.75 | 45 | 3.0 / 3.0 | 15 / 25 / 8 | 0 | 55 | 45, 10, 12.0 s, 30% |
 | Colossus Maw | 3 | Monster | 260 / 140 | 6 | 55 | Gorge | 1 × 600 | 1 | 2.5 | 70 | 3.5 / 3.5 | 55 / 35 / 28 | 50 | 95 | |
 
@@ -462,11 +462,11 @@ A few figures to sanity-check the first pass (front rank fighting a defence-40 e
 | Unit | Total HP | Melee damage a second | Grub-equivalent cost* | HP per 100 Grub |
 |---|---|---|---|---|
 | Yari Ashigaru | 224 | 8.9 | 120 | 187 |
-| Skitterlings | 192 | 14.4 | 100 | 192 |
+| Skitterlings | 160 | 13.2 | 70 | 229 |
 | Shardlings | 168 | 12.0 | 110 | 153 |
 | Bone Pikes | 133 | 11.0 | 90 | 148 |
 | Katana Samurai | 224 | 26.0 | 240 | 93 |
-| Chitin Guard | 192 | 9.6 | 130 | 148 |
+| Chitin Guard | 144 | 8.2 | 100 | 144 |
 | Gravewardens | 216 | 19.8 | 250 | 86 |
 | Harmonic Walkers | 192 | 10.5 | 270 | 71 |
 | Mounted Samurai | 240 | 13.2 | 260 | 92 |
@@ -500,6 +500,8 @@ Two Veteran AIs, one per faction, on the generated map with every rule in play (
 | **Ember Clans** | 50% | 52% | 50% |
 | **Brood** | | 44% | 52% |
 | **Choir** | | | 49.5% |
+
+<a id="brood-swarm-cut"></a>**Brood swarm cut (2026-10-31, faction rebalance PR 3).** Mario asked for the Brood to stay cheap, with lots of attacks, but with each soldier weak. Skitterlings went from 100 Grub, 3 supply, 18 s, 32 × 6 HP, 50 / 28 / 3, morale 64 to 70 Grub, 2 supply, 13 s, 32 × 5 HP, 45 / 22 / 3, morale 60, and their Field Battle points from 400 to 280, so a Brood army fields 14 regiments where others field 10. Chitin Guard went to 100 Grub, 12 × 12 HP, 24 / 45; the tier 2 evolutions and Drone-Moths lost about a quarter of their hit points and 15% of their attack and cost about 15% less (Monsters and heroes are unchanged). Light units may now take 2 supply. On 128 battles a pair (seeds 1 to 64 and 2001 to 2064, holding-until-bloodied morale) the Brood pairs moved from Ember Clans v Brood 41.5%, Brood v Choir 26% and Brood v Concord 41% to 33.5%, 22.5% and 47%. Tuned before the morale change, the plan's first numbers (4 HP, 36 / 20 / 2) lost every battle, and the knobs are steep: attack 46 and morale 61 moved single pairs by 10 to 15 points, and 300 points (13 regiments) left the Brood at 17% to 22% against the Choir and the Concord. The Brood against the Choir is the residual, as it was before; the Field Battle pass (docs/29, item 5) is where it gets fixed.
 
 **Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
@@ -585,6 +587,7 @@ The in-game Guide ([08 · UI/UX](08-ui-ux.md#guide)) shows the numbers of this f
     buildings: [
         (
             name: "Clan Hall",            // as in the roster
+            blurb: "...",               // at most 120 characters: the build-menu tooltip; what it does, what it unlocks or trains, when to build it
             summary: "...",               // at most 350 characters: role, when to build it, what beats it
             notes: [("Castle Keep", "...")],   // benefit line for each tier upgrade, by the building it makes
             tips: [(icon: Grub, text: "...")], // 2 or 3 how-to-use tips, one sentence of at most 100 characters each
@@ -598,6 +601,7 @@ The in-game Guide ([08 · UI/UX](08-ui-ux.md#guide)) shows the numbers of this f
 
 - **Buildings.** `notes` holds a benefit line for the main building's tier upgrade (keyed by the upgrade's name) and, for a building whose rules text promises research, a `"Research"` note saying it is not designed yet. Everything else on a building's Upgrades tab is computed: the units it trains (their `tagline` is the benefit line), the heroes it hires, and for the Brood's tech building the evolutions.
 - **Tips.** Every building has two or three `tips`: an `icon` (one of the HUD's pixel icons, by its `gc_ui::Icon` name, e.g. Grub, Marrow, Supply, Hammer, Heart, Flag, Alarm, Sword, Spear, Bow, Hold, Formation, Move, Attack, Skill, Charge, Brace, Run, Book) and a `text` that says succinctly how to use the building to your advantage (where to put it, what to pair it with, what to watch for). They are second person, imperative and printable ASCII; the game shows them while a building is being placed, behind the info button on a selected building and on its Guide card ([08 · UI/UX](08-ui-ux.md#guide)). A test fails a building with fewer than two or more than three tips, or a tip over 100 characters.
+- **Blurbs.** Every building has one `blurb`, a single plain sentence of at most 120 characters that a worker's build-menu button and an upgrade button show as their tooltip: what the building does, what it unlocks or trains, and when to build it. It names nothing the roster or the summary does not say. A test fails a building with no blurb or one over 120 characters.
 - **Units.** `tagline` is the one-line benefit shown wherever the unit appears as something a building trains, hires or evolves into. A unit's own Upgrades tab lists its evolutions and its roster abilities (the roster's `effect` is the benefit line).
 - **Class counters.** `classes.ron` holds the damage multipliers of [Classes and counters](#classes-and-counters) as `(attacker, target, multiplier)` rows. A troop's "Strong against" is every class it deals more than x1.0 to, and its "Weak against" every class that deals it more than x1.0 or that it deals less than x1.0 to. Heroes take and deal x1.0.
 - **Rules, checked by `guide_data` tests.** Every building, unit and hero in the rosters has exactly one entry, and every entry names something in the roster. Summaries are at most 350 characters, taglines at most 80, text is printable ASCII (the font draws nothing else) with no stray spaces. Every tier upgrade has a note, and no note names something that does not exist. Adding a roster entry without prose fails `cargo test -p gc_game guide_data`.

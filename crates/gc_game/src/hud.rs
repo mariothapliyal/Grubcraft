@@ -184,6 +184,10 @@ pub struct HudState {
     /// the ring as it would be ordered now.
     pub wall_mode: crate::wall_tool::WallMode,
     pub ring_preview: Option<crate::wall_tool::RingPreview>,
+    /// Conquest: the wall tool drags a curve: the points so far, and the
+    /// curve as it would be ordered now.
+    pub wall_drag: Option<crate::drawn_tool::Drag>,
+    pub drag_preview: Option<crate::wall_tool::DragPreview>,
     /// Conquest: the workers' build menu is open on the grid.
     pub build_menu: bool,
     /// Conquest: the build menu shows its second page (a faction with more
@@ -538,6 +542,7 @@ impl Running {
     fn selection_info(&self, side: PlayerId) -> Option<(String, Selection<'static>)> {
         let mut n = 0u16;
         let (mut models, mut max_models, mut morale) = (0u32, 0u32, 0u32);
+        let (mut break_at, mut rank) = (0, 0);
         let mut state = CardState::Steady;
         let (mut unit, mut same, mut icon, mut same_icon) = (None, true, Icon::Sword, true);
         let mut color = crate::color_of(&self.parties, side);
@@ -580,6 +585,7 @@ impl Running {
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
+            (break_at, rank) = (r.break_at, r.rank);
             // The worst of them: routing over wavering over steady.
             state = state.max(card_state(r.morale));
         }
@@ -598,6 +604,8 @@ impl Running {
             models,
             max_models,
             morale: (morale / u32::from(n)) as u8,
+            break_at: if n == 1 { break_at } else { 0 },
+            rank: if n == 1 { rank } else { 0 },
             state,
             formation: match self.selection_formation() {
                 Some(Some(f)) => f.name(),
@@ -800,8 +808,10 @@ impl Running {
         };
         let conquest = self.conquest_match();
         let plantable = conquest && !self.plantable().is_empty();
-        // The order tabs over the selected banners, where the field has room.
-        let mut tabs: Vec<(gc_ui::Rect, UiOrder)> = Vec::new();
+        // The order tabs over the selected banners, where the field has room,
+        // and veterans' chevrons over theirs (above the tab, if it has one).
+        let mut tabs: Vec<(gc_sim::RegimentHandle, gc_ui::Rect, UiOrder)> = Vec::new();
+        let mut chevrons: Vec<([i32; 2], u8)> = Vec::new();
         if self.ride.is_none() {
             let field = gc_ui::hud::HudLayout::new(screen).field;
             for &h in &self.selected {
@@ -816,7 +826,30 @@ impl Running {
                 };
                 let tab = gc_ui::Rect::new(x as i32 - 9, y as i32 - 18, 18, 18);
                 if field.intersect(tab) == Some(tab) {
-                    tabs.push((tab, order_of(f.doing)));
+                    tabs.push((h, tab, order_of(f.doing)));
+                }
+            }
+            for r in self.world.regiments.iter() {
+                if r.rank == 0
+                    || !(r.owner == side || self.reveal_all || self.world.sees(side, r.handle))
+                {
+                    continue;
+                }
+                let Some([x, y]) = project_ahead(view_proj, self.banner_top(&r), screen) else {
+                    continue;
+                };
+                let bottom = tabs
+                    .iter()
+                    .find(|t| t.0 == r.handle)
+                    .map_or(y as i32, |t| t.1.y - 2);
+                let stack = gc_ui::Rect::new(
+                    x as i32 - 7,
+                    bottom - 5 * i32::from(r.rank),
+                    15,
+                    5 * i32::from(r.rank) + 1,
+                );
+                if field.intersect(stack) == Some(stack) {
+                    chevrons.push(([x as i32, bottom], r.rank));
                 }
             }
         }
@@ -904,6 +937,8 @@ impl Running {
                 models: r.models,
                 max_models: self.units.stats[r.unit as usize].models,
                 morale: r.morale_points,
+                break_at: r.break_at,
+                rank: r.rank,
                 state: card_state(r.morale),
                 engaged: r.engaged,
                 selected: picked(h),
@@ -984,7 +1019,15 @@ impl Running {
         if let Some((card, states)) = card {
             for (i, slot) in grid.iter_mut().enumerate() {
                 if card.slots[i].is_some() {
-                    let (icon, mut tip) = card_look(card.slots[i]);
+                    let (icon, look) = card_look(card.slots[i]);
+                    // A building's or its upgrade's own blurb, else the fixed line.
+                    let blurb = match card.slots[i] {
+                        Some(Action::Lay(b) | Action::Upgrade(b)) => {
+                            self.blurb_book.get(self.buildings.name(b))
+                        }
+                        _ => None,
+                    };
+                    let mut tip = blurb.map_or(look, String::as_str);
                     if let Some(Action::Lay(b)) = card.slots[i]
                         && self.buildings.is_wall(b)
                     {
@@ -1137,8 +1180,13 @@ impl Running {
             hud.draw.border(r, 1, [170, 255, 180, 230]);
         }
         // Over each selected regiment's banner: what it is doing.
-        for &(tab, order) in &tabs {
+        for &(_, tab, order) in &tabs {
             orders::draw_tab(&mut hud.draw, tab, order);
+        }
+        for &([x, y], rank) in &chevrons {
+            // Ink under gold, so they read on grass and sky alike.
+            gc_ui::hud::draw_chevrons(&mut hud.draw, x + 1, y + 1, rank, gc_ui::ui::theme::INK);
+            gc_ui::hud::draw_chevrons(&mut hud.draw, x, y, rank, gc_ui::ui::theme::WELD_HI);
         }
         // The regiment the mouse rests on: its card, after the delay.
         let hover_card = hover.and_then(|(h, enemy)| {
@@ -2039,7 +2087,7 @@ fn sky_word(world: &gc_sim::World, gauge: Option<&str>) -> String {
 /// words for the selection panel (docs/32-changing-land.md, stage 3b).
 fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static str {
     let dark = world.air().dark;
-    match ground_word(world.terrain(), r.position) {
+    match ground_word(world, r.position) {
         _ if world.swept(r.handle) => "Swept by the flood: losing men",
         _ if dark && r.torches => "Torches lit: seen from afar",
         "" if dark => "In the dark: unseen from afar",
@@ -2049,9 +2097,17 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 
 /// What the ground at `p` does to a regiment, in a few words for the selection panel (capitalised, as it stands on its own line): the readable side
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
-fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
-    if terrain.wet(p) {
-        if terrain.deep(p) {
+fn ground_word(world: &gc_sim::World, p: gc_fixed::FxVec2) -> &'static str {
+    let terrain = world.terrain();
+    let rivers = world.flood().rivers();
+    let (x, y) = (p.x.floor_int(), p.y.floor_int());
+    if rivers.on_floodplain(x, y) && rivers.shuts(x, y) {
+        "In deep flood water: hurt every second, get to high ground"
+    } else if terrain.wet(p) {
+        if terrain.height(p) >= i32::from(terrain.water_level()) {
+            // Dry land the water has risen over.
+            "In flood water: slow, no charges"
+        } else if terrain.deep(p) {
             "In a river that is up: slower still, no charges"
         } else {
             "In a ford: slow, no charges"
@@ -2085,7 +2141,7 @@ const WALL_TIP_PASS: &str = "Draw this wall: click its start, then each end or b
 const WALL_TIP_GROWN: &str = "Draw this wall: click its start, then each end or bend. It grows on its own along your root-veins, with no Gnawer. Right-click ends it; Shift locks 15-degree steps. O draws a ring.";
 
 /// The build-menu tooltip of a bridge.
-const BRIDGE_TIP: &str = "Draw a straight bridge across a river: click the near bank, then the far bank. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
+const BRIDGE_TIP: &str = "Draw a bridge across a river: press on the near bank and drag to the far bank for a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide. A worker builds it out from the bank, a tile at a time, and anyone can cross it. Troops on a tile that falls drop into the river. Right-click ends it.";
 
 /// The build-menu tooltip of a hidden trap.
 const TRAP_TIP: &str = "A hidden trap, laid like any building on one tile. Only you can see it. The first enemy regiment to walk onto it springs it, and it is gone. Nothing can be built on it. See the guide for what this one does.";
@@ -2125,10 +2181,8 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
             Icon::Hammer,
             "Selected workers build the walls you have planned (the faint blue tiles), nearest first, paying for each as they go and waiting while you can't. Right-click a planned tile to do the same. Any other order stops them.",
         ),
-        Some(Action::Lay(_)) => (
-            Icon::Hammer,
-            "A worker lays this building. Then click where. Woods and scrub are cleared first, which takes longer.",
-        ),
+        // A building's own line is its blurb (see the card's loop above).
+        Some(Action::Lay(_)) => (Icon::Hammer, ""),
         Some(Action::Train(_)) => (Icon::Flag, "Train this regiment at the building."),
         Some(Action::Upgrade(_)) => (Icon::Ultimate, "Raise the building to its next tier."),
         Some(Action::RaiseWall(_)) => (
