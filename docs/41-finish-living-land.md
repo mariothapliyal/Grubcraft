@@ -242,8 +242,11 @@ seasons. Render only: nothing in the simulation changed.
   Frozen water (`Look::ice`, from the simulation's frozen water, the same
   state that lets armies cross the shallows) is drawn as a pale, cloudy,
   cracked sheet of ice that hides the ripples and the bed, with snow
-  lying on it in the same patches as on the bank. The ice comes in and goes over about 6
-  seconds (`ICE_SETTLE`).
+  lying on it in the same patches as on the bank. Only the shallows and
+  fords freeze, as in the simulation where only they can be crossed:
+  deep water stays open inside an icy rim. The ice comes and goes over
+  about 2 seconds (`ICE_SETTLE`), and a match opened or joined in winter
+  starts frozen and frosted.
 - **Crossing over.** Each season is full through its middle and crosses
   to the next over a fifth of a season either side of its edge
   (`atmosphere::Year`), so nothing changes at a stroke: at Short seasons

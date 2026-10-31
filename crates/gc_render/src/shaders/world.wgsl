@@ -1114,7 +1114,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     if parched > 0.0 {
         let shade_of = luma(grass) / 0.17;
         let drift = smoothstep(0.2, 0.8, vnoise(xz * 0.11 + vec2<f32>(5.0, 17.0)));
-        grass = mix(grass, STRAW * clamp(shade_of, 0.6, 1.3), parched * mix(0.5, 0.85, drift));
+        grass = mix(grass, STRAW * clamp(shade_of, 0.6, 1.3), parched * mix(0.4, 0.65, drift));
     }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
@@ -1345,9 +1345,11 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         var wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
         var cover = clamp(0.5 + depth * 1.5, 0.0, 0.92);
         // Frozen water: a pale sheet of ice, cracked and cloudy, with snow
-        // drifted over it as on the bank when snow lies. It hides the bed and
-        // the ripples, and is lit flat under the water's own shadow.
-        let frozen = g.sky_top.w;
+        // lying on it as on the bank. It hides the bed and the ripples, and
+        // is lit flat under the water's own shadow. Only the shallows and
+        // fords freeze (as in the simulation, where only they can be
+        // crossed); deep water stays open, with an icy rim.
+        let frozen = g.sky_top.w * (1.0 - smoothstep(0.3, 0.42, depth));
         if frozen > 0.0 {
             let cloudy = 0.8 + 0.35 * vnoise(wp.xz * 0.45 + vec2<f32>(3.0, 29.0));
             let crack = 1.0 - smoothstep(0.0, 0.03, abs(vnoise(wp.xz * 1.7) - 0.5));

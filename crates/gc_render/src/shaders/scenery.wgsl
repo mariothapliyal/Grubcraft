@@ -360,7 +360,7 @@ fn autumn_leaves(albedo: vec3<f32>, leaf: f32, at: vec2<f32>) -> vec3<f32> {
     let pick = vnoise(at * 0.45 + vec2<f32>(13.0, 0.0));
     var hue = mix(AUTUMN_GOLD, AUTUMN_ORANGE, smoothstep(0.3, 0.55, pick));
     hue = mix(hue, AUTUMN_RED, smoothstep(0.6, 0.8, pick));
-    let late = smoothstep(0.15, 0.05, vnoise(at * 0.83 + vec2<f32>(41.0, 3.0)));
+    let late = 1.0 - smoothstep(0.05, 0.15, vnoise(at * 0.83 + vec2<f32>(41.0, 3.0)));
     return mix(albedo, hue * leaf_bright(albedo), leaf * turned * 0.85 * (1.0 - late));
 }
 

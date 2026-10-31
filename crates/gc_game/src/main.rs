@@ -706,9 +706,7 @@ fn parse_args() -> Options {
             "--weather" => gc_render::Weather::from_name(&value)
                 .map(|w| opts.weather = Some(w))
                 .is_some(),
-            "--season" => gc_sim::sky::Season::ALL
-                .into_iter()
-                .find(|s| format!("{s:?}").eq_ignore_ascii_case(value.trim()))
+            "--season" => gc_sim::sky::Season::from_name(&value)
                 .map(|s| opts.season = Some(s as usize as f32 + 0.5))
                 .is_some(),
             "--air" => gc_map::def::Land::ALL
