@@ -41,7 +41,7 @@ use gc_ui::lobby::Tempo;
 
 use crate::buildings::Table;
 use crate::conquest::{self, Foot};
-use crate::headless::Headless;
+use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-ribcage-1v1";
 const SEED: u64 = 0x00C0_9E57;
@@ -349,8 +349,9 @@ pub struct Match {
 
 impl Match {
     pub fn new() -> Match {
-        let game = Headless::new(conquest::make_map(0, 0, 0), &FACTIONS, SEED);
-        let (data, table) = (&game.data, &game.table);
+        let real = Real::load();
+        let game = Headless::new(&real, conquest::make_map(0, 0, 0), &FACTIONS, SEED);
+        let (data, table) = (&real.data, &real.table);
         let mut plan = game.plan(Tempo::Swift, Victories::BOTH);
         // The Concord side plays the Choir's powers.
         plan.meters[1] = Meter::Resonance;

@@ -5,55 +5,16 @@
 use core::ops::Range;
 use std::cell::OnceCell;
 
-use gc_data::GameData;
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_map::Map;
 use gc_map::def::{CoverKind, CoverOp, MapDef, Mode, Shape, SizeClass, Symmetry, TerrainOp};
 use gc_sim::terrain::Cover;
 use gc_sim::{
-    Capacities, Command, ConquestSetup, ConquestUnit, MatchSetup, PlayerCommand, PlayerId,
-    RegimentHandle, RegimentView, StructureHandle, UnitStats, World,
+    Capacities, Command, ConquestSetup, MatchSetup, PlayerCommand, PlayerId, RegimentHandle,
+    RegimentView, StructureHandle, World,
 };
 
-use crate::buildings::Table;
-use crate::conquest;
-
-/// The real game data, as a Conquest world reads it.
-pub(crate) struct Real {
-    pub data: GameData<'static>,
-    pub table: Table,
-    pub units: Vec<UnitStats>,
-    pub conquest_units: Vec<ConquestUnit>,
-}
-
-impl Real {
-    pub fn load() -> Real {
-        let data = crate::data::load();
-        Real {
-            table: Table::new(&data),
-            units: conquest::unit_stats(&data),
-            conquest_units: conquest::units_of(&data),
-            data,
-        }
-    }
-
-    /// The Conquest unit called `name`.
-    pub fn unit(&self, name: &str) -> u16 {
-        (self.data.conquest_units.iter())
-            .position(|u| u.name() == name)
-            .unwrap_or_else(|| panic!("no unit called {name}")) as u16
-    }
-
-    /// The Ember Clans' spearmen, swordsmen and archers.
-    pub fn ember_line(&self) -> [u16; 3] {
-        ["Yari Ashigaru", "Katana Samurai", "Yumi Ashigaru"].map(|n| self.unit(n))
-    }
-
-    /// The building called `name`.
-    pub fn building(&self, name: &str) -> u16 {
-        self.table.named(name)
-    }
-}
+pub(crate) use crate::headless::Real;
 
 /// Dry ground, the water line and a river's bed, in sixteenths of a tile
 /// (as a map file writes them): the river is a tile and a half deep, far

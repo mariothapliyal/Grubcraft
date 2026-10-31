@@ -161,7 +161,7 @@ mod tests {
     use gc_sim::{PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World};
     use gc_ui::lobby::Tempo;
 
-    use crate::headless::Headless;
+    use crate::headless::{Headless, Real};
 
     /// How one side stood when a headless match ended.
     pub(crate) struct Standing {
@@ -421,8 +421,14 @@ mod tests {
         // AI_TRACE=2 also prints every journal entry as it is written.
         let journal = trace == "2";
         let trace = journal || trace == "1";
-        let game = Headless::new(conquest::make_map(choice, tiles, seed), factions, seed);
-        let (data, units) = (&game.data, &game.units);
+        let real = Real::load();
+        let game = Headless::new(
+            &real,
+            conquest::make_map(choice, tiles, seed),
+            factions,
+            seed,
+        );
+        let (data, units) = (&real.data, &real.units);
         let defaults = gc_ui::lobby::LobbySettings::default();
         let plan = game.plan(Tempo::Standard, conquest::victories(defaults.victory));
         assert!(plan.victories.any() && plan.victories != Victories::default());

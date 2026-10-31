@@ -32,7 +32,7 @@ use crate::conquest;
 use crate::conquest_golden::{
     Kit, affords, main_of, nodes_near, own, regiments_of, site, trade_orders,
 };
-use crate::headless::Headless;
+use crate::headless::{Headless, Real};
 
 const SEED: u64 = 0x50AC_0006;
 /// "Classic: Mixed": some of every kind of ground.
@@ -98,8 +98,9 @@ struct Minute {
 
 impl Soak {
     fn new(map: Map) -> Soak {
-        let game = Headless::new(map, &FACTIONS, SEED);
-        let (data, table) = (&game.data, &game.table);
+        let real = Real::load();
+        let game = Headless::new(&real, map, &FACTIONS, SEED);
+        let (data, table) = (&real.data, &real.table);
         // Annihilation only, so the fog is on but nobody wins by holding
         // the Heart and the hour plays out.
         let victories = Victories {
