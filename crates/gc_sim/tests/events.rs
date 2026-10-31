@@ -136,6 +136,7 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                 Event::Lightning { .. } => unreachable!("no storms here"),
                 Event::Flooded { .. } => unreachable!("no rain here"),
                 Event::Season { .. } => unreachable!("no seasons here"),
+                Event::Town { .. } => unreachable!("no towns in a field battle"),
                 Event::Shallows { .. } => unreachable!("no seasons here"),
                 Event::FlashFlood { .. } | Event::GreatFlood { .. } => {
                     unreachable!("no storms here")
