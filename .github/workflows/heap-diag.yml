@@ -24,6 +24,7 @@ jobs:
         skip: [a, b, c, d]
     steps:
       - uses: actions/checkout@v4
+      - run: python .github/heap/variant.py ${{ matrix.skip }}
       - uses: ./.github/actions/rust
       - run: cargo build --release -p gc_game
       - name: Find the debugger
@@ -62,7 +63,7 @@ jobs:
             Write-Host "run $i : $secs s, crashed=$crashed"
             if ($crashed) { $crashes++; Select-String -Path $log -Pattern '===CRASH===' -Context 0,30 }
           }
-          Write-Host "SUMMARY skip=$env:GC_DIAG_SKIP crashes=$crashes of 8"
+          Write-Host "SUMMARY skip=${{ matrix.skip }} crashes=$crashes of 8"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
