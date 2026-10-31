@@ -434,13 +434,10 @@ impl Match {
     /// nearest side `p`'s main building (`None` on a map with none).
     fn overgrown_near(&self, p: PlayerId) -> Option<(i16, i16)> {
         let main = self.main_of(p)?;
-        let (cx, cy) = (main.tile.0, main.tile.1);
-        let side = self.world.terrain().growth_side() as i32;
-        (0..side * side)
-            .map(|i| (i % side, i / side))
-            .filter(|&(x, y)| self.world.overgrown([x, y, 1, 1]))
-            .min_by_key(|&(x, y)| ((x - cx).pow(2) + (y - cy).pow(2), y, x))
-            .map(|(x, y)| ((x - 1) as i16, (y - 1) as i16))
+        nearest(&self.world, main.tile, |x, y| {
+            self.world.overgrown([x, y, 1, 1])
+        })
+        .map(|(x, y)| ((x - 1) as i16, (y - 1) as i16))
     }
 
     fn nodes_near(&self, p: PlayerId, resource: Resource) -> Vec<u16> {
@@ -1259,6 +1256,20 @@ pub(crate) fn main_of(world: &World, k: &Kit, p: PlayerId) -> Option<StructureVi
 }
 
 /// Side `p`'s regiments of type `unit`.
+/// The tile nearest `from` that `fits` (nearest first, then north, then
+/// west).
+pub(crate) fn nearest(
+    world: &World,
+    from: (i32, i32),
+    fits: impl Fn(i32, i32) -> bool,
+) -> Option<(i32, i32)> {
+    let side = world.terrain().growth_side() as i32;
+    (0..side * side)
+        .map(|i| (i % side, i / side))
+        .filter(|&(x, y)| fits(x, y))
+        .min_by_key(|&(x, y)| ((x - from.0).pow(2) + (y - from.1).pow(2), y, x))
+}
+
 pub(crate) fn regiments_of(world: &World, p: PlayerId, unit: UnitId) -> Vec<RegimentHandle> {
     world
         .regiments

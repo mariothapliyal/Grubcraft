@@ -19,7 +19,7 @@ use gc_sim::{Command, PlayerCommand, PlayerId, TICKS_PER_SECOND, Victories, Worl
 use gc_ui::lobby::Tempo;
 
 use crate::conquest;
-use crate::conquest_golden::{Kit, regiments_of};
+use crate::conquest_golden::{Kit, nearest, regiments_of};
 use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-river-1v1";
@@ -44,15 +44,6 @@ fn map() -> gc_map::Map {
 /// The lobby's choice for grown land.
 const GROWN: usize = gc_map::SHIPPED.len() + 1 + gc_map::wilds::Wildness::ALL.len();
 
-/// The tile nearest `from` that `fits`.
-fn nearest(world: &World, from: (i32, i32), fits: impl Fn(i32, i32) -> bool) -> Option<(i32, i32)> {
-    let side = world.terrain().growth_side() as i32;
-    (0..side * side)
-        .map(|i| (i % side, i / side))
-        .filter(|&(x, y)| fits(x, y))
-        .min_by_key(|&(x, y)| ((x - from.0).pow(2) + (y - from.1).pow(2), y, x))
-}
-
 /// Side `p`'s orders this tick.
 fn script(
     world: &World,
@@ -62,6 +53,9 @@ fn script(
     out: &mut Vec<PlayerCommand>,
 ) {
     let t = world.tick_count();
+    if t != FELL_AT && t != DUMP_AT {
+        return;
+    }
     let start = starts[usize::from(p)];
     let mut crew = regiments_of(world, p, worker);
     crew.sort_by_key(|h| h.index);
@@ -132,23 +126,21 @@ mod tests {
     fn both_sides_put_logs_and_rafts_in_the_river() {
         let replay = record();
         let mut world = replay.new_world();
-        let (mut felled, mut rafts) = ([0; 2], [0; 2]);
+        let (mut felled, mut raft) = ([0; 2], false);
         for t in 0..replay.info().ticks {
             world.tick(replay.commands_at(t));
             let debris = world.flood().rivers().debris();
             for p in 0..2u8 {
                 felled[usize::from(p)] = felled[usize::from(p)].max(debris.owned(p));
             }
-            for s in debris.pieces(world.terrain().growth_side() as i32) {
-                if s.kind == gc_sim::rivers::debris::Kind::Raft {
-                    rafts[0] = 1;
-                }
-            }
+            raft |= debris
+                .pieces(world.terrain().growth_side() as i32)
+                .any(|s| s.kind == gc_sim::rivers::debris::Kind::Raft);
         }
         assert!(
             felled.iter().all(|&n| n > 0),
             "each side put pieces in: {felled:?}"
         );
-        assert_eq!(rafts[0], 1, "a raft went in");
+        assert!(raft, "a raft went in");
     }
 }

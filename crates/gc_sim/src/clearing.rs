@@ -120,8 +120,6 @@ pub struct ClearingView {
     /// The building (type, north-west tile and quarter turns) it has paid for and will
     /// lay on the area once it is cleared, if any.
     pub then: Option<(BuildingId, (i32, i32), u8)>,
-    /// What it does there.
-    pub work: Work,
 }
 
 /// A building paid for, to be laid once its footprint is cleared.
@@ -250,12 +248,8 @@ impl Clearing {
 
     /// The area worker slot `r` is clearing, and the building it will lay
     /// there, if it is clearing.
-    pub(crate) fn job_of(
-        &self,
-        regs: &Regiments,
-        r: usize,
-    ) -> Option<([i32; 4], Option<Pledge>, Work)> {
-        self.live(regs, r).map(|job| (job.area, job.then, job.work))
+    pub(crate) fn job_of(&self, regs: &Regiments, r: usize) -> Option<([i32; 4], Option<Pledge>)> {
+        self.live(regs, r).map(|job| (job.area, job.then))
     }
 
     /// Worker slot `r`'s order, if the regiment it was given to is still
@@ -341,7 +335,6 @@ impl Clearing {
         r: usize,
         job: &mut Job,
     ) -> bool {
-        let fells = |x, y| rivers.fells_into(terrain, x, y);
         let side = terrain.growth_side();
         let dump = job.work == Work::Dump;
         let left = |t: u32| {
@@ -405,10 +398,14 @@ impl Clearing {
         way.arrive(regs, r);
         let growth = terrain.growth(x, y);
         // Felling a bank tile into the river: woods and thicket only.
-        let logs = match growth {
-            Growth::Woods if job.work == Work::Fell && fells(x, y) => 1,
-            Growth::Thicket if job.work == Work::Fell && fells(x, y) => 2,
-            _ => 0,
+        let logs = if job.work == Work::Fell && rivers.fells_into(terrain, x, y) {
+            match growth {
+                Growth::Woods => 1,
+                Growth::Thicket => 2,
+                _ => 0,
+            }
+        } else {
+            0
         };
         let ticks = match job.work {
             Work::Dump => crate::rivers::debris::DUMP_SECONDS * TICKS_PER_SECOND,

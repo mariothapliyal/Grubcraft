@@ -2339,6 +2339,17 @@ mod tests {
     use super::*;
     use crate::camera::RtsCamera;
 
+    /// The raft's tooltip and hint quote the sim's numbers.
+    #[test]
+    fn the_raft_text_quotes_the_sims_numbers() {
+        use gc_sim::rivers::debris::{DUMP_SECONDS, RAFT_GRUB, SHARE};
+        let tip = card_look(Some(Action::Dump)).1;
+        assert!(tip.contains(&format!("{DUMP_SECONDS} seconds")), "{tip}");
+        assert!(tip.contains(&format!("({RAFT_GRUB} Grub")), "{tip}");
+        assert!(tip.contains(&format!("At most {SHARE} ")), "{tip}");
+        assert!(crate::clearing::DUMP_WHERE.contains(&format!("({RAFT_GRUB} Grub")));
+    }
+
     /// A Field Battle's villages, outposts and stones show on the minimap
     /// in their own colours; a Conquest map's only mark its trade posts.
     #[test]

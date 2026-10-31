@@ -1564,13 +1564,12 @@ impl World {
     /// What worker `h` is clearing, if it is clearing (Conquest only).
     pub fn clearing_of(&self, h: RegimentHandle) -> Option<clearing::ClearingView> {
         let c = self.conquest.as_ref()?;
-        let (area, then, work) = c
+        let (area, then) = c
             .clearing
             .job_of(&self.regiments, self.regiments.resolve(h)?)?;
         Some(clearing::ClearingView {
             area,
             then: then.map(|p| (p.building, p.tile, p.turn)),
-            work,
         })
     }
 
@@ -2434,8 +2433,8 @@ impl World {
                     _ => false,
                 }
             }
-            Command::Dump { regiment, tile } => {
-                let (x, y) = (i32::from(tile.0), i32::from(tile.1));
+            Command::Dump { regiment, tile: t } => {
+                let (x, y) = tile(t);
                 let takes = (self.flood.rivers).takes_raft(&self.terrain, x, y, pc.player);
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
                     (Some(r), Some(c)) if takes => {
@@ -2719,11 +2718,12 @@ impl World {
                     }
                 }
                 clearing::Done::Raft { x, y, owner } => {
-                    let rivers = &mut self.flood.rivers;
-                    if rivers.takes_raft(&self.terrain, x, y, owner)
-                        && c.economy.spend(owner, rivers::debris::RAFT_GRUB, 0)
+                    // Paid for only when the raft goes in.
+                    let raft = rivers::debris::RAFT_GRUB;
+                    if c.economy.can_afford(owner, raft, 0)
+                        && self.flood.rivers.dump(&self.terrain, x, y, owner, tick)
                     {
-                        rivers.dump(&self.terrain, x, y, owner, tick);
+                        c.economy.spend(owner, raft, 0);
                     }
                 }
                 _ => {}

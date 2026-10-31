@@ -16,7 +16,7 @@ use crate::scenery::Stood;
 use crate::{Running, color_of};
 
 /// Where a raft can go, and what it costs.
-const DUMP_WHERE: &str =
+pub(crate) const DUMP_WHERE: &str =
     "Click running river to tip a raft in (12 Grub; it rides the current) - Esc to cancel";
 
 /// Overgrown ground that will be cleared: amber.
@@ -203,7 +203,7 @@ impl Running {
         let Some(at) = self.ground_under_cursor() else {
             return;
         };
-        let (x, y) = (at.x.floor() as i32, at.y.floor() as i32);
+        let (x, y) = (tile_of(at.x), tile_of(at.y));
         if !self.world.takes_raft(self.sandbox.side, x, y) {
             self.say(DUMP_WHERE.into());
             return;
