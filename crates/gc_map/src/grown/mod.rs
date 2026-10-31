@@ -233,7 +233,7 @@ pub struct Grown {
 
 /// Grown land, one value per tile, row by row: what the loader starts a
 /// grown map from.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Raster {
     /// Heights at tile centres, fixed-point tiles.
     pub(crate) height: Grid,
@@ -307,7 +307,7 @@ pub(crate) fn grow(tiles: u32, what: Grown) -> Arc<Raster> {
     {
         return Arc::clone(r);
     }
-    let raster = Arc::new(grow_uncached(tiles as usize, what));
+    let raster = Arc::new(grow_fair(tiles as usize, what));
     if let Ok(mut cache) = RECENT.lock() {
         cache.retain(|(k, _)| *k != key);
         cache.insert(0, (key, Arc::clone(&raster)));
@@ -315,6 +315,34 @@ pub(crate) fn grow(tiles: u32, what: Grown) -> Arc<Raster> {
     }
     raster
 }
+
+/// The land grown, and under [`Fairness::Measured`] grown once more from
+/// another seed if its starts' walks are more unequal than
+/// [`MEASURED_LIMIT`], keeping the fairer. Mirrored land is fair by construction.
+fn grow_fair(n: usize, what: Grown) -> Raster {
+    // How unequal a Measured map's walks are, measured unless its
+    // settling already did.
+    let grown = |what: Grown| {
+        let (r, spread) = grow_uncached(n, what);
+        let spread = spread.unwrap_or_else(|| true_unfairness(&r, &standable(&r)));
+        (r, spread)
+    };
+    if what.fairness != Fairness::Measured {
+        return grow_uncached(n, what).0;
+    }
+    let (first, spread) = grown(what);
+    if spread <= MEASURED_LIMIT {
+        return first;
+    }
+    let seed = what.seed ^ 0x9E37_79B9_7F4A_7C15;
+    let (again, s) = grown(Grown { seed, ..what });
+    if s < spread { again } else { first }
+}
+
+/// How unequal Measured starts' walks may be (thousandths, as
+/// [`starts::unfairness`]: the worst over every way the lobby hands starts
+/// out) before the land is grown once more from another seed.
+pub(crate) const MEASURED_LIMIT: u32 = 100;
 
 /// `t` tiles on a 512-tile map, scaled to one `n` across (whole tiles).
 fn scaled(n: usize, t: i32) -> i32 {
@@ -351,7 +379,7 @@ fn near_starts(n: usize, starts: &[Pos]) -> Grid {
     })
 }
 
-fn grow_uncached(n: usize, what: Grown) -> Raster {
+fn grow_uncached(n: usize, what: Grown) -> (Raster, Option<u32>) {
     let dials = Dials::of(what.wildness);
     let mut seeds = Seeds::new(what.seed);
     let mirrored = what.fairness == Fairness::Mirrored;
@@ -446,16 +474,62 @@ fn grow_uncached(n: usize, what: Grown) -> Raster {
         mirrored,
     };
     ways::open_ways(&mut raster, &mut seeds);
-    if !mirrored {
-        refine_starts(&mut raster, shape, &mut seeds);
-    }
-    raster
+    let spread = (!mirrored)
+        .then(|| refine_starts(&mut raster, shape, &mut seeds))
+        .flatten();
+    (raster, spread)
 }
 
 /// Measured fairness's second look: on the finished land, move the starts
 /// a few tiles where the walks come out more equal, clear and flatten the
 /// same clearing at each that moved, and cut the ways again.
-fn refine_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds) {
+fn refine_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds) -> Option<u32> {
+    let mut now = None;
+    for round in 0..SETTLE_ROUNDS {
+        if now.is_some_and(|u| u <= SETTLED) {
+            break;
+        }
+        let (mut trial, mut s) = (r.clone(), seeds.clone());
+        let reach = scaled(r.height.n, if round == 0 { 24 } else { 8 });
+        let (before, moved) = move_starts(&mut trial, shape, &mut s, reach);
+        let was = *now.get_or_insert(before);
+        if !moved {
+            break;
+        }
+        let after = true_unfairness(&trial, &standable(&trial));
+        if after >= was {
+            break;
+        }
+        (*r, *seeds, now) = (trial, s, Some(after));
+    }
+    now
+}
+
+/// Measured's settling stops once the starts' walks are this unequal or
+/// less (thousandths, as [`starts::unfairness`]), or after this many
+/// rounds of moving them.
+const SETTLED: u32 = 50;
+const SETTLE_ROUNDS: usize = 2;
+
+/// How unequal the walks between the starts are on the land as it
+/// stands (`step` from [`standable`]), in thousandths.
+fn true_unfairness(r: &Raster, step: &[u8]) -> u32 {
+    let n = r.height.n;
+    let mut walk = [[0u32; START_PLATEAUS]; START_PLATEAUS];
+    for (j, &s) in r.starts.iter().enumerate() {
+        let d = ways::walk(step, n, tile_index(n, s), &[]);
+        for (row, &k) in walk.iter_mut().zip(&r.starts) {
+            row[j] = walk_to(&d, n, k).map_or(u32::MAX, |(d, _)| d);
+        }
+    }
+    starts::unfairness(&walk)
+}
+
+/// One round of [`refine_starts`]: move the starts up to `reach` tiles by
+/// their true walks, clear and flatten their clearings and cut the ways
+/// again. How unequal the walks were before (as [`starts::unfairness`]),
+/// and whether any start moved.
+fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -> (u32, bool) {
     let n = r.height.n as i32;
     let step = standable(r);
     let half = clear_radius(n as usize) / 2;
@@ -470,9 +544,9 @@ fn refine_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds) {
                 (-half..=half).all(|dx| r.height.v[at(p.0 + dx, p.1 + dy)] > WATER_LINE + ONE / 4)
             })
     };
-    let moved = starts::refine(&r.height, &step, r.starts, &fits);
+    let (moved, before) = starts::settle(&step, n as usize, r.starts, reach, &fits);
     if moved == r.starts {
-        return;
+        return (before, false);
     }
     // The meadow is the part of the clearing flattened however its edge
     // wobbles; the open ground the least a start's ragged edge gives.
@@ -501,6 +575,7 @@ fn refine_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds) {
     }
     r.starts = moved;
     ways::open_ways(r, seeds);
+    (before, true)
 }
 
 /// What it costs to step onto each tile ([`crate::Ground::cost`], ten on
@@ -1507,6 +1582,69 @@ mod load_time {
                 "{wild} 768: made {made:?}, with the nav grid {:?}",
                 t.elapsed()
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod fairness_probe {
+    use super::*;
+
+    /// On these seeds, Measured land's starts walk to their nearest enemies
+    /// within 10% of each other, for every way the lobby hands them out, on
+    /// the finished land as the nav rules walk it. The limit is a target,
+    /// not a promise (the reroll keeps the fairer of two maps), so a seed
+    /// that drifts over it after a generator change is a reason to look,
+    /// not proof of a bug.
+    #[test]
+    fn measured_starts_are_within_the_limit() {
+        for tiles in [256u32, 320] {
+            for w in Wildness::ALL {
+                for seed in 1..=2 {
+                    let what = Grown {
+                        seed,
+                        wildness: w,
+                        fairness: Fairness::Measured,
+                        heart: false,
+                    };
+                    let r = grow(tiles, what);
+                    let spread = true_unfairness(&r, &standable(&r));
+                    assert!(
+                        spread <= MEASURED_LIMIT,
+                        "{w:?} {tiles} seed {seed}: walks {spread} thousandths apart"
+                    );
+                }
+            }
+        }
+    }
+
+    /// How unequal Measured maps come out, and how long they take: the
+    /// numbers in docs/41.
+    #[test]
+    #[ignore = "a probe: PROBE=N cargo test --release -p gc_map fairness_probe -- --ignored --nocapture"]
+    fn probe() {
+        let seeds: u64 = std::env::var("PROBE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+        for tiles in [320u32, 512, 768] {
+            for w in Wildness::ALL {
+                let mut v = Vec::new();
+                for seed in 0..seeds {
+                    let t = std::time::Instant::now();
+                    let r = grow(
+                        tiles,
+                        Grown {
+                            seed: 100 + seed,
+                            wildness: w,
+                            fairness: Fairness::Measured,
+                            heart: false,
+                        },
+                    );
+                    v.push((true_unfairness(&r, &standable(&r)), t.elapsed().as_millis()));
+                }
+                println!("{tiles} {w:?}: {v:?}");
+            }
         }
     }
 }

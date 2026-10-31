@@ -357,9 +357,9 @@ pub const MAPS: [&str; 18] = [
     "Measured: Wild",
 ];
 
-/// The map a new lobby starts on: grown land, as wild as the seed picks
-/// (`gc_map::GROWN`).
-pub const DEFAULT_MAP: usize = 10;
+/// The map a new lobby starts on: grown land with measured fairness, as
+/// wild as the seed picks (`gc_map::MEASURED`; docs/41 step 2).
+pub const DEFAULT_MAP: usize = 14;
 
 /// The Conquest maps the lobby offers, and how many starts each has:
 /// first the shipped maps (the game makes them from the shipped maps of

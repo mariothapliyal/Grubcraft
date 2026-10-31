@@ -135,6 +135,57 @@ the Classic choices so old choices keep their numbers;
   (`SWEEP=N` for more seeds), and the AI one-on-one above (first run: wins
   by Annihilation at 25:53 and 32:42, first contact at 7:22 and 6:34).
 
+## Step 2 as built
+
+*2026-10-31.* Field Battles start on **Measured: Random**.
+
+- **Why it fell short.** The old second search walked a coarse grid
+  that guessed the land's cost from its slopes. On the finished land, as
+  the nav rules walk it, 4- to 6-player maps at 512 tiles came out 7 to
+  35% unequal (worst of every way the lobby hands starts out).
+- **Settling on the true walks** (`grown::starts::settle`). One full
+  walk from each start, over the finished land as `gc_mapcheck` walks it,
+  gives every tile's walk to that start. So any tile within 24 tiles
+  (scaled to the map) can be tried for a start at once, scored on every
+  way the lobby hands starts out, with a small price for each tile it
+  moves. A start that moves is walked from again. The clearings are then
+  flattened and the ways cut again, which changes the walks a little, so
+  it is measured again, and a second, shorter round of 8 tiles runs when
+  the walks are still over 5% apart. A round that makes things worse is
+  thrown away.
+- **Reroll.** A map still over 10% is grown once more from another seed
+  (`seed ^ k * golden ratio`), and the fairer of the two is kept.
+- **The default.** A new Field Battle lobby starts on **Measured:
+  Random**. Land (mirrored), Classic and Random stay choices. Conquest
+  stays mirrored: its shares are placed round the north starts and turned
+  for the south, so mirrored land is what keeps them equal.
+- **PROTOCOL 42**, because the same Measured map choice now makes other
+  land, and machines must agree on it.
+- **Measured** (true walks, 5 seeds of each wildness at each size, worst
+  over every handout, before → after): see the table below.
+
+| Size | Before | After | Build time (each) |
+|---|---|---|---|
+| 320 | — | 0.4 to 9.0% | 0.6 to 2.0 s |
+| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 4.8 s (with a reroll) |
+| 768 | — | 0.4 to 6.1%, one Wild map 13.8% | 3.7 to 5.5 s, about 10 s with a reroll |
+
+  The one miss (768, Wild) was still 13.8% after its reroll: the reroll
+  keeps the fairer of two maps, it does not promise 10%.
+
+  A 768 Measured map took about 4 s before this change on the same
+  machine (mirrored 1.8 s). The 3-second target for 768 is still missed;
+  most of the time is the full walks over 590,000 tiles.
+- **Tests.** `measured_starts_are_within_the_limit` grows 12 Measured maps
+  (every wildness, 256 and 320 tiles) and holds each within 10%.
+  `every_grown_map_passes_the_checker` still passes with no extra rerolls.
+  The probe (`fairness_probe::probe`, ignored) prints the table.
+- **Real use.** Four- to six-player Field Battles (2v2, 3v3, free for
+  all, three teams of two) were the unfair case, because a mirrored map
+  makes twins equal but not corners and middles. Each start's walk to its
+  nearest enemy is now within a tenth of the others', so no team gets to
+  the fight a minute sooner. Two-player maps were already equal.
+
 ## Step 4 as built
 
 *2026-10-30.*

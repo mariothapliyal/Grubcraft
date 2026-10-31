@@ -513,12 +513,13 @@ impl Ui {
         let value = options[*index];
         let chars = (mid.w / 8).max(1) as usize;
         let ty = mid.y + (mid.h - 16) / 2;
-        if label.is_empty() {
+        let lab = format!("{label}: ");
+        // A long value drops its label rather than be cut short.
+        if label.is_empty() || lab.len() + value.chars().count() > chars {
             let text = fit(value, chars);
             self.draw.text_centered(mid, 1, theme::INK, &text);
         } else {
             // The label in the muted ink, the value in the strong one.
-            let lab = format!("{label}: ");
             let total = fit(&format!("{lab}{value}"), chars);
             let x = mid.x + (mid.w - text_width(&total, 1)) / 2;
             let split = lab.chars().count().min(total.chars().count());
