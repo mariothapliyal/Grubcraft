@@ -90,6 +90,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - A foundation starts at 10% HP. Up to four workers build it (the first full speed, each extra half). Nothing works until finished.
 - Cancel refunds 75%. A destroyed building refunds nothing. Overgrown ground is cleared first and paid when ordered.
 - Choir buildings (except Spire, Resonator, Siphon) must stand in a Choir field. Tier: the main-building tier needed to place it.
+- Hover a build-menu button for its tooltip: a one-line blurb (what it does, what it unlocks or trains, when to build it), then its key. Blurbs live in `data/guide/*.ron` as `blurb`.
 
 **Main building tiers**
 - Clans: Clan Hall, Castle Keep, Daimyo's Citadel. Brood: Hive, Great Hive, Throne Hive. Choir: Spire, Cathedral, Grand Organ. Concord: Counting House, Exchange, Grand Bourse.

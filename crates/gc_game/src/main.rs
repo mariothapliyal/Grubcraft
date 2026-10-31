@@ -951,6 +951,8 @@ struct Running {
     turn_scroll: f32,
     /// Each building's tips, for the HUD's tips card.
     tip_book: guide_data::TipBook,
+    /// Each building's blurb, for its line on the build menu.
+    blurb_book: guide_data::BlurbBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -1834,6 +1836,7 @@ impl App {
             guide_scroll: 0.0,
             turn_scroll: 0.0,
             tip_book: guide_data::tip_book(),
+            blurb_book: guide_data::blurb_book(),
             reveal_all: false,
             fog: Default::default(),
             river_watch: Default::default(),
