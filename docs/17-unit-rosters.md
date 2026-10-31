@@ -74,7 +74,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
-| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
+| Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 9 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
 | Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 32% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
 | Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 50 / 45 / 5 | 30 | 80 | |
@@ -180,7 +180,7 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 5 | 8 | 4.0 | 120 | 0.8 / 0.8 | 45 / 22 / 3 | 40 | 60 | |
+| Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
 | Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 50 / 15 | 3 | 15 | Skitterlings | 16 × 5 | 8 | 3.5 | 100 | 0.8 / 0.9 | 17 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
@@ -281,7 +281,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 100 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 54 | |
+| Shardlings | 1 | Light | 100 / 0 | 3 | 20 | Forge of Facets | 14 × 10 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 54 | |
 | Prism Lancers | 1 | Ranged | 125 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
@@ -362,7 +362,7 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 125 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
+| Bone Pikes | 1 | Spear | 125 / 0 | 3 | 18 | Ossuary | 19 × 8 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
 | Crossbow Auditors | 1 | Ranged | 150 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
@@ -502,6 +502,10 @@ Two Veteran AIs, one per faction, on the generated map with every rule in play (
 | **Choir** | | | 49.5% |
 
 <a id="brood-swarm-cut"></a>**Brood swarm cut (2026-10-31, faction rebalance PR 3).** Mario asked for the Brood to stay cheap, with lots of attacks, but with each soldier weak. Skitterlings went from 100 Grub, 3 supply, 18 s, 32 × 6 HP, 50 / 28 / 3, morale 64 to 70 Grub, 2 supply, 13 s, 32 × 5 HP, 45 / 22 / 3, morale 60, and their Field Battle points from 400 to 280, so a Brood army fields 14 regiments where others field 10. Chitin Guard went to 100 Grub, 12 × 12 HP, 24 / 45; the tier 2 evolutions and Drone-Moths lost about a quarter of their hit points and 15% of their attack and cost about 15% less (Monsters and heroes are unchanged). Light units may now take 2 supply. On 128 battles a pair (seeds 1 to 64 and 2001 to 2064, holding-until-bloodied morale) the Brood pairs moved from Ember Clans v Brood 41.5%, Brood v Choir 26% and Brood v Concord 41% to 33.5%, 22.5% and 47%. Tuned before the morale change, the plan's first numbers (4 HP, 36 / 20 / 2) lost every battle, and the knobs are steep: attack 46 and morale 61 moved single pairs by 10 to 15 points, and 300 points (13 regiments) left the Brood at 17% to 22% against the Choir and the Concord. The Brood against the Choir is the residual, as it was before; the Field Battle pass (docs/29, item 5) is where it gets fixed.
+
+<a id="frontage-pass"></a>**After frontage (2026-10-31, faction rebalance PR 5).** Frontage ([05 · Combat](05-combat.md#frontage-only-the-soldiers-touching-the-enemy-fight), #335) undid the even Conquest of PR 4: only the soldiers touching the enemy strike, so a tough, narrow block gains and a swarm loses. The tournament on main read Choir 82%, Clans 65%, Concord 30%, Brood 18% (192 games each; the Brood won none of 32 against the Choir, and the Choir all 32 against the Concord). Toughness per soldier is what frontage rewards, so the pass moved hit points: Shardlings 12 to 10, Skitterlings 5 to 6 (and attack 45 to 46), Bone Pikes 7 to 8, Yari Ashigaru 8 to 9, and the Hands' `gather_percent` 135 to 125. The tournament now reads Clans 53%, Brood 43%, Choir 48%, Concord 45% over 192 games each, and both halves of the seeds agree within 3 points. Steep knobs: Skitterlings attack 48 instead of 46 put the Brood at 54% and left the Clans winning 5 of 31 against it on seeds 201 to 308; Hands at 130 did not lift the Clans (36%), because their losses were to the Brood. These five regiments also live in `data/units.ron`, which moved with them; that table is now only the sandbox's default and the golden replays' (see below), and the goldens store their own unit stats.
+
+<a id="roster-field-table"></a>**Field Battles on the rosters.** Since #174 a lobby Field Battle plays every faction's full roster, priced from its roster cost (3 points a Grub, 6 a Marrow), so the `gc_match` `faction_table` below measures the five `units.ron` regiments, which players no longer field. `field_balance::roster_field_table` in `gc_game` plays them as the lobby does (each AI buys its own mix, the default lobby map with a fresh seed each battle): `AI_BATTLES=64 AI_FROM=1 cargo test -p gc_game --release roster_field_table -- --ignored --nocapture` (`AI_PAIR` narrows it, `AI_ARMY=1` prints the first battle's armies). After this pass, 64 battles a pair: Ember Clans v Brood 9%, v Choir 72%, v Concord 75%; Brood v Choir 91%, v Concord 92%; Choir v Concord 69%. The Brood wins nine in ten, and armies differ a lot in size (a 4,000-point Concord army is 4 regiments, a Brood one 9, with a Colossus Maw). Prices that also count supply (half the cost price, half 120 points a supply) lifted the Concord (the Clans won 20% against it) but left the Brood on top (86% to 91%), so cheapness is not what makes the Brood strong there. Evening Field Battles is the next pass, with Field-only knobs so Conquest stays where it is.
 
 **Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 

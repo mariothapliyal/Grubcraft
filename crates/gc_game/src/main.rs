@@ -159,6 +159,8 @@ mod director;
 mod effects;
 mod faction_powers;
 mod field;
+#[cfg(test)]
+mod field_balance;
 mod fog;
 mod fx_demo;
 #[cfg(test)]

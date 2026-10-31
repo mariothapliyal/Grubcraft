@@ -535,7 +535,7 @@
                 name: "Bone Pikes",
                 faction: CarrionConcord,
                 models: 19,
-                hp_per_model: 7,
+                hp_per_model: 8,
                 files: 10,
                 speed: 2.75,
                 turn_rate: 45.0,
