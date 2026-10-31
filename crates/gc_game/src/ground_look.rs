@@ -33,6 +33,12 @@ fn look_of(habitat: Habitat) -> [u8; 4] {
         BoneDrift => [128, 128, 128, GROUND_RIPPLE],
         RibField => [128, 128, 128, GROUND_BONE],
         DyingGrass => [147, 134, 102, GROUND_STRAW],
+        GravelBar => [168, 162, 150, GROUND_GRAVEL],
+        ReedBed => [118, 128, 92, GROUND_DAMP],
+        Beach => [200, 180, 128, GROUND_RIPPLE],
+        // No pattern: a pattern is drawn tile by tile, and a trail one tile
+        // wide would show as blocks; the colour alone blends smoothly.
+        Trail => [132, 100, 70, 0],
     }
 }
 

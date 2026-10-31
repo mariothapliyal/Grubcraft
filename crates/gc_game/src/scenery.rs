@@ -1204,12 +1204,19 @@ impl Placer<'_> {
             SedgeTussock => (0.0, 0.5),
             PeatBog => (0.02, 0.15),
             WetMeadow => (0.0, 0.25),
+            ReedBed => (0.0, 0.6),
             _ => (0.0, 0.0),
         };
         // The wet edge of a stream or pool: alders and sedge along it.
-        let wet = matches!(habitat, AlderCarr | PeatBog | SedgeTussock | WetMeadow);
+        let wet = matches!(
+            habitat,
+            AlderCarr | PeatBog | SedgeTussock | WetMeadow | ReedBed
+        );
         let (alder, sedge) = if t.shore && wet {
             (alder + 0.1, sedge + 0.3)
+        } else if t.shore && matches!(habitat, Grassland | FlowerMeadow | ScrubEdge) {
+            // Bankside alders along an open river or lake shore.
+            (alder + 0.06, sedge)
         } else {
             (alder, sedge)
         };
@@ -1240,6 +1247,14 @@ impl Placer<'_> {
             for _ in 0..count {
                 self.put(Model::Scree, t, rng, 0.7, 1.4, 0.2);
             }
+        }
+    }
+
+    /// A shingle or sand tile: a few pebbles and nothing else.
+    fn pebbles(&mut self, t: &Tile, rng: &mut Rng) {
+        let count = 1 + u32::from(rng.chance(0.5));
+        for _ in 0..count {
+            self.put(Pebbles, t, rng, 0.7, 1.3, 0.2);
         }
     }
 
@@ -1368,9 +1383,16 @@ fn build_chunk(
             let cover = t.cover.get(i).copied().unwrap_or(0);
             let thicket = t.thicket.get(i) == Some(&true);
             let mut rng = Rng::tile(seed, x, y);
-            placer.tile(&tile, cover, thicket, clear[i], &mut rng);
-            if t.habitat.len() == (n * n) as usize {
-                let habitat = Habitat::from_u8(t.habitat[i]);
+            let habitat =
+                (t.habitat.len() == (n * n) as usize).then(|| Habitat::from_u8(t.habitat[i]));
+            match habitat {
+                // Worn trails stay bare; shingle and sand get pebbles, not
+                // the land's grass, bushes and lone trees.
+                Some(Habitat::Trail) => {}
+                Some(Habitat::GravelBar | Habitat::Beach) => placer.pebbles(&tile, &mut rng),
+                _ => placer.tile(&tile, cover, thicket, clear[i], &mut rng),
+            }
+            if let Some(habitat) = habitat {
                 placer.habitat_dressing(&tile, habitat, clear[i], &mut rng);
             }
         }
