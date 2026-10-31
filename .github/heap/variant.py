@@ -31,6 +31,30 @@ elif v == "d":  # no rig fit (and its barrier)
 """
     assert old in body
     body = body.replace(old, "")
+elif v in ("e", "f"):  # no early returns before the barriers (f: only the unfitted one)
+    unfit = """    if fit == 0u {
+        if bone < bones {
+            pose_unfitted(i, slot, bone);
+        }
+        return;
+    }
+"""
+    assert unfit in body
+    body = body.replace(unfit, "")
+    if v == "e":
+        ret = """    if k >= jobs.count.w {
+        return;
+    }
+"""
+        assert ret in body
+        body = body.replace(ret, "")
+elif v == "g":  # no job search loop
+    assert "jobs.job[find_job(k, true)]" in body
+    body = body.replace("jobs.job[find_job(k, true)]", "jobs.job[0u]")
+elif v == "h":  # no layer loop
+    a = body.index("        for (var l = 1u; l <= POSE_LAYERS; l++) {")
+    b = body.index("        local = pose_matrix(p);")
+    body = body[:a] + body[b:]
 else:
     raise SystemExit("unknown variant " + v)
 s = s[:start] + body + s[end:]
