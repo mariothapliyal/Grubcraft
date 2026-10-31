@@ -11,6 +11,18 @@ use gc_sim::nav::{BLOCKED, CELLS_PER_TILE, CLEARANCE, FORD, OPEN};
 use gc_sim::{Cover, Growth};
 use glam::Vec2;
 
+/// The eight steps from a tile to its neighbours.
+const STEPS: [(i32, i32); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
+
 #[derive(Clone)]
 pub struct Terrain {
     map_tiles: u32,
@@ -618,6 +630,113 @@ impl Terrain {
         })
     }
 
+    /// The thicket tiles, in order from `from`, on the cheapest way to `to`
+    /// when each tile of thicket costs `per_thicket` tiles of open ground
+    /// to cross (the time a worker takes to grub it out, say): where
+    /// clearing a path saves a longer way round. Empty when the cheapest
+    /// way goes round, or there is no thicket or no way at all.
+    pub fn thicket_on_way(&self, from: Vec2, to: Vec2, per_thicket: u32) -> Vec<(i32, i32)> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let n = self.map_tiles as i32;
+        if self.side == 0 || self.under.is_empty() {
+            return Vec::new();
+        }
+        let thicket = |t: usize| self.growth[t] == Growth::Thicket as u8;
+        if !(0..self.growth.len()).any(thicket) {
+            return Vec::new();
+        }
+        let tile = |p: Vec2| {
+            (p.x.floor() as i32).clamp(0, n - 1) + (p.y.floor() as i32).clamp(0, n - 1) * n
+        };
+        let (start, goal) = (tile(from) as usize, tile(to) as usize);
+        // Each tile's cost to step onto, in tenths of an open tile (none
+        // where it can't be), read at its first cell as the walkable grid
+        // has it; thicket at what it costs to clear.
+        const NO_WAY: u32 = u32::MAX;
+        let step: Vec<u32> = (0..self.growth.len())
+            .map(|t| {
+                let (x, y) = self.tile_cell(t);
+                let c = (y * self.side + x) as usize;
+                if thicket(t) {
+                    match self.under[c] {
+                        // Rock or deep water under it: clearing opens no way.
+                        BLOCKED => NO_WAY,
+                        u => 10 * per_thicket + 10 * u32::from(u.max(OPEN)),
+                    }
+                } else {
+                    match self.cost[c] {
+                        BLOCKED => NO_WAY,
+                        FORD if self.frozen => 10,
+                        c => 10 * u32::from(c),
+                    }
+                }
+            })
+            .collect();
+        // A*, guessing what is left as open ground the shortest way (no
+        // step costs less).
+        let (gx, gy) = (goal as i32 % n, goal as i32 / n);
+        let guess = |x: i32, y: i32| {
+            let (dx, dy) = ((x - gx).unsigned_abs(), (y - gy).unsigned_abs());
+            10 * dx.max(dy) + 4 * dx.min(dy)
+        };
+        let mut best = vec![u32::MAX; self.growth.len()];
+        let mut came = vec![u32::MAX; self.growth.len()];
+        let mut todo = BinaryHeap::new();
+        best[start] = 0;
+        todo.push(Reverse((0u32, start)));
+        while let Some(Reverse((f, t))) = todo.pop() {
+            if t == goal {
+                break;
+            }
+            let (d, x, y) = (best[t], t as i32 % n, t as i32 / n);
+            if f > d + guess(x, y) {
+                continue;
+            }
+            for (dx, dy) in STEPS {
+                let (nx, ny) = (x + dx, y + dy);
+                if nx < 0 || ny < 0 || nx >= n || ny >= n {
+                    continue;
+                }
+                let u = (ny * n + nx) as usize;
+                let c = step[u];
+                if c == NO_WAY {
+                    continue;
+                }
+                // Diagonals cost 1.4 times, and don't squeeze between two
+                // tiles that can't be stepped on.
+                let c = if dx != 0 && dy != 0 {
+                    if step[(y * n + nx) as usize] == NO_WAY
+                        || step[(ny * n + x) as usize] == NO_WAY
+                    {
+                        continue;
+                    }
+                    c * 14 / 10
+                } else {
+                    c
+                };
+                if d + c < best[u] {
+                    best[u] = d + c;
+                    came[u] = t as u32;
+                    todo.push(Reverse((d + c + guess(nx, ny), u)));
+                }
+            }
+        }
+        if best[goal] == u32::MAX {
+            return Vec::new();
+        }
+        let mut way = Vec::new();
+        let mut t = goal;
+        while t != start {
+            if thicket(t) {
+                way.push((t as i32 % n, t as i32 / n));
+            }
+            t = came[t] as usize;
+        }
+        way.reverse();
+        way
+    }
+
     /// Whether a regiment's centre can stand at `p`.
     pub fn walkable(&self, p: Vec2) -> bool {
         if !self.inside(p, 0.0) {
@@ -732,6 +851,40 @@ fn square_ring(a: f32) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 32-tile open map with a band of thicket down columns 15 to 17,
+    /// broken only on the rows `gap`.
+    fn hedge(gap: std::ops::Range<u32>) -> Terrain {
+        let n = 32u32;
+        let side = (n as i32 * CELLS_PER_TILE) as usize;
+        let growth: Vec<u8> = (0..n * n)
+            .map(|t| {
+                let (x, y) = (t % n, t / n);
+                if (15..18).contains(&x) && !gap.contains(&y) {
+                    Growth::Thicket as u8
+                } else {
+                    Growth::Open as u8
+                }
+            })
+            .collect();
+        Terrain::new(&vec![OPEN; side * side], n).with_growth(growth)
+    }
+
+    #[test]
+    fn a_path_is_cut_where_the_way_round_is_long_and_not_where_it_is_short() {
+        let (from, to) = (Vec2::new(5.5, 16.5), Vec2::new(28.5, 16.5));
+        // No way round: straight through the three tiles of the band.
+        let through = hedge(0..0).thicket_on_way(from, to, 12);
+        assert_eq!(through, vec![(15, 16), (16, 16), (17, 16)]);
+        // A gap two rows off the way: round it.
+        assert!(hedge(14..16).thicket_on_way(from, to, 12).is_empty());
+        // A gap at the map's edge, some 16 tiles further round: round it
+        // when the band costs more than that, through when it costs less.
+        assert!(hedge(0..2).thicket_on_way(from, to, 12).is_empty());
+        assert_eq!(hedge(0..2).thicket_on_way(from, to, 4).len(), 3);
+        // No thicket, no way: nothing.
+        assert!(hedge(0..32).thicket_on_way(from, to, 12).is_empty());
+    }
 
     /// A 16-tile map: tile (5, 5) half ford and half deep, tile (6, 5)
     /// wholly deep, the rest open.

@@ -471,3 +471,10 @@ pub fn vec_angle(v: Vec2) -> Angle {
 pub fn right_of(forward: Vec2) -> Vec2 {
     Vec2::new(-forward.y, forward.x)
 }
+
+/// How far `p` is from the segment `a` to `b`.
+pub fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}

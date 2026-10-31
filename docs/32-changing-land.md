@@ -136,7 +136,7 @@ Computer players plan for the shorter range and slower march (stage 3a, below).
 
 ## Woods that burn (idea 2)
 
-Fire is the first change to the ground that happens in a Field Battle as well as in Conquest. A regiment sets the woods beside it alight; the fire spreads tile by tile with the wind, dies in the rain, burns whoever stands in it, and lights the night round it. A tile that burns out is open, scorched ground for good. Stage 4a is the rules. Lightning strikes came with docs/41 step 6; burning buildings and the computer players' own use of fire come later.
+Fire is the first change to the ground that happens in a Field Battle as well as in Conquest. A regiment sets the woods beside it alight; the fire spreads tile by tile with the wind, dies in the rain, burns whoever stands in it, and lights the night round it. A tile that burns out is open, scorched ground for good. Stage 4a is the rules. Lightning strikes and the computer players setting fires came with docs/41 step 6; burning buildings come later.
 
 ### Setting it alight
 
@@ -154,14 +154,14 @@ Fire is the first change to the ground that happens in a Field Battle as well as
 - **Burns.** Once a second a regiment whose block touches burning tiles loses 4 hit points for each, up to six tiles (24 a second, about three soldiers), from the back ranks forward, and 3 morale points (a regiment that never routs keeps its morale). Losses to fire count as any other.
 - **Seen.** A regiment touching fire is never hidden, by cover or the dark.
 - **Firelight.** In the dark, burning tiles light the ground round them as torches do: a regiment within `TORCH_LIGHT` (10 tiles) of one is lit (stage 3b, above), so it is seen and shot from as far as by day.
-- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Minds don't set fires yet, and in Conquest they don't yet march out of them.
+- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Since docs/41 step 6, in a Field Battle, a Veteran or better sets alight woods an enemy stands or hides in from a regiment at their edge, when the ground is dry, the wind isn't against it and none of its own are in the way. In Conquest they don't yet march out of fires, so they don't set any.
 
 ### Shared state
 
 - `World::fires()` lists the burning tiles as (column, row, growth, ticks left, ticks in all), for the flames, smoke and their light; `Event::Kindled { x, y }` tells when a tile catches, and `Event::Cleared { burnt: true }` when it burns out. `World::in_fire` says a regiment touches fire (vision works it out from the fires each tick, so it is not hashed).
 - The fires are hashed with the ground (only once a fire has been lit). `Command::Burn` is replay tag 39 (`FORMAT` 41) and wire tag 37 (`PROTOCOL` 34); `SIM_VERSION` 44 (42 and 43 went to the walls). Rehearsal worlds burn as the match does (they copy its fires).
 - **Golden.** `field-fire-1v1` is the woods map in a dry wind: every 20 seconds the Carrion Concord sets fire to the woods beside its regiments, the fire runs downwind, and both computer players march their troops out of it.
-- **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings and the computer players setting fires of their own come later (lightning strikes are built: docs/41 step 6).
+- **Not yet:** pathfinding doesn't steer round fire (regiments march through it and burn); burning buildings come later (lightning strikes and the computer players' fires are built: docs/41 step 6).
 
 ## Fords that flood (idea 6)
 
