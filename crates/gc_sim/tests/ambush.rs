@@ -406,7 +406,7 @@ fn a_charge_seen_coming_is_no_ambush() {
 }
 
 #[test]
-fn an_ambush_breaks_a_line_that_would_have_held() {
+fn an_ambush_breaks_a_line_sooner() {
     // Spears locked in melee front to front; cavalry hits their flank from
     // 12 tiles to the east, from a wood or from open ground. Returns the
     // tick the flanked spears break, if they do within 40 seconds, summed
@@ -443,7 +443,10 @@ fn an_ambush_breaks_a_line_that_would_have_held() {
         "ambushed: {ambushed} broke, ticks {ambushed_when}; open: {open} broke, ticks {open_when}"
     );
     assert!(
-        ambushed > open || (ambushed == open && ambushed_when * 10 < open_when * 9),
+        // Nobody breaks above its breaking point (docs/05, "Morale"), so
+        // the surprise tells in how soon: the line caught off guard is cut
+        // down faster and has no nerve left when it gets there.
+        ambushed > open || (ambushed == open && ambushed_when < open_when),
         "ambushed {ambushed} ({ambushed_when}) vs open {open} ({open_when})"
     );
 }

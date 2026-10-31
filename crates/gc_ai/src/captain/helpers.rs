@@ -123,10 +123,36 @@ pub(super) fn path_clear(
     to: Vec2,
     skip: RegimentHandle,
 ) -> bool {
+    clear_of(fighting, from, to, skip, |f| {
+        view.unit(f).class != Class::Ranged
+    })
+}
+
+/// Whether the way from `from` to `to` passes clear of free enemy spears
+/// and pikes, which a charge riding by would meet point first.
+pub(super) fn spears_clear(
+    view: &Perception,
+    fighting: &[&Seen],
+    from: Vec2,
+    to: Vec2,
+    skip: RegimentHandle,
+) -> bool {
+    clear_of(fighting, from, to, skip, |f| view.unit(f).stats.reach)
+}
+
+/// Whether the way from `from` to `to` passes clear of every free
+/// (not engaged) regiment in `fighting` that `counts`.
+fn clear_of(
+    fighting: &[&Seen],
+    from: Vec2,
+    to: Vec2,
+    skip: RegimentHandle,
+    counts: impl Fn(&Seen) -> bool,
+) -> bool {
     let d = to - from;
     let len2 = d.length_squared().max(1e-6);
     fighting.iter().all(|f| {
-        if f.handle == skip || f.engaged || view.unit(f).class == Class::Ranged {
+        if f.handle == skip || f.engaged || !counts(f) {
             return true;
         }
         let t = ((f.pos - from).dot(d) / len2).clamp(0.0, 1.0);
