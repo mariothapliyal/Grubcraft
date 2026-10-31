@@ -2530,3 +2530,7 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(c, 1.0);
 }
+
+// TEMP heap diag.
+@compute @workgroup_size(64)
+fn cs_noop() {}

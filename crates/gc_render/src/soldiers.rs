@@ -700,8 +700,11 @@ pub(crate) fn make(
             cache: None,
         })
     };
-    let pose_pipeline = compute_pipeline("soldier posing", "cs_pose");
-    let skin_pipeline = compute_pipeline("soldier skinning", "cs_skin");
+    // TEMP heap diag: swap a compute shader for an empty one.
+    let skip = std::env::var("GC_DIAG_SKIP").unwrap_or_default();
+    let pick = |name: &'static str, entry: &'static str| if skip == name { "cs_noop" } else { entry };
+    let pose_pipeline = compute_pipeline("soldier posing", pick("pose", "cs_pose"));
+    let skin_pipeline = compute_pipeline("soldier skinning", pick("skin", "cs_skin"));
     let pipeline = |label, vs, target: crate::Target<'_>, cull_mode, buffers: &[_]| {
         let (targets, fs) = target.color();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
