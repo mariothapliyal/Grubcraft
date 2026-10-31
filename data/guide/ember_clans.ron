@@ -12,6 +12,7 @@
     buildings: [
         (
             name: "Clan Hall",
+            blurb: "Your starting base: trains Hands and takes Grub and Marrow. Upgrade it to the Castle Keep for the mid game.",
             summary: "Your starting base: Hands drop Grub and Marrow here, it trains new Hands, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
@@ -24,6 +25,7 @@
         ),
         (
             name: "Castle Keep",
+            blurb: "Tier 2 of the Clan Hall: unlocks the Stables, Kite Loft and tier-2 regiments. Upgrade once your army pays for itself.",
             summary: "The Clan Hall's second tier. It keeps working as a hall while it upgrades and raises your supply cap. It unlocks the Stables and Kite Loft and every tier-2 regiment. Upgrade again for monsters once your army is paying for itself.",
             notes: [
                 ("Daimyo's Citadel", "The late game: the Oni-Bound monster, the third hero and the top upgrades (not designed yet). Expensive, so upgrade when you hold a second base."),
@@ -36,6 +38,7 @@
         ),
         (
             name: "Daimyo's Citadel",
+            blurb: "Tier 3 of the Clan Hall: opens the third hero slot and lets the Ancestor Shrine bind the Oni-Bound.",
             summary: "The final tier of the main building. It raises the supply cap again, lets the Ancestor Shrine bind the Oni-Bound and opens the third hero slot. Nothing is left to upgrade, so spend on armies and defence from here.",
             notes: [],
             tips: [
@@ -46,6 +49,7 @@
         ),
         (
             name: "Outpost Hall",
+            blurb: "A forward hall at a far seep or vein: a Grub and Marrow drop-off and reinforcement point. Trains nothing.",
             summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer.",
             notes: [],
             tips: [
@@ -56,6 +60,7 @@
         ),
         (
             name: "Farmstead",
+            blurb: "Housing: raises your supply cap. Build one before you hit the cap, and keep it back from the front.",
             summary: "Housing: every regiment uses supply, and each Farmstead raises the cap. Cheap and quick to raise, so build one before you hit the cap, not after, and keep them away from the front where raiders will burn them.",
             notes: [],
             tips: [
@@ -66,6 +71,7 @@
         ),
         (
             name: "Granary",
+            blurb: "A Grub drop-off beside far seeps so Hands walk less. Its economy research is not designed yet.",
             summary: "A Grub drop-off to build beside seeps so Hands walk less; put one at every far seep. It is also meant to research the Clans' economy upgrades, but no research is designed yet, so for now it is a shorter walk and nothing more.",
             notes: [
                 ("Research", "Economy upgrades are planned for the Granary. No research, costs or times are designed or built yet, so nothing can be bought here today."),
@@ -78,6 +84,7 @@
         ),
         (
             name: "Dojo",
+            blurb: "Trains Yari spears, Yumi archers and, at tier 2, Katana Samurai. Your first military building; raise it near the front.",
             summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Regiments reinforce beside it, so raise it near the front. It is your first military building and the one you will build most; without it you have no army.",
             notes: [],
             tips: [
@@ -88,6 +95,7 @@
         ),
         (
             name: "Stables",
+            blurb: "Trains Mounted Samurai and Yabusame Riders. Tier 2, needs Marrow. Cavalry ride down archers and routing troops.",
             summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Regiments reinforce beside it. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
             notes: [],
             tips: [
@@ -98,6 +106,7 @@
         ),
         (
             name: "Ember Workshop",
+            blurb: "Builds Battering Rams, then Rocket Carts at tier 2. Build one before you attack: rams break Fortified halls and walls.",
             summary: "Builds Battering Rams at tier 1 and Ember Rocket Carts at tier 2, so it is your only siege and artillery. Raise one before you attack a base: rams are how you break Fortified halls, towers and walls.",
             notes: [],
             tips: [
@@ -108,6 +117,7 @@
         ),
         (
             name: "Kite Loft",
+            blurb: "Builds War Kites, the Clans' flyers: fast scouts that set structures burning. Tier 2, needs Marrow.",
             summary: "Builds War Kites, the Clans' only flyers: fast scouts that see far and set structures burning. Tier 2 and needs Marrow. Build one to scout, to hunt workers and artillery, or to burn walls out from under a defender.",
             notes: [],
             tips: [
@@ -118,6 +128,7 @@
         ),
         (
             name: "Ancestor Shrine",
+            blurb: "Hires and revives heroes, and each finished Shrine earns Honor. Build it early, since heroes lead your army.",
             summary: "Hires and revives heroes and holds the Honor Edicts; each finished Shrine earns a point of Honor every 30 seconds. Build it early, since heroes lead your army and Honor is the Clans' faction power. At tier 3 it binds the Oni-Bound.",
             notes: [],
             tips: [
@@ -128,6 +139,7 @@
         ),
         (
             name: "Forge",
+            blurb: "Nothing to research yet: weapon and armour upgrades are not designed or built. Plan one for later.",
             summary: "Meant to research weapon and armour upgrades. No upgrades are designed or built yet, so today it does nothing you can buy. Plan one after your first military building, ready for when research arrives.",
             notes: [
                 ("Research", "Weapon and armour upgrades are planned for the Forge. No research, costs or times are designed or built yet, so nothing can be bought here today."),
@@ -139,6 +151,7 @@
         ),
         (
             name: "Watchtower",
+            blurb: "Two archers that shoot ground and air. A cheap guard for seeps and approaches against lone raiders and flyers.",
             summary: "Two archers that shoot ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
             notes: [],
             tips: [
@@ -149,6 +162,7 @@
         ),
         (
             name: "Palisade",
+            blurb: "A wall you draw, built a tile at a time by a worker. Fire burns it and rams break it.",
             summary: "A wall you draw: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. Shift keeps it straight in 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker. Fire Arrows burn it and rams break it.",
             notes: [
                 ("Stone Wall", "Twice and a half as tough and no longer burns like logs. Raise the stretch facing the enemy first."),
@@ -161,6 +175,7 @@
         ),
         (
             name: "Stone Wall",
+            blurb: "Tier 2 of the Palisade: 2.5 times as tough. Select a Palisade and press U to raise its stretch.",
             summary: "Level 2 of the Palisade: a sloped stone wall with a plaster face, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
             notes: [
                 ("Castle Wall", "The toughest wall the Clans build: four times a Palisade. Needs a Castle Keep."),
@@ -173,6 +188,7 @@
         ),
         (
             name: "Castle Wall",
+            blurb: "Tier 3 of the Palisade: 4 times as tough, with loopholes for archers. Needs a Castle Keep; press U on a Stone Wall.",
             summary: "Level 3, the top: a castle wall with loopholes and corner turrets, 4 times as tough as a Palisade. Needs a Castle Keep. Select a Stone Wall and press U to raise its stretch. Its twist: a stone falls every 3 s on each regiment hacking at it, and your archers on it shoot through loopholes, a quarter faster.",
             notes: [],
             tips: [
@@ -183,6 +199,7 @@
         ),
         (
             name: "Gate",
+            blurb: "A gate in your wall: your side walks through and enemies don't. Set it Auto, Locked or Open.",
             summary: "A wall segment your side walks through and enemies don't. Select it to set Auto (opens as your regiments march up, shuts 2 s after; troops in the gateway hold it open), Locked (shut to everyone) or Open (anyone can pass). Enemies break it down like any wall.",
             notes: [
                 ("Yagura Gatehouse", "Half as tough again, with a walkway over the door for archers or foot. It goes up on its own, with no worker, and the door keeps working."),
@@ -195,6 +212,7 @@
         ),
         (
             name: "Yagura Gatehouse",
+            blurb: "Tier 2 of the Gate: half as tough again, with a walkway for archers. Select a Gate and press V.",
             summary: "Level 2 of the Gate: a stone gatehouse with a timber yagura on top, half as tough again. Select a Gate and press V: it goes up on its own, with no worker, and the door keeps working. Archers or foot can man the walkway over the door, and it joins a raised wall beside it into one walkway.",
             notes: [],
             tips: [
@@ -205,6 +223,7 @@
         ),
         (
             name: "Timber Bridge",
+            blurb: "Draw a bridge across a river. Workers build it from each bank, and anyone can cross it.",
             summary: "You draw it across a river: drag from bank to bank along a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide (3 to 5 tiles), 3 Grub a tile. Hands build it out from the bank a plank-span at a time. Anyone can cross it; a broken tile drops its troops into the river.",
             notes: [
                 ("Braced Timber Bridge", "Twice as tough against blows; later, debris in the river too."),
@@ -217,6 +236,7 @@
         ),
         (
             name: "Braced Timber Bridge",
+            blurb: "Tier 2 of the Timber Bridge: twice as tough. Select a bridge and press U to raise the whole joined span.",
             summary: "Level 2 of the Timber Bridge: cross-bracing and doubled pilings under the deck, twice as tough. Select a bridge and press U: the whole joined bridge is paid now and a Hand raises it a span at a time, and troops keep crossing meanwhile.",
             notes: [
                 ("Stone-Footed Bridge", "More than three times as tough, and debris glances off its cutwaters."),
@@ -229,6 +249,7 @@
         ),
         (
             name: "Stone-Footed Bridge",
+            blurb: "Tier 3 of the Timber Bridge: over three times as tough, and sheds debris. Needs a Castle Keep; press U on a braced one.",
             summary: "Level 3, the top: stone-footed piers with pointed cutwaters facing upstream, more than three times a plain bridge's toughness, and it sheds debris instead of catching it. Needs a Castle Keep. Select a Braced Timber Bridge and press U.",
             notes: [],
             tips: [
@@ -239,6 +260,7 @@
         ),
         (
             name: "Stake Line",
+            blurb: "Draw stakes that stop enemy riders and beasts dead; foot troops pass at half pace. Wears down each time.",
             summary: "A line of sharpened stakes you draw like a wall, at any angle, for 4 Grub a tile. Anyone walks through at half pace, but nobody charges through: enemy riders and beasts that run onto it are stopped dead, hurt and disordered. It wears down each time.",
             notes: [],
             tips: [
@@ -249,6 +271,7 @@
         ),
         (
             name: "Cart Barricade",
+            blurb: "Draw a barricade nobody walks through; troops behind it take less from arrows and blows.",
             summary: "A line of overturned carts and logs you draw like a wall, for 8 Grub a tile. It blocks walking like a wall, and your troops within 2 tiles of it take 30 percent less from arrows and 20 percent less from blows to their front. Enemy troops get no cover from it.",
             notes: [],
             tips: [
@@ -259,6 +282,7 @@
         ),
         (
             name: "Spike Pit",
+            blurb: "A hidden trap: the first enemy regiment to step on it is thrown into disorder. Gone once sprung.",
             summary: "A hidden pit under a woven lid, for 15 Grub on one tile. The first enemy regiment to walk onto it falls in: its front rank is hurt and the regiment is thrown into disorder. Your enemies cannot see it, and once it is sprung it is gone.",
             notes: [],
             tips: [

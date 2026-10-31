@@ -503,6 +503,9 @@ struct Options {
     /// The weather every match opens in (`--weather rain|snow|fog`); F12
     /// steps through them.
     weather: Option<gc_render::Weather>,
+    /// The season the land is drawn in (`--season spring|summer|autumn|
+    /// winter`), whatever the match's year: the picture only.
+    season: Option<f32>,
     /// A land whose air lights the whole map (`--air waste`).
     air: Option<gc_map::def::Land>,
     /// How far the camera starts from the ground (`--distance 14..260`).
@@ -547,6 +550,7 @@ fn parse_args() -> Options {
         viewer: None,
         look: None,
         weather: None,
+        season: None,
         air: None,
         distance: None,
         fx: None,
@@ -706,6 +710,9 @@ fn parse_args() -> Options {
             "--weather" => gc_render::Weather::from_name(&value)
                 .map(|w| opts.weather = Some(w))
                 .is_some(),
+            "--season" => gc_sim::sky::Season::from_name(&value)
+                .map(|s| opts.season = Some(s as usize as f32 + 0.5))
+                .is_some(),
             "--air" => gc_map::def::Land::ALL
                 .into_iter()
                 .find(|l| format!("{l:?}").eq_ignore_ascii_case(value.trim()))
@@ -796,7 +803,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 fn usage() -> ! {
     eprintln!(
         "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
-         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
+         [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
 }
@@ -947,6 +954,8 @@ struct Running {
     turn_scroll: f32,
     /// Each building's tips, for the HUD's tips card.
     tip_book: guide_data::TipBook,
+    /// Each building's blurb, for its line on the build menu.
+    blurb_book: guide_data::BlurbBook,
     /// Sandbox: draw regiments hidden from the side you command too (Shift+V).
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
@@ -1740,7 +1749,9 @@ impl App {
         self.running = Some(Running {
             window,
             renderer,
-            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air).with_weather(opts.weather),
+            atmosphere: atmosphere::Atmosphere::new(opts.look, opts.air)
+                .with_weather(opts.weather)
+                .with_season(opts.season),
             cinema: cinema::Cinema::default(),
             was_deploying: false,
             director: director::Director::default(),
@@ -1830,6 +1841,7 @@ impl App {
             guide_scroll: 0.0,
             turn_scroll: 0.0,
             tip_book: guide_data::tip_book(),
+            blurb_book: guide_data::blurb_book(),
             reveal_all: false,
             fog: Default::default(),
             river_watch: Default::default(),
@@ -4352,8 +4364,7 @@ impl Running {
         );
         // The unit viewer shows a model as made, not as the last rain left it.
         if self.viewer.is_some() {
-            look.wet = 0.0;
-            look.snow = 0.0;
+            look = look.bare_land();
         }
         self.renderer.set_look(look);
         // The water rises in a flood (docs/32-changing-land.md) and drops

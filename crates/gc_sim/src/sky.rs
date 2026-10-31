@@ -136,6 +136,24 @@ impl Season {
         Season::Winter,
     ];
 
+    /// The season of this name ("spring", "Summer", ...), any case.
+    pub fn from_name(name: &str) -> Option<Season> {
+        let name = name.trim();
+        Season::ALL
+            .into_iter()
+            .find(|s| s.name().eq_ignore_ascii_case(name))
+    }
+
+    /// Its name alone.
+    pub fn name(self) -> &'static str {
+        match self {
+            Season::Spring => "Spring",
+            Season::Summer => "Summer",
+            Season::Autumn => "Autumn",
+            Season::Winter => "Winter",
+        }
+    }
+
     /// Its name and what it does, in a word, for the top bar.
     pub fn chip(self) -> &'static str {
         match self {
