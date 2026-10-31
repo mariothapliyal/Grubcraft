@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 69;
+pub const SIM_VERSION: u32 = 70;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -3044,10 +3044,17 @@ impl World {
         self.fires.burning()
     }
 
-    /// One tick of the fires (before the fallen are taken off the field,
+    /// One tick of the fires, a storm's lightning first (before the fallen are taken off the field,
     /// so those the fire kills fall with the rest): the tiles that burn out
     /// go through the ground change as burnt.
     fn burn(&mut self) {
+        let strike =
+            (self.fires).lightning(self.tick, &self.terrain, self.sky.weather(), self.sky.wet());
+        if let Some((x, y, caught)) = strike
+            && !self.scratch
+        {
+            self.events.lightning(x, y, caught);
+        }
         self.fires.update(
             self.tick,
             &self.terrain,

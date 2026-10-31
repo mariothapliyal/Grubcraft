@@ -153,7 +153,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - **Time of day** (lobby): Golden hour (17:00), Noon, Overcast (12:00), Dusk (18:00), Night (23:00).
 - **Weather** (lobby): Fair, Changing (a new spell every 3 to 6 min; the default since 2026-10-30), Rain, Snow, Fog. Fog cuts sight up to 60%; snow 30%; rain 20%; night 45%. Snow slows marching up to 15%. The top bar shows the cut (for example "Fog: sight 40%").
-- **Weather and fire news:** the news line says when rain (strength 80+), a storm (rain 192+, where lightning starts; rain again under 152), snow or fog comes in, and when it clears (under 40), once each way. Woods or scrub burning within 10 tiles of your buildings or regiments: "Fire! It is spreading near your base" (or "troops"), each once as it comes near, then not again for 45 s. Not told while catching up online. The weather a match starts in isn't announced. Code: `gc_game/src/sky_news.rs`.
+- **Lightning:** a storm (rain 192+; the lobby's Rain is 200) throws a bolt about every 10 s somewhere on the map, likeliest on woods or thicket. It sets the tile alight only while the ground is dry (the first ~30 s of a storm over dry land), so it burns small patches, mostly in summer. Flash and thunder within 160 tiles of the camera; bolt drawn where it struck if seen. Code: `Fires::lightning` (gc_sim/src/fire.rs), `Event::Lightning`. Docs 41 step 6.
+- **Weather and fire news:** the news line says when rain (strength 80+), a storm (rain 192+, where lightning starts; rain again under 152), snow or fog comes in, and when it clears (under 40), once each way. Woods or scrub burning within 10 tiles of your buildings or regiments: "Fire! It is spreading near your base" (or "troops"), each once as it comes near, then not again for 45 s; "Lightning! It set the woods alight near ..." when a bolt lit a tile near the same place in the last 2 s. Not told while catching up online. The weather a match starts in isn't announced. Code: `gc_game/src/sky_news.rs`.
 - **Night:** an unlit regiment in the open is spotted only within 6 tiles (12 when marching). Torches (`X`) light 10 tiles and make a regiment visible.
 - **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed). The land shows it: straw-coloured grass in summer, gold, orange and red broadleaf woods in autumn, a thin snow and ice on the frozen water in winter (`--season NAME` previews one).
 - **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled (flames only).
@@ -203,7 +204,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Tutorial "First Harvest", faction primers, Codex, contextual hints.
 - Ping wheel, text chat, key rebinding, alternate grid layouts.
 - Settings saved but not acted on: V-sync, frame cap, effects, unit voices, interface volumes, colour-blind palette, high-contrast banners, hints, most of the graphics preset.
-- World: lightning, burning buildings, computer players setting fires or planning for seasons, snow on the Highland.
+- World: burning buildings, computer players setting fires or planning for seasons, snow on the Highland.
 - Commander: a command to move the general to another regiment.
 
 **Conflicts in the sources** (the code is the authority)
