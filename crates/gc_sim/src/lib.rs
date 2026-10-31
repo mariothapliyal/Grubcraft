@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 71;
+pub const SIM_VERSION: u32 = 72;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1748,6 +1748,7 @@ impl World {
             &self.stances,
             &self.terrain,
             &self.vision,
+            &self.nav,
             self.tick,
         );
         self.combat.push_lines(
