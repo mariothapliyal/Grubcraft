@@ -22,6 +22,8 @@ pub struct WallKit {
     post: usize,
     end: usize,
     broken: usize,
+    /// Half a run, to fill out a diagonal tile, if the kit has one.
+    half: Option<usize>,
     /// Below a fifth of its hit points, if the kit has one (charred logs).
     burnt: Option<usize>,
     /// A buttress on the back, every few tiles, if the kit has one.
@@ -36,13 +38,25 @@ pub struct Tile<'a> {
     pub centre: Vec2,
     pub dir: Vec2,
     pub len: f32,
-    /// Whether another tile of a drawn wall stands at a tile.
+    /// Whether a tile of the same side's walls or gates stands at a tile.
     pub walled: &'a dyn Fn((i32, i32)) -> bool,
 }
 
 /// How much of a run's length a piece may come short by before it takes
 /// another run (as `buildings::SPOT_SLACK`).
 const SLACK: f32 = 0.15;
+
+/// How far a tile's piece of the line reaches past each joint, to overlap
+/// the next (`buildings::LINE_JOINT`).
+const JOINT: f32 = 0.05;
+
+/// How much a tile's runs may come short by before a half run fills it out.
+const HALF_FROM: f32 = 0.25;
+
+/// A wall that carries on past a joint has a tile on that side: ahead, to
+/// the side at a corner, but not behind (in a drawn line the tile before is
+/// always well behind, so this never mistakes it for the next).
+const AHEAD: f32 = -0.2;
 
 /// The eight tiles around a tile.
 const NEIGHBOURS: [(i32, i32); 8] = [
@@ -78,6 +92,7 @@ impl WallKit {
                 post: find("Palisade Kit Post")?,
                 end: find("Palisade Kit End Post")?,
                 broken: find("Palisade Kit Run Broken")?,
+                half: find("Palisade Kit Half Run"),
                 burnt: find("Palisade Kit Run Burnt"),
                 brace: find("Palisade Kit Brace"),
             }),
@@ -94,6 +109,7 @@ impl WallKit {
                     post: find(&format!("Bone Fence Kit {level}Post"))?,
                     end: find(&format!("Bone Fence Kit {level}End"))?,
                     broken: find(&format!("Bone Fence Kit {level}Broken"))?,
+                    half: None,
                     burnt: None,
                     brace: None,
                 })
@@ -108,12 +124,15 @@ impl WallKit {
     }
 
     /// The pieces that build wall tile `t`, added to `out`: runs end to
-    /// end along its piece of the line, a post at the joint where it
-    /// starts and an end post where the wall stops. A tile going up shows
-    /// its posts, and its runs from half built.
+    /// end along its piece of the line, a post at a joint where the wall
+    /// carries on and an end post where it stops. A tile going up shows its
+    /// posts, and its runs from half built.
     pub fn pieces(&self, t: &Tile<'_>, out: &mut Vec<Piece>) {
         let s = t.s;
-        let mut put = |model: usize, at: Vec2, facing: Vec2| {
+        // Every piece faces the same way along a line whichever way it was
+        // drawn, so the braces and the plainer back stay on one side.
+        let facing = if forward(t.dir) { t.dir } else { -t.dir };
+        let mut put = |model: usize, at: Vec2| {
             out.push(Piece {
                 model,
                 at,
@@ -122,47 +141,78 @@ impl WallKit {
             });
         };
         let half = t.dir * (t.len / 2.0);
-        let (start, end) = (t.centre - half, t.centre + half);
         // Does the wall carry on past a joint: is any of the tile's eight
-        // neighbours on that side walled (straight on, or stepped aside on
-        // a curve)?
+        // neighbours on that side one of its side's walls or gates?
         let goes_on = |way: Vec2| {
             NEIGHBOURS.iter().any(|&(dx, dy)| {
-                Vec2::new(dx as f32, dy as f32).normalize().dot(way) > 0.3
+                Vec2::new(dx as f32, dy as f32).normalize().dot(way) > AHEAD
                     && (t.walled)((s.tile.0 + dx, s.tile.1 + dy))
             })
         };
-        let ends = [(start, -t.dir), (end, t.dir)];
-        for (k, &(joint, way)) in ends.iter().enumerate() {
+        for (joint, way) in [(t.centre - half, -t.dir), (t.centre + half, t.dir)] {
             if !goes_on(way) {
-                put(self.end, joint, t.dir);
-            } else if k == 0 {
-                put(self.post, joint, t.dir);
+                put(self.end, joint);
+            } else if forward(way) {
+                // Of the two tiles meeting at a joint, the one it lies
+                // ahead of puts the post, however each was drawn.
+                put(self.post, joint);
             }
         }
         if !s.finished() && s.built_percent < 50 {
             return;
         }
         let hp = s.hp * 100 / s.max_hp.max(1);
-        let count = (t.len - SLACK).ceil().max(1.0) as usize;
-        let step = (t.len - 1.0).max(0.0) / (count as f32 - 1.0).max(1.0);
-        let first = -step * (count as f32 - 1.0) / 2.0;
+        let run = |k: usize| match self.burnt {
+            Some(burnt) if hp < BURNT_BELOW => burnt,
+            _ if hp < BROKEN_BELOW => self.broken,
+            _ => self.runs[pick(s.tile, k, self.runs.len())],
+        };
+        // Whole runs to the tile's length less its overlaps, and a half run
+        // where they would come well short (a diagonal); without a half
+        // run, one more whole run, the runs closing up to fit.
+        let core = t.len - 2.0 * JOINT;
+        let mut count = (core + SLACK).floor().max(1.0) as usize;
+        let short = core - count as f32;
+        let half_run = self
+            .half
+            .filter(|_| short > HALF_FROM && hp >= BROKEN_BELOW);
+        if short > HALF_FROM && half_run.is_none() {
+            count += 1;
+        }
+        let laid = if half_run.is_some() {
+            count as f32 + 0.5
+        } else {
+            count as f32
+        };
+        // Laid end to end from one end, or evenly over the core when the
+        // runs are more than it.
+        let step = if laid > core && half_run.is_none() && count > 1 {
+            (core - 1.0) / (count as f32 - 1.0)
+        } else {
+            1.0
+        };
+        let from =
+            -(step * (count as f32 - 1.0) + 1.0 + if half_run.is_some() { 0.5 } else { 0.0 }) / 2.0;
         for k in 0..count {
-            let at = t.centre + t.dir * (first + step * k as f32);
-            let run = match self.burnt {
-                Some(burnt) if hp < BURNT_BELOW => burnt,
-                _ if hp < BROKEN_BELOW => self.broken,
-                _ => self.runs[pick(s.tile, k, self.runs.len())],
-            };
-            put(run, at, t.dir);
+            put(run(k), t.centre + t.dir * (from + 0.5 + step * k as f32));
+        }
+        if let Some(half_run) = half_run {
+            let at = from + step * (count as f32 - 1.0) + 1.25;
+            put(half_run, t.centre + t.dir * at);
         }
         if let Some(brace) = self.brace
             && s.finished()
             && pick(s.tile, 7, BRACE_EVERY) == 0
         {
-            put(brace, t.centre, t.dir);
+            put(brace, t.centre);
         }
     }
+}
+
+/// Whether `way` points toward higher x (or straight toward higher y):
+/// one of a line's two ways, the same whichever way it was drawn.
+fn forward(way: Vec2) -> bool {
+    way.x > 1e-3 || (way.x.abs() <= 1e-3 && way.y > 0.0)
 }
 
 /// A number below `n` that tile `tile` always gets for its `k`th piece.
@@ -206,8 +256,9 @@ mod tests {
         };
         let mut out = Vec::new();
         kit.pieces(&tile, &mut out);
-        // An end post at the west end (nothing beyond), no post at the east
-        // joint (the next tile has its own), and one run.
+        // An end post at the west end (nothing beyond), a post at the east
+        // joint (the joint lies east of this tile, so it is this tile's),
+        // and one run.
         let ends: Vec<_> = out.iter().filter(|p| p.model == kit.end).collect();
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].at, Vec2::new(5.0, 5.5));
@@ -215,18 +266,63 @@ mod tests {
             out.iter().filter(|p| kit.runs.contains(&p.model)).count(),
             1
         );
-        // A diagonal piece takes two runs.
-        out.clear();
-        let diagonal = Tile {
-            dir: Vec2::new(1.0, 1.0).normalize(),
-            len: std::f32::consts::SQRT_2,
-            ..tile
+        assert_eq!(out.iter().filter(|p| p.model == kit.post).count(), 1);
+        // A diagonal piece takes a run and a half, not two runs one over
+        // the other; a piece a little longer than a tile, just the one.
+        for (dir, len, runs, halves) in [
+            (Vec2::new(1.0, 1.0), std::f32::consts::SQRT_2, 1, 1),
+            (Vec2::new(10.0, 4.0), 1.077, 1, 0),
+        ] {
+            out.clear();
+            let piece = Tile {
+                dir: dir.normalize(),
+                len: len + 2.0 * JOINT,
+                ..tile
+            };
+            kit.pieces(&piece, &mut out);
+            let count = |m: &dyn Fn(usize) -> bool| out.iter().filter(|p| m(p.model)).count();
+            assert_eq!(count(&|m| kit.runs.contains(&m)), runs, "{dir}");
+            assert_eq!(count(&|m| Some(m) == kit.half), halves, "{dir}");
+        }
+    }
+
+    #[test]
+    fn a_corner_and_lines_drawn_toward_each_other_join_without_end_posts() {
+        let models = crate::models::load().unwrap();
+        let kit = WallKit::for_wall(&models, "Palisade").unwrap();
+        // Drawn east to (5, 0), then north from there; and a second line
+        // drawn west from (9, 0) back to (6, 0).
+        let walled = |t: (i32, i32)| matches!(t, (0..=9, 0)) || t == (5, -1) || t == (5, -2);
+        let pieces = |tile: (i32, i32), dir: Vec2| {
+            let mut s = crate::buildings::footprint_view(tile, 1, 1, 0);
+            s.built_percent = 100;
+            let t = Tile {
+                s: &s,
+                centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
+                dir,
+                len: 1.0,
+                walled: &walled,
+            };
+            let mut out = Vec::new();
+            kit.pieces(&t, &mut out);
+            out
         };
-        kit.pieces(&diagonal, &mut out);
-        assert_eq!(
-            out.iter().filter(|p| kit.runs.contains(&p.model)).count(),
-            2
-        );
+        let ends = |out: &[Piece]| out.iter().filter(|p| p.model == kit.end).count();
+        let posts = |out: &[Piece]| out.iter().filter(|p| p.model == kit.post).count();
+        // The corner tile carries on to the side: no end post.
+        assert_eq!(ends(&pieces((5, 0), Vec2::X)), 0);
+        // At the joint where the two lines meet, one post between them.
+        let west = pieces((5, 0), Vec2::X);
+        let east = pieces((6, 0), Vec2::NEG_X);
+        let at = |out: &[Piece]| {
+            (out.iter())
+                .filter(|p| p.model == kit.post && (p.at.x - 6.0).abs() < 0.1)
+                .count()
+        };
+        assert_eq!(at(&west) + at(&east), 1);
+        assert!(posts(&east) <= 1);
+        // Both lines face the same way.
+        assert_eq!(west[0].facing, east[0].facing);
     }
 
     #[test]

@@ -587,16 +587,21 @@ impl Looks {
                 (Some(f32::from(top) / scale), Some(half / scale))
             })
             .unzip();
+        let wall_kits: Vec<_> = (table.names.iter())
+            .map(|name| crate::wall_kit::WallKit::for_wall(models, name))
+            .collect();
         Looks {
             // A drawn wall with a model of its own (the Palisade) shows it
             // along its line (`model_spots`); the rest, and stakes and
             // barricades, are drawn as boxes. A bridge has no model of its
             // own: it is built from the timber kit's pieces (`kit`), or
             // drawn as boxes without them.
-            stages: (table.names.iter().zip(&table.stats))
-                .map(|(name, stats)| {
+            // A wall built from a kit (`wall_kits`) leaves its one-piece
+            // models unused, unless its kit is missing.
+            stages: (table.names.iter().zip(&table.stats).zip(&wall_kits))
+                .map(|((name, stats), kit)| {
                     core::array::from_fn(|k| {
-                        if boxed_line(stats) || stats.is_bridge() || has_wall_kit(name) {
+                        if boxed_line(stats) || stats.is_bridge() || kit.is_some() {
                             return None;
                         }
                         models.by_name(&stage_name(name, k))
@@ -619,9 +624,7 @@ impl Looks {
             walls,
             kit: crate::bridge_kit::BridgeKit::new(models),
             bridges: table.stats.iter().map(BuildingStats::is_bridge).collect(),
-            wall_kits: (table.names.iter())
-                .map(|name| crate::wall_kit::WallKit::for_wall(models, name))
-                .collect(),
+            wall_kits,
         }
     }
 
@@ -834,15 +837,6 @@ fn spots_along(s: &StructureView, len: f32) -> Option<impl Iterator<Item = (Vec2
     let step = (p.len - len).max(0.0) / (count - 1.0).max(1.0);
     let first = -step * (count - 1.0) / 2.0;
     Some((0..count as usize).map(move |k| (p.centre + p.dir * (first + step * k as f32), p.dir)))
-}
-
-/// Whether wall type `name` is built from a wall kit (`wall_kit`), so its
-/// own one-piece models go unused.
-fn has_wall_kit(name: &str) -> bool {
-    matches!(
-        name,
-        "Palisade" | "Bone Fence" | "Ossuary Wall" | "Mausoleum Wall"
-    )
 }
 
 /// Whether a building drawn as a line is drawn as boxes, never a model:
@@ -3283,9 +3277,9 @@ mod tests {
         // Stakes and barricades are drawn as boxes: a model their name would
         // find is left unused.
         // And the walls built from a wall kit leave their one-piece models.
-        let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(n, s)| boxed_line(s) || has_wall_kit(n))
-            .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
+        let unused = (table.names.iter().zip(&table.stats).zip(&looks.wall_kits))
+            .filter(|((_, s), kit)| boxed_line(s) || kit.is_some())
+            .flat_map(|((n, _), _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
         // So is the old one-tile bridge model.

@@ -7573,7 +7573,14 @@ impl Running {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
                 continue;
             };
-            let model = self.art.as_ref().and_then(|art| art.looks.model_of(&s));
+            // A kit wall stands, and falls, as one of its runs.
+            let model = self.art.as_ref().and_then(|art| {
+                (art.looks.model_of(&s)).or_else(|| {
+                    art.looks
+                        .wall_kit_for(s.building)
+                        .map(wall_kit::WallKit::run)
+                })
+            });
             let top = match (model, &self.art) {
                 (Some(m), Some(art)) => art.looks.top(m),
                 _ => buildings::height_of(stats.role),
@@ -7935,13 +7942,25 @@ impl Running {
         // The bridge tiles, so the timber kit rails only a deck's outer
         // edges. Sorted for a binary search; empty on a map with no bridges.
         let bridged = buildings::bridge_tiles(structures, &self.buildings);
-        // The drawn wall (and gate) tiles, so a kit wall puts an end post
-        // only where it stops.
-        let mut walled: Vec<(i32, i32)> = (structures.iter())
-            .filter(|s| s.line.is_some() && !self.buildings.is_bridge(s.building))
-            .map(|s| s.tile)
-            .collect();
-        walled.sort_unstable();
+        // The tiles of each side's drawn walls and gates that this player
+        // sees, so a kit wall puts an end post only where it stops (and a
+        // wall hidden in the fog does not take one away). Empty on a map
+        // with no kit walls.
+        let b = &self.buildings;
+        let mut walled: Vec<((i32, i32), PlayerId)> = Vec::new();
+        if (structures.iter()).any(|s| art.looks.wall_kit_for(s.building).is_some()) {
+            for s in structures.iter().filter(|s| shown(s)) {
+                let wall = b.is_wall(s.building) && !b.is_bridge(s.building);
+                if (wall && !b.is_fieldwork(s.building)) || b.is_gate(s.building) {
+                    for x in 0..i32::from(s.width) {
+                        for y in 0..i32::from(s.depth) {
+                            walled.push(((s.tile.0 + x, s.tile.1 + y), s.owner));
+                        }
+                    }
+                }
+            }
+            walled.sort_unstable();
+        }
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -7969,7 +7988,7 @@ impl Running {
                     centre,
                     dir,
                     len,
-                    walled: &|t| walled.binary_search(&t).is_ok(),
+                    walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
                 };
                 kit.pieces(&tile, &mut pieces);
             }
