@@ -1335,16 +1335,15 @@ impl Steward {
             }
             return;
         }
-        if self.is_busy(main.view.handle) {
-            return;
+        if !self.is_busy(main.view.handle) {
+            self.order_upgrade(s, clicks, main.view.handle);
         }
-        if clicks.give(
-            s.now,
-            Command::Upgrade {
-                structure: main.view.handle,
-            },
-        ) {
-            self.busy.push((main.view.handle, None, s.now));
+    }
+
+    /// Order a building up a level and mark it busy.
+    fn order_upgrade(&mut self, s: &Sense, clicks: &mut Clicks, h: StructureHandle) {
+        if clicks.give(s.now, Command::Upgrade { structure: h }) {
+            self.busy.push((h, None, s.now));
         }
     }
 
@@ -1362,7 +1361,7 @@ impl Steward {
             return;
         };
         let tower = look.mine.iter().find_map(|m| {
-            if m.stats.role != Role::Defence || !m.finished() {
+            if m.stats.role != Role::Defence || !m.finished() || self.is_busy(m.view.handle) {
                 return None;
             }
             let to = s.kit.upgrade_of(m.view.building)?;
@@ -1370,14 +1369,8 @@ impl Steward {
                 && bank.marrow >= u32::from(to.stats.cost_marrow) * 2;
             (rich && s.world.can_upgrade(s.party, m.view.handle).is_ok()).then_some(m.view.handle)
         });
-        let Some(h) = tower else {
-            return;
-        };
-        if self.is_busy(h) {
-            return;
-        }
-        if clicks.give(s.now, Command::Upgrade { structure: h }) {
-            self.busy.push((h, None, s.now));
+        if let Some(h) = tower {
+            self.order_upgrade(s, clicks, h);
         }
     }
 
