@@ -457,7 +457,17 @@ clearing woods is the second (below).
   (the Engineer).
 - `ai_only_generals_cut_a_path_through_thicket_that_cuts_them_off`
   (release, CI): a belt of thicket across Ribcage Pass, and some General
-  orders it cleared.
+  orders it cleared (each side cleared twice in 20 minutes).
+- Real match (Field Battle against a General, dry weather, my army hidden
+  in scrub and then in a wood near its line): the General didn't burn us
+  out. It sent several regiments into the wood together, and with its own
+  troops in the woods by us the "none of its own in the way" rule held it
+  back, as it should. Played back move by move, only one moment in the
+  13-minute match had a General regiment on open ground within reach of
+  us in the woods, and its friends were already in there. So the rule
+  works but rarely gets its chance while the General's attack goes in all
+  at once. Holding the attack at the wood's edge to burn first is left
+  for the smarter-generals work.
 
 ## Not in this plan
 
