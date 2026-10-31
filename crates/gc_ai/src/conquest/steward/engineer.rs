@@ -826,7 +826,11 @@ fn plan_front(
 fn ring_corners(((x0, y0), (x1, y1)): Line, home: Vec2) -> Line {
     let (hx, hy) = (home.x.floor() as i32, home.y.floor() as i32);
     // How far the line stands out from home, across its own run.
-    let d = if x0 == x1 { (x0 - hx).abs() } else { (y0 - hy).abs() };
+    let d = if x0 == x1 {
+        (x0 - hx).abs()
+    } else {
+        (y0 - hy).abs()
+    };
     (
         (x0.min(x1).min(hx - d), y0.min(y1).min(hy - d)),
         (x0.max(x1).max(hx + d), y0.max(y1).max(hy + d)),
