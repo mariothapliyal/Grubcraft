@@ -3472,6 +3472,43 @@ impl Running {
         }
     }
 
+    /// Where regiment `h`'s soldiers stand on the wall it mans: on a kit
+    /// wall with a walkway (the Ember Stone Wall), on the walkway's deck
+    /// behind it, inside the fort; on another kit wall, on its runs' top;
+    /// else on the wall's top (see `buildings::wall_slots`). Ladders still
+    /// lean on the wall itself (`buildings::ladder_props`).
+    fn manned_slots(&self, h: gc_sim::RegimentHandle) -> Vec<puppets::WallSlot> {
+        let Some(structures) = self.world.structures() else {
+            return Vec::new();
+        };
+        let art = self.art.as_ref();
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
+        let mut halls = None;
+        (self.world.wall_tiles(h).iter())
+            .filter_map(|&t| structures.get(t))
+            .map(|s| {
+                let mut slot = buildings::wall_slot(&self.buildings, &s);
+                let kit = art.and_then(|a| a.looks.wall_kit_for(s.building).map(|k| (a, k)));
+                let piece = s.line.and_then(|line| buildings::wall_piece(line, s.tile));
+                if let (Some((art, kit)), Some(piece)) = (kit, piece) {
+                    if kit.has_walkway() {
+                        let halls = halls.get_or_insert_with(|| {
+                            buildings::halls(structures, &self.buildings, shown)
+                        });
+                        let out = buildings::wall_out(halls, s.owner, piece.centre, piece.dir);
+                        let f = wall_kit::facing(piece.dir, out);
+                        let front = Vec2::new(f.y, -f.x);
+                        slot.centre = piece.centre - front * wall_kit::WALKWAY_BACK;
+                        slot.lift = wall_kit::WALKWAY_DECK;
+                    } else {
+                        slot.lift = art.looks.top(kit.run());
+                    }
+                }
+                slot
+            })
+            .collect()
+    }
+
     /// How far up a regiment's marks sit: the wall top (or deck) it stands
     /// on, else the ground.
     fn mark_lift(&self, r: &gc_sim::RegimentView) -> f32 {
@@ -3796,8 +3833,8 @@ impl Running {
                 || self.puppets.on_wall(r.handle)
                 || self.puppets.on_ladder(r.handle)
             {
-                let slots = buildings::wall_slots(&self.world, &self.buildings, r.handle);
-                self.puppets.stand_on_wall(r.handle, slots);
+                let slots = self.manned_slots(r.handle);
+                self.puppets.stand_on_wall(r.handle, slots.into_iter());
             }
             // How workers clear a tile, and where its trees should fall from
             // (the regiment's centre, when the viewer sees it; else straight
@@ -8049,6 +8086,12 @@ impl Running {
             }
             walled.sort_unstable();
         }
+        // What kit walls face away from.
+        let halls = if walled.is_empty() {
+            Vec::new()
+        } else {
+            buildings::halls(structures, b, shown)
+        };
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -8076,6 +8119,7 @@ impl Running {
                     centre,
                     dir,
                     len,
+                    out: buildings::wall_out(&halls, s.owner, centre, dir),
                     walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
                 };
                 kit.pieces(&tile, &mut pieces);

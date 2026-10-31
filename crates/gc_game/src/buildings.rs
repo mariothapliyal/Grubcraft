@@ -1716,6 +1716,47 @@ pub fn shown_to(
     move |s| (reveal_all && !table.is_trap(s.building)) || s.seen_by(side)
 }
 
+/// The centres of the halls (main buildings and outposts) that `shown`
+/// allows, with their owners: what a kit wall faces away from.
+pub fn halls(
+    structures: &gc_sim::structures::Structures,
+    table: &Table,
+    shown: impl Fn(&StructureView) -> bool,
+) -> Vec<(PlayerId, Vec2)> {
+    (structures.iter())
+        .filter(|s| {
+            (table.stats.get(usize::from(s.building)))
+                .is_some_and(|st| matches!(st.role, Role::Main | Role::Outpost))
+                && shown(s)
+        })
+        .map(|s| (s.owner, centre_of(s.tile, s.width, s.depth)))
+        .collect()
+}
+
+/// The way out of the fort at a wall tile of `owner`'s at `centre` running
+/// along `dir`: square to it, away from the nearest of `owner`'s `halls`.
+/// `None` when they have none.
+pub fn wall_out(
+    halls: &[(PlayerId, Vec2)],
+    owner: PlayerId,
+    centre: Vec2,
+    dir: Vec2,
+) -> Option<Vec2> {
+    let hall = (halls.iter())
+        .filter(|h| h.0 == owner)
+        .map(|h| h.1)
+        .min_by(|a, b| {
+            a.distance_squared(centre)
+                .total_cmp(&b.distance_squared(centre))
+        })?;
+    let side = Vec2::new(dir.y, -dir.x);
+    Some(if side.dot(centre - hall) >= 0.0 {
+        side
+    } else {
+        -side
+    })
+}
+
 /// Every bridge tile, sorted for a binary search (so a deck rails only its
 /// outer edges); no allocation on a map with no bridges.
 pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
@@ -3389,8 +3430,15 @@ mod tests {
             looks.stages[0][FINISHED].is_some(),
             "the Clan Hall has no model"
         );
-        // The drawn Palisade and the bone walls are built from their kits.
-        for name in ["Palisade", "Bone Fence", "Ossuary Wall", "Mausoleum Wall"] {
+        // The drawn Palisade, Stone Wall and the bone walls are built from
+        // their kits.
+        for name in [
+            "Palisade",
+            "Stone Wall",
+            "Bone Fence",
+            "Ossuary Wall",
+            "Mausoleum Wall",
+        ] {
             let b = table.named(name);
             assert!(looks.wall_kit_for(b).is_some(), "{name} has no wall kit");
             assert!(looks.stages[usize::from(b)].iter().all(Option::is_none));
@@ -4097,5 +4145,26 @@ mod tests {
         let mut full = vec![BoxInstance::default(); MAX_BOX_INSTANCES];
         push_aim_ring(Vec2::ZERO, 12.0, 140, &mut full);
         assert_eq!(full.len(), MAX_BOX_INSTANCES);
+    }
+
+    #[test]
+    fn a_wall_faces_away_from_its_owners_nearest_hall() {
+        // Player 0's hall at (10, 10), player 1's at (10, 40).
+        let halls = [(0, Vec2::new(10.0, 10.0)), (1, Vec2::new(10.0, 40.0))];
+        // A wall of player 0's running east at y = 20: out is south (+y).
+        let out = wall_out(&halls, 0, Vec2::new(10.5, 20.5), Vec2::X).unwrap();
+        assert_eq!(out, Vec2::Y);
+        // Drawn the other way, the same.
+        assert_eq!(
+            wall_out(&halls, 0, Vec2::new(10.5, 20.5), Vec2::NEG_X),
+            Some(Vec2::Y)
+        );
+        // Player 1's wall in the same place faces north, away from theirs.
+        assert_eq!(
+            wall_out(&halls, 1, Vec2::new(10.5, 20.5), Vec2::X),
+            Some(Vec2::NEG_Y)
+        );
+        // No hall: no way out.
+        assert_eq!(wall_out(&halls, 2, Vec2::new(10.5, 20.5), Vec2::X), None);
     }
 }

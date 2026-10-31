@@ -198,7 +198,7 @@
         (
             name: "Stone Wall",
             blurb: "Tier 2 of the Palisade: 2.5 times as tough. Select a Palisade and press U to raise its stretch.",
-            summary: "Level 2 of the Palisade: a sloped stone wall with a plaster face, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
+            summary: "Level 2 of the Palisade: the logs set on a stone footing and bound in iron, with a walkway behind for your troops, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
             notes: [
                 ("Castle Wall", "The toughest wall the Clans build: four times a Palisade. Needs a Castle Keep."),
             ],
