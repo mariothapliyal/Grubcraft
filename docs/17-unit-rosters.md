@@ -77,8 +77,8 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 | Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 8 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
 | Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 32% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
-| Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 55 / 45 / 5 | 30 | 80 | |
-| Mounted Samurai | 2 | Cavalry | 180 / 40 | 5 | 32 | Stables | 8 × 30 | 4 | 6.5 | 140 | 1.4 / 2.0 | 45 / 30 / 6 | 80 | 70 | |
+| Katana Samurai | 2 | Heavy | 160 / 40 | 5 | 30 | Dojo | 16 × 14 | 8 | 3.0 | 75 | 0.8 / 0.9 | 50 / 45 / 5 | 30 | 80 | |
+| Mounted Samurai | 2 | Cavalry | 180 / 40 | 5 | 32 | Stables | 8 × 30 | 4 | 6.5 | 140 | 1.4 / 2.0 | 40 / 30 / 6 | 80 | 70 | |
 | Yabusame Riders (new) | 2 | Cavalry | 170 / 40 | 5 | 30 | Stables | 8 × 22 | 4 | 6.0 | 140 | 1.4 / 2.0 | 30 / 25 / 3 | 20 | 60 | 24, 4, 3.5 s, 30% |
 | Ember Rocket Cart | 2 | Artillery | 150 / 60 | 4 | 35 | Ember Workshop | 4 × 25 | 4 | 2.0 | 40 | 2.5 / 2.5 | 5 / 10 / 2 | 0 | 45 | 60, 12, 10.0 s, 20% |
 | War Kite | 2 | Air | 140 / 40 | 3 | 28 | Kite Loft | 4 × 18 | 4 | 7.0 | 120 | 2.0 / 2.0 | 20 / 15 / 2 | 0 | 50 | 6, 5, 6.0 s, 50% |
@@ -180,8 +180,8 @@ A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
-| Skitterlings | 1 | Light | 70 / 0 | 2 | 13 | Hive | 32 × 5 | 8 | 4.0 | 120 | 0.8 / 0.8 | 45 / 22 / 3 | 40 | 60 | |
-| Chitin Guard | 1 | Heavy | 100 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
+| Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 5 | 8 | 4.0 | 120 | 0.8 / 0.8 | 45 / 22 / 3 | 40 | 60 | |
+| Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
 | Spitters | 2 | Ranged | 50 / 15 | 3 | 15 | Skitterlings | 16 × 5 | 8 | 3.5 | 100 | 0.8 / 0.9 | 17 / 15 / 2 | 5 | 45 | 22, 3, 3.0 s, 35% |
 | Burrowers | 2 | Light | 60 / 15 | 3 | 15 | Skitterlings | 16 × 7 | 8 | 4.0 | 110 | 0.8 / 0.8 | 38 / 25 / 3 | 50 | 50 | |
@@ -281,8 +281,8 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
-| Shardlings | 1 | Light | 110 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 54 | |
-| Prism Lancers | 1 | Ranged | 140 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
+| Shardlings | 1 | Light | 100 / 0 | 3 | 20 | Forge of Facets | 14 × 12 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 54 | |
+| Prism Lancers | 1 | Ranged | 125 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
 | Glass Striders (new) | 2 | Cavalry | 175 / 45 | 5 | 32 | Forge of Facets | 6 × 26 | 3 | 7.0 | 150 | 1.4 / 2.0 | 45 / 30 / 6 | 70 | 60 | |
 | Skyglass | 2 | Air | 130 / 40 | 3 | 26 | Skyglass Loom | 4 × 16 | 4 | 8.0 | 160 | 1.8 / 1.8 | 25 / 20 / 3 | 0 | 50 | 14, 5, 2.5 s, 50% |
@@ -362,8 +362,8 @@ Merchant-necromancers: cheap undead that never break, beside living specialists 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
-| Bone Pikes | 1 | Spear | 110 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
-| Crossbow Auditors | 1 | Ranged | 140 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
+| Bone Pikes | 1 | Spear | 125 / 0 | 3 | 18 | Ossuary | 19 × 7 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
+| Crossbow Auditors | 1 | Ranged | 150 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |
 | Gravewardens (new) | 2 | Heavy | 170 / 40 | 5 | 30 | Ossuary | 12 × 18 | 6 | 2.5 | 55 | 0.9 / 1.0 | 45 / 50 / 6 | 15 | — | |
 | Debt Collectors | 2 | Cavalry | 190 / 50 | 5 | 34 | Guildhall | 6 × 34 | 3 | 6.0 | 120 | 1.5 / 2.1 | 45 / 40 / 7 | 70 | 65 | |
 | Lantern Wraiths | 2 | Air | 140 / 40 | 3 | 28 | Lantern Spire | 4 × 16 | 4 | 6.5 | 140 | 1.8 / 1.8 | 30 / 25 / 3 | 0 | — | 8, 3, 3.0 s, 40% |
@@ -462,17 +462,17 @@ A few figures to sanity-check the first pass (front rank fighting a defence-40 e
 | Unit | Total HP | Melee damage a second | Grub-equivalent cost* | HP per 100 Grub |
 |---|---|---|---|---|
 | Yari Ashigaru | 224 | 8.9 | 120 | 187 |
-| Skitterlings | 160 | 13.2 | 70 | 229 |
-| Shardlings | 168 | 12.0 | 110 | 153 |
-| Bone Pikes | 133 | 11.0 | 90 | 148 |
+| Skitterlings | 160 | 13.2 | 65 | 246 |
+| Shardlings | 168 | 12.0 | 100 | 168 |
+| Bone Pikes | 133 | 11.0 | 125 | 106 |
 | Katana Samurai | 224 | 26.0 | 240 | 93 |
-| Chitin Guard | 144 | 8.2 | 100 | 144 |
+| Chitin Guard | 144 | 8.2 | 90 | 160 |
 | Gravewardens | 216 | 19.8 | 250 | 86 |
 | Harmonic Walkers | 192 | 10.5 | 270 | 71 |
 | Mounted Samurai | 240 | 13.2 | 260 | 92 |
 | Oni-Bound | 520 | 22.4 | 550 | 95 |
 
-\* Marrow counted at 2 Grub each.
+\* Marrow counted at 2 Grub each. The Katana and Mounted Samurai damage figures are from before their attack cut (faction rebalance PR 4, 55 to 50 and 45 to 40).
 
 What these show, and what playtesting should watch:
 
@@ -543,7 +543,9 @@ Fights went from about 95-120 s to 105-140 s, whole battles from about 175 s to 
 
 <a id="commander-balance"></a>**The commander on the field (2026-10-24).** Each side now has a general ([37](37-commander.md)). Generals help every faction whose men can break, so the Concord's undead, who never break, fell behind (Choir v Concord 73.5) until a Concord general was given his own twist: undead near him strike 10% harder, and fall into disorder when he dies. On top of reading the ground above, with no stat moved, the table reads (96 battles a pair on seeds 1 and on seeds 2001, averaged) Clans v Brood 48, Clans v Choir 47, Clans v Concord 53, Brood v Choir 42, Brood v Concord 47, Choir v Concord 56.5. Tried and dropped: undead driven 15% harder (Brood v Concord 38.5, Clans v Concord 45.5). The Choir, ahead of the Brood and the Concord, is the one to watch.
 
-<a id="faction-rebalance"></a>**Faction rebalance (2026-10-30, PR 1).** The Conquest economy had no balance: the Choir earned about 3.5 times what the Clans did and won every AI-vs-AI game, while the Clans won 8 of 96. The changes (the Choir's tuning, Hands filling loads in two thirds of the time (about a fifth more income), the Concord's start, caravan pay and Bone Pikes cost; see [04 · Economy](04-economy.md#harvest-rates-first-pass-targets)) gave, in 192 headless AI-vs-AI Conquest games (Veteran, Ribcage Pass, seeds 1 to 8 and 101 to 108, both starts), wins of Ember Clans 71%, Choir 54%, Concord 39% and Brood 36%, where the Clans had won 8% and the Choir 100%. Income by minute 10 is about 3,260 Grub for the Clans, 2,090 for the Brood, 3,160 for the Choir and 2,710 for the Concord (the Choir was about 9,830). The Clans now lead because their first army is ready a minute before the others; the even early game is next. The Choir AI now builds a production building before tuning a third node. The measuring tool is the ignored test `conquest_balance` in `gc_game`: `AI_GAMES=8 AI_FROM=1 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture`, then `AI_FROM=101`.
+<a id="faction-rebalance"></a>**Faction rebalance (2026-10-30, PR 1).** The Conquest economy had no balance: the Choir earned about 3.5 times what the Clans did and won every AI-vs-AI game, while the Clans won 8 of 96. The changes (the Choir's tuning, Hands filling loads in two thirds of the time (about a fifth more income), the Concord's start, caravan pay and Bone Pikes cost; see [04 · Economy](04-economy.md#harvest-rates-first-pass-targets)) gave, in 192 headless AI-vs-AI Conquest games (Veteran, Ribcage Pass, seeds 1 to 8 and 101 to 108, both starts), wins of Ember Clans 71%, Choir 54%, Concord 39% and Brood 36%, where the Clans had won 8% and the Choir 100%. Income by minute 10 is about 3,260 Grub for the Clans, 2,090 for the Brood, 3,160 for the Choir and 2,710 for the Concord (the Choir was about 9,830). The Clans now lead because their first army is ready a minute before the others; the even early game is next. The Choir AI now builds a production building before tuning a third node. The measuring tool is the ignored test `conquest_balance` in `gc_game`: `AI_GAMES=8 AI_FROM=1 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture`, then `AI_FROM=101`. 
+
+<a id="even-conquest"></a>**Even Conquest (2026-10-31, faction rebalance PR 4).** After the even early game, the Brood swarm cut and the holding-until-bloodied morale rules, the Conquest tournament (96 headless AI-vs-AI games for each faction, seeds 1 to 8 and 101 to 108) read Ember Clans 66%, Concord 65%, Choir 35% and Brood 28%: the Clans traded 1.27 worth killed for each worth lost and the Choir 0.78. The pass changes only Conquest numbers that Field Battles do not use: Bone Pikes 110 to 125 Grub, Crossbow Auditors 140 to 150, Shardlings 110 to 100, Prism Lancers 140 to 125, Skitterlings 70 to 65, Chitin Guard 100 to 90, Katana Samurai attack 55 to 50, Mounted Samurai attack 45 to 40, and Hands `gather_percent` 150 to 135 (docs/04). On the same seeds the table reads Clans 49%, Brood 50%, Choir 51% and Concord 43%, and on fresh seeds (201 to 208 and 301 to 308) Clans 49%, Brood 43%, Choir 52% and Concord 46%. Tried and dropped: Yari Ashigaru defence 45 to 40 evened Conquest as well, but the Yari also fight in Field Battles, where it put the Clans at 11% to 16% against everyone; dearer Yari and Katana (140 and 195 Grub) made the Clans stronger (84%), because the AI built other regiments; Hands at 140 or 150 with the rest of this pass left the Clans at 58% and 62%; a smaller Concord purse (300) and slower Hands alone barely moved the table. The knobs are steep and the AI's choices matter as much as the numbers, so re-run the tournament after any Conquest change.
 
 ### Weapon flags and mass
 
