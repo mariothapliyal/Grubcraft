@@ -1668,12 +1668,6 @@ pub fn shown_to(
     move |s| (reveal_all && !table.is_trap(s.building)) || s.seen_by(side)
 }
 
-/// Draw every standing building that `shown` allows: a box in its owner's
-/// colour, dimmer as its hit points fall, and a bar over it once it is
-/// damaged, white for a moment as a blow lands (`flash`, 0 to 1).
-/// `across` is the way the camera looks along the ground, so the bars face
-/// it.
-#[allow(clippy::too_many_arguments)]
 /// Every bridge tile, sorted for a binary search (so a deck rails only its
 /// outer edges); no allocation on a map with no bridges.
 pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
@@ -1686,6 +1680,12 @@ pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) 
     bridged
 }
 
+/// Draw every standing building that `shown` allows: a box in its owner's
+/// colour, dimmer as its hit points fall, and a bar over it once it is
+/// damaged, white for a moment as a blow lands (`flash`, 0 to 1).
+/// `across` is the way the camera looks along the ground, so the bars face
+/// it.
+#[allow(clippy::too_many_arguments)]
 pub fn push(
     world: &World,
     table: &Table,
