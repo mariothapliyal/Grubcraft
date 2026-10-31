@@ -367,7 +367,7 @@ clearing woods is the second.
 - **Not drawn** while a weather is chosen by hand (F12, `--weather`: no
   flash or thunder) or in the unit viewer (no bolt). The picture's storm
   starts where the sim's does (`STORM_AT` is `sky::STORM` over 255).
-- **SIM_VERSION 69.** Three golden replays have storms and were blessed
+- **SIM_VERSION 70.** Three golden replays have storms and were blessed
   again: `field-flood-1v1`, `field-night-rain-1v1` and
   `field-river-storm-1v1`. The lobby's **Rain** is strength 200, a storm,
   so a Rain match throws lightning too.
