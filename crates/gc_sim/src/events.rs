@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::FxVec2;
 
+use crate::PlayerId;
 use crate::combat::Combat;
 use crate::morale::MoraleState;
 use crate::regiments::{RegimentHandle, Regiments};
@@ -156,6 +157,9 @@ pub enum Event {
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
+    /// A player's walls closed round its main building (`walled`), or its
+    /// ring was breached (see [`crate::towns`]).
+    Town { player: PlayerId, walled: bool },
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -253,10 +257,20 @@ impl Events {
         self.list.push(Event::SweptAway { regiments });
     }
 
+<<<<<<< HEAD
     /// Tell of the regiments of `owners` (a bit each) struck by debris
     /// riding a river this tick.
     pub(crate) fn debris_struck(&mut self, owners: u8) {
         self.list.push(Event::DebrisStruck { owners });
+=======
+    /// Tell of walled towns closed and breached at this tick's survey.
+    pub(crate) fn towns(&mut self, changed: &[(PlayerId, bool)]) {
+        (self.list).extend(
+            changed
+                .iter()
+                .map(|&(player, walled)| Event::Town { player, walled }),
+        );
+>>>>>>> origin/main
     }
 
     /// Tell of a new season.

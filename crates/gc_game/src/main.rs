@@ -6593,6 +6593,14 @@ impl Running {
                     "The rivers have gone down: the fords are open again"
                 }),
                 Event::Season { season } => news.push(season_news(season)),
+                // Only a side's own town is told of.
+                Event::Town { player, walled } if player == self.sandbox.side => {
+                    news.push(if walled {
+                        "Your walls close round your hall: a Walled Town. Buildings inside take a quarter less from regiments, and your troops inside stand firmer and mend"
+                    } else {
+                        "Your town's ring is breached: the Walled Town is lost until it is closed again"
+                    });
+                }
                 Event::FlashFlood { stage } => news.push(match stage {
                     gc_sim::rivers::Stage::Coming => {
                         "A flash flood is coming down the river: get off the fords"

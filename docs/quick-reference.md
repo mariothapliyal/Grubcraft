@@ -150,6 +150,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
   - Shard Choir: Chord Obelisk (200 + 50, needs power): every regiment its burst hits is thrown into disorder.
   - Brood: Acid Bloater (190 + 50): leaves an acid pool (4 tiles across) for 6 s.
 - **Tower levels** (tier 2): select a finished tower and press `V` to raise it to its level 2. It takes 30 seconds and keeps shooting while it upgrades. The level 2 has 1.5 times the hit points, about 20 to 30% more damage a shot and 4 tiles more range, with the same reload, shots, shot and quirk. It costs 60% of the tower's Grub plus 50 Marrow (75 Marrow for a blast tower). The Fire-Arrow Watchtower's fire arrows set woods and scrub alight where they land. Computer players of General level and up raise their towers once they reach tier 2 with Grub and Marrow to spare. Until a level 2 has its own model, it looks like its level 1.
+- **Walled Town** (docs/26 stage 8): when your walls, gates, cliffs and your own buildings in the line close all the way round your main building (within 40 tiles of it), your base is a Walled Town. A gate set Open, a wall piece down or an unpowered Choir curtain breaks the ring. The ring is checked every 2 seconds. While it holds, your buildings inside take a quarter less from ordinary regiments' blows (siege engines, artillery and heroes hit as before). Your regiments inside lose 1 point less morale a second, as if a general were near, and each wounded soldier of a regiment resting inside (not fighting) gets 1 hit point back a second. The top bar shows "Town: Walled", a message says when the ring closes or is breached, and a selected regiment inside says "In its walled town". Computer players of General level and up carry their front wall on round home as a rectangle at tier 2, always leaving their front gate as the way out, and once it has closed mend a breach before any other work. A bridge deck in the line is a gap.
 - Burning ground and acid hurt only the owner's enemies, once a second, and shake morale like fire.
 
 ## 6. World: weather, seasons, fire, floods, rivers [docs/32-changing-land.md, docs/38-living-waterways.md]
@@ -200,7 +201,6 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Orders: Hold, Skirmish, Run, Column and Wedge; double-click select by type; `Tab` sub-groups.
 - Concord Tithe contracts (Raise the Bound, Indenture, Foreclose, Hire Militia); Choir Silence the Chord.
 - Research at Granary, Forge and Harmonics Lab (costs not designed yet).
-- Walled Town defence bonus (no "built" marker).
 - Tuners' repair (10 HP/s).
 - Titan Events (Tremor, Marrow Bloom, Heartbeat, Gut Fog): no code found for Heartbeat, Marrow Bloom or Gut Fog; no lobby toggle found.
 - Grubfolk market, rumours and mercenaries; allied resource trading (10% tax).
