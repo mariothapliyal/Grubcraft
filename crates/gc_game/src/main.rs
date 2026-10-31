@@ -516,6 +516,8 @@ struct Options {
     /// Open on regiments marching through every gate in the sandbox,
     /// looking at the `n`th (`--gate-march n`, 0 to 5).
     gate_march: Option<usize>,
+    /// `--wall-scene`: a Stone Wall south of a hall, archers manning it.
+    wall_scene: bool,
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
@@ -554,6 +556,7 @@ fn parse_args() -> Options {
         fx: None,
         siege: false,
         gate_march: None,
+        wall_scene: false,
         fell_demo: false,
         hamlet_demo: false,
         render: RendererOptions::default(),
@@ -570,6 +573,11 @@ fn parse_args() -> Options {
         }
         if flag == "--sandbox" {
             opts.sandbox = true;
+            continue;
+        }
+        if flag == "--wall-scene" {
+            opts.wall_scene = true;
+            opts.menu = Some(false);
             continue;
         }
         if flag == "--siege" {
@@ -875,6 +883,9 @@ struct Running {
     siege_scene: Option<u8>,
     /// How far `--gate-march` has staged its march, and the gate looked at.
     gate_scene: Option<(u8, usize)>,
+    /// How far `--wall-scene` has staged its manned wall: 0 to place it,
+    /// 1 to send the archers up.
+    wall_scene: Option<u8>,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1782,6 +1793,7 @@ impl App {
             aftermath: aftermath::Aftermath::default(),
             siege_scene: None,
             gate_scene: None,
+            wall_scene: None,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1930,6 +1942,14 @@ impl App {
             if opts.siege {
                 r.start_match(MatchKind::Sandbox { roster: true });
                 r.siege_scene = Some(0);
+            }
+            if opts.wall_scene {
+                // In a Conquest match (`--conquest`), so its soldiers man walls.
+                if opts.conquest.is_none() {
+                    let setup = conquest::quick_conquest(0, r.menu.settings(), opts.seed);
+                    r.start_match(MatchKind::Battle(setup));
+                }
+                r.wall_scene = Some(0);
             }
             if let Some(n) = opts.gate_march {
                 r.start_match(MatchKind::Sandbox { roster: true });
@@ -3544,6 +3564,7 @@ impl Running {
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
         self.stage_gate_march();
+        self.stage_wall_scene();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -7581,6 +7602,91 @@ impl Running {
                 }
                 self.human_orders.extend(orders);
                 self.siege_scene = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Stage `--wall-scene`: a Clan Hall, a Stone Wall south of it (a
+    /// straight stretch, then a diagonal one), and archers inside sent up
+    /// onto its walkway, the camera close over it: to see a raised kit wall
+    /// manned in a real match.
+    fn stage_wall_scene(&mut self) {
+        let Some(step) = self.wall_scene else {
+            return;
+        };
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let focus = self.camera.focus.round();
+        // South of the start, clear of the hall already there.
+        let (x0, row) = (focus.x as i32 - 4, focus.y as i32 + 10);
+        let (Some(hall), Some(wall), Some(archers)) = (
+            building("Clan Hall"),
+            building("Stone Wall"),
+            self.units.names.iter().position(|n| n == "Yumi Ashigaru"),
+        ) else {
+            self.wall_scene = None;
+            return;
+        };
+        match step {
+            0 => {
+                let mut spawn = |building, tile: (i32, i32)| {
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnStructure {
+                            building,
+                            tile: (tile.0 as i16, tile.1 as i16),
+                            turn: 0,
+                        },
+                    });
+                };
+                spawn(hall, (x0 + 2, row - 12));
+                for x in x0..x0 + 8 {
+                    spawn(wall, (x, row));
+                }
+                for k in 1..5 {
+                    spawn(wall, (x0 + 7 + k, row + k));
+                }
+                self.human_orders.push(PlayerCommand {
+                    player: 0,
+                    command: gc_sim::Command::SpawnRegiment {
+                        unit: archers as UnitId,
+                        position: fx_vec(Vec2::new(x0 as f32 + 4.0, row as f32 - 4.0)),
+                        facing: gc_fixed::Angle::of_vec(fx_vec(Vec2::Y)),
+                    },
+                });
+                self.camera.focus = Vec2::new(x0 as f32 + 5.0, row as f32);
+                self.camera.distance = 14.0;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                self.wall_scene = Some(1);
+            }
+            1 => {
+                // The middle of the straight stretch (the camera has moved).
+                let mut tiles: Vec<_> = (self.world.structures().into_iter())
+                    .flat_map(gc_sim::Structures::iter)
+                    .filter(|s| s.building == wall && s.owner == 0)
+                    .map(|s| (s.tile.1, s.tile.0, s.handle))
+                    .collect();
+                tiles.sort_unstable_by_key(|t| (t.0, t.1));
+                let target = tiles.get(4).map(|t| t.2);
+                let regiment = (self.world.regiments.iter())
+                    .find(|r| r.owner == 0 && usize::from(r.unit) == archers)
+                    .map(|r| r.handle);
+                if let (Some(structure), Some(regiment)) = (target, regiment) {
+                    if let Err(why) = self.world.man_check(regiment, structure) {
+                        eprintln!("wall scene: the archers can't man the wall: {why:?}");
+                    }
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::ManWall {
+                            regiment,
+                            structure,
+                        },
+                    });
+                    self.wall_scene = None;
+                }
             }
             _ => {}
         }
