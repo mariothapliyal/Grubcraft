@@ -380,17 +380,20 @@ impl Mind {
             return;
         }
         let keep = (self.smoking).and_then(|(h, until)| (view.tick < until).then_some(h));
-        if keep.is_none() && self.smoking.take().is_some() {
+        let on = (keep.is_some() || view.tick >= self.next_smoke)
+            .then(|| firing::quarry(view, world, self.party, keep))
+            .flatten();
+        // A smoking out that ends, however, isn't followed by another for
+        // as long.
+        if self.smoking.is_some() && (on.is_none() || on != keep) {
+            self.smoking = None;
             self.next_smoke = view.tick + firing::SMOKE_TICKS;
-        }
-        if keep.is_none() && view.tick < self.next_smoke {
             return;
         }
-        let Some(on) = firing::quarry(view, world, self.party, keep) else {
-            self.smoking = None;
+        let Some(on) = on else {
             return;
         };
-        if keep != Some(on) {
+        if self.smoking.is_none() {
             self.smoking = Some((on, view.tick + firing::SMOKE_TICKS));
             self.journal.note(
                 view.tick,

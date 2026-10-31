@@ -75,10 +75,7 @@ pub fn pick(view: &Perception, world: &World, party: PlayerId) -> Option<Regimen
     if !world.weather_lets_fire() || world.terrain().growth_side() == 0 {
         return None;
     }
-    let burners: Vec<&Seen> = (view.regiments.iter())
-        .filter(|r| r.owner == party && r.models > 0)
-        .filter(|r| !(r.engaged || r.broken() || r.in_fire || burnable(world, r.pos)))
-        .collect();
+    let burners: Vec<&Seen> = burners(view, world, party).collect();
     if burners.is_empty() {
         return None;
     }
@@ -92,9 +89,7 @@ pub fn pick(view: &Perception, world: &World, party: PlayerId) -> Option<Regimen
     let friends: Vec<&Seen> = (view.regiments.iter())
         .filter(|f| !view.hostile(party, f.owner))
         .collect();
-    let w = world.weather().wind;
-    let wind = Vec2::new(f32::from(w.0), f32::from(w.1));
-    let back = (wind.length() >= WIND_FELT).then(|| wind.normalize());
+    let back = felt_wind(world);
     let mut best: Option<(f32, RegimentHandle)> = None;
     for r in burners {
         // Where its torches would catch: the nearest burnable tile within
@@ -151,10 +146,51 @@ pub const SMOKE_TICKS: u32 = 45 * gc_sim::TICKS_PER_SECOND;
 /// The priority of its smoking-out orders: above the battle's own, below
 /// marching out of a fire.
 const SMOKE_PRIORITY: u8 = u8::MAX - 1;
+/// Open ground at least this deep (tiles) past a woods' edge makes it an
+/// edge, not a clearing or a track through the trees.
+const EDGE_DEPTH: f32 = 2.0;
+
+/// Where `r` should stand to burn the woods that `e` hides in: just out of
+/// them on its own side, facing `e`, within reach of a fire set there
+/// and not with the wind blowing back at it (`back`, the felt wind's
+/// direction). None if there is no such place.
+fn approach(world: &World, r: &Seen, e: &Seen, back: Option<Vec2>) -> Option<Vec2> {
+    let way = (r.pos - e.pos).try_normalize()?;
+    if back.is_some_and(|b| b.dot(-way) < BACK_WIND) {
+        return None;
+    }
+    let edge = walk_out(world, e.pos, way)?;
+    if edge.distance(e.pos) > REACH - 4.0 {
+        return None;
+    }
+    // Its front at the trees once it faces them (orders count a march
+    // done 2 tiles short).
+    Some(edge + way * (r.depth * 0.5 - 1.0).max(0.6))
+}
+
+/// The direction of a wind strong enough to have a side, if any.
+fn felt_wind(world: &World) -> Option<Vec2> {
+    let w = world.weather().wind;
+    let wind = Vec2::new(f32::from(w.0), f32::from(w.1));
+    (wind.length() >= WIND_FELT).then(|| wind.normalize())
+}
+
+/// Its regiments that could bring a fire: free, steady, on open ground.
+fn burners<'a>(
+    view: &'a Perception,
+    world: &'a World,
+    party: PlayerId,
+) -> impl Iterator<Item = &'a Seen> + 'a {
+    (view.regiments.iter())
+        .filter(move |r| r.owner == party && r.models > 0)
+        .filter(move |r| !(r.engaged || r.broken() || r.in_fire || burnable(world, r.pos)))
+}
 
 /// An enemy hidden in woods that `party` could smoke out: in burnable
-/// ground, within [`SMOKE_REACH`] of one of its regiments, with none of its
-/// own side fighting it. The nearest such, or `keep` while it still is one.
+/// ground, within [`SMOKE_REACH`] of one of its regiments that has a place
+/// to burn it from ([`approach`]), with none of its own side fighting it
+/// and no ally (whom it can't order out) in the woods by it. The nearest
+/// such, or `keep` while it still is one.
 pub fn quarry(
     view: &Perception,
     world: &World,
@@ -164,9 +200,7 @@ pub fn quarry(
     if !world.weather_lets_fire() || world.terrain().growth_side() == 0 {
         return None;
     }
-    let ours: Vec<&Seen> = (view.regiments.iter())
-        .filter(|r| r.owner == party && r.models > 0 && !r.broken())
-        .collect();
+    let back = felt_wind(world);
     let friends: Vec<&Seen> = (view.regiments.iter())
         .filter(|f| !view.hostile(party, f.owner))
         .collect();
@@ -175,23 +209,24 @@ pub fn quarry(
         .filter(|e| view.hostile(party, e.owner) && e.models > 0)
         .filter(|e| burnable(world, e.pos))
     {
-        let fought = friends
-            .iter()
-            .any(|f| f.engaged && f.pos.distance(e.pos) < FRIEND_NEAR + f.radius() + e.radius());
-        if fought {
+        let blocked = friends.iter().any(|f| {
+            let near = f.pos.distance(e.pos) < FRIEND_NEAR + f.radius() + e.radius();
+            (f.engaged && near)
+                || (f.owner != party
+                    && burnable(world, f.pos)
+                    && f.pos.distance(e.pos) < FRIEND_CLEAR * 2.0 + f.radius())
+        });
+        if blocked {
             continue;
         }
-        let Some((d, r)) =
-            (ours.iter().map(|r| (r.pos.distance(e.pos), r))).min_by(|a, b| a.0.total_cmp(&b.0))
+        let Some(d) = burners(view, world, party)
+            .filter(|r| r.pos.distance(e.pos) <= SMOKE_REACH)
+            .filter(|r| approach(world, r, e, back).is_some())
+            .map(|r| r.pos.distance(e.pos))
+            .min_by(f32::total_cmp)
         else {
             continue;
         };
-        // Near enough, and no deeper in the woods than a fire set from
-        // their edge on that side reaches.
-        let toward = (r.pos - e.pos).normalize_or_zero();
-        if d > SMOKE_REACH || walk_out(world, e.pos, toward).distance(e.pos) > REACH - 4.0 {
-            continue;
-        }
         let d = if Some(e.handle) == keep { -1.0 } else { d };
         if best.is_none_or(|(b, _)| d < b) {
             best = Some((d, e.handle));
@@ -202,9 +237,10 @@ pub fn quarry(
 
 /// Smoke out enemy `on`, hidden in the woods: rather than send its troops
 /// in after it, `party` keeps them out of those woods (the ones in there
-/// and free march out, the rest stop short of them) and brings the nearest
-/// regiment on open ground to the woods' edge facing it, so that
-/// [`pick`] can set the fire. Rewrites `wants` to match.
+/// and free march out by the nearest edge, the rest stop rather than go
+/// in) and brings its nearest regiment that has a place to burn from
+/// ([`approach`]) there, so that [`pick`] can set the fire. Rewrites
+/// `wants` to match.
 pub fn smoke_out(
     view: &Perception,
     world: &World,
@@ -215,15 +251,19 @@ pub fn smoke_out(
     let Some(e) = (view.regiments.iter().chain(view.remembered())).find(|e| e.handle == on) else {
         return;
     };
+    let back = felt_wind(world);
+    // Woods near the enemy, that a fire there would run through.
     let near = |p: Vec2| burnable(world, p) && p.distance(e.pos) < FRIEND_CLEAR * 2.0;
+    // Whether the way from `a` to `b` goes through those woods.
+    let through = |a: Vec2, b: Vec2| {
+        let steps = (a.distance(b) * 2.0).ceil().max(1.0) as i32;
+        (0..=steps).any(|k| near(a.lerp(b, k as f32 / steps as f32)))
+    };
     let target_of = |w: &Want| match w.act {
         Act::Move { to, .. } => Some(to),
-        Act::Attack(h) => (view.regiments.iter().chain(view.remembered()))
-            .find(|x| x.handle == h)
-            .map(|x| x.pos),
+        Act::Attack(h) => view.regiments.iter().find(|x| x.handle == h).map(|x| x.pos),
         _ => None,
     };
-    let mut burner: Option<(f32, &Seen, Vec2)> = None;
     for r in view
         .regiments
         .iter()
@@ -232,54 +272,44 @@ pub fn smoke_out(
         if r.engaged || r.broken() {
             continue;
         }
-        let out_of = |w: &Want| w.regiment == r.handle;
-        if burnable(world, r.pos) {
-            // In the woods: out the way it is nearest the edge, away from
-            // the enemy.
-            if r.pos.distance(e.pos) < FRIEND_CLEAR * 2.0 + r.radius() {
-                let away = (r.pos - e.pos).normalize_or(-r.facing);
-                let edge = walk_out(world, r.pos, away);
-                wants.retain(|w| !out_of(w));
-                wants.push(hold(r.handle, edge + away * (r.radius() + 1.0), None));
+        let its = |w: &Want| w.regiment == r.handle;
+        if burnable(world, r.pos) && r.pos.distance(e.pos) < FRIEND_CLEAR * 2.0 + r.radius() {
+            // In those woods: out by the nearest edge.
+            let out = (0..8)
+                .map(|k| Vec2::from_angle(k as f32 * core::f32::consts::FRAC_PI_4))
+                .filter_map(|dir| walk_out(world, r.pos, dir).map(|p| (p, dir)))
+                .min_by(|a, b| a.0.distance(r.pos).total_cmp(&b.0.distance(r.pos)));
+            if let Some((edge, dir)) = out {
+                wants.retain(|w| !its(w));
+                wants.push(hold(r.handle, edge + dir * (r.radius() + 1.0), None));
             }
-            continue;
-        }
-        // On open ground: never on into those woods.
-        if wants
+        } else if wants
             .iter()
-            .any(|w| out_of(w) && target_of(w).is_some_and(near))
+            .any(|w| its(w) && target_of(w).is_some_and(|t| through(r.pos, t)))
         {
-            wants.retain(|w| !out_of(w));
+            // Not into them.
+            wants.retain(|w| !its(w));
             wants.push(hold(r.handle, r.pos, None));
         }
-        // The burner: the nearest that stands back from the woods' edge on
-        // the way to the enemy.
-        let Some(way) = (r.pos - e.pos).try_normalize() else {
-            continue;
-        };
-        let edge = walk_out(world, e.pos, way);
-        // Its front at the trees (orders count a march done 2 tiles short).
-        let stand = edge + way * (r.half_extent(way) - 1.0).max(0.6);
-        let d = r.pos.distance(stand);
-        if burner.is_none_or(|(b, _, _)| d < b) {
-            burner = Some((d, r, stand));
-        }
     }
-    if let Some((d, r, stand)) = burner
-        && d > 1.5
-    {
+    let burner = burners(view, world, party)
+        .filter_map(|r| approach(world, r, e, back).map(|stand| (r, stand)))
+        .min_by(|a, b| a.0.pos.distance(a.1).total_cmp(&b.0.pos.distance(b.1)));
+    if let Some((r, stand)) = burner {
         wants.retain(|w| w.regiment != r.handle);
         wants.push(hold(r.handle, stand, (e.pos - stand).try_normalize()));
     }
 }
 
-/// From `from`, the first point on open ground walking `dir` in half
-/// tiles (at most [`SMOKE_REACH`] tiles out).
-fn walk_out(world: &World, from: Vec2, dir: Vec2) -> Vec2 {
+/// From `from`, the first point walking `dir` in half tiles (at most
+/// [`SMOKE_REACH`] tiles out) past which there is open ground at least
+/// [`EDGE_DEPTH`] deep: the woods' edge that way, if any.
+fn walk_out(world: &World, from: Vec2, dir: Vec2) -> Option<Vec2> {
+    let at = |k: i32| from + dir * (k as f32 * 0.5);
+    let deep = (EDGE_DEPTH * 2.0) as i32;
     (1..=(SMOKE_REACH * 2.0) as i32)
-        .map(|k| from + dir * (k as f32 * 0.5))
-        .find(|&p| !burnable(world, p))
-        .unwrap_or(from + dir * SMOKE_REACH)
+        .find(|&k| (k..=k + deep).all(|j| !burnable(world, at(j))))
+        .map(at)
 }
 
 fn hold(regiment: RegimentHandle, to: Vec2, facing: Option<Vec2>) -> Want {
