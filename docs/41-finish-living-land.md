@@ -159,7 +159,7 @@ the Classic choices so old choices keep their numbers;
   Random**. Land (mirrored), Classic and Random stay choices. Conquest
   stays mirrored: its shares are placed round the north starts and turned
   for the south, so mirrored land is what keeps them equal.
-- **PROTOCOL 41**, because the same Measured map choice now makes other
+- **PROTOCOL 42**, because the same Measured map choice now makes other
   land, and machines must agree on it.
 - **Measured** (true walks, 5 seeds of each wildness at each size, worst
   over every handout, before → after): see the table below.
