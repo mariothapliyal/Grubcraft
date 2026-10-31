@@ -234,11 +234,24 @@ fn long_routes_are_walked_without_stopping_for_the_rest() {
 }
 
 #[test]
-fn regiments_on_blocked_ground_walk_off_it() {
+fn a_regiment_cannot_be_set_down_inside_a_wall() {
+    // Spawning on blocked ground is refused (the sim never starts a
+    // regiment where it would be stuck), and a spot beside the wall is fine
+    // and walks on as ordered.
     let nav = map(64, wall_with_gap);
     let mut w = world_on(64, &nav, &DRILL_UNITS);
-    let r = spawn(&mut w, 0, SPEARS, 20, 32, NORTH); // inside the wall
-    assert!(!w.nav().walkable(0, FxVec2::from_ints(20, 32)));
+    let inside = PlayerCommand {
+        player: 0,
+        command: Command::SpawnRegiment {
+            unit: SPEARS,
+            position: FxVec2::from_ints(20, 32),
+            facing: NORTH,
+        },
+    };
+    let stats = w.tick(&[inside]);
+    assert_eq!((stats.commands_applied, stats.commands_rejected), (0, 1));
+    assert!(w.regiments.is_empty());
+    let r = spawn(&mut w, 0, SPEARS, 20, 29, NORTH);
     move_to(&mut w, 0, r, 20, 10);
     for _ in 0..20 * 120 {
         w.tick(&[]);
