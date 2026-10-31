@@ -1,6 +1,6 @@
 # Audio assets
 
-`sounds.gcsnd` is the game's whole sound bank: 32 sound effects (16 synthesised, 16 battle cries layered from recordings), 4 ambient beds and 2 music loops, compressed as IMA ADPCM (about 972 KB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
+`sounds.gcsnd` is the game's whole sound bank: 55 sounds (synthesised effects, battle cries layered from recordings, blows, weather, habitat and fire beds, and 2 music loops; the list is `SoundId` in `crates/gc_audio/src/bank.rs`), compressed as IMA ADPCM (about 1.5 MB). The game embeds it with `include_bytes!` (`crates/gc_game/src/sounds.rs`).
 
 ## Where the sounds come from
 

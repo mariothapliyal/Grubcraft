@@ -18,7 +18,7 @@ Every third-party crate the game uses, why, and what it costs. Policy: see [10 �
 | `chacha20poly1305` 0.10 (`alloc`) | `gc_net` | Encrypts and authenticates every packet on a link (`crypt.rs`), on LAN and over Tailscale | Adds 24 bytes to each packet (an 8-byte number and a 16-byte tag). The key exchange is not authenticated; see `crypt.rs` for what that does and does not stop |
 | `x25519-dalek` 2 (`static_secrets`, `zeroize`) | `gc_net` | Key exchange when a player joins (`crypt.rs`) | A fresh key pair for each connection |
 | `getrandom` 0.3 | `gc_net` | Random bytes for each new key pair (`crypt.rs`) | Reads the system's random source |
-| `lz4_flex` 0.14 (`std`, `safe-encode`, `safe-decode`; no frame format) | `gc_replay`, used by `gc_game` | Compresses replay files, as [11 · Networking](11-networking.md#save-load-and-replays) planned. Pure Rust, no `unsafe` with these features. The game records and plays replays with it |
+| `lz4_flex` 0.14 (`std`, `safe-encode`, `safe-decode`; no frame format) | `gc_replay` (which the game uses for its replays) | Compresses replay files, as [11 · Networking](11-networking.md#save-load-and-replays) planned. Pure Rust, no `unsafe` with these features. The game records and plays replays with it |
 | `tracy-client` 0.18 | `gc_game` (`profile` feature only) | Frame and tick profiling with Tracy | Off by default; when on, builds Tracy's C++ client. Not in normal builds |
 
 ## Build time only (baker)
@@ -30,7 +30,7 @@ These run in `gc_bake` and in `gc_game`'s build script (and in the game itself o
 | `ron` 0.10 | Parses the human-edited game data in `data/*.ron` | Small |
 | `serde` 1 (`derive`) | Maps RON onto typed definitions with unknown-field errors; also saves the player's settings (`gc_ui`) | Proc-macro build cost only |
 
-`tools/gc_artbake` (the model baker) also uses `ron` and `serde`, and the crates below, none of which reach the game:
+`tools/gc_artbake` (the model baker) also uses `ron` and `serde`, and the crates below; only `png` also reaches the game (`gc_render` decodes the rock textures with it at run time), and `gltf` is shared with `tools/gc_scenebake`:
 
 | Crate | Why | Cost and notes |
 |---|---|---|

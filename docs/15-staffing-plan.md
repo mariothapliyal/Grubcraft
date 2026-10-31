@@ -12,6 +12,22 @@ This is a plan, not a switch. Nothing here changes which model a running thread 
 - **3D models go to Sonnet 5.5 alone.** Blender builds, rigs, clips, bakes and re-bakes for units, heroes, buildings and anything else modelled in-house, with no Opus supervisor and no Haiku builders. Mario's call (2026-10-23), after the tower model bake-off compared Opus, Sonnet and Haiku alone with Haiku builds reviewed by Opus or Sonnet. It replaces the earlier rules: Opus at medium effort (2026-10-16), then Opus supervising Haiku helpers (2026-10-17).
 - **One Opus engine thread through M1 and M2**, because almost every step changes the sim and two threads editing it would fight. **Parallel threads from M3**, once the sim's interfaces settle and the work splits along crate lines.
 
+## Mario's standing rules (as of 2026-10-31)
+
+These are the project instructions every thread follows; where older text below differs, these win.
+
+- **Reviews on Opus** (2026-10-23): every reviewer, `/simplify`, `/code-review`, design or art review and reviewing subagent runs on Opus, in every thread, Sonnet-led ones included; never Haiku or Sonnet, unless Mario asks otherwise for one task.
+- **PR quality** (2026-10-15): before merging a PR that changes code, run `/simplify` on the diff and apply its fixes, then `/code-review` and fix real findings; both are required for `gc_sim`, `gc_net`, `gc_replay` and `gc_ai`. Docs-only and art-only PRs skip both. Golden replays must stay green.
+- **Threads merge their own PRs when CI is green**, and every merge reply ends with the Mac build link (builds go to GitHub Releases).
+- **Decide on your own** (2026-10-23): when a choice comes up, take the recommended option if an Opus check agrees, note the decision and why in the thread, and wait for Mario only for things that need his hands (his accounts, downloads, his Mac).
+- **Cheaper helpers** (2026-10-16): Opus or Fable leads hand well-specified feature work behind the sim API (UI, render, tools, maps) to Sonnet 5.5 helpers and mechanical work (docs, tests, CI config, bench runs) to Haiku 5.5 helpers; Sonnet leads hand mechanical work to Haiku. The lead reviews every helper diff and owns the PR; sim, netcode and replay logic stays with the lead.
+- **3D modelling on Sonnet 5.5 alone** (2026-10-23), see the short version above.
+- **Design work other than 3D** (2026-10-17): Opus plans and splits it, Haiku 5.5 helpers do as much as possible, and Opus reviews, fixes and owns the result.
+- **Effort:** medium or high; low is never used, and extra-high or max needs Mario's go first.
+- **Guides and docs in the same PR** (2026-10-22): a change a player-facing guide covers (Guide menu, Quick Start, building tips, tooltips, [quick reference](quick-reference.md)) updates it in the same PR, as do the docs it affects.
+- **Play it through** (2026-10-30): every spec for something units interact with has a "real use" section, and the real-play checks of [40](40-real-play-checks.md) run on every PR; a batched playtest thread plays each finished stage in the real game.
+- **No stalling** (2026-10-31): never wait silently; check CI and PR state at least every 30 minutes and act on it, pick work back up at once after a restart, use a second branch rather than park work behind another PR, and put the time checked on every status line.
+
 ## The roster
 
 ### The five ways to staff a piece of work
@@ -183,7 +199,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 | Chore | Who | When |
 |---|---|---|
 | Red CI on a PR | Haiku `ci-triage` reads it; the PR's lead fixes it | Every failure |
-| PR review | Opus `sim-reviewer` for Opus-owned crates; the thread's own lead for the rest | Every PR |
+| PR review | Opus, always (`/simplify` and `/code-review` on code PRs; see Mario's standing rules above) | Every PR |
 | Benchmarks and budget gates | Haiku `bench-runner`; Opus investigates any breach | Every sim or render PR |
 | PR screenshots for Mario | Haiku `screenshotter` | Every visible change |
 | Docs progress notes, roadmap updates | Haiku `docs-sync` | After each merge |
@@ -197,7 +213,7 @@ A and B both live in `gc_sim` but in separate faction modules; shared hooks they
 - Play-test feel: "does this look and feel like Shogun?" is the M1 exit and no benchmark answers it.
 - Run builds on real Windows hardware (M0 exit and every game night).
 - Game nights, which are the real milestone reviews.
-- Merge approvals, art direction calls and the open questions in [14 · Decisions Needed](14-decisions-needed.md).
+- Art direction calls and the open questions in [14 · Decisions Needed](14-decisions-needed.md). Threads merge their own PRs once CI is green (Mario's standing rules above).
 - Bring in a human artist or voice actors for the M6 art pass.
 
 ## Deciding a new task in ten seconds
