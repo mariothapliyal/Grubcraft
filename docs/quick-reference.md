@@ -74,7 +74,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Grub:** from seeps. A seep holds 7,500; then dregs at 25% of the rate, for good. Pays for most things.
 - **Marrow:** from veins (3,000 each, no regrowth, dregs at 25%). Pays for tier upgrades, elite units, monsters, hero revival and most research.
 - **Top bar:** Grub, Marrow, Supply used/cap, clock, and a line "Upkeep 80%" in amber once upkeep bites. A faction meter sits beside them.
-- **Harvest:** five Hands on a seep near the hall give about 240 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands fill 10 Grub in 6 s; a Marrow load (5) takes 8 s. Choir: one Resonator (175 Grub) tunes one seep for about 109 Grub a minute, and a Siphon one vein for about 40 Marrow; chords add 10% to 30%.
+- **Harvest:** five Hands on a seep near the hall give about 225 Grub a minute; a vein (3 workers) about 50 Marrow a minute at Standard tempo. Hands fill 10 Grub in about 6.7 s; a Marrow load (5) takes about 8.9 s. Choir: one Resonator (175 Grub) tunes one seep for about 109 Grub a minute, and a Siphon one vein for about 40 Marrow; chords add 10% to 30%.
 - **Upkeep** (Grub only): supply used 0 to 60 = 100%; 61 to 100 = 75%; 101 to 150 = 55%.
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.

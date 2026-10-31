@@ -359,7 +359,7 @@
         (
             tier: 1,
             class: Light,
-            cost: (grub: 70, marrow: 0),
+            cost: (grub: 65, marrow: 0),
             supply: 2,
             train_time: 13.0,
             from: Building("Hive"),
@@ -399,7 +399,7 @@
         (
             tier: 1,
             class: Heavy,
-            cost: (grub: 100, marrow: 0),
+            cost: (grub: 90, marrow: 0),
             supply: 4,
             train_time: 22.0,
             from: Building("Hive"),

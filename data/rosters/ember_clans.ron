@@ -400,7 +400,7 @@
             supply: 1,
             train_time: 12.0,
             from: Building("Clan Hall"),
-            gather_percent: 150,
+            gather_percent: 135,
             abilities: [
                 (
                     name: "Gather",
@@ -585,7 +585,7 @@
                 turn_rate: 75.0,
                 file_spacing: 0.8,
                 rank_spacing: 0.9,
-                melee_attack: 55,
+                melee_attack: 50,
                 melee_defence: 45,
                 melee_damage: 5,
                 charge_bonus: 30,
@@ -624,7 +624,7 @@
                 turn_rate: 140.0,
                 file_spacing: 1.4,
                 rank_spacing: 2.0,
-                melee_attack: 45,
+                melee_attack: 40,
                 melee_defence: 30,
                 melee_damage: 6,
                 charge_bonus: 80,
