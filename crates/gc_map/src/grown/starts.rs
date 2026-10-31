@@ -8,9 +8,9 @@
 //! It runs twice. First on the land's shape before the water and the
 //! woods ([`place`]), so the clearings, the open ground round the starts
 //! and the rivers all grow round the starts it chose; then on the finished
-//! land as the nav rules see it ([`refine`]), a few tiles at most, to
-//! even out what the rivers, woods and passes changed. `gc_mapcheck`
-//! measures the finished map.
+//! land by its true walks, as the nav rules walk it ([`settle`]), to even
+//! out what the rivers, woods and passes changed. `gc_mapcheck` measures
+//! the finished map.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -220,23 +220,6 @@ pub(super) fn place(h: &Grid) -> [Pos; START_PLATEAUS] {
     search(&coarse, slots, scaled(n, 28), 2, &|_| true)
 }
 
-/// The starts moved a few tiles on the finished land (`standable` as
-/// `super::standable` gives it), where the walks to the enemy come out
-/// more equal, onto ground where `fits` says a clearing can go.
-pub(super) fn refine(
-    h: &Grid,
-    standable: &[u8],
-    starts: [Pos; START_PLATEAUS],
-    fits: &dyn Fn(Pos) -> bool,
-) -> [Pos; START_PLATEAUS] {
-    let n = h.n;
-    let shut: Vec<bool> = standable.iter().map(|&c| c == 0).collect();
-    let coarse = Coarse::new(h, (n / 128).max(3), &shut);
-    search(&coarse, starts, scaled(n, 12), 1, &|cell| {
-        fits(coarse.tile(cell))
-    })
-}
-
 /// The search: each start, one at a time, moved to the cell within
 /// `reach` tiles of where it is that makes the walks most equal, trying
 /// every `stride`th cell and then the cells round the best; then again,
@@ -350,4 +333,94 @@ fn search(
         }
     }
     out
+}
+
+/// What a move must make the walks more equal by (thousandths) in
+/// [`settle`].
+const MIN_GAIN: u32 = 2;
+
+/// The starts moved on the finished land by its true walks (`standable`
+/// as `super::standable` gives it, walked as `ways::walk` walks), each at
+/// most `reach` tiles from where it is, onto ground where `fits` says a
+/// clearing can go, where the walks to the enemy come out most equal.
+/// One full walk from each start gives every tile's walk to it, so any
+/// tile can be tried for a start at once; a start that moves is walked
+/// from again. Also how unequal the walks were before (as
+/// [`unfairness`]).
+pub(super) fn settle(
+    standable: &[u8],
+    n: usize,
+    from: [Pos; START_PLATEAUS],
+    reach: i32,
+    fits: &dyn Fn(Pos) -> bool,
+) -> ([Pos; START_PLATEAUS], u32) {
+    let index = |p: Pos| p.1 as usize * n + p.0 as usize;
+    let field = |p: Pos| super::ways::walk(standable, n, index(p), &[]);
+    let mut at = from;
+    let mut fields: Vec<Vec<u32>> = at.iter().map(|&p| field(p)).collect();
+    // The walk to a start from a tile next to it, as starts stand on
+    // their clearing's middle.
+    let to = |f: &[u32], p: Pos| super::walk_to(f, n, p).map_or(u32::MAX, |(d, _)| d);
+    let matrix = |at: &[Pos; START_PLATEAUS], fields: &[Vec<u32>]| {
+        let mut walk = [[0u32; START_PLATEAUS]; START_PLATEAUS];
+        for k in 0..START_PLATEAUS {
+            for j in 0..START_PLATEAUS {
+                if j != k {
+                    walk[k][j] = to(&fields[j], at[k]);
+                }
+            }
+        }
+        walk
+    };
+    let moved =
+        |p: Pos, k: usize| ((p.0 - from[k].0).abs().max((p.1 - from[k].1).abs())) as u32 / 4;
+    let mut walk = matrix(&at, &fields);
+    let before = unfairness(&walk);
+    let mut score = unfairness(&walk) + (0..START_PLATEAUS).map(|k| moved(at[k], k)).sum::<u32>();
+    for _ in 0..8 {
+        let mut any = false;
+        for k in 0..START_PLATEAUS {
+            let rest: u32 = (0..START_PLATEAUS)
+                .filter(|&j| j != k)
+                .map(|j| moved(at[j], j))
+                .sum();
+            let mut best: Option<(u32, Pos)> = None;
+            for y in from[k].1 - reach..=from[k].1 + reach {
+                for x in from[k].0 - reach..=from[k].0 + reach {
+                    let p = (x, y);
+                    // Out of the map or on ground no one stands on: no walk.
+                    if p == at[k] || to(&fields[(k + 1) % START_PLATEAUS], p) == u32::MAX {
+                        continue;
+                    }
+                    let mut trial = walk;
+                    for j in 0..START_PLATEAUS {
+                        if j != k {
+                            let d = to(&fields[j], p);
+                            trial[k][j] = d;
+                            trial[j][k] = d;
+                        }
+                    }
+                    let s = unfairness(&trial) + rest + moved(p, k);
+                    // Whether a clearing fits costs the most, so last.
+                    if best.is_none_or(|(b, _)| s < b) && fits(p) {
+                        best = Some((s, p));
+                    }
+                }
+            }
+            // Each move costs a full walk, so a move must gain a little.
+            if let Some((s, p)) = best
+                && s + MIN_GAIN < score
+            {
+                score = s;
+                at[k] = p;
+                fields[k] = field(p);
+                walk = matrix(&at, &fields);
+                any = true;
+            }
+        }
+        if !any {
+            break;
+        }
+    }
+    (at, before)
 }

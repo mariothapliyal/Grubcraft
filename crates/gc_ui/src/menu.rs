@@ -957,8 +957,14 @@ impl<N: Network> Menu<N> {
             } else {
                 2 * SKY_NARROW_W + 8
             };
-            let name_room = (w - sky - 16).max(0) / 16;
-            ui.label(x, strip.y, 2, theme::INK, &fit(name, name_room as usize));
+            // Big letters, or small ones for a name too long for them
+            // ("Measured: Random").
+            let name_room = ((w - sky - 16).max(0) / 16) as usize;
+            if name.chars().count() <= name_room {
+                ui.label(x, strip.y, 2, theme::INK, name);
+            } else {
+                ui.label(x, strip.y + 4, 1, theme::INK, &fit(name, name_room * 2));
+            }
             // The orange dots on the picture, said once, if there is room.
             if preview_side >= sp(88) {
                 let hint = "Orange dots are the start positions.";
@@ -2279,7 +2285,7 @@ mod tests {
         assert!(h.has("Map: Land: Plains"));
         // Back to Field Battle, on its own first map, and back again.
         h.click("Mode: Conquest");
-        assert!(h.has("Map: Land: Random"));
+        assert!(h.has("Map: Measured: Random"));
         h.click("Mode:");
         assert!(h.has("Map: Land: Random"));
         h.click("Map: Land: Random");
@@ -2564,7 +2570,8 @@ mod tests {
         let mut h = Harness::new();
         h.click("Play");
         h.click_last("Host");
-        h.click("Land: Random");
+        // The map stepper (its column cuts the name short).
+        h.click("Measured:");
         let seed = |h: &Harness| match h.menu.wanted_map_preview() {
             Some(MapPreviewKey::Field { seed, .. }) => seed,
             other => panic!("{other:?}"),
@@ -2573,7 +2580,7 @@ mod tests {
         let MapPreviewKey::Field { choice, .. } = wanted else {
             panic!("{wanted:?}")
         };
-        assert_eq!(MAPS[choice], "Land: Plains");
+        assert_eq!(MAPS[choice], "Measured: Plains");
         let before = seed(&h);
         h.click("New map");
         assert_ne!(seed(&h), before);
