@@ -186,6 +186,70 @@ the Classic choices so old choices keep their numbers;
   nearest enemy is now within a tenth of the others', so no team gets to
   the fight a minute sooner. Two-player maps were already equal.
 
+## Step 3 as built
+
+*2026-10-31.* Grown maps get riverside dressing and worn trails. Lairs
+guarding rich fields came with step 1.
+
+- **Gravel bars** (`Habitat::GravelBar`). Where the water wraps round more
+  than half of a bank tile right by a river (a ring of 32 points, 4 tiles
+  out), that is the inside of a bend. The shingle spreads over the low,
+  dry bank up to 2 tiles round it. Open ground, drawn with the gravel
+  pattern.
+- **Lake shores.** On gentle shores within 3 tiles of a lake: sand
+  (`Beach`, the ripple pattern) where the sun falls, and reeds
+  (`ReedBed`) in patches where it doesn't. Reeds are tall grass, so a
+  regiment can hide in them ([20](20-ambushes.md)), and they are drawn
+  with dense sedge.
+- **Bankside alders.** Open meadow on a river or lake shore gets the odd
+  alder (scenery only).
+- **Worn trails** (`grown::trails`). Once the sites stand, the first start
+  is the network; each other start and each site in turn (villages,
+  camps, the old fort, the standing stones, the Heart; not lairs) wears
+  the cheapest way to the nearest worn tile. Worn ground costs a third
+  of fresh ground, so trails join into a network. A slow wobble in the
+  cost (every 9 tiles) makes them wander. They keep off steep ground,
+  cross rivers at the fords, and go round woods and bog where they can.
+  Each trail is 2 tiles wide. In the open it shows as `Habitat::Trail`
+  (a worn brown, colour only so its edges blend) and its tall grass is
+  trodden flat; under trees, on bog and in water nothing changes. A trail
+  never squeezes diagonally between two tiles that can't be walked. On
+  mirrored land only one half's ends wear trails, plus one from the turned
+  first start to join the halves, and every worn tile's turned copy is
+  worn too, so the trails are their own turned copy.
+- **Bare ground stays bare.** Trails get no scenery at all; gravel bars
+  and beaches get a few pebbles instead of the land's grass, bushes and
+  lone trees. A trail or bar inside a river valley keeps the valley's
+  land (its scenery set and sounds).
+- **PROTOCOL 43**: the same map choice now makes slightly different land.
+
+### Real use
+
+- **Trails are the roads.** They run from each base to its neighbours,
+  the villages and the camps, and they cross rivers where the fords are.
+  A player can read where the enemy will come from, and where to wait
+  for them. Trails are open ground, so an army marching on one is in the
+  open.
+- **Reeds hide.** A lake shore with reeds is tall grass: a place for an
+  ambush beside the water.
+- **Gravel and sand are open.** The bends of a river and the sunny lake
+  shores are open ground to form up on before a crossing.
+- **Fairness.** Trails change a few tiles of tall grass to open ground,
+  which walking costs don't read, so fairness can't change. `gc_mapcheck`
+  runs on the map with its trails and still passes; the Conquest share
+  check (`still_fair`) skips wearing them to save time.
+
+### Checks
+
+- `trails_reach_the_starts_and_sites`, `trails_lie_on_open_dry_ground`,
+  `mirrored_trails_are_their_own_turned_copy`; the habitat tests cover
+  gravel bars; `every_grown_map_passes_the_checker` still passes.
+- In-game screenshots are in project files under
+  `screenshots/living-land-step3/`: trails leaving a Conquest base, and
+  gravel bars and reeds on a river pool. Beaches are only shown in the
+  map-data picture there. They are small and I did not get one in a
+  screenshot.
+
 ## Step 4 as built
 
 *2026-10-30.*

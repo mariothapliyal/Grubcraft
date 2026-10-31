@@ -194,7 +194,7 @@ Each stage is playable on its own.
   - The company camp takes the first place with room.
   - Under Measured, the best place that has a partner in the south wins.
 - **Scenery by habitat** and the five new models (stump, fallen log, alder, sedge tussock, scree): see [25 · Scenery models](25-scenery-models.md).
-- **Not built:** riverside dressing (gravel bars, reeds, beaches), worn trails, ground materials per habitat, and Conquest lairs guarding rich fields.
+- **Not built:** ~~riverside dressing (gravel bars, reeds, beaches), worn trails~~ (built 2026-10-31, [41 step 3](41-finish-living-land.md#step-3-as-built)), ground materials per habitat, and ~~Conquest lairs guarding rich fields~~ (built with [41 step 1](41-finish-living-land.md#step-1-as-built)).
 
 ## Costs and risks
 
