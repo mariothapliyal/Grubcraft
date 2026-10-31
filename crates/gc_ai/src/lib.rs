@@ -334,8 +334,9 @@ impl Mind {
                 next_slip: &mut self.next_slip,
             };
             realm.tick(world, ctx, out);
+            // No fires of its own in Conquest: its realm doesn't march its
+            // troops out of one (docs/41, step 6).
             self.torches(view);
-            self.fire_woods(view, world);
             self.orders.release(view.tick, out);
             return;
         }

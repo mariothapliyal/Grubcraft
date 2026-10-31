@@ -659,7 +659,11 @@ impl Terrain {
                 let (x, y) = self.tile_cell(t);
                 let c = (y * self.side + x) as usize;
                 if thicket(t) {
-                    10 * per_thicket + 10 * u32::from(self.under[c].max(OPEN))
+                    match self.under[c] {
+                        // Rock or deep water under it: clearing opens no way.
+                        BLOCKED => NO_WAY,
+                        u => 10 * per_thicket + 10 * u32::from(u.max(OPEN)),
+                    }
                 } else {
                     match self.cost[c] {
                         BLOCKED => NO_WAY,

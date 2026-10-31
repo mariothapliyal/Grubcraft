@@ -399,18 +399,21 @@ clearing woods is the second (below).
 *2026-10-31.* The second half of step 6.
 
 - **Burning woods on an enemy** (`gc_ai/src/firing.rs`, `Mind::fire_woods`).
-  Every 2 seconds, after its other orders, a Veteran, General or Warlord
-  looks for a fire to set. It needs all of these:
+  In a Field Battle, every 2 seconds after its other orders, a Veteran,
+  General or Warlord looks for a fire to set (it reads the ground). It
+  needs all of these:
   - one of its regiments standing on open ground, free, not broken and
     not burning;
   - an enemy it sees, or saw lately (one hiding in the woods counts),
     within 12 tiles, standing in woods, scrub or thicket;
-  - woods that start within a tile of the regiment's edge and run
-    unbroken to the enemy;
+  - the tile its torches would catch (the nearest burnable tile within a
+    tile of its block, as the sim picks it) on the way to the enemy, and
+    woods running unbroken from there to the enemy;
   - ground dry enough to catch;
   - no wind of any strength blowing the fire back at the burner;
-  - none of its own side or allies in those woods within 6 tiles of the
-    enemy or of the woods between, and none within 3 tiles of the enemy.
+  - none of its own side or allies in the woods, or fighting, within 6
+    tiles (plus their size) of the line the fire runs along, and none
+    close to the enemy (3 tiles between the two blocks' sizes).
   
   It takes the nearest such pair and orders `Command::Burn`, which costs
   an order as a person's would, then sets no other fire for 20 seconds.
@@ -421,17 +424,22 @@ clearing woods is the second (below).
   (`Terrain::thicket_on_way`, a search over the map's tiles; it doesn't
   squeeze diagonally between two tiles it can't walk). If that way crosses
   thicket, a spare worker is sent to clear the first 6 tiles of it, cut
-  three tiles wide (`Command::Clear`, at most 16 a side). The next look
-  finds what is left. It comes right after the bridge, before field works,
+  three tiles wide (`Command::Clear`, at most 16 a side; on a diagonal
+  way only as far as it stays three across). Thicket on rock or deep
+  water is no way at all. No second worker is sent while the first is
+  still clearing, and other works don't take a clearing worker. The next
+  look finds what is left. It comes right after the bridge, before field works,
   for any mind that fortifies (Veteran and up).
 - **Not done.** In Conquest, minds still don't march their own troops out
-  of a fire (they do in Field Battles). The computer players don't light
+  of a fire (they do in Field Battles), so they don't set any either. The
+  path is cut toward the nearest other start, as the bridge is, which in a
+  team game may be an ally's. The computer players don't light
   fires to block a way or to cover a retreat.
 
 ### Real use
 
-- **Hiding in the woods has a price.** An army waiting in a wood for an
-  ambush can be burned out by a computer player that has seen it go in,
+- **Hiding in the woods has a price.** In a Field Battle, an army waiting
+  in a wood for an ambush can be burned out by a computer player that has seen it go in,
   if the weather is dry and the wind isn't against it. Keep watch on the
   wood's edge, or wait where it is wet.
 - **Thicket belts don't wall a computer player in.** Where thicket forces

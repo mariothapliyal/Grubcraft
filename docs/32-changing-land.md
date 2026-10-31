@@ -154,7 +154,7 @@ Fire is the first change to the ground that happens in a Field Battle as well as
 - **Burns.** Once a second a regiment whose block touches burning tiles loses 4 hit points for each, up to six tiles (24 a second, about three soldiers), from the back ranks forward, and 3 morale points (a regiment that never routs keeps its morale). Losses to fire count as any other.
 - **Seen.** A regiment touching fire is never hidden, by cover or the dark.
 - **Firelight.** In the dark, burning tiles light the ground round them as torches do: a regiment within `TORCH_LIGHT` (10 tiles) of one is lit (stage 3b, above), so it is seen and shot from as far as by day.
-- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Since docs/41 step 6 a Veteran or better sets alight woods an enemy stands or hides in from a regiment at their edge, when the ground is dry, the wind isn't against it and none of its own are in the way. In Conquest they don't yet march out of fires.
+- **Computer players.** Each time a mind thinks, a regiment of its touching a burning tile that isn't fighting marches 8 tiles away from the fire's middle round it, before anything else it was to do. Since docs/41 step 6, in a Field Battle, a Veteran or better sets alight woods an enemy stands or hides in from a regiment at their edge, when the ground is dry, the wind isn't against it and none of its own are in the way. In Conquest they don't yet march out of fires, so they don't set any.
 
 ### Shared state
 

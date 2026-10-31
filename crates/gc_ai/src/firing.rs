@@ -31,6 +31,33 @@ const BACK_WIND: f32 = -0.3;
 pub const LOOK_TICKS: u32 = 2 * gc_sim::TICKS_PER_SECOND;
 pub const AFTER_BURN: u32 = 20 * gc_sim::TICKS_PER_SECOND;
 
+/// The centre of the burnable tile nearest `r` whose edge is within
+/// [`TINDER`] of its block: where a [`gc_sim::Command::Burn`] from it
+/// catches (the sim's `Fires::tinder`, near enough).
+fn tinder(world: &World, r: &Seen) -> Option<Vec2> {
+    let reach = (r.radius() + TINDER).ceil() as i32 + 1;
+    let (cx, cy) = (r.pos.x.floor() as i32, r.pos.y.floor() as i32);
+    let mut best: Option<(f32, Vec2)> = None;
+    for y in cy - reach..=cy + reach {
+        for x in cx - reach..=cx + reach {
+            let c = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+            if !burnable(world, c) {
+                continue;
+            }
+            let d = c.distance(r.pos);
+            let Some(dir) = (c - r.pos).try_normalize() else {
+                continue;
+            };
+            // A tile's half width, outward, at most √2/2.
+            if d > r.half_extent(dir) + TINDER + 0.7 || best.is_some_and(|(b, _)| b <= d) {
+                continue;
+            }
+            best = Some((d, c));
+        }
+    }
+    best.map(|(_, c)| c)
+}
+
 /// Whether the ground at `p` burns, as the sim's fire judges it.
 fn burnable(world: &World, p: Vec2) -> bool {
     let g = world
@@ -61,15 +88,19 @@ pub fn pick(view: &Perception, world: &World, party: PlayerId) -> Option<Regimen
     if enemies.is_empty() {
         return None;
     }
-    let friends: Vec<Vec2> = (view.regiments.iter())
+    let friends: Vec<&Seen> = (view.regiments.iter())
         .filter(|f| !view.hostile(party, f.owner))
-        .map(|f| f.pos)
         .collect();
     let w = world.weather().wind;
     let wind = Vec2::new(f32::from(w.0), f32::from(w.1));
     let back = (wind.length() >= WIND_FELT).then(|| wind.normalize());
     let mut best: Option<(f32, RegimentHandle)> = None;
     for r in burners {
+        // Where its torches would catch: the nearest burnable tile within
+        // reach of its block, as the sim picks it.
+        let Some(lit) = tinder(world, r) else {
+            continue;
+        };
         for e in &enemies {
             let d = r.pos.distance(e.pos);
             if d > REACH || best.is_some_and(|(b, _)| b <= d) {
@@ -81,24 +112,27 @@ pub fn pick(view: &Perception, world: &World, party: PlayerId) -> Option<Regimen
             if back.is_some_and(|b| b.dot(way) < BACK_WIND) {
                 continue;
             }
-            // The woods start within its reach and run unbroken to the
-            // enemy, walked in half tiles.
-            let edge = r.half_extent(way) + TINDER;
-            let steps = (d * 2.0).ceil() as i32;
-            let at = |k: i32| r.pos + way * (k as f32 * 0.5);
-            let reach = ((edge * 2.0) as i32).min(steps);
-            let Some(start) = (0..=reach).find(|&k| burnable(world, at(k))) else {
-                continue;
-            };
-            if !(start + 1..=steps).all(|k| burnable(world, at(k))) {
+            // That tile is on the way to the enemy, and the woods run
+            // unbroken from it to the enemy, walked in half tiles.
+            if segment_distance(lit, r.pos, e.pos) > 1.0 {
                 continue;
             }
-            let from = at(start);
-            let in_the_way = |p: Vec2| {
-                p.distance(e.pos) < FRIEND_NEAR
-                    || (burnable(world, p) && segment_distance(p, from, e.pos) < FRIEND_CLEAR)
+            let steps = (lit.distance(e.pos) * 2.0).ceil() as i32;
+            let Some(on) = (e.pos - lit).try_normalize() else {
+                continue;
             };
-            if friends.iter().any(|&p| in_the_way(p)) {
+            if !(1..=steps).all(|k| burnable(world, lit + on * (k as f32 * 0.5))) {
+                continue;
+            }
+            // None of its own side fighting the enemy, nor in the woods by
+            // the way the fire runs.
+            let in_the_way = |f: &&Seen| {
+                f.handle != r.handle
+                    && (f.pos.distance(e.pos) < FRIEND_NEAR + f.radius() + e.radius()
+                        || (burnable(world, f.pos) || f.engaged)
+                            && segment_distance(f.pos, lit, e.pos) < FRIEND_CLEAR + f.radius())
+            };
+            if friends.iter().any(in_the_way) {
                 continue;
             }
             best = Some((d, r.handle));

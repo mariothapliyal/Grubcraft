@@ -132,8 +132,10 @@ pub(super) struct Engineer {
     /// crossing and its tiles, or none where it needs or can draw none (or
     /// has drawn it).
     bridge: Option<Option<(Line, u32)>>,
-    /// When it next looks for thicket in the way.
+    /// When it next looks for thicket in the way, and the worker it last
+    /// sent to clear some (no other is sent while that one is at it).
     next_clear: u32,
+    clearer: Option<RegimentHandle>,
 }
 
 impl Steward {
@@ -526,9 +528,12 @@ impl Steward {
             return None;
         }
         self.engineer.next_clear = s.now + CLEAR_EVERY;
+        if (self.engineer.clearer).is_some_and(|w| s.world.clearing_of(w).is_some()) {
+            return None;
+        }
         let target = super::super::nearest_other_start(s, home)?;
         let way = s.terrain.thicket_on_way(home, target, PER_THICKET);
-        let run = clear_run(&way)?;
+        let run = clear_run(&way, s.terrain.map_tiles() as i32)?;
         let ((x0, y0), (x1, y1)) = run;
         let at = Vec2::new((x0 + x1) as f32 * 0.5 + 0.5, (y0 + y1) as f32 * 0.5 + 0.5);
         let w = self.builder(s, look, at)?;
@@ -537,15 +542,18 @@ impl Steward {
             tile: (x0 as i16, y0 as i16),
             size: ((x1 - x0 + 1) as u8, (y1 - y0 + 1) as u8),
         };
+        self.engineer.clearer = Some(w);
         Some((order, Some(w)))
     }
 }
 
 /// The area to clear for the thicket tiles `way` (in order along the
-/// way): round the first [`CLEAR_RUN`] of them, a tile wider each side,
-/// at most [`gc_sim::clearing::MAX_CLEAR_SIDE`] a side; as its corner
+/// way), on a map `n` tiles a side: round the first [`CLEAR_RUN`] of them,
+/// a tile wider each side, while it stays three tiles across one way (a
+/// path, not a square: a diagonal way gets its first step or two) and at
+/// most [`gc_sim::clearing::MAX_CLEAR_SIDE`] the other; as its corner
 /// tiles.
-fn clear_run(way: &[(i32, i32)]) -> Option<Line> {
+fn clear_run(way: &[(i32, i32)], n: i32) -> Option<Line> {
     let first = *way.first()?;
     let side = gc_sim::clearing::MAX_CLEAR_SIDE;
     let (mut lo, mut hi) = ((first.0 - 1, first.1 - 1), (first.0 + 1, first.1 + 1));
@@ -554,12 +562,16 @@ fn clear_run(way: &[(i32, i32)]) -> Option<Line> {
             (lo.0.min(x - 1), lo.1.min(y - 1)),
             (hi.0.max(x + 1), hi.1.max(y + 1)),
         );
-        if nhi.0 - nlo.0 + 1 > side || nhi.1 - nlo.1 + 1 > side {
+        let (w, h) = (nhi.0 - nlo.0 + 1, nhi.1 - nlo.1 + 1);
+        if w.max(h) > side || w.min(h) > 3 {
             break;
         }
         (lo, hi) = (nlo, nhi);
     }
-    Some(((lo.0.max(0), lo.1.max(0)), hi))
+    Some((
+        (lo.0.max(0), lo.1.max(0)),
+        (hi.0.min(n - 1), hi.1.min(n - 1)),
+    ))
 }
 
 /// An order for the economy's hands, and the worker it sends (to leave
@@ -794,13 +806,17 @@ mod tests {
 
     #[test]
     fn a_path_is_cut_round_the_first_tiles_of_thicket_three_wide() {
-        assert_eq!(clear_run(&[]), None);
-        assert_eq!(clear_run(&[(5, 5)]), Some(((4, 4), (6, 6))));
+        assert_eq!(clear_run(&[], 64), None);
+        assert_eq!(clear_run(&[(5, 5)], 64), Some(((4, 4), (6, 6))));
         // A run going east: the first six, a tile round them.
         let way: Vec<_> = (10..20).map(|x| (x, 7)).collect();
-        assert_eq!(clear_run(&way), Some(((9, 6), (16, 8))));
-        // Never off the map's corner.
-        assert_eq!(clear_run(&[(0, 0)]), Some(((0, 0), (1, 1))));
+        assert_eq!(clear_run(&way, 64), Some(((9, 6), (16, 8))));
+        // A diagonal run: no square cut, just its first tile.
+        let way: Vec<_> = (10..20).map(|x| (x, x)).collect();
+        assert_eq!(clear_run(&way, 64), Some(((9, 9), (11, 11))));
+        // Never off the map, at either corner.
+        assert_eq!(clear_run(&[(0, 0)], 64), Some(((0, 0), (1, 1))));
+        assert_eq!(clear_run(&[(63, 63)], 64), Some(((62, 62), (63, 63))));
     }
 
     #[test]

@@ -777,6 +777,7 @@ impl Steward {
         let free = |w: &&&Seen| {
             !self.recently_sent(w.handle)
                 && s.world.building_target(w.handle).is_none()
+                && s.world.clearing_of(w.handle).is_none()
                 && !w.engaged
         };
         let near = |a: &&&Seen, b: &&&Seen| a.pos.distance(at).total_cmp(&b.pos.distance(at));
