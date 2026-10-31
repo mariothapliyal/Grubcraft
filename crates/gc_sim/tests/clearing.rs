@@ -476,6 +476,7 @@ fn clearing_styles_change_the_pace_and_the_pay() {
         pace: [50; 3],
         pays: [0; 3],
         burns: true,
+        fells: false,
     };
     let (ticks, pay, burnt) = clear_in(burning, WOODS);
     assert_eq!(pay, 0);
@@ -501,6 +502,7 @@ fn clearing_styles_change_the_pace_and_the_pay() {
         pace: [100, 100, 53],
         pays: [0; 3],
         burns: false,
+        fells: false,
     };
     let (standard_thicket, _, _) = clear_in(ClearStyle::STANDARD, THICKET);
     let (fast, _, _) = clear_in(shatter, THICKET);

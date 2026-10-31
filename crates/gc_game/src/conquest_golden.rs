@@ -17,7 +17,10 @@
 //! trade: its caravan runs to the nearest trade post (a Trade order) and
 //! its Clerks mine only Marrow. Its third worker, once the spare building
 //! is called off, clears the overgrown ground nearest its main building (a
-//! Clear order, docs/32-changing-land.md).
+//! Clear order, docs/32-changing-land.md); the Clans' third worker fells
+//! its ground instead (a Fell order, docs/39 section 3: Ribcage Pass has no
+//! river, so it clears as plain clearing does; `conquest-river-1v1` drops
+//! logs and rafts in).
 //!
 //! The test below plays it through a recorder and checks it plays back
 //! alike after a trip through the file format. To record the golden again
@@ -635,10 +638,20 @@ impl Match {
         if t == CLEAR_AT
             && let (Some(&w), Some(tile)) = (workers.get(builders), self.overgrown_near(p))
         {
-            out.push(order(Command::Clear {
-                regiment: w,
-                tile,
-                size: (3, 3),
+            // The Clans fell what they clear into any river beside it.
+            let (regiment, size) = (w, (3, 3));
+            out.push(order(if FACTIONS[usize::from(p)] == Faction::EmberClans {
+                Command::Fell {
+                    regiment,
+                    tile,
+                    size,
+                }
+            } else {
+                Command::Clear {
+                    regiment,
+                    tile,
+                    size,
+                }
             }));
         }
         // The soldiers march on the other side's main building (each idle

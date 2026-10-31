@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 70;
+pub const SIM_VERSION: u32 = 71;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -706,6 +706,23 @@ pub enum Command {
         tile: (i16, i16),
         size: (u8, u8),
     },
+    /// Conquest: [`Command::Clear`], felling the woods and thicket beside
+    /// a river into it ([`clearing::Work::Fell`]). Only for workers whose
+    /// faction fells ([`clearing::ClearStyle::fells`]).
+    Fell {
+        regiment: RegimentHandle,
+        tile: (i16, i16),
+        size: (u8, u8),
+    },
+    /// Conquest: a worker walks to the bank of river tile `tile` and tips
+    /// a raft in ([`clearing::Work::Dump`], docs/39 section 3), paying
+    /// [`rivers::debris::RAFT_GRUB`] when it goes in. Refused for a tile
+    /// that isn't running river, a player who can't pay, or one with
+    /// [`rivers::debris::SHARE`] pieces on the water already.
+    Dump {
+        regiment: RegimentHandle,
+        tile: (i16, i16),
+    },
     /// Conquest: a worker helps build one of its owner's buildings, or
     /// mends it once it is up.
     Construct {
@@ -883,6 +900,8 @@ impl Command {
             | Command::Trade { regiment, .. }
             | Command::Build { regiment, .. }
             | Command::Clear { regiment, .. }
+            | Command::Fell { regiment, .. }
+            | Command::Dump { regiment, .. }
             | Command::Construct { regiment, .. }
             | Command::WorkPlan { regiment, .. }
             | Command::ManWall { regiment, .. }
@@ -910,6 +929,8 @@ impl Command {
             | Command::Trade { .. }
             | Command::Build { .. }
             | Command::Clear { .. }
+            | Command::Fell { .. }
+            | Command::Dump { .. }
             | Command::Construct { .. }
             | Command::CallOff { .. }
             | Command::Train { .. }
@@ -1527,15 +1548,29 @@ impl World {
         conquest::overgrown(&self.terrain, foot)
     }
 
+    /// Whether `player` may tip a raft into tile `(x, y)` now: it is
+    /// running river and the player's share of the debris isn't used up
+    /// (docs/39 section 3; the price is checked when ordered).
+    pub fn takes_raft(&self, player: PlayerId, x: i32, y: i32) -> bool {
+        self.flood.rivers.takes_raft(&self.terrain, x, y, player)
+    }
+
+    /// Whether land tile `(x, y)` is beside running river, so felling it
+    /// drops it in.
+    pub fn fells_into(&self, x: i32, y: i32) -> bool {
+        self.flood.rivers.fells_into(&self.terrain, x, y)
+    }
+
     /// What worker `h` is clearing, if it is clearing (Conquest only).
     pub fn clearing_of(&self, h: RegimentHandle) -> Option<clearing::ClearingView> {
         let c = self.conquest.as_ref()?;
-        let (area, then) = c
+        let (area, then, work) = c
             .clearing
             .job_of(&self.regiments, self.regiments.resolve(h)?)?;
         Some(clearing::ClearingView {
             area,
             then: then.map(|p| (p.building, p.tile, p.turn)),
+            work,
         })
     }
 
@@ -2379,13 +2414,32 @@ impl World {
                 regiment,
                 tile,
                 size,
+            }
+            | Command::Fell {
+                regiment,
+                tile,
+                size,
             } => {
                 let side = 1..=clearing::MAX_CLEAR_SIDE;
                 let (w, d) = (i32::from(size.0), i32::from(size.1));
                 let area = [i32::from(tile.0), i32::from(tile.1), w, d];
+                let work = match pc.command {
+                    Command::Fell { .. } => clearing::Work::Fell,
+                    _ => clearing::Work::Clear,
+                };
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
                     (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) => {
-                        c.clear(&mut self.regiments, r, area, &self.terrain)
+                        c.clear(&mut self.regiments, r, area, &self.terrain, work)
+                    }
+                    _ => false,
+                }
+            }
+            Command::Dump { regiment, tile } => {
+                let (x, y) = (i32::from(tile.0), i32::from(tile.1));
+                let takes = (self.flood.rivers).takes_raft(&self.terrain, x, y, pc.player);
+                match (self.worker_of(pc.player, regiment), &mut self.conquest) {
+                    (Some(r), Some(c)) if takes => {
+                        c.dump(pc.player, &mut self.regiments, r, (x, y))
                     }
                     _ => false,
                 }
@@ -2631,17 +2685,48 @@ impl World {
         let Some(c) = &mut self.conquest else {
             return;
         };
-        c.clearing
-            .update(&mut self.regiments, &self.units, &c.units, &self.terrain);
+        c.clearing.update(
+            &mut self.regiments,
+            &self.units,
+            &c.units,
+            &self.terrain,
+            &self.flood.rivers,
+        );
         if c.clearing.done.is_empty() {
             return;
         }
         // Taken out and put back, so the list keeps its room. The cleared
         // tiles change the ground together, before any building is laid.
         let done = core::mem::take(&mut c.clearing.done);
+        let tick = self.tick;
         for d in &done {
-            if let clearing::Done::Tile { owner, pays, .. } = *d {
-                c.economy.earn_grub(owner, pays, &self.regiments, &c.units);
+            match *d {
+                clearing::Done::Tile {
+                    x,
+                    y,
+                    owner,
+                    pays,
+                    burnt,
+                    logs,
+                } => {
+                    c.economy.earn_grub(owner, pays, &self.regiments, &c.units);
+                    let rivers = &mut self.flood.rivers;
+                    if logs > 0 {
+                        rivers.fell_in(&self.terrain, x, y, logs, owner, tick);
+                    } else if burnt {
+                        // Bank woods burnt off topple as a fire's do.
+                        rivers.topple(&self.terrain, x, y, tick);
+                    }
+                }
+                clearing::Done::Raft { x, y, owner } => {
+                    let rivers = &mut self.flood.rivers;
+                    if rivers.takes_raft(&self.terrain, x, y, owner)
+                        && c.economy.spend(owner, rivers::debris::RAFT_GRUB, 0)
+                    {
+                        rivers.dump(&self.terrain, x, y, owner, tick);
+                    }
+                }
+                _ => {}
             }
         }
         self.change_ground(done.iter().filter_map(|d| match *d {
@@ -2650,7 +2735,7 @@ impl World {
         }));
         for d in &done {
             match *d {
-                clearing::Done::Tile { .. } => {}
+                clearing::Done::Tile { .. } | clearing::Done::Raft { .. } => {}
                 clearing::Done::Lay { r, pledge } => {
                     if let Some(c) = &mut self.conquest {
                         c.lay_pledged(r, pledge, &mut self.nav, &mut self.regiments, &self.terrain);

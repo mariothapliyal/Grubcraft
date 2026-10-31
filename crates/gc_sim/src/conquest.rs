@@ -602,7 +602,8 @@ impl Conquest {
                 grub,
                 marrow,
             };
-            self.clearing.start(regs, r, foot, Some(pledge));
+            self.clearing
+                .start(regs, r, foot, Some(pledge), crate::clearing::Work::Clear);
             return true;
         }
         // A gate replaces the stretch of its owner's wall it goes on.
@@ -668,12 +669,35 @@ impl Conquest {
         r: usize,
         area: [i32; 4],
         terrain: &Terrain,
+        work: crate::clearing::Work,
     ) -> bool {
-        if !self.unit(regs.unit[r]).worker || !overgrown(terrain, area) {
+        let unit = self.unit(regs.unit[r]);
+        let fells = work != crate::clearing::Work::Fell || unit.clearing.fells;
+        if !unit.worker || !fells || !overgrown(terrain, area) {
             return false;
         }
         self.stop_work(r);
-        self.clearing.start(regs, r, area, None);
+        self.clearing.start(regs, r, area, None, work);
+        true
+    }
+
+    /// Worker slot `r`, `player`'s, goes to tip a raft into river tile
+    /// `tile` (checked by the caller), if `player` can pay for it.
+    pub(crate) fn dump(
+        &mut self,
+        player: PlayerId,
+        regs: &mut Regiments,
+        r: usize,
+        tile: (i32, i32),
+    ) -> bool {
+        let raft = crate::rivers::debris::RAFT_GRUB;
+        if !self.unit(regs.unit[r]).worker || !self.economy.can_afford(player, raft, 0) {
+            return false;
+        }
+        self.stop_work(r);
+        let area = [tile.0, tile.1, 1, 1];
+        self.clearing
+            .start(regs, r, area, None, crate::clearing::Work::Dump);
         true
     }
 

@@ -1,8 +1,9 @@
 //! Debris riding the rivers, as drawn (docs/39-water-engine.md, section
 //! 3): each piece the simulation floats is a bare trunk lying on the
-//! water along the way it goes, and one aground sits low on the bed.
+//! water along the way it goes (a raft: three lashed side by side), and
+//! one aground sits low on the bed.
 
-use gc_sim::rivers::debris::Seen;
+use gc_sim::rivers::debris::{Kind, Seen};
 use gc_sim::terrain::HEIGHT_UNITS;
 use glam::{Vec2, Vec3};
 
@@ -17,6 +18,10 @@ const AGROUND: f32 = 0.08;
 /// Wet bark: darker than the trees on the bank (the shader doubles a
 /// tint, so 128 is as made).
 const WET_BARK: [u8; 3] = [92, 84, 76];
+/// A raft's trunks, how far apart (tiles) and their timber: paler, cut.
+const RAFT_TRUNKS: usize = 3;
+const RAFT_GAP: f32 = 0.22;
+const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
 
 /// The trunks to draw for `pieces`, the still water drawn at `water`
 /// (tiles) and the rivers raising it by `rise` (height units, see
@@ -30,38 +35,45 @@ pub fn extras<'a>(
     seen: impl Fn((i32, i32)) -> bool + 'a,
 ) -> impl Iterator<Item = Extra> + 'a {
     let scale = LOG_LENGTH / tall.max(0.1);
-    pieces.filter_map(move |p| {
-        let tile = (p.at.x.floor_int(), p.at.y.floor_int());
-        if !seen(tile) {
-            return None;
-        }
-        let at = crate::from_fx_vec(p.at);
-        let way = Some(crate::from_fx_vec(p.way))
-            .filter(|w| w.length_squared() > 0.01)
-            .map_or(Vec2::X, Vec2::normalize);
-        let rise = f32::from(rise(p.at)) / HEIGHT_UNITS as f32;
-        let y = water + rise - if p.grounded { AGROUND } else { 0.0 };
-        // Base upstream, so the trunk lies across where the piece is.
-        let base = at - way * (LOG_LENGTH / 2.0);
-        let turn = turn_of(way);
-        Some(Extra {
-            model: LOG_MODEL,
-            at: Vec3::new(base.x, y, base.y),
-            turn,
-            scale,
-            tint: WET_BARK,
-            phase: 0,
-            lean: 255,
-            fall: fall_of(turn, way),
+    pieces
+        .filter(move |p| seen((p.at.x.floor_int(), p.at.y.floor_int())))
+        .flat_map(move |p| {
+            let at = crate::from_fx_vec(p.at);
+            let way = Some(crate::from_fx_vec(p.way))
+                .filter(|w| w.length_squared() > 0.01)
+                .map_or(Vec2::X, Vec2::normalize);
+            let rise = f32::from(rise(p.at)) / HEIGHT_UNITS as f32;
+            let y = water + rise - if p.grounded { AGROUND } else { 0.0 };
+            // Base upstream, so the trunk lies across where the piece is.
+            let base = at - way * (LOG_LENGTH / 2.0);
+            let turn = turn_of(way);
+            // A raft is trunks lashed side by side.
+            let trunks = if p.kind == Kind::Raft { RAFT_TRUNKS } else { 1 };
+            let beside = way.perp() * RAFT_GAP;
+            (0..trunks).map(move |k| {
+                let off = beside * (k as f32 - (trunks - 1) as f32 / 2.0);
+                Extra {
+                    model: LOG_MODEL,
+                    at: Vec3::new(base.x + off.x, y, base.y + off.y),
+                    turn,
+                    scale,
+                    tint: if p.kind == Kind::Raft {
+                        RAFT_TIMBER
+                    } else {
+                        WET_BARK
+                    },
+                    phase: 0,
+                    lean: 255,
+                    fall: fall_of(turn, way),
+                }
+            })
         })
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use gc_fixed::{Fx, FxVec2};
-    use gc_sim::rivers::debris::Kind;
 
     fn seen(at: FxVec2, way: FxVec2, grounded: bool) -> Seen {
         Seen {
@@ -101,5 +113,22 @@ mod tests {
             extras([afloat].into_iter(), |_| 0, 1.0, 5.0, |_| false).count(),
             0
         );
+    }
+
+    #[test]
+    fn a_raft_is_three_trunks_side_by_side_across_its_way() {
+        let raft = Seen {
+            kind: Kind::Raft,
+            ..seen(
+                FxVec2::from_ints(5, 5),
+                FxVec2::new(Fx::ONE, Fx::ZERO),
+                false,
+            )
+        };
+        let e: Vec<Extra> = extras([raft].into_iter(), |_| 0, 1.0, 5.0, |_| true).collect();
+        assert_eq!(e.len(), RAFT_TRUNKS);
+        // Along x, so they stand apart in z, at one x.
+        assert!(e.iter().all(|t| (t.at.x - e[0].at.x).abs() < 1e-4));
+        assert!((e[2].at.z - e[0].at.z).abs() > RAFT_GAP);
     }
 }

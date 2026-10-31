@@ -221,6 +221,7 @@ impl Writer {
         }
         self.bool(c.burns);
         self.var(u64::from(u.gather_percent));
+        self.bool(c.fells);
     }
 
     /// A caravan's trade post (format 24 on).
@@ -392,13 +393,25 @@ impl Writer {
                 regiment,
                 tile,
                 size,
+            }
+            | Command::Fell {
+                regiment,
+                tile,
+                size,
             } => {
-                self.u8(27);
+                let fell = matches!(pc.command, Command::Fell { .. });
+                self.u8(if fell { 46 } else { 27 });
                 self.handle(regiment);
                 self.var(u64::from(tile.0 as u16));
                 self.var(u64::from(tile.1 as u16));
                 self.u8(size.0);
                 self.u8(size.1);
+            }
+            Command::Dump { regiment, tile } => {
+                self.u8(47);
+                self.handle(regiment);
+                self.var(u64::from(tile.0 as u16));
+                self.var(u64::from(tile.1 as u16));
             }
             Command::Construct {
                 regiment,
@@ -901,6 +914,9 @@ impl<'a> Reader<'a> {
         if format >= 47 {
             u.gather_percent = self.var_as()?;
         }
+        if format >= 51 {
+            u.clearing.fells = self.bool()?;
+        }
         Some(u)
     }
 
@@ -1005,6 +1021,15 @@ impl<'a> Reader<'a> {
                 regiment: self.handle()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
                 size: (self.u8()?, self.u8()?),
+            },
+            46 => Command::Fell {
+                regiment: self.handle()?,
+                tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
+                size: (self.u8()?, self.u8()?),
+            },
+            47 => Command::Dump {
+                regiment: self.handle()?,
+                tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
             },
             23 => Command::Trade {
                 regiment: self.handle()?,
@@ -1297,6 +1322,21 @@ mod tests {
                 },
                 tile: (12, -3),
                 size: (16, 1),
+            },
+            Command::Fell {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 1,
+                },
+                tile: (12, 30),
+                size: (2, 3),
+            },
+            Command::Dump {
+                regiment: RegimentHandle {
+                    index: 9,
+                    generation: 2,
+                },
+                tile: (-4, 200),
             },
             Command::Construct {
                 regiment: RegimentHandle {

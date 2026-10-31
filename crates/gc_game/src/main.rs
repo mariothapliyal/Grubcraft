@@ -184,6 +184,8 @@ mod puppets;
 mod replays;
 mod ring_tool;
 mod river_debris;
+#[cfg(test)]
+mod river_golden;
 mod river_watch;
 mod roster;
 mod sandbox;
@@ -2419,9 +2421,10 @@ impl Running {
                 // The wall tool: a drag from here draws a curve.
                 self.begin_wall_drag();
                 // Choosing ground to clear: the drag starts on the ground.
-                self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
-                    .then(|| self.ground_under_cursor())
-                    .flatten();
+                self.input.clear_from =
+                    matches!(self.hud.armed, Some(hud::Armed::Clear | hud::Armed::Fell))
+                        .then(|| self.ground_under_cursor())
+                        .flatten();
             }
             // Q, W or A was pressed: this click says where (or at whom).
             (MouseButton::Left, ElementState::Released)

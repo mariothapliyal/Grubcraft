@@ -74,6 +74,14 @@ const OPEN_PLACES: usize = POOL - KEPT_FOR_WRECKS;
 pub(super) const BANKS: usize = 4;
 /// No tile.
 const NO_TILE: u32 = u32::MAX;
+/// The owner of a piece no player put in.
+const NOBODY: u8 = u8::MAX;
+/// Grub a raft costs (the timber; docs/39, "Dumping").
+pub const RAFT_GRUB: u32 = 12;
+/// Seconds a worker takes to tip a raft in, at Standard tempo.
+pub const DUMP_SECONDS: u32 = 6;
+/// Most pieces one player may have put in that are still on the water.
+pub const SHARE: usize = 16;
 /// No second.
 const NEVER: u32 = u32::MAX;
 
@@ -127,6 +135,8 @@ struct Piece {
     entered: bool,
     /// Whether a flood or a fire put it in.
     natural: bool,
+    /// The player who dumped or felled it in ([`NOBODY`]: none).
+    owner: u8,
     /// The tick it went in.
     born: u32,
     /// The regiments it has struck, the oldest pushed out.
@@ -197,6 +207,13 @@ impl Debris {
         self.pieces.iter().flatten().any(|p| !p.grounded)
     }
 
+    /// How many pieces `player` dumped or felled in are on the water.
+    pub fn owned(&self, player: u8) -> usize {
+        (self.pieces.iter().flatten())
+            .filter(|p| p.owner == player)
+            .count()
+    }
+
     /// Whether ford group `g` is a snag.
     pub(super) fn snagged(&self, g: usize) -> bool {
         self.snag.get(g).is_some_and(|&m| m >= SNAG_MASS)
@@ -264,6 +281,7 @@ impl Debris {
             h.u8(p.across as u8);
             h.u8(u8::from(p.grounded) | u8::from(p.natural) << 1 | u8::from(p.entered) << 2);
             h.u32(p.born);
+            h.u8(p.owner);
             h.u8(p.struck_next);
             for r in p.struck {
                 let (i, g) = r.map_or((u32::MAX, 0), |r| (r.index, r.generation));
@@ -291,6 +309,7 @@ impl Piece {
             grounded: false,
             entered: false,
             natural,
+            owner: NOBODY,
             born: tick,
             struck: [None; STRUCK_KEPT],
             struck_next: 0,
@@ -446,19 +465,91 @@ impl Rivers {
         if !self.any() || !wooded(terrain, x, y) {
             return;
         }
-        let (flow, n) = (terrain.flow_layer(), self.side);
-        let Some(river) = (crate::nav::DIRS.iter())
-            .filter_map(|&(dx, dy)| index_in(n, x + dx, y + dy))
-            .find(|&j| flow[j] != 0 && self.stretch_of[j] != NONE)
-        else {
+        let Some(river) = self.river_beside(terrain, x, y) else {
             return;
         };
-        let r = roll(self.seed, tick, (y * n + x) as u64);
+        let r = roll(self.seed, tick, (y * self.side + x) as u64);
         if !r.is_multiple_of(TOPPLE_IN) {
             return;
         }
         let piece = Piece::new(Kind::Log, river as u32, across(r), true, tick);
         self.debris.put(piece);
+    }
+
+    /// A running river tile beside land tile `(x, y)`, if there is one.
+    fn river_beside(&self, terrain: &Terrain, x: i32, y: i32) -> Option<usize> {
+        let n = self.side;
+        (crate::nav::DIRS.iter())
+            .filter_map(|&(dx, dy)| index_in(n, x + dx, y + dy))
+            .find(|&j| self.runs(terrain, j))
+    }
+
+    /// Whether river tile `i` runs (has a current and a stretch).
+    fn runs(&self, terrain: &Terrain, i: usize) -> bool {
+        terrain.flow_layer().get(i).is_some_and(|&f| f != 0)
+            && self.stretch_of.get(i).is_some_and(|&s| s != NONE)
+    }
+
+    /// Whether a worker may fell land tile `(x, y)` into a river beside it.
+    pub fn fells_into(&self, terrain: &Terrain, x: i32, y: i32) -> bool {
+        self.any() && self.river_beside(terrain, x, y).is_some()
+    }
+
+    /// Whether `player` may tip a raft into river tile `(x, y)`: it runs,
+    /// and the player has fewer than [`SHARE`] pieces on the water.
+    pub fn takes_raft(&self, terrain: &Terrain, x: i32, y: i32, player: u8) -> bool {
+        self.any()
+            && index_in(self.side, x, y).is_some_and(|i| self.runs(terrain, i))
+            && self.debris.owned(player) < SHARE
+    }
+
+    /// `logs` logs felled off land tile `(x, y)` by `player` go into the
+    /// river beside it, as far as the pool and the player's share allow.
+    pub(crate) fn fell_in(
+        &mut self,
+        terrain: &Terrain,
+        x: i32,
+        y: i32,
+        logs: u8,
+        player: u8,
+        tick: u32,
+    ) {
+        let Some(river) = self.river_beside(terrain, x, y) else {
+            return;
+        };
+        for k in 0..logs {
+            if self.debris.owned(player) >= SHARE {
+                return;
+            }
+            let r = roll(
+                self.seed,
+                tick,
+                ((y * self.side + x) as u64) << 2 | u64::from(k),
+            );
+            let mut piece = Piece::new(Kind::Log, river as u32, across(r), false, tick);
+            piece.owner = player;
+            self.debris.put(piece);
+        }
+    }
+
+    /// `player` tips a raft into river tile `(x, y)`. Returns whether it
+    /// went in.
+    pub(crate) fn dump(
+        &mut self,
+        terrain: &Terrain,
+        x: i32,
+        y: i32,
+        player: u8,
+        tick: u32,
+    ) -> bool {
+        if !self.takes_raft(terrain, x, y, player) {
+            return false;
+        }
+        let i = (y * self.side + x) as u32;
+        let r = roll(self.seed, tick, u64::from(i) << 2 | 3);
+        let mut piece = Piece::new(Kind::Raft, i, across(r), false, tick);
+        piece.owner = player;
+        self.debris.put(piece)
     }
 
     /// One tick of the debris, with the map's water `lift`: floating

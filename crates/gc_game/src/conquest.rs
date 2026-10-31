@@ -178,12 +178,15 @@ pub fn clear_style(f: Faction) -> ClearStyle {
     match f {
         Faction::EmberClans => ClearStyle {
             pays: [0, 5, 8],
+            // They may fell bank woods into the river (docs/39).
+            fells: true,
             ..ClearStyle::STANDARD
         },
         Faction::CarrionConcord => ClearStyle {
             pace: [50; 3],
             pays: [0; 3],
             burns: true,
+            fells: false,
         },
         Faction::Choir => ClearStyle {
             // Thicket in the time woods take.
@@ -194,11 +197,13 @@ pub fn clear_style(f: Faction) -> ClearStyle {
             ],
             pays: [0; 3],
             burns: false,
+            fells: false,
         },
         Faction::Brood => ClearStyle {
             pace: [150; 3],
             pays: [1, 3, 5],
             burns: false,
+            fells: false,
         },
     }
 }
@@ -606,13 +611,25 @@ mod tests {
     #[test]
     fn clearing_styles_match_the_changing_land_doc() {
         let table = [
-            (Faction::EmberClans, [100, 100, 100], [0, 5, 8], false),
-            (Faction::CarrionConcord, [50, 50, 50], [0, 0, 0], true),
-            (Faction::Choir, [100, 100, 53], [0, 0, 0], false),
-            (Faction::Brood, [150, 150, 150], [1, 3, 5], false),
+            (Faction::EmberClans, [100, 100, 100], [0, 5, 8], false, true),
+            (
+                Faction::CarrionConcord,
+                [50, 50, 50],
+                [0, 0, 0],
+                true,
+                false,
+            ),
+            (Faction::Choir, [100, 100, 53], [0, 0, 0], false, false),
+            (Faction::Brood, [150, 150, 150], [1, 3, 5], false, false),
         ];
-        for (f, pace, pays, burns) in table {
-            assert_eq!(clear_style(f), ClearStyle { pace, pays, burns }, "{f:?}");
+        for (f, pace, pays, burns, fells) in table {
+            let style = ClearStyle {
+                pace,
+                pays,
+                burns,
+                fells,
+            };
+            assert_eq!(clear_style(f), style, "{f:?}");
         }
         // The Choir's thicket takes about the time woods do.
         let choir = clear_style(Faction::Choir);
