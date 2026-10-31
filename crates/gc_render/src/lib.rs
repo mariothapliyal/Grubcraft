@@ -1801,16 +1801,16 @@ impl Renderer {
             sun_color: rgba(look.sun_color, look.foliage_glow),
             sky_ambient: rgba(look.sky_ambient, look.rim),
             ground_ambient: rgba(look.ground_ambient, look.cloud_shadows),
-            haze: rgba(haze, 0.0),
+            haze: rgba(haze, look.dry.clamp(0.0, 1.0)),
             // How the air thins with height, the ground occlusion, and how
             // thick the air is at the camera (it only changes per frame).
             air: [
                 look.fog_falloff,
                 look.ground_occlusion,
                 (-look.fog_falloff * frame.camera_pos.y).exp(),
-                0.0,
+                look.autumn.clamp(0.0, 1.0),
             ],
-            sky_top: rgba(look.hdr(look.sky_top), 0.0),
+            sky_top: rgba(look.hdr(look.sky_top), look.ice.clamp(0.0, 1.0)),
             sky_horizon: rgba(look.hdr(look.sky_horizon), 0.0),
             light_meta: [
                 self.lights.len().min(MAX_LIGHTS) as f32,

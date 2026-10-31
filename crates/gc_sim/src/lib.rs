@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 66;
+pub const SIM_VERSION: u32 = 68;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -156,8 +156,9 @@ pub struct Capacities {
 impl Capacities {
     /// The most regiments a match may reserve room for: far past any
     /// battle, and what anything reading a match from outside (a replay
-    /// file) refuses beyond.
-    pub const MAX_REGIMENTS: u32 = 1 << 16;
+    /// file) refuses beyond. One short of 65,536, so a regiment's index
+    /// and an end marker both fit in 16 bits.
+    pub const MAX_REGIMENTS: u32 = u16::MAX as u32;
 }
 
 /// The largest map a match may be on, in tiles a side: far past any battle
@@ -1008,6 +1009,7 @@ impl World {
             setup.map_tiles,
             setup.capacities.regiments as usize,
             terrain.thicket(),
+            nav::going_of(&terrain, setup.map_tiles),
         );
         nav.set_sides(setup.teams.len(), |a, b| !stances.hostile(a, b));
         let vision = Vision::new(setup.capacities.regiments as usize, &terrain, &stances);
@@ -1797,6 +1799,9 @@ impl World {
                 self.judge.throne().map_or(0, verdict::Throne::out_mask),
                 self.sky.air(),
             );
+            if self.tick.is_multiple_of(TICKS_PER_SECOND) && self.flood.rivers.floodplain_shut() {
+                (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
+            }
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);
             }
@@ -2659,6 +2664,7 @@ impl World {
     /// growing are left as they are.
     pub(crate) fn change_ground(&mut self, tiles: impl IntoIterator<Item = (i32, i32, bool)>) {
         let mut thicket = Vec::new();
+        let mut going = Vec::new();
         for (x, y, burnt) in tiles {
             // Nothing to change (and no copy of a shared terrain made)
             // where nothing grows.
@@ -2671,6 +2677,7 @@ impl World {
             if was == Growth::Thicket {
                 thicket.push([x, y, 1, 1]);
             }
+            going.push((x, y, self.terrain.going_percent(x, y)));
             if !self.scratch {
                 self.events.cleared(x, y, was, burnt);
             }
@@ -2680,6 +2687,10 @@ impl World {
         }
         if !thicket.is_empty() {
             self.nav.set_built_all(&thicket, false, &self.regiments);
+        }
+        // Routes price the ground anew: open where woods stood.
+        if !going.is_empty() {
+            self.nav.set_going(&going, &self.regiments);
         }
     }
 
@@ -3134,6 +3145,13 @@ impl World {
             }
             None => {}
         }
+        // The floodplain shuts and opens whatever the map-wide flood does.
+        for shut in [true, false] {
+            let runs = self.flood.rivers.changed_plain_runs(shut);
+            if !runs.is_empty() {
+                (self.nav).set_flooded_all(runs, shut, &self.regiments);
+            }
+        }
     }
 
     /// The rivers' part of [`World::flash`]: storms, fronts and fords, and
@@ -3208,7 +3226,7 @@ impl World {
     /// A rehearsal leaves its troops in the fords: it shares a walkable
     /// grid it never shuts them on, so they could wash up in another.
     fn sweep_away(&mut self) {
-        if self.scratch || !self.flood.rivers.shut() {
+        if self.scratch || !self.flood.rivers.flooding() {
             return;
         }
         let mut swept = 0u16;

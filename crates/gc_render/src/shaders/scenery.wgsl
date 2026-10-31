@@ -322,6 +322,12 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
         let xz = left * detailed.x + in.facing * detailed.z;
         n = normalize(vec3<f32>(xz.x, detailed.y, xz.y));
     }
+    // The season, near and far alike (conifers keep their needles).
+    if in.kind == DETAIL_BROADLEAF {
+        albedo = autumn_leaves(albedo, in.leaf, in.at);
+    } else if in.kind == DETAIL_FOLIAGE {
+        albedo = seasonal_foliage(albedo);
+    }
     albedo *= 1.0 - OCCLUDED_DARK * in.occ;
     albedo *= 1.0 - WET_DARK * drench(n);
     let unsnowed = albedo;
@@ -336,3 +342,42 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     }
     return vec4<f32>(veil(c, in.world.xz), 1.0);
 }
+
+// How bright a leaf's own colour is, to carry its light and dark over to
+// a season's colour.
+fn leaf_bright(albedo: vec3<f32>) -> f32 {
+    return clamp(luma(albedo) * 6.0, 0.35, 1.2);
+}
+
+// Autumn on a broadleaf tree's leaves (`leaf` how much of the surface is
+// leaf): gold, orange or red, each tree its own colour (`at` is where it
+// stands), and a few turn late and stay green.
+fn autumn_leaves(albedo: vec3<f32>, leaf: f32, at: vec2<f32>) -> vec3<f32> {
+    let turned = g.air.w;
+    if leaf < 0.02 || turned <= 0.0 {
+        return albedo;
+    }
+    let pick = vnoise(at * 0.45 + vec2<f32>(13.0, 0.0));
+    var hue = mix(AUTUMN_GOLD, AUTUMN_ORANGE, smoothstep(0.3, 0.55, pick));
+    hue = mix(hue, AUTUMN_RED, smoothstep(0.6, 0.8, pick));
+    let late = 1.0 - smoothstep(0.05, 0.15, vnoise(at * 0.83 + vec2<f32>(41.0, 3.0)));
+    return mix(albedo, hue * leaf_bright(albedo), leaf * turned * 0.85 * (1.0 - late));
+}
+
+// The season on grass and bushes: straw in a dry summer and winter, brown
+// a little in the autumn.
+fn seasonal_foliage(albedo: vec3<f32>) -> vec3<f32> {
+    let turned = g.air.w;
+    let parched = g.haze.w;
+    if turned <= 0.0 && parched <= 0.0 {
+        return albedo;
+    }
+    let goal = mix(STRAW, AUTUMN_BROWN, turned / max(turned + parched, 1e-3));
+    return mix(albedo, goal * leaf_bright(albedo), max(parched * 0.75, turned * 0.4));
+}
+
+// Season colours (linear).
+const AUTUMN_GOLD = vec3<f32>(0.579, 0.302, 0.013);
+const AUTUMN_ORANGE = vec3<f32>(0.612, 0.106, 0.004);
+const AUTUMN_RED = vec3<f32>(0.301, 0.011, 0.002);
+const AUTUMN_BROWN = vec3<f32>(0.218, 0.093, 0.018);

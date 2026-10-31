@@ -161,3 +161,22 @@ Buildings coming down together are now grouped by where they stand (any that fit
 ## Charges that plough in (2026-10-24)
 
 The instruction-count baseline was re-blessed: drill +3.5%, pathing storm +0.4%, field-8000pt-2v2 +5.0% (just over the 5% gate). Part of it is the plough's own work (a few integer operations on the tick a charge lands, and a `Regiments::plougher` check per regiment per tick in `push_lines`, `follow` and `close_up`); the rest is the battles playing differently, with ploughed regiments driven back and their chargers following, so more blocks move and look for routes (route search, `nav::Grid::sector_costs`, is a quarter of the 8000-point run). Tick budgets in `gc_bench` are unchanged and still met.
+
+## Sim heap headroom: area numbers in 16 bits (2026-10-31)
+
+**Why:** `field-8000pt-2v2` had filled its 8 MiB (8,388,608-byte) sim heap budget: 8,372,668 bytes on main, and 8,388,564 (44 bytes under) with the pathfinding overhaul, PR #333, and several features waiting to land need sim memory.
+
+**Where the heap went** (the grand battle's world as it starts, by allocation site): the walking grid's per-cell arrays were 4.7 MB of the 8.4 MB, since a 384-tile map is 768 × 768 cells. Each cell held its cost, ground cost, buildings and clearance in a byte each, and its connected area in a `u32`: 2.36 MB on its own. Then the event list (0.54 MB), the terrain's per-tile layers (0.59 MB), the portal graph and search room (about 1 MB), combat's blow list (0.25 MB) and the regiment table (about 0.3 MB).
+
+**The change:** area numbers are held in 16 bits (`nav::reblock::Areas`), and numbering the whole map runs over the cells at their own width, with no check per cell. A real map has a few hundred areas (354 on the grand battle's, from 1,199 first-pass labels), far under 65,535. Ground cut into more pieces than that (only made-up maps, such as open cells a cell apart) is numbered in 32 bits instead, and narrows back the next time it is numbered with few enough. Numbering near a building that would give out a number past 16 bits numbers the whole map again from 1 instead. Areas are only ever compared, so routes are the same: every golden replay plays as recorded, with no re-bless.
+
+| | Before | After |
+|---|---|---|
+| `field-8000pt-2v2` sim heap | 7.98 MiB (8,372,668 B) | 6.86 MiB (7,193,020 B) |
+| the same, on top of #333 | 8.00 MiB (8,388,564 B) | 6.87 MiB (7,208,916 B) |
+| `conquest-6p` sim heap (768-tile map) | 24.14 MiB | 19.64 MiB |
+| Instructions (drill / storm / field) | | +0.13% / +0.40% / +0.22% |
+| `conquest-6p` laying, typical / worst | 6.6 / 13.1 ms | 6.3 / 11.9 ms |
+
+**Left for later**, if more room is needed: the event list is sized for every regiment's four events at once (0.54 MB); `Grid::ground` copies `cost` everywhere nothing stands (0.59 MB); the portal links grow by doubling and keep the slack (about 0.2 MB).
+

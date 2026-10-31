@@ -36,6 +36,7 @@ mod erode;
 pub(crate) mod field;
 mod shape;
 mod starts;
+pub(crate) mod trails;
 mod water;
 mod ways;
 
@@ -95,10 +96,20 @@ pub enum Habitat {
     BoneDrift,
     RibField,
     DyingGrass,
+    /// Shingle on the inside of a river's bend, just above the water
+    /// (docs/41 step 3).
+    GravelBar,
+    /// Reeds standing in the slack shallows of a lake shore: tall grass.
+    ReedBed,
+    /// Sand on a gently sloping lake shore.
+    Beach,
+    /// Ground worn bare by feet, on the trails between the starts, the
+    /// villages and the other sites.
+    Trail,
 }
 
 impl Habitat {
-    pub const ALL: [Habitat; 19] = [
+    pub const ALL: [Habitat; 23] = [
         Habitat::FlowerMeadow,
         Habitat::Grassland,
         Habitat::ScrubEdge,
@@ -118,6 +129,10 @@ impl Habitat {
         Habitat::BoneDrift,
         Habitat::RibField,
         Habitat::DyingGrass,
+        Habitat::GravelBar,
+        Habitat::ReedBed,
+        Habitat::Beach,
+        Habitat::Trail,
     ];
 
     /// The habitat a tile's byte stands for (grassland for anything unknown).
@@ -132,9 +147,11 @@ impl Habitat {
     pub fn land(self) -> Land {
         use Habitat::*;
         match self {
-            FlowerMeadow | Grassland | ScrubEdge | WetMeadow => Land::Meadow,
+            FlowerMeadow | Grassland | ScrubEdge | WetMeadow | GravelBar | Beach | Trail => {
+                Land::Meadow
+            }
             OldGrowth | BirchFringe | FernHollow | Glade => Land::Forest,
-            SedgeTussock | AlderCarr | PeatBog => Land::Fen,
+            SedgeTussock | AlderCarr | PeatBog | ReedBed => Land::Fen,
             HeatherMoor | Scree | TreeLine | BareRock => Land::Highland,
             CrackedFlat | BoneDrift | RibField | DyingGrass => Land::Waste,
         }
@@ -830,8 +847,9 @@ fn lay(tiles: i32, what: Grown) -> Option<MapDef> {
         set_pieces: Vec::new(),
     };
     // Where a site can stand: open, walkable ground with a regiment's room
-    // round it, from the land as the loader builds it.
-    let map = crate::Map::from_def(&def);
+    // round it, from the land as the loader builds it (before the trails
+    // are worn between the sites).
+    let map = crate::Map::from_def_untrodden(&def);
     let ground = map.tile_ground(&map.nav_costs());
     let standable = map.standable(&ground);
     let room = |at: Pos, r: i32| {
@@ -1115,7 +1133,7 @@ fn walks_from(map: &crate::Map, from: &[Pos]) -> (Vec<u8>, Vec<Vec<u32>>) {
 /// each piece of its share within two of [`shares`]' slacks of every
 /// other's, and every start still with a counter-route.
 fn still_fair(def: &MapDef, starts: &[Pos], north: &[Pos]) -> bool {
-    let map = crate::Map::from_def(def);
+    let map = crate::Map::from_def_untrodden(def);
     let n = map.tiles as usize;
     let (cost, walks) = walks_from(&map, north);
     if !counter_routes(n, &cost, starts, north, &walks) {
