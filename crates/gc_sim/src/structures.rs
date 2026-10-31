@@ -1351,6 +1351,12 @@ impl Structures {
         self.supply_of(owner).min(crate::economy::SUPPLY_LIMIT)
     }
 
+    /// Building slot `i`'s hit points left, in thousandths of its whole.
+    pub(crate) fn left_permille(&self, i: usize) -> u16 {
+        let whole = u64::from(self.stats_of(i).hp) * u64::from(HP_SCALE);
+        (u64::from(self.hp[i]) * 1000 / whole.max(1)).min(1000) as u16
+    }
+
     /// Whether building slot `i` is below its full hit points.
     pub(crate) fn hurt(&self, i: usize) -> bool {
         self.hp[i] < u32::from(self.stats_of(i).hp) * HP_SCALE

@@ -303,6 +303,20 @@ Built 2026-10-31.
 - **Tests:** `gc_sim/tests/river_work.rs`: felling drops only the bank row and pays only the rest; plain clearing drops nothing and a faction that doesn't fell is refused; a raft costs its Grub and rides the current; no raft without the Grub.
 - *Not yet:* the computer players don't fell or dump (stage 5), and the share isn't per team.
 
+## Built: stage 4a, bridges in the water
+
+Built 2026-10-31.
+
+- **Piers** (`gc_sim::rivers::debris::piers`): each second the world hands the rivers every standing, finished bridge tile that isn't on a bank (`Structures::piers`: tile, slot, `pier_level` 1 to 3 and hit points left); those over running river are piers.
+- **A piece reaching a pier** jams on it (40%, 30% or 10% by level, while the jam holds under 12 mass) or strikes it: 6%, 4% or 1.5% of the tile a mass point at a steady pace, times the square of its pace (up to four times in a full flood), and goes on under. A jammed piece lies on the tile above, against the pier, and is drawn low like one aground.
+- **Jams** choke their stretch's outflow, 5% a mass point up to 60% (`Rivers::choke`), so the water backs up above them. While the water is Minor or more a jam pushes on its tile (0.1% a mass point a second at Minor, 0.2% in a Flood, 0.4% from Major; braced two thirds of that, reinforced a third). When the water falls back below Minor a jam of 3 mass or less washes free.
+- **High water:** from Major up a tile under 75% of its hit points loses 0.5% a second (braced 0.12%, reinforced nothing); catastrophic water sweeps away a plain tile under half its hit points or a braced one under a quarter.
+- **A tile that falls** lets its jam go, and if it stood over running river its wreck (mass 2, drawn as two grey deck timbers) floats on down and can strike the next bridge. A bank tile leaves no wreck.
+- Harm to bridges goes through the same path as fire and attacks (`wear_down`), so a fallen tile shuts and reopens the river's crossings as before.
+- **Formats:** `SIM_VERSION` 78; no new commands, so `FORMAT` and `PROTOCOL` stay. The river Conquest golden and the river storm move; the others don't.
+- **Tests:** `gc_sim/tests/river_bridges.rs`: rafts reaching a bridge strike or jam on its piers, and small jams wash free; a fallen bridge tile floats on as a wreck, a bank tile doesn't; a sound bridge stands through a catastrophic flood with nothing in the water; a catastrophic flood tears logs off the banks that batter the bridge below; rafts in a flood do far more harm than in a steady river.
+- *Not yet (stage 4b):* clearing and burning jams, the burst when a jammed tile falls, news of strikes and jams, computer players clearing and repairing, and the stress scenarios.
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**

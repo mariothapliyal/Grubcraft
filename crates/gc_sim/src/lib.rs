@@ -129,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 77;
+pub const SIM_VERSION: u32 = 78;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1864,6 +1864,13 @@ impl World {
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);
             }
+            // A tile that fell over the river lets its jam go and floats
+            // on as a wreck.
+            for &([x, y, _, _], on) in &conquest.structures.decks {
+                if !on {
+                    (self.flood.rivers).bridge_fell(&self.terrain, x, y, self.tick);
+                }
+            }
             bridges::settle_decks(
                 &mut conquest.structures.decks,
                 &mut self.nav,
@@ -3303,14 +3310,38 @@ impl World {
         if water && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_water(copy);
         }
+        if second && let Some(c) = &self.conquest {
+            (self.flood.rivers).set_piers(c.structures.piers(), &self.terrain);
+        }
         let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
         if snags && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_snags(copy);
         }
+        self.batter_bridges();
         if coming && !self.scratch {
             self.events.flash(rivers::Stage::Coming);
         }
         stage
+    }
+
+    /// What the debris and the water did to the bridges this tick
+    /// (docs/39-water-engine.md, section 4): tiles worn down, or swept away.
+    fn batter_bridges(&mut self) {
+        let blows = self.flood.rivers.blows();
+        if blows.is_empty() {
+            return;
+        }
+        let Some(c) = &mut self.conquest else {
+            blows.clear();
+            return;
+        };
+        for blow in blows.drain(..) {
+            let (slot, per) = match blow {
+                rivers::debris::Blow::Wear(slot, per) => (slot, per),
+                rivers::debris::Blow::Sweep(slot) => (slot, 10_000),
+            };
+            (c.structures).batter(slot, per, &mut self.nav, &self.regiments);
+        }
     }
 
     /// One second of the summer fords gone deep again (with seasons):

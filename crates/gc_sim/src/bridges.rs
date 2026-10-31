@@ -13,7 +13,7 @@ use crate::conquest::overlaps;
 use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
-use crate::structures::{BuildingStats, LINE, Refusal, Structures};
+use crate::structures::{BuildingStats, HP_SCALE, LINE, Refusal, StructureHandle, Structures};
 use crate::terrain::Terrain;
 use crate::walls::{Laying, Line, MAX_BRIDGE_LENGTH, WallTile};
 use crate::{PlayerId, UnitStats};
@@ -43,6 +43,41 @@ impl Structures {
             b = &self.buildings()[usize::from(from)];
         }
         level
+    }
+
+    /// Every finished bridge tile off the banks, where a pier stands in
+    /// the water (docs/39-water-engine.md, section 4): its tile, handle,
+    /// pier level and hit points left, in thousandths.
+    pub(crate) fn piers(&self) -> impl Iterator<Item = (i32, i32, StructureHandle, u8, u16)> + '_ {
+        self.standing()
+            .filter(|&i| self.is_bridge(i) && self.finished(i) && !self.ashore[i])
+            .map(|i| {
+                let [x, y, _, _] = self.footprint(i);
+                (
+                    x,
+                    y,
+                    self.handle(i),
+                    self.pier_level(i),
+                    self.left_permille(i),
+                )
+            })
+    }
+
+    /// Bridge tile `h` loses `per_ten_thousand` ten-thousandths of its
+    /// whole hit points (at least one), and falls at none (a debris blow).
+    pub(crate) fn batter(
+        &mut self,
+        h: StructureHandle,
+        per_ten_thousand: u32,
+        nav: &mut Nav,
+        regs: &Regiments,
+    ) {
+        let Some(i) = self.resolve(h) else {
+            return;
+        };
+        let whole = u64::from(self.stats_of(i).hp) * u64::from(HP_SCALE);
+        let loss = (whole * u64::from(per_ten_thousand) / 10_000).max(1);
+        self.wear_down(i, u32::try_from(loss).unwrap_or(u32::MAX), nav, regs);
     }
 
     /// Whether a builder can reach unfinished bridge slot `j`: it was laid
