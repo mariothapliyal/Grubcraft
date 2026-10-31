@@ -1139,9 +1139,7 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
-        // Clans v Brood seed 7 stalls past an hour since the Brood swarm
-        // cut (seeds 1 to 4 end), more input for smarter AI generals.
-        for (factions, seed) in pairs.iter().zip([1, 8]) {
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
             let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 45);
             assert!(played.winner().is_some(), "{}", played.report());
         }
@@ -1186,9 +1184,7 @@ mod tests {
             [Faction::EmberClans, Faction::Brood],
             [Faction::Choir, Faction::CarrionConcord],
         ];
-        // Clans v Brood seed 7 stalls past an hour since the Brood swarm
-        // cut (seeds 1 to 4 end), more input for smarter AI generals.
-        for (factions, seed) in pairs.iter().zip([1, 8]) {
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
             let played = play(land, medium, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
