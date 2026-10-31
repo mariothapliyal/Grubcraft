@@ -316,10 +316,9 @@ pub(crate) fn grow(tiles: u32, what: Grown) -> Arc<Raster> {
     raster
 }
 
-/// The land grown, and under [`Fairness::Measured`] grown again from
-/// other seeds while its starts' walks are more unequal than
-/// [`MEASURED_LIMIT`] (up to [`MEASURED_TRIES`] in all), keeping the
-/// fairest. Mirrored land is fair by construction.
+/// The land grown, and under [`Fairness::Measured`] grown once more from
+/// another seed if its starts' walks are more unequal than
+/// [`MEASURED_LIMIT`], keeping the fairer. Mirrored land is fair by construction.
 fn grow_fair(n: usize, what: Grown) -> Raster {
     // How unequal a Measured map's walks are, measured unless its
     // settling already did.
@@ -331,26 +330,19 @@ fn grow_fair(n: usize, what: Grown) -> Raster {
     if what.fairness != Fairness::Measured {
         return grow_uncached(n, what).0;
     }
-    let (mut best, mut spread) = grown(what);
-    for k in 1..MEASURED_TRIES as u64 {
-        if spread <= MEASURED_LIMIT {
-            break;
-        }
-        let seed = what.seed ^ k.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let (r, s) = grown(Grown { seed, ..what });
-        if s < spread {
-            (best, spread) = (r, s);
-        }
+    let (first, spread) = grown(what);
+    if spread <= MEASURED_LIMIT {
+        return first;
     }
-    best
+    let seed = what.seed ^ 0x9E37_79B9_7F4A_7C15;
+    let (again, s) = grown(Grown { seed, ..what });
+    if s < spread { again } else { first }
 }
 
 /// How unequal Measured starts' walks may be (thousandths, as
 /// [`starts::unfairness`]: the worst over every way the lobby hands starts
-/// out) before the land is grown again, and how many times it is grown at
-/// most.
+/// out) before the land is grown once more from another seed.
 pub(crate) const MEASURED_LIMIT: u32 = 100;
-const MEASURED_TRIES: usize = 2;
 
 /// `t` tiles on a 512-tile map, scaled to one `n` across (whole tiles).
 fn scaled(n: usize, t: i32) -> i32 {
@@ -499,10 +491,11 @@ fn refine_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds) -> Option<u
         }
         let (mut trial, mut s) = (r.clone(), seeds.clone());
         let reach = scaled(r.height.n, if round == 0 { 24 } else { 8 });
-        let Some(before) = move_starts(&mut trial, shape, &mut s, reach) else {
-            break;
-        };
+        let (before, moved) = move_starts(&mut trial, shape, &mut s, reach);
         let was = *now.get_or_insert(before);
+        if !moved {
+            break;
+        }
         let after = true_unfairness(&trial, &standable(&trial));
         if after >= was {
             break;
@@ -534,9 +527,9 @@ fn true_unfairness(r: &Raster, step: &[u8]) -> u32 {
 
 /// One round of [`refine_starts`]: move the starts up to `reach` tiles by
 /// their true walks, clear and flatten their clearings and cut the ways
-/// again. If any moved, how unequal the walks were before (as
-/// [`starts::unfairness`]).
-fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -> Option<u32> {
+/// again. How unequal the walks were before (as [`starts::unfairness`]),
+/// and whether any start moved.
+fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -> (u32, bool) {
     let n = r.height.n as i32;
     let step = standable(r);
     let half = clear_radius(n as usize) / 2;
@@ -553,7 +546,7 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
     };
     let (moved, before) = starts::settle(&step, n as usize, r.starts, reach, &fits);
     if moved == r.starts {
-        return None;
+        return (before, false);
     }
     // The meadow is the part of the clearing flattened however its edge
     // wobbles; the open ground the least a start's ragged edge gives.
@@ -582,7 +575,7 @@ fn move_starts(r: &mut Raster, shape: [u16; 3], seeds: &mut Seeds, reach: i32) -
     }
     r.starts = moved;
     ways::open_ways(r, seeds);
-    Some(before)
+    (before, true)
 }
 
 /// What it costs to step onto each tile ([`crate::Ground::cost`], ten on

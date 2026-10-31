@@ -49,7 +49,7 @@ struct Coarse {
 }
 
 impl Coarse {
-    /// The grid of `c`-tile cells over `h`, with the tiles in `shut`
+    /// The grid of `c`-tile cells over `h`, with the tiles in `steep`
     /// counted as ground that can't be crossed.
     fn new(h: &Grid, c: usize, steep: &[bool]) -> Coarse {
         let n = h.n;
@@ -217,20 +217,14 @@ pub(super) fn place(h: &Grid) -> [Pos; START_PLATEAUS] {
         .collect();
     let coarse = Coarse::new(h, (n / 96).max(4), &steep);
     let slots = plateaus(n as u32);
-    search(&coarse, slots, scaled(n, 28), 2, &|_| true)
+    search(&coarse, slots, scaled(n, 28))
 }
 
 /// The search: each start, one at a time, moved to the cell within
 /// `reach` tiles of where it is that makes the walks most equal, trying
-/// every `stride`th cell and then the cells round the best; then again,
-/// while any moved. Only cells `ok` takes are tried.
-fn search(
-    coarse: &Coarse,
-    from: [Pos; START_PLATEAUS],
-    reach: i32,
-    stride: usize,
-    ok: &dyn Fn(usize) -> bool,
-) -> [Pos; START_PLATEAUS] {
+/// every other cell and then the cells round the best; then again,
+/// while any moved.
+fn search(coarse: &Coarse, from: [Pos; START_PLATEAUS], reach: i32) -> [Pos; START_PLATEAUS] {
     let reach = (reach as usize / coarse.c).max(1) as i64;
     let home: Vec<usize> = from.iter().map(|&s| coarse.cell(s)).collect();
     let mut at = home.clone();
@@ -271,10 +265,7 @@ fn search(
             // Every other cell first, then the ones round the best of
             // those.
             let try_cell = |cell: usize, best: &mut Option<(u32, usize, Vec<u32>)>| {
-                if !coarse.open[cell]
-                    || !ok(cell)
-                    || at.iter().enumerate().any(|(j, &a)| j != k && a == cell)
-                {
+                if !coarse.open[cell] || at.iter().enumerate().any(|(j, &a)| j != k && a == cell) {
                     return;
                 }
                 let mut targets = at.clone();
@@ -287,15 +278,15 @@ fn search(
                     *best = Some((s, cell, row));
                 }
             };
-            for dy in (-reach..=reach).step_by(stride) {
-                for dx in (-reach..=reach).step_by(stride) {
+            for dy in (-reach..=reach).step_by(2) {
+                for dx in (-reach..=reach).step_by(2) {
                     let (x, y) = (hx + dx, hy + dy);
                     if (0..m).contains(&x) && (0..m).contains(&y) {
                         try_cell((y * m + x) as usize, &mut best);
                     }
                 }
             }
-            if let Some((_, c, _)) = best.as_ref().filter(|_| stride > 1) {
+            if let Some((_, c, _)) = best.as_ref() {
                 let c = *c;
                 let (cx, cy) = (c as i64 % m, c as i64 / m);
                 for dy in -1..=1 {
@@ -354,8 +345,7 @@ pub(super) fn settle(
     reach: i32,
     fits: &dyn Fn(Pos) -> bool,
 ) -> ([Pos; START_PLATEAUS], u32) {
-    let index = |p: Pos| p.1 as usize * n + p.0 as usize;
-    let field = |p: Pos| super::ways::walk(standable, n, index(p), &[]);
+    let field = |p: Pos| super::ways::walk(standable, n, super::tile_index(n, p), &[]);
     let mut at = from;
     let mut fields: Vec<Vec<u32>> = at.iter().map(|&p| field(p)).collect();
     // The walk to a start from a tile next to it, as starts stand on
@@ -376,7 +366,7 @@ pub(super) fn settle(
         |p: Pos, k: usize| ((p.0 - from[k].0).abs().max((p.1 - from[k].1).abs())) as u32 / 4;
     let mut walk = matrix(&at, &fields);
     let before = unfairness(&walk);
-    let mut score = unfairness(&walk) + (0..START_PLATEAUS).map(|k| moved(at[k], k)).sum::<u32>();
+    let mut score = before + (0..START_PLATEAUS).map(|k| moved(at[k], k)).sum::<u32>();
     for _ in 0..8 {
         let mut any = false;
         for k in 0..START_PLATEAUS {

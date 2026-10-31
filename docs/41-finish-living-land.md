@@ -166,9 +166,12 @@ the Classic choices so old choices keep their numbers;
 
 | Size | Before | After | Build time (each) |
 |---|---|---|---|
-| 320 | — | 0.5 to 9.0% | 0.6 to 2.7 s |
-| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 5.6 s (a reroll) |
-| 768 | — | 0.4 to 6.1% | 3.7 to 5.5 s, 10 to 15 s with a reroll |
+| 320 | — | 0.5 to 9.0% | 0.7 to 2.9 s |
+| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 5.3 s (with a reroll) |
+| 768 | — | 0.4 to 6.1%, one Wild map 13.8% | 4.0 to 5.5 s, 9.6 to 10.4 s with a reroll |
+
+  The one miss (768, Wild) was still 13.8% after its reroll: the reroll
+  keeps the fairer of two maps, it does not promise 10%.
 
   A 768 Measured map took about 4 s before this change on the same
   machine (mirrored 1.8 s). The 3-second target for 768 is still missed;
