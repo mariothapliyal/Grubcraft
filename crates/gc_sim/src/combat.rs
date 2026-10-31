@@ -87,6 +87,16 @@ const REFERENCE_AREA_PER_SOLDIER: i64 = (Fx::ONE.raw() as i64 * 64) / 100;
 /// A marching regiment stops short of a friendly block it would overlap by
 /// more than this, in tiles (see [`Combat::friend_in_the_way`]).
 const CROWDING: Fx = Fx::from_ratio(1, 4);
+/// Marching regiments keep at least this much room, in tiles, from the
+/// blocks of their friends (see [`Combat::keep_apart`]).
+const KEEP_GAP: Fx = Fx::from_ratio(1, 2);
+/// ... and start round a friend stopped in their way this far short of it.
+const KEEP_LOOK: Fx = Fx::from_int(6);
+/// A regiment with no friend within this many tiles of the room it keeps
+/// may wait longer before it looks again: until one could have come near,
+/// at most [`KEEP_QUIET_TICKS`].
+const KEEP_QUIET: Fx = Fx::from_int(2);
+const KEEP_QUIET_TICKS: u8 = 8;
 /// A regiment overlapping a friendly block by more than this, in tiles, is
 /// pushing through it (or being pushed through): it slows and falls into
 /// disorder. Neighbours in a line brushing or wheeling into each other
@@ -192,6 +202,15 @@ fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: boo
 const CELL_TILES: i32 = 16;
 const BUCKETS: usize = 1024;
 const EMPTY: u32 = u32::MAX;
+/// A finer hash of each regiment's centre alone (cell edge in tiles, bucket
+/// count), for the spacing look, which runs often over short distances.
+const FINE_TILES: i32 = 4;
+const FINE_BUCKETS: usize = 256;
+/// The end of a fine hash chain. Chains hold 16-bit regiment indexes to
+/// save sim memory, which [`Capacities::MAX_REGIMENTS`] leaves room for.
+///
+/// [`Capacities::MAX_REGIMENTS`]: crate::Capacities::MAX_REGIMENTS
+const FINE_EMPTY: u16 = u16::MAX;
 /// The grid keeps each owner's regiments apart (by `owner % OWNER_SLOTS`) so a
 /// search for enemies skips crowds of its own regiments, and a search for
 /// friends only visits its own and its allies'.
@@ -365,6 +384,11 @@ pub struct Combat {
     entry_regiment: Vec<u32>,
     entries: usize,
     big: Vec<u32>,
+    /// The finer hash: first regiment per bucket, the next in the same
+    /// bucket, and the cell each was filed under (see `each_friend_near`).
+    fine_head: Vec<u16>,
+    fine_next: Vec<u16>,
+    fine_cell: Vec<u16>,
     /// Every live regiment's footprint at the start of this tick.
     blocks: Vec<Block>,
     radius: Vec<Fx>,
@@ -525,6 +549,10 @@ impl Combat {
     }
 
     pub fn new(regiment_capacity: usize) -> Combat {
+        debug_assert!(
+            regiment_capacity <= usize::from(FINE_EMPTY),
+            "too many regiments for the fine hash"
+        );
         let none = RegimentHandle {
             index: 0,
             generation: 0,
@@ -536,6 +564,9 @@ impl Combat {
             entry_regiment: vec![0; regiment_capacity * MAX_CELLS_PER_REGIMENT],
             entries: 0,
             big: Vec::with_capacity(regiment_capacity),
+            fine_head: vec![FINE_EMPTY; FINE_BUCKETS],
+            fine_next: vec![FINE_EMPTY; regiment_capacity],
+            fine_cell: vec![0; regiment_capacity],
             blocks: vec![
                 Block {
                     centre: FxVec2::ZERO,
@@ -680,6 +711,64 @@ impl Combat {
         (h >> 22) as usize & (BUCKETS - 1)
     }
 
+    fn fine_cell_of(p: FxVec2) -> (i32, i32) {
+        (
+            p.x.floor_int().div_euclid(FINE_TILES),
+            p.y.floor_int().div_euclid(FINE_TILES),
+        )
+    }
+
+    /// A fine cell packed into 16 bits, a byte a coordinate: cells 256
+    /// apart share a key, which a search over a few cells never meets
+    /// (the distance check sorts out the rest).
+    fn fine_key((cx, cy): (i32, i32)) -> u16 {
+        u16::from(cx as u8) | (u16::from(cy as u8) << 8)
+    }
+
+    fn fine_bucket_of(key: u16) -> usize {
+        let (cx, cy) = (u32::from(key & 0xFF), u32::from(key >> 8));
+        let h = cx.wrapping_mul(0x9E37_79B1) ^ cy.wrapping_mul(0x85EB_CA77);
+        (h >> 21) as usize & (FINE_BUCKETS - 1)
+    }
+
+    /// Call `f(j, squared distance)` for every live regiment friendly to
+    /// `owner` whose centre is within `range` of `p` now, from the finer
+    /// hash (filed at the start of the tick, so it allows for `max_step`).
+    fn each_friend_near(
+        &self,
+        regs: &Placement,
+        owner: PlayerId,
+        p: FxVec2,
+        range: Fx,
+        mut f: impl FnMut(usize, u64),
+    ) {
+        let slack = range + self.max_step;
+        let (x0, y0) = Self::fine_cell_of(p - FxVec2::new(slack, slack));
+        let (x1, y1) = Self::fine_cell_of(p + FxVec2::new(slack, slack));
+        let range_sq = i64::from(range.raw()) * i64::from(range.raw());
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let key = Self::fine_key((x, y));
+                let mut e = self.fine_head[Self::fine_bucket_of(key)];
+                while e != FINE_EMPTY {
+                    let j = e as usize;
+                    e = self.fine_next[j];
+                    // Another cell hashed to the same bucket.
+                    if self.fine_cell[j] != key
+                        || !regs.alive[j]
+                        || regs.stances.hostile(owner, regs.owner[j])
+                    {
+                        continue;
+                    }
+                    let d = (regs.position[j] - p).length_sq_raw();
+                    if d as i64 <= range_sq {
+                        f(j, d);
+                    }
+                }
+            }
+        }
+    }
+
     /// The cells (x0, y0, x1, y1) a circle touches.
     fn cells(p: FxVec2, radius: Fx) -> (i32, i32, i32, i32) {
         let cell = |v: Fx| v.floor_int().div_euclid(CELL_TILES);
@@ -695,6 +784,10 @@ impl Combat {
         self.head.fill(EMPTY);
         self.entries = 0;
         self.big.clear();
+        // Empty only the buckets filed last tick: cheaper than all of them.
+        for i in 0..regs.alive.len() {
+            self.fine_head[Self::fine_bucket_of(self.fine_cell[i])] = FINE_EMPTY;
+        }
         self.max_radius = Fx::ZERO;
         self.max_step = GIVE_GROUND;
         for i in 0..regs.alive.len() {
@@ -704,7 +797,14 @@ impl Combat {
             self.blocks[i] = Block::of(regs, units, i);
             self.radius[i] = self.blocks[i].radius();
             self.max_radius = self.max_radius.max(self.radius[i]);
-            self.max_step = self.max_step.max(regs.marched(i, regs.speed[i]));
+            // A step aside (at most a step, square to the march) adds up
+            // to half again.
+            self.max_step = self.max_step.max(regs.marched(i, regs.speed[i]) * 3 / 2);
+            let key = Self::fine_key(Self::fine_cell_of(regs.position[i]));
+            let b = Self::fine_bucket_of(key);
+            self.fine_cell[i] = key;
+            self.fine_next[i] = self.fine_head[b];
+            self.fine_head[b] = i as u16;
             let (x0, y0, x1, y1) = Self::cells(regs.position[i], self.radius[i] + REACH);
             if ((x1 - x0 + 1) * (y1 - y0 + 1)) as usize > MAX_CELLS_PER_REGIMENT {
                 self.big.push(i as u32);
@@ -1017,9 +1117,9 @@ impl Combat {
                 // on the march pass through each other.
                 let ahead = || {
                     self.marked[j]
-                        && regs.target[j].is_some()
                         && (regs.position[j] - regs.position[i]).dot(dir) > Fx::ZERO
                         && regs.facing[j].to_vec().dot(dir) > Fx::ZERO
+                        && regs.goes_first(j, i)
                 };
                 let holding = regs.engaged[j].is_some()
                     || (patient
@@ -1050,6 +1150,121 @@ impl Combat {
             },
         );
         found.ok_or(gap)
+    }
+
+    /// How far marching regiment `i`, going along `dir`, steps aside this
+    /// tick to keep its spacing from friendly blocks (docs/29, unit
+    /// spacing), square to its way (right positive), at most `most`; and
+    /// how many ticks it may wait before it looks again (`floor` at least).
+    ///
+    /// It steps out of each friend its block comes nearer than
+    /// [`KEEP_GAP`] to beside it, or up to [`KEEP_LOOK`] ahead of it when
+    /// the friend has no order or is fighting: all of the way, or half
+    /// from a friend with an order and not fighting (which steps aside the
+    /// other half itself). So blocks marching side by side push gently
+    /// apart, and one stopped in the way is gone round. A friend with an
+    /// order that stepped forward last tick, ahead and facing about the
+    /// same way, is followed instead (only pushing into it slows, see
+    /// [`Combat::crowding`]). Routers neither keep their spacing nor are
+    /// kept from, and nor is a friend without an order standing on `goal`,
+    /// so a block can squeeze in beside it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn keep_apart(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        i: usize,
+        dir: FxVec2,
+        goal: Option<FxVec2>,
+        most: Fx,
+        floor: u8,
+    ) -> (Fx, u8) {
+        if regs.morale_state[i].broken() || dir == FxVec2::ZERO {
+            return (Fx::ZERO, floor);
+        }
+        let me = Block::of(regs, units, i);
+        let right = FxVec2::new(-dir.y, dir.x);
+        let (my_wide, my_long) = (me.extent_along(right), me.extent_along(dir));
+        // The look runs KEEP_LOOK ahead but no further back or aside than
+        // touching, so search a circle centred half the look ahead.
+        let half = KEEP_LOOK / 2;
+        let centre = me.centre + dir * half;
+        let near = me.radius() + KEEP_GAP + half;
+        // Friends further off than this can't come near enough before it
+        // looks again (see the return).
+        let reach = near + self.max_radius + KEEP_QUIET;
+        let mut push = Fx::ZERO;
+        // Whether no friend is within KEEP_QUIET of the room it keeps.
+        let mut alone = true;
+        self.each_friend_near(
+            &placement!(regs, stances),
+            regs.owner[i],
+            centre,
+            reach,
+            |j, d| {
+                if j == i || regs.morale_state[j].broken() || regs.on_wall[j] {
+                    return;
+                }
+                // Cheap circle test before the rectangles: how far apart
+                // their circles are, past the room it keeps.
+                let room = near + self.radius[j];
+                let r = room.raw() as u64;
+                if d > r * r {
+                    let far = (room + KEEP_QUIET).raw() as u64;
+                    alone &= d > far * far;
+                    return;
+                }
+                alone = false;
+                let them = Block::of(regs, units, j);
+                let d = them.centre - me.centre;
+                let (along, across) = (d.dot(dir), d.dot(right));
+                let wide = my_wide + them.extent_along(right) + KEEP_GAP;
+                let long = my_long + them.extent_along(dir) + KEEP_GAP;
+                if across.abs() >= wide {
+                    return;
+                }
+                let marching = regs.marching(j);
+                if marching
+                    && along > Fx::ZERO
+                    && regs.stepped[j]
+                    && them.forward.dot(dir) > Fx::from_ratio(7, 10)
+                {
+                    return;
+                }
+                // One stopped in the way ahead it starts round in good time.
+                let ahead = if marching { Fx::ZERO } else { KEEP_LOOK };
+                if along >= long + ahead || -along >= long {
+                    return;
+                }
+                if !marching
+                    && goal
+                        .is_some_and(|g| (g - them.centre).length() < me.radius() + them.radius())
+                {
+                    return;
+                }
+                // Away from `j`; dead level, the lower slot gives way to its
+                // right and the higher the other way (its left, or its
+                // right too when the two face each other).
+                let sign = match across.raw().signum() {
+                    0 if i < j || them.forward.dot(dir) < Fx::ZERO => 1,
+                    0 => -1,
+                    s => -s,
+                };
+                let depth = wide - across.abs();
+                let share = if marching { depth / 2 } else { depth };
+                push += share * sign;
+            },
+        );
+        // With no friend near, it needn't look again until one could be:
+        // both may close at a full step a tick.
+        let wait = if alone {
+            (KEEP_QUIET.raw() / (2 * self.max_step.raw()).max(1))
+                .clamp(0, i32::from(KEEP_QUIET_TICKS)) as u8
+        } else {
+            0
+        };
+        (push.clamp(-most, most), wait.max(floor))
     }
 
     /// Whether regiment `i`, marching along `dir`, could stand beside
@@ -1307,24 +1522,31 @@ impl Combat {
             }
             if regs.morale_state[i].broken() {
                 regs.crowd[i] = Fx::ZERO;
+                regs.crowded[i] = false;
                 regs.disorder[i] = 0;
                 continue;
             }
             if (tick + i as u32).is_multiple_of(CROWD_EVERY) {
                 let me = self.blocks[i];
-                let mut deepest = Fx::ZERO;
+                let (mut deepest, mut into) = (Fx::ZERO, Fx::ZERO);
                 self.each_friend_touching(regs, stances, i, |j| {
                     // Deeper than this changes nothing (see `SATURATED`).
-                    if deepest < SATURATED
+                    if into < SATURATED
                         && !regs.morale_state[j].broken()
-                        && let Some(more) = me.overlap_over(&self.blocks[j], deepest)
+                        && let Some(more) = me.overlap_over(&self.blocks[j], into)
                     {
-                        deepest = more;
+                        deepest = deepest.max(more);
+                        // Only pushing into a friend ahead slows it: the
+                        // one in front marches on, so the two come apart.
+                        if (regs.position[j] - regs.position[i]).dot(me.forward) > Fx::ZERO {
+                            into = into.max(more);
+                        }
                     }
                 });
-                regs.crowd[i] = deepest.min(SATURATED);
+                regs.crowd[i] = into.min(SATURATED);
+                regs.crowded[i] = deepest > PUSHING;
             }
-            if regs.crowd[i] > PUSHING {
+            if regs.crowded[i] {
                 regs.disorder(i);
             } else {
                 regs.disorder[i] = regs.disorder[i].saturating_sub(1);

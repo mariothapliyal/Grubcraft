@@ -79,6 +79,18 @@ fn wheeling_pace(pace: Fx, off: i32) -> Option<Fx> {
 /// a shuffle: the block turns toward its final facing and steps there at half
 /// pace instead of wheeling round to face the way it walks.
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
+/// A waypoint short of the end of a route counts as reached within this
+/// many tiles.
+const WAYPOINT_NEAR: Fx = Fx::ONE;
+/// A marching regiment that friends (keeping their spacing, or crowding)
+/// have kept from getting on for this long marches through them for as
+/// long again, so no tangle of blocks at a gap holds anyone for good.
+const UNSTICK_TICKS: u8 = 2 * crate::TICKS_PER_SECOND as u8;
+/// `stuck` from here up counts down the ticks left marching through.
+const GHOST: u8 = 200;
+/// It looks for friends to keep its spacing from at most every this
+/// many ticks, keeping up its last step aside in between.
+const KEEP_EVERY: u8 = 4;
 
 /// Ticks between looks at whether the way ahead has cleared, while queuing.
 const RECHECK: u8 = 4;
@@ -307,6 +319,23 @@ regiment_fields! {
     /// How deep the block overlaps its friends, in tiles (see
     /// `Combat::crowding`).
     crowd: Fx = Fx::ZERO,
+    /// Whether the block overlaps a friend's past [`crate::combat::PUSHING`]
+    /// (see `Combat::crowding`): both fall out of order.
+    crowded: bool = false,
+    /// How far it marched on its last step (zero if it stood), so friends
+    /// behind can tell a block filing on ahead from one stopped in the
+    /// way (see `Combat::keep_apart`).
+    stepped: bool = false,
+    /// Ticks it has been kept from marching on by friends (see
+    /// [`UNSTICK_TICKS`]); from [`GHOST`] up, the ticks left (above
+    /// `GHOST`) it marches on through them.
+    stuck: u8 = 0,
+    /// Ticks before it looks again for friends to keep its spacing from:
+    /// [`KEEP_EVERY`] apart, or longer with none near (see
+    /// `Combat::keep_apart`).
+    apart: u8 = 0,
+    /// The step aside it last found it needed, kept up between looks.
+    aside: i16 = 0,
     /// Ticks left until it is back in order (0: in order).
     disorder: u8 = 0,
     /// Ticks it has stepped forward since it last halted or fought, up to
@@ -862,6 +891,24 @@ impl Regiments {
         }
     }
 
+    /// Whether slot `j` has a move order and isn't fighting.
+    pub(crate) fn marching(&self, j: usize) -> bool {
+        self.target[j].is_some() && self.engaged[j].is_none()
+    }
+
+    /// Whether marching slot `j` goes before marching slot `i` where the
+    /// two can't pass side by side (a ford, a gap): the one nearer its
+    /// goal, and between two as near, the lower slot. Every pair agrees
+    /// and nobody can wait on itself round a ring, so a crowd at a gap
+    /// always has one going through (see `Combat::friend_in_the_way`).
+    pub(crate) fn goes_first(&self, j: usize, i: usize) -> bool {
+        let (Some(gj), Some(gi)) = (self.target[j], self.target[i]) else {
+            return false;
+        };
+        let left = |g: FxVec2, k: usize| (g - self.position[k]).length_sq_raw();
+        (left(gj, j), j) < (left(gi, i), i)
+    }
+
     /// Slot `i` drops its orders: no move, no facing to turn to, no enemy.
     pub(crate) fn halt(&mut self, i: usize) {
         self.target[i] = None;
@@ -1266,6 +1313,8 @@ impl Regiments {
             if !self.alive[i] || self.on_wall[i] {
                 continue;
             }
+            let was = self.position[i];
+            self.stepped[i] = false;
             // Falling back ends when time runs out, wherever it got to.
             if self.falling_back[i] > 0 {
                 self.falling_back[i] -= 1;
@@ -1283,6 +1332,11 @@ impl Regiments {
             if self.target[i].is_none() {
                 self.held[i] = 0;
                 self.clear[i] = 0;
+                self.stuck[i] = 0;
+                // Staggered, so a whole army ordered at once doesn't all
+                // look on the same ticks.
+                self.apart[i] = i as u8 % KEEP_EVERY;
+                self.aside[i] = 0;
             }
             if self.engaged[i].is_none() && !self.braced[i] {
                 self.squeeze(i, nav, units);
@@ -1312,9 +1366,24 @@ impl Regiments {
                 }
                 // The next waypoint on the way to the target; none while the
                 // route is being searched for.
-                let Some((point, last)) = nav.steer(i, target) else {
+                let Some((mut point, mut last)) = nav.steer(i, target) else {
                     continue;
                 };
+                // A turn on the way counts as reached once the block is
+                // near it and can see the next (stepping aside for friends
+                // may never let it stand on the very point).
+                let near = u64::from(WAYPOINT_NEAR.raw().unsigned_abs()) + 1;
+                if (point - self.position[i]).length_sq_raw() < near * near
+                    && nav
+                        .after_next(i)
+                        .is_some_and(|p| !nav.blocks(self.owner[i], self.position[i], p))
+                {
+                    nav.reached(i);
+                    let Some(next) = nav.steer(i, target) else {
+                        continue;
+                    };
+                    (point, last) = next;
+                }
                 let delta = point - self.position[i];
                 let dist = delta.length();
                 // A shield wall shuffles along at half its speed.
@@ -1376,7 +1445,35 @@ impl Regiments {
                 let step = combat
                     .air()
                     .march(terrain.going(step, self.position[i], dir, mass));
-                let step = crate::combat::pushing(step, self.crowd[i]);
+                let ghost = self.stuck[i] >= GHOST;
+                let full = step;
+                let step = if ghost {
+                    step
+                } else {
+                    crate::combat::pushing(step, self.crowd[i])
+                };
+                // Keeping its spacing from friends (docs/29): a step aside
+                // from any it comes too near.
+                let goal = last.then_some(point);
+                // In tight ground (a ford, a pass) it queues instead (below);
+                // in a fight it keeps to its foe, friends beside it or not.
+                let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
+                let aside = if ghost || tight || self.engaged[i].is_some() {
+                    Fx::ZERO
+                } else if self.apart[i] > 0 {
+                    self.apart[i] -= 1;
+                    Fx::from_raw(i32::from(self.aside[i])).clamp(-step, step)
+                } else {
+                    let (aside, wait) =
+                        combat.keep_apart(self, units, stances, i, dir, goal, step, KEEP_EVERY - 1);
+                    debug_assert!(
+                        i16::try_from(aside.raw()).is_ok(),
+                        "a step aside of half a tile or more"
+                    );
+                    self.aside[i] = aside.raw().clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+                    self.apart[i] = wait;
+                    aside
+                };
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
                 let arriving = dist <= step;
@@ -1386,20 +1483,30 @@ impl Regiments {
                 // behind it. In the open, blocks still pass through.
                 // Marching, it looks at most every other tick (`clear`);
                 // waiting, every RECHECK ticks, standing in between.
-                if self.clear[i] > 0 {
+                if ghost {
+                    // Marching through: friends neither hold nor queue it,
+                    // but a fight is never walked into.
+                    if tight
+                        && combat
+                            .friend_in_the_way(self, units, stances, i, next, dir)
+                            .is_ok_and(|j| self.engaged[j].is_some())
+                    {
+                        continue;
+                    }
+                } else if self.clear[i] > 0 {
                     self.clear[i] -= 1;
                     if (1..PATIENCE).contains(&self.held[i]) {
                         continue;
                     }
-                } else if !nav.open_around(self.owner[i], here, OPEN_GROUND) {
+                } else if tight {
                     let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
                     // Following a friend marching on ahead (its route goes
                     // where this one's does, room beside it or not) uses
                     // up no patience: the queue is moving.
                     let following = |j: usize| {
-                        self.target[j].is_some()
-                            && self.engaged[j].is_none()
+                        self.marching(j)
                             && !(1..PATIENCE).contains(&self.held[j])
+                            && self.stepped[j]
                     };
                     match found {
                         Ok(j) if following(j) => {
@@ -1438,7 +1545,18 @@ impl Regiments {
                     } else {
                         nav.reached(i);
                     }
-                } else if let Some(next) = nav.slide(self.owner[i], here, next) {
+                } else if let Some(next) = {
+                    // The step aside goes with the step, as far as the
+                    // ground lets it; where it can't, the step alone.
+                    let aside = FxVec2::new(-dir.y, dir.x) * aside;
+                    nav.slide(self.owner[i], here, next + aside).or_else(|| {
+                        if aside == FxVec2::ZERO {
+                            None
+                        } else {
+                            nav.slide(self.owner[i], here, next)
+                        }
+                    })
+                } {
                     self.position[i] = next;
                     // Wading across a river, the current carries it down a
                     // little (it steers back onto its way each tick), unless
@@ -1450,6 +1568,26 @@ impl Regiments {
                 } else {
                     nav.lost(i);
                     continue;
+                }
+                let stepped = (self.position[i] - was).dot(dir).max(Fx::ZERO);
+                self.stepped[i] = stepped > Fx::ZERO;
+                if ghost {
+                    self.stuck[i] -= 1;
+                    if self.stuck[i] < GHOST {
+                        self.stuck[i] = 0;
+                    }
+                } else if stepped * 4 < full
+                    && (self.crowd[i] > Fx::ZERO || self.held[i] > 0 || aside != Fx::ZERO)
+                {
+                    // Kept back by friends (not just by the ground): once
+                    // for UNSTICK_TICKS, it marches through them for as
+                    // long.
+                    self.stuck[i] += 1;
+                    if self.stuck[i] >= UNSTICK_TICKS {
+                        self.stuck[i] = GHOST + UNSTICK_TICKS;
+                    }
+                } else {
+                    self.stuck[i] = 0;
                 }
                 // A run-up is made on ground that bears a charge: wading or
                 // slogging through mud starts it again.

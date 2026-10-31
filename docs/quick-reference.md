@@ -125,6 +125,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
+- Marching pace: woods 85% (heavy units 70%), soft ground 75% (heavy 60%), wading 60%. Routes go round woods and soft ground when that is quicker. Friendly blocks keep about half a tile apart and step round a friend standing in the way; only overlapping a friend ahead slows you, and overlapping past a tile throws both into disorder.
 - Melee hits buildings with the front rank; blows on buildings always land. Fortified buildings take half from regiments. Siege (rams, Mausoleum Engine) take x3.0 vs Fortified. Right-click an enemy building to attack it.
 - Right-click an enemy with a tower selected to focus it.
 - **Drawn walls:** wall tool; built tile by tile; snaps to wall ends, towers and gates within 1.5 tiles.
