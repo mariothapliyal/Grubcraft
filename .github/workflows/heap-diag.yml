@@ -1,0 +1,69 @@
+# TEMPORARY: hunts the Windows smoke-run heap corruption. Removed before merge.
+name: Heap diag
+
+on:
+  push:
+    branches: [claude/project-thread-p7mae4]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  hunt:
+    name: Hunt (${{ matrix.heap }} page heap, ${{ matrix.n }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        heap: [full, standard]
+        n: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+      - run: cargo build --release -p gc_game
+      - name: Find the debugger
+        shell: pwsh
+        run: |
+          $c = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Debuggers' -Recurse -Filter cdb.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
+          if (-not $c) { Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10' -ErrorAction SilentlyContinue; throw 'no cdb' }
+          "CDB=$($c.FullName)" | Out-File -Append $env:GITHUB_ENV
+          Write-Host "cdb at $($c.FullName)"
+      - name: Turn on page heap for grubcraft.exe
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\grubcraft.exe'
+          New-Item -Path $k -Force | Out-Null
+          # hpa (page heap) + ust (allocation stack traces)
+          New-ItemProperty -Path $k -Name GlobalFlag -Value 0x02001000 -PropertyType DWord -Force | Out-Null
+          $flags = if ('${{ matrix.heap }}' -eq 'full') { 0x3 } else { 0x2 }
+          New-ItemProperty -Path $k -Name PageHeapFlags -Value $flags -PropertyType DWord -Force | Out-Null
+      - name: Run the battle under the debugger until it crashes
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path target/release/grubcraft.exe).Path
+          $dir = Split-Path $exe
+          New-Item -ItemType Directory -Force -Path diag | Out-Null
+          $cmds = 'sxd av; sxd eh; sxd ch; g; .echo ===CRASH===; .lastevent; r; .ecxr; kv 80; !analyze -v; !heap -p -a @rcx; !heap -p -a @rdx; ~*k 30; q'
+          for ($i = 1; $i -le 8; $i++) {
+            $app = Join-Path $env:RUNNER_TEMP "gc-$i"
+            New-Item -ItemType Directory -Force -Path $app | Out-Null
+            $env:GRUBCRAFT_SETTINGS = Join-Path $app 'settings.ron'
+            $log = "diag/run-$i.txt"
+            $start = Get-Date
+            & $env:CDB -g -G -lines -y "srv*$env:RUNNER_TEMP\sym*https://msdl.microsoft.com/download/symbols;$dir" -c $cmds $exe --frames 40 --no-audio --battle recruit --no-shadows --no-glow *> $log
+            $secs = [int]((Get-Date) - $start).TotalSeconds
+            $crashed = Select-String -Path $log -Pattern 'second chance|FAILURE_BUCKET_ID' -Quiet
+            Write-Host "run $i : $secs s, crashed=$crashed"
+            if ($crashed) { Get-Content $log | Select-Object -Last 400; break }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: heap-diag-${{ matrix.heap }}-${{ matrix.n }}
+          path: diag/
+          retention-days: 5
