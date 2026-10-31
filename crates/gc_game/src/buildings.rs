@@ -562,6 +562,8 @@ pub struct Looks {
     kit: Option<crate::bridge_kit::BridgeKit>,
     /// By building type, whether it is a bridge.
     bridges: Vec<bool>,
+    /// By building type, the kit a drawn wall is built from, if it has one.
+    wall_kits: Vec<Option<crate::wall_kit::WallKit>>,
 }
 
 impl Looks {
@@ -594,7 +596,7 @@ impl Looks {
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
                     core::array::from_fn(|k| {
-                        if boxed_line(stats) || stats.is_bridge() {
+                        if boxed_line(stats) || stats.is_bridge() || has_wall_kit(name) {
                             return None;
                         }
                         models.by_name(&stage_name(name, k))
@@ -617,7 +619,15 @@ impl Looks {
             walls,
             kit: crate::bridge_kit::BridgeKit::new(models),
             bridges: table.stats.iter().map(BuildingStats::is_bridge).collect(),
+            wall_kits: (table.names.iter())
+                .map(|name| crate::wall_kit::WallKit::for_wall(models, name))
+                .collect(),
         }
+    }
+
+    /// The kit that builds drawn wall type `building`, if it has one.
+    pub fn wall_kit_for(&self, building: BuildingId) -> Option<&crate::wall_kit::WallKit> {
+        self.wall_kits.get(usize::from(building))?.as_ref()
     }
 
     /// The timber kit that builds bridge type `building`, or `None` for
@@ -824,6 +834,15 @@ fn spots_along(s: &StructureView, len: f32) -> Option<impl Iterator<Item = (Vec2
     let step = (p.len - len).max(0.0) / (count - 1.0).max(1.0);
     let first = -step * (count - 1.0) / 2.0;
     Some((0..count as usize).map(move |k| (p.centre + p.dir * (first + step * k as f32), p.dir)))
+}
+
+/// Whether wall type `name` is built from a wall kit (`wall_kit`), so its
+/// own one-piece models go unused.
+fn has_wall_kit(name: &str) -> bool {
+    matches!(
+        name,
+        "Palisade" | "Bone Fence" | "Ossuary Wall" | "Mausoleum Wall"
+    )
 }
 
 /// Whether a building drawn as a line is drawn as boxes, never a model:
@@ -3263,8 +3282,9 @@ mod tests {
         let still = models.models.iter().filter(|m| m.is_still()).count();
         // Stakes and barricades are drawn as boxes: a model their name would
         // find is left unused.
+        // And the walls built from a wall kit leave their one-piece models.
         let unused = (table.names.iter().zip(&table.stats))
-            .filter(|(_, s)| boxed_line(s))
+            .filter(|(n, s)| boxed_line(s) || has_wall_kit(n))
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
@@ -3302,16 +3322,12 @@ mod tests {
             looks.stages[0][FINISHED].is_some(),
             "the Clan Hall has no model"
         );
-        // The drawn Palisade shows its own textured model at every stage.
-        let palisade = (0..table.len() as BuildingId)
-            .find(|&b| table.name(b) == "Palisade")
-            .unwrap();
-        assert!(
-            looks.stages[usize::from(palisade)]
-                .iter()
-                .all(Option::is_some),
-            "the Palisade is drawn without its model"
-        );
+        // The drawn Palisade and the bone walls are built from their kits.
+        for name in ["Palisade", "Bone Fence", "Ossuary Wall", "Mausoleum Wall"] {
+            let b = table.named(name);
+            assert!(looks.wall_kit_for(b).is_some(), "{name} has no wall kit");
+            assert!(looks.stages[usize::from(b)].iter().all(Option::is_none));
+        }
         assert!(
             looks.crews.iter().all(Option::is_some),
             "a faction lacks its worker"
