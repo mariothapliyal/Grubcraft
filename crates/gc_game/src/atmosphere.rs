@@ -130,10 +130,10 @@ const SNOW_SETTLE: f32 = 50.0;
 const SNOW_BARE: f32 = 0.06;
 const SNOW_MELT: f32 = 240.0;
 const RAIN_MELT: f32 = 25.0;
-/// How much of the full rain it takes to storm, and the seconds between
-/// flashes (shortest, longest).
-// The sim's storm, where its own lightning starts too.
+/// How much of the full rain it takes to storm: the sim's storm, where
+/// its own lightning starts too.
 const STORM_AT: f32 = gc_sim::sky::STORM as f32 / 255.0;
+/// The seconds between the picture's own flashes (shortest, longest).
 const STRIKE_GAP: (f32, f32) = (5.0, 16.0);
 /// The wind of a weather chosen by hand (F12, `--weather`), tiles a second.
 const PREVIEW_WIND: Vec2 = Vec2::new(0.64, 0.32);
@@ -494,8 +494,11 @@ impl Atmosphere {
     /// `far` from the viewer (0 at their feet, 1 at the edge of hearing):
     /// the sky flashes and the thunder follows. Its bolt is drawn where it
     /// struck, not by [`Atmosphere::take_strike`].
+    /// Not while a weather chosen by hand (F12, `--weather`) is shown.
     pub fn strike(&mut self, far: f32) {
-        self.storm.flash(far.clamp(0.0, 1.0));
+        if !self.weather_preview {
+            self.storm.flash(far.clamp(0.0, 1.0));
+        }
     }
 
     /// The next thunder that has reached the viewer since this was last

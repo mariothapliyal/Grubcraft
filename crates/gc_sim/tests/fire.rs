@@ -342,9 +342,10 @@ fn a_storm_throws_lightning_that_fires_dry_woods_only() {
         for &(s, x, y, caught) in &seen {
             assert!((0..MAP as i32).contains(&x) && (0..MAP as i32).contains(&y));
             // Woods everywhere: a strike fires them while the ground is
-            // dry (3 wet a second of a storm this strong: 33
-            // seconds to reach `DAMP_WET`), never after.
-            assert_eq!(caught, s < 33, "second {s}: {seen:?}");
+            // dry (3 wet a second of a storm this strong: 33 seconds to
+            // reach `DAMP_WET`), never after. (One on a tile burning or
+            // burnt out already doesn't catch either.)
+            assert!(!caught || s < 33, "second {s}: {seen:?}");
             caught_any |= caught;
         }
     }

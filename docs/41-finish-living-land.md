@@ -316,9 +316,14 @@ clearing woods is the second.
   the tile, the bolt is drawn there (`Effects::strike_at`), not under
   Clarity. The picture's own flashes, at random places near the camera,
   carry on between them as before, and wait a full gap after a real one.
-- **News.** A fire that comes near your base or troops on the second a
-  bolt set woods alight is told as "Lightning! It set the woods alight
-  near your base" (or "troops") instead of "Fire! ...".
+- **News.** A fire that comes near your base or troops within two
+  seconds of a bolt setting a tile alight near the same place is told as
+  "Lightning! It set the woods alight near your base" (or "troops")
+  instead of "Fire! ..." (`SkyNews::struck`). A bolt elsewhere on the map
+  doesn't take the credit for a fire near you.
+- **Not drawn** while a weather is chosen by hand (F12, `--weather`: no
+  flash or thunder) or in the unit viewer (no bolt). The picture's storm
+  starts where the sim's does (`STORM_AT` is `sky::STORM` over 255).
 - **SIM_VERSION 68.** Three golden replays have storms and were blessed
   again: `field-flood-1v1`, `field-night-rain-1v1` and
   `field-river-storm-1v1`. The lobby's **Rain** is strength 200, a storm,
@@ -337,10 +342,14 @@ clearing woods is the second.
 ### Checks
 
 - `a_storm_throws_lightning_that_fires_dry_woods_only` (eight matches: a
-  strike every ten seconds or so, on the map, caught exactly while the
+  strike every ten seconds or so, on the map, caught only while the
   ground is dry, the same strikes when played again, none in rain short
   of a storm) and `lightning_prefers_the_woods`, in `gc_sim/tests/fire.rs`.
-- `a_fire_lightning_lit_is_told_as_lightning` in `sky_news`.
+- `a_fire_lightning_lit_is_told_as_lightning` and
+  `a_bolt_far_off_does_not_take_a_fire_near_the_troops` in `sky_news`.
+- In a real Field Battle with the lobby's Rain: a bolt struck the edge of
+  a wood in view and the tile burned
+  (`screenshots/living-land-step6/` in project files).
 
 ## Not in this plan
 

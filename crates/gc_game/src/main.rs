@@ -6307,8 +6307,6 @@ impl Running {
         let (focus, distance) = self.view_focus();
         // What happened while catching up online is old news.
         let old_news = self.online.is_some() && self.menu.net().catching_up();
-        // A bolt set woods alight this tick.
-        let mut lit = false;
         for e in self.world.events() {
             match *e {
                 Event::Landed {
@@ -6498,15 +6496,17 @@ impl Running {
                 }),
                 // A storm's bolt flashes the sky and thunders as far as it
                 // is heard, and is drawn where it struck if that is seen.
-                Event::Lightning { caught, .. } if old_news => lit |= caught,
                 Event::Lightning { x, y, caught } => {
-                    lit |= caught;
+                    if caught {
+                        self.sky_news.struck(x, y, self.world.tick_count());
+                    }
                     let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                     let far = at.distance(focus) / THUNDER_REACH;
-                    if far < 1.0 {
+                    if far < 1.0 && !old_news {
                         self.atmosphere.strike(far);
                         if (self.reveal_all || self.fog.sees_tile((x, y)))
                             && !self.menu.settings().clarity
+                            && self.viewer.is_none()
                         {
                             let ground = self.heightmap.height_at(at.x, at.y);
                             self.effects
@@ -6534,7 +6534,7 @@ impl Running {
         // Kept up while catching up online, but what happened then is old
         // news.
         let mut sky = Vec::new();
-        self.weather_and_fire_news(&mut sky, lit);
+        self.weather_and_fire_news(&mut sky);
         if !old_news {
             news.extend(sky);
         }
@@ -6548,9 +6548,9 @@ impl Running {
     }
 
     /// A storm, fog or snow coming in or clearing, and woods catching fire
-    /// (by `lightning` this tick, or not) near the viewer's troops or base,
-    /// since the last tick.
-    fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>, lightning: bool) {
+    /// (by lightning or not) near the viewer's troops or base, since the
+    /// last tick.
+    fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
         let world = &self.world;
         let side = self.sandbox.side;
         news.extend(self.sky_news.weather(world.weather()));
@@ -6563,13 +6563,10 @@ impl Running {
             .flat_map(gc_sim::Structures::iter))
         .filter(|b| b.owner == side)
         .map(|b| [b.tile.0, b.tile.1, i32::from(b.width), i32::from(b.depth)]);
-        news.extend(self.sky_news.fires(
-            world.tick_count(),
-            world.fires(),
-            lightning,
-            troops,
-            base,
-        ));
+        news.extend(
+            self.sky_news
+                .fires(world.tick_count(), world.fires(), troops, base),
+        );
     }
 
     /// Sparks and wounds for the blows soldiers landed on each other since
