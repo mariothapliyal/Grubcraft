@@ -102,10 +102,16 @@ fn roster_field_table() {
                                         )
                                     })
                                     .collect();
+                                let spent: u32 = (m.world.regiments.iter())
+                                    .filter(|r| r.owner == p)
+                                    .map(|r| {
+                                        roster::field_points(&data.conquest_units[r.unit as usize])
+                                    })
+                                    .sum();
                                 army.sort();
                                 army.dedup_by(|a, b| a == b);
                                 println!(
-                                    "{} seed {seed} slot {p}: {} regiments: {}",
+                                    "{} seed {seed} slot {p}: {} regiments, {spent} points: {}",
                                     setup.players[p as usize].faction.name(),
                                     m.world.regiments.iter().filter(|r| r.owner == p).count(),
                                     army.join(", ")
