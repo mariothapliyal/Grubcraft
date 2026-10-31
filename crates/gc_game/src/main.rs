@@ -236,9 +236,6 @@ static ALLOC: TaggedAlloc = TaggedAlloc;
 
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
 const HUMAN: PlayerId = 0;
-/// How long a joiner's opening view waits for the host's deployment zone
-/// before giving up on it.
-const ZONE_LOOK_WAIT: Duration = Duration::from_secs(10);
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
 const TEAM_COLORS: [[u8; 3]; 4] = [
     [178, 38, 30],
@@ -836,10 +833,9 @@ struct Running {
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
     /// A joiner's opening view, waiting for the host's deployment zone: the
-    /// way it faces, the focus it was first given and when it began waiting.
-    /// The host moves a zone off the start where the ground needs it, and
-    /// only it knows where.
-    zone_look: Option<(Vec2, Vec2, Instant)>,
+    /// way the start faces and the focus it was first given. The host moves a
+    /// zone off the start where the ground needs it, and only it knows where.
+    zone_look: Option<(Vec2, Vec2)>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     /// How far between the last two ticks the last frame drew, 0 to 1.
@@ -5616,6 +5612,7 @@ impl Running {
             sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
+        self.zone_look = None;
         self.sim_clock = Duration::ZERO;
         self.fresh_puppets();
         self.effects.clear();
@@ -5793,16 +5790,17 @@ impl Running {
             .online
             .as_ref()
             .filter(|o| !o.host)
-            .map(|_| (set.my_forward, focus, Instant::now()));
+            .map(|_| (set.my_forward, focus));
     }
 
     /// Once the host's deployment zone for this machine's side arrives, point
-    /// a joiner's camera at it, unless they have already moved the view.
+    /// a joiner's camera at it, unless they have already moved the view or
+    /// the battle has begun without one.
     fn look_at_own_zone(&mut self) {
-        let Some((forward, first, since)) = self.zone_look else {
+        let Some((forward, first)) = self.zone_look else {
             return;
         };
-        if self.camera.focus != first || since.elapsed() > ZONE_LOOK_WAIT {
+        if self.camera.focus != first || self.world.battle_ticks() > 0 {
             self.zone_look = None;
             return;
         }
