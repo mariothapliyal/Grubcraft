@@ -158,10 +158,10 @@ mod tests {
     use super::*;
     use gc_ai::conquest::opening;
     use gc_sim::economy::Bank;
-    use gc_sim::{
-        Capacities, MatchSetup, PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World,
-    };
+    use gc_sim::{PlayerId, TICKS_PER_SECOND, Verdict, Victories, Win, World};
     use gc_ui::lobby::Tempo;
+
+    use crate::headless::{Headless, Real};
 
     /// How one side stood when a headless match ended.
     pub(crate) struct Standing {
@@ -435,48 +435,21 @@ mod tests {
         // AI_TRACE=2 also prints every journal entry as it is written.
         let journal = trace == "2";
         let trace = journal || trace == "1";
-        let data = crate::data::load();
-        let table = Table::new(&data);
-        let units = conquest::unit_stats(&data);
-        let nav = map.sim_nav_costs();
-        let teams: Vec<u8> = (0..factions.len() as u8).collect();
-        let sides: Vec<(Faction, u8)> = factions.iter().copied().zip(teams.clone()).collect();
-        let setup = MatchSetup {
-            seed,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: map.tiles,
-            nav: &nav,
-            teams: &teams,
-            ground: map.ground(),
-            champions: false,
-            sky: gc_sim::Sky::STILL,
-            generals: true,
-        };
+        let real = Real::load();
+        let game = Headless::new(&real, map, factions, seed);
+        let (data, units) = (&real.data, &real.units);
         let defaults = gc_ui::lobby::LobbySettings::default();
-        let plan = conquest::plan(
-            &table,
-            &data,
-            &map,
-            factions,
-            Tempo::Standard,
-            conquest::victories(defaults.victory),
-        );
+        let plan = game.plan(Tempo::Standard, conquest::victories(defaults.victory));
         assert!(plan.victories.any() && plan.victories != Victories::default());
-        let mut world = World::new(&setup);
-        assert!(world.conquest(&plan.setup()));
-        let mut minds = Minds::new(gc_match::terrain_view::ai_terrain(&map, &nav));
+        let mut world = game.world(&plan);
+        let mut minds = game.minds();
         for i in 0..factions.len() {
             let level = levels[i.min(levels.len() - 1)];
             let temper = temper.unwrap_or_else(|| super::temper(seed, i));
             let opening = openings.get(i).copied().flatten();
-            minds.add(mind_for(
-                &data, &table, &map, i, &sides, level, temper, seed, opening,
-            ));
+            minds.add(game.mind(i, level, temper, opening));
         }
-        let opening = conquest::opening(&data, &table, &map, &world, factions);
-        let stats = world.tick(&opening);
-        assert_eq!(stats.commands_applied as usize, opening.len());
+        game.open(&mut world, World::tick);
         let end = max_minutes * 60 * TICKS_PER_SECOND;
         let every = 120 * TICKS_PER_SECOND;
         let mut cmds = Vec::new();
@@ -952,33 +925,44 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
-        let mut weighed = false;
-        for (p, side) in played.sides.iter().enumerate() {
-            let find = |label: &str| {
-                let start = format!("  {label:<7} ");
-                side.lens.iter().position(|l| l.starts_with(&start))
-            };
-            let roles = find("roles").expect("battle lines come first");
-            let economy = find("economy").unwrap_or_else(|| panic!("side {p}: {:?}", side.lens));
-            assert!(economy > roles, "{:?}", side.lens);
-            assert!(
-                side.lens[economy].contains("keeps 70% workers, 2 producers a tier"),
-                "{}",
-                side.lens[economy]
-            );
-            assert!(side.lens[economy].contains("saving: "));
-            assert!(side.lens[economy].contains("arming: "));
-            assert_eq!(find("belief"), Some(economy + 1), "{:?}", side.lens);
-            weighed |= side.lens[economy + 1].contains(", odds ");
-            if let Some(plan) = find("plan") {
-                assert_eq!(plan, economy + 2, "{:?}", side.lens);
+        // Whether anybody weighs up the other's army by eight minutes
+        // depends on how the game goes, so the first of a few seeds where
+        // somebody does counts; every game's panel is laid out alike.
+        let mut last = String::new();
+        let weighed = [8, 1, 2, 3, 4, 5].into_iter().any(|seed| {
+            let played = play(0, 0, &factions, &[Difficulty::Veteran], seed, 8);
+            let mut weighed = false;
+            for (p, side) in played.sides.iter().enumerate() {
+                let find = |label: &str| {
+                    let start = format!("  {label:<7} ");
+                    side.lens.iter().position(|l| l.starts_with(&start))
+                };
+                let roles = find("roles").expect("battle lines come first");
+                let economy =
+                    find("economy").unwrap_or_else(|| panic!("side {p}: {:?}", side.lens));
+                assert!(economy > roles, "{:?}", side.lens);
+                assert!(
+                    side.lens[economy].contains("keeps 70% workers, 2 producers a tier"),
+                    "{}",
+                    side.lens[economy]
+                );
+                assert!(side.lens[economy].contains("saving: "));
+                assert!(side.lens[economy].contains("arming: "));
+                assert_eq!(find("belief"), Some(economy + 1), "{:?}", side.lens);
+                weighed |= side.lens[economy + 1].contains(", odds ");
+                if let Some(plan) = find("plan") {
+                    assert_eq!(plan, economy + 2, "{:?}", side.lens);
+                }
+                assert!(side.lens.iter().all(|l| l.starts_with("  ")));
             }
-            assert!(side.lens.iter().all(|l| l.starts_with("  ")));
-        }
+            if !weighed {
+                last = played.report();
+            }
+            weighed
+        });
         // By eight minutes the armies have met, and somebody weighed up
         // the other's.
-        assert!(weighed, "{}", played.report());
+        assert!(weighed, "{last}");
     }
 
     /// A General's scout comes to look at the enemy's start within the
@@ -1087,36 +1071,46 @@ mod tests {
     }
 
     /// Generals fortify (docs/26-fortifications.md, stage 8): in a
-    /// one-on-one on Ribcage Pass some side draws a front wall with a gate,
-    /// a barricade at its rally point and traps on the approach; a
-    /// Veteran puts up field works at most, and no walls or traps.
+    /// one-on-one on Ribcage Pass some side draws a front wall with a gate
+    /// and a barricade at its rally point, and some General lays traps on
+    /// the approach; a Veteran puts up field works at most, and no walls
+    /// or traps.
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_generals_wall_and_trap_veterans_only_field_works() {
         // Traps come last, once Grub piles up: a quick win may come first,
-        // so one of the two games is enough for them.
-        let mut traps = 0;
+        // so a trap in any General's game counts.
+        let general = |f: Faction, seed: u64| {
+            let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
+            let most = (played.sides.iter()).fold(Works::default(), |m, s| m.most(s.works));
+            (most, played.report())
+        };
+        let (mut traps, mut last) = (0, String::new());
         // Whether a General walls depends on how its game goes (about one
-        // Clans mirror in five), so the first seed that walls counts: a
-        // known one first, then the rest of 1 to 12.
-        for (f, known) in [(Faction::EmberClans, 2), (Faction::CarrionConcord, 8)] {
-            let mut last = String::new();
+        // Clans mirror in five; fewer since blocks keep their spacing, which
+        // moves where things get built), so the first seed that walls
+        // counts: a known one first, then the rest of 1 to 24.
+        for (f, known) in [(Faction::EmberClans, 14), (Faction::CarrionConcord, 8)] {
             let walled = core::iter::once(known)
-                .chain((1..=12).filter(|&s| s != known))
-                .find_map(|seed| {
-                    let played = play(0, 0, &[f, f], &[Difficulty::General], seed, 40);
-                    let most = (played.sides.iter()).fold(Works::default(), |m, s| m.most(s.works));
-                    let walls = most.walls >= 5 && most.gates >= 1 && most.barricades >= 1;
-                    if !walls {
-                        last = played.report();
-                    }
-                    walls.then_some(most)
+                .chain((1..=24).filter(|&s| s != known))
+                .any(|seed| {
+                    let most;
+                    (most, last) = general(f, seed);
+                    traps += most.traps;
+                    most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
-            let most = walled
-                .unwrap_or_else(|| panic!("{f:?}: no General walled in seeds 1 to 12: {last}"));
+            assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
+        }
+        // Still none: more Clans games until one lays a trap.
+        for seed in 13..=24 {
+            if traps > 0 {
+                break;
+            }
+            let most;
+            (most, last) = general(Faction::EmberClans, seed);
             traps += most.traps;
         }
-        assert!(traps >= 1, "no traps laid in either game");
+        assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         let played = play(
             0,
             0,

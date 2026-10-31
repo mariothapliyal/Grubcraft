@@ -34,13 +34,14 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::gates::GateMode;
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
-    BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
-    RegimentHandle, RegimentView, Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
+    BuildingId, Command, Meter, PlayerCommand, PlayerId, PowerTarget, RegimentHandle, RegimentView,
+    Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
 use crate::buildings::Table;
 use crate::conquest::{self, Foot};
+use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-ribcage-1v1";
 const SEED: u64 = 0x00C0_9E57;
@@ -60,6 +61,10 @@ const CLEAR_AT: u32 = 100 * TICKS_PER_SECOND;
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
 const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
+/// What each side starts with: the script's own purses, kept apart from
+/// the factions' Conquest starts. The Concord side's Grub comes by
+/// caravan, slowly at first, so it opens with more and the sides arm alike.
+const STARTS: [(u32, u32); 2] = [(300, 0), (900, 100)];
 /// How much later side 1 marches (10 s, from 30, so it still sees and
 /// climbs the other's wall in time once the Clans gathered faster).
 const MARCH_LATER: u32 = 10 * TICKS_PER_SECOND;
@@ -348,51 +353,25 @@ pub struct Match {
 
 impl Match {
     pub fn new() -> Match {
-        let data = crate::data::load();
-        let table = Table::new(&data);
-        let map = conquest::make_map(0, 0, 0);
-        let units = conquest::unit_stats(&data);
-        let nav = map.sim_nav_costs();
-        let setup = MatchSetup {
-            seed: SEED,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: map.tiles,
-            nav: &nav,
-            teams: &[0, 1],
-            ground: map.ground(),
-            champions: false,
-            sky: gc_sim::Sky::STILL,
-            generals: true,
-        };
-        let mut plan = conquest::plan(
-            &table,
-            &data,
-            &map,
-            &FACTIONS,
-            Tempo::Swift,
-            Victories::BOTH,
-        );
+        let real = Real::load();
+        let game = Headless::new(&real, conquest::make_map(0, 0, 0), &FACTIONS, SEED);
+        let (data, table) = (&real.data, &real.table);
+        let mut plan = game.plan(Tempo::Swift, Victories::BOTH);
         // The Concord side plays the Choir's powers.
         plan.meters[1] = Meter::Resonance;
-        // Its Grub comes by caravan, slowly at first: a bigger purse to open
-        // with, so the script's sides arm alike.
-        plan.start[1] = (900, 100);
-        let mut world = World::new(&setup);
-        assert!(world.conquest(&plan.setup()));
-        let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);
-        let opening = conquest::opening(&data, &table, &map, &world, &FACTIONS);
+        plan.start[..2].copy_from_slice(&STARTS);
+        let world = game.world(&plan);
+        let rec = Recorder::new(&game.setup(), &world, String::new()).conquest(plan);
         let mut m = Match {
-            kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
+            kits: FACTIONS.map(|f| Kit::of(data, table, f)),
             sides: Default::default(),
-            choir: Choir::of(&data),
-            clans: Clans::of(&data),
-            starts: map.starts(),
+            choir: Choir::of(data),
+            clans: Clans::of(data),
+            starts: game.map.starts(),
             world,
             rec,
         };
-        let stats = m.rec.tick(&mut m.world, &opening);
-        assert_eq!(stats.commands_applied as usize, opening.len());
+        game.open(&mut m.world, |w, orders| m.rec.tick(w, orders));
         m
     }
 
@@ -1401,7 +1380,7 @@ mod tests {
         m.play(u32::MAX);
         for p in 0..2u8 {
             let k = m.kits[usize::from(p)];
-            let start = conquest::start_stores(FACTIONS[usize::from(p)]);
+            let start = STARTS[usize::from(p)];
             let bank = m.world.bank(p).unwrap();
             assert!(
                 m.count(p, k.fighter) >= 3,
