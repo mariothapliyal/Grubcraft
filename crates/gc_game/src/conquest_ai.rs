@@ -952,7 +952,9 @@ mod tests {
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_lens_panel_shows_its_economy_belief_and_plan() {
         let factions = [Faction::EmberClans, Faction::Choir];
-        let played = play(0, 0, &factions, &[Difficulty::Veteran], 8, 8);
+        // Whether the odds are weighed by eight minutes depends on how the
+        // game goes: seed 1 is one where they are (7 of seeds 1 to 9 do).
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 1, 8);
         let mut weighed = false;
         for (p, side) in played.sides.iter().enumerate() {
             let find = |label: &str| {

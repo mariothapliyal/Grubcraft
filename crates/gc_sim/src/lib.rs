@@ -58,6 +58,7 @@ pub mod traps;
 pub mod twists;
 pub mod veins;
 pub mod verdict;
+pub mod veterancy;
 pub mod vision;
 pub mod walls;
 
@@ -127,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 65;
+pub const SIM_VERSION: u32 = 66;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
