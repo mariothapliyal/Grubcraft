@@ -108,7 +108,9 @@ pub(crate) fn spring(
                 regs.trapped_left[j] = regs.trapped_left[j].max(MINE_TICKS);
             }
             Trap::Nest(unit) => {
-                raised = raise_beside(structures, regs, nav, units, owner, unit, s, NEST_TICKS);
+                raised = raise_beside(
+                    structures, regs, nav, units, owner, unit, s, NEST_TICKS, None,
+                );
             }
         }
         let [x, y, _, _] = structures.footprint(s);

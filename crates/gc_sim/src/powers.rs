@@ -657,7 +657,8 @@ fn summon(
 
 /// Put a regiment of `unit` of `player`'s down beside building slot `s`
 /// for `lasts` ticks, where [`spot_beside`] says: a burrow nest's (see
-/// [`crate::traps`]). `None` if there is no room for it.
+/// [`crate::traps`]) or a Corpse Catapult's, `models` strong at most
+/// (none: full). `None` if there is no room for it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn raise_beside(
     structures: &Structures,
@@ -668,10 +669,15 @@ pub(crate) fn raise_beside(
     unit: UnitId,
     s: usize,
     lasts: u16,
+    models: Option<u16>,
 ) -> Option<RegimentHandle> {
-    let stats = units.get(usize::from(unit))?;
-    let (at, facing) = spot_beside(structures, regs, nav, stats, player, s)?;
-    let h = regs.spawn(player, unit, at, facing, stats)?;
+    let mut stats = *units.get(usize::from(unit))?;
+    if let Some(m) = models {
+        stats.models = stats.models.min(m);
+        stats.files = stats.files.min(stats.models);
+    }
+    let (at, facing) = spot_beside(structures, regs, nav, &stats, player, s)?;
+    let h = regs.spawn(player, unit, at, facing, &stats)?;
     regs.summoned_left[h.index as usize] = lasts;
     Some(h)
 }

@@ -142,6 +142,26 @@ impl Field {
         self.impact(pos, 0.5 + 0.08 * n, 2.0 + 0.5 * n, 1.5 + 0.3 * n, 0.5);
     }
 
+    /// A blast tower's round came down at `pos`.
+    pub fn blast_landed(&mut self, pos: Vec3) {
+        self.fx.blast(pos, 2.0);
+    }
+
+    /// A tower's bolt struck at `pos`: dust and a few splinters.
+    pub fn bolt_landed(&mut self, pos: Vec3) {
+        self.impact(pos, 0.8, 4.0, 3.0, 0.8);
+    }
+
+    /// A pool of burning ground or acid (`acid`), `half` tiles from its
+    /// middle to its edge, burns for `dt` seconds, at `strength` (0 to 1).
+    pub fn pool(&mut self, pos: Vec3, half: f32, acid: bool, strength: f32, dt: f32) {
+        if acid {
+            self.fx.acid_pool(pos, half, strength, dt);
+        } else {
+            self.fx.ground_fire(pos, half, strength, dt);
+        }
+    }
+
     /// Two regiments met at `pos` with a charge.
     pub fn charge_hit(&mut self, pos: Vec3) {
         self.impact(pos, 2.2, 16.0, 8.0, 1.0);
