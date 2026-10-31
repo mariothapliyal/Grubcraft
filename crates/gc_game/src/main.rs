@@ -1121,11 +1121,20 @@ impl LodView {
     /// when it is worth no drawing: it is neither on screen nor casting a
     /// shadow where one is drawn.
     fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        // A soldier may be drawn forward of his position onto his feet.
         self.cull
-            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .sees(
+                pos + glam::Vec3::Y * (height * 0.5),
+                height + FEET_SHIFT_ROOM,
+            )
             .then(|| self.lod(height, pos))
     }
 }
+
+/// How far beyond its height a soldier's model may reach from his position,
+/// being drawn forward onto his feet ([`gc_assets::model::Models::feet_shift`],
+/// at most 0.74 tiles).
+const FEET_SHIFT_ROOM: f32 = 0.75;
 
 impl Art {
     /// Empty the buckets for a frame seen from `eye` looking along `forward`,

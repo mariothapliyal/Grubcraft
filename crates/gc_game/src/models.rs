@@ -3,7 +3,7 @@
 //! the build script and embedded in the executable, and the choice of
 //! which animation frame each soldier shows.
 
-use gc_assets::anim::{Act, Anim, ROOT, Role, Weapon};
+use gc_assets::anim::{Act, ROOT, Role, Weapon};
 use gc_assets::detail::Detail;
 use gc_assets::model::Models;
 use gc_assets::{Aligned, Pack};
@@ -192,12 +192,18 @@ struct Body {
     /// How far in front of a soldier's position his model's feet (the
     /// skeleton's origin, which its moves are made from) are drawn, in
     /// tiles: the baker centres a model on its rest pose's bounds, so a long
-    /// weapon held forward draws the body behind his position (by 0.66 tiles
-    /// for the Yari Ashigaru).
+    /// weapon held forward bakes the body behind his position (by 0.66 tiles
+    /// for the Yari Ashigaru). A soldier who stands on his feet is drawn
+    /// moved forward by `shift`, so for him it is 0; a beast whose skeleton
+    /// sits away from its legs keeps the bake's.
     feet: f32,
     /// How far to a soldier's left of his position his feet are drawn, in
     /// tiles, the same way (a staff or lance held to one side).
     side: f32,
+    /// How far forward of where the bake centred him he is drawn, so that
+    /// he stands on his position ([`Models::feet_shift`]): his feet are then
+    /// drawn there, and `feet` is 0.
+    shift: f32,
 }
 
 /// A kill a model can play.
@@ -215,7 +221,13 @@ struct KillFor {
 /// from the soldier's position, in tiles: `x` to his left, `y` ahead along
 /// his facing (model space's x and z). The joint's pose composed up to the
 /// root, then turned, sized and placed into the model by its fit.
-fn chest_at(anim: &Anim<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
+/// `shift` is how far forward the model is drawn ([`Models::feet_shift`]).
+fn chest_at(
+    anim: &gc_assets::anim::Anim<'_>,
+    model: usize,
+    row: u32,
+    shift: f32,
+) -> Option<glam::Vec2> {
     use gc_assets::model::f16_value;
     use glam::{Mat4, Quat, Vec3};
     let fit = anim.fit(model)?;
@@ -241,7 +253,7 @@ fn chest_at(anim: &Anim<'_>, model: usize, row: u32) -> Option<glam::Vec2> {
     }
     let f = anim.fixes.get(fit.first_fix as usize)?;
     let row = |r: usize| f[r] * at.x + f[r + 1] * at.y + f[r + 2] * at.z + f[r + 3];
-    Some(glam::Vec2::new(row(0), row(8)))
+    Some(glam::Vec2::new(row(0), row(8) + shift))
 }
 
 /// How far a victim's size may be from the one the kill was made for (as a
@@ -293,6 +305,10 @@ pub struct Clips {
 impl Clips {
     pub fn new(models: &Models<'_>) -> Clips {
         let moves = Moves::new(models);
+        // How far forward each model is drawn onto its feet.
+        let shifts: Vec<f32> = (0..models.models.len())
+            .map(|m| models.feet_shift(m))
+            .collect();
         let by_model = (0..models.models.len())
             .map(|m| {
                 // A model that names what it holds plays the moves made for it.
@@ -311,7 +327,7 @@ impl Clips {
                 ModelClips {
                     lying: dies
                         .iter()
-                        .map(|d| chest_at(&models.anim, m, d.first_row + d.frames - 1))
+                        .map(|d| chest_at(&models.anim, m, d.first_row + d.frames - 1, shifts[m]))
                         .collect(),
                     actions: ACTIONS.map(|a| pick(want(a))),
                     parry: choices(Act::Parry).first().copied(),
@@ -332,8 +348,9 @@ impl Clips {
                 Some(Body {
                     skeleton: fit.skeleton,
                     size: (f[0] * f[0] + f[4] * f[4] + f[8] * f[8]).sqrt(),
-                    feet: f[11],
+                    feet: f[11] + shifts[m],
                     side: f[3],
+                    shift: shifts[m],
                 })
             })
             .collect();
@@ -438,7 +455,9 @@ impl Clips {
     /// and [`crate::puppets::Corpse::kill`] give it back.
     /// Each unit type's finisher reach goes with them, for its men to
     /// stand that far from a man on the ground they strike down at, and
-    /// where its men lying dead have their chests, for them to strike at.
+    /// where its men lying dead have their chests, for them to strike at,
+    /// and how much further back its men stand in a duel, to make up for
+    /// being drawn forward onto their feet ([`Body::shift`]).
     pub fn kills_of(&self, units: &[Option<usize>]) -> Kills {
         let mut kills = Kills::new(self.pairs.iter().map(KillPair::timing).collect());
         let mut ids = Vec::new();
@@ -449,6 +468,9 @@ impl Clips {
             }
             let chests = (0..=u8::MAX).map(|look| self.lying_chest(killer, look));
             kills.add_chests(k as u16, chests.collect());
+            if let Some(body) = self.body.get(killer).copied().flatten() {
+                kills.add_stand_off(k as u16, body.shift);
+            }
             if self.kills.get(killer).is_none_or(Vec::is_empty) {
                 continue;
             }
@@ -1013,7 +1035,13 @@ mod tests {
         assert_eq!(kills.finish_gap(0), reach(0));
         assert_eq!(kills.finish_gap(1), reach(1));
         assert!(kills.finish_gap(1) > kills.finish_gap(0));
-        assert_eq!(kills.finish_gap(2), crate::puppets::FINISH_GAP);
+        // His bent swing keeps his stand-off: he is drawn forward onto his
+        // feet, a big weapon having baked him behind his position.
+        assert!(kills.stand_off(2) > 0.3);
+        assert_eq!(
+            kills.finish_gap(2),
+            crate::puppets::FINISH_GAP + kills.stand_off(2)
+        );
     }
 
     #[test]
@@ -1118,11 +1146,10 @@ mod tests {
         assert_eq!(kill("Katana Samurai", "Chitin Guard"), None);
         assert_eq!(kill("Chitin Guard", "Gnawer"), None);
         assert_eq!(kill("Chitin Guard", "Oni-Bound"), None);
-        // The insects meet a yari man too, but the mounted cut, made at a
-        // man's length, would have the rider stand beyond a spearman drawn
-        // as far behind his position, so it is left out there.
+        // The insects meet a yari man too, and now that a spearman is drawn
+        // on his feet the mounted cut meets him as well.
         assert!(kill("Chitin Guard", "Yari Ashigaru").is_some());
-        assert_eq!(kill("Mounted Samurai", "Bone Pikes"), None);
+        assert!(kill("Mounted Samurai", "Bone Pikes").is_some());
         assert!(clips.pairs.iter().all(|p| p.reach > 0.0));
     }
 
@@ -1191,8 +1218,13 @@ mod tests {
         let clips = Clips::new(&models);
         let by = |name| models.by_name(name).unwrap();
         let feet = |name| clips.body[by(name)].unwrap().feet;
-        // A yari held forward draws the man behind his position.
-        assert!(feet("Yari Ashigaru") < -0.5 && feet("Katana Samurai").abs() < 0.1);
+        // A yari held forward bakes the man behind his position, and he is
+        // drawn moved forward onto his feet; a beast whose skeleton sits off
+        // its legs keeps where the bake put it.
+        let shift = |name| clips.body[by(name)].unwrap().shift;
+        assert!(shift("Yari Ashigaru") > 0.5 && shift("Bone Pikes") > 0.5);
+        assert!(feet("Yari Ashigaru").abs() < 1e-6 && feet("Katana Samurai").abs() < 1e-6);
+        assert!(shift("Colossus Maw") == 0.0 && feet("Colossus Maw") > 1.0);
         let reach = |k, v| clips.kill_pair(by(k), by(v), 0).unwrap().reach;
         let gap =
             reach("Yari Ashigaru", "Katana Samurai") - reach("Yari Ashigaru", "Yari Ashigaru");
@@ -1238,7 +1270,14 @@ mod tests {
         // Standing, the chest is over the feet.
         let m = by("Yari Ashigaru");
         let idle = clips.clip(m, Action::Idle).unwrap();
-        let up = chest_at(&models.anim, m, idle.first_row).unwrap().y - clips.body[m].unwrap().feet;
+        let up = chest_at(
+            &models.anim,
+            m,
+            idle.first_row,
+            clips.body[m].unwrap().shift,
+        )
+        .unwrap()
+        .y - clips.body[m].unwrap().feet;
         assert!(up.abs() < 0.2, "{up}");
     }
 
