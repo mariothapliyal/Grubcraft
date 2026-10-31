@@ -241,16 +241,20 @@ impl<T: State, const N: usize> State for [T; N] {
 pub(crate) fn other<T: State>(v: T) -> T {
     let mut bytes = Vec::new();
     v.write(&mut bytes);
-    // Room for a value where `v` has none (`None` becoming `Some`).
+    // Room for a value where `v` has none (`None` becoming `Some`), padded
+    // with zeros, then with ones for types that can't be zero.
     let flips = bytes.len() * 8;
-    bytes.resize(bytes.len() + 16, 0);
-    for bit in 0..flips {
-        let mut b = bytes.clone();
-        b[bit / 8] ^= 1 << (bit % 8);
-        if let Some(w) = T::read(&mut &b[..])
-            && w != v
-        {
-            return w;
+    for pad in [0, 1] {
+        let mut padded = bytes.clone();
+        padded.resize(bytes.len() + 16, pad);
+        for bit in 0..flips {
+            let mut b = padded.clone();
+            b[bit / 8] ^= 1 << (bit % 8);
+            if let Some(w) = T::read(&mut &b[..])
+                && w != v
+            {
+                return w;
+            }
         }
     }
     panic!("no other value of this type");
