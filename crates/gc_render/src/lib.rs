@@ -2720,6 +2720,46 @@ mod tests {
         assert!(Cull::new(Mat4::from_cols_array(&[f32::NAN; 16]), None).sees(behind, 0.0));
     }
 
+    /// Whether `block` of `module` reaches a barrier after a `return` (once
+    /// `returned`), reading statements in order and following calls (a
+    /// called function's own returns go back to its caller).
+    fn barrier_after_return(
+        module: &naga::Module,
+        block: &naga::Block,
+        returned: &mut bool,
+    ) -> bool {
+        use naga::Statement as S;
+        block.iter().any(|s| match s {
+            S::Return { .. } | S::Kill => {
+                *returned = true;
+                false
+            }
+            // `workgroupUniformLoad` is a barrier on each side of a load.
+            S::ControlBarrier(_) | S::MemoryBarrier(_) | S::WorkGroupUniformLoad { .. } => {
+                *returned
+            }
+            S::Block(b) => barrier_after_return(module, b, returned),
+            S::If { accept, reject, .. } => {
+                barrier_after_return(module, accept, returned)
+                    | barrier_after_return(module, reject, returned)
+            }
+            S::Switch { cases, .. } => cases
+                .iter()
+                .any(|c| barrier_after_return(module, &c.body, returned)),
+            S::Loop {
+                body, continuing, ..
+            } => {
+                barrier_after_return(module, body, returned)
+                    | barrier_after_return(module, continuing, returned)
+            }
+            S::Call { function, .. } => {
+                *returned
+                    && barrier_after_return(module, &module.functions[*function].body, &mut true)
+            }
+            _ => false,
+        })
+    }
+
     /// Whether `block` of `module` holds a barrier inside a loop (`in_loop`
     /// once inside one), following calls.
     fn barrier_in_loop(module: &naga::Module, block: &naga::Block, in_loop: bool) -> bool {
@@ -2785,6 +2825,19 @@ mod tests {
                     !barrier_in_loop(&module, &f.body, false),
                     "{:?} has a barrier inside a loop (it has crashed WARP)",
                     f.name
+                );
+            }
+            // A barrier after a return in `cs_pose`, even one the whole
+            // workgroup takes, crashed Windows' software GPU (WARP): compiling
+            // it, WARP wrote 512 MB past a table, so the game crashed or
+            // corrupted its memory now and then (the Windows smoke run,
+            // October 2026; 22 of 32 runs under a memory checker, none once
+            // the returns moved after the barriers).
+            for e in &module.entry_points {
+                assert!(
+                    !barrier_after_return(&module, &e.function.body, &mut false),
+                    "{} reaches a barrier after a return (it has crashed WARP)",
+                    e.name
                 );
             }
             // Macs run the shaders as Metal: they must translate to it too,

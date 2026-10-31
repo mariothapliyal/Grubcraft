@@ -4,7 +4,8 @@ v = sys.argv[1].rstrip("2")
 p = "crates/gc_render/src/shaders/world.wgsl"
 if v == "x":  # main's posing (depth loop), only the early returns moved
     import subprocess
-    subprocess.run(["git", "checkout", "origin/main", "--", p, "crates/gc_render/src/soldiers.rs"], check=True)
+    subprocess.run(["git", "fetch", "--depth=1", "origin", "967d208febec67b821315985b4ffac8816874ea8"], check=True)
+    subprocess.run(["git", "checkout", "967d208febec67b821315985b4ffac8816874ea8", "--", p, "crates/gc_render/src/soldiers.rs"], check=True)
     s = open(p, encoding="utf-8").read()
     def sub(a, b):
         global s
