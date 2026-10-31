@@ -119,6 +119,8 @@ pub struct Seen {
     pub morale: MoraleState,
     /// Morale in points, 0 to 100 (meaningless for units that never rout).
     pub morale_points: u8,
+    /// Its veteran rank, 0 to 3 (see [`gc_sim::veterancy`]).
+    pub rank: u8,
     /// No enemy sees it (in cover, unspotted). Always false for enemies a
     /// mind sees, of course.
     pub hidden: bool,
@@ -318,6 +320,7 @@ impl Perception {
                 diverted: r.diverted,
                 morale: r.morale,
                 morale_points: r.morale_points,
+                rank: r.rank,
                 hidden: world.hidden(r.handle),
                 torches: r.torches,
                 in_fire: world.in_fire(r.handle),

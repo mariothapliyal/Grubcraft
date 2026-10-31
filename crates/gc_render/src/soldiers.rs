@@ -1376,7 +1376,12 @@ fn anim_gpu(m: &Models<'_>) -> (Vec<[u32; 4]>, Vec<u32>) {
             out.push(rigs[s]);
             let fixes =
                 &m.anim.fixes[fit.first_fix as usize..][..1 + m.models[model].bones as usize];
-            out.extend_from_slice(bytemuck::cast_slice::<_, [u32; 4]>(fixes));
+            // A soldier stands on his feet: moved forward from where the
+            // bake centred him (`Models::feet_shift`).
+            let mut pre = fixes[0];
+            pre[11] += m.feet_shift(model);
+            out.extend_from_slice(bytemuck::cast_slice::<_, [u32; 4]>(&[pre]));
+            out.extend_from_slice(bytemuck::cast_slice::<_, [u32; 4]>(&fixes[1..]));
             at
         })
         .collect();
