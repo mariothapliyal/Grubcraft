@@ -168,6 +168,7 @@ mod lights;
 #[cfg(test)]
 mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod drawn_tool;
 mod guide_data;
 mod hud;
 mod lens;
@@ -2375,6 +2376,8 @@ impl Running {
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
+                // The wall tool: a drag from here draws a curve.
+                self.begin_wall_drag();
                 // Choosing ground to clear: the drag starts on the ground.
                 self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
                     .then(|| self.ground_under_cursor())

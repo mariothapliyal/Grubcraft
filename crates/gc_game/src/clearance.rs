@@ -23,7 +23,12 @@ const COLUMN_FILES: f32 = 2.0;
 /// Line troops: foot regiments of at least this many soldiers (the
 /// few-and-big, such as the Choir's Harmonic Walkers, go in single file).
 const LINE_MODELS: u16 = 9;
-/// A bridge's lanes (`Conquest::bridge_lanes`): two tiles wide.
+/// The narrowest bridge a player can draw, in tiles across
+/// (`gc_sim::drawn::BRIDGE_WIDTHS`).
+const BRIDGE_WIDTH: f32 = gc_sim::drawn::BRIDGE_WIDTHS[0] as f32;
+/// How many one-tile bridge models lie side by side in the measure of a
+/// model's deck (two lanes, each with its rail on the outside). Bridges
+/// show no model for now (`buildings::BRIDGE_MODELS`).
 const BRIDGE_LANES: f32 = 2.0;
 /// The height band a model's passage must be open in, above its floor or
 /// deck, in tiles: from the ankles to the chest of a man.
@@ -32,32 +37,7 @@ const BAND: (f32, f32) = (0.1, 1.2);
 const FLOOR_BELOW: f32 = 0.6;
 
 /// Problems found and owned: what fails, what fixes it, and the passages.
-const KNOWN: &[(What, &str, &[&str])] = &[
-    // The shared bridge model's rails leave 1.4 tiles of the two-tile
-    // deck free at chest height, not quite two line soldiers abreast.
-    (
-        What::Model,
-        "bridges: rails further out",
-        &[
-            "Timber Bridge",
-            "Chitin Span",
-            "Glass Span",
-            "Bone Causeway",
-        ],
-    ),
-    // The Broodmother Bulk (2.7 tiles across) is wider than a two-lane
-    // bridge.
-    (
-        What::Body,
-        "bridges: widen, or a ford rule for giants",
-        &[
-            "Timber Bridge",
-            "Chitin Span",
-            "Glass Span",
-            "Bone Causeway",
-        ],
-    ),
-];
+const KNOWN: &[(What, &str, &[&str])] = &[];
 
 /// Which measure of a passage fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +72,7 @@ fn passages(table: &Table, models: &Models<'_>) -> Vec<Passage> {
                 let width = f32::from(s.width.max(s.depth));
                 (width, tris().map(|t| doorway(&t, width / 2.0)))
             } else if table.is_bridge(b) {
-                (BRIDGE_LANES, tris().map(|t| deck(&t)))
+                (BRIDGE_WIDTH, tris().map(|t| deck(&t)))
             } else {
                 return None;
             };
