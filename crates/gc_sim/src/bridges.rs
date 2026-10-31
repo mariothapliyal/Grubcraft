@@ -56,7 +56,7 @@ impl Structures {
                 let [x, y, _, _] = self.footprint(i);
                 let pier = Pier::new(
                     self.handle(i),
-                    self.owner(self.handle(i)).unwrap_or_default(),
+                    self.owner_of(i),
                     self.pier_level(i),
                     self.left_permille(i),
                 );

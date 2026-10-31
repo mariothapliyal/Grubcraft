@@ -185,8 +185,10 @@ impl Rivers {
             if jam > 0 {
                 let lifted = self.lift_jam(i, band.is_some());
                 match band {
-                    // The water falling back loosens a small jam.
+                    // The water falling back loosens a small jam; a bigger
+                    // one holds, and waits for the next rise.
                     None if lifted && jam <= WASH_FREE_MASS => self.wash_free(i),
+                    None if lifted => self.settle_jam(i),
                     None => {}
                     Some(band) => {
                         let push = PUSH_PER_TEN_THOUSAND
@@ -237,8 +239,11 @@ impl Rivers {
     /// Whether a jam lies on any tile of `area` (north-west tile, width,
     /// depth).
     pub(crate) fn jammed_in(&self, [x, y, w, d]: [i32; 4]) -> bool {
-        self.any_jam()
-            && (y..y + d).any(|ty| (x..x + w).any(|tx| self.jam_piece_at(tx, ty).is_some()))
+        let n = self.side as u32;
+        (self.debris.pieces.iter().flatten()).any(|p| {
+            let (px, py) = ((p.tile % n) as i32, (p.tile / n) as i32);
+            p.jammed && (x..x + w).contains(&px) && (y..y + d).contains(&py)
+        })
     }
 
     /// Whether any piece is jammed anywhere (so a worker's area is worth
@@ -247,13 +252,14 @@ impl Rivers {
         (self.debris.pieces.iter().flatten()).any(|p| p.jammed)
     }
 
-    /// Workers pull a piece out of the jam lying on tile `(x, y)` and drag
-    /// it ashore. Whether there was one.
-    pub(crate) fn pull_jam(&mut self, x: i32, y: i32) -> bool {
+    /// Workers pull the piece of `mass` they were working out of the jam
+    /// lying on tile `(x, y)` and drag it ashore. Whether it was still the
+    /// next to come out (another worker may have pulled it first).
+    pub(crate) fn pull_jam(&mut self, x: i32, y: i32, mass: u8) -> bool {
         let Some(i) = index_in(self.side, x, y) else {
             return false;
         };
-        let Some((k, _)) = self.jammed_at(i as u32) else {
+        let Some((k, _)) = self.jammed_at(i as u32).filter(|&(_, m)| m == mass) else {
             return false;
         };
         self.debris.pieces[k] = None;
@@ -277,6 +283,16 @@ impl Rivers {
             }
         }
         lifted
+    }
+
+    /// The water fell back from the jam on the pier on tile `i` and it
+    /// held: it is no longer lifted.
+    fn settle_jam(&mut self, i: u32) {
+        for p in self.debris.pieces.iter_mut().flatten() {
+            if p.jammed && p.next == i {
+                p.lifted = false;
+            }
+        }
     }
 
     /// The jam on the pier on tile `i` breaks up and floats on, past it.

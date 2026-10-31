@@ -282,9 +282,10 @@ impl Debris {
         let slot = if taken < OPEN_PLACES || !open(&piece) {
             self.pieces.iter().position(Option::is_none)
         } else {
-            // The oldest grounded, else the oldest of all.
+            // The oldest grounded, else the oldest of all; a jam holds its
+            // pieces until it is cleared or lets go.
             (self.pieces.iter().enumerate())
-                .filter_map(|(i, p)| p.filter(|p| open(p)).map(|p| (i, p)))
+                .filter_map(|(i, p)| p.filter(|p| open(p) && !p.jammed).map(|p| (i, p)))
                 .min_by_key(|(i, p)| (!p.grounded, p.born, *i))
                 .map(|(i, _)| i)
         };

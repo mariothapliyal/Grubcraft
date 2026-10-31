@@ -2756,8 +2756,8 @@ impl World {
                         rivers.topple(&self.terrain, x, y, tick);
                     }
                 }
-                clearing::Done::Unjam { x, y, owner } => {
-                    if self.flood.rivers.pull_jam(x, y) {
+                clearing::Done::Unjam { x, y, owner, mass } => {
+                    if self.flood.rivers.pull_jam(x, y, mass) {
                         let grub = rivers::debris::piers::UNJAM_GRUB;
                         c.economy.earn_grub(owner, grub, &self.regiments, &c.units);
                     }

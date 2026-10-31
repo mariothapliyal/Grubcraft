@@ -62,13 +62,15 @@ pub fn dragged_area(from: Vec2, to: Vec2, tiles: i32) -> [i32; 4] {
 }
 
 /// The tiles of `area` (`[x, y, width, depth]`) where something still
-/// grows, row by row.
+/// grows, or debris lies jammed against a bridge, row by row.
 pub fn overgrown_tiles(world: &World, area: [i32; 4]) -> impl Iterator<Item = (i32, i32)> + '_ {
     let [x, y, w, d] = area;
     let terrain = world.terrain();
     (y..y + d)
         .flat_map(move |ty| (x..x + w).map(move |tx| (tx, ty)))
-        .filter(|&(tx, ty)| terrain.growth(tx, ty) != Growth::Open)
+        .filter(move |&(tx, ty)| {
+            terrain.growth(tx, ty) != Growth::Open || world.clearable([tx, ty, 1, 1])
+        })
 }
 
 /// Draw `area` on the ground: a wash over all of it (`chosen` for the area

@@ -186,9 +186,14 @@ pub(crate) enum Done {
     /// A worker of `owner`'s tipped a raft into river tile `(x, y)`: it
     /// goes in if `owner` can pay for it.
     Raft { x: i32, y: i32, owner: PlayerId },
-    /// A worker of `owner`'s pulled a piece out of the jam lying on river
-    /// tile `(x, y)`: it is dragged ashore for its timber.
-    Unjam { x: i32, y: i32, owner: PlayerId },
+    /// A worker of `owner`'s pulled the piece of `mass` out of the jam
+    /// lying on river tile `(x, y)`: it is dragged ashore for its timber.
+    Unjam {
+        x: i32,
+        y: i32,
+        owner: PlayerId,
+        mass: u8,
+    },
     /// Worker slot `r` cleared and left the footprint of `pledge`: lay it.
     Lay { r: usize, pledge: Pledge },
     /// Worker slot `r` (or the regiment that was in it) gave up on, or was
@@ -462,9 +467,9 @@ impl Clearing {
                 self.done.push(Done::Raft { x, y, owner });
                 return false;
             }
-            if jam.is_some() {
+            if let Some(mass) = jam {
                 // One piece out; the next is worked afresh.
-                self.done.push(Done::Unjam { x, y, owner });
+                self.done.push(Done::Unjam { x, y, owner, mass });
                 job.next();
                 return true;
             }
