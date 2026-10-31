@@ -318,7 +318,7 @@
         (
             name: "Hands",
             tagline: "Worker: gathers Grub and Marrow, builds and repairs.",
-            summary: "The Clans' worker. Carries 10 Grub or 5 Marrow a trip to a Clan Hall or Granary, and builds and repairs every Clan structure. Poor fighters, so keep them out of raids. Train a steady stream early and put them on every seep. They can also clear woods, scrub and thicket (S); Hands fell and haul the trees, so timber pays more Grub than elsewhere. Fell in (Z) drops bank woods into the river instead: no timber, but the logs ride the current into troops wading below.",
+            summary: "The Clans' worker. Carries 10 Grub or 5 Marrow a trip and builds every Clan structure. Poor fighters. They clear woods, scrub and thicket (S), and timber pays more Grub than elsewhere. Fell in (Z) drops bank woods into a river instead: no timber, but the logs ride the current into troops wading below.",
         ),
         (
             name: "Yari Ashigaru",
