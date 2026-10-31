@@ -135,6 +135,121 @@ the Classic choices so old choices keep their numbers;
   (`SWEEP=N` for more seeds), and the AI one-on-one above (first run: wins
   by Annihilation at 25:53 and 32:42, first contact at 7:22 and 6:34).
 
+## Step 2 as built
+
+*2026-10-31.* Field Battles start on **Measured: Random**.
+
+- **Why it fell short.** The old second search walked a coarse grid
+  that guessed the land's cost from its slopes. On the finished land, as
+  the nav rules walk it, 4- to 6-player maps at 512 tiles came out 7 to
+  35% unequal (worst of every way the lobby hands starts out).
+- **Settling on the true walks** (`grown::starts::settle`). One full
+  walk from each start, over the finished land as `gc_mapcheck` walks it,
+  gives every tile's walk to that start. So any tile within 24 tiles
+  (scaled to the map) can be tried for a start at once, scored on every
+  way the lobby hands starts out, with a small price for each tile it
+  moves. A start that moves is walked from again. The clearings are then
+  flattened and the ways cut again, which changes the walks a little, so
+  it is measured again, and a second, shorter round of 8 tiles runs when
+  the walks are still over 5% apart. A round that makes things worse is
+  thrown away.
+- **Reroll.** A map still over 10% is grown once more from another seed
+  (`seed ^ k * golden ratio`), and the fairer of the two is kept.
+- **The default.** A new Field Battle lobby starts on **Measured:
+  Random**. Land (mirrored), Classic and Random stay choices. Conquest
+  stays mirrored: its shares are placed round the north starts and turned
+  for the south, so mirrored land is what keeps them equal.
+- **PROTOCOL 42**, because the same Measured map choice now makes other
+  land, and machines must agree on it.
+- **Measured** (true walks, 5 seeds of each wildness at each size, worst
+  over every handout, before → after): see the table below.
+
+| Size | Before | After | Build time (each) |
+|---|---|---|---|
+| 320 | — | 0.4 to 9.0% | 0.6 to 2.0 s |
+| 512 | 7 to 35% | 0.7 to 6.7% | 1.8 to 4.8 s (with a reroll) |
+| 768 | — | 0.4 to 6.1%, one Wild map 13.8% | 3.7 to 5.5 s, about 10 s with a reroll |
+
+  The one miss (768, Wild) was still 13.8% after its reroll: the reroll
+  keeps the fairer of two maps, it does not promise 10%.
+
+  A 768 Measured map took about 4 s before this change on the same
+  machine (mirrored 1.8 s). The 3-second target for 768 is still missed;
+  most of the time is the full walks over 590,000 tiles.
+- **Tests.** `measured_starts_are_within_the_limit` grows 12 Measured maps
+  (every wildness, 256 and 320 tiles) and holds each within 10%.
+  `every_grown_map_passes_the_checker` still passes with no extra rerolls.
+  The probe (`fairness_probe::probe`, ignored) prints the table.
+- **Real use.** Four- to six-player Field Battles (2v2, 3v3, free for
+  all, three teams of two) were the unfair case, because a mirrored map
+  makes twins equal but not corners and middles. Each start's walk to its
+  nearest enemy is now within a tenth of the others', so no team gets to
+  the fight a minute sooner. Two-player maps were already equal.
+
+## Step 3 as built
+
+*2026-10-31.* Grown maps get riverside dressing and worn trails. Lairs
+guarding rich fields came with step 1.
+
+- **Gravel bars** (`Habitat::GravelBar`). Where the water wraps round more
+  than half of a bank tile right by a river (a ring of 32 points, 4 tiles
+  out), that is the inside of a bend. The shingle spreads over the low,
+  dry bank up to 2 tiles round it. Open ground, drawn with the gravel
+  pattern.
+- **Lake shores.** On gentle shores within 3 tiles of a lake: sand
+  (`Beach`, the ripple pattern) where the sun falls, and reeds
+  (`ReedBed`) in patches where it doesn't. Reeds are tall grass, so a
+  regiment can hide in them ([20](20-ambushes.md)), and they are drawn
+  with dense sedge.
+- **Bankside alders.** Open meadow on a river or lake shore gets the odd
+  alder (scenery only).
+- **Worn trails** (`grown::trails`). Once the sites stand, the first start
+  is the network; each other start and each site in turn (villages,
+  camps, the old fort, the standing stones, the Heart; not lairs) wears
+  the cheapest way to the nearest worn tile. Worn ground costs a third
+  of fresh ground, so trails join into a network. A slow wobble in the
+  cost (every 9 tiles) makes them wander. They keep off steep ground,
+  cross rivers at the fords, and go round woods and bog where they can.
+  Each trail is 2 tiles wide. In the open it shows as `Habitat::Trail`
+  (a worn brown, colour only so its edges blend) and its tall grass is
+  trodden flat; under trees, on bog and in water nothing changes. A trail
+  never squeezes diagonally between two tiles that can't be walked. On
+  mirrored land only one half's ends wear trails, plus one from the turned
+  first start to join the halves, and every worn tile's turned copy is
+  worn too, so the trails are their own turned copy.
+- **Bare ground stays bare.** Trails get no scenery at all; gravel bars
+  and beaches get a few pebbles instead of the land's grass, bushes and
+  lone trees. A trail or bar inside a river valley keeps the valley's
+  land (its scenery set and sounds).
+- **PROTOCOL 43**: the same map choice now makes slightly different land.
+
+### Real use
+
+- **Trails are the roads.** They run from each base to its neighbours,
+  the villages and the camps, and they cross rivers where the fords are.
+  A player can read where the enemy will come from, and where to wait
+  for them. Trails are open ground, so an army marching on one is in the
+  open.
+- **Reeds hide.** A lake shore with reeds is tall grass: a place for an
+  ambush beside the water.
+- **Gravel and sand are open.** The bends of a river and the sunny lake
+  shores are open ground to form up on before a crossing.
+- **Fairness.** Trails change a few tiles of tall grass to open ground,
+  which walking costs don't read, so fairness can't change. `gc_mapcheck`
+  runs on the map with its trails and still passes; the Conquest share
+  check (`still_fair`) skips wearing them to save time.
+
+### Checks
+
+- `trails_reach_the_starts_and_sites`, `trails_lie_on_open_dry_ground`,
+  `mirrored_trails_are_their_own_turned_copy`; the habitat tests cover
+  gravel bars; `every_grown_map_passes_the_checker` still passes.
+- In-game screenshots are in project files under
+  `screenshots/living-land-step3/`: trails leaving a Conquest base, and
+  gravel bars and reeds on a river pool. Beaches are only shown in the
+  map-data picture there. They are small and I did not get one in a
+  screenshot.
+
 ## Step 4 as built
 
 *2026-10-30.*

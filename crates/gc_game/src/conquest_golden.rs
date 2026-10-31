@@ -34,13 +34,14 @@ use gc_replay::{Recorder, Replay};
 use gc_sim::gates::GateMode;
 use gc_sim::structures::{Role, StructureView};
 use gc_sim::{
-    BuildingId, Capacities, Command, MatchSetup, Meter, PlayerCommand, PlayerId, PowerTarget,
-    RegimentHandle, RegimentView, Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
+    BuildingId, Command, Meter, PlayerCommand, PlayerId, PowerTarget, RegimentHandle, RegimentView,
+    Resource, TICKS_PER_SECOND, TradePost, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
 use crate::buildings::Table;
 use crate::conquest::{self, Foot};
+use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-ribcage-1v1";
 const SEED: u64 = 0x00C0_9E57;
@@ -60,6 +61,10 @@ const CLEAR_AT: u32 = 100 * TICKS_PER_SECOND;
 /// main building before the six minutes are up (moved from 150 s when
 /// battles were slowed, `gc_sim::combat::BATTLE_PACE_PERCENT`).
 const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
+/// What each side starts with: the script's own purses, kept apart from
+/// the factions' Conquest starts. The Concord side's Grub comes by
+/// caravan, slowly at first, so it opens with more and the sides arm alike.
+const STARTS: [(u32, u32); 2] = [(300, 0), (900, 100)];
 /// How much later side 1 marches (10 s, from 30, so it still sees and
 /// climbs the other's wall in time once the Clans gathered faster).
 const MARCH_LATER: u32 = 10 * TICKS_PER_SECOND;
@@ -348,51 +353,25 @@ pub struct Match {
 
 impl Match {
     pub fn new() -> Match {
-        let data = crate::data::load();
-        let table = Table::new(&data);
-        let map = conquest::make_map(0, 0, 0);
-        let units = conquest::unit_stats(&data);
-        let nav = map.sim_nav_costs();
-        let setup = MatchSetup {
-            seed: SEED,
-            capacities: Capacities::default(),
-            units: &units,
-            map_tiles: map.tiles,
-            nav: &nav,
-            teams: &[0, 1],
-            ground: map.ground(),
-            champions: false,
-            sky: gc_sim::Sky::STILL,
-            generals: true,
-        };
-        let mut plan = conquest::plan(
-            &table,
-            &data,
-            &map,
-            &FACTIONS,
-            Tempo::Swift,
-            Victories::BOTH,
-        );
+        let real = Real::load();
+        let game = Headless::new(&real, conquest::make_map(0, 0, 0), &FACTIONS, SEED);
+        let (data, table) = (&real.data, &real.table);
+        let mut plan = game.plan(Tempo::Swift, Victories::BOTH);
         // The Concord side plays the Choir's powers.
         plan.meters[1] = Meter::Resonance;
-        // Its Grub comes by caravan, slowly at first: a bigger purse to open
-        // with, so the script's sides arm alike.
-        plan.start[1] = (900, 100);
-        let mut world = World::new(&setup);
-        assert!(world.conquest(&plan.setup()));
-        let rec = Recorder::new(&setup, &world, String::new()).conquest(plan);
-        let opening = conquest::opening(&data, &table, &map, &world, &FACTIONS);
+        plan.start[..2].copy_from_slice(&STARTS);
+        let world = game.world(&plan);
+        let rec = Recorder::new(&game.setup(), &world, String::new()).conquest(plan);
         let mut m = Match {
-            kits: FACTIONS.map(|f| Kit::of(&data, &table, f)),
+            kits: FACTIONS.map(|f| Kit::of(data, table, f)),
             sides: Default::default(),
-            choir: Choir::of(&data),
-            clans: Clans::of(&data),
-            starts: map.starts(),
+            choir: Choir::of(data),
+            clans: Clans::of(data),
+            starts: game.map.starts(),
             world,
             rec,
         };
-        let stats = m.rec.tick(&mut m.world, &opening);
-        assert_eq!(stats.commands_applied as usize, opening.len());
+        game.open(&mut m.world, |w, orders| m.rec.tick(w, orders));
         m
     }
 
@@ -998,26 +977,41 @@ impl Match {
             i32::from(main.width),
             main.depth.into(),
         ];
-        let fits = |from: (i32, i32), to: (i32, i32)| {
-            self.world.wall_plan(p, b, from, to).is_ok_and(|plan| {
+        // The second side draws its wall with the drawing order
+        // (`Command::DrawLine`), the first with the old one
+        // (`Command::BuildWall`); the tests of `gc_sim` draw the curves.
+        let drawing = p == 1;
+        let fits = |from: (i32, i32)| {
+            let to = (from.0 + WALL_TILES - 1, from.1);
+            let plan = if drawing {
+                self.world.line_plan(p, b, &drawn_straight(from, to))
+            } else {
+                self.world.wall_plan(p, b, from, to)
+            };
+            plan.is_ok_and(|plan| {
                 plan.len() == WALL_TILES as usize && plan.iter().all(|t| t.fits.is_ok())
             })
         };
-        let Some(from) =
-            conquest::ring(foot, 6).find(|&(x, y)| fits((x, y), (x + WALL_TILES - 1, y)))
-        else {
+        let Some(from) = conquest::ring(foot, 6).find(|&t| fits(t)) else {
             return;
         };
         let to = (from.0 + WALL_TILES - 1, from.1);
-        out.push(PlayerCommand {
-            player: p,
-            command: Command::BuildWall {
+        let command = if drawing {
+            Command::DrawLine {
+                regiment: Some(w),
+                building: b,
+                path: drawn_straight(from, to).path,
+                width: 1,
+            }
+        } else {
+            Command::BuildWall {
                 regiment: Some(w),
                 building: b,
                 from: (from.0 as i16, from.1 as i16),
                 to: (to.0 as i16, to.1 as i16),
-            },
-        });
+            }
+        };
+        out.push(PlayerCommand { player: p, command });
         self.sides[usize::from(p)].waller = Some(w);
     }
 
@@ -1040,14 +1034,19 @@ impl Match {
         ) else {
             return;
         };
+        // The second side plans with the drawing order (`Command::PlanLine`).
+        let drawing = p == 1;
         let n = PLAN_TILES;
         let alongside = (1..=3)
             .flat_map(|d| [wy - d, wy + d])
             .map(|y| ((wx, y), (wx + n - 1, y)));
         let fits = |&(from, to): &((i32, i32), (i32, i32))| {
-            self.world
-                .blueprint(p, b, from, to)
-                .is_ok_and(|plan| plan.len() == n as usize && plan.iter().all(|t| t.fits.is_ok()))
+            let plan = if drawing {
+                self.world.line_blueprint(p, b, &drawn_straight(from, to))
+            } else {
+                self.world.blueprint(p, b, from, to)
+            };
+            plan.is_ok_and(|plan| plan.len() == n as usize && plan.iter().all(|t| t.fits.is_ok()))
         };
         let Some((from, to)) = [((ex + 1, wy), (ex + n, wy)), ((wx - 1, wy), (wx - n, wy))]
             .into_iter()
@@ -1057,12 +1056,20 @@ impl Match {
             return;
         };
         let at = |t: (i32, i32)| (t.0 as i16, t.1 as i16);
-        for command in [
+        let first = if drawing {
+            Command::PlanLine {
+                building: b,
+                path: drawn_straight(from, to).path,
+            }
+        } else {
             Command::PlanWall {
                 building: b,
                 from: at(from),
                 to: at(to),
-            },
+            }
+        };
+        for command in [
+            first,
             Command::DropPlan {
                 from: at(to),
                 to: at(to),
@@ -1357,6 +1364,12 @@ pub fn record() -> Replay {
     m.finish()
 }
 
+/// A wall drawn straight from tile `from` to tile `to` with the drawing
+/// order.
+fn drawn_straight(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
+    gc_sim::walls::Line::drawn(gc_sim::drawn::DrawnPath::straight(from, to), 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1367,7 +1380,7 @@ mod tests {
         m.play(u32::MAX);
         for p in 0..2u8 {
             let k = m.kits[usize::from(p)];
-            let start = conquest::start_stores(FACTIONS[usize::from(p)]);
+            let start = STARTS[usize::from(p)];
             let bank = m.world.bank(p).unwrap();
             assert!(
                 m.count(p, k.fighter) >= 3,

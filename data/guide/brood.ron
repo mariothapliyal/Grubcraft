@@ -119,7 +119,7 @@
         (
             name: "Resin Ridge",
             blurb: "A wall the Hive grows along its root-veins. It needs no Gnawer and heals on the veins.",
-            summary: "A wall the Hive grows: click the start, move, click the end; click again to bend it, right-click to finish. It goes only where your root-veins reach, takes no Gnawer and grows every tile at once. It heals on the veins and withers off them.",
+            summary: "A wall the Hive grows: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. It goes only where your root-veins reach, takes no Gnawer and grows every tile at once. It heals on the veins and withers off them.",
             notes: [
                 ("Chitin Wall", "Twice and a half as tough, grown with no Gnawer while the veins reach it."),
             ],
@@ -180,12 +180,38 @@
         (
             name: "Chitin Span",
             blurb: "Draw a chitin span across a river. Gnawers build it from the bank, and anyone can cross it.",
-            summary: "A span of chitin plates two tiles wide you draw straight across a river: click the near bank, then the far bank. Gnawers build it out from the bank a plate at a time, and anyone can cross it. Break a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            summary: "You draw it across a river: drag from bank to bank along a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide (3 to 5 tiles), 3 Grub a tile. Gnawers build it out from the bank a plate at a time. Anyone can cross it; a broken tile drops its troops into the river.",
+            notes: [
+                ("Ribbed Chitin Span", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
-                (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
+                (icon: Hammer, text: "Drag from dry land to dry land; it bends gently. [ and ] pick the width."),
                 (icon: Move, text: "A Gnawer builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
+        (
+            name: "Ribbed Chitin Span",
+            blurb: "Tier 2 of the Chitin Span: twice as tough. Select a span and press U to raise the whole joined bridge.",
+            summary: "Level 2 of the Chitin Span: ribbed chitin struts grown under the deck, twice as tough. Select a span and press U: the whole joined span is paid now and Gnawers raise it a plate at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Rooted Chitin Span", "More than three times as tough, and debris glances off its prows."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Rooted Chitin Span",
+            blurb: "Tier 3 of the Chitin Span: over three times as tough, and it sheds debris. Needs tier 2; press U on a ribbed span.",
+            summary: "Level 3, the top: hardened carapace piers with pointed prows, more than three times a plain span's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Ribbed Chitin Span and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
             ],
         ),
         (

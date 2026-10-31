@@ -130,7 +130,7 @@
         (
             name: "Bone Fence",
             blurb: "A wall you draw, priced and built a tile at a time by a worker. Blocks passage except through gates.",
-            summary: "A wall you draw: click the start, move, click the end; click again to bend it, right-click to finish. Shift locks 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker.",
+            summary: "A wall you draw: press and drag for a smooth curve, or click corner to corner for sharp ones; right-click to finish. Shift keeps it straight in 15-degree steps; O draws a closed ring; B plans a blueprint. Priced and built a tile at a time by a worker.",
             notes: [
                 ("Ossuary Wall", "Twice and a half as tough: worth it on any stretch the living will test."),
             ],
@@ -191,12 +191,38 @@
         (
             name: "Bone Causeway",
             blurb: "Draw a two-tile causeway across a river. Workers build it from the bank, and anyone can cross it.",
-            summary: "A causeway of bone piers and boards, two tiles wide, you draw straight across a river: click the near bank, then the far bank. Workers build it out from the bank a span at a time, and anyone can cross it. Break a tile and the troops on it fall into the river, hurt and in disorder, and wash up on the nearest bank.",
-            notes: [],
+            summary: "You draw it across a river: drag from bank to bank along a gentle curve, or click each bank for a straight one. [ and ] pick narrow, standard or wide (3 to 5 tiles), 3 Grub a tile. Workers build it out from the bank a span at a time. Anyone can cross it; a broken tile drops its troops into the river.",
+            notes: [
+                ("Braced Bone Causeway", "Twice as tough against blows; later, debris in the river too."),
+            ],
             tips: [
-                (icon: Hammer, text: "Draw it straight along x or y, dry land both ends. A second lane goes beside it."),
+                (icon: Hammer, text: "Drag from dry land to dry land; it bends gently. [ and ] pick the width."),
                 (icon: Move, text: "A worker builds it from the bank and carries on across the river a tile at a time."),
                 (icon: Alarm, text: "Enemies can cross it too, so guard it. A tile that falls drops troops into the river."),
+            ],
+        ),
+        (
+            name: "Braced Bone Causeway",
+            blurb: "Tier 2 of the Bone Causeway: twice as tough. Select a causeway and press U to raise the whole joined span.",
+            summary: "Level 2 of the Bone Causeway: braced, iron-banded bone piers, twice as tough. Select a causeway and press U: the whole joined causeway is paid now and raised a span at a time, and troops keep crossing meanwhile.",
+            notes: [
+                ("Iron-Shod Causeway", "More than three times as tough, and debris glances off its cutwaters."),
+            ],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
+            ],
+        ),
+        (
+            name: "Iron-Shod Causeway",
+            blurb: "Tier 3 of the Bone Causeway: over three times as tough, and it sheds debris. Needs tier 2; press U on a braced causeway.",
+            summary: "Level 3, the top: iron-shod stone footings with cutwaters facing upstream, more than three times a plain causeway's toughness, and it sheds debris instead of catching it. Needs tier 2. Select a Braced Bone Causeway and press U.",
+            notes: [],
+            tips: [
+                (icon: Hammer, text: "Select the bridge and press U: the joined bridge is paid now, then raised a span at a time."),
+                (icon: Move, text: "Troops keep crossing while it is raised; the deck never closes."),
+                (icon: Alarm, text: "Upgrade bridges on rivers an enemy can reach first: they take blows and debris best."),
             ],
         ),
         (

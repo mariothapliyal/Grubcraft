@@ -541,10 +541,10 @@ fn building_flag_text(f: BuildingFlag, b: &RBuilding) -> Option<String> {
             "Drawn like a wall at any angle; blocks walking, and troops of yours within 2 tiles take less damage".into()
         }
         BuildingFlag::Line if b.role == Role::Bridge => {
-            "Drawn straight across water, bank to bank; anyone can cross it, and troops on a tile that falls drop in the river".into()
+            "Drawn bank to bank across water along a gentle curve, three to five tiles wide ([ and ]); anyone can cross it, and troops on a tile that falls drop in the river".into()
         }
         BuildingFlag::Line => {
-            "Drawn wall: drag it out at any angle, paid and built a tile at a time".into()
+            "Drawn wall: drag it out as a smooth curve, or click corners for straight sides; paid and built a tile at a time".into()
         }
         BuildingFlag::Pass => {
             "Your side walks through it; without power it drops and anyone can".into()

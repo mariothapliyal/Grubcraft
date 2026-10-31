@@ -107,12 +107,18 @@ pub(super) struct Engineer {
     barricaded: Option<Vec2>,
     /// Looks spent trying for a barricade where none fitted.
     barricade_tries: u8,
+    /// The first tile of the barricade it last ordered, and how many it has
+    /// ordered again because none went up there (the bank ran short before
+    /// the order came through, say).
+    barricade_at: Option<(i32, i32)>,
+    barricade_redone: u8,
     /// Regiments sent to plant stakes.
     staked: Vec<RegimentHandle>,
     traps: u8,
     /// The bridge it means to draw: `None` until it has looked, then the
-    /// crossing, or none where it needs or can draw none (or has drawn it).
-    bridge: Option<Option<Line>>,
+    /// crossing and its tiles, or none where it needs or can draw none (or
+    /// has drawn it).
+    bridge: Option<Option<(Line, u32)>>,
 }
 
 impl Steward {
@@ -140,6 +146,17 @@ impl Steward {
         };
         if !clicks.free() {
             return;
+        }
+        // A barricade ordered but never begun is tried again, a few times.
+        if let Some(at) = self.engineer.barricade_at.take() {
+            let begun = look
+                .mine
+                .iter()
+                .any(|m| m.view.tile == at && m.stats.role == Role::Barricade);
+            if !begun && self.engineer.barricade_redone < BARRICADE_TRIES {
+                self.engineer.barricade_redone += 1;
+                self.engineer.barricaded = None;
+            }
         }
         let kept = RESERVE + self.ledger.saving.0.min(SAVING_KEPT);
         let spare = bank.grub.saturating_sub(kept);
@@ -170,6 +187,7 @@ impl Steward {
                     .then(|| self.wall(s, look, home, toward, spare))
                     .flatten()
                     .or_else(|| self.traps(s, look, home, toward, spare))
+                    .or_else(|| self.raise_bridge(s, look, spare))
             });
         if let Some((order, worker)) = order {
             // There is attention for it (checked above), so it is given.
@@ -303,6 +321,46 @@ impl Steward {
         Some((order, worker))
     }
 
+    /// Once rich, raise its own finished bridge a level (braced, then
+    /// reinforced piers), so the crossing its armies need stands up to
+    /// blows: the whole joined bridge, paid now.
+    fn raise_bridge(&self, s: &Sense, look: &Look, spare: u32) -> Option<Order> {
+        if spare < RICH {
+            return None;
+        }
+        // One try a drawn bridge: its tiles are raised together.
+        let mut tried = Vec::new();
+        let (tile, h, raise) = look
+            .mine
+            .iter()
+            .filter(|m| m.finished() && m.stats.role == Role::Bridge)
+            .filter(|m| {
+                m.view.drawing.is_none_or(|d| {
+                    let new = !tried.contains(&d);
+                    tried.push(d);
+                    new
+                })
+            })
+            .find_map(|m| {
+                let raise = s.world.wall_level(s.party, m.view.handle).ok()?;
+                (raise.afford && spare >= raise.grub + RICH / 2).then_some((
+                    m.view.tile,
+                    m.view.handle,
+                    raise,
+                ))
+            })?;
+        let grown = s
+            .kit
+            .building(raise.to)
+            .is_some_and(|b| b.stats.flags & GROWN != 0);
+        let worker = self.hands(s, look, grown, tile)?;
+        let order = Command::RaiseWall {
+            structure: h,
+            regiment: worker,
+        };
+        Some((order, worker))
+    }
+
     /// The nearest spare worker to tile `at`.
     fn builder_at(&self, s: &Sense, look: &Look, at: (i32, i32)) -> Option<RegimentHandle> {
         self.hands(s, look, false, at).flatten()
@@ -340,6 +398,7 @@ impl Steward {
             self.engineer.barricade_tries = 0;
         }
         let (from, to) = line?;
+        self.engineer.barricade_at = Some(from);
         let order = Command::BuildWall {
             regiment: Some(w),
             building: b.id,
@@ -423,18 +482,19 @@ impl Steward {
             }
             narrowest_crossing(s, b.id, home, target)
         }))?;
-        let (from, to) = line;
-        let len = (to.0 - from.0).abs().max((to.1 - from.1).abs()) as u32 + 1;
-        if spare < u32::from(b.stats.cost_grub) * len {
+        let ((from, to), tiles) = line;
+        if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
+        // Standard width, so its army crosses a few files abreast.
+        let deck = bridge_line(from, to);
         let w = self.builder_at(s, look, from)?;
         self.engineer.bridge = Some(None);
-        let order = Command::BuildWall {
+        let order = Command::DrawLine {
             regiment: Some(w),
             building: b.id,
-            from: (from.0 as i16, from.1 as i16),
-            to: (to.0 as i16, to.1 as i16),
+            path: deck.path,
+            width: deck.width,
         };
         Some((order, Some(w)))
     }
@@ -589,12 +649,17 @@ fn heavy_foes(s: &Sense) -> bool {
 
 /// The shortest bridge (from bank to bank) that fits over the water on
 /// the way from `home` to `target`: crossings straight along that way and
-/// along each axis, from points either side of it.
-fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -> Option<Line> {
+/// along each axis, from points either side of it; with its tiles.
+fn narrowest_crossing(
+    s: &Sense,
+    bridge: BuildingId,
+    home: Vec2,
+    target: Vec2,
+) -> Option<(Line, u32)> {
     let way = (target - home).try_normalize()?;
     let side = Vec2::new(-way.y, way.x);
     let len = home.distance(target);
-    let mut best: Option<(i32, Line)> = None;
+    let mut best: Option<(i32, Line, u32)> = None;
     for k in -6..=6 {
         let start = home + side * (k as f32 * 3.0);
         // Where this walk first meets water it can't wade.
@@ -615,19 +680,28 @@ fn narrowest_crossing(s: &Sense, bridge: BuildingId, home: Vec2, target: Vec2) -
                 continue;
             };
             let n = (to.0 - from.0).abs().max((to.1 - from.1).abs());
-            if n > BRIDGE_LONGEST || best.is_some_and(|(b, _)| b <= n) {
+            if n > BRIDGE_LONGEST || best.is_some_and(|(b, ..)| b <= n) {
                 continue;
             }
-            let fits = s
-                .world
-                .wall_fits(s.party, bridge, from, to)
-                .is_ok_and(|t| !t.is_empty() && t.iter().all(|t| t.fits.is_ok()));
-            if fits {
-                best = Some((n, (from, to)));
+            let fits = s.world.line_fits(s.party, bridge, &bridge_line(from, to));
+            if let Ok(t) = fits
+                && !t.is_empty()
+                && t.iter().all(|t| t.fits.is_ok())
+            {
+                best = Some((n, (from, to), t.len() as u32));
             }
         }
     }
-    best.map(|(_, line)| line)
+    best.map(|(_, line, tiles)| (line, tiles))
+}
+
+/// A standard-width bridge drawn straight from tile `from` to tile `to`
+/// (at a slant, if that is the shortest way over).
+fn bridge_line(from: (i32, i32), to: (i32, i32)) -> gc_sim::walls::Line {
+    gc_sim::walls::Line::drawn(
+        gc_sim::drawn::DrawnPath::straight(from, to),
+        gc_sim::drawn::STANDARD,
+    )
 }
 
 /// The last land tile before the water at `wet` going back along `dir`,

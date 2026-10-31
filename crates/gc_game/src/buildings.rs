@@ -452,6 +452,13 @@ impl Table {
         self.names.get(usize::from(id)).map_or("", String::as_str)
     }
 
+    /// The type called `name`.
+    #[cfg(test)]
+    pub fn named(&self, name: &str) -> BuildingId {
+        (self.names.iter().position(|n| n == name))
+            .unwrap_or_else(|| panic!("no building called {name}")) as BuildingId
+    }
+
     /// What a worker of `faction` lays from the build menu: every building
     /// of theirs but the main building and its upgrades.
     pub fn buildable(&self, faction: Faction) -> impl Iterator<Item = BuildingId> + Clone + '_ {
@@ -521,7 +528,9 @@ pub fn stage_of(built_percent: u8) -> usize {
         .count()
 }
 
-/// The model every faction's bridge tile shows until it has one of its own.
+/// The old one-tile bridge model, which the timber kit replaced: left in
+/// the pack, dressing nothing.
+#[cfg(test)]
 const SHARED_BRIDGE: &str = "Timber Bridge";
 
 /// The model name of a building's stage: its own name when finished, and
@@ -549,6 +558,10 @@ pub struct Looks {
     /// By model, how far a still model's walls reach from its middle
     /// across and along the map, in tiles: the eaves and roof left out.
     walls: Vec<Option<Vec2>>,
+    /// The timber kit every bridge is built from, if the pack has all of it.
+    kit: Option<crate::bridge_kit::BridgeKit>,
+    /// By building type, whether it is a bridge.
+    bridges: Vec<bool>,
 }
 
 impl Looks {
@@ -575,20 +588,16 @@ impl Looks {
         Looks {
             // A drawn wall with a model of its own (the Palisade) shows it
             // along its line (`model_spots`); the rest, and stakes and
-            // barricades, are drawn as boxes. A bridge tile is a model:
-            // each faction's own, else the shared one.
+            // barricades, are drawn as boxes. A bridge has no model of its
+            // own: it is built from the timber kit's pieces (`kit`), or
+            // drawn as boxes without them.
             stages: (table.names.iter().zip(&table.stats))
                 .map(|(name, stats)| {
-                    let bridge = stats.is_bridge();
                     core::array::from_fn(|k| {
-                        if boxed_line(stats) {
+                        if boxed_line(stats) || stats.is_bridge() {
                             return None;
                         }
-                        models.by_name(&stage_name(name, k)).or_else(|| {
-                            bridge
-                                .then(|| models.by_name(&stage_name(SHARED_BRIDGE, k)))
-                                .flatten()
-                        })
+                        models.by_name(&stage_name(name, k))
                     })
                 })
                 .collect(),
@@ -606,7 +615,20 @@ impl Looks {
                 .collect(),
             tops,
             walls,
+            kit: crate::bridge_kit::BridgeKit::new(models),
+            bridges: table.stats.iter().map(BuildingStats::is_bridge).collect(),
         }
+    }
+
+    /// The timber kit that builds bridge type `building`, or `None` for
+    /// another building (or without the kit, when bridges are boxes).
+    pub fn kit_for(&self, building: BuildingId) -> Option<&crate::bridge_kit::BridgeKit> {
+        let bridge = self
+            .bridges
+            .get(usize::from(building))
+            .copied()
+            .unwrap_or(false);
+        self.kit.as_ref().filter(|_| bridge)
     }
 
     /// How far still model `model`'s walls reach from its middle, across
@@ -1104,26 +1126,40 @@ fn wall_block(
     }
 }
 
-/// One tile of a bridge: a flat deck slab along its line, a full tile wide
-/// and floating just above the ground the shader draws (the water over a
-/// river), with a rail along each edge and a post at the middle of each;
-/// while it goes up, only two posts that grow with the work done. `deck` is
-/// the deck's colour (with its glow), `team` the owner's, which tints the
-/// posts and rails.
-fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut Vec<BoxInstance>) {
-    let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
-        Some(p) => (p.centre, p.dir, p.len),
-        None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
-    };
-    let side = Vec2::new(-dir.y, dir.x);
+/// One tile of a bridge: a flat deck slab filling the tile square,
+/// floating just above the ground the shader draws (the water over a
+/// river), so the tiles of a deck meet edge to edge whatever way it curves;
+/// with a rail and a post along each of its sides that is an outer edge of
+/// the deck; while it goes up, only posts there that grow with the work
+/// done. A side is an outer edge where no tile of a bridge is beside it
+/// (`joined` says whether the tile there is one) and it runs along the
+/// way the bridge goes there (its line), not across it, so the ends
+/// where the deck meets the bank stay open. `deck` is the deck's colour
+/// (with its glow), `team` the owner's, which tints the posts and rails.
+fn push_bridge_tile(
+    s: &StructureView,
+    deck: [u8; 4],
+    team: [u8; 3],
+    joined: &dyn Fn((i32, i32)) -> bool,
+    out: &mut Vec<BoxInstance>,
+) {
+    let centre = centre_of(s.tile, 1, 1);
+    let dir = (s.line.and_then(|line| wall_piece(line, s.tile))).map_or(Vec2::X, |p| p.dir);
     let [r, g, b, _] = deck;
     let [r, g, b] = tint([r, g, b].map(|c| (u32::from(c) * 3 / 4) as u8), team, 35);
     let wood = [r, g, b, 0];
     let top = DECK_TOP;
-    let edge = 0.5 - POST_THIN / 2.0;
-    let post = |height: f32, lift: f32, at: Vec2| BoxInstance {
+    // Just outside the deck's edge, so the whole width stays clear.
+    let edge = 0.5 + POST_THIN / 2.0;
+    // The outer edges: (outward, along the edge).
+    let sides = [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y]
+        .into_iter()
+        .filter(|&n| n.dot(dir).abs() < RAIL_ACROSS)
+        .filter(|&n| !joined((s.tile.0 + n.x as i32, s.tile.1 + n.y as i32)))
+        .map(|n| (n, Vec2::new(-n.y, n.x)));
+    let post = |height: f32, lift: f32, at: Vec2, along: Vec2| BoxInstance {
         pos: at.to_array(),
-        facing: dir.to_array(),
+        facing: along.to_array(),
         size: [POST_THIN, height, POST_THIN],
         color: wood,
         lift,
@@ -1131,30 +1167,36 @@ fn push_bridge_tile(s: &StructureView, deck: [u8; 4], team: [u8; 3], out: &mut V
     if !s.finished() {
         let done = f32::from(s.built_percent) / 100.0;
         let height = FRAME_LOW + (top + RAIL_HEIGHT - FRAME_LOW) * done;
-        for sign in [-1.0, 1.0] {
-            out.push(post(height, 0.0, centre + side * (sign * edge)));
+        for (n, along) in sides {
+            out.push(post(height, 0.0, centre + n * edge, along));
         }
         return;
     }
     out.push(BoxInstance {
         pos: centre.to_array(),
-        facing: dir.to_array(),
-        size: [1.0, BRIDGE_THICK, len],
+        facing: Vec2::Y.to_array(),
+        size: [1.0, BRIDGE_THICK, 1.0],
         color: deck,
         lift: DECK_LIFT,
     });
-    for sign in [-1.0, 1.0] {
-        let at = centre + side * (sign * edge);
-        out.push(post(RAIL_HEIGHT, top, at));
+    for (n, along) in sides {
+        let at = centre + n * edge;
+        out.push(post(RAIL_HEIGHT, top, at, along));
         out.push(BoxInstance {
             pos: at.to_array(),
-            facing: dir.to_array(),
-            size: [RAIL_THIN, RAIL_THIN, len],
+            facing: along.to_array(),
+            // A touch over a tile, so rails meet round a step.
+            size: [RAIL_THIN, RAIL_THIN, 1.0 + RAIL_THIN],
             color: wood,
             lift: top + RAIL_HEIGHT - RAIL_THIN,
         });
     }
 }
+
+/// How square to the way a bridge runs a tile side must be to carry a
+/// rail: the cosine of the widest angle between the side's outward
+/// direction and the line (about 41 degrees).
+const RAIL_ACROSS: f32 = 0.75;
 
 /// What one tile of a field work is drawn in.
 struct Fieldwork {
@@ -1626,6 +1668,18 @@ pub fn shown_to(
     move |s| (reveal_all && !table.is_trap(s.building)) || s.seen_by(side)
 }
 
+/// Every bridge tile, sorted for a binary search (so a deck rails only its
+/// outer edges); no allocation on a map with no bridges.
+pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
+    let mut bridged: Vec<(i32, i32)> = structures
+        .iter()
+        .filter(|s| table.is_bridge(s.building))
+        .map(|s| s.tile)
+        .collect();
+    bridged.sort_unstable();
+    bridged
+}
+
 /// Draw every standing building that `shown` allows: a box in its owner's
 /// colour, dimmer as its hit points fall, and a bar over it once it is
 /// damaged, white for a moment as a blow lands (`flash`, 0 to 1).
@@ -1648,6 +1702,10 @@ pub fn push(
         return;
     };
     let right = Vec2::new(-across.y, across.x);
+    // The bridge tiles, so a wide deck rails only its edges (where one
+    // drawing meets another, as a mended gap does, too). Sorted for a
+    // binary search; no allocation on a map with no bridges.
+    let bridged = bridge_tiles(structures, table);
     for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 12 > MAX_BOX_INSTANCES {
             return;
@@ -1673,7 +1731,8 @@ pub fn push(
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
             if model.is_none() {
-                push_bridge_tile(&s, [r, g, b, look.glow], team, out);
+                let joined = |tile| bridged.binary_search(&tile).is_ok();
+                push_bridge_tile(&s, [r, g, b, look.glow], team, &joined, out);
             }
         } else if matches!(stats.role, Role::Stakes | Role::Barricade) {
             let (_, trim, _) = fieldwork_colours(stats.role, table.faction(s.building));
@@ -2441,6 +2500,7 @@ pub fn footprint_view(tile: (i32, i32), width: u8, depth: u8, turn: u8) -> Struc
         gate: None,
         open: false,
         line: None,
+        drawing: None,
     }
 }
 
@@ -2724,7 +2784,9 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::NoWalkway => {
             "Raise the wall a level (or a gate to a gatehouse) first: only a walkway can be manned."
         }
-        Refusal::Crooked => "A bridge must run straight across, not at a slant.",
+        Refusal::Crooked => {
+            "Too sharp a bend: drawn walls and bridges bend gently, with no corners."
+        }
     }
 }
 
@@ -2874,6 +2936,11 @@ mod tests {
                 continue;
             }
             let faction = table.faction(b).expect("a bridge has a faction");
+            // Its braced and reinforced levels are raised, not built.
+            if table.stats[usize::from(b)].upgrades_from.is_some() {
+                assert!(!table.buildable(faction).any(|x| x == b));
+                continue;
+            }
             assert!(!seen.contains(&faction), "two bridges for {faction:?}");
             seen.push(faction);
             assert!(table.is_wall(b), "a bridge is drawn as a line");
@@ -2889,7 +2956,7 @@ mod tests {
     }
 
     #[test]
-    fn every_bridge_shows_the_shared_timber_model_along_its_line() {
+    fn every_bridge_is_built_from_the_timber_kit_along_its_line() {
         let data = crate::data::load();
         let table = Table::new(&data);
         let models = crate::models::load().unwrap();
@@ -2899,10 +2966,11 @@ mod tests {
             view.building = b;
             view.line = Some([10, 3, 10, 9]);
             view.built_percent = 100;
-            let name = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
-            assert_eq!(name(&view), Some("Timber Bridge"));
+            // No model of its own: the timber kit builds it.
+            assert_eq!(looks.model_of(&view), None);
+            assert!(looks.kit_for(b).is_some());
             view.built_percent = 10;
-            assert_eq!(name(&view), Some("Timber Bridge #1"));
+            assert_eq!(looks.model_of(&view), None);
             // Along the line (south here), and east for a line across the map.
             assert_eq!(looks.facing(&view), Vec2::Y);
             view.line = Some([3, 5, 9, 5]);
@@ -2920,7 +2988,13 @@ mod tests {
         view.line = Some([10, 3, 10, 9]);
         view.built_percent = 100;
         let mut out = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut out);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut out,
+        );
         // Deck, two rails, two posts; nothing taller than the railing.
         assert_eq!(out.len(), 5);
         let top = out.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
@@ -2930,11 +3004,23 @@ mod tests {
         assert_eq!((out[0].size[0], out[0].facing[0]), (1.0, 0.0));
         view.built_percent = 20;
         let mut frame = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut frame);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut frame,
+        );
         assert_eq!(frame.len(), 2);
         view.built_percent = 80;
         let mut later = Vec::new();
-        push_bridge_tile(&view, [150, 106, 62, 0], [200, 40, 40], &mut later);
+        push_bridge_tile(
+            &view,
+            [150, 106, 62, 0],
+            [200, 40, 40],
+            &|_| false,
+            &mut later,
+        );
         assert!(later[0].size[1] > frame[0].size[1]);
     }
 
@@ -3182,8 +3268,20 @@ mod tests {
             .flat_map(|(n, _)| (0..STAGES).map(move |k| stage_name(n, k)))
             .filter(|n| models.by_name(n).is_some())
             .count();
+        // So is the old one-tile bridge model.
+        let bridge = (0..STAGES)
+            .filter(|&k| models.by_name(&stage_name(SHARED_BRIDGE, k)).is_some())
+            .count();
+        // And the timber bridge kit's pieces (assets-src/buildings/bridges.ron:
+        // "Bridge Deck A", "Bridge Pier L2 Mid", ...): `bridge_kit` lays them
+        // along each bridge, so none dresses a building by name.
+        let kit = models
+            .models
+            .iter()
+            .filter(|m| m.is_still() && m.name().starts_with("Bridge "))
+            .count();
         assert_eq!(
-            dressed.len() + unused,
+            dressed.len() + unused + bridge + kit,
             still,
             "a building model's name matches no building"
         );
@@ -3234,6 +3332,7 @@ mod tests {
             gate: None,
             open: false,
             line: None,
+            drawing: None,
         };
         let model = |s: &StructureView| looks.model_of(s).map(|m| models.models[m].name());
         assert_eq!(model(&s), Some("Clan Hall #2"));
@@ -3276,6 +3375,7 @@ mod tests {
             gate: Some(gc_sim::gates::GateMode::Auto),
             open: false,
             line: None,
+            drawing: None,
         }
     }
 
@@ -3582,6 +3682,7 @@ mod tests {
                     gate: None,
                     open: false,
                     line: None,
+                    drawing: None,
                 };
                 let mut out = Vec::new();
                 push_trap_tile(&view, trap, |c| c, &mut out);

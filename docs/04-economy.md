@@ -61,8 +61,10 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 |---|---|---|---|---|
 | Main building | Clan Hall | Hive | Spire + 1 Resonator | Counting House |
 | Workers | 5 Hands | 4 Gnawers + 3 larvae | 3 Tuners | 4 Clerks + 1 Caravan |
-| Grub / Marrow | 300 / 0 | 300 / 0 | 300 / 0 | 300 / 0 |
+| Grub / Marrow | 250 / 0 | 300 / 0 | 300 / 0 | 350 / 0 |
 | Supply cap | 12 | 12 | 12 | 12 |
+
+*Even early game (2026-10-30, faction rebalance PR 2): the Clans start with 250 Grub and the Concord with 350 (both were 300), so first armies come closer together. The Clans gather fastest and had their first army (450 Grub's worth) ready at about 3:40, the Choir at 4:35 and the Concord at 4:45; now they are at about 3:50, 4:30 and 4:10. The Brood's first wave (about 5:25) is set by the Brood swarm cut, which comes next.*
 
 Every start position has 2 Grub seeps and 1 Marrow vein within its natural base area, a "natural expansion" with 2 more seeps nearby, and a Grubfolk hamlet within reach.
 

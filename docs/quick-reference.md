@@ -31,8 +31,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `A` Work plans (build your planned walls). `F1` selects the next idle worker; with none idle, `F1` opens the Marshal's Scroll.
 
 **Wall tool** (armed from the build menu)
-- Click a start, click again for each piece; right-click or `Esc` ends. `Shift` locks 15-degree steps.
-- `B` plans a blueprint (paid later). `O` ring tool: click corners; `Enter` or the first corner closes it.
+- Press and drag to draw a smooth curve; let go to order it. Click a start, click again for each sharp corner; right-click or `Esc` ends. `Shift` keeps lines straight, in 15-degree steps.
+- Bridge: drag bank to bank (gentle curve, no corners); `[` and `]` pick narrow, standard or wide (3, 4 or 5 tiles).
+- `B` plans a blueprint (paid later). `O` ring tool: click corners, or drag round for a smooth loop; `Enter` or the first corner closes it.
 
 **Selected building** (Conquest card)
 - The grid shows what it trains (`Q` first), with prices. A queue holds five; clicking the queue removes the last one.
@@ -78,7 +79,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Supply:** every faction starts at a cap of 12, raised by housing up to a hard maximum of 150. Housing: Farmstead +10 and Tenement +10 (Clans and Concord), Pustule +8 (Brood), Resonator or Siphon +4 (Choir), Outpost Hall +6 (Clans). Each main-building tier adds +10.
 - **Supply per unit:** worker 1, light 3, line 4, elite or cavalry 5, artillery 4, air 3, monster 6, hero 5. Training waits in the queue while there is no room.
 - **Workers:** Ember Hands 50 Grub; Brood Gnawers 50 Grub + 1 larva; Choir Tuners 60 (build and repair only); Concord Ledger Clerks 50 (Marrow only); Concord Caravan 75. Repair is free (Hands and Clerks 8 HP/s; Tuners' 10 not built).
-- **Starting state:** Clans Clan Hall, 5 Hands, 300 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 300 Grub.
+- **Starting state:** Clans Clan Hall, 5 Hands, 250 Grub. Brood Hive, 4 Gnawers + 3 larvae, 300 Grub. Choir Spire + 1 Resonator, 3 Tuners, 300 Grub. Concord Counting House, 4 Clerks + 1 Caravan, 350 Grub.
 - **Tempo:** Standard (100%); Swift (gather 150%, build and train 75%); Epic (gather 80%, build and train 120%).
 - **Tier costs:** tier 2 = 300 Grub + 100 Marrow, 60 s; tier 3 = 600 Grub + 250 Marrow, 90 s. Tier 1 needs no Marrow.
 
@@ -120,16 +121,18 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
 - **Routing:** a regiment can't waver or rout until it is down to its breaking point: about 45% strength for levies (morale under 55), 40% for line troops, 35% for elite (morale 70+), give or take 5, and 5 lower with its general near. Workers can break at any strength. Charges and flank attacks break regiments by killing men faster. The tick on a regiment card's health bar marks it.
+- **Veteran ranks:** a regiment earns ranks by killing enemy soldiers, weighed by their hit points against its own: rank 1 at its own worth killed, rank 2 at twice, rank 3 at four times; volley kills count half. Each rank: +10% damage, breaking point 5 lower. Ranks never go. Gold chevrons over the banner, on the card and on the selection banner ("Veteran rank 2").
 - **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Falling back, Running), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
+- Marching pace: woods 85% (heavy units 70%), soft ground 75% (heavy 60%), wading 60%. Routes go round woods and soft ground when that is quicker. Friendly blocks keep about half a tile apart and step round a friend standing in the way; only overlapping a friend ahead slows you, and overlapping past a tile throws both into disorder.
 - Melee hits buildings with the front rank; blows on buildings always land. Fortified buildings take half from regiments. Siege (rams, Mausoleum Engine) take x3.0 vs Fortified. Right-click an enemy building to attack it.
 - Right-click an enemy with a tower selected to focus it.
 - **Drawn walls:** wall tool; built tile by tile; snaps to wall ends, towers and gates within 1.5 tiles.
 - **Gates:** Auto (opens for you and allies), Locked (shut to all), Open (held). Enemy routes treat a shut gate as wall.
 - **Manning:** with foot or archers, right-click your raised (level 2 or 3) wall to man it. Right-click an enemy raised wall to climb ladders; `Ctrl`+right-click sieges it instead.
-- **Bridges** (straight, over water, two tiles wide, 6 Grub a tile, so 12 Grub a step along the span): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are drawn as the same planked timber bridge with lanterns and your team's cloth for now.
+- **Bridges** (drawn bank to bank over water along a gentle curve, three to five tiles wide, 3 Grub a tile; the land remembers every line): Timber Bridge (Clans), Bone Causeway (Concord), Glass Span (Choir), Chitin Span (Brood). All four are built from the timber kit, tile by tile: a planked deck (patched, weathered, broken when badly hurt), rope rails and posts on its outer edges, log cribs on the banks and timber piers in the water reaching the river bed; level 2 adds braced piers, timber rails and lantern posts; level 3 stone piers with cutwaters. Raise a finished bridge with `U` like a wall: level 2 braced piers (3 Grub, 3 s a tile, 600 hp; tier 1), level 3 reinforced piers (4 Grub + 1 Marrow, 4 s a tile, 1000 hp; tier 2). Names: Braced Timber Bridge / Stone-Footed Bridge, Braced Bone / Iron-Shod Causeway, Braced / Anchored Glass Span, Ribbed / Rooted Chitin Span. The AI raises its own bridges when rich.
 - **Field works:** Stakes and Barricades, drawn with the wall tool. Spearmen and archers plant stakes with `C` (about 10 s).
 - **Hidden traps** (one per faction; only its owner sees it): Spike Pit (Clans), Grave Hands (Concord), Shard Mine (Choir), Burrow Nest (Brood).
 - **Towers that fire:** Watchtower, Tollgate, Spine Mound, Bell Tower (range about 30 to 32). Bolt and Blast towers are not built.
@@ -147,6 +150,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Reading the rivers [docs/39]:** on grown maps every river has a name ("the Brackwater"). The top bar shows the worst river you can see: up (wading in it is a quarter slower), in flood (its fords shut) or bursting its banks, and whether it is rising or falling. When you see a river rising in flood upstream, the river watch tells you when its crest reaches a ford ("The Brackwater is rising upriver: its crest reaches a ford in about 40 s"). The river's water is drawn as high as it stands.
 - **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a flood front down a river at 6 tiles a second; each ford shuts as it arrives (upper fords first) and opens once the water falls. Sizes: Minor (no ford shuts; 35 in 100), Flood (45), Major (16), Catastrophic (4); wet ground and rain on spring snow make them bigger, a dry summer smaller. Warnings: 8 s before the first ford ("A flash flood is coming down the river"); a Major is told to everyone 15 s ahead and a Catastrophic one 30 s ahead. Troops in a ford the front shuts are swept 10 tiles downstream and 30% drown.
 - **Currents:** wading troops drift downstream; going upstream is slower.
+- **Trails and shores [docs/41 step 3]:** grown maps have worn trails between the bases, villages, camps and standing stones. They are open ground and cross rivers at the fords. River bends have gravel bars and sunny lake shores have sand (both open). Shaded lake shores have reed beds, which are tall grass to hide in.
 - **Clearing** (`S`): scrub 3 s, woods 8 s (3 Grub of timber), thicket 15 s (5 Grub).
 
 ## 7. Game modes and how to start them [docs/06-game-modes.md, docs/08-ui-ux.md, crates/gc_game/src/main.rs]
@@ -155,7 +159,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4) / `land-mixed` (any lobby map's name). Made maps: **Land: Random** (the default), **Plains**, **Mixed** and **Wild** on grown land with rivers, fords and woods (docs/41), and the older **Classic: Random**, **Plains**, **Mixed** and **Wild**. Both are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
-- **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
+- **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI. New lobbies start on **Measured: Random**: grown land with no mirrored half, starts placed so each one's walk to its nearest enemy is within 10% of the others' (any way the lobby hands starts out). Also offered: Land (mirrored grown land), Classic and Random maps. [docs/41]
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000; build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. Win by rout or victory points. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).

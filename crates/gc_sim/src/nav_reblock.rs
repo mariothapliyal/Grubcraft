@@ -56,6 +56,154 @@ pub(crate) struct Door {
     pub(crate) others: bool,
 }
 
+/// Each cell's area, as [`Grid::area`] holds it: in 16 bits while every
+/// number fits, as on any real map (the 384-tile grand battle's has a few
+/// hundred areas), and in 32 on ground cut into more pieces than that. The
+/// grid's cells are the biggest part of the simulation's memory, and these
+/// were half of them. Numbers are only ever compared, so which way they
+/// are held never changes a route. They stay narrow because numbering
+/// near a change refuses to give out a number past 16 bits (the whole map
+/// is numbered again from 1 instead), and a full numbering narrows them
+/// back when it can.
+#[derive(Clone)]
+pub(super) enum Areas {
+    Narrow(Vec<u16>),
+    Wide(Vec<u32>),
+}
+
+impl Areas {
+    /// `cells` cells, none in an area yet.
+    pub(super) fn new(cells: usize) -> Areas {
+        Areas::Narrow(vec![0; cells])
+    }
+
+    #[inline]
+    pub(super) fn get(&self, c: usize) -> u32 {
+        match self {
+            Areas::Narrow(a) => u32::from(a[c]),
+            Areas::Wide(a) => a[c],
+        }
+    }
+
+    /// Put cell `c` in area `n`, widening the cells if `n` doesn't fit.
+    #[inline]
+    pub(super) fn set(&mut self, c: usize, n: u32) {
+        match self {
+            Areas::Narrow(a) => match u16::try_from(n) {
+                Ok(n) => a[c] = n,
+                Err(_) => self.widen_to_set(c, n),
+            },
+            Areas::Wide(a) => a[c] = n,
+        }
+    }
+
+    /// Hold the cells in 32 bits and put cell `c` in area `n`. This
+    /// allocates, but no caller gives out such a number: numbering near a
+    /// change checks [`Areas::holds`] first, and [`Grid::number_areas`]
+    /// picks the width itself.
+    #[cold]
+    #[inline(never)]
+    fn widen_to_set(&mut self, c: usize, n: u32) {
+        if let Areas::Narrow(a) = self {
+            let mut wide: Vec<u32> = a.iter().map(|&x| u32::from(x)).collect();
+            wide[c] = n;
+            *self = Areas::Wide(wide);
+        }
+    }
+
+    /// Whether numbers up to `n` fit without widening.
+    pub(super) fn holds(&self, n: u32) -> bool {
+        matches!(self, Areas::Wide(_)) || n <= u32::from(u16::MAX)
+    }
+
+    /// Back to 16 bits a cell if wide but no number is above `most`.
+    pub(super) fn narrow(&mut self, most: u32) {
+        if let Areas::Wide(a) = self
+            && most <= u32::from(u16::MAX)
+        {
+            *self = Areas::Narrow(a.iter().map(|&x| x as u16).collect());
+        }
+    }
+
+    /// Every cell's area, in order.
+    #[cfg(test)]
+    pub(super) fn all(&self) -> Vec<u32> {
+        match self {
+            Areas::Narrow(a) => a.iter().map(|&x| u32::from(x)).collect(),
+            Areas::Wide(a) => a.clone(),
+        }
+    }
+}
+
+/// [`Grid::number_areas`]'s two passes over cells `area`, `side` across,
+/// whose clearances are `clear`: the number of areas, or `None` if the
+/// first pass's labels outgrew `T` (the cells are then left half done).
+fn number_cells<T>(clear: &[u8], area: &mut [T], side: usize) -> Option<u32>
+where
+    T: Copy + Into<u32> + TryFrom<u32>,
+{
+    let zero = T::try_from(0).ok()?;
+    // Each label's parent, never above the label: a root is its own.
+    let mut parent: Vec<u32> = vec![0];
+    let root = |parent: &mut [u32], mut l: u32| {
+        while parent[l as usize] != l {
+            let up = parent[parent[l as usize] as usize];
+            parent[l as usize] = up;
+            l = up;
+        }
+        l
+    };
+    for y in 0..side {
+        let row = y * side;
+        for x in 0..side {
+            let i = row + x;
+            if clear[i] < CLEARANCE {
+                area[i] = zero;
+                continue;
+            }
+            let behind = if x > 0 { area[i - 1].into() } else { 0 };
+            let above = if y > 0 { area[i - side].into() } else { 0 };
+            let label = match (behind, above) {
+                (0, 0) => {
+                    parent.push(parent.len() as u32);
+                    parent.len() as u32 - 1
+                }
+                (l, 0) | (0, l) => l,
+                (a, b) if a == b => a,
+                (a, b) => {
+                    // Labels the root, so the cells after it in the run
+                    // meet the same label above them and skip this.
+                    let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                    parent[ra.max(rb) as usize] = ra.min(rb);
+                    ra.min(rb)
+                }
+            };
+            area[i] = T::try_from(label).ok()?;
+        }
+    }
+    // Flatten (a parent is never above its label), then number roots in
+    // the order the map first meets them (no number is above its label,
+    // so each fits where the label did).
+    for l in 1..parent.len() {
+        parent[l] = parent[parent[l] as usize];
+    }
+    let mut number = vec![0u32; parent.len()];
+    let mut next = 0;
+    for a in area.iter_mut() {
+        let l: u32 = (*a).into();
+        if l == 0 {
+            continue;
+        }
+        let r = parent[l as usize] as usize;
+        if number[r] == 0 {
+            next += 1;
+            number[r] = next;
+        }
+        *a = T::try_from(number[r]).ok()?;
+    }
+    Some(next)
+}
+
 /// A change to a rectangle of cells.
 #[derive(Clone, Copy)]
 enum Change {
@@ -122,6 +270,19 @@ impl Nav {
             }
             let work = self.search.work;
             let changed = Arc::make_mut(&mut self.grids[v]).reprice(on, &mut self.search);
+            self.search.work = work;
+            self.reroute_near(v, &changed, 0, false, regs);
+        }
+    }
+
+    /// The going on each of `tiles` (`(x, y, percent)`, those on the map)
+    /// is now as given (see [`super::going_of`]): woods cleared or burnt
+    /// out. Only costs change, so the portals stay put and only routes
+    /// passing near the changed tiles are found again.
+    pub(crate) fn set_going(&mut self, tiles: &[(i32, i32, u8)], regs: &Regiments) {
+        for v in 0..self.grids.len() {
+            let work = self.search.work;
+            let changed = Arc::make_mut(&mut self.grids[v]).regoing(tiles, &mut self.search);
             self.search.work = work;
             self.reroute_near(v, &changed, 0, false, regs);
         }
@@ -351,16 +512,66 @@ impl Grid {
         if self.built[i] > opened {
             BLOCKED
         } else if self.is_bridged(i) {
-            DECK
+            super::price(DECK, 100)
         } else if self.is_flooded(i) {
             BLOCKED
         } else if self.ground[i] == BLOCKED && self.is_exposed(i) {
-            super::SHALLOWS
+            self.priced(i, super::SHALLOWS)
         } else if self.frozen && self.ground[i] == FORD {
-            OPEN
+            self.priced(i, OPEN)
         } else {
-            self.ground[i]
+            self.priced(i, self.ground[i])
         }
+    }
+
+    /// Set the going on each of `tiles` (`(x, y, percent)`) and bring the
+    /// costs and links up to date, searching in `search`'s room. Returns
+    /// the boxes of cells whose cost changed. No change while the grid has
+    /// no going and every tile keeps its whole pace.
+    fn regoing(&mut self, tiles: &[(i32, i32, u8)], search: &mut Search) -> Vec<[i32; 4]> {
+        let side = self.side / CELLS_PER_TILE;
+        let on_map = |&&(x, y, _): &&(i32, i32, u8)| self.cells([x, y, 1, 1]).is_some();
+        if self.going.is_empty() {
+            if tiles.iter().filter(on_map).all(|&(_, _, g)| g == 100) {
+                return Vec::new();
+            }
+            self.going = vec![100; (side * side) as usize];
+        }
+        let mut dirty = vec![false; (self.sectors * self.sectors) as usize];
+        let mut boxes = Vec::new();
+        for &(x, y, g) in tiles {
+            let Some(cells) = self.cells([x, y, 1, 1]) else {
+                continue;
+            };
+            let t = (y * side + x) as usize;
+            if self.going[t] == g {
+                continue;
+            }
+            self.going[t] = g;
+            for c in self.cells_in(cells).collect::<Vec<_>>() {
+                let cost = self.cell_cost(c as usize);
+                if cost != self.cost[c as usize] {
+                    self.cost[c as usize] = cost;
+                    dirty[self.sector_of(c) as usize] = true;
+                }
+            }
+            boxes.push(cells);
+        }
+        if !dirty.contains(&true) {
+            return Vec::new();
+        }
+        self.relink_costs(&dirty, search);
+        boxes
+    }
+
+    /// Link the sectors marked `dirty` again after only cell costs changed
+    /// (portals stay put), searching in `search`'s room.
+    fn relink_costs(&mut self, dirty: &[bool], search: &mut Search) {
+        let old = OldGraph::take(self);
+        let partner = self.place_portals(Some((&old, [0, 0, 0, 0])));
+        self.relink(&partner, &old, dirty, search);
+        self.node_room = self.node_room();
+        search.fit(self);
     }
 
     /// Freeze the fords (`on`) or thaw them and bring the links up to
@@ -401,11 +612,7 @@ impl Grid {
         if boxes.is_empty() {
             return boxes;
         }
-        let old = OldGraph::take(self);
-        let partner = self.place_portals(Some((&old, [0, 0, 0, 0])));
-        self.relink(&partner, &old, &dirty, search);
-        self.node_room = self.node_room();
-        search.fit(self);
+        self.relink_costs(&dirty, search);
         boxes
     }
 
@@ -558,7 +765,8 @@ impl Grid {
     /// box, and new ground) take new numbers. Returns false when that
     /// can't be told from the box alone: two areas joined, or a piece from
     /// before cut into two that both reach out (they may or may not meet
-    /// again beyond). Then the whole map must be numbered again: cells in
+    /// again beyond), or new numbers would no longer fit 16 bits (see
+    /// [`Areas`]). Then the whole map must be numbered again: cells in
     /// `near` that opened or shut have already lost their areas. Areas are only ever compared, so their numbers may
     /// differ from a fresh numbering's.
     pub(super) fn renumber_near(&mut self, near: [i32; 4], was_open: &[bool]) -> bool {
@@ -581,7 +789,7 @@ impl Grid {
             before[l] = was;
             // Cells that shut have no area; cells that opened have none yet.
             if was != now[l] {
-                self.area[(y * side + x) as usize] = 0;
+                self.area.set((y * side + x) as usize, 0);
             }
         }
         let (_, pieces, cells) = pieces_of(&now, w, h);
@@ -604,7 +812,7 @@ impl Grid {
         for (p, range) in pieces.iter().enumerate() {
             let mut area = 0;
             for &l in &cells[range.clone()] {
-                match (area, self.area[cell(l)]) {
+                match (area, self.area.get(cell(l))) {
                     (_, 0) => {}
                     (0, a) => area = a,
                     (a, b) if a != b => return false, // two areas joined
@@ -636,13 +844,19 @@ impl Grid {
                 number[run[0].1] = run[0].0;
             }
         }
+        // Numbers that would no longer fit the areas' narrow cells are
+        // given out afresh instead, by numbering the whole map again.
+        let new = number.iter().filter(|&&n| n == 0).count() as u32;
+        if !self.area.holds(self.areas.saturating_add(new)) {
+            return false;
+        }
         for n in number.iter_mut().filter(|n| **n == 0) {
             self.areas += 1;
             *n = self.areas;
         }
         for (range, &n) in pieces.iter().zip(&number) {
             for &l in &cells[range.clone()] {
-                self.area[cell(l)] = n;
+                self.area.set(cell(l), n);
             }
         }
         true
@@ -659,61 +873,21 @@ impl Grid {
     /// met in it.
     pub(super) fn number_areas(&mut self) {
         let side = self.side as usize;
-        // Each label's parent, never above the label: a root is its own.
-        let mut parent: Vec<u32> = vec![0];
-        let root = |parent: &mut [u32], mut l: u32| {
-            while parent[l as usize] != l {
-                let up = parent[parent[l as usize] as usize];
-                parent[l as usize] = up;
-                l = up;
-            }
-            l
-        };
-        for y in 0..side {
-            let row = y * side;
-            for x in 0..side {
-                let i = row + x;
-                if self.clear[i] < CLEARANCE {
-                    self.area[i] = 0;
-                    continue;
+        let next = match &mut self.area {
+            Areas::Narrow(a) => match number_cells(&self.clear, a, side) {
+                Some(next) => next,
+                // More labels than 16 bits hold (only on ground cut into
+                // tens of thousands of pieces): label it again in 32.
+                None => {
+                    let mut wide = vec![0u32; a.len()];
+                    let next = number_cells(&self.clear, &mut wide, side);
+                    self.area = Areas::Wide(wide);
+                    next.expect("a label for every cell")
                 }
-                let behind = if x > 0 { self.area[i - 1] } else { 0 };
-                let above = if y > 0 { self.area[i - side] } else { 0 };
-                self.area[i] = match (behind, above) {
-                    (0, 0) => {
-                        parent.push(parent.len() as u32);
-                        parent.len() as u32 - 1
-                    }
-                    (l, 0) | (0, l) => l,
-                    (a, b) if a == b => a,
-                    (a, b) => {
-                        // Labels the root, so the cells after it in the run
-                        // meet the same label above them and skip this.
-                        let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
-                        parent[ra.max(rb) as usize] = ra.min(rb);
-                        ra.min(rb)
-                    }
-                };
-            }
-        }
-        // Flatten (a parent is never above its label), then number roots
-        // in the order the map first meets them.
-        for l in 1..parent.len() {
-            parent[l] = parent[parent[l] as usize];
-        }
-        let mut number = vec![0u32; parent.len()];
-        let mut next = 0;
-        for a in &mut self.area {
-            if *a == 0 {
-                continue;
-            }
-            let r = parent[*a as usize] as usize;
-            if number[r] == 0 {
-                next += 1;
-                number[r] = next;
-            }
-            *a = number[r];
-        }
+            },
+            Areas::Wide(a) => number_cells(&self.clear, a, side).expect("a label for every cell"),
+        };
+        self.area.narrow(next);
         self.areas = next;
     }
 
@@ -871,13 +1045,25 @@ mod tests {
     fn same_areas(a: &Grid, b: &Grid) {
         let mut to_b = alloc::collections::BTreeMap::new();
         let mut to_a = alloc::collections::BTreeMap::new();
-        for (i, (&x, &y)) in a.area.iter().zip(&b.area).enumerate() {
+        for (i, (x, y)) in a.area.all().into_iter().zip(b.area.all()).enumerate() {
             assert_eq!(x == 0, y == 0, "open differs at cell {i}");
             if x != 0 {
                 assert_eq!(*to_b.entry(x).or_insert(y), y, "areas differ at cell {i}");
                 assert_eq!(*to_a.entry(y).or_insert(x), x, "areas differ at cell {i}");
             }
         }
+    }
+
+    /// The costs of a grid with no slow going, as the map would give
+    /// them (in steps of open ground), to build it afresh from.
+    fn unpriced(g: &Grid) -> Vec<u8> {
+        assert!(g.going.is_empty());
+        let back = |c: u8| {
+            (0..=u8::MAX)
+                .find(|&m| super::super::price(m, 100) == c)
+                .expect("a map cost")
+        };
+        g.cost.iter().map(|&c| back(c)).collect()
     }
 
     /// Every part of the grid that routes read.
@@ -926,7 +1112,7 @@ mod tests {
                 standing.push([x, y, w, d]);
                 build_on(&mut g, [x, y, w, d], true);
             }
-            let mut fresh = Grid::build(&g.cost, side);
+            let mut fresh = Grid::build(&unpriced(&g), side);
             fresh.ground.clone_from(&g.ground);
             fresh.built.clone_from(&g.built);
             same(&g, &fresh);
@@ -951,7 +1137,7 @@ mod tests {
         for b in [wall, gate, house] {
             assert!(g.set_built(b, true, &mut search).is_some());
         }
-        let mut walled = Grid::build(&g.cost, side);
+        let mut walled = Grid::build(&unpriced(&g), side);
         walled.ground.clone_from(&g.ground);
         walled.built.clone_from(&g.built);
         same(&g, &walled);
@@ -1067,7 +1253,7 @@ mod tests {
                 let mut g = Grid::build(&ground, side);
                 let mut search = Search::for_grid(&g);
                 assert!(g.set_built([x, y, 2, 3], true, &mut search).is_some());
-                let mut fresh = Grid::build(&g.cost, side);
+                let mut fresh = Grid::build(&unpriced(&g), side);
                 fresh.ground.clone_from(&g.ground);
                 fresh.built.clone_from(&g.built);
                 same(&g, &fresh);
@@ -1093,7 +1279,7 @@ mod tests {
             }
         }
         let check = |g: &Grid| {
-            let mut fresh = Grid::build(&g.cost, side);
+            let mut fresh = Grid::build(&unpriced(g), side);
             fresh.ground.clone_from(&g.ground);
             fresh.built.clone_from(&g.built);
             same(g, &fresh);
@@ -1111,16 +1297,15 @@ mod tests {
     /// The areas numbered by a flood fill from each new open cell met,
     /// row by row: what [`Grid::number_areas`] must give.
     fn flood_areas(g: &Grid) -> Vec<u32> {
-        let mut g = g.clone();
-        g.area.fill(0);
+        let mut area = vec![0; g.cost.len()];
         let mut queue: Vec<u32> = Vec::with_capacity(g.cost.len());
         let mut next = 0;
         for c in 0..g.cost.len() as u32 {
-            if !g.open_cell(c) || g.area[c as usize] != 0 {
+            if !g.open_cell(c) || area[c as usize] != 0 {
                 continue;
             }
             next += 1;
-            g.area[c as usize] = next;
+            area[c as usize] = next;
             queue.clear();
             queue.push(c);
             let mut head = 0;
@@ -1134,14 +1319,14 @@ mod tests {
                         continue;
                     }
                     let m = g.idx(x + dx, y + dy);
-                    if g.area[m as usize] == 0 {
-                        g.area[m as usize] = next;
+                    if area[m as usize] == 0 {
+                        area[m as usize] = next;
                         queue.push(m);
                     }
                 }
             }
         }
-        g.area
+        area
     }
 
     #[test]
@@ -1155,7 +1340,7 @@ mod tests {
                 .map(|_| if rng.below(100) < blocked { BLOCKED } else { 1 })
                 .collect();
             let g = Grid::build(&cost, side);
-            assert!(g.area == flood_areas(&g), "{blocked}% blocked");
+            assert!(g.area.all() == flood_areas(&g), "{blocked}% blocked");
         }
     }
 
@@ -1169,14 +1354,18 @@ mod tests {
         for c in g.cells_in([x0, y0, x1, y1]).collect::<Vec<_>>() {
             let c = c as usize;
             g.built[c] = if on { g.built[c] + 1 } else { g.built[c] - 1 };
-            g.cost[c] = if g.built[c] > 0 { BLOCKED } else { g.ground[c] };
+            g.cost[c] = if g.built[c] > 0 {
+                BLOCKED
+            } else {
+                g.priced(c, g.ground[c])
+            };
         }
         g.measure_clearance_in(0, 0, g.side, g.side);
         let near_only = g.renumber_near(near, &was_open);
         if !near_only {
             g.number_areas();
         }
-        let fresh = Grid::build(&g.cost, g.side);
+        let fresh = Grid::build(&unpriced(g), g.side);
         same_areas(g, &fresh);
         near_only
     }
@@ -1217,6 +1406,50 @@ mod tests {
             !renumbered_near(&mut g, [0, 50, 8, 1], false),
             "halves joined"
         );
+    }
+
+    #[test]
+    fn areas_numbers_too_high_to_fit_are_given_out_afresh() {
+        let tiles = 64;
+        let open = vec![1u8; (tiles * CELLS_PER_TILE * tiles * CELLS_PER_TILE) as usize];
+        let mut g = Grid::build(&open, tiles * CELLS_PER_TILE);
+        // As if a long match had given out every number 16 bits hold: a
+        // pocket walled off needs a new one, so the map is numbered again,
+        // from 1, and the cells stay narrow.
+        g.areas = u32::from(u16::MAX);
+        let ring = [[20, 20, 8, 1], [20, 27, 8, 1], [20, 21, 1, 6]];
+        for wall in ring {
+            assert!(renumbered_near(&mut g, wall, true));
+        }
+        assert!(!renumbered_near(&mut g, [27, 21, 1, 6], true));
+        assert_eq!(g.areas, 2);
+        assert!(matches!(g.area, Areas::Narrow(_)));
+    }
+
+    #[test]
+    fn ground_in_more_pieces_than_16_bits_count_is_numbered_in_32() {
+        // Open cells a cell apart, each its own area: 260 x 260 of them.
+        let side = 520;
+        let cost: Vec<u8> = (0..side * side)
+            .map(|i| {
+                if (i % side) % 2 == 0 && (i / side) % 2 == 0 {
+                    1
+                } else {
+                    BLOCKED
+                }
+            })
+            .collect();
+        let g = Grid::build(&cost, side);
+        assert!(matches!(g.area, Areas::Wide(_)));
+        assert_eq!(g.areas, 260 * 260);
+        assert!(g.area.all() == flood_areas(&g), "areas differ");
+        // Numbered again with few enough areas, the cells narrow back.
+        let mut fewer = g.clone();
+        fewer.clear.fill(0);
+        fewer.clear[0] = CLEARANCE;
+        fewer.number_areas();
+        assert!(matches!(fewer.area, Areas::Narrow(_)));
+        assert_eq!(fewer.area.get(0), 1);
     }
 
     #[test]

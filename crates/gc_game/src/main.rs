@@ -140,6 +140,7 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+mod bridge_kit;
 mod buildings;
 mod camera;
 mod cinema;
@@ -163,11 +164,14 @@ mod fx_demo;
 #[cfg(test)]
 mod goldens;
 mod ground_look;
+#[cfg(test)]
+mod headless;
 mod land;
 mod lights;
 #[cfg(test)]
 mod stress;
 // The Guide's data (docs/08-ui-ux.md#guide).
+mod drawn_tool;
 mod guide_data;
 mod hud;
 mod lens;
@@ -832,6 +836,10 @@ struct Running {
     pending: Vec<PlayerCommand>,
     /// Orders from this machine's player, and a new match's deployment.
     human_orders: Vec<PlayerCommand>,
+    /// A joiner's opening view, waiting for the host's deployment zone: the
+    /// way the start faces and the focus it was first given. The host moves a
+    /// zone off the start where the ground needs it, and only it knows where.
+    zone_look: Option<(Vec2, Vec2)>,
     /// Position and facing at the previous tick, by pool index, for interpolation.
     prev_positions: Vec<Option<(RegimentHandle, Vec2, Vec2)>>,
     /// How far between the last two ticks the last frame drew, 0 to 1.
@@ -1122,11 +1130,20 @@ impl LodView {
     /// when it is worth no drawing: it is neither on screen nor casting a
     /// shadow where one is drawn.
     fn place(&self, height: f32, pos: glam::Vec3) -> Option<usize> {
+        // A soldier may be drawn forward of his position onto his feet.
         self.cull
-            .sees(pos + glam::Vec3::Y * (height * 0.5), height)
+            .sees(
+                pos + glam::Vec3::Y * (height * 0.5),
+                height + FEET_SHIFT_ROOM,
+            )
             .then(|| self.lod(height, pos))
     }
 }
+
+/// How far beyond its height a soldier's model may reach from his position,
+/// being drawn forward onto his feet ([`gc_assets::model::Models::feet_shift`],
+/// at most 0.74 tiles).
+const FEET_SHIFT_ROOM: f32 = 0.75;
 
 impl Art {
     /// Empty the buckets for a frame seen from `eye` looking along `forward`,
@@ -1737,6 +1754,7 @@ impl App {
             matches: 0,
             pending,
             human_orders: Vec::with_capacity(64),
+            zone_look: None,
             prev_positions,
             alpha: 1.0,
             instances: Vec::with_capacity(gc_render::MAX_BOX_INSTANCES),
@@ -2378,6 +2396,8 @@ impl Running {
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
+                // The wall tool: a drag from here draws a curve.
+                self.begin_wall_drag();
                 // Choosing ground to clear: the drag starts on the ground.
                 self.input.clear_from = (self.hud.armed == Some(hud::Armed::Clear))
                     .then(|| self.ground_under_cursor())
@@ -3562,6 +3582,7 @@ impl Running {
                 self.save_recording();
             }
         }
+        self.look_at_own_zone();
         let alpha = match &self.online {
             // Turns arrive on the host's clock: move smoothly towards the
             // latest one.
@@ -5609,6 +5630,7 @@ impl Running {
             sounds.new_match(self.heightmap.clone());
         }
         self.attack_mark = None;
+        self.zone_look = None;
         self.sim_clock = Duration::ZERO;
         self.fresh_puppets();
         self.effects.clear();
@@ -5780,6 +5802,33 @@ impl Running {
         if self.online.is_some() && set.my_forward.y > 0.0 {
             self.camera.face(Vec2::Y);
         }
+        // A joiner doesn't deploy: the host's zone, when it arrives, says
+        // where the army really stands.
+        self.zone_look = self
+            .online
+            .as_ref()
+            .filter(|o| !o.host)
+            .map(|_| (set.my_forward, focus));
+    }
+
+    /// Once the host's deployment zone for this machine's side arrives, point
+    /// a joiner's camera at it, unless they have already moved the view or
+    /// the battle has begun without one.
+    fn look_at_own_zone(&mut self) {
+        let Some((forward, first)) = self.zone_look else {
+            return;
+        };
+        if self.camera.focus != first || self.world.battle_ticks() > 0 {
+            self.zone_look = None;
+            return;
+        }
+        let Some(zone) = self.world.deploy_zone(self.sandbox.side) else {
+            return;
+        };
+        self.zone_look = None;
+        let focus = from_fx_vec(zone.center) + forward * 18.0;
+        self.camera.focus = focus;
+        self.camera.focus_height = self.heightmap.height_at(focus.x, focus.y);
     }
 
     /// Seat `parties` for a lobby match, this machine playing `me`, and
@@ -6818,9 +6867,14 @@ impl Running {
             text.push_str(dev);
         }
         let scale = self.window.scale_factor() as f32;
-        // Below Conquest's top bar.
+        // Below Conquest's top bar, and the faction power buttons under it.
         let top = if self.match_started && self.showroom.is_none() {
-            gc_ui::hud::TOP_BAR_HEIGHT as f32 * self.ui_scale()
+            let powers = if !self.menu_open && self.offered_powers().next().is_some() {
+                gc_ui::powers::ROW_BOTTOM
+            } else {
+                0
+            };
+            (gc_ui::hud::TOP_BAR_HEIGHT + powers) as f32 * self.ui_scale()
         } else {
             0.0
         };
@@ -7104,6 +7158,9 @@ impl Running {
             buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all),
             |s| {
                 let art = art.as_ref()?;
+                if art.looks.kit_for(s.building).is_some() {
+                    return Some(buildings::height_of(gc_sim::structures::Role::Bridge));
+                }
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
             |s| {
@@ -7866,9 +7923,51 @@ impl Running {
                 });
             }
         }
+        // The bridge tiles, so the timber kit rails only a deck's outer
+        // edges. Sorted for a binary search; empty on a map with no bridges.
+        let bridged = buildings::bridge_tiles(structures, &self.buildings);
+        let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
-            if let Some(model) = art.looks.model_of(&s) {
+            if let Some(kit) = art.looks.kit_for(s.building) {
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
+                let dir = (s.line.and_then(|line| buildings::wall_piece(line, s.tile)))
+                    .map_or(Vec2::X, |p| p.dir);
+                let tile = bridge_kit::Tile {
+                    s: &s,
+                    dir,
+                    level: self.buildings.level(s.building),
+                    joined: &|t| bridged.binary_search(&t).is_ok(),
+                    drawn: &|p: Vec2| ground(p.x, p.y),
+                    bed: &|p: Vec2| hm.height_at(p.x, p.y),
+                };
+                pieces.clear();
+                kit.pieces(&tile, &mut pieces);
+                let (shake, rise) = self.siege.jolt(s.handle);
+                for p in &pieces {
+                    // Shaken as one: every piece keeps the height it has
+                    // unshaken, wherever the jolt puts it.
+                    let pos = p.at + shake;
+                    let lift = ground(p.at.x, p.at.y) + p.lift + rise - ground(pos.x, pos.y);
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(p.model), at),
+                        art.clips.pose(p.model, Action::Idle, time),
+                    ) else {
+                        continue;
+                    };
+                    art.buckets[p.model * LODS + lod].push(SoldierInstance {
+                        pos: pos.to_array(),
+                        facing: p.facing.to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                }
+            } else if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let along = !self.buildings.is_bridge(s.building);
@@ -9009,16 +9108,16 @@ mod tests {
     #[test]
     fn the_lobby_offers_the_maps_gc_map_makes() {
         assert_eq!(gc_ui::lobby::MAPS, gc_map::FIELD_MAPS);
-        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::GROWN);
+        assert_eq!(gc_ui::lobby::DEFAULT_MAP, gc_map::MEASURED);
     }
 
     /// A new lobby's two-player battle is on grown land, as wild as the
     /// seed picks, at the standard size for two.
     #[test]
-    fn a_new_lobby_plays_on_grown_land() {
+    fn a_new_lobby_plays_on_measured_grown_land() {
         let key = battle_map(&gc_ui::lobby::LobbySettings::default(), 2);
         let wilds = FieldMap {
-            choice: gc_map::GROWN,
+            choice: gc_map::MEASURED,
             tiles: 512,
             seed: 0x6772_7562,
         };
