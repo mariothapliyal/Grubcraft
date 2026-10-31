@@ -118,7 +118,7 @@
         ),
         (
             name: "Collector's Bolt",
-            blurb: "Bolt tower: a heavy bolt that runs down a single file. Strong against columns, monsters, riders and engines.",
+            blurb: "Bolt tower: a heavy bolt down a file of soldiers; each soldier it kills pays you 3 Grub.",
             summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers, then whoever attacks your buildings. Each soldier it kills pays you 3 Grub. A shield wall does not stop the bolt.",
             notes: [],
             tips: [
@@ -129,7 +129,7 @@
         ),
         (
             name: "Corpse Catapult",
-            blurb: "Blast tower: shots into the fullest enemy block, harder the more packed it is. Cannot hit enemies close to it.",
+            blurb: "Blast tower: shells packed blocks; its kills rise as Bone Pikes. Blind within 8 tiles, so guard it.",
             summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Every 10 soldiers it kills rise beside it as a regiment of 10 Bone Pikes, yours for 30 seconds.",
             notes: [],
             tips: [
