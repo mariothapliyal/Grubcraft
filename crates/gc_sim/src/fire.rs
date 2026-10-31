@@ -254,33 +254,23 @@ impl Fires {
 
     /// The burnable tile regiment `i` would fire: the nearest its centre
     /// of those its block touches or comes within a tile of, not burning
-    /// yet (ties to the lower row, then column).
+    /// yet, or of the `more` tiles that burn (the jams against bridges);
+    /// ties to the lower row, then column.
     pub(crate) fn tinder(
         &self,
         terrain: &Terrain,
         regs: &Regiments,
         units: &[UnitStats],
         i: usize,
+        more: impl Iterator<Item = (i32, i32)>,
     ) -> Option<(i32, i32)> {
         let b = Block::of(regs, units, i);
         let r = (b.radius() + Fx::ONE).ceil_int();
         let (cx, cy) = (b.centre.x.floor_int(), b.centre.y.floor_int());
         let tiles = (cy - r..=cy + r).flat_map(|y| (cx - r..=cx + r).map(move |x| (x, y)));
-        nearest(
-            &b,
-            tiles.filter(|&(x, y)| terrain.growth(x, y) != Growth::Open && !self.is_burning(x, y)),
-        )
-    }
-
-    /// The nearest of `tiles` regiment `i` can reach to set alight (the
-    /// tiles a [`Fires::tinder`] would look at), if any.
-    pub(crate) fn in_reach(
-        regs: &Regiments,
-        units: &[UnitStats],
-        i: usize,
-        tiles: impl Iterator<Item = (i32, i32)>,
-    ) -> Option<(i32, i32)> {
-        nearest(&Block::of(regs, units, i), tiles)
+        let growth =
+            tiles.filter(|&(x, y)| terrain.growth(x, y) != Growth::Open && !self.is_burning(x, y));
+        nearest(&b, growth.chain(more))
     }
 
     /// One tick of the fires: each burns down (faster in rain or snow),

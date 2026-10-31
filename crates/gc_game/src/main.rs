@@ -7522,8 +7522,7 @@ impl Running {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             river_debris::extras(
                 world.flood().rivers().debris_seen(),
-                |p| t.river_rise(p),
-                river_debris::still_water(t, map.water_level()),
+                move |p| river_debris::surface(t, map.water_level(), p),
                 self.scenery.height_of(river_debris::LOG_MODEL),
                 move |tile| reveal || fog.sees_tile(tile),
             )

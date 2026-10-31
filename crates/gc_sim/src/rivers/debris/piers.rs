@@ -235,24 +235,25 @@ impl Rivers {
     /// it is gone (or its pier is).
     fn burn_jams(&mut self) {
         let mut fires = core::mem::take(&mut self.debris.fires);
-        fires.retain_mut(|(i, seconds)| {
-            let Some(pier) = self.pier_on(*i) else {
+        fires.retain_mut(|fire| {
+            let Some(pier) = self.pier_on(fire.pier) else {
                 return false;
             };
             let pieces = &mut self.debris.pieces;
-            let Some(k) = pieces
-                .iter()
-                .position(|p| p.is_some_and(|p| p.jammed && p.next == *i))
+            let Some(k) =
+                (pieces.iter()).position(|p| p.is_some_and(|p| p.jammed && p.next == fire.pier))
             else {
                 return false;
             };
-            self.debris
-                .blows
-                .push((pier.slot, DECK_BURN_PER_TEN_THOUSAND));
-            *seconds += 1;
-            if pieces[k].is_some_and(|p| *seconds >= BURN_SECONDS * p.kind.mass()) {
+            (self.debris.blows).push((pier.slot, DECK_BURN_PER_TEN_THOUSAND));
+            // A new piece to burn down (the last one burnt, or pulled out).
+            if usize::from(fire.piece) != k {
+                fire.piece = k as u8;
+                fire.seconds = 0;
+            }
+            fire.seconds += 1;
+            if pieces[k].is_some_and(|p| fire.seconds >= BURN_SECONDS * p.kind.mass()) {
                 pieces[k] = None;
-                *seconds = 0;
             }
             true
         });
@@ -266,17 +267,15 @@ impl Rivers {
 
     /// Whether the jam on the pier on tile `i` burns.
     fn burns(&self, i: u32) -> bool {
-        self.debris.fires.iter().any(|&(t, _)| t == i)
+        self.debris.fires.iter().any(|f| f.pier == i)
     }
 
-    /// The tiles the jams that don't burn yet lie on, for the Burn order.
+    /// The tiles the jams that don't burn yet lie on (one a piece), for the
+    /// Burn order.
     pub(crate) fn unlit_jams(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
         let n = self.side as u32;
-        (self.debris.piers.iter())
-            .filter(|pier| !self.burns(pier.tile))
-            .filter_map(|pier| {
-                (self.debris.pieces.iter().flatten()).find(|p| p.jammed && p.next == pier.tile)
-            })
+        (self.debris.pieces.iter().flatten())
+            .filter(|p| p.jammed && !self.burns(p.next))
             .map(move |p| ((p.tile % n) as i32, (p.tile / n) as i32))
     }
 
@@ -287,23 +286,27 @@ impl Rivers {
             return false;
         };
         let Some(pier) = (self.debris.pieces.iter().flatten())
-            .find(|p| p.jammed && p.tile == i as u32)
+            .find(|p| p.jammed && p.tile == i as u32 && !self.burns(p.next))
             .map(|p| p.next)
-            .filter(|&pier| !self.burns(pier))
         else {
             return false;
         };
         let fires = &mut self.debris.fires;
-        let at = fires.partition_point(|&(t, _)| t < pier);
-        fires.insert(at, (pier, 0));
+        let at = fires.partition_point(|f| f.pier < pier);
+        let fire = super::JamFire {
+            pier,
+            piece: u8::MAX,
+            seconds: 0,
+        };
+        fires.insert(at, fire);
         true
     }
 
     /// Where each burning jam is (its first piece), in tiles.
     pub fn jam_fires(&self) -> impl Iterator<Item = gc_fixed::FxVec2> + '_ {
-        (self.debris.fires.iter()).filter_map(|&(i, _)| {
+        (self.debris.fires.iter()).filter_map(|f| {
             (self.debris.pieces.iter().flatten())
-                .find(|p| p.jammed && p.next == i)
+                .find(|p| p.jammed && p.next == f.pier)
                 .map(|p| p.point(self.side))
         })
     }
@@ -387,7 +390,7 @@ impl Rivers {
     /// The jam on the pier on tile `i` breaks up and floats on, past it
     /// (put out, if it burned).
     fn wash_free(&mut self, i: u32) {
-        self.debris.fires.retain(|&(t, _)| t != i);
+        self.debris.fires.retain(|f| f.pier != i);
         for p in self.debris.pieces.iter_mut().flatten() {
             if p.jammed && p.next == i {
                 p.jammed = false;

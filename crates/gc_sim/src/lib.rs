@@ -646,8 +646,10 @@ pub enum Command {
     /// regiments, at any time, deploying too.
     Torches { regiment: RegimentHandle, lit: bool },
     /// Set the woods beside a regiment alight: the burnable tile (scrub,
-    /// woods or thicket) nearest its centre within a tile of its block
-    /// catches, and the fire spreads with the wind (see [`fire`]). The
+    /// woods or thicket, or debris jammed against a bridge) nearest its
+    /// centre within a tile of its block catches, and the fire spreads
+    /// with the wind (see [`fire`]; a jam burns down where it lies and the
+    /// deck above with it, docs/39-water-engine.md, "Burning it"). The
     /// issuer's own regiment, not fighting or routed; refused when nothing
     /// is in reach or the ground is too wet to catch. Not while deploying.
     Burn { regiment: RegimentHandle },
@@ -2191,18 +2193,26 @@ impl World {
                         && !self.regiments.morale_state[i].broken()
                         && self.weather_lets_fire() =>
                 {
-                    // A jam against a bridge in reach burns first (docs/39,
-                    // "Burning it"), else the woods.
+                    // The nearest of the woods and the jams against bridges
+                    // in reach (docs/39, "Burning it").
                     let rivers = &mut self.flood.rivers;
-                    let jam =
-                        fire::Fires::in_reach(&self.regiments, &self.units, i, rivers.unlit_jams());
-                    match jam {
-                        Some((x, y)) => rivers.light_jam(x, y),
-                        None => self
-                            .fires
-                            .tinder(&self.terrain, &self.regiments, &self.units, i)
-                            .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y)),
-                    }
+                    let lit = (self.fires)
+                        .tinder(
+                            &self.terrain,
+                            &self.regiments,
+                            &self.units,
+                            i,
+                            rivers.unlit_jams(),
+                        )
+                        .filter(|&(x, y)| {
+                            if rivers.light_jam(x, y) {
+                                // A jam catching is told as woods catching are.
+                                self.fires.kindled.push((x, y));
+                                return true;
+                            }
+                            self.fires.kindle(&self.terrain, x, y)
+                        });
+                    lit.is_some()
                 }
                 _ => false,
             },
