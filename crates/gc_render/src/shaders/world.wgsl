@@ -36,12 +36,15 @@ struct Globals {
     sky_ambient: vec4<f32>,
     // rgb: light from the ground, a: how dark cloud shadows are
     ground_ambient: vec4<f32>,
-    // rgb: air colour toward the sun (HDR)
+    // rgb: air colour toward the sun (HDR), a: how dry the grass is
+    // (`Look::dry`)
     haze: vec4<f32>,
     // x: how quickly the air thins with height, y: ground occlusion strength,
     // z: how thick the air is at the camera, relative to sea level
-    // (exp(-x * camera height))
+    // (exp(-x * camera height)), w: how far the woods have turned
+    // (`Look::autumn`)
     air: vec4<f32>,
+    // rgb: the sky overhead, a: how frozen the water is (`Look::ice`)
     sky_top: vec4<f32>,
     sky_horizon: vec4<f32>,
     // x: how many point lights (lights.rs), y: how much snow lies on the
@@ -1084,6 +1087,16 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
         grass = grass * look_mult * (255.0 / 128.0);
     }
+    // The season on the grass: straw in a dry summer and dead grass in
+    // winter, in drifts so a field is never one colour. The land's and the
+    // habitat's own shades still show through it.
+    let parched = g.haze.w;
+    if parched > 0.0 {
+        let straw = srgb_to_linear(vec3<f32>(0.6, 0.52, 0.27));
+        let shade_of = dot(grass, vec3<f32>(0.3, 0.6, 0.1)) / 0.17;
+        let drift = smoothstep(0.2, 0.8, vnoise(xz * 0.11 + vec2<f32>(5.0, 17.0)));
+        grass = mix(grass, straw * clamp(shade_of, 0.6, 1.3), parched * mix(0.5, 0.85, drift));
+    }
     let dry = srgb_to_linear(vec3<f32>(0.62, 0.55, 0.33));
     let bone = srgb_to_linear(vec3<f32>(0.85, 0.8, 0.68));
     let grass_in = smoothstep(0.16, 0.26, h);
@@ -1311,8 +1324,24 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
             sky = mix(sky, cl.rgb, cl.a);
         }
         let glint = g.sun_color.rgb * pow(max(dot(r, g.sun_dir.xyz), 0.0), 500.0) * 10.0 * sun;
-        let wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
-        c = mix(c, wc, clamp(0.5 + depth * 1.5, 0.0, 0.92));
+        var wc = finish(mix(lit, sky * 0.8, mirror) + glint, wp);
+        var cover = clamp(0.5 + depth * 1.5, 0.0, 0.92);
+        // Frozen water: a pale sheet of ice, cracked and cloudy, with snow
+        // drifted over it when snow lies. It hides the bed and the ripples.
+        let frozen = g.sky_top.w;
+        if frozen > 0.0 {
+            let cloudy = 0.8 + 0.35 * fbm(wp.xz * 0.45 + vec2<f32>(3.0, 29.0));
+            let crack = smoothstep(0.47, 0.5, vnoise(wp.xz * 1.7)) * (1.0 - smoothstep(0.5, 0.53, vnoise(wp.xz * 1.7)));
+            var ice = srgb_to_linear(vec3<f32>(0.72, 0.82, 0.88)) * cloudy * (1.0 - 0.35 * crack);
+            let drifted = smoothstep(0.55, 0.75, fbm(wp.xz * 0.3 + vec2<f32>(51.0, 7.0))) * g.light_meta.y;
+            ice = mix(ice, SNOW_ALBEDO, drifted);
+            let up = vec3<f32>(0.0, 1.0, 0.0);
+            let sheen = sky_color(reflect(-v, up), false) * 0.12 * (1.0 - drifted);
+            let ic = shade(ice, up, wp) + sheen * (1.0 - air_amount(wp, dist));
+            wc = mix(wc, ic, frozen);
+            cover = mix(cover, 1.0, frozen);
+        }
+        c = mix(c, wc, cover);
     }
     return vec4<f32>(veil(c, xz), 1.0);
 }

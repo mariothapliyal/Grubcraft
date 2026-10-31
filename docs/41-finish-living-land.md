@@ -223,6 +223,45 @@ the Classic choices so old choices keep their numbers;
   fire near troops then the base is told once each, with the quiet time,
   and a fire spreading from the troops to the base is told again.
 
+## Step 5 as built
+
+*2026-10-31.* The season shows on the land in a Conquest match with
+seasons. Render only: nothing in the simulation changed.
+
+- **Summer** (`Look::dry`): the grass turns to straw, in drifts so a
+  field is never one colour, with the land's and habitat's own shades
+  still under it. Grass clumps and bushes go the same way.
+- **Autumn** (`Look::autumn`): broadleaf trees turn gold, orange or red,
+  each tree its own colour (picked from where it stands), and a few turn
+  late and stay green. Conifers keep their needles. The grass browns a
+  little and bushes go brown.
+- **Winter**: a thin snow lies whatever the weather (`WINTER_SNOW`, 0.35
+  of a full cover: patches on flat ground, a dusting on trees and roofs),
+  and real snowfall builds on it as before. The grass is dead and pale.
+  Frozen water (`Look::ice`, from the simulation's frozen water, the same
+  state that lets armies cross the shallows) is drawn as a pale, cloudy,
+  cracked sheet of ice that hides the ripples and the bed, with snow
+  drifted on it when snow lies. The ice comes in and goes over about 6
+  seconds (`ICE_SETTLE`).
+- **Crossing over.** Each season is full through its middle and crosses
+  to the next over a fifth of a season either side of its edge
+  (`atmosphere::Year`), so nothing changes at a stroke: at Short seasons
+  the woods take about three minutes to turn.
+- **Where it lives.** `SkyView` carries where the year stands and whether
+  the water is frozen; `Atmosphere::look` sets the three new `Look`
+  values. They reach the shaders in free slots of `Globals` (`haze.w`,
+  `air.w`, `sky_top.w`). The tuning panel has knobs for each.
+- **`--season spring|summer|autumn|winter`** draws the land in that
+  season whatever the match's year (the picture only), to check the look
+  without waiting for it.
+- **Real use.** In a Conquest match with seasons, a player sees the
+  season on the field, not only in the top bar: frozen rivers that can be
+  crossed look frozen, the dry summer when fire spreads looks dry, and
+  winter's snow is there without a snowstorm.
+- **Tests.** `each_season_shows_through_its_middle_and_crosses_over_at_its_edges`
+  and `the_season_is_drawn_and_the_ice_comes_in_over_seconds`; the shader
+  validation test covers the shaders.
+
 ## Not in this plan
 
 Water levels per tile, dams and debris (docs/39). Three- and five-player

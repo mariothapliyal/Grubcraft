@@ -250,6 +250,9 @@ const GOLDEN_HOUR: Look = Look {
     ground_occlusion: 1.0,
     wet: 0.0,
     snow: 0.0,
+    dry: 0.0,
+    autumn: 0.0,
+    ice: 0.0,
     stars: 0.0,
     cloud: 0.0,
     exposure: 0.9,
@@ -300,6 +303,15 @@ pub struct Look {
     /// rocks, buildings and soldiers. The game sets it from the snow that has
     /// fallen, so it outlasts the fall and melts slowly (rain melts it).
     pub snow: f32,
+    /// How dry the grass is, 0 green to 1 high summer's straw (and winter's
+    /// dead grass). The game sets it from the season.
+    pub dry: f32,
+    /// How far the broadleaf woods have turned, 0 green to 1 autumn's gold,
+    /// orange and red. The game sets it from the season.
+    pub autumn: f32,
+    /// How much the water is frozen over, 0 open to 1 a sheet of ice. The
+    /// game sets it from the simulation's frozen water.
+    pub ice: f32,
     /// How many stars show in the sky, 0 none to 1 a clear night's. Dusk and
     /// dawn blend it with the looks, cloud and weather hide it.
     pub stars: f32,
@@ -444,6 +456,9 @@ impl Look {
             ground_occlusion: n(self.ground_occlusion, other.ground_occlusion),
             wet: n(self.wet, other.wet),
             snow: n(self.snow, other.snow),
+            dry: n(self.dry, other.dry),
+            autumn: n(self.autumn, other.autumn),
+            ice: n(self.ice, other.ice),
             stars: n(self.stars, other.stars),
             cloud: n(self.cloud, other.cloud),
             exposure: n(self.exposure, other.exposure),
@@ -771,7 +786,7 @@ macro_rules! share_knob {
 }
 
 /// Every knob of the tuning panel, in the order it lists them.
-pub const KNOBS: [Knob; 20] = [
+pub const KNOBS: [Knob; 23] = [
     Knob {
         name: "Sun height (deg)",
         step: 2.0,
@@ -809,6 +824,9 @@ pub const KNOBS: [Knob; 20] = [
     field_knob!("Valley shade", 0.05, ground_occlusion, 0.0),
     share_knob!("Wet", 0.05, wet),
     share_knob!("Snow", 0.05, snow),
+    share_knob!("Dry grass", 0.05, dry),
+    share_knob!("Autumn woods", 0.05, autumn),
+    share_knob!("Ice", 0.05, ice),
     share_knob!("Stars", 0.05, stars),
     share_knob!("Cloud banks", 0.05, cloud),
     Knob {
