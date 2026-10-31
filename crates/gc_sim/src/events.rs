@@ -143,6 +143,10 @@ pub enum Event {
     /// washed up on a bank (see [`crate::rivers::DROWN_PERCENT`]). Told
     /// once a second at most.
     SweptAway { regiments: u16 },
+    /// Debris riding a river struck regiments wading where it passed
+    /// this tick (see [`crate::rivers::debris`]): of the players in
+    /// `owners`, a bit each. Told once a tick at most.
+    DebrisStruck { owners: u8 },
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
@@ -236,6 +240,12 @@ impl Events {
     /// Tell of `regiments` swept away by a flash flood this second.
     pub(crate) fn swept_away(&mut self, regiments: u16) {
         self.list.push(Event::SweptAway { regiments });
+    }
+
+    /// Tell of the regiments of `owners` (a bit each) struck by debris
+    /// riding a river this tick.
+    pub(crate) fn debris_struck(&mut self, owners: u8) {
+        self.list.push(Event::DebrisStruck { owners });
     }
 
     /// Tell of a new season.

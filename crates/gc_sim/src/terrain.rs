@@ -843,10 +843,14 @@ impl Terrain {
     }
 
     /// Whether `p` is in a river that is up ([`crate::rivers::DEEP_RISE`]
-    /// or more over its line): wading there is slower still.
+    /// or more over its line), or on a ford snagged with debris (see
+    /// [`crate::rivers::debris`]): wading there is slower still.
     pub fn deep(&self, p: FxVec2) -> bool {
-        self.water_at(p)
-            .is_some_and(|rise| rise >= crate::rivers::DEEP_RISE)
+        self.water_at(p).is_some_and(|rise| {
+            rise >= crate::rivers::DEEP_RISE
+                || (self.rivers.as_ref())
+                    .is_some_and(|w| w.snagged(p.x.floor_int(), p.y.floor_int()))
+        })
     }
 
     /// Which way and how fast the water runs at `p`, if it runs there and

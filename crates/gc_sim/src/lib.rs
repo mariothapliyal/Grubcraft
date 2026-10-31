@@ -1767,6 +1767,10 @@ impl World {
             &self.stances,
         );
         self.burn();
+        let struck = (self.flood.rivers).strike(&mut self.regiments, &self.units, &self.terrain);
+        if struck != 0 && !self.scratch {
+            self.events.debris_struck(struck);
+        }
         if self.tick.is_multiple_of(TICKS_PER_SECOND) {
             self.sweep_fords();
             self.wade_out();
@@ -3060,6 +3064,10 @@ impl World {
         self.fires.kindled.clear();
         if !self.fires.burnt.is_empty() {
             let burnt = core::mem::take(&mut self.fires.burnt);
+            // Woods burnt out on a bank may topple into the river.
+            for &(x, y) in &burnt {
+                (self.flood.rivers).topple(&self.terrain, x, y, self.tick);
+            }
             self.change_ground(burnt.iter().map(|&(x, y)| (x, y, true)));
             // Put back, so the list keeps its room.
             self.fires.burnt = burnt;
@@ -3175,6 +3183,12 @@ impl World {
         let (coming, stage, water) = (turn.coming, turn.stage, turn.water);
         if water && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_water(copy);
+        }
+        let drift = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
+        if drift.snags
+            && let Some(copy) = self.terrain.rivers_mut()
+        {
+            self.flood.rivers.write_snags(copy);
         }
         if coming && !self.scratch {
             self.events.flash(rivers::Stage::Coming);

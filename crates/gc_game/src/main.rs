@@ -183,6 +183,7 @@ mod profile;
 mod puppets;
 mod replays;
 mod ring_tool;
+mod river_debris;
 mod river_watch;
 mod roster;
 mod sandbox;
@@ -240,6 +241,8 @@ static ALLOC: TaggedAlloc = TaggedAlloc;
 
 const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as u64);
 const HUMAN: PlayerId = 0;
+/// The news tells of debris striking our troops at most this often.
+const DEBRIS_NEWS_SECONDS: u32 = 10;
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
 const TEAM_COLORS: [[u8; 3]; 4] = [
     [178, 38, 30],
@@ -977,6 +980,8 @@ struct Running {
     watching: Option<Watching>,
     /// The news line's word on the weather and nearby fires.
     sky_news: sky_news::SkyNews,
+    /// The tick the news last told of debris striking our troops.
+    debris_told: Option<u32>,
     /// The game data's short hash, for replays.
     data_hash: u64,
     quit: bool,
@@ -1850,6 +1855,7 @@ impl App {
             recording: None,
             watching: None,
             sky_news: sky_news::SkyNews::default(),
+            debris_told: None,
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
@@ -6485,6 +6491,19 @@ impl Running {
                 } else {
                     "The flash flood swept regiments out of the fords: some drowned, the rest washed up downstream"
                 }),
+                Event::DebrisStruck { owners } => {
+                    let ours = 1u8.checked_shl(u32::from(self.sandbox.side)).unwrap_or(0);
+                    let now = self.world.tick_count();
+                    let quiet = self.debris_told.is_none_or(|t| {
+                        now.saturating_sub(t) >= DEBRIS_NEWS_SECONDS * gc_sim::TICKS_PER_SECOND
+                    });
+                    if owners & ours != 0 && quiet {
+                        self.debris_told = Some(now);
+                        news.push(
+                            "Logs coming down the river struck our troops in the water: they are hurt and in disorder",
+                        );
+                    }
+                }
                 Event::Shallows { open } => news.push(if open {
                     "Low water: the shallows at the rivers' edges can be waded"
                 } else {
@@ -7271,6 +7290,19 @@ impl Running {
                 })
             });
         let falling = self.ambient.felling.extras(|p| ground_of(map, p));
+        let logs = {
+            let t = world.terrain();
+            let line = (t.water_line() - i32::from(t.water_level())) as f32
+                / gc_sim::terrain::HEIGHT_UNITS as f32;
+            let (reveal, fog) = (self.reveal_all, &self.fog);
+            river_debris::extras(
+                world.flood().rivers().debris_seen(),
+                |p| t.river_rise(p),
+                map.water_level() + line,
+                self.scenery.height_of(river_debris::LOG_MODEL),
+                move |tile| reveal || fog.sees_tile(tile),
+            )
+        };
         let fallen = self.aftermath.standards(|p| ground_of(map, p));
         let carried = self.aftermath.trophies(
             |h| {
@@ -7299,6 +7331,7 @@ impl Running {
             nodes
                 .chain(banners)
                 .chain(falling)
+                .chain(logs)
                 .chain(fallen)
                 .chain(carried)
                 .chain(stumps)
