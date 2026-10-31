@@ -28,6 +28,11 @@ const SLOT_CLEAR: usize = 5;
 const SLOT_EXPAND: usize = 6;
 /// A worker's Work plans button (A): build the walls your side has planned.
 const SLOT_WORK_PLANS: usize = 4;
+/// A worker's Fell in button (Z), for a faction that fells: clear bank
+/// woods into the river.
+const SLOT_FELL: usize = 8;
+/// A worker's Raft button (C): tip a raft into the river.
+const SLOT_DUMP: usize = 10;
 /// A building's last slot (V): its tier upgrade, or calling it off.
 const SLOT_LAST: usize = GRID_SLOTS - 1;
 /// A right-click this close to a seep or vein (in tiles) sends workers there.
@@ -46,6 +51,10 @@ pub enum Action {
     MoreBuildings,
     /// Choose ground for the workers to clear.
     Clear,
+    /// Choose bank woods for the workers to fell into the river.
+    Fell,
+    /// Choose the river tile a worker tips a raft into.
+    Dump,
     /// Set the selected workers to build the walls your side has planned.
     WorkPlans,
     /// Choose where a worker lays this building.
@@ -101,6 +110,14 @@ impl Running {
         if !self.hud.build_menu {
             slots[SLOT_BUILD] = Some(Action::OpenBuild);
             slots[SLOT_CLEAR] = Some(Action::Clear);
+            // Fell in and Raft sit on Brace's and the stakes' keys, so they
+            // show only for workers alone, and only by a river.
+            if self.selection_all_workers() && self.world.flood().rivers().any() {
+                slots[SLOT_FELL] = crate::conquest::clear_style(faction)
+                    .fells
+                    .then_some(Action::Fell);
+                slots[SLOT_DUMP] = Some(Action::Dump);
+            }
             slots[SLOT_EXPAND] = self.buildings.expansion(faction).map(Action::Lay);
             slots[SLOT_WORK_PLANS] = self.has_plans().then_some(Action::WorkPlans);
             return Some(Card {
@@ -138,7 +155,7 @@ impl Running {
     }
 
     /// Whichever of the regiments `from` stands nearest `spot`.
-    fn nearest_to(
+    pub(crate) fn nearest_to(
         &self,
         from: impl Iterator<Item = RegimentHandle>,
         spot: Vec2,
@@ -232,9 +249,15 @@ impl Running {
                 Some(Ok(w)) if !w.afford => Some(Refusal::Price),
                 _ => None,
             },
+            Action::Dump => self
+                .world
+                .bank(side)
+                .is_some_and(|b| b.grub < gc_sim::rivers::debris::RAFT_GRUB)
+                .then_some(Refusal::Price),
             Action::OpenBuild
             | Action::MoreBuildings
             | Action::Clear
+            | Action::Fell
             | Action::WorkPlans
             | Action::CallOff
             | Action::SetGate(_) => None,
@@ -268,6 +291,14 @@ impl Running {
                 Action::Clear => {
                     label.push_str("Clear");
                     detail.push('S');
+                }
+                Action::Fell => {
+                    label.push_str("Fell in");
+                    detail.push('Z');
+                }
+                Action::Dump => {
+                    label.push_str("Raft");
+                    price(detail, gc_sim::rivers::debris::RAFT_GRUB, 0u32);
                 }
                 Action::WorkPlans => {
                     label.push_str("Plans");
@@ -335,6 +366,8 @@ impl Running {
                     matches!(self.hud.armed, Some(Armed::Lay(a) | Armed::Wall(a, _)) if a == b)
                 }
                 Action::Clear => self.hud.armed == Some(Armed::Clear),
+                Action::Fell => self.hud.armed == Some(Armed::Fell),
+                Action::Dump => self.hud.armed == Some(Armed::Dump),
                 // The mode it is set to now.
                 Action::SetGate(mode) => gate_mode == Some(mode),
                 _ => false,
@@ -368,13 +401,21 @@ impl Running {
                 self.set_build_menu(true);
                 return true;
             }
-            Action::Clear => {
+            Action::Clear | Action::Fell | Action::Dump => {
+                let (armed, said) = match action {
+                    Action::Clear => (Armed::Clear, "Drag over the ground to clear."),
+                    Action::Fell => (
+                        Armed::Fell,
+                        "Drag over bank woods: they fall into the river and ride it down.",
+                    ),
+                    _ => (Armed::Dump, "Click running river to tip a raft in."),
+                };
                 // Pressing it again puts it down.
-                if self.hud.armed == Some(Armed::Clear) {
+                if self.hud.armed == Some(armed) {
                     self.hud.armed = None;
                 } else {
-                    self.hud.armed = Some(Armed::Clear);
-                    self.say("Drag over the ground to clear.".into());
+                    self.hud.armed = Some(armed);
+                    self.say(said.into());
                 }
                 return true;
             }

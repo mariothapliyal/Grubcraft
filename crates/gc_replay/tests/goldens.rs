@@ -72,6 +72,8 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Trade { .. } => "Trade",
         Command::Build { .. } => "Build",
         Command::Clear { .. } => "Clear",
+        Command::Fell { .. } => "Fell",
+        Command::Dump { .. } => "Dump",
         Command::Construct { .. } => "Construct",
         Command::CallOff { .. } => "CallOff",
         Command::Train { .. } => "Train",
@@ -97,7 +99,7 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::PlantStakes { .. } => "PlantStakes",
         Command::Burn { .. } => "Burn",
     };
-    const KINDS: [&str; 41] = [
+    const KINDS: [&str; 43] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -115,6 +117,8 @@ fn the_goldens_cover_every_kind_of_command() {
         "Trade",
         "Build",
         "Clear",
+        "Fell",
+        "Dump",
         "Construct",
         "CallOff",
         "Train",
@@ -164,9 +168,10 @@ fn fingerprint(replay: &Replay) -> u64 {
 /// that other builds and old replays know: this table then fails, and is
 /// updated from the test's output.
 const PINNED: (u32, &[(&str, u64)]) = (
-    76,
+    77,
     &[
-        ("conquest-ribcage-1v1", 0xc8ed44387f777ec4),
+        ("conquest-ribcage-1v1", 0x10b1e5e5cd3807e0),
+        ("conquest-river-1v1", 0xb0bf8b4def583e53),
         ("field-1v1", 0x463c8f413a8001f0),
         ("field-2v2", 0xf5ce57ad9cd850b9),
         ("field-8000pt-2v2", 0xf4b3fc5094457289),
@@ -178,7 +183,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
         ("field-handover-2v2", 0x6acb962e9be091fd),
         ("field-night-rain-1v1", 0xa4fef13b4d8dd0cd),
         ("field-orders-1v1", 0x6e52c8fd083ac42e),
-        ("field-river-storm-1v1", 0xa6b7fb154c9b68c3),
+        ("field-river-storm-1v1", 0xd4260bdb7e3e82bc),
         ("field-woods-1v1", 0x6aa6ac4a4c3e2819),
         ("sandbox-tuning", 0xe9cbd280fb93e1c2),
     ],

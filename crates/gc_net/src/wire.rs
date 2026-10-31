@@ -420,13 +420,28 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             regiment,
             tile,
             size,
+        }
+        | Command::Fell {
+            regiment,
+            tile,
+            size,
         } => {
-            w.u8(25);
+            w.u8(if matches!(*c, Command::Fell { .. }) {
+                44
+            } else {
+                25
+            });
             w.handle(regiment);
             w.var(u64::from(tile.0 as u16));
             w.var(u64::from(tile.1 as u16));
             w.u8(size.0);
             w.u8(size.1);
+        }
+        Command::Dump { regiment, tile } => {
+            w.u8(45);
+            w.handle(regiment);
+            w.var(u64::from(tile.0 as u16));
+            w.var(u64::from(tile.1 as u16));
         }
         Command::Construct {
             regiment,
@@ -705,6 +720,15 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             regiment: r.handle()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
             size: (r.u8()?, r.u8()?),
+        },
+        44 => Command::Fell {
+            regiment: r.handle()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
+            size: (r.u8()?, r.u8()?),
+        },
+        45 => Command::Dump {
+            regiment: r.handle()?,
+            tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
         },
         13 => Command::Construct {
             regiment: r.handle()?,
@@ -995,6 +1019,15 @@ mod tests {
                 regiment: h(4, 2),
                 tile: (-3, 700),
                 size: (1, 16),
+            },
+            Command::Fell {
+                regiment: h(4, 2),
+                tile: (5, 9),
+                size: (3, 2),
+            },
+            Command::Dump {
+                regiment: h(3, 1),
+                tile: (-1, 120),
             },
             Command::Construct {
                 regiment: h(1, 1),

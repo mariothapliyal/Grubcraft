@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 51: felling into the river and dumping rafts (the fell and dump
+///   commands, tags 46 and 47) and whether a worker fells (read as not);
 /// - 50: what each tower looses and its quirk (read as arrows, no quirk);
 /// - 49: drawn lines (the draw line and plan line commands, tags 43 to 45);
 /// - 48: attack-moves and queued orders (commands tagged 41 and 42);
@@ -106,7 +108,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
-pub const FORMAT: u16 = 50;
+pub const FORMAT: u16 = 51;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
@@ -1602,12 +1604,14 @@ mod tests {
                 train_ticks: 200,
                 trained_at: Some(0),
                 tier: 1,
-                // A Clerk: no Grub drop-off, and burns what it clears.
+                // A Clerk: no Grub drop-off, burns what it clears and fells
+                // into rivers (not the default, so the round trip shows it).
                 cannot_bank: gc_sim::structures::DROP_OFF_GRUB,
                 clearing: gc_sim::clearing::ClearStyle {
                     pace: [50, 60, 70],
                     pays: [1, 2, 3],
                     burns: true,
+                    fells: true,
                 },
                 ..ConquestUnit::default()
             },

@@ -754,6 +754,11 @@ fn record_golden_replays() {
             write(golden.name, record(golden));
         }
     }
+    if wanted(crate::river_golden::NAME) {
+        let replay = crate::river_golden::record();
+        println!("{}", replay.note);
+        write(crate::river_golden::NAME, replay);
+    }
     if wanted(crate::conquest_golden::NAME) {
         let replay = crate::conquest_golden::record();
         println!("{}", replay.note);

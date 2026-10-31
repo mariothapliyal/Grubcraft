@@ -15,6 +15,12 @@ use crate::hud::Armed;
 use crate::scenery::Stood;
 use crate::{Running, color_of};
 
+/// Where a raft can go, and what it costs.
+pub(crate) const DUMP_WHERE: &str = "Click running river along a bank to tip a raft in (12 Grub; it rides the current) - Esc to cancel";
+/// Said when your side's share of the water is full.
+pub(crate) const SHARE_USED: &str =
+    "You have 16 logs and rafts on the water already: wait for some to rot away";
+
 /// Overgrown ground that will be cleared: amber.
 const AMBER: [u8; 4] = [235, 170, 40, 130];
 /// The rest of an area being cleared: a pale green wash.
@@ -140,7 +146,7 @@ impl Running {
                 buildings::push_blueprint(stats, tile, turn, colour, ground, out);
             }
         }
-        if matches!(self.hud.armed, Some(Armed::Clear))
+        if matches!(self.hud.armed, Some(Armed::Clear | Armed::Fell))
             && let Some(from) = self.input.clear_from
             && let Some(to) = self.ground_under_cursor()
         {
@@ -172,11 +178,54 @@ impl Running {
         // Sides are at most 16, so these fit.
         let (tile, size) = ((x as i16, y as i16), (w as u8, d as u8));
         let crew: Vec<_> = self.selected_workers().collect();
-        self.orders(crew.into_iter().map(|regiment| Command::Clear {
-            regiment,
-            tile,
-            size,
+        let fell = self.hud.armed == Some(Armed::Fell);
+        self.orders(crew.into_iter().map(|regiment| {
+            if fell {
+                Command::Fell {
+                    regiment,
+                    tile,
+                    size,
+                }
+            } else {
+                Command::Clear {
+                    regiment,
+                    tile,
+                    size,
+                }
+            }
         }));
+        if !self.input.shift {
+            self.hud.armed = None;
+        }
+    }
+
+    /// The click after Raft: the selected worker nearest the river tile
+    /// clicked tips a raft into it. Anywhere else keeps the order armed.
+    pub fn finish_dumping(&mut self) {
+        let Some(at) = self.ground_under_cursor() else {
+            return;
+        };
+        let (x, y) = (tile_of(at.x), tile_of(at.y));
+        let side = self.sandbox.side;
+        if !self.world.takes_raft(side, x, y) {
+            let full = self.world.flood().rivers().share_used(side);
+            self.say(if full {
+                SHARE_USED.into()
+            } else {
+                DUMP_WHERE.into()
+            });
+            return;
+        }
+        // A worker not already at work, so a second raft doesn't call off
+        // the first; else the nearest.
+        let idle = (self.selected_workers()).filter(|&h| self.world.clearing_of(h).is_none());
+        let Some(regiment) = (self.nearest_to(idle, at)).or_else(|| self.nearest_worker(at)) else {
+            return;
+        };
+        self.orders([Command::Dump {
+            regiment,
+            tile: (x as i16, y as i16),
+        }]);
         if !self.input.shift {
             self.hud.armed = None;
         }
@@ -190,6 +239,11 @@ impl Running {
                 "Drag over the ground to clear, or click one tile - Esc or right-click to cancel"
                     .into(),
             ),
+            Armed::Fell => Some(
+                "Drag over bank woods to fell them into the river (no timber) - Esc to cancel"
+                    .into(),
+            ),
+            Armed::Dump => Some(DUMP_WHERE.into()),
             Armed::Lay(id) => {
                 let (stats, tile, why) = self.building_placement(id)?;
                 (self.fit_of(&stats, tile, why) == Fit::Overgrown)

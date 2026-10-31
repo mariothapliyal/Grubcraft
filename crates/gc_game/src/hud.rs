@@ -59,6 +59,11 @@ pub enum Armed {
     Wall(gc_sim::BuildingId, Option<(i32, i32)>),
     /// Conquest: the ground a worker clears, chosen by a left-drag.
     Clear,
+    /// Conquest: the ground a worker clears, felling the bank woods into
+    /// the river (the Clans' Fell in), chosen by a left-drag.
+    Fell,
+    /// Conquest: the river tile a worker tips a raft into.
+    Dump,
     /// Conquest: the target of this faction power (its place in the
     /// powers table).
     Power(u8),
@@ -730,7 +735,10 @@ impl Running {
         let picked_structure = self.picked_structure();
         if self.selected_workers().next().is_none() {
             self.set_build_menu(false);
-            if self.hud.armed == Some(Armed::Clear) {
+            if matches!(
+                self.hud.armed,
+                Some(Armed::Clear | Armed::Fell | Armed::Dump)
+            ) {
                 self.hud.armed = None;
             }
         }
@@ -1010,7 +1018,15 @@ impl Running {
             Some(Armed::Move) => grid[SLOT_MOVE].state = SlotState::Armed,
             Some(Armed::Attack) => grid[SLOT_ATTACK].state = SlotState::Armed,
             Some(Armed::AttackMove) => grid[SLOT_ADVANCE].state = SlotState::Armed,
-            Some(Armed::Lay(_) | Armed::Wall(..) | Armed::Clear | Armed::Power(_)) | None => {}
+            Some(
+                Armed::Lay(_)
+                | Armed::Wall(..)
+                | Armed::Clear
+                | Armed::Fell
+                | Armed::Dump
+                | Armed::Power(_),
+            )
+            | None => {}
         }
         if let Some(Some(f)) = self.shown_formation {
             grid[SLOT_FORMATION].detail = f.name();
@@ -1471,7 +1487,8 @@ impl Running {
         match armed {
             Armed::Lay(b) => return self.finish_laying(b),
             Armed::Wall(b, _) => return self.finish_walling(b),
-            Armed::Clear => return self.finish_clearing(),
+            Armed::Clear | Armed::Fell => return self.finish_clearing(),
+            Armed::Dump => return self.finish_dumping(),
             Armed::Power(power) => return self.finish_power(power),
             Armed::Move => match self.ground_under_cursor() {
                 Some(p) => self.issue_march(move_order(p), false, shift),
@@ -2181,6 +2198,14 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
             Icon::Hammer,
             "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
         ),
+        Some(Action::Fell) => (
+            Icon::Hammer,
+            "Clear bank woods and thicket by felling them into the river: no timber, half as long again, and each tile drops a log (thicket: two) that rides the current and strikes troops wading below. Tiles away from the water are cleared as usual.",
+        ),
+        Some(Action::Dump) => (
+            Icon::Hammer,
+            "A worker walks to the river and spends 6 seconds tipping in a raft (12 Grub, paid as it goes in). It rides the current, strikes troops wading where it passes and grounds on fords in quiet water. At most 16 of your pieces on the water at once.",
+        ),
         Some(Action::WorkPlans) => (
             Icon::Hammer,
             "Selected workers build the walls you have planned (the faint blue tiles), nearest first, paying for each as they go and waiting while you can't. Right-click a planned tile to do the same. Any other order stops them.",
@@ -2315,6 +2340,18 @@ fn view_outline(view_proj: glam::Mat4, plane: f32, map: f32) -> [[f32; 2]; 4] {
 mod tests {
     use super::*;
     use crate::camera::RtsCamera;
+
+    /// The raft's tooltip and hint quote the sim's numbers.
+    #[test]
+    fn the_raft_text_quotes_the_sims_numbers() {
+        use gc_sim::rivers::debris::{DUMP_SECONDS, RAFT_GRUB, SHARE};
+        let tip = card_look(Some(Action::Dump)).1;
+        assert!(tip.contains(&format!("{DUMP_SECONDS} seconds")), "{tip}");
+        assert!(tip.contains(&format!("({RAFT_GRUB} Grub")), "{tip}");
+        assert!(tip.contains(&format!("At most {SHARE} ")), "{tip}");
+        assert!(crate::clearing::DUMP_WHERE.contains(&format!("({RAFT_GRUB} Grub")));
+        assert!(crate::clearing::SHARE_USED.contains(&format!("have {SHARE} ")));
+    }
 
     /// A Field Battle's villages, outposts and stones show on the minimap
     /// in their own colours; a Conquest map's only mark its trade posts.

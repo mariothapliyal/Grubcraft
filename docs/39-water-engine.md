@@ -290,6 +290,19 @@ Built 2026-10-31. Stage 3 is split in two: 3a is the debris itself and the logs 
 - **Tests.** `gc_sim/tests/debris.rs`: a burnt bank wood topples logs that ride down and strike troops wading the lower ford, then ground there; a snag slows wading until a flood lifts it; a catastrophic flood tears logs off wooded banks with never more than 8 floating; the same seed sends the same logs down.
 - `SIM_VERSION` 76 (main reached 75 first). Only the river-storm golden moves: its Major flood now washes logs down the Rushbrook (screenshots in project files, `screenshots/water-engine/stage3a-*`).
 
+## Built: stage 3b, felling and rafts
+
+Built 2026-10-31.
+
+- **Fell in** (`Command::Fell`, `clearing::Work::Fell`): the Clear order, but woods and thicket beside running river (any of the 8 tiles round them) fall into it: a log a woods tile, two a thicket tile, no timber, half as long again (`FELL_PERCENT` 150). Tiles away from the water are cleared and paid as usual. Only factions whose clearing fells (`ClearStyle::fells`): the Clans. The Concord's clearing burns, and a burnt-off bank tile topples a log in one time in three, as a fire's does. The Choir and the Brood drop nothing.
+- **Raft** (`Command::Dump`, `clearing::Work::Dump`): a worker walks to a running river tile along a bank (one with land beside it, so a worker on the bank can reach it; `Rivers::bank_river`), works 6 seconds (`DUMP_SECONDS`, at the match's tempo) and the raft goes in, paid then (`RAFT_GRUB` 12; refused when ordered without it, and nothing happens if the Grub is gone by then). Any faction. A raft is mass 3: three times a log's blow, and a snag on its own when it grounds.
+- **Share:** each player may have at most 16 pieces they put in on the water (`SHARE`); the pool's 40 open places and its rot rule hold as before. Pieces remember who put them in (hashed).
+- **Shown:** workers' card has Fell in (`Z`, Clans only) and Raft (`C`, 12 Grub, greyed without it), on maps with a river and only when the selection is all workers (those keys are Brace and stakes for soldiers). Hints and tooltips say what they do; a refused raft says whether the click missed a bank or the player's 16 pieces are already afloat. A second raft goes to a selected worker not already at work. Each kind of work keeps its own progress on a tile, so a feller and a clearer on one tile don't finish each other's work. A raft is drawn as three paler trunks lashed side by side.
+- **Formats:** replay `FORMAT` 51 (tags 46 and 47, and whether a worker fells), network `PROTOCOL` 44 (tags 44 and 45), `SIM_VERSION` 77 (3a has 76). The two Conquest goldens and the river storm move (pieces now carry who put them in); the other field goldens don't.
+- **Goldens:** a new one, `conquest-river-1v1` (gc_game `river_golden.rs`): three minutes on grown land, two Clans sides each fell the bank woods nearest their start and tip a raft into the nearest river. The Ribcage golden's Clans clear with Fell in (no river there, so it clears as before).
+- **Tests:** `gc_sim/tests/river_work.rs`: felling drops only the bank row and pays only the rest; plain clearing drops nothing and a faction that doesn't fell is refused; a raft costs its Grub and rides the current; no raft without the Grub.
+- *Not yet:* the computer players don't fell or dump (stage 5), and the share isn't per team.
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**

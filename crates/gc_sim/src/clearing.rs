@@ -18,6 +18,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::conquest::ConquestUnit;
 use crate::regiments::{Order, Regiments};
+use crate::rivers::Rivers;
 use crate::structures::{Approach, BuildingId, RETRY_TICKS, STALLS, footprint_centre};
 use crate::terrain::{Growth, Terrain};
 use crate::{PlayerId, StateHasher, TICKS_PER_SECOND, UnitStats};
@@ -48,6 +49,8 @@ pub struct ClearStyle {
     /// It burns the land: what it clears is left scorched (a look only:
     /// scorched ground is open like any other cleared ground).
     pub burns: bool,
+    /// It may fell bank woods into the river ([`Work::Fell`]).
+    pub fells: bool,
 }
 
 impl ClearStyle {
@@ -56,6 +59,7 @@ impl ClearStyle {
         pace: [100; 3],
         pays: [0, 3, 5],
         burns: false,
+        fells: false,
     };
 
     /// What the worker pays for clearing a tile of `growth`.
@@ -83,6 +87,29 @@ impl Default for ClearStyle {
         ClearStyle::STANDARD
     }
 }
+
+/// Tile `t`'s place in [`Clearing`]'s work done, for `work` on it.
+fn key(t: u32, work: Work) -> u32 {
+    t << 2 | work as u32
+}
+
+/// What a worker's order has it do (docs/32 and docs/39, section 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Work {
+    /// Clear the area for open ground (and timber).
+    Clear,
+    /// Clear the area, felling the woods and thicket beside a river into
+    /// it: no timber for those, half as long again, and a log (thicket:
+    /// two) goes in.
+    Fell,
+    /// Tip a raft into the river at the one tile of the area, for
+    /// [`crate::rivers::debris::RAFT_GRUB`], paid when it goes in.
+    Dump,
+}
+
+/// How much longer felling into the river takes than plain clearing, in
+/// percent.
+pub const FELL_PERCENT: u32 = 150;
 
 /// Tiles a worker may give up on in one order before it stops.
 const SKIPS: usize = 4;
@@ -118,6 +145,8 @@ struct Job {
     area: [i32; 4],
     /// The building to lay once it is cleared (its footprint is the area).
     then: Option<Pledge>,
+    /// What it does there.
+    work: Work,
     /// The tile it is walking to or working (row by row).
     at: Option<u32>,
     /// Ticks until its next try to reach the tile.
@@ -144,14 +173,19 @@ impl Job {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Done {
     /// The tile `(x, y)` is cleared, by a worker of `owner`'s, which earns
-    /// `pays` Grub for it and, if `burnt`, has burnt it.
+    /// `pays` Grub for it and, if `burnt`, has burnt it; `logs` were
+    /// felled off it into the river beside it.
     Tile {
         x: i32,
         y: i32,
         owner: PlayerId,
         pays: u32,
         burnt: bool,
+        logs: u8,
     },
+    /// A worker of `owner`'s tipped a raft into river tile `(x, y)`: it
+    /// goes in if `owner` can pay for it.
+    Raft { x: i32, y: i32, owner: PlayerId },
     /// Worker slot `r` cleared and left the footprint of `pledge`: lay it.
     Lay { r: usize, pledge: Pledge },
     /// Worker slot `r` (or the regiment that was in it) gave up on, or was
@@ -162,8 +196,10 @@ pub(crate) enum Done {
 /// Every worker's clearing order, by regiment slot.
 pub(crate) struct Clearing {
     job: alloc::vec::Vec<Option<Job>>,
-    /// Tiles part cleared: the tile (row by row) and work left in
-    /// hundredths of a tick, in tile order.
+    /// Tiles part worked: the [`key`] of the tile and the work done on it,
+    /// and the work left in hundredths of a tick, in key order. Each kind
+    /// of work keeps its own count, so a feller and a clearer on one tile
+    /// don't finish each other's work.
     worked: alloc::vec::Vec<(u32, u32)>,
     /// Scratch: the tiles workers are at, sorted (kept for its room).
     at: alloc::vec::Vec<u32>,
@@ -194,10 +230,12 @@ impl Clearing {
         r: usize,
         area: [i32; 4],
         then: Option<Pledge>,
+        work: Work,
     ) {
         self.job[r] = Some(Job {
             area,
             then,
+            work,
             at: None,
             clock: 0,
             gap: Fx::MAX,
@@ -233,11 +271,15 @@ impl Clearing {
     /// game shows the work with it, and checks the worker is up at the
     /// tile itself. Read only: nothing is changed or hashed.
     pub(crate) fn working_tile(&self, regs: &Regiments, r: usize, side: u32) -> Option<(i32, i32)> {
-        let t = self.live(regs, r)?.at?;
-        if regs.engaged[r].is_some() {
+        let job = self.live(regs, r)?;
+        let t = job.at?;
+        // Tipping a raft swings no tools at the water.
+        if regs.engaged[r].is_some() || job.work == Work::Dump {
             return None;
         }
-        self.worked.binary_search_by_key(&t, |w| w.0).ok()?;
+        (self.worked)
+            .binary_search_by_key(&key(t, job.work), |w| w.0)
+            .ok()?;
         Some(((t % side) as i32, (t / side) as i32))
     }
 
@@ -254,6 +296,7 @@ impl Clearing {
         units: &[UnitStats],
         styles: &[ConquestUnit],
         terrain: &Terrain,
+        rivers: &Rivers,
     ) {
         self.done.clear();
         for r in 0..self.job.len() {
@@ -272,14 +315,14 @@ impl Clearing {
             let style = styles
                 .get(usize::from(regs.unit[r]))
                 .map_or(ClearStyle::STANDARD, |u| u.clearing);
-            let kept = self.work(regs, units, style, terrain, r, &mut job);
+            let kept = self.work(regs, units, style, (terrain, rivers), r, &mut job);
             self.job[r] = kept.then_some(job);
         }
         // Work on a tile nobody is at any more is forgotten.
         if !self.worked.is_empty() {
             let at = &mut self.at;
             at.clear();
-            at.extend(self.job.iter().flatten().filter_map(|j| j.at));
+            at.extend((self.job.iter().flatten()).filter_map(|j| j.at.map(|t| key(t, j.work))));
             at.sort_unstable();
             self.worked.retain(|&(t, _)| at.binary_search(&t).is_ok());
         }
@@ -299,12 +342,17 @@ impl Clearing {
         regs: &mut Regiments,
         units: &[UnitStats],
         style: ClearStyle,
-        terrain: &Terrain,
+        (terrain, rivers): (&Terrain, &Rivers),
         r: usize,
         job: &mut Job,
     ) -> bool {
         let side = terrain.growth_side();
+        let dump = job.work == Work::Dump;
         let left = |t: u32| {
+            if dump {
+                // Until the raft goes in, when the order ends.
+                return true;
+            }
             let (x, y) = ((t % side) as i32, (t / side) as i32);
             let cleared =
                 |d: &Done| matches!(*d, Done::Tile { x: dx, y: dy, .. } if (dx, dy) == (x, y));
@@ -360,26 +408,50 @@ impl Clearing {
         }
         way.arrive(regs, r);
         let growth = terrain.growth(x, y);
-        let full = crate::conquest::at_tempo(clear_ticks(growth), self.percent) * HAND;
-        let k = match self.worked.binary_search_by_key(&t, |w| w.0) {
+        // Felling a bank tile into the river: woods and thicket only.
+        let logs = if job.work == Work::Fell && rivers.fells_into(terrain, x, y) {
+            match growth {
+                Growth::Woods => 1,
+                Growth::Thicket => 2,
+                _ => 0,
+            }
+        } else {
+            0
+        };
+        let ticks = match job.work {
+            Work::Dump => crate::rivers::debris::DUMP_SECONDS * TICKS_PER_SECOND,
+            _ if logs > 0 => clear_ticks(growth) * FELL_PERCENT / 100,
+            _ => clear_ticks(growth),
+        };
+        let full = crate::conquest::at_tempo(ticks, self.percent) * HAND;
+        let id = key(t, job.work);
+        let k = match self.worked.binary_search_by_key(&id, |w| w.0) {
             Ok(k) => k,
             Err(k) => {
-                self.worked.insert(k, (t, full));
+                self.worked.insert(k, (id, full));
                 k
             }
         };
         // A worker's own pace: workers of different factions on the one
         // tile each do their own share.
-        let work = (HAND * 100 / style.pace_on(growth)).max(1) * u32::from(regs.steps(r));
+        let pace = if dump { 100 } else { style.pace_on(growth) };
+        let work = (HAND * 100 / pace).max(1) * u32::from(regs.steps(r));
         self.worked[k].1 = self.worked[k].1.saturating_sub(work);
         if self.worked[k].1 == 0 {
             self.worked.remove(k);
+            let owner = regs.owner[r];
+            if dump {
+                self.done.push(Done::Raft { x, y, owner });
+                return false;
+            }
             self.done.push(Done::Tile {
                 x,
                 y,
-                owner: regs.owner[r],
-                pays: style.pays_on(growth),
+                owner,
+                // Felled into the river: no timber.
+                pays: if logs > 0 { 0 } else { style.pays_on(growth) },
                 burnt: style.burns,
+                logs,
             });
             job.next();
         }
@@ -476,6 +548,7 @@ impl Clearing {
                 continue;
             };
             h.u32(r as u32);
+            h.u8(job.work as u8);
             for v in job.area {
                 h.i32(v);
             }
