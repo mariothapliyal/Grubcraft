@@ -99,7 +99,9 @@
             name: "Bell Tower",
             blurb: "A beam tower that hits ground and air. When enemies come near it silences their faction powers. Needs power.",
             summary: "A beam tower that hits ground and air. When enemies come within 10 tiles it tolls (at most once every 20 seconds) and silences their faction powers there for 5 seconds, which shuts down hero spells and unit powers at your gates. Needs power, so keep it inside a field.",
-            notes: [],
+            notes: [
+                ("Great Bell Tower", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot and 4 tiles more range."),
+            ],
             tips: [
                 (icon: Alarm, text: "Place it where enemy heroes will push, since its toll silences their abilities within 10 tiles."),
                 (icon: Charge, text: "Time your charges for right after a toll, while enemy hero spells and faction powers are silenced."),
@@ -107,10 +109,22 @@
             ],
         ),
         (
+            name: "Great Bell Tower",
+            summary: "Level 2 of the Bell Tower, upgraded in place. Its beam hits for 13 (up from 10), reaches 34 tiles (up from 30) and the tower has 1350 hit points (up from 900). It still tolls every 20 seconds to silence enemy abilities within 10 tiles. It costs 90 Grub and 50 Marrow. Press V on a finished Bell Tower (tier 2); it takes 30 seconds and keeps firing.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Place it where enemy heroes will push, since its toll silences them within 10 tiles."),
+                (icon: Marrow, text: "Save 50 Marrow for it, since the upgrade costs 90 Grub and 50 Marrow."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it needs power and hits air as well as ground."),
+            ],
+        ),
+        (
             name: "Prism Lance",
             blurb: "Bolt tower: a heavy bolt down a file of soldiers, through up to 3 more regiments in line. Needs power.",
             summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. Its beam runs on through up to 3 more enemy regiments in line behind the target. It shoots siege engines first, then big soldiers. Needs power, so keep it inside a field.",
-            notes: [],
+            notes: [
+                ("Prism Spire", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot and 4 tiles more range."),
+            ],
             tips: [
                 (icon: Flag, text: "Place it where enemy columns will march, so its beam runs through several regiments."),
                 (icon: Hammer, text: "Keep it inside a powered field, since it does nothing without power."),
@@ -118,13 +132,35 @@
             ],
         ),
         (
+            name: "Prism Spire",
+            summary: "Level 2 of the Prism Lance, upgraded in place. Its bolt hits for 42 (up from 32), reaches 38 tiles (up from 34) and the tower has 1200 hit points (up from 800). Its beam still runs on through 3 more regiments. It needs power. It costs 115 Grub and 50 Marrow. Press V on a finished Prism Lance (tier 2); it takes 30 seconds and keeps firing.",
+            notes: [],
+            tips: [
+                (icon: Flag, text: "Place it where enemy columns will march, so its beam runs through several regiments."),
+                (icon: Marrow, text: "Save 50 Marrow for it, since the upgrade costs 115 Grub and 50 Marrow."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it does nothing without power."),
+            ],
+        ),
+        (
             name: "Chord Obelisk",
             blurb: "Blast tower: shells packed blocks and throws them into disorder. Blind within 8 tiles; needs power.",
             summary: "Blast tower: six shots every 5 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Its sound burst throws every regiment it hits into disorder until they re-form. Needs power.",
-            notes: [],
+            notes: [
+                ("Choral Obelisk", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot and 4 tiles more range."),
+            ],
             tips: [
                 (icon: Charge, text: "Charge the regiments it throws into disorder, since they fight worse until they re-form."),
                 (icon: Spear, text: "Guard it with troops, since nothing within 8 tiles of it can be hit."),
+                (icon: Hammer, text: "Keep it inside a powered field, since it needs power to fire."),
+            ],
+        ),
+        (
+            name: "Choral Obelisk",
+            summary: "Level 2 of the Chord Obelisk, upgraded in place. It fires six shots every 5 seconds, 5 damage each (up from 4), reaches 40 tiles (up from 36) and has 1275 hit points (up from 850). Its sound burst still throws regiments into disorder. It needs power. It costs 120 Grub and 75 Marrow. Press V on a finished Chord Obelisk (tier 2); it takes 30 seconds.",
+            notes: [],
+            tips: [
+                (icon: Charge, text: "Charge the regiments it throws into disorder, since they fight worse until they re-form."),
+                (icon: Marrow, text: "Save 75 Marrow for it, since the upgrade costs 120 Grub and 75 Marrow."),
                 (icon: Hammer, text: "Keep it inside a powered field, since it needs power to fire."),
             ],
         ),

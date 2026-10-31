@@ -231,6 +231,8 @@ mod tests {
         /// Bolt and blast towers (docs/26 stage 5).
         pub bolts: u32,
         pub blasts: u32,
+        /// Towers raised to level 2.
+        pub raised: u32,
     }
 
     impl Works {
@@ -246,6 +248,9 @@ mod tests {
                 let Some(b) = table.get(usize::from(v.building)) else {
                     continue;
                 };
+                if b.role == Role::Defence && b.upgrades_from.is_some() {
+                    w.raised += 1;
+                }
                 let n = match b.role {
                     Role::Wall if b.flags & GATE != 0 => &mut w.gates,
                     Role::Wall => &mut w.walls,
@@ -276,6 +281,7 @@ mod tests {
                 bridges: self.bridges.max(o.bridges),
                 bolts: self.bolts.max(o.bolts),
                 blasts: self.blasts.max(o.blasts),
+                raised: self.raised.max(o.raised),
             }
         }
     }
