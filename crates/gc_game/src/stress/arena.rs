@@ -1,13 +1,17 @@
-//! A flat test map to paint rivers, woods and thicket on, played with the
-//! real game data (every faction's units and buildings), and the orders
-//! the scenarios give on it.
+//! A flat test map to paint rivers, woods and thicket on, made by the
+//! game's own map maker, played with the real game data (every faction's
+//! units and buildings), and the orders the scenarios give on it.
+
+use core::ops::Range;
+use std::cell::OnceCell;
 
 use gc_data::GameData;
 use gc_fixed::{Angle, Fx, FxVec2};
-use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
-use gc_sim::terrain::{Cover, Growth};
+use gc_map::Map;
+use gc_map::def::{CoverKind, CoverOp, MapDef, Mode, Shape, SizeClass, Symmetry, TerrainOp};
+use gc_sim::terrain::Cover;
 use gc_sim::{
-    Capacities, Command, ConquestSetup, ConquestUnit, Ground, MatchSetup, PlayerCommand, PlayerId,
+    Capacities, Command, ConquestSetup, ConquestUnit, MatchSetup, PlayerCommand, PlayerId,
     RegimentHandle, RegimentView, StructureHandle, UnitStats, World,
 };
 
@@ -53,122 +57,124 @@ impl Real {
     }
 }
 
-/// Height of dry ground and the water line, in the sim's height units.
-const LAND: u16 = 300;
-const WATER_LINE: u16 = 256;
+/// Dry ground, the water line and a river's bed, in sixteenths of a tile
+/// (as a map file writes them): the river is a tile and a half deep, far
+/// past wading.
+const LAND: i32 = 40;
+const WATER_LINE: i32 = 24;
+const RIVER_BED: i32 = 0;
 
-/// A square map `tiles` across, open and flat until painted.
+/// A square map `tiles` across, open and flat until painted, made by the
+/// game's own map maker (`gc_map`) from a description, as a map file is:
+/// the same heights, river banks, woods and thicket rules as a real match.
 pub(crate) struct Arena {
-    pub tiles: u32,
-    nav: Vec<u8>,
-    heights: Vec<u16>,
-    cover: Vec<u8>,
-    growth: Vec<u8>,
+    def: MapDef,
+    /// The map, made the first time it is asked for; painting after that
+    /// is a mistake.
+    map: OnceCell<Map>,
 }
 
 impl Arena {
     pub fn new(tiles: u32) -> Arena {
-        let n = tiles as usize;
-        let side = n * CELLS_PER_TILE as usize;
         Arena {
-            tiles,
-            nav: vec![1; side * side],
-            heights: vec![LAND; n * n],
-            cover: vec![Cover::Open as u8; n * n],
-            growth: vec![Growth::Open as u8; n * n],
+            def: MapDef {
+                name: "Stress arena".into(),
+                size: SizeClass::Field(tiles as i32),
+                symmetry: Symmetry::None,
+                players: 2,
+                base: LAND,
+                water: WATER_LINE,
+                noise: None,
+                grown: None,
+                terrain: Vec::new(),
+                cover: Vec::new(),
+                land: Vec::new(),
+                objects: Vec::new(),
+                set_pieces: Vec::new(),
+            },
+            map: OnceCell::new(),
         }
     }
 
-    /// Every tile with x in `xs` and y in `ys`.
-    fn each(
-        &mut self,
-        xs: core::ops::Range<i32>,
-        ys: core::ops::Range<i32>,
-        mut paint: impl FnMut(&mut Arena, usize),
-    ) {
-        for y in ys {
-            for x in xs.clone() {
-                if let Some(t) = self.index(x, y) {
-                    paint(self, t);
-                }
-            }
+    /// The tiles with x in `xs` and y in `ys` as a map shape.
+    fn rect(xs: Range<i32>, ys: Range<i32>) -> Shape {
+        assert!(!xs.is_empty() && !ys.is_empty(), "nothing to paint");
+        Shape::Rect {
+            min: (xs.start, ys.start),
+            max: (xs.end, ys.end),
         }
     }
 
-    /// Tile `(x, y)`'s place in the rows, if it is on the map.
-    fn index(&self, x: i32, y: i32) -> Option<usize> {
-        let n = self.tiles as i32;
-        ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (y * n + x) as usize)
+    fn paint(&mut self) -> &mut MapDef {
+        assert!(self.map.get().is_none(), "painted after the map was made");
+        &mut self.def
     }
 
-    /// Deep water no one wades (a bridge crosses it).
-    pub fn river(&mut self, xs: core::ops::Range<i32>, ys: core::ops::Range<i32>) {
-        self.each(xs, ys, |a, t| {
-            a.heights[t] = 0;
-            a.block(t);
+    /// Deep water no one wades (a bridge crosses it). Its banks are sheer,
+    /// so, as on a real map, the half of each bank tile next to the water
+    /// is blocked to the march too.
+    pub fn river(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().terrain.push(TerrainOp {
+            shape,
+            mode: Mode::Set,
+            height: RIVER_BED,
+            edge: 0,
         });
     }
 
     /// Woods: they hide regiments in them and slow the march.
-    pub fn woods(&mut self, xs: core::ops::Range<i32>, ys: core::ops::Range<i32>) {
-        self.each(xs, ys, |a, t| {
-            a.cover[t] = Cover::Wood as u8;
-            a.growth[t] = Growth::Woods as u8;
-        });
+    pub fn woods(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        self.cover(xs, ys, CoverKind::Wood);
     }
 
     /// Thicket: woods no one marches through.
-    pub fn thicket(&mut self, xs: core::ops::Range<i32>, ys: core::ops::Range<i32>) {
-        self.each(xs, ys, |a, t| {
-            a.cover[t] = Cover::Wood as u8;
-            a.growth[t] = Growth::Thicket as u8;
-        });
+    pub fn thicket(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        self.cover(xs, ys, CoverKind::Thicket);
     }
 
-    /// Mark tile `t`'s cells blocked.
-    fn block(&mut self, t: usize) {
-        let n = self.tiles as usize;
-        let c = CELLS_PER_TILE as usize;
-        let side = n * c;
-        let (x, y) = (t % n, t / n);
-        for cy in y * c..(y + 1) * c {
-            for cx in x * c..(x + 1) * c {
-                self.nav[cy * side + cx] = BLOCKED;
-            }
-        }
+    fn cover(&mut self, xs: Range<i32>, ys: Range<i32>, kind: CoverKind) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().cover.push(CoverOp { shape, kind });
     }
 
-    /// Whether tile `(x, y)` is river.
+    /// The map as painted.
+    fn map(&self) -> &Map {
+        self.map.get_or_init(|| Map::from_def(&self.def))
+    }
+
+    /// The map and tile `(x, y)`'s place in its rows, if it is on it.
+    fn tile(&self, x: i32, y: i32) -> Option<(&Map, usize)> {
+        let map = self.map();
+        let n = map.tiles as i32;
+        ((0..n).contains(&x) && (0..n).contains(&y)).then(|| (map, (y * n + x) as usize))
+    }
+
+    /// Whether tile `(x, y)` is under water.
     pub fn is_river(&self, x: i32, y: i32) -> bool {
-        self.index(x, y)
-            .is_some_and(|t| self.heights[t] < WATER_LINE)
+        self.tile(x, y).is_some_and(|(m, t)| m.heights[t] < m.water)
     }
 
     /// Whether tile `(x, y)` is woods or thicket.
     pub fn is_woods(&self, x: i32, y: i32) -> bool {
-        self.index(x, y)
-            .is_some_and(|t| self.cover[t] == Cover::Wood as u8)
+        self.tile(x, y)
+            .is_some_and(|(m, t)| m.cover[t] == Cover::Wood as u8)
     }
 
     /// A two-player Conquest world on this map with every faction's units
     /// and buildings, each player with `stores` Grub and Marrow, nobody
     /// winning however it goes.
     pub fn world(&self, real: &Real, seed: u64, stores: u32) -> World {
-        let ground = Ground {
-            heights: &self.heights,
-            water_level: WATER_LINE,
-            cover: &self.cover,
-            growth: &self.growth,
-            ..Ground::FLAT
-        };
+        let map = self.map();
+        let nav = map.sim_nav_costs();
         let mut world = World::new(&MatchSetup {
             seed,
             capacities: Capacities { regiments: 128 },
             units: &real.units,
-            map_tiles: self.tiles,
-            nav: &self.nav,
+            map_tiles: map.tiles,
+            nav: &nav,
             teams: &[0, 1],
-            ground,
+            ground: map.ground(),
             champions: false,
             sky: gc_sim::Sky::STILL,
             generals: false,
@@ -327,4 +333,38 @@ pub(crate) fn attack_nearest(
             })
         })
         .collect()
+}
+
+/// The map maker paints what the scenarios ask for, corners and map
+/// edges included: a river exactly as wide as asked and blocked to the
+/// march, woods where asked, and thicket blocked too.
+#[test]
+fn the_arena_paints_what_it_is_asked() {
+    let mut arena = Arena::new(64);
+    arena.river(30..34, 0..64);
+    arena.woods(4..20, 0..64);
+    arena.thicket(8..12, 20..25);
+    for y in [0, 31, 63] {
+        let wet: Vec<i32> = (0..64).filter(|&x| arena.is_river(x, y)).collect();
+        assert_eq!(wet, (30..34).collect::<Vec<_>>(), "row {y}");
+    }
+    for y in [0, 40, 63] {
+        let woods: Vec<i32> = (0..64).filter(|&x| arena.is_woods(x, y)).collect();
+        assert_eq!(woods, (4..20).collect::<Vec<_>>(), "row {y}");
+    }
+    let nav = arena.map().nav_costs();
+    let cells = gc_sim::nav::CELLS_PER_TILE as usize;
+    let side = 64 * cells;
+    let cell = |x: usize, y: usize| nav[y * cells * side + x * cells];
+    assert_eq!(cell(32, 31), gc_sim::nav::BLOCKED, "the river");
+    for (x, y) in [(8, 20), (11, 20), (8, 24), (11, 24)] {
+        assert_eq!(
+            cell(x, y),
+            gc_sim::nav::BLOCKED,
+            "the thicket's corner ({x}, {y})"
+        );
+    }
+    assert_ne!(cell(12, 24), gc_sim::nav::BLOCKED, "beside the thicket");
+    assert_ne!(cell(15, 40), gc_sim::nav::BLOCKED, "the woods");
+    assert_ne!(cell(45, 31), gc_sim::nav::BLOCKED, "open ground");
 }

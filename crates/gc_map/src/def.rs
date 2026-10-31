@@ -109,6 +109,9 @@ pub enum Shape {
     Disc { at: Pos, r: i32 },
     /// Everything within `half_width` tiles of the line from `a` to `b`.
     Line { a: Pos, b: Pos, half_width: i32 },
+    /// Everything between corner points `min` and `max`: the tiles from
+    /// `min` up to but not including `max`, square-cornered.
+    Rect { min: Pos, max: Pos },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
