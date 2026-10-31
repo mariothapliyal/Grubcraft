@@ -193,6 +193,7 @@ mod siege;
 mod sky_news;
 mod sounds;
 mod viewer;
+mod wall_kit;
 mod wall_tool;
 
 use std::sync::{Arc, mpsc};
@@ -7278,6 +7279,9 @@ impl Running {
                 if art.looks.kit_for(s.building).is_some() {
                     return Some(buildings::height_of(gc_sim::structures::Role::Bridge));
                 }
+                if let Some(kit) = art.looks.wall_kit_for(s.building) {
+                    return Some(art.looks.top(kit.run()));
+                }
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
             |s| {
@@ -7681,7 +7685,14 @@ impl Running {
             let Some(stats) = self.buildings.stats.get(usize::from(s.building)) else {
                 continue;
             };
-            let model = self.art.as_ref().and_then(|art| art.looks.model_of(&s));
+            // A kit wall stands, and falls, as one of its runs.
+            let model = self.art.as_ref().and_then(|art| {
+                (art.looks.model_of(&s)).or_else(|| {
+                    art.looks
+                        .wall_kit_for(s.building)
+                        .map(wall_kit::WallKit::run)
+                })
+            });
             let top = match (model, &self.art) {
                 (Some(m), Some(art)) => art.looks.top(m),
                 _ => buildings::height_of(stats.role),
@@ -8043,11 +8054,30 @@ impl Running {
         // The bridge tiles, so the timber kit rails only a deck's outer
         // edges. Sorted for a binary search; empty on a map with no bridges.
         let bridged = buildings::bridge_tiles(structures, &self.buildings);
+        // The tiles of each side's drawn walls and gates that this player
+        // sees, so a kit wall puts an end post only where it stops (and a
+        // wall hidden in the fog does not take one away). Empty on a map
+        // with no kit walls.
+        let b = &self.buildings;
+        let mut walled: Vec<((i32, i32), PlayerId)> = Vec::new();
+        if (structures.iter()).any(|s| art.looks.wall_kit_for(s.building).is_some()) {
+            for s in structures.iter().filter(|s| shown(s)) {
+                let wall = b.is_wall(s.building) && !b.is_bridge(s.building);
+                if (wall && !b.is_fieldwork(s.building)) || b.is_gate(s.building) {
+                    for x in 0..i32::from(s.width) {
+                        for y in 0..i32::from(s.depth) {
+                            walled.push(((s.tile.0 + x, s.tile.1 + y), s.owner));
+                        }
+                    }
+                }
+            }
+            walled.sort_unstable();
+        }
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
+            pieces.clear();
             if let Some(kit) = art.looks.kit_for(s.building) {
-                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let dir = (s.line.and_then(|line| buildings::wall_piece(line, s.tile)))
                     .map_or(Vec2::X, |p| p.dir);
                 let tile = bridge_kit::Tile {
@@ -8058,8 +8088,24 @@ impl Running {
                     drawn: &|p: Vec2| ground(p.x, p.y),
                     bed: &|p: Vec2| hm.height_at(p.x, p.y),
                 };
-                pieces.clear();
                 kit.pieces(&tile, &mut pieces);
+            } else if let Some(kit) = art.looks.wall_kit_for(s.building) {
+                let piece = s.line.and_then(|line| buildings::wall_piece(line, s.tile));
+                let (centre, dir, len) = piece
+                    .map_or((buildings::centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
+                        (p.centre, p.dir, p.len)
+                    });
+                let tile = wall_kit::Tile {
+                    s: &s,
+                    centre,
+                    dir,
+                    len,
+                    walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
+                };
+                kit.pieces(&tile, &mut pieces);
+            }
+            if !pieces.is_empty() {
+                let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let (shake, rise) = self.siege.jolt(s.handle);
                 for p in &pieces {
                     // Shaken as one: every piece keeps the height it has
