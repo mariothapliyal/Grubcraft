@@ -294,6 +294,111 @@ pub(crate) fn attack_nearest(
         .collect()
 }
 
+/// What a march found: when every regiment still on the field stood at
+/// its goal, how close that came to the best pace, and the losses.
+pub(crate) struct March {
+    /// The tick every regiment still on the field was standing within
+    /// [`NEAR`] of its goal, or `None` if the limit came first.
+    pub done: Option<u32>,
+    /// The slowest regiment's straight march over open ground, in ticks:
+    /// the best the army could do.
+    pub ideal: u32,
+    /// Soldiers at the start and at the end.
+    pub soldiers: (u32, u32),
+    /// The limit, in seconds.
+    limit: u32,
+}
+
+impl March {
+    /// The ideal time as a percent of the time taken (100 is a straight
+    /// march on open ground with nothing in the way), or 0 if never done.
+    pub fn pace_percent(&self) -> u32 {
+        self.done.map_or(0, |t| self.ideal * 100 / t.max(1))
+    }
+
+    /// Report the march and check it: every regiment there and standing
+    /// within the limit, at least `min_pace` percent of the straight
+    /// march's pace, and no soldier lost.
+    pub fn report(&self, report: &mut super::Report, min_pace: u32) {
+        let pace = self.pace_percent();
+        report.metric("soldiers", self.soldiers.0);
+        report.metric("all arrived and standing", super::seconds(self.done));
+        report.metric(
+            "straight march on open ground",
+            super::seconds(Some(self.ideal)),
+        );
+        report.metric("pace, percent of the straight march", pace);
+        report.check(
+            format!("every regiment arrives and stands within {} s", self.limit),
+            self.done.is_some(),
+        );
+        report.check(
+            format!("at least {min_pace}% of the straight march's pace"),
+            pace >= min_pace,
+        );
+        report.check("no soldier lost", self.soldiers.1 == self.soldiers.0);
+    }
+}
+
+/// How near its goal a regiment must stand to have arrived.
+const NEAR: Fx = Fx::from_int(3);
+
+/// March each of `army` to the goal of the same place in `goals`, ticking
+/// (timed) for at most `limit` seconds, calling `each` with the tick after
+/// every tick.
+pub(crate) fn march(
+    real: &Real,
+    world: &mut World,
+    report: &mut super::Report,
+    army: &[RegimentHandle],
+    goals: &[FxVec2],
+    limit: u32,
+    mut each: impl FnMut(u32, &World),
+) -> March {
+    assert_eq!(army.len(), goals.len());
+    let tps = f64::from(gc_sim::TICKS_PER_SECOND);
+    let mut ideal = 0;
+    let mut orders = Vec::new();
+    for (r, &g) in army.iter().zip(goals) {
+        let v = of(world, core::slice::from_ref(r))
+            .next()
+            .expect("on the field");
+        // Tiles over tiles a second: the fixed point's scale cancels.
+        let (tiles, speed) = (
+            (g - v.position).length(),
+            real.units[usize::from(v.unit)].speed,
+        );
+        ideal = ideal.max((f64::from(tiles.raw()) / f64::from(speed.raw().max(1)) * tps) as u32);
+        orders.push(move_to(v.owner, *r, g));
+    }
+    let start = soldiers(world, army);
+    report.tick(world, &orders);
+    each(0, world);
+    let mut done = None;
+    for t in 1..=limit * gc_sim::TICKS_PER_SECOND {
+        report.tick(world, &[]);
+        each(t, world);
+        // Every regiment still on the field there and standing (losses
+        // are checked on their own).
+        let (mut alive, mut there) = (0, 0);
+        for v in of(world, army) {
+            let g = goals[army.iter().position(|&r| r == v.handle).unwrap()];
+            alive += 1;
+            there += usize::from(!v.moving && (g - v.position).length() <= NEAR);
+        }
+        if alive > 0 && there == alive {
+            done = Some(t);
+            break;
+        }
+    }
+    March {
+        done,
+        ideal,
+        soldiers: (start, soldiers(world, army)),
+        limit,
+    }
+}
+
 /// The map maker paints what the scenarios ask for, corners and map
 /// edges included: a river exactly as wide as asked and blocked to the
 /// march, woods where asked, and thicket blocked too.
