@@ -10,18 +10,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use gc_replay::{EXTENSION, Replay, pinned_table};
+use gc_replay::{Replay, pinned_table};
 use gc_sim::{Command, SIM_VERSION};
 
 /// Every golden replay, by file.
 fn goldens() -> Vec<(PathBuf, Replay)> {
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays");
-    let mut files: Vec<_> = std::fs::read_dir(&folder)
-        .expect("the replays folder")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
-        .collect();
-    files.sort();
+    let files = gc_replay::files_in(&folder).expect("the replays folder");
     assert!(files.len() >= 4, "golden replays missing from {folder:?}");
     files
         .into_iter()
@@ -183,15 +178,10 @@ const PINNED: (u32, &[(&str, u64)]) = (
 #[test]
 fn the_sim_version_changes_when_the_goldens_do() {
     let goldens = goldens();
-    let names: Vec<String> = goldens
-        .iter()
-        .map(|(file, _)| file.file_stem().unwrap().to_string_lossy().into_owned())
-        .collect();
     let table = pinned_table(
-        names
+        goldens
             .iter()
-            .map(String::as_str)
-            .zip(goldens.iter().map(|(_, r)| r)),
+            .map(|(file, replay)| (file.file_stem().unwrap().to_string_lossy(), replay)),
     );
     assert_eq!(
         PINNED.0, SIM_VERSION,

@@ -51,7 +51,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Whole history for the merge base, but file contents only as read.
           fetch-depth: 0
+          filter: blob:none
       - name: Compare with main as it is now
         env:
           BASE: ${{ github.base_ref }}

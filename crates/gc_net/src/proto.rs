@@ -15,6 +15,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
+// scripts/rules-bump.py reads and sets this line as written.
 pub const PROTOCOL: u8 = 44;
 
 const MAGIC: [u8; 2] = *b"GC";

@@ -130,6 +130,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
+// scripts/rules-bump.py reads and sets this line as written.
 pub const SIM_VERSION: u32 = 79;
 
 /// A tile in a command, widened.

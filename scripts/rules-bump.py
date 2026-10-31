@@ -35,14 +35,16 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# The numbers that are taken in merge order: name -> (file, pattern).
+# The numbers that are taken in merge order: name -> (file, pattern). Each
+# declaration says beside it that this script reads it in this exact form.
 NUMBERS = {
     "SIM_VERSION": ("crates/gc_sim/src/lib.rs", r"(pub const SIM_VERSION: u32 = )(\d+)(;)"),
     "FORMAT": ("crates/gc_replay/src/lib.rs", r"(pub const FORMAT: u16 = )(\d+)(;)"),
     "PROTOCOL": ("crates/gc_net/src/proto.rs", r"(pub const PROTOCOL: u8 = )(\d+)(;)"),
 }
 GOLDENS_TEST = "crates/gc_replay/tests/goldens.rs"
-PINNED = re.compile(r"const PINNED: .*?\n\);", re.S)
+# From `const PINNED` to the first `\n);` after it, as `gc_replay pin` finds it.
+PINNED = re.compile(r"const PINNED.*?\n\);", re.S)
 BASELINE = "tools/gc_bench/baseline.json"
 
 
@@ -80,8 +82,12 @@ def changed(rev_a, rev_b, *paths, kinds="ACDMR"):
     return [p for p in out.splitlines() if p]
 
 
-def goldens_moved(rev_a, rev_b):
-    return [p for p in changed(rev_a, rev_b, "replays") if p.endswith(".gcr")]
+def goldens_moved(rev_a, rev_b, kinds="ACDMR"):
+    return [p for p in changed(rev_a, rev_b, "replays", kinds=kinds) if p.endswith(".gcr")]
+
+
+def dirty():
+    return bool(git("status", "--porcelain", "--untracked-files=no").stdout.strip())
 
 
 def run(*cmd):
@@ -111,7 +117,7 @@ def check(base, head):
 
 
 def bump(base, take):
-    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+    if dirty():
         sys.exit("commit or stash your changes first")
     for state in ("MERGE_HEAD", "rebase-merge", "rebase-apply"):
         if (ROOT / git("rev-parse", "--git-path", state).stdout.strip()).exists():
@@ -122,8 +128,7 @@ def bump(base, take):
 
     take = set(take)
     take |= {n for n in NUMBERS if number_at("HEAD", n) != number_at(mb, n)}
-    golden_files = goldens_moved(mb, "HEAD")
-    if golden_files:
+    if goldens_moved(mb, "HEAD"):
         take.add("SIM_VERSION")
     rebench = bool(changed(mb, "HEAD", BASELINE))
 
@@ -136,11 +141,10 @@ def bump(base, take):
         test = ROOT / GOLDENS_TEST
         old = PINNED.search(show(mb, GOLDENS_TEST)).group(0)
         test.write_text(PINNED.sub(lambda _: old, test.read_text(), count=1))
-    existing = [p for p in changed(mb, "HEAD", "replays", kinds="M") if p.endswith(".gcr")]
-    existing += changed(mb, "HEAD", BASELINE, kinds="M")
+    existing = goldens_moved(mb, "HEAD", kinds="M") + changed(mb, "HEAD", BASELINE, kinds="M")
     if existing:
         git("checkout", mb, "--", *existing)
-    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+    if dirty():
         git("commit", "-aqm", "Put the rules numbers back to the merge base before merging main\n\n"
             "Made by scripts/rules-bump.py; the next commit takes the next free ones.")
 
@@ -156,13 +160,12 @@ def bump(base, take):
         )
 
     # 3. Take main's + 1 for each number this branch bumps.
-    taken = {}
-    for name in sorted(take):
-        taken[name] = number_at(base, name) + 1
-        set_number(name, taken[name])
-    if not taken:
+    if not take:
         print(f"merged {base}; this branch bumps none of {', '.join(NUMBERS)}")
         return
+    taken = {name: number_at(base, name) + 1 for name in sorted(take)}
+    for name, value in taken.items():
+        set_number(name, value)
     if "SIM_VERSION" in taken:
         run("cargo", "run", "--release", "-q", "-p", "gc_replay", "--", "bless", "replays")
         run("cargo", "run", "--release", "-q", "-p", "gc_replay", "--", "pin")

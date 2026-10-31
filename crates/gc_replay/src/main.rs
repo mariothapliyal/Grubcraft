@@ -295,55 +295,55 @@ fn info(file: &Path) -> bool {
     true
 }
 
-/// Where two recordings of one match, from two machines, first disagree.
 /// Rewrites the `PINNED` table in the goldens test from the repository's
 /// replays as they are now (blessed) and this build's `SIM_VERSION`.
 fn pin() -> ExitCode {
-    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays");
-    let test = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens.rs");
-    let goldens: Option<Vec<(String, Replay)>> = match gc_replay::files_in(&folder) {
-        Ok(files) => files
-            .iter()
-            .map(|f| Some((f.file_stem()?.to_string_lossy().into_owned(), load(f)?)))
-            .collect(),
-        Err(e) => {
-            eprintln!("{}: {e}", folder.display());
-            None
+    match write_pins() {
+        Ok(message) => {
+            println!("{message}");
+            ExitCode::SUCCESS
         }
-    };
-    let Some(goldens) = goldens else {
-        return ExitCode::FAILURE;
-    };
-    let table = gc_replay::pinned_table(goldens.iter().map(|(n, r)| (n.as_str(), r)));
-    let source = match std::fs::read_to_string(&test) {
-        Ok(s) => s,
         Err(e) => {
-            eprintln!("{}: {e}", test.display());
-            return ExitCode::FAILURE;
+            eprintln!("{e}");
+            ExitCode::FAILURE
         }
-    };
-    let Some(start) = source.find("const PINNED") else {
-        eprintln!("no PINNED table in {}", test.display());
-        return ExitCode::FAILURE;
-    };
-    let Some(len) = source[start..].find("\n);").map(|i| i + 3) else {
-        eprintln!("the PINNED table in {} has no end", test.display());
-        return ExitCode::FAILURE;
-    };
-    let new = format!("{}{table}{}", &source[..start], &source[start + len..]);
-    if let Err(e) = std::fs::write(&test, new) {
-        eprintln!("{}: {e}", test.display());
-        return ExitCode::FAILURE;
     }
-    println!(
+}
+
+fn write_pins() -> Result<String, String> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let folder = crate_dir.join("../../replays");
+    let test = crate_dir.join("tests/goldens.rs");
+    // The repository's goldens (not a `replays/` in the working directory),
+    // since the table pinned is the repository's test.
+    let files = expand(&[folder]).map_err(|e| e.to_string())?;
+    let goldens = files
+        .iter()
+        .map(|f| Replay::load(f).map(|r| (f.file_stem().unwrap_or_default().to_string_lossy(), r)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let source = std::fs::read_to_string(&test).map_err(|e| format!("{}: {e}", test.display()))?;
+    // The table runs from `const PINNED` to the first `\n);` after it
+    // (scripts/rules-bump.py finds it the same way).
+    let start = source
+        .find("const PINNED")
+        .ok_or_else(|| format!("no PINNED table in {}", test.display()))?;
+    let end = source[start..]
+        .find("\n);")
+        .map(|i| start + i + 3)
+        .ok_or_else(|| format!("the PINNED table in {} has no end", test.display()))?;
+    let table = gc_replay::pinned_table(goldens.iter().map(|(n, r)| (n, r)));
+    let new = format!("{}{table}{}", &source[..start], &source[end..]);
+    std::fs::write(&test, new).map_err(|e| format!("{}: {e}", test.display()))?;
+    Ok(format!(
         "pinned {} goldens under sim version {} in {}",
         goldens.len(),
         gc_sim::SIM_VERSION,
         test.display()
-    );
-    ExitCode::SUCCESS
+    ))
 }
 
+/// Where two recordings of one match, from two machines, first disagree.
 fn compare(a: &Path, b: &Path) -> ExitCode {
     let (Some(ra), Some(rb)) = (load(a), load(b)) else {
         return ExitCode::from(2);
