@@ -1113,6 +1113,11 @@ impl World {
     }
 
     /// The buildings on the field (Conquest only).
+    /// Whether player `p` has a walled town (see [`towns`]).
+    pub fn walled_town(&self, p: PlayerId) -> bool {
+        self.structures().is_some_and(|s| s.towns().walled(p))
+    }
+
     pub fn structures(&self) -> Option<&Structures> {
         Some(&self.conquest.as_ref()?.structures)
     }

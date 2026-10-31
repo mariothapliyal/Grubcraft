@@ -1525,6 +1525,7 @@ impl Running {
             resonance: b.resonance,
             chords: b.chords,
             honor: (self.world.meter(self.sandbox.side) == gc_sim::Meter::Honor).then_some(b.honor),
+            walled: self.world.walled_town(self.sandbox.side),
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
     }
@@ -2091,6 +2092,12 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
         _ if world.swept(r.handle) => "Swept by the flood: losing men",
         _ if dark && r.torches => "Torches lit: seen from afar",
         "" if dark => "In the dark: unseen from afar",
+        "" if world
+            .structures()
+            .is_some_and(|s| s.towns().inside_at(r.owner, r.position)) =>
+        {
+            "In its walled town: stands firmer, its wounded mend"
+        }
         word => word,
     }
 }
