@@ -490,9 +490,6 @@ impl Structures {
         }
     }
 
-    /// Lay a pool where a tower of `owner`'s hit landed at `at` (acid, or
-    /// burning ground), while there is room; burning ground sets the growth
-    /// it covers alight (see [`Structures::kindle`]).
     /// Set the ground at a tile alight, if the kindle queue has room: it
     /// never grows past what it reserved.
     pub(crate) fn kindle_at(&mut self, x: i32, y: i32) {
@@ -501,6 +498,9 @@ impl Structures {
         }
     }
 
+    /// Lay a pool where a tower of `owner`'s hit landed at `at` (acid, or
+    /// burning ground), while there is room; burning ground sets the growth
+    /// it covers alight (see [`Structures::kindle`]).
     pub(crate) fn lay_pool(&mut self, owner: PlayerId, acid: bool, at: FxVec2) {
         if self.pools.len() >= MAX_POOLS {
             return;

@@ -154,7 +154,7 @@
             blurb: "Two archers that shoot ground and air. A cheap guard for seeps and approaches against lone raiders and flyers.",
             summary: "Two archers that shoot ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
             notes: [
-                ("Fire-Arrow Watchtower", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot, 4 tiles more range and fire arrows that set woods and fields alight."),
+                ("Fire-Arrow Watchtower", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot, 4 tiles more range and fire arrows that set woods and scrub alight."),
             ],
             tips: [
                 (icon: Alarm, text: "Place it at seeps and approaches to punish lone raiders and flyers, since it will not stop an army."),
@@ -164,10 +164,10 @@
         ),
         (
             name: "Fire-Arrow Watchtower",
-            summary: "Level 2 of the Watchtower, upgraded in place. Its two archers hit for 6 a shot (up from 5), reach 36 tiles (up from 32) and have 1500 hit points (up from 1000). Its fire arrows set woods and fields alight. It costs 75 Grub and 50 Marrow. Press V on a finished Watchtower (tier 2); it takes 30 seconds and keeps firing.",
+            summary: "Level 2 of the Watchtower, upgraded in place. Its two archers hit for 6 a shot (up from 5), reach 36 tiles (up from 32) and have 1500 hit points (up from 1000). Its fire arrows set woods and scrub alight. It costs 75 Grub and 50 Marrow. Press V on a finished Watchtower (tier 2); it takes 30 seconds and keeps firing.",
             notes: [],
             tips: [
-                (icon: Alarm, text: "Its fire arrows set woods and fields alight, so keep it away from woods you want kept whole."),
+                (icon: Alarm, text: "Its fire arrows set woods and scrub alight, so keep it away from woods you want kept whole."),
                 (icon: Marrow, text: "Save 50 Marrow for it, since the upgrade costs 75 Grub and 50 Marrow."),
                 (icon: Hammer, text: "Upgrade it with V; it keeps shooting for the 30 seconds it takes."),
             ],

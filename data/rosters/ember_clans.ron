@@ -265,7 +265,7 @@
             footprint: (2, 2),
             flags: [AntiAir],
             attack: Some((range: 36.0, damage: 6, reload: 2.0, shots: 2, quirk: Kindles)),
-            effect: "Level 2 of the Watchtower: half as tough again, hits harder and reaches 4 tiles further. Its fire arrows set woods and fields where they land alight.",
+            effect: "Level 2 of the Watchtower: half as tough again, hits harder and reaches 4 tiles further. Its fire arrows set woods and scrub where they land alight.",
         ),
         (
             name: "Ballista Yagura",

@@ -677,9 +677,11 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
     let from = &table[usize::from(b.upgrades_from)];
     let main = Role::Main as u8;
     // Walls and towers each have one next level.
-    let next = (table.iter())
-        .filter(|o| o.upgrades_from == b.upgrades_from)
-        .count();
+    let next = || {
+        (table.iter())
+            .filter(|o| o.upgrades_from == b.upgrades_from)
+            .count()
+    };
     // Drawn walls and gates go up levels.
     let levels = |r: &BuildingRecord| r.flags & (BUILDING_LINE | BUILDING_GATE) != 0;
     if levels(b) || levels(from) {
@@ -690,7 +692,7 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
         if from.faction != b.faction || from.tier > b.tier {
             return Err("a wall's level upgrades from its own faction's wall, at no higher tier");
         }
-        if next > 1 {
+        if next() > 1 {
             return Err("a wall has one next level");
         }
         // Follow the levels down: they must end, not come back round.
@@ -714,7 +716,7 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
         if from.upgrades_from != NONE {
             return Err("a tower has two levels");
         }
-        if next > 1 {
+        if next() > 1 {
             return Err("a tower has one next level");
         }
     } else if b.role != main || from.role != main {

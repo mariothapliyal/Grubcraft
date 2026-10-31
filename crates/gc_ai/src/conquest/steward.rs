@@ -1354,7 +1354,13 @@ impl Steward {
         if s.plan.fortifies != Fortify::Full || self.arming || look.tier < 2 {
             return;
         }
-        if look.mine.iter().any(|m| m.view.upgrading.is_some()) {
+        // Nothing upgrading, nor ordered up and not yet started (an order
+        // on a finished building is an upgrade), and nothing saved for.
+        let ordered = |h| (self.busy.iter()).any(|&(b, worker, _)| b == h && worker.is_none());
+        if self.ledger.saving != (0, 0)
+            || (look.mine.iter())
+                .any(|m| m.view.upgrading.is_some() || m.finished() && ordered(m.view.handle))
+        {
             return;
         }
         let Some(bank) = s.world.bank(s.party) else {
@@ -1362,6 +1368,10 @@ impl Steward {
         };
         let tower = look.mine.iter().find_map(|m| {
             if m.stats.role != Role::Defence || !m.finished() || self.is_busy(m.view.handle) {
+                return None;
+            }
+            // An unpowered tower can't shoot, raised or not.
+            if s.world.powered(m.view.handle) == Some(false) {
                 return None;
             }
             let to = s.kit.upgrade_of(m.view.building)?;
