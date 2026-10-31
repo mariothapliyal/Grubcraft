@@ -171,7 +171,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
     71,
     &[
         ("conquest-ribcage-1v1", 0xd8d9e899ef65e076),
-        ("conquest-river-1v1", 0xb50badbec5d9249b),
+        ("conquest-river-1v1", 0x8b61892d876b3571),
         ("field-1v1", 0x6dece8f8e379e580),
         ("field-2v2", 0x6d29da147a8ea169),
         ("field-8000pt-2v2", 0xba562ecac284c678),

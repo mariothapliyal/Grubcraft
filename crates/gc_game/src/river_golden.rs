@@ -23,10 +23,11 @@ use crate::conquest_golden::{Kit, regiments_of};
 use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-river-1v1";
-/// Grown land (the first grown choice, as wild as the seed picks), at the
-/// smallest Conquest size, with a river near both starts.
-const MAP_SEED: u64 = 3;
-const SEED: u64 = 0x0071_7E55;
+/// The seed of the world and of its map (grown land, as wild as the seed
+/// picks, at the smallest Conquest size, with a river near both starts).
+/// One seed for both, as a lobby match has, so watching the replay makes
+/// the same map again.
+const SEED: u64 = 3;
 const MINUTES: u32 = 3;
 const FACTIONS: [Faction; 2] = [Faction::EmberClans, Faction::EmberClans];
 /// When the workers are sent: the fellers, then the raft.
@@ -37,9 +38,11 @@ const FELL_SIDE: i32 = 3;
 
 /// The map: grown land at the smallest Conquest size.
 fn map() -> gc_map::Map {
-    let grown = gc_map::SHIPPED.len() + 1 + gc_map::wilds::Wildness::ALL.len();
-    conquest::make_map(grown, 0, MAP_SEED)
+    conquest::make_map(GROWN, 0, SEED)
 }
+
+/// The lobby's choice for grown land.
+const GROWN: usize = gc_map::SHIPPED.len() + 1 + gc_map::wilds::Wildness::ALL.len();
 
 /// The tile nearest `from` that `fits`.
 fn nearest(world: &World, from: (i32, i32), fits: impl Fn(i32, i32) -> bool) -> Option<(i32, i32)> {
@@ -112,9 +115,9 @@ pub fn record() -> Replay {
         );
     }
     let mut replay = rec.finish();
+    replay.header.map = Some(GROWN as u8);
     replay.note = format!(
-        "{NAME}: Conquest recorded from gc_game's river_golden.rs, seed {SEED:#x}, grown land \
-         (map seed {MAP_SEED}); Clans v Clans felling and dumping into the river, scripted, \
+        "{NAME}: Conquest recorded from gc_game's river_golden.rs, seed {SEED}, grown land; Clans v Clans felling and dumping into the river, scripted, \
          {MINUTES} minutes"
     );
     replay
