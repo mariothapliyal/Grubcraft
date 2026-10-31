@@ -12,10 +12,11 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Regiments**
 - Left-click selects; drag a box; `Shift` adds or removes. Double-click select by type: not built.
-- Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing).
+- Right-click ground: move. Right-click enemy: attack. Right-drag: draw a line (position, frontage, facing). Alt+right-drag: a deep line (the drag is the front, each regiment keeps its frontage and the rest stack behind, as the Deep shape), to fill a gate or bridge.
 - `Shift`+right-click: queue a move or an attack after the regiment's current orders (up to four; more are refused). Each player can have 32 regiments with queued orders or on an attack-move at once; beyond that a queued order is refused and an attack-move marches plainly. Any order without `Shift` replaces the queue. A dotted line runs on through the queued stops (red for advances).
 - `Q` then click: move. `W` then click: attack; a click on open ground advances there instead. `A` (Advance) then click: attack-move, which marches but stops to fight any enemy within 12 tiles, then marches on. `Shift` on the click queues it and keeps the tool armed. `Esc` cancels. While a hero panel is shown (`Shift+H` test), `A` is the hero's first ability instead.
 - Every move shows a fading plate at once where the regiment will stand.
+- A regiment sent back the way it faces (more than 135° round) turns about where it stands, the rear rank becoming the front, and marches off a third of a second later; told to face back the way it came at the end, it turns about again. Up to 90° off it wheels as it marches; between 90° and 135° it turns on the spot first.
 - `R` cycles formation: Line, Tight, Loose, Shield wall (shields only). `F` does the same while no hero owns `F`.
 - `Z` Brace (spears and pikes; again lifts). `V` Fall back (8 tiles at half pace). `E` Burn (set nearby woods alight). `X` Torches (night only). `C` Plant stakes (Conquest).
 - `O` cycles army shape for group moves: Line, Deep, Hammer, Square, Plain, then saved Mine 1 to 3. `Shift+O` saves the selection's shape.
@@ -61,8 +62,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `F9` light presets. `F12` weather (Clear, Rain, Snow, Fog). `F10` light-tuning panel (developer tool). `F11` or backquote: dev overlay.
 
 **Command-line flags** [crates/gc_game/src/main.rs]
-- `--sandbox`; `--conquest ribcage_pass|four_teeth`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
-- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--watch REPLAY`.
+- `--sandbox`; `--conquest ribcage_pass|four_teeth|land-random|land-mixed|...`; `--battle recruit|veteran|general|warlord`; `--host`; `--join ADDRESS`; `--password PW`; `--menu`/`--no-menu`; `--map NAME-or-FILE`; `--seed N`.
+- `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march N` (a regiment through each gate, looking at the Nth); `--watch REPLAY`.
 - Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
 
 **Not in the game:** key rebinding, ping wheel (`G` is blocked-ground view), text chat, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
@@ -118,6 +119,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 - A regiment is a block of models; the back rank steps up as the front falls, so it hits less as it shrinks.
 - Hits from the flank do x1.4 damage; from the rear x1.8.
+- **Routing:** a regiment can't waver or rout until it is down to its breaking point: about 45% strength for levies (morale under 55), 40% for line troops, 35% for elite (morale 70+), give or take 5, and 5 lower with its general near. Workers can break at any strength. Charges and flank attacks break regiments by killing men faster. The tick on a regiment card's health bar marks it.
+- **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Falling back, Running), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
@@ -134,12 +137,14 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 ## 6. World: weather, seasons, fire, floods, rivers [docs/32-changing-land.md, docs/38-living-waterways.md]
 
 - **Time of day** (lobby): Golden hour (17:00), Noon, Overcast (12:00), Dusk (18:00), Night (23:00).
-- **Weather** (lobby): Fair, Changing (a new spell every 3 to 6 min), Rain, Snow, Fog. Fog cuts sight up to 60%; snow 30%; rain 20%; night 45%. Snow slows marching up to 15%. The top bar shows the cut (for example "Fog: sight 40%").
+- **Weather** (lobby): Fair, Changing (a new spell every 3 to 6 min; the default since 2026-10-30), Rain, Snow, Fog. Fog cuts sight up to 60%; snow 30%; rain 20%; night 45%. Snow slows marching up to 15%. The top bar shows the cut (for example "Fog: sight 40%").
+- **Weather and fire news:** the news line says when rain (strength 80+), a storm (rain 192+, where lightning starts; rain again under 152), snow or fog comes in, and when it clears (under 40), once each way. Woods or scrub burning within 10 tiles of your buildings or regiments: "Fire! It is spreading near your base" (or "troops"), each once as it comes near, then not again for 45 s. Not told while catching up online. The weather a match starts in isn't announced. Code: `gc_game/src/sky_news.rs`.
 - **Night:** an unlit regiment in the open is spotted only within 6 tiles (12 when marching). Torches (`X`) light 10 tiles and make a regiment visible.
 - **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed).
 - **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled (flames only).
 - **Mud and floods:** long rain soaks ground into mud (slow, no charges). Long heavy rain swells rivers and shuts the fords; troops caught on a shut ford lose 12 HP a second and are moved to the bank.
 - **Rivers carry their own water [docs/39]:** each river is cut into 16-tile stretches. Rain on a river fills them and runs on downstream, so a long river's lower fords flood most and drain last.
+- **Reading the rivers [docs/39]:** on grown maps every river has a name ("the Brackwater"). The top bar shows the worst river you can see: up (wading in it is a quarter slower), in flood (its fords shut) or bursting its banks, and whether it is rising or falling. When you see a river rising in flood upstream, the river watch tells you when its crest reaches a ford ("The Brackwater is rising upriver: its crest reaches a ford in about 40 s"). The river's water is drawn as high as it stands.
 - **Flash floods:** in Changing weather, a storm (rain strength 220 or more) can send a flood front down a river at 6 tiles a second; each ford shuts as it arrives (upper fords first) and opens once the water falls. Sizes: Minor (no ford shuts; 35 in 100), Flood (45), Major (16), Catastrophic (4); wet ground and rain on spring snow make them bigger, a dry summer smaller. Warnings: 8 s before the first ford ("A flash flood is coming down the river"); a Major is told to everyone 15 s ahead and a Catastrophic one 30 s ahead. Troops in a ford the front shuts are swept 10 tiles downstream and 30% drown.
 - **Currents:** wading troops drift downstream; going upstream is slower.
 - **Clearing** (`S`): scrub 3 s, woods 8 s (3 Grub of timber), thicket 15 s (5 Grub).
@@ -148,7 +153,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Main menu:** Play (Host a game, Join a game), Sandbox, Replays, Unit viewer, Settings, Guide, Exit.
 
-- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4). Made maps **Classic: Random**, **Plains**, **Mixed** and **Wild** are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
+- **Conquest** (primary; 20 to 60 min). Play > Host > Conquest, or `--conquest ribcage_pass` (2 players) / `four_teeth` (4) / `land-mixed` (any lobby map's name). Made maps: **Land: Random** (the default), **Plains**, **Mixed** and **Wild** on grown land with rivers, fords and woods (docs/41), and the older **Classic: Random**, **Plains**, **Mixed** and **Wild**. Both are sized by the lobby's **Size**: Small 320 tiles with four starts (up to 4 players), Medium 448 with four (the default, up to 4), Large 640 with six (up to 6). Two players start across the map from each other. Ribcage Pass and The Four Teeth keep their own size, and Size is hidden for them. Fog of war on in Conquest matches played to a victory.
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI.
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.

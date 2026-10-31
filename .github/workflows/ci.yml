@@ -67,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macOS arm64, os: macos-14 }
+          - { name: macOS arm64, os: macos-15 }
           - { name: Windows x64, os: windows-latest }
           - { name: Linux x64, os: ubuntu-latest }
     runs-on: ${{ matrix.os }}
@@ -169,7 +169,8 @@ jobs:
 
   mac-app:
     name: macOS universal app
-    runs-on: macos-14
+    # macos-14 is retired by GitHub on 2026-11-02 (brownouts refuse its jobs before that).
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust

@@ -474,32 +474,29 @@ impl Wilds<'_> {
             None => vec![nw, ne],
         };
         let z = self.clearing();
-        // One jitter for every share, so they stay alike.
-        let natural = [(Kind::GrubSeep, -6, 33), (Kind::GrubSeep, 7, 32)];
-        let own: Vec<(Kind, i32, i32)> = conquest::BASE_NODES
+        // One jitter for every share's own pieces, so they stay alike.
+        let (own, around): (Vec<_>, Vec<_>) = conquest::SHARE.iter().partition(|p| p.owned);
+        let own: Vec<(Kind, i32, i32)> = own
             .into_iter()
-            .chain(natural)
-            .map(|(kind, dx, dy)| (kind, dx + self.w.range(-1, 1), dy + self.w.range(-1, 1)))
+            .map(|p| {
+                (
+                    p.kind,
+                    p.at.0 + self.w.range(-1, 1),
+                    p.at.1 + self.w.range(-1, 1),
+                )
+            })
             .collect();
         // The rest, at hundredths of the clearing's reach.
-        let around = [
-            (Kind::Village, -55, 30, ""),
-            (Kind::Shrine, 65, -15, ""),
-            (Kind::Bloodseep, -70, -25, ""),
-            (Kind::FrontierSlot, 0, 80, ""),
-            (Kind::GrubSeep, 45, 55, ""),
-            (Kind::CreepCamp, 50, 60, conquest::TOADS),
-            (Kind::MarrowVein, -30, 70, ""),
-            (Kind::CreepCamp, -25, 75, conquest::GOLEMS),
-            (Kind::GrubSeep, -65, 50, ""),
-            (Kind::CreepCamp, -70, 55, conquest::TOADS),
-        ];
+        let around: Vec<(Kind, i32, i32, &str)> = around
+            .into_iter()
+            .map(|p| (p.kind, p.at.0, p.at.1, p.label))
+            .collect();
         for (player, s) in (0..).zip(north) {
             self.put(Kind::Start, s, Some(player), "");
             for &(kind, dx, dy) in &own {
                 self.put(kind, (s.0 + dx, s.1 + dy), Some(player), "");
             }
-            for (kind, u, v, label) in around {
+            for &(kind, u, v, label) in &around {
                 self.put(kind, (s.0 + z * u / 100, s.1 + z * v / 100), None, label);
             }
         }

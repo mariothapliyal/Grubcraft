@@ -714,7 +714,7 @@ const GOLDENS: &[Golden] = &[
 
 /// The river storm golden's seed: its grown map has rivers with fords,
 /// and its storm rolls a major flash flood.
-const RIVER_STORM_SEED: u64 = 0x570a;
+const RIVER_STORM_SEED: u64 = 0x5729;
 
 /// Fair, a storm from the first minute for two, then fair again.
 const RIVER_STORM: &[gc_sim::Spell] = &[
@@ -1036,7 +1036,8 @@ fn deploy(
         // Every row gets its share of each kind of regiment.
         let row: Vec<_> = raised.iter().copied().skip(k).step_by(rows).collect();
         let centre = start - forward * (k as f32 * ROW_DEPTH);
-        placed.extend(army::deploy(units, &row, centre, forward, minds.terrain()));
+        let rank = army::deploy_clear_of(units, &row, centre, forward, minds.terrain(), &placed);
+        placed.extend(rank.placed);
     }
     placed
 }

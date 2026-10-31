@@ -276,12 +276,27 @@ A lot of what feels clunky is the controls, not the pathfinding. A **new control
 - **Real use.** Queue a march over a bridge, through a gate, then an attack: the regiments file through in order (item 1) and attack on arrival. Drag a deep line across a gate: it fills the gate wide and stacks the rest behind (item 2).
 - **Checks.** A headless test measures ticks from command to first movement and fails over a budget; LAN timing in the batched playtest.
 
+**Progress (2026-10-30, built).**
+- **Delay measured.** Lockstep delay is 2 turns (100 ms). Route search answers on the order's tick. The biggest part was the turn: a block stood and turned on the spot first.
+- **Wheeling (#330).** Blocks now wheel as they march up to 90° off. `order_response.rs` checks the ticks from command to first step.
+- **Queued orders and attack-move (#339):**
+  - Shift queues up to four moves or attacks.
+  - `A` attack-moves.
+  - Every order shows a ghost plate and a dotted line at once.
+  - The AI attack-moves when it defends.
+  - Stress scenario `queued-orders`: through a gate, then an attack.
+- **Deep lines and about-face (#341):**
+  - Alt+right-drag draws a deep line, each regiment keeping its frontage and the rest stacked behind.
+  - A block sent more than 135° behind faces about where it stands, its rear rank becoming the front, and marches off 0.3 s later.
+- **Not done:** LAN timing waits for the batched playtest.
+
 ### 7. Clear orders and feedback
 
 Show on screen what each unit is doing and why. Many "this feels wrong" moments happen because you can't see what a unit is thinking. Controls thread for the screen side, T4 for the reasons the sim exposes.
 - **What it shows.** Order and stance icons on the banner and card (marching, attack-move, braced, hold, falling back, forced march, queued orders); morale as a bar with a tick at the breaking point (from the morale redesign); and **why** a unit is wavering, as one or two short reasons from the sim (flanked, rear, outnumbered, general fell, ally broke nearby). Hovering a unit shows its order queue and route.
 - **Real use.** In a big fight you can see which regiment is about to break and why, and send a reserve there. A regiment that won't move shows "waiting: friend in the way" or "pinned".
 - **Sim side.** The reasons come from the morale drains the sim already sums, kept as a small bit set per regiment in the view (not hashed, it is derived).
+- **Built (2026-10-30).** Order line with icon (Holding, Marching, Forced march, Attacking, Advancing, Fighting, Braced, Falling back, Running), held-up note (pinned, driven back, re-forming ranks, filing through, trapped) and queued-order count on the panel and hover card; up to two "Why" reasons while wavering or running; order icons on tray cards and in a tab over selected banners; hover card for any regiment, with the route for your own. The sim keeps the reasons as unhashed bits beside the regiment pool and gives them out through `Regiments::feedback`. "Bloodied" means below half strength until the morale redesign lands, then down to its breaking point.
 
 ### 8. Smarter computer generals
 

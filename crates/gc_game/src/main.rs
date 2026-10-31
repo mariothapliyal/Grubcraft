@@ -107,8 +107,8 @@
 //!
 //! Flags: `--sandbox` starts on an empty field; `--battle recruit|veteran|general|warlord`
 //! starts a Field Battle against one computer player of that level;
-//! `--conquest ribcage_pass|four_teeth` starts Conquest on that map, every
-//! other start held by an idle side;
+//! `--conquest ribcage_pass|four_teeth|land-mixed|...` starts Conquest on that map (a
+//! shipped map's file or a lobby map's name), every other start held by an idle side;
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
@@ -179,12 +179,14 @@ mod profile;
 mod puppets;
 mod replays;
 mod ring_tool;
+mod river_watch;
 mod roster;
 mod sandbox;
 mod scars;
 mod scenery;
 mod showroom;
 mod siege;
+mod sky_news;
 mod sounds;
 mod viewer;
 mod wall_tool;
@@ -503,6 +505,9 @@ struct Options {
     fx: Option<fx_demo::Mode>,
     /// Open on a siege staged in the sandbox, to look at (`--siege`).
     siege: bool,
+    /// Open on regiments marching through every gate in the sandbox,
+    /// looking at the `n`th (`--gate-march n`, 0 to 5).
+    gate_march: Option<usize>,
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
@@ -539,6 +544,7 @@ fn parse_args() -> Options {
         distance: None,
         fx: None,
         siege: false,
+        gate_march: None,
         fell_demo: false,
         hamlet_demo: false,
         render: RendererOptions::default(),
@@ -623,6 +629,13 @@ fn parse_args() -> Options {
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--gate-march" => value
+                .parse()
+                .map(|v| {
+                    opts.gate_march = Some(v);
+                    opts.menu = Some(false);
+                })
+                .is_ok(),
             "--conquest" => {
                 let choice = conquest::choice_of(&value);
                 choice.map(|c| opts.conquest = Some(c)).is_some()
@@ -775,7 +788,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
@@ -837,11 +850,15 @@ struct Running {
     arrows: field::Arrows,
     /// Blows on buildings, shots at them, and buildings coming down.
     siege: siege::Siege,
+    /// How far open each gate's door leaves are drawn.
+    gate_swings: buildings::GateSwings,
     /// Fallen standards, crows and grime (see [`aftermath`]).
     aftermath: aftermath::Aftermath,
     /// How far `--siege` has staged its siege: 0 to place it, 1 to order
     /// the attacks.
     siege_scene: Option<u8>,
+    /// How far `--gate-march` has staged its march, and the gate looked at.
+    gate_scene: Option<(u8, usize)>,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -925,6 +942,10 @@ struct Running {
     reveal_all: bool,
     /// The fog of war on the ground, when the match has it.
     fog: fog::FogView,
+    /// The rivers' names, and what the viewer has been told of them.
+    river_watch: river_watch::RiverWatch,
+    /// The rivers' water drawn as high as it stands.
+    river_picture: river_watch::RiverPicture,
     land: land::LandView,
     /// Turned earth and worn tracks on the ground.
     scars: scars::ScarView,
@@ -948,6 +969,8 @@ struct Running {
     /// The battle being recorded, or the replay being watched.
     recording: Option<Recording>,
     watching: Option<Watching>,
+    /// The news line's word on the weather and nearby fires.
+    sky_news: sky_news::SkyNews,
     /// The game data's short hash, for replays.
     data_hash: u64,
     quit: bool,
@@ -1723,8 +1746,10 @@ impl App {
             ambient: ambient::Ambient::new(opts.fell_demo, opts.hamlet_demo),
             arrows: field::Arrows::new(field::MAX_STUCK),
             siege: siege::Siege::new(capacities.regiments as usize),
+            gate_swings: buildings::GateSwings::default(),
             aftermath: aftermath::Aftermath::default(),
             siege_scene: None,
+            gate_scene: None,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1787,6 +1812,8 @@ impl App {
             blurb_book: guide_data::blurb_book(),
             reveal_all: false,
             fog: Default::default(),
+            river_watch: Default::default(),
+            river_picture: Default::default(),
             land: Default::default(),
             scars: Default::default(),
             data_label: format!(
@@ -1807,6 +1834,7 @@ impl App {
             online: None,
             recording: None,
             watching: None,
+            sky_news: sky_news::SkyNews::default(),
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
@@ -1870,6 +1898,10 @@ impl App {
             if opts.siege {
                 r.start_match(MatchKind::Sandbox { roster: true });
                 r.siege_scene = Some(0);
+            }
+            if let Some(n) = opts.gate_march {
+                r.start_match(MatchKind::Sandbox { roster: true });
+                r.gate_scene = Some((0, n));
             }
         }
         Ok(())
@@ -2733,15 +2765,21 @@ impl Running {
     /// Expand a group order for the current selection into
     /// `self.group_commands` (one move per regiment), arranged in the
     /// chosen army shape.
-    fn plan_order(&mut self, order: GroupOrder) {
+    fn plan_order(&mut self, mut order: GroupOrder) {
         self.fill_group();
         self.group_commands.clear();
-        gc_sim::arrange::arranged_move(
-            &mut self.group,
-            order,
-            self.army_shapes.arrangement(),
-            &mut self.group_commands,
-        );
+        // Alt on a dragged line draws it deep: the drag is the front, every
+        // regiment keeps its frontage and those that don't fit stand behind
+        // (one regiment alone just goes there, as it stands).
+        let how = if self.input.alt && order.width.is_some() {
+            if self.group.len() < 2 {
+                order.width = None;
+            }
+            gc_sim::arrange::Arrangement::Preset(gc_sim::arrange::Preset::Deep)
+        } else {
+            self.army_shapes.arrangement()
+        };
+        gc_sim::arrange::arranged_move(&mut self.group, order, how, &mut self.group_commands);
         battle::shift_into_zone(&self.world, self.sandbox.side, &mut self.group_commands);
     }
 
@@ -3059,6 +3097,28 @@ impl Running {
             .or_else(|| self.ground_under_cursor().and_then(|p| self.enemy_at(p)))
     }
 
+    /// The regiment, of any side your side can see, whose block holds the
+    /// mouse's ground point; the nearest centre if blocks overlap.
+    pub fn regiment_containing_cursor(&self) -> Option<RegimentHandle> {
+        let side = self.sandbox.side;
+        let p = self.ground_under_cursor()?;
+        self.world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == side || self.world.sees(side, r.handle))
+            .filter_map(|r| {
+                let stats = &self.units.stats[r.unit as usize];
+                let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
+                let (at, facing) = drawn_pose(&self.prev_positions, self.alpha, &r);
+                let to = p - at;
+                let ahead = to.dot(facing).abs() - fx_to_f32(depth) / 2.0;
+                let across = to.perp_dot(facing).abs() - fx_to_f32(width) / 2.0;
+                (ahead.max(across) <= 0.0).then_some((r.handle, to.length_squared()))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(h, _)| h)
+    }
+
     /// The enemy regiment whose block is under (or within a step of) `p`.
     fn enemy_at(&self, p: Vec2) -> Option<RegimentHandle> {
         self.world
@@ -3368,6 +3428,38 @@ impl Running {
         })
     }
 
+    /// How much flags and banners grow as the Commander View pulls back, so
+    /// they stay readable.
+    fn banner_zoom(&self) -> f32 {
+        if self.commander {
+            (self.camera.distance / COMMANDER_IN).max(1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// How far up a regiment's marks sit: the wall top (or deck) it stands
+    /// on, else the ground.
+    fn mark_lift(&self, r: &gc_sim::RegimentView) -> f32 {
+        if r.on_wall {
+            self.puppets.wall_top(r.handle)
+        } else {
+            0.0
+        }
+    }
+
+    /// The world point just over a regiment's banner (the Commander View's
+    /// flag pole), where the HUD hangs its order tab.
+    fn banner_top(&self, r: &gc_sim::RegimentView) -> Vec3 {
+        let p = drawn_position(&self.prev_positions, self.alpha, r);
+        let lift = if self.commander {
+            COMMANDER_POLE[1] * self.banner_zoom() + 1.0
+        } else {
+            BANNER_LIFT + self.mark_lift(r) + BANNER_SIZE[1] + 0.6
+        };
+        Vec3::new(p.x, self.heightmap.height_at(p.x, p.y) + lift, p.y)
+    }
+
     fn nearest_own(&self, p: Vec2, radius: f32) -> Option<RegimentHandle> {
         self.world
             .regiments
@@ -3393,6 +3485,7 @@ impl Running {
         self.last_frame = now;
         self.update_camera(dt.as_secs_f32());
         self.stage_siege();
+        self.stage_gate_march();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -3559,11 +3652,7 @@ impl Running {
         }
         // Flags and banners grow as the Commander View pulls back, so they
         // stay readable.
-        let zoom = if self.commander {
-            (self.camera.distance / COMMANDER_IN).max(1.0)
-        } else {
-            1.0
-        };
+        let zoom = self.banner_zoom();
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment of theirs could walk (an
@@ -3603,11 +3692,7 @@ impl Running {
             let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
             let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
             // Marks of a regiment on a wall sit on the wall top.
-            let up = if r.on_wall {
-                self.puppets.wall_top(r.handle)
-            } else {
-                0.0
-            };
+            let up = self.mark_lift(&r);
             // No plate under the regiment we ride with: the eye is inside it
             // and the plate would fill the view.
             if seen
@@ -3646,6 +3731,7 @@ impl Running {
                 general: r.general,
                 fighter: fighter_of(stats, &r),
             };
+            self.puppets.faced_about(r.handle, r.abouts);
             // Manning a wall, the soldiers stand on its tiles.
             // At the head of a ladder they stand in their block, lifted to
             // the wall top, with ladders against the wall below them.
@@ -4145,12 +4231,15 @@ impl Running {
         }
 
         if self.guide.is_some() {
+            self.hud.hover_own = None;
             self.run_guide();
         } else if self.menu_open {
+            self.hud.hover_own = None;
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
         } else {
+            self.hud.hover_own = None;
             self.renderer.clear_ui();
         }
 
@@ -4161,6 +4250,12 @@ impl Running {
             self.sandbox.side,
             self.heightmap.tiles,
             !self.reveal_all,
+        );
+        self.river_picture.update(
+            self.last_frame,
+            &mut self.renderer,
+            &self.world,
+            self.heightmap.tiles,
         );
         self.land.update(
             self.last_frame,
@@ -5276,6 +5371,8 @@ impl Running {
         // The last battle's recording is done.
         self.save_recording();
         self.recording = None;
+        // The last match's weather and fires are no news in this one.
+        self.sky_news = sky_news::SkyNews::default();
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
@@ -5477,6 +5574,8 @@ impl Running {
         // Seeing through the woods stays in the sandbox.
         self.reveal_all &= kind.is_sandbox();
         self.fog.reset();
+        self.river_watch.reset();
+        self.river_picture.reset();
         self.cinema.reset();
         self.director.stop();
         self.was_deploying = false;
@@ -5623,6 +5722,8 @@ impl Running {
         // The renderer's land is bare again.
         self.land.reset();
         self.scars.reset();
+        self.river_picture.reset();
+        self.river_watch.reset();
         self.hud.set_terrain(hm);
         self.camera.map_size = hm.tiles as f32;
         let nav = hm.sim_nav_costs();
@@ -5987,7 +6088,9 @@ impl Running {
     /// are red.
     fn push_routes(&mut self) {
         let mut dots = 0;
-        for &h in &self.selected {
+        // The regiment the mouse rests on shows its route too.
+        let hovered = self.hud.hover_own.filter(|h| !self.selected.contains(h));
+        for h in self.selected.iter().copied().chain(hovered) {
             let Some(r) = self.world.regiments.get(h) else {
                 continue;
             };
@@ -6344,6 +6447,28 @@ impl Running {
                 _ => {}
             }
         }
+        // The river watch looks once a second.
+        let mut watched = None;
+        if self
+            .world
+            .tick_count()
+            .is_multiple_of(gc_sim::TICKS_PER_SECOND)
+        {
+            let (fog, reveal) = (&self.fog, self.reveal_all);
+            watched = (self.river_watch)
+                .look(self.world.flood().rivers(), |t| reveal || fog.sees_tile(t));
+        }
+        if let Some(w) = &watched {
+            news.push(w.as_str());
+        }
+        // Kept up while catching up online, but what happened then is old
+        // news.
+        let catching_up = self.online.is_some() && self.menu.net().catching_up();
+        let mut sky = Vec::new();
+        self.weather_and_fire_news(&mut sky);
+        if !catching_up {
+            news.extend(sky);
+        }
         // Said together, so none hides another from the same tick.
         if !news.is_empty() {
             self.say(news.join(". "));
@@ -6351,6 +6476,27 @@ impl Running {
         for b in self.world.blows() {
             self.puppets.struck(b);
         }
+    }
+
+    /// A storm, fog or snow coming in or clearing, and woods catching fire
+    /// near the viewer's troops or base, since the last tick.
+    fn weather_and_fire_news(&mut self, news: &mut Vec<&'static str>) {
+        let world = &self.world;
+        let side = self.sandbox.side;
+        news.extend(self.sky_news.weather(world.weather()));
+        let troops = (world.regiments.iter())
+            .filter(|r| r.owner == side)
+            .map(|r| (fx_to_f32(r.position.x), fx_to_f32(r.position.y)));
+        let base = (world
+            .structures()
+            .into_iter()
+            .flat_map(gc_sim::Structures::iter))
+        .filter(|b| b.owner == side)
+        .map(|b| [b.tile.0, b.tile.1, i32::from(b.width), i32::from(b.depth)]);
+        news.extend(
+            self.sky_news
+                .fires(world.tick_count(), world.fires(), troops, base),
+        );
     }
 
     /// Sparks and wounds for the blows soldiers landed on each other since
@@ -6960,6 +7106,10 @@ impl Running {
                 let art = art.as_ref()?;
                 Some(art.looks.top(art.looks.model_of(s)?))
             },
+            |s| {
+                art.as_ref()
+                    .is_some_and(|art| art.looks.leaf_of(s.building).is_some())
+            },
             |h| siege.flash(h),
             across,
             &mut self.instances,
@@ -7248,6 +7398,97 @@ impl Running {
                 }
                 self.human_orders.extend(orders);
                 self.siege_scene = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Stage `--gate-march`: every gate in a wall run east to west, a
+    /// regiment south of each marching through it to the north, and the
+    /// camera low over the one looked at.
+    fn stage_gate_march(&mut self) {
+        const APART: i32 = 10;
+        const MARCH: f32 = 9.0;
+        let Some((step, looked)) = self.gate_scene else {
+            return;
+        };
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let unit = |name: &str| self.units.names.iter().position(|n| n == name);
+        let gates: Vec<BuildingId> = (0..self.buildings.len() as BuildingId)
+            .filter(|&b| self.buildings.is_gate(b))
+            .collect();
+        let focus = self.camera.focus.round();
+        let (x0, row) = (focus.x as i32 - APART * 3, focus.y as i32);
+        let gate_x = |k: usize| x0 + APART * k as i32;
+        let north = gc_fixed::Angle::of_vec(fx_vec(Vec2::NEG_Y));
+        match step {
+            0 => {
+                let (Some(palisade), Some(soldiers)) =
+                    (building("Palisade"), unit("Yari Ashigaru"))
+                else {
+                    self.gate_scene = None;
+                    return;
+                };
+                let mut spawn = |building, tile: (i32, i32), turn| {
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnStructure {
+                            building,
+                            tile: (tile.0 as i16, tile.1 as i16),
+                            turn,
+                        },
+                    });
+                };
+                let mut gaps = Vec::new();
+                for (k, &id) in gates.iter().enumerate() {
+                    // Turned a quarter, a gate runs east to west.
+                    spawn(id, (gate_x(k), row), 1);
+                    gaps.extend(gate_x(k)..gate_x(k) + 3);
+                }
+                for x in x0 - APART..gate_x(gates.len()) + APART {
+                    if !gaps.contains(&x) {
+                        spawn(palisade, (x, row), 0);
+                    }
+                }
+                for k in 0..gates.len() {
+                    let at = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5 + MARCH);
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::SpawnRegiment {
+                            unit: soldiers as UnitId,
+                            position: fx_vec(at),
+                            facing: north,
+                        },
+                    });
+                }
+                let k = looked.min(gates.len() - 1);
+                self.camera.focus = Vec2::new(gate_x(k) as f32 + 1.5, row as f32 + 0.5);
+                self.camera.distance = 16.0;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                self.gate_scene = Some((1, looked));
+            }
+            // A few seconds to settle, then march.
+            1 if self.world.regiments.iter().filter(|r| r.owner == 0).count() >= gates.len() => {
+                let orders = (self.world.regiments.iter())
+                    .filter(|r| r.owner == 0)
+                    .map(|r| {
+                        let p = from_fx_vec(r.position);
+                        PlayerCommand {
+                            player: 0,
+                            command: gc_sim::Command::MoveTo {
+                                regiment: r.handle,
+                                target: fx_vec(Vec2::new(p.x, p.y - 2.0 * MARCH)),
+                                facing: Some(north),
+                                files: 0,
+                                pace: gc_fixed::Fx::ZERO,
+                            },
+                        }
+                    });
+                self.human_orders.extend(orders);
+                self.gate_scene = None;
             }
             _ => {}
         }
@@ -7576,6 +7817,7 @@ impl Running {
         let ground = |x, z| hm.drawn_height(x, z);
         let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
         let time = self.puppets.time();
+        self.gate_swings.update(structures.iter(), time);
         // The building being placed: its finished model, see-through in the
         // colour that says whether it fits.
         if let Some((view, [r, g, b, _])) = ghost
@@ -7628,24 +7870,38 @@ impl Running {
             let [r, g, b] = color_of(&self.parties, s.owner);
             if let Some(model) = art.looks.model_of(&s) {
                 let (shake, rise) = self.siege.jolt(s.handle);
-                let still = art.clips.pose(model, Action::Idle, time);
-                let height = art.looks.top(model);
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
                 let along = !self.buildings.is_bridge(s.building);
+                // A still model at `pos`, `lift` above the ground there.
+                let mut push = |model: usize, pos: Vec2, facing: Vec2, lift: f32| {
+                    let at = Vec3::new(pos.x, ground(pos.x, pos.y) + lift, pos.y);
+                    let (Some(lod), Some(pose)) = (
+                        art.view.place(art.looks.top(model), at),
+                        art.clips.pose(model, Action::Idle, time),
+                    ) else {
+                        return;
+                    };
+                    art.buckets[model * LODS + lod].push(SoldierInstance {
+                        pos: pos.to_array(),
+                        facing: facing.to_array(),
+                        frames: pose.rows,
+                        flags: models::pose_flags(pose, highlight, false),
+                        color: [r, g, b, gc_render::TONE_NEUTRAL],
+                        lift,
+                        scale: 1.0,
+                        ..Default::default()
+                    });
+                };
+                let leaf = art.looks.leaf_shown(&s);
                 for (centre, facing, lift) in art.looks.spots(&s, model, along, &ground) {
                     let (centre, lift) = (centre + shake, lift + rise);
-                    let at = Vec3::new(centre.x, ground(centre.x, centre.y) + lift, centre.y);
-                    if let (Some(lod), Some(pose)) = (art.view.place(height, at), still) {
-                        art.buckets[model * LODS + lod].push(SoldierInstance {
-                            pos: centre.to_array(),
-                            facing: facing.to_array(),
-                            frames: pose.rows,
-                            flags: models::pose_flags(pose, highlight, false),
-                            color: [r, g, b, gc_render::TONE_NEUTRAL],
-                            lift,
-                            scale: 1.0,
-                            ..Default::default()
-                        });
+                    push(model, centre, facing, lift);
+                    let Some(leaf) = leaf else { continue };
+                    // On the gate's floor, wherever the ground is.
+                    let floor = ground(centre.x, centre.y) + lift;
+                    let swing = self.gate_swings.swing(s.handle);
+                    for (at, way) in buildings::leaf_spots(centre, facing, leaf.hinge, swing) {
+                        push(leaf.model, at, way, floor - ground(at.x, at.y));
                     }
                 }
             }
@@ -8580,9 +8836,15 @@ fn pose_between(
     alpha: f32,
 ) -> (Vec2, Vec2) {
     match prev {
+        // A block that faced about this tick (its facing flipped, where a
+        // turn moves it a few degrees) shows its new facing at once.
         Some((h, prev, prev_facing)) if h == handle => (
             prev.lerp(cur, alpha),
-            prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing),
+            if prev_facing.dot(cur_facing) < -0.5 {
+                cur_facing
+            } else {
+                prev_facing.lerp(cur_facing, alpha).normalize_or(cur_facing)
+            },
         ),
         _ => (cur, cur_facing),
     }
