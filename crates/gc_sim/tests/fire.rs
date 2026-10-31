@@ -31,20 +31,10 @@ fn woods(x0: u32, x1: u32, y0: u32, y1: u32) -> Vec<u8> {
 }
 
 fn world(cover: &[u8], sky: Sky<'static>) -> World {
-    World::new(&setup_with(cover, sky))
+    World::new(&setup(cover, sky))
 }
 
-fn setup<'a>(cover: &'a [u8], spells: &'static [Spell]) -> MatchSetup<'a> {
-    setup_with(
-        cover,
-        Sky {
-            spells,
-            ..Sky::STILL
-        },
-    )
-}
-
-fn setup_with<'a>(cover: &'a [u8], sky: Sky<'static>) -> MatchSetup<'a> {
+fn setup<'a>(cover: &'a [u8], sky: Sky<'static>) -> MatchSetup<'a> {
     MatchSetup {
         seed: 5,
         capacities: Capacities::default(),
@@ -313,15 +303,15 @@ fn storm(strength: u8) -> &'static [Spell] {
     }]))
 }
 
-/// The lightning told over `seconds`: the second of each, the tile, whether
-/// it caught, and whether the ground was dry enough to catch.
-fn strikes(w: &mut World, seconds: u32) -> Vec<(u32, i32, i32, bool, bool)> {
+/// The lightning told over `seconds`: the second of each, the tile, and
+/// whether it caught.
+fn strikes(w: &mut World, seconds: u32) -> Vec<(u32, i32, i32, bool)> {
     let mut seen = Vec::new();
     for t in 0..seconds * SECOND {
         w.tick(&[]);
         for e in w.events() {
             if let Event::Lightning { x, y, caught } = *e {
-                seen.push((t / SECOND, x, y, caught, w.weather_lets_fire()));
+                seen.push((t / SECOND, x, y, caught));
             }
         }
     }
@@ -331,7 +321,13 @@ fn strikes(w: &mut World, seconds: u32) -> Vec<(u32, i32, i32, bool, bool)> {
 fn stormy(seed: u64, cover: &[u8], strength: u8) -> World {
     World::new(&MatchSetup {
         seed,
-        ..setup(cover, storm(strength))
+        ..setup(
+            cover,
+            Sky {
+                spells: storm(strength),
+                ..Sky::STILL
+            },
+        )
     })
 }
 
@@ -343,13 +339,12 @@ fn a_storm_throws_lightning_that_fires_dry_woods_only() {
         let seen = strikes(&mut stormy(seed, &cover, 240), 90);
         // About one strike in ten seconds, each on the map.
         assert!((2..=25).contains(&seen.len()), "{seen:?}");
-        for &(s, x, y, caught, dry) in &seen {
+        for &(s, x, y, caught) in &seen {
             assert!((0..MAP as i32).contains(&x) && (0..MAP as i32).contains(&y));
             // Woods everywhere: a strike fires them while the ground is
             // dry (3 wet a second of a storm this strong: 33
             // seconds to reach `DAMP_WET`), never after.
-            assert_eq!(caught, dry, "second {s}: {seen:?}");
-            assert_eq!(dry, s < 33, "second {s}: {seen:?}");
+            assert_eq!(caught, s < 33, "second {s}: {seen:?}");
             caught_any |= caught;
         }
     }
@@ -369,7 +364,7 @@ fn lightning_prefers_the_woods() {
     let cover = woods(0, MAP / 2, 0, MAP / 2);
     let seen = strikes(&mut stormy(5, &cover, 255), 600);
     let in_woods = (seen.iter())
-        .filter(|&&(_, x, y, ..)| x < MAP as i32 / 2 && y < MAP as i32 / 2)
+        .filter(|&&(_, x, y, _)| x < MAP as i32 / 2 && y < MAP as i32 / 2)
         .count();
     assert!(seen.len() > 30, "{}", seen.len());
     assert!(in_woods * 2 > seen.len(), "{in_woods} of {}", seen.len());
