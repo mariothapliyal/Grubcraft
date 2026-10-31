@@ -386,3 +386,49 @@ fn a_forts_palisade_is_shut_but_for_its_gate() {
     });
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
+
+/// Grown Conquest maps (docs/41, step 1) pass the checker's Conquest
+/// checks at every wildness and the lobby's three sizes (320 and 448 with
+/// four starts, 640 with six), with room for all their sites.
+#[test]
+fn every_grown_conquest_map_passes_the_checker() {
+    let seeds: u64 = std::env::var("SWEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let jobs: Vec<(Wildness, i32, u64)> = Wildness::ALL
+        .into_iter()
+        .flat_map(|w| [320, 448, 640].map(move |t| (w, t)))
+        .flat_map(|(w, t)| (0..seeds).map(move |k| (w, t, 11 + k)))
+        .collect();
+    let failed = failures(&jobs, |&(wild, tiles, seed)| {
+        let def = gc_map::grown::describe_conquest(tiles, seed, wild).unwrap();
+        let Some(grown) = def.grown else {
+            return Some(format!(
+                "{wild:?} {tiles} seed {seed}: fell back to Classic land"
+            ));
+        };
+        let tried = u64::from(grown.seed != seed);
+        let report = check(&def);
+        if std::env::var("SWEEP").is_ok() {
+            println!(
+                "{wild:?} {tiles} seed {seed} (+{tried}): {} errors",
+                report.errors.len()
+            );
+        }
+        let fairness = report.notes.iter().any(|n| n.starts_with("Heart"));
+        let e = report
+            .errors
+            .first()
+            .cloned()
+            .or_else(|| (!fairness).then(|| "wasn't checked as a Conquest map".to_string()))
+            .or_else(|| short_of_sites(&def))?;
+        Some(format!("{wild:?} {tiles} seed {seed} (+{tried}): {e}"))
+    });
+    assert!(
+        failed.is_empty(),
+        "{} grown Conquest maps failed the checker:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+}

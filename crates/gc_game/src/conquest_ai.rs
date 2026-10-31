@@ -1118,4 +1118,22 @@ mod tests {
         let played = play(wilds, large, &factions, &[Difficulty::Veteran], 1, 120);
         assert!(played.winner().is_some(), "{}", played.report());
     }
+
+    /// Computer players finish one-on-ones on grown land (docs/41, step
+    /// 1): a Medium map, as wild as the seed picks, across rivers, woods
+    /// and passes.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_grown_land_1v1_ends_in_a_win() {
+        let land = gc_ui::lobby::DEFAULT_CONQUEST_MAP;
+        let medium = gc_ui::lobby::MapSize::Medium.conquest_tiles();
+        let pairs = [
+            [Faction::EmberClans, Faction::Brood],
+            [Faction::Choir, Faction::CarrionConcord],
+        ];
+        for (factions, seed) in pairs.iter().zip([7, 8]) {
+            let played = play(land, medium, factions, &[Difficulty::Veteran], seed, 60);
+            assert!(played.winner().is_some(), "{}", played.report());
+        }
+    }
 }

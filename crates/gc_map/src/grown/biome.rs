@@ -596,6 +596,7 @@ mod tests {
                 seed,
                 wildness: w,
                 fairness: super::super::Fairness::Mirrored,
+                heart: false,
             },
         )
         .height
