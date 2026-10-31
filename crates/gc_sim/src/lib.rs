@@ -129,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 78;
+pub const SIM_VERSION: u32 = 79;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1554,6 +1554,13 @@ impl World {
         conquest::overgrown(&self.terrain, foot)
     }
 
+    /// Whether workers have anything to clear in `area`: something grows
+    /// there, or debris is jammed against a bridge there (docs/39
+    /// section 4).
+    pub fn clearable(&self, area: [i32; 4]) -> bool {
+        self.overgrown(area) || self.flood.rivers.jammed_in(area)
+    }
+
     /// Whether `player` may tip a raft into tile `(x, y)` now: it is
     /// running river and the player's share of the debris isn't used up
     /// (docs/39 section 3; the price is checked when ordered).
@@ -2457,9 +2464,10 @@ impl World {
                     Command::Fell { .. } => clearing::Work::Fell,
                     _ => clearing::Work::Clear,
                 };
+                let clearable = self.clearable(area);
                 match (self.worker_of(pc.player, regiment), &mut self.conquest) {
-                    (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) => {
-                        c.clear(&mut self.regiments, r, area, &self.terrain, work)
+                    (Some(r), Some(c)) if side.contains(&w) && side.contains(&d) && clearable => {
+                        c.clear(&mut self.regiments, r, area, work)
                     }
                     _ => false,
                 }
@@ -2748,6 +2756,12 @@ impl World {
                         rivers.topple(&self.terrain, x, y, tick);
                     }
                 }
+                clearing::Done::Unjam { x, y, owner, mass } => {
+                    if self.flood.rivers.pull_jam(x, y, mass) {
+                        let grub = rivers::debris::piers::UNJAM_GRUB;
+                        c.economy.earn_grub(owner, grub, &self.regiments, &c.units);
+                    }
+                }
                 clearing::Done::Raft { x, y, owner } => {
                     // Paid for only when the raft goes in.
                     let raft = rivers::debris::RAFT_GRUB;
@@ -2766,7 +2780,9 @@ impl World {
         }));
         for d in &done {
             match *d {
-                clearing::Done::Tile { .. } | clearing::Done::Raft { .. } => {}
+                clearing::Done::Tile { .. }
+                | clearing::Done::Raft { .. }
+                | clearing::Done::Unjam { .. } => {}
                 clearing::Done::Lay { r, pledge } => {
                     if let Some(c) = &mut self.conquest {
                         c.lay_pledged(r, pledge, &mut self.nav, &mut self.regiments, &self.terrain);
@@ -3318,6 +3334,10 @@ impl World {
             (self.flood.rivers).set_piers(c.structures.piers(), &self.terrain);
         }
         let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
+        let jammed = self.flood.rivers.take_jammed();
+        if jammed != 0 && !self.scratch {
+            self.events.bridge_jammed(jammed);
+        }
         if snags && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_snags(copy);
         }

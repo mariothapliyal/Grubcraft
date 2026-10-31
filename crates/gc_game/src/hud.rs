@@ -2196,7 +2196,7 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         ),
         Some(Action::Clear) => (
             Icon::Hammer,
-            "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them.",
+            "Workers clear scrub, woods and thicket, each faction its own way (the worker's guide entry says how). Felled timber can pay a little Grub. Drag over the ground, or click one tile. Cleared ground no longer hides troops or slows them. Drag over debris jammed against a bridge to pull it out a piece at a time (4 s a mass point, 1 Grub of timber a piece).",
         ),
         Some(Action::Fell) => (
             Icon::Hammer,
@@ -2351,6 +2351,19 @@ mod tests {
         assert!(tip.contains(&format!("At most {SHARE} ")), "{tip}");
         assert!(crate::clearing::DUMP_WHERE.contains(&format!("({RAFT_GRUB} Grub")));
         assert!(crate::clearing::SHARE_USED.contains(&format!("have {SHARE} ")));
+    }
+
+    /// The Clear tooltip quotes the sim's numbers for pulling out jams.
+    #[test]
+    fn the_clear_text_quotes_the_jam_numbers() {
+        use gc_sim::rivers::debris::piers::{UNJAM_GRUB, UNJAM_SECONDS};
+        let tip = card_look(Some(Action::Clear)).1;
+        assert!(
+            tip.contains(&format!(
+                "({UNJAM_SECONDS} s a mass point, {UNJAM_GRUB} Grub"
+            )),
+            "{tip}"
+        );
     }
 
     /// A Field Battle's villages, outposts and stones show on the minimap

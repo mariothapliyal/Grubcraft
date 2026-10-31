@@ -248,6 +248,18 @@ const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as 
 const HUMAN: PlayerId = 0;
 /// The news tells of debris striking our troops at most this often.
 const DEBRIS_NEWS_SECONDS: u32 = 10;
+/// The news tells of debris jamming on our bridges at most this often.
+const JAM_NEWS_SECONDS: u32 = 30;
+
+/// Whether news last told at tick `told` may be told again at tick `now`,
+/// at most every `seconds`; if so, `told` becomes `now`.
+fn quiet_since(told: &mut Option<u32>, now: u32, seconds: u32) -> bool {
+    let quiet = told.is_none_or(|t| now.saturating_sub(t) >= seconds * gc_sim::TICKS_PER_SECOND);
+    if quiet {
+        *told = Some(now);
+    }
+    quiet
+}
 /// Team colours: Ember red, Brood violet, Choir cyan, Concord bone.
 const TEAM_COLORS: [[u8; 3]; 4] = [
     [178, 38, 30],
@@ -1009,6 +1021,8 @@ struct Running {
     sky_news: sky_news::SkyNews,
     /// The tick the news last told of debris striking our troops.
     debris_told: Option<u32>,
+    /// The tick the news last told of debris jamming on our bridges.
+    jam_told: Option<u32>,
     /// The game data's short hash, for replays.
     data_hash: u64,
     quit: bool,
@@ -1891,6 +1905,7 @@ impl App {
             watching: None,
             sky_news: sky_news::SkyNews::default(),
             debris_told: None,
+            jam_told: None,
             data_hash: game_data.short_hash(),
             quit: false,
             sounds,
@@ -5514,6 +5529,7 @@ impl Running {
         // The last match's weather and fires are no news in this one.
         self.sky_news = sky_news::SkyNews::default();
         self.debris_told = None;
+        self.jam_told = None;
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {
@@ -6629,15 +6645,20 @@ impl Running {
                     "The flash flood swept regiments out of the fords: some drowned, the rest washed up downstream"
                 }),
                 Event::DebrisStruck { owners } => {
-                    let ours = 1u8.checked_shl(u32::from(self.sandbox.side)).unwrap_or(0);
+                    let ours = owners & gc_sim::events::owner_bit(self.sandbox.side) != 0;
                     let now = self.world.tick_count();
-                    let quiet = self.debris_told.is_none_or(|t| {
-                        now.saturating_sub(t) >= DEBRIS_NEWS_SECONDS * gc_sim::TICKS_PER_SECOND
-                    });
-                    if owners & ours != 0 && quiet {
-                        self.debris_told = Some(now);
+                    if ours && quiet_since(&mut self.debris_told, now, DEBRIS_NEWS_SECONDS) {
                         news.push(
                             "Logs coming down the river struck our troops in the water: they are hurt and in disorder",
+                        );
+                    }
+                }
+                Event::BridgeJammed { owners } => {
+                    let ours = owners & gc_sim::events::owner_bit(self.sandbox.side) != 0;
+                    let now = self.world.tick_count();
+                    if ours && quiet_since(&mut self.jam_told, now, JAM_NEWS_SECONDS) {
+                        news.push(
+                            "Debris has jammed against one of our bridges: send workers to Clear it before the river rises",
                         );
                     }
                 }

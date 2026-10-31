@@ -154,12 +154,22 @@ pub enum Event {
     /// this tick (see [`crate::rivers::debris`]): of the players in
     /// `owners`, a bit each. Told once a tick at most.
     DebrisStruck { owners: u8 },
+    /// Debris riding a river jammed against the piers of bridges of the
+    /// players in `owners` (a bit each) this tick (see
+    /// [`crate::rivers::debris::piers`]). Told once a tick at most.
+    BridgeJammed { owners: u8 },
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
     /// A player's walls closed round its main building (`walled`), or its
     /// ring was breached (see [`crate::towns`]).
     Town { player: PlayerId, walled: bool },
+}
+
+/// The bit player `p` has in an owners mask (`DebrisStruck`,
+/// `BridgeJammed`).
+pub fn owner_bit(p: PlayerId) -> u8 {
+    1u8.checked_shl(u32::from(p)).unwrap_or(0)
 }
 
 /// Each regiment slot as it stood before the tick.
@@ -261,6 +271,11 @@ impl Events {
     /// riding a river this tick.
     pub(crate) fn debris_struck(&mut self, owners: u8) {
         self.list.push(Event::DebrisStruck { owners });
+    }
+
+    /// Tell of debris jammed on bridges of `owners` (a bit each) this tick.
+    pub(crate) fn bridge_jammed(&mut self, owners: u8) {
+        self.list.push(Event::BridgeJammed { owners });
     }
 
     /// Tell of walled towns closed and breached at this tick's survey.
