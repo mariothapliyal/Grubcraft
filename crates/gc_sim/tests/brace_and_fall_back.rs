@@ -19,10 +19,13 @@ const PLAIN: u16 = 3;
 
 /// The drill's units with morale off (nobody routs, so the numbers are the
 /// blows alone), unit 0 with long weapons and unit 3 a plain copy of it.
+/// The chargers come on eight wide, as wide as the spears, so every spear
+/// file meets one (frontage).
 fn units() -> [UnitStats; 4] {
     let mut units = DRILL_UNITS.map(|u| UnitStats { morale: 0, ..u });
     units[PLAIN as usize] = units[SPEARS as usize];
     units[SPEARS as usize].reach = true;
+    units[CHARGERS as usize].files = 8;
     units
 }
 
