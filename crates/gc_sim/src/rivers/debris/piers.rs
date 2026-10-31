@@ -6,7 +6,7 @@
 //! are already hurt, and catastrophic water sweeps weak spans away. A tile
 //! that falls lets its jam go and floats on down as a wreck.
 
-use super::{Blow, Kind, NO_TILE, Piece, roll};
+use super::{Blow, Kind, Piece, roll};
 use crate::rivers::{Band, FLOOD_RISE, Rivers};
 use crate::structures::StructureHandle;
 use crate::terrain::index_in;
@@ -125,7 +125,11 @@ impl Rivers {
         };
         let mass = p.kind.mass();
         let r = roll(self.seed, tick, (k as u64) << 32 | u64::from(p.tile));
-        if r % 100 < JAM_PERCENT[pier.at()] && self.jam_on(p.tile) + mass <= JAM_MOST {
+        if r % 100 < JAM_PERCENT[pier.at()] {
+            if self.jam_on(p.tile) + mass > JAM_MOST {
+                // The jam is full: it passes over or round it.
+                return false;
+            }
             p.jammed = true;
             p.next = p.tile;
             p.tile = from;
@@ -152,7 +156,7 @@ impl Rivers {
         for k in 0..self.debris.piers.len() {
             let pier = self.debris.piers[k];
             let i = pier.tile;
-            let rise = self.water_on(lift, i as usize) - lift;
+            let rise = self.water_on(lift, i as usize);
             let band = (rise >= i32::from(Band::Minor.crest()))
                 .then(|| Band::of(u16::try_from(rise).unwrap_or(u16::MAX)));
             let jam = self.jam_on(i);
@@ -220,8 +224,8 @@ impl Rivers {
         self.debris.piers.retain(|p| p.tile != i);
         let r = roll(self.seed, tick, u64::from(i) << 2 | 2);
         let wreck = Piece::new(Kind::Wreck, i, super::across(r), false, tick);
+        // Some places are kept for wrecks; with all of them taken it sinks.
         self.debris.put(wreck);
-        debug_assert!(wreck.next != NO_TILE);
     }
 
     /// What the debris and the water did to bridges this tick, for the

@@ -229,10 +229,12 @@ impl Debris {
             .any(|p| !p.grounded && !p.jammed)
     }
 
-    /// How many pieces `player` dumped or felled in are on the water.
+    /// How many pieces `player` dumped or felled in are on the water (not
+    /// held in a jam: a jam is bounded by its pier, and stuck pieces don't
+    /// use up a player's share).
     pub fn owned(&self, player: u8) -> usize {
         (self.pieces.iter().flatten())
-            .filter(|p| p.owner == player)
+            .filter(|p| p.owner == player && !p.jammed)
             .count()
     }
 
@@ -263,7 +265,7 @@ impl Debris {
         let taken = self.pieces.iter().flatten().filter(|p| open(p)).count();
         if piece.natural {
             let natural = (self.pieces.iter().flatten())
-                .filter(|p| p.natural && !p.grounded)
+                .filter(|p| p.natural && !p.grounded && !p.jammed)
                 .count();
             if natural >= NATURAL_MOST {
                 return false;

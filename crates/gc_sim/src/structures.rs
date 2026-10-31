@@ -862,6 +862,10 @@ pub struct Structures {
     /// Bridge tiles finished (`true`) or fallen since the ground last
     /// heard, each as its footprint (see [`crate::bridges::settle_decks`]).
     pub(crate) decks: Vec<([i32; 4], bool)>,
+    /// Bridge tiles brought down (worn, struck or swept to no hit points,
+    /// not taken away) since the rivers last heard, each as its footprint:
+    /// over running river they float on as wrecks.
+    pub(crate) sunk: Vec<[i32; 4]>,
     /// Field work tiles finished or gone since the ground last heard (see
     /// [`crate::fieldworks::settle_field`]).
     pub(crate) field: Vec<crate::fieldworks::FieldMark>,
@@ -1002,6 +1006,7 @@ impl Structures {
             fallen: Vec::with_capacity(n),
             rubble: Vec::with_capacity(8),
             decks: Vec::with_capacity(n),
+            sunk: Vec::new(),
             field: Vec::new(),
             walked_tiles: Vec::new(),
             traps: 0,
@@ -1357,6 +1362,15 @@ impl Structures {
         (u64::from(self.hp[i]) * 1000 / whole.max(1)).min(1000) as u16
     }
 
+    /// Building slot `i` was brought down: told to the events, and to the
+    /// rivers if it is a bridge tile.
+    fn fell(&mut self, i: usize) {
+        self.fallen.push(self.handle(i));
+        if self.stats_of(i).role == Role::Bridge && self.finished(i) {
+            self.sunk.push(self.footprint(i));
+        }
+    }
+
     /// Building slot `i`'s full hit points (scaled).
     pub(crate) fn whole_hp(&self, i: usize) -> u32 {
         u32::from(self.stats_of(i).hp) * HP_SCALE
@@ -1376,7 +1390,7 @@ impl Structures {
     /// Building slot `i` gains `scaled` hundredths of a hit point, up to its
     /// full.
     fn add_hp(&mut self, i: usize, scaled: u32) {
-        let max = u32::from(self.stats_of(i).hp) * HP_SCALE;
+        let max = self.whole_hp(i);
         self.hp[i] = (self.hp[i] + scaled).min(max);
     }
 
@@ -1390,7 +1404,7 @@ impl Structures {
     pub(crate) fn wear_down(&mut self, i: usize, scaled: u32, nav: &mut Nav, regs: &Regiments) {
         self.hp[i] = self.hp[i].saturating_sub(scaled);
         if self.hp[i] == 0 {
-            self.fallen.push(self.handle(i));
+            self.fell(i);
             self.remove(i, nav, regs);
         }
     }
@@ -1413,7 +1427,7 @@ impl Structures {
             }
             let c = self.centre(i);
             if rivers.shuts(c.x.floor_int(), c.y.floor_int()) {
-                let whole = u32::from(self.stats_of(i).hp) * HP_SCALE;
+                let whole = self.whole_hp(i);
                 let loss = (whole * crate::rivers::DROWNED_PERCENT / 100).max(1);
                 self.hp[i] = self.hp[i].saturating_sub(loss);
                 if self.hp[i] == 0 {
@@ -1938,7 +1952,7 @@ impl Structures {
                 self.twist_blow(regs, r, s, unit.range > Fx::ZERO);
             }
             if self.hp[s] == 0 {
-                self.fallen.push(target);
+                self.fell(s);
                 self.rubble.push(self.footprint(s));
                 self.remove(s, nav, regs);
                 self.siege[r] = None;

@@ -2,7 +2,7 @@
 //! reaching a bridge's piers jams against them or strikes them, and a
 //! bridge tile that falls floats on down as a wreck.
 
-use gc_fixed::FxVec2;
+use gc_fixed::{Fx, FxVec2};
 use gc_sim::StructureHandle;
 use gc_sim::clearing::ClearStyle;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
@@ -260,16 +260,56 @@ fn rafts_reaching_a_bridge_strike_or_jam_on_its_piers() {
 fn a_bridge_tile_that_falls_floats_on_as_a_wreck() {
     let mut w = world(ClearStyle::STANDARD);
     bridge(&mut w);
-    let (gone, _) = deck(&w, RIVER.start + 1).unwrap();
-    assert!(order(&mut w, Command::RemoveStructure { structure: gone }));
-    w.tick(&[]);
+    let (target, _) = deck(&w, RIVER.start + 1).unwrap();
+    // An enemy on the deck hacks the next tile down.
+    let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
+    let spawned = w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::SpawnRegiment {
+            unit: 0,
+            position: FxVec2::new(
+                Fx::from_int(BRIDGE_X) + Fx::HALF,
+                Fx::from_int(RIVER.start) + Fx::HALF,
+            ),
+            facing: NORTH,
+        },
+    }]);
+    assert_eq!(spawned.commands_applied, 1);
+    let enemy = (w.regiments.iter().map(|r| r.handle))
+        .find(|h| !before.contains(h))
+        .unwrap();
+    let hacked = w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::AttackStructure {
+            regiment: enemy,
+            structure: target,
+        },
+    }]);
+    assert_eq!(hacked.commands_applied, 1);
     let wreck =
         |w: &World| (w.flood().rivers().debris().pieces(MAP)).find(|p| p.kind == Kind::Wreck);
+    for _ in 0..600 * SECOND {
+        if deck(&w, RIVER.start + 1).is_none() {
+            break;
+        }
+        w.tick(&[]);
+    }
+    assert!(deck(&w, RIVER.start + 1).is_none(), "the tile fell");
     let at = wreck(&w).expect("its wreck went in").at;
     assert_eq!(at.x.floor_int(), BRIDGE_X);
     run(&mut w, 5);
     let on = wreck(&w).expect("it floats on").at;
     assert!(on.x > at.x, "down the river: {on:?} from {at:?}");
+}
+
+#[test]
+fn a_tile_taken_away_leaves_no_wreck() {
+    let mut w = world(ClearStyle::STANDARD);
+    bridge(&mut w);
+    let (gone, _) = deck(&w, RIVER.start + 1).unwrap();
+    assert!(order(&mut w, Command::RemoveStructure { structure: gone }));
+    run(&mut w, 1);
+    assert!(w.flood().rivers().debris().is_empty());
 }
 
 #[test]

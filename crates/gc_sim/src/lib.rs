@@ -1864,12 +1864,16 @@ impl World {
             for foot in conquest.structures.rubble.drain(..) {
                 self.terrain.spread_rubble(foot);
             }
+            // What the debris and the water did to the bridges this tick
+            // (docs/39-water-engine.md, section 4), told after the update
+            // so a tile brought down is in its fallen.
+            for (slot, per) in self.flood.rivers.blows().drain(..) {
+                (conquest.structures).batter(slot, per, &mut self.nav, &self.regiments);
+            }
             // A tile that fell over the river lets its jam go and floats
             // on as a wreck.
-            for &([x, y, _, _], on) in &conquest.structures.decks {
-                if !on {
-                    (self.flood.rivers).bridge_fell(&self.terrain, x, y, self.tick);
-                }
+            for [x, y, _, _] in conquest.structures.sunk.drain(..) {
+                (self.flood.rivers).bridge_fell(&self.terrain, x, y, self.tick);
             }
             bridges::settle_decks(
                 &mut conquest.structures.decks,
@@ -3317,27 +3321,10 @@ impl World {
         if snags && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_snags(copy);
         }
-        self.batter_bridges();
         if coming && !self.scratch {
             self.events.flash(rivers::Stage::Coming);
         }
         stage
-    }
-
-    /// What the debris and the water did to the bridges this tick
-    /// (docs/39-water-engine.md, section 4): tiles worn down, or swept away.
-    fn batter_bridges(&mut self) {
-        let blows = self.flood.rivers.blows();
-        if blows.is_empty() {
-            return;
-        }
-        let Some(c) = &mut self.conquest else {
-            blows.clear();
-            return;
-        };
-        for (slot, per) in blows.drain(..) {
-            (c.structures).batter(slot, per, &mut self.nav, &self.regiments);
-        }
     }
 
     /// One second of the summer fords gone deep again (with seasons):
