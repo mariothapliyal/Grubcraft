@@ -33,6 +33,8 @@
 
 use alloc::vec::Vec;
 
+pub mod piers;
+
 use gc_fixed::{Fx, FxVec2};
 
 use super::{FLOOD_RISE, NONE, Rivers, Stretch, step_of, water_rise};
@@ -130,6 +132,8 @@ struct Piece {
     /// How far it went the last tick (zero while grounded).
     pace: Fx,
     grounded: bool,
+    /// Whether it is jammed against a bridge's pier on its tile.
+    jammed: bool,
     /// Whether it came onto a new tile last tick (it grounds or not
     /// there at once).
     entered: bool,
@@ -174,7 +178,19 @@ pub struct Debris {
     ever: bool,
     /// Kept room for the pieces moving in a tick (not state).
     moving: Vec<(usize, FxVec2)>,
+    /// The piers in the water, by tile (refreshed from the bridges each
+    /// second).
+    piers: Vec<piers::Pier>,
+    /// Per stretch, how much of its outflow its jams hold back, percent.
+    choke: Vec<u8>,
+    /// What the debris did to bridges this tick, for the world to apply.
+    blows: Vec<Blow>,
 }
+
+/// A blow debris or the water strikes a bridge tile: the tile, and the
+/// ten-thousandths of its whole hit points it loses (all of them when
+/// swept away).
+pub(crate) type Blow = (crate::structures::StructureHandle, u32);
 
 impl Debris {
     /// A pool for a map with `stretches` and `groups` of fords, with
@@ -189,6 +205,9 @@ impl Debris {
             torn: alloc::vec![NEVER; stretches],
             ever: false,
             moving: Vec::new(),
+            piers: Vec::new(),
+            choke: alloc::vec![0; stretches],
+            blows: Vec::new(),
         }
     }
 
@@ -204,13 +223,18 @@ impl Debris {
 
     /// Whether any piece floats.
     pub fn floating(&self) -> bool {
-        self.pieces.iter().flatten().any(|p| !p.grounded)
+        self.pieces
+            .iter()
+            .flatten()
+            .any(|p| !p.grounded && !p.jammed)
     }
 
-    /// How many pieces `player` dumped or felled in are on the water.
+    /// How many pieces `player` dumped or felled in are on the water (not
+    /// held in a jam: a jam is bounded by its pier, and stuck pieces don't
+    /// use up a player's share).
     pub fn owned(&self, player: u8) -> usize {
         (self.pieces.iter().flatten())
-            .filter(|p| p.owner == player)
+            .filter(|p| p.owner == player && !p.jammed)
             .count()
     }
 
@@ -225,7 +249,7 @@ impl Debris {
             kind: p.kind,
             at: p.point(side),
             way: p.way(side),
-            grounded: p.grounded,
+            grounded: p.grounded || p.jammed,
         })
     }
 
@@ -241,7 +265,7 @@ impl Debris {
         let taken = self.pieces.iter().flatten().filter(|p| open(p)).count();
         if piece.natural {
             let natural = (self.pieces.iter().flatten())
-                .filter(|p| p.natural && !p.grounded)
+                .filter(|p| p.natural && !p.grounded && !p.jammed)
                 .count();
             if natural >= NATURAL_MOST {
                 return false;
@@ -279,7 +303,10 @@ impl Debris {
             h.u32(p.next);
             h.u32(p.along.raw() as u32);
             h.u8(p.across as u8);
-            h.u8(u8::from(p.grounded) | u8::from(p.natural) << 1 | u8::from(p.entered) << 2);
+            h.u8(u8::from(p.grounded)
+                | u8::from(p.natural) << 1
+                | u8::from(p.entered) << 2
+                | u8::from(p.jammed) << 3);
             h.u32(p.born);
             h.u8(p.owner);
             h.u8(p.struck_next);
@@ -291,6 +318,9 @@ impl Debris {
         }
         for &t in &self.torn {
             h.u32(t);
+        }
+        for &c in &self.choke {
+            h.u8(c);
         }
     }
 }
@@ -307,6 +337,7 @@ impl Piece {
             across,
             pace: Fx::ZERO,
             grounded: false,
+            jammed: false,
             entered: false,
             natural,
             owner: NOBODY,
@@ -580,6 +611,9 @@ impl Rivers {
             self.flood_banks(terrain, lift, tick);
         }
         if self.debris.is_empty() {
+            if second {
+                self.weigh_piers(lift);
+            }
             // The last piece may have just gone: weigh the fords clear.
             return second && self.debris.ever && self.weigh_debris();
         }
@@ -588,6 +622,9 @@ impl Rivers {
             let Some(mut p) = self.debris.pieces[k] else {
                 continue;
             };
+            if p.jammed {
+                continue;
+            }
             if second || p.entered {
                 p.grounded = self.grounds(terrain, lift, p.tile);
             }
@@ -601,9 +638,13 @@ impl Rivers {
                 p.along += p.pace;
                 while p.along >= Fx::ONE && p.next != NO_TILE {
                     p.along -= Fx::ONE;
+                    let from = p.tile;
                     p.tile = p.next;
                     p.next = downstream(flow, &self.reach, n, p.tile);
                     p.entered = true;
+                    if self.meet_pier(&mut p, from, k, lift, tick) {
+                        break;
+                    }
                 }
                 if p.next == NO_TILE && p.along >= Fx::HALF {
                     // Off the map, or into still water.
@@ -612,6 +653,9 @@ impl Rivers {
                 }
             }
             self.debris.pieces[k] = Some(p);
+        }
+        if second {
+            self.weigh_piers(lift);
         }
         second && self.weigh_debris()
     }
@@ -719,7 +763,7 @@ impl Rivers {
                     grounded[on_ford] = (g, p.kind.mass());
                     on_ford += 1;
                 }
-            } else if self.stretch_of[t] != NONE {
+            } else if !p.jammed && self.stretch_of[t] != NONE {
                 floating[afloat] = (self.stretch_of[t], self.reach[t]);
                 afloat += 1;
             }

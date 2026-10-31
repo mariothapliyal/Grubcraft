@@ -2204,7 +2204,7 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
         ),
         Some(Action::Dump) => (
             Icon::Hammer,
-            "A worker walks to the river and spends 6 seconds tipping in a raft (12 Grub, paid as it goes in). It rides the current, strikes troops wading where it passes and grounds on fords in quiet water. At most 16 of your pieces on the water at once.",
+            "A worker walks to the river and spends 6 seconds tipping in a raft (12 Grub, paid as it goes in). It rides the current, strikes troops wading where it passes, grounds on fords in quiet water and jams on or strikes the piers of bridges downstream. At most 16 of your pieces on the water at once.",
         ),
         Some(Action::WorkPlans) => (
             Icon::Hammer,

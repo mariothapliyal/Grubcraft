@@ -938,7 +938,9 @@ impl Rivers {
         // this second flows on only the next.
         for &s in self.order.iter() {
             let st = &self.stretches[usize::from(s)];
-            let out = self.store[usize::from(s)].div_ceil(OUTFLOW_DIVISOR);
+            // Jams on the stretch's bridges hold some of it back.
+            let held = 100 - u64::from(self.choke(usize::from(s)));
+            let out = self.store[usize::from(s)].div_ceil(OUTFLOW_DIVISOR) * held / 100;
             let store = &mut self.store[usize::from(s)];
             *store = *store + pour * u64::from(st.own) - out;
             if st.below != NONE {

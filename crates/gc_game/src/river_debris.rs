@@ -1,7 +1,8 @@
 //! Debris riding the rivers, as drawn (docs/39-water-engine.md, section
 //! 3): each piece the simulation floats is a bare trunk lying on the
-//! water along the way it goes (a raft: three lashed side by side), and
-//! one aground sits low on the bed.
+//! water along the way it goes (a raft: three lashed side by side; a
+//! fallen bridge span: two grey deck timbers), and one aground or jammed
+//! sits low on the bed.
 
 use gc_sim::rivers::debris::{Kind, Seen};
 use gc_sim::terrain::HEIGHT_UNITS;
@@ -22,6 +23,9 @@ const WET_BARK: [u8; 3] = [92, 84, 76];
 const RAFT_TRUNKS: usize = 3;
 const RAFT_GAP: f32 = 0.22;
 const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
+/// A fallen span's deck timbers: two, weathered grey.
+const WRECK_TIMBERS: usize = 2;
+const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
 /// The trunks to draw for `pieces`, the still water drawn at `water`
 /// (tiles) and the rivers raising it by `rise` (height units, see
@@ -47,8 +51,12 @@ pub fn extras<'a>(
             // Base upstream, so the trunk lies across where the piece is.
             let base = at - way * (LOG_LENGTH / 2.0);
             let turn = turn_of(way);
-            // A raft is trunks lashed side by side.
-            let trunks = if p.kind == Kind::Raft { RAFT_TRUNKS } else { 1 };
+            // A raft is trunks lashed side by side, a wreck its deck timbers.
+            let (trunks, tint) = match p.kind {
+                Kind::Raft => (RAFT_TRUNKS, RAFT_TIMBER),
+                Kind::Wreck => (WRECK_TIMBERS, WRECK_TIMBER),
+                _ => (1, WET_BARK),
+            };
             let beside = way.perp() * RAFT_GAP;
             (0..trunks).map(move |k| {
                 let off = beside * (k as f32 - (trunks - 1) as f32 / 2.0);
@@ -57,11 +65,7 @@ pub fn extras<'a>(
                     at: Vec3::new(base.x + off.x, y, base.y + off.y),
                     turn,
                     scale,
-                    tint: if p.kind == Kind::Raft {
-                        RAFT_TIMBER
-                    } else {
-                        WET_BARK
-                    },
+                    tint,
                     phase: 0,
                     lean: 255,
                     fall: fall_of(turn, way),
