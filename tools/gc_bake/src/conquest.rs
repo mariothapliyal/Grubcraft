@@ -290,6 +290,7 @@ fn building_record(
                 rosters::Quirk::Disorders => (cq::QUIRK_DISORDERS, 0),
                 rosters::Quirk::Drags => (cq::QUIRK_DRAGS, 0),
                 rosters::Quirk::Acid => (cq::QUIRK_ACID, 0),
+                rosters::Quirk::Kindles => (cq::QUIRK_KINDLES, 0),
             };
             (shot, quirk, raises)
         }

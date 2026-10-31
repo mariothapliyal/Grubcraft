@@ -322,6 +322,11 @@ impl Conquest {
                     s.lay_pool(owner, attack.quirk == Quirk::Acid, hit.at);
                 }
             }
+            Quirk::Kindles => {
+                if s.kindle.len() < s.kindle.capacity() {
+                    s.kindle.push((hit.at.x.floor_int(), hit.at.y.floor_int()));
+                }
+            }
         }
     }
 }

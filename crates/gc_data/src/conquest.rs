@@ -18,7 +18,7 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 13;
+pub const BUILDING_SCHEMA: u32 = 14;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
 pub const CONQUEST_UNIT_SCHEMA: u32 = 6;
@@ -186,6 +186,8 @@ pub const QUIRK_DISORDERS: u8 = 5;
 pub const QUIRK_DRAGS: u8 = 6;
 /// Its hits leave a pool of acid for a few seconds.
 pub const QUIRK_ACID: u8 = 7;
+/// Fire arrows: its hits set the growth where they land alight (schema 14).
+pub const QUIRK_KINDLES: u8 = 8;
 /// The furthest a field, tuning or link reaches, in tiles.
 pub const MAX_REACH_TILES: u8 = 30;
 
@@ -647,7 +649,7 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if shoots != (b.attack_damage > 0 && b.attack_reload_ticks > 0 && b.attack_shots > 0) {
         return Err("a tower needs range, damage, reload and shots, and nothing else has any");
     }
-    if b.shot > SHOT_BLAST || b.quirk > QUIRK_ACID {
+    if b.shot > SHOT_BLAST || b.quirk > QUIRK_KINDLES {
         return Err("unknown tower shot or quirk");
     }
     if !shoots && (b.shot != SHOT_ARROWS || b.quirk != QUIRK_NONE) {
@@ -664,7 +666,8 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
 /// wall's next level: a drawn wall of the same faction and kind
 /// (passable or grown alike), or a gate's gatehouse from a gate of the
 /// same faction, needing no lower tier, and only one level per wall or
-/// gate (so a chain can't loop either). The table has passed
+/// gate (so a chain can't loop either), or a tower's level 2 from a
+/// first-level tower of the same faction. The table has passed
 /// [`validate_building`].
 pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'static str> {
     let b = &table[i];
@@ -700,6 +703,24 @@ pub fn validate_upgrade(table: &[BuildingRecord], i: usize) -> Result<(), &'stat
                 Some(r) if r.upgrades_from != NONE => at = r.upgrades_from,
                 _ => break,
             }
+        }
+    } else if b.role == Role::Defence as u8 || from.role == Role::Defence as u8 {
+        // A tower has a level 2 (docs/26 stage 5).
+        if b.role != from.role || from.faction != b.faction || from.tier > b.tier {
+            return Err(
+                "a tower's level 2 upgrades from its own faction's tower, at no higher tier",
+            );
+        }
+        if from.upgrades_from != NONE {
+            return Err("a tower has two levels");
+        }
+        if table
+            .iter()
+            .filter(|o| o.upgrades_from == b.upgrades_from)
+            .count()
+            > 1
+        {
+            return Err("a tower has one next level");
         }
     } else if b.role != main || from.role != main {
         return Err("only a Main building upgrades, and only from a Main building");
