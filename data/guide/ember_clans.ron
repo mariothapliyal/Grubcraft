@@ -153,7 +153,9 @@
             name: "Watchtower",
             blurb: "Two archers that shoot ground and air. A cheap guard for seeps and approaches against lone raiders and flyers.",
             summary: "Two archers that shoot ground and air: siege engines first, then whoever attacks your buildings, then the nearest. Right-click an enemy with it selected to pick its target. A cheap deterrent for seeps and approaches: it will not stop an army, but it punishes lone raiders and flyers. It is Fortified, so rams and fire still beat it.",
-            notes: [],
+            notes: [
+                ("Fire-Arrow Watchtower", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot, 4 tiles more range and fire arrows that set woods and scrub alight."),
+            ],
             tips: [
                 (icon: Alarm, text: "Place it at seeps and approaches to punish lone raiders and flyers, since it will not stop an army."),
                 (icon: Spear, text: "Guard it with spears, since rams and Fire Arrows still beat it."),
@@ -161,10 +163,23 @@
             ],
         ),
         (
+            name: "Fire-Arrow Watchtower",
+            blurb: "Level 2 of the Watchtower: more range, damage and hit points, and fire arrows that set woods alight. Press V.",
+            summary: "Level 2 of the Watchtower, upgraded in place. Its two archers hit for 6 a shot (up from 5), reach 36 tiles (up from 32) and have 1500 hit points (up from 1000). Its fire arrows set woods and scrub alight. It costs 75 Grub and 50 Marrow. Press V on a finished Watchtower (tier 2); it takes 30 seconds and keeps firing.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Its fire arrows set woods and scrub alight, so keep it away from woods you want kept whole."),
+                (icon: Marrow, text: "Save 50 Marrow for it, since the upgrade costs 75 Grub and 50 Marrow."),
+                (icon: Hammer, text: "Upgrade it with V; it keeps shooting for the 30 seconds it takes."),
+            ],
+        ),
+        (
             name: "Ballista Yagura",
             blurb: "Bolt tower: a heavy bolt down a file of soldiers, hard on monsters and riders; pick its target.",
             summary: "Bolt tower: one heavy bolt every 5 seconds that runs down a single file of soldiers, twice as hard on monsters, riders and engines. It shoots siege engines first, then big soldiers, then whoever attacks your buildings. Right-click an enemy with it selected to pick its target. A shield wall does not stop the bolt.",
-            notes: [],
+            notes: [
+                ("Great Ballista Yagura", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot and 4 tiles more range."),
+            ],
             tips: [
                 (icon: Alarm, text: "Strong against columns, monsters and cavalry, since each bolt runs down a whole file."),
                 (icon: Spear, text: "Weak against wide lines of small soldiers, so keep spears in front of it."),
@@ -172,14 +187,38 @@
             ],
         ),
         (
+            name: "Great Ballista Yagura",
+            blurb: "Level 2 of the Ballista Yagura: more range, damage and hit points for its heavy bolts. Press V on one at tier 2.",
+            summary: "Level 2 of the Ballista Yagura, upgraded in place. Its bolt hits for 52 (up from 40), reaches 38 tiles (up from 34) and the tower has 1350 hit points (up from 900). It still fires one bolt every 5 seconds down a file of soldiers. It costs 105 Grub and 50 Marrow. Press V on a finished Ballista Yagura (tier 2); it takes 30 seconds and keeps firing.",
+            notes: [],
+            tips: [
+                (icon: Alarm, text: "Still strong against columns, monsters and cavalry, since each bolt runs down a whole file."),
+                (icon: Marrow, text: "Save 50 Marrow for it, since the upgrade costs 105 Grub and 50 Marrow."),
+                (icon: Spear, text: "Keep spears in front of it, since wide lines of small soldiers still reach it."),
+            ],
+        ),
+        (
             name: "Horoku Tower",
             blurb: "Blast tower: fire-pots on packed blocks leave burning ground. Blind within 8 tiles, so guard it.",
             summary: "Blast tower: six shots every 6 seconds into the fullest enemy block in range, harder the more packed it is, with half splashing on nearby regiments. Siege engines first. It cannot hit enemies within 8 tiles of it, so guard it with troops. Its fire-pots leave burning ground for 8 seconds and set woods alight.",
-            notes: [],
+            notes: [
+                ("Great Horoku Tower", "Level 2 at tier 2, upgraded in place with V: 1.5 times the hit points, more damage a shot and 4 tiles more range."),
+            ],
             tips: [
                 (icon: Spear, text: "Guard it with spears close by, since nothing within 8 tiles of it can be hit."),
                 (icon: Alarm, text: "Burning ground hurts enemies standing in it, so it is best against crowds that stay put."),
                 (icon: Hammer, text: "Clear woods and scrub around it, since its fire-pots set them alight."),
+            ],
+        ),
+        (
+            name: "Great Horoku Tower",
+            blurb: "Level 2 of the Horoku Tower: more range, damage and hit points for its fire-pots. Press V on one at tier 2.",
+            summary: "Level 2 of the Horoku Tower, upgraded in place. It fires six shots every 6 seconds, 6 damage each (up from 5), reaches 40 tiles (up from 36) and has 1350 hit points (up from 900). Its fire-pots still set woods and scrub alight. It costs 120 Grub and 75 Marrow. Press V on a finished Horoku Tower (tier 2); it takes 30 seconds.",
+            notes: [],
+            tips: [
+                (icon: Spear, text: "Guard it with spears close by, since nothing within 8 tiles of it can be hit."),
+                (icon: Marrow, text: "Save 75 Marrow for it, since the upgrade costs 120 Grub and 75 Marrow."),
+                (icon: Hammer, text: "Upgrade it with V; it keeps firing for the 30 seconds the upgrade takes."),
             ],
         ),
         (
@@ -198,7 +237,7 @@
         (
             name: "Stone Wall",
             blurb: "Tier 2 of the Palisade: 2.5 times as tough. Select a Palisade and press U to raise its stretch.",
-            summary: "Level 2 of the Palisade: a sloped stone wall with a plaster face, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
+            summary: "Level 2 of the Palisade: the logs set on a stone footing and bound in iron, with a walkway behind for your troops, 2.5 times as tough. Select a Palisade and press U: the whole joined stretch is paid now and a worker raises it a tile at a time, and the wall stays up meanwhile.",
             notes: [
                 ("Castle Wall", "The toughest wall the Clans build: four times a Palisade. Needs a Castle Keep."),
             ],

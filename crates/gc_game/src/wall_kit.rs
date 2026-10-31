@@ -28,7 +28,22 @@ pub struct WallKit {
     burnt: Option<usize>,
     /// A buttress on the back, every few tiles, if the kit has one.
     brace: Option<usize>,
+    /// Laid with the runs on a raised wall: a stone footing under them,
+    /// iron bands on their front and a fighting step behind them.
+    footing: Option<usize>,
+    bands: Option<usize>,
+    walkway: Option<usize>,
 }
+
+/// The top of the walkway's deck, and how far behind the wall's centre
+/// line its middle is, in tiles (assets-src/buildings/wall-kits.ron: deck
+/// top 0.82, x -0.66 .. -0.14).
+pub const WALKWAY_DECK: f32 = 0.82;
+pub const WALKWAY_BACK: f32 = 0.4;
+
+/// How much higher each overlapping copy of a piece laid evenly over a
+/// diagonal tile sits than the last, so their tops never fight.
+const OVERLAP_LIFT: f32 = 0.01;
 
 /// What the generator needs to know of one wall tile.
 pub struct Tile<'a> {
@@ -38,6 +53,9 @@ pub struct Tile<'a> {
     pub centre: Vec2,
     pub dir: Vec2,
     pub len: f32,
+    /// The way out of the fort (the side its front faces), if known: away
+    /// from its owner's nearest hall. Without it a line faces one fixed way.
+    pub out: Option<Vec2>,
     /// Whether a tile of the same side's walls or gates stands at a tile.
     pub walled: &'a dyn Fn((i32, i32)) -> bool,
 }
@@ -95,6 +113,27 @@ impl WallKit {
                 half: find("Palisade Kit Half Run"),
                 burnt: find("Palisade Kit Run Burnt"),
                 brace: find("Palisade Kit Brace"),
+                footing: None,
+                bands: None,
+                walkway: None,
+            }),
+            // The Ember's raised wall: the palisade on a stone footing,
+            // bound in iron, with a fighting step behind. It no longer burns
+            // like logs, and its walkway takes the braces' place.
+            "Stone Wall" => Some(WallKit {
+                runs: ["A", "B", "C", "D"]
+                    .iter()
+                    .map(|v| find(&format!("Palisade Kit Run {v}")))
+                    .collect::<Option<_>>()?,
+                post: find("Palisade Kit Post")?,
+                end: find("Palisade Kit End Post")?,
+                broken: find("Palisade Kit Run Broken")?,
+                half: find("Palisade Kit Half Run"),
+                burnt: None,
+                brace: None,
+                footing: Some(find("Palisade Kit Footing")?),
+                bands: Some(find("Palisade Kit Bands")?),
+                walkway: Some(find("Palisade Kit Walkway")?),
             }),
             "Bone Fence" | "Ossuary Wall" | "Mausoleum Wall" => {
                 let (level, variants): (&str, &[&str]) = match name {
@@ -112,6 +151,9 @@ impl WallKit {
                     half: None,
                     burnt: None,
                     brace: None,
+                    footing: None,
+                    bands: None,
+                    walkway: None,
                 })
             }
             _ => None,
@@ -123,23 +165,30 @@ impl WallKit {
         self.runs[0]
     }
 
+    /// Whether men manning it stand on a walkway behind it (at
+    /// [`WALKWAY_DECK`], [`WALKWAY_BACK`] inside), not on its top.
+    pub fn has_walkway(&self) -> bool {
+        self.walkway.is_some()
+    }
+
     /// The pieces that build wall tile `t`, added to `out`: runs end to
     /// end along its piece of the line, a post at a joint where the wall
     /// carries on and an end post where it stops. A tile going up shows its
     /// posts, and its runs from half built.
     pub fn pieces(&self, t: &Tile<'_>, out: &mut Vec<Piece>) {
         let s = t.s;
-        // Every piece faces the same way along a line whichever way it was
-        // drawn, so the braces and the plainer back stay on one side.
-        let facing = if forward(t.dir) { t.dir } else { -t.dir };
-        let mut put = |model: usize, at: Vec2| {
+        // The front faces out of the fort; without a fort, every piece of a
+        // line faces the same way whichever way it was drawn.
+        let facing = facing(t.dir, t.out);
+        let mut lay = |model: usize, at: Vec2, lift: f32| {
             out.push(Piece {
                 model,
                 at,
                 facing,
-                lift: 0.0,
+                lift,
             });
         };
+        let mut put = |model: usize, at: Vec2| lay(model, at, 0.0);
         let half = t.dir * (t.len / 2.0);
         // Does the wall carry on past a joint: is any of the tile's eight
         // neighbours on that side one of its side's walls or gates?
@@ -206,6 +255,56 @@ impl WallKit {
         {
             put(brace, t.centre);
         }
+        // Footing, bands and walkway are a tile long each, laid evenly over
+        // the tile's core: one on a straight tile, two overlapping on a
+        // diagonal, the second a hair higher.
+        let works = (core - SLACK).ceil().max(1.0) as usize;
+        let spread = if works > 1 {
+            (core - 1.0).max(0.0) / (works as f32 - 1.0)
+        } else {
+            0.0
+        };
+        let first = -spread * (works as f32 - 1.0) / 2.0;
+        for k in 0..works {
+            let at = t.centre + t.dir * (first + spread * k as f32);
+            let lift = OVERLAP_LIFT * k as f32;
+            for piece in [self.footing, self.bands, self.walkway]
+                .into_iter()
+                .flatten()
+            {
+                lay(piece, at, lift);
+            }
+        }
+    }
+}
+
+/// The way a kit piece along `dir` faces: its front out of the fort
+/// (`out`), or without one the same fixed way for a whole line, whichever
+/// way it was drawn. The front, a piece's +x, is `(f.y, -f.x)`.
+pub fn facing(dir: Vec2, out: Option<Vec2>) -> Vec2 {
+    match out {
+        Some(way) => facing_out(dir, way),
+        None if forward(dir) => dir,
+        None => -dir,
+    }
+}
+
+/// The way a kit piece along `dir` fronts: `out`, or the fixed way a
+/// line with no fort faces (see [`facing`]).
+pub fn front(dir: Vec2, out: Option<Vec2>) -> Vec2 {
+    out.unwrap_or_else(|| {
+        let f = facing(dir, None);
+        Vec2::new(f.y, -f.x)
+    })
+}
+
+/// Of `dir` and its reverse, the one that puts a piece's +x (its front,
+/// `(f.y, -f.x)`) on the `out` side.
+fn facing_out(dir: Vec2, out: Vec2) -> Vec2 {
+    if Vec2::new(dir.y, -dir.x).dot(out) >= 0.0 {
+        dir
+    } else {
+        -dir
     }
 }
 
@@ -233,11 +332,17 @@ mod tests {
     #[test]
     fn every_wall_kit_is_in_the_pack() {
         let models = crate::models::load().unwrap();
-        for name in ["Palisade", "Bone Fence", "Ossuary Wall", "Mausoleum Wall"] {
+        for name in [
+            "Palisade",
+            "Stone Wall",
+            "Bone Fence",
+            "Ossuary Wall",
+            "Mausoleum Wall",
+        ] {
             let kit = WallKit::for_wall(&models, name);
             assert!(kit.is_some(), "{name} has no kit");
         }
-        assert!(WallKit::for_wall(&models, "Stone Wall").is_none());
+        assert!(WallKit::for_wall(&models, "Castle Wall").is_none());
     }
 
     #[test]
@@ -252,6 +357,7 @@ mod tests {
             centre: Vec2::new(5.5, 5.5),
             dir: Vec2::X,
             len: 1.0,
+            out: None,
             walled: &walled,
         };
         let mut out = Vec::new();
@@ -301,6 +407,7 @@ mod tests {
                 centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
                 dir,
                 len: 1.0,
+                out: None,
                 walled: &walled,
             };
             let mut out = Vec::new();
@@ -345,6 +452,7 @@ mod tests {
                 centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
                 dir: way.normalize(),
                 len: 1.0,
+                out: None,
                 walled: &walled,
             };
             let mut out = Vec::new();
@@ -355,5 +463,71 @@ mod tests {
             ends += here;
         }
         assert_eq!(ends, 2);
+    }
+
+    #[test]
+    fn the_front_faces_out_of_the_fort_whichever_way_the_wall_was_drawn() {
+        for dir in [Vec2::X, Vec2::NEG_X] {
+            // The fort lies to the north (-y): out is south.
+            let f = facing(dir, Some(Vec2::Y));
+            assert_eq!(Vec2::new(f.y, -f.x), Vec2::Y, "{dir}");
+        }
+        // Without a fort, both ways of drawing face the same way.
+        assert_eq!(facing(Vec2::X, None), facing(Vec2::NEG_X, None));
+    }
+
+    #[test]
+    fn a_stone_wall_is_the_palisade_on_a_footing_with_a_walkway_and_never_burns() {
+        let models = crate::models::load().unwrap();
+        let kit = WallKit::for_wall(&models, "Stone Wall").unwrap();
+        assert!(kit.has_walkway());
+        assert!(
+            !WallKit::for_wall(&models, "Palisade")
+                .unwrap()
+                .has_walkway()
+        );
+        let mut s = crate::buildings::footprint_view((5, 5), 1, 1, 0);
+        s.built_percent = 100;
+        let mut hurt = s;
+        hurt.hp = s.max_hp / 10;
+        let walled = |_: (i32, i32)| true;
+        let tile = Tile {
+            s: &s,
+            centre: Vec2::new(5.5, 5.5),
+            dir: Vec2::X,
+            len: 1.0 + 2.0 * JOINT,
+            out: Some(Vec2::Y),
+            walled: &walled,
+        };
+        let mut out = Vec::new();
+        kit.pieces(&tile, &mut out);
+        let has = |m: Option<usize>| out.iter().filter(|p| Some(p.model) == m).count();
+        assert_eq!(has(kit.walkway), 1);
+        assert_eq!(has(kit.footing), 1);
+        assert_eq!(has(kit.bands), 1);
+        assert_eq!(has(kit.brace), 0);
+        // Every piece's front faces out.
+        assert!(
+            out.iter()
+                .all(|p| Vec2::new(p.facing.y, -p.facing.x) == Vec2::Y)
+        );
+        // Badly hurt it shows broken runs, not burnt ones.
+        out.clear();
+        kit.pieces(&Tile { s: &hurt, ..tile }, &mut out);
+        assert!(out.iter().any(|p| p.model == kit.broken));
+        // A diagonal tile takes two walkways, the second a hair higher.
+        out.clear();
+        let diagonal = Tile {
+            dir: Vec2::new(1.0, 1.0).normalize(),
+            len: std::f32::consts::SQRT_2 + 2.0 * JOINT,
+            ..tile
+        };
+        kit.pieces(&diagonal, &mut out);
+        let walks: Vec<_> = out
+            .iter()
+            .filter(|p| Some(p.model) == kit.walkway)
+            .collect();
+        assert_eq!(walks.len(), 2);
+        assert!(walks[1].lift > walks[0].lift);
     }
 }

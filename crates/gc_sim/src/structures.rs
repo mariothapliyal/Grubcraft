@@ -358,6 +358,8 @@ pub enum Quirk {
     Drags,
     /// Its hits leave a pool of acid for a few seconds.
     Acid,
+    /// Fire arrows: its hits set the growth where they land alight.
+    Kindles,
 }
 
 impl Quirk {
@@ -372,6 +374,7 @@ impl Quirk {
             Quirk::Disorders => 5,
             Quirk::Drags => 6,
             Quirk::Acid => 7,
+            Quirk::Kindles => 8,
         }
     }
 
@@ -387,6 +390,7 @@ impl Quirk {
             5 => Quirk::Disorders,
             6 => Quirk::Drags,
             7 => Quirk::Acid,
+            8 => Quirk::Kindles,
             _ => return None,
         })
     }

@@ -143,7 +143,8 @@ impl Kit {
             .min_by_key(|b| b.stats.tier)
     }
 
-    /// What the main building `from` upgrades into, if anything.
+    /// What building `from` upgrades into, if anything: a main building's
+    /// next tier, a gate's gatehouse or a tower's level 2.
     pub fn upgrade_of(&self, from: BuildingId) -> Option<&KitBuilding> {
         self.buildings
             .iter()

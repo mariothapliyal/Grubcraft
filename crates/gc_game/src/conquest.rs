@@ -713,6 +713,117 @@ mod tests {
         assert_eq!(slot.half.length() * 2.0, f32::from(held.frontage));
     }
 
+    /// Real use of the Stone Wall's walkway: a regiment sent to man a
+    /// stretch stands on the walkway's deck, inside the wall (the side of
+    /// its hall), not on top of the logs; ladders against it reach the
+    /// logs' top.
+    #[test]
+    fn a_regiment_manning_a_stone_wall_stands_on_its_walkway_inside() {
+        use crate::buildings::{Looks, WallSides, kit_piece, manned_slot};
+        use crate::wall_kit::{WALKWAY_BACK, WALKWAY_DECK};
+        let data = data();
+        let map = make_map(0, 0, 0);
+        let factions = [Faction::EmberClans, Faction::EmberClans];
+        let (mut world, _, table) = world_on(&map, &factions, Tempo::Standard);
+        let models = crate::models::load().unwrap();
+        let looks = Looks::new(&table, &models);
+        let wall = (0..table.len() as u16)
+            .find(|&b| table.name(b) == "Stone Wall")
+            .unwrap();
+        let foot = (data.conquest_units.iter())
+            .position(|u| {
+                u.faction() == Faction::EmberClans
+                    && !u.worker()
+                    && matches!(u.class(), Class::Light | Class::Spear | Class::Heavy)
+            })
+            .expect("a foot regiment") as u16;
+        let (sx, sy) = map.starts()[0];
+        // A stretch of three tiles running east, 8 tiles south of the hall.
+        let row = (0..20)
+            .map(|dy| sy + 8 + dy)
+            .find(|&y| (0..3).all(|dx| world.can_build(wall, (sx - 1 + dx, y), 0).is_ok()))
+            .expect("room for a wall");
+        let apply = |world: &mut World, command| {
+            world
+                .tick(&[PlayerCommand { player: 0, command }])
+                .commands_applied
+                == 1
+        };
+        // The hall, north of where the wall goes: inside is north.
+        let hall = (0..table.len() as u16)
+            .find(|&b| table.name(b) == "Clan Hall")
+            .unwrap();
+        let hall_tile = (-14..14)
+            .flat_map(|dy| (-14..14).map(move |dx| (sx + dx, sy + dy)))
+            .find(|&t| t.1 + 4 < row && world.can_build(hall, t, 0).is_ok())
+            .expect("room for a hall");
+        assert!(apply(
+            &mut world,
+            Command::SpawnStructure {
+                building: hall,
+                tile: (hall_tile.0 as i16, hall_tile.1 as i16),
+                turn: 0,
+            }
+        ));
+        for dx in 0..3 {
+            assert!(apply(
+                &mut world,
+                Command::SpawnStructure {
+                    building: wall,
+                    tile: ((sx - 1 + dx) as i16, row as i16),
+                    turn: 0,
+                }
+            ));
+        }
+        let structure = (world.structures().unwrap().iter())
+            .find(|s| s.building == wall)
+            .unwrap()
+            .handle;
+        assert!(apply(
+            &mut world,
+            Command::SpawnRegiment {
+                unit: foot,
+                position: gc_fixed::FxVec2::from_ints(sx, row - 4),
+                facing: gc_sim::scenario::NORTH,
+            }
+        ));
+        let regiment = world.regiments.iter().last().unwrap().handle;
+        assert!(apply(
+            &mut world,
+            Command::ManWall {
+                regiment,
+                structure
+            }
+        ));
+        let up = |world: &World| world.regiments.iter().any(|r| r.on_wall);
+        for _ in 0..120 * TICKS_PER_SECOND {
+            if up(&world) {
+                break;
+            }
+            world.tick(&[]);
+        }
+        assert!(up(&world), "it never got onto the Stone Wall");
+        let structures = world.structures().unwrap();
+        let mut sides = WallSides::new(&world, &table);
+        let hall_y = hall_tile.1 as f32;
+
+        for &t in world.wall_tiles(regiment) {
+            let s = structures.get(t).unwrap();
+            let slot = manned_slot(&table, Some(&looks), &mut sides, &s);
+            let (centre, _, _) = kit_piece(&s);
+            assert_eq!(slot.lift, WALKWAY_DECK);
+            // Behind the logs by the walkway's depth, on the hall's side.
+            assert!((slot.centre.distance(centre) - WALKWAY_BACK).abs() < 1e-4);
+            assert!(
+                slot.centre.y < centre.y && centre.y > hall_y,
+                "{slot:?} vs {centre}"
+            );
+            // Well below the logs' top, which the ladders reach.
+            let top = looks.top(looks.wall_kit_for(wall).unwrap().run());
+            assert!(top > slot.lift + 0.5, "logs {top}, deck {}", slot.lift);
+        }
+    }
+
     /// A fresh Conquest world on `map` for `factions`, and its plan.
     fn world_on(map: &Map, factions: &[Faction], tempo: Tempo) -> (World, ConquestRecord, Table) {
         world_for(map, factions, tempo, Victories::default())

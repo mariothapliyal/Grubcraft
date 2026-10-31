@@ -880,7 +880,7 @@ impl Ctx<'_> {
             .r
             .buildings
             .iter()
-            .filter(|b| b.tier == tier && b.role != Role::Main)
+            .filter(|b| b.tier == tier && b.role != Role::Main && b.upgrades_from.is_none())
             .map(|b| b.name.as_str())
             .collect();
         let u = self
@@ -903,6 +903,15 @@ impl Ctx<'_> {
             (r, Some(from), _) if r == Role::Main || b.flags.contains(&BuildingFlag::Gate) => {
                 fact(&mut facts, "Needs", format!("An upgrade of the {from}"));
             }
+            // A tower's level 2 goes up on its tower, from its tier on.
+            (_, Some(from), Some(main)) => fact(
+                &mut facts,
+                "Needs",
+                format!(
+                    "An upgrade of the {from}, with the main building at tier {} ({})",
+                    b.tier, main.name
+                ),
+            ),
             (Role::Main, None, _) => fact(&mut facts, "Needs", "You start with it"),
             (_, _, Some(main)) if b.tier > 1 => fact(
                 &mut facts,
