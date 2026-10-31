@@ -12,6 +12,7 @@ use gc_fixed::FxVec2;
 use gc_render::{BoxInstance, Cull};
 use gc_sim::combat::MAX_VOLLEYS;
 use gc_sim::events::VolleyId;
+use gc_sim::structures::TowerShot;
 use glam::{Vec2, Vec3};
 
 /// Arrows drawn per volley, and how far apart they fly, in tiles.
@@ -25,6 +26,16 @@ const ARROW_ARC: f32 = 0.22;
 /// An arrow in flight: its box, and colour.
 pub const ARROW_SIZE: [f32; 3] = [0.05, 0.05, 0.7];
 pub const ARROW_COLOR: [u8; 4] = [70, 52, 36, 0];
+/// A tower's bolt: one big dark shaft on a flat flight.
+pub const BOLT_SIZE: [f32; 3] = [0.14, 0.14, 1.7];
+pub const BOLT_COLOR: [u8; 4] = [34, 28, 24, 0];
+const BOLT_ARC: f32 = 0.03;
+/// A tower's blast: a lobbed clay ball on a high arc, with a glowing fuse.
+pub const BLAST_SIZE: [f32; 3] = [0.42, 0.42, 0.42];
+pub const BLAST_COLOR: [u8; 4] = [96, 66, 48, 0];
+pub const BLAST_FUSE_SIZE: [f32; 3] = [0.2, -0.2, 0.2];
+pub const BLAST_FUSE_COLOR: [u8; 4] = [255, 150, 50, 0];
+const BLAST_ARC: f32 = 0.6;
 /// Spent arrows kept on the field at once; when it is full the oldest
 /// vanish first. 24 bytes each, so 576 KB, and two boxes to draw.
 pub const MAX_STUCK: usize = 24_576;
@@ -107,9 +118,15 @@ impl Flight {
         self.from.lerp(self.aim, t) + self.spread(k)
     }
 
-    /// How high arrow `k` flies over the ground at `t`: the arc, in tiles.
-    pub fn arc(&self, t: f32) -> f32 {
-        (t * std::f32::consts::PI).sin() * self.length * ARROW_ARC
+    /// How high a volley of `kind` flies over the ground at `t`: the arc,
+    /// in tiles.
+    pub fn arc(&self, kind: TowerShot, t: f32) -> f32 {
+        let factor = match kind {
+            TowerShot::Arrows => ARROW_ARC,
+            TowerShot::Bolt => BOLT_ARC,
+            TowerShot::Blast => BLAST_ARC,
+        };
+        (t * std::f32::consts::PI).sin() * self.length * factor
     }
 
     /// Where arrow `k` comes down, unless the trees caught it.
@@ -184,6 +201,7 @@ impl Arrows {
         &mut self,
         id: VolleyId,
         at: FxVec2,
+        kind: TowerShot,
         in_wood: impl Fn(FxVec2) -> bool,
         ground: impl Fn(Vec2) -> Option<f32>,
     ) -> Option<Flight> {
@@ -194,7 +212,13 @@ impl Arrows {
             .flatten()
             .filter(|l| l.launch_tick == id.launch_tick)?;
         let flight = Flight::new(l.launch_tick, l.from, at, in_wood);
-        for k in 0..ARROWS_PER_VOLLEY.min(usize::from(l.shots)) {
+        // A bolt or a blast sticks nothing in the ground.
+        let sticking = if kind == TowerShot::Arrows {
+            ARROWS_PER_VOLLEY
+        } else {
+            0
+        };
+        for k in 0..sticking.min(usize::from(l.shots)) {
             if let Some((pos, ground)) = flight.lands(k).and_then(|p| Some((p, ground(p)?))) {
                 self.stick(pos, flight.dir, ground, 0.0);
             }
@@ -331,7 +355,10 @@ mod tests {
             launch_tick: 90,
         };
         // Never seen loosed: nothing to say where it came from.
-        assert!(a.landed(id, fx(30, 10), |_| false, |_| Some(0.0)).is_none());
+        assert!(
+            a.landed(id, fx(30, 10), TowerShot::Arrows, |_| false, |_| Some(0.0))
+                .is_none()
+        );
         a.loosed(id, fx(10, 10), 24);
         // Another volley now flies in the slot: the first one's arrows are
         // not this one's.
@@ -340,11 +367,17 @@ mod tests {
             ..id
         };
         assert!(
-            a.landed(later, fx(30, 10), |_| false, |_| Some(0.0))
-                .is_none()
+            a.landed(
+                later,
+                fx(30, 10),
+                TowerShot::Arrows,
+                |_| false,
+                |_| Some(0.0)
+            )
+            .is_none()
         );
         let flight = a
-            .landed(id, fx(30, 10), |_| false, |_| Some(2.0))
+            .landed(id, fx(30, 10), TowerShot::Arrows, |_| false, |_| Some(2.0))
             .expect("loosed");
         assert!((flight.dir - Vec2::X).length() < 1e-6);
         assert_eq!(a.len(), ARROWS_PER_VOLLEY);
@@ -356,9 +389,9 @@ mod tests {
         assert!(a.stuck.iter().all(|s| s.ground == 2.0 && s.base == 0.0));
         // Into the water they vanish, and a thin volley sends fewer.
         a.loosed(id, fx(10, 10), 2);
-        a.landed(id, fx(30, 10), |_| false, |_| None);
+        a.landed(id, fx(30, 10), TowerShot::Arrows, |_| false, |_| None);
         assert_eq!(a.len(), ARROWS_PER_VOLLEY);
-        a.landed(id, fx(30, 10), |_| false, |_| Some(0.0));
+        a.landed(id, fx(30, 10), TowerShot::Arrows, |_| false, |_| Some(0.0));
         assert_eq!(a.len(), ARROWS_PER_VOLLEY + 2);
     }
 

@@ -268,17 +268,39 @@ fn building_record(
             .ok_or_else(|| bad(format!("upgrades unknown building {from}")))?,
         None => cq::NONE,
     };
+    let unit_named = |n: &str, what: &str| {
+        unit_at
+            .get(n)
+            .copied()
+            .ok_or_else(|| bad(format!("{what} names no unit {n}")))
+    };
+    let (shot, quirk, raises) = match &b.attack {
+        Some(a) => {
+            let shot = match a.shot {
+                rosters::Shot::Arrows => cq::SHOT_ARROWS,
+                rosters::Shot::Bolt => cq::SHOT_BOLT,
+                rosters::Shot::Blast => cq::SHOT_BLAST,
+            };
+            let (quirk, raises) = match &a.quirk {
+                rosters::Quirk::None => (cq::QUIRK_NONE, 0),
+                rosters::Quirk::Burns => (cq::QUIRK_BURNS, 0),
+                rosters::Quirk::Collects => (cq::QUIRK_COLLECTS, 0),
+                rosters::Quirk::Raises(n) => (cq::QUIRK_RAISES, unit_named(n, "its tower")?),
+                rosters::Quirk::Pierces => (cq::QUIRK_PIERCES, 0),
+                rosters::Quirk::Disorders => (cq::QUIRK_DISORDERS, 0),
+                rosters::Quirk::Drags => (cq::QUIRK_DRAGS, 0),
+                rosters::Quirk::Acid => (cq::QUIRK_ACID, 0),
+            };
+            (shot, quirk, raises)
+        }
+        None => (cq::SHOT_ARROWS, cq::QUIRK_NONE, 0),
+    };
     let (trap, trap_unit) = match &b.trap {
-        rosters::Trap::None => (cq::TRAP_NONE, 0),
+        rosters::Trap::None => (cq::TRAP_NONE, raises),
         rosters::Trap::Pit => (cq::TRAP_PIT, 0),
         rosters::Trap::Hands => (cq::TRAP_HANDS, 0),
         rosters::Trap::Mine => (cq::TRAP_MINE, 0),
-        rosters::Trap::Nest(n) => (
-            cq::TRAP_NEST,
-            *unit_at
-                .get(n.as_str())
-                .ok_or_else(|| bad(format!("its nest names no unit {n}")))?,
-        ),
+        rosters::Trap::Nest(n) => (cq::TRAP_NEST, unit_named(n, "its nest")?),
     };
     Ok(BuildingRecord {
         name: name_bytes(&b.name).map_err(bad)?,
@@ -323,9 +345,10 @@ fn building_record(
             rosters::Twist::Thorns => cq::TWIST_THORNS,
         },
         trap,
-        pad: 0,
+        shot,
         trap_unit,
-        pad2: [0; 2],
+        quirk,
+        pad2: 0,
     })
 }
 

@@ -15,14 +15,14 @@ mod engineer;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
 use gc_sim::structures::{
-    BuildingStats, LINE, Role, StructureHandle, StructureView, TRADE_POST, VEINS,
+    BuildingStats, LINE, Role, StructureHandle, StructureView, TRADE_POST, TowerShot, VEINS,
 };
 use gc_sim::{BuildingId, Command, RegimentHandle, Resource, TICKS_PER_SECOND, TradePost, UnitId};
 use glam::Vec2;
 
 use super::Sense;
 use super::kit::{EconomyStyle, KitBuilding, KitUnit};
-use super::strategy::Early;
+use super::strategy::{Early, Fortify};
 use super::{placing, sovereign, spymaster};
 use crate::orders::Hands as Clicks;
 use crate::perception::{Class, Seen, to_fx, to_fx_vec, v2};
@@ -94,6 +94,14 @@ const ROUTE_TICKS: u32 = 15 * TICKS_PER_SECOND;
 /// sent home, and sent out again from there.
 const STUCK_TICKS: u32 = 40 * TICKS_PER_SECOND;
 const STUCK_TILES: f32 = 4.0;
+/// Where a fortifying mind puts its bolt tower: this many tiles from home
+/// on the way the enemy comes, inside its front wall (8 to 12 out).
+const BOLT_OUT: f32 = 5.0;
+/// Where it puts its blast tower: this many tiles from home away from the
+/// enemy, more than a blast's least reach from the front wall.
+const BLAST_BACK: f32 = 4.0;
+/// Grub it has in hand beyond a blast tower's price before it puts one up.
+const WORKS_SPARE: u32 = 250;
 
 /// A building it ordered laid that hasn't shown on the field yet.
 #[derive(Clone, Copy, Debug)]
@@ -956,7 +964,44 @@ impl Steward {
             if towers >= usize::from(s.plan.early.towers) {
                 return None;
             }
-            Some((s.kit.tower(look.tier)?, self.inner_spot(look)))
+            // Against riders or monsters, a bolt tower if it can.
+            let bolt = spymaster::heavy_foes(s)
+                .then(|| s.kit.tower_of(look.tier, TowerShot::Bolt))
+                .flatten();
+            Some((
+                bolt.or_else(|| s.kit.tower(look.tier))?,
+                self.inner_spot(look),
+            ))
+        };
+        // A mind that fortifies in full, once its front wall is drawn, puts
+        // up a bolt tower on the way the enemy comes once it has seen riders
+        // or monsters, and from tier 2
+        // a blast tower behind its hall, out of the way of the fighting at
+        // its wall (a blast can't come down close).
+        let works = || {
+            if s.plan.fortifies != Fortify::Full || self.arming || !self.engineer.walled(s.now) {
+                return None;
+            }
+            let home = self.home?;
+            let toward = (super::nearest_other_start(s, home)? - home).try_normalize()?;
+            let have = |shot: TowerShot| {
+                look.mine
+                    .iter()
+                    .any(|m| m.stats.attack.is_some_and(|a| a.shot == shot))
+            };
+            // Neither is worth holding the rest of the build back to save
+            // for: each waits until there is Grub for it.
+            if spymaster::heavy_foes(s) && !have(TowerShot::Bolt) {
+                let b = s.kit.tower_of(look.tier, TowerShot::Bolt)?;
+                return (bank.grub >= u32::from(b.stats.cost_grub))
+                    .then_some((b, home + toward * BOLT_OUT));
+            }
+            if look.tier < 2 || have(TowerShot::Blast) {
+                return None;
+            }
+            let b = s.kit.tower_of(look.tier, TowerShot::Blast)?;
+            (bank.grub >= u32::from(b.stats.cost_grub) + WORKS_SPARE)
+                .then_some((b, home - toward * BLAST_BACK))
         };
         let expand = || {
             let b = match s.kit.economy {
@@ -989,6 +1034,7 @@ impl Steward {
             .or_else(|| self.waystation(s, look))
             .or_else(first)
             .or_else(tower)
+            .or_else(works)
             .or_else(hatch)
             .or_else(expand)
             .or_else(more);

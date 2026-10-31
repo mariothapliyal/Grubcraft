@@ -8,7 +8,9 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::orders::Step;
-use gc_sim::structures::{Armour, Breaker, Role, TowerAttack, Trap, VEINS, WallTwist};
+use gc_sim::structures::{
+    Armour, Breaker, Quirk, Role, TowerAttack, TowerShot, Trap, VEINS, WallTwist,
+};
 use gc_sim::{
     BuildingStats, Command, ConquestUnit, Formation, Mass, Meter, NodeSetup, PlayerCommand,
     PowerEffect, PowerStats, PowerTarget, RegimentHandle, Resource, StructureHandle, TradePost,
@@ -144,6 +146,14 @@ impl Writer {
         self.u8(b.trap.kind());
         if let Trap::Nest(unit) = b.trap {
             self.var(u64::from(unit));
+        }
+        // Format 49: what a tower looses, and its quirk.
+        if let Some(a) = b.attack {
+            self.u8(a.shot as u8);
+            self.u8(a.quirk.kind());
+            if let Quirk::Raises(unit) = a.quirk {
+                self.var(u64::from(unit));
+            }
         }
     }
 
@@ -756,6 +766,8 @@ impl<'a> Reader<'a> {
                     damage: self.var_as()?,
                     reload_ticks: self.var_as()?,
                     shots: self.u8()?,
+                    shot: TowerShot::Arrows,
+                    quirk: Quirk::None,
                 })
             } else {
                 None
@@ -786,6 +798,18 @@ impl<'a> Reader<'a> {
                     0
                 };
                 b.trap = Trap::from_kind(kind, unit)?;
+            }
+            if format >= 50
+                && let Some(a) = &mut b.attack
+            {
+                a.shot = TowerShot::from_u8(self.u8()?)?;
+                let kind = self.u8()?;
+                let unit = if kind == Quirk::Raises(0).kind() {
+                    self.var_as()?
+                } else {
+                    0
+                };
+                a.quirk = Quirk::from_kind(kind, unit)?;
             }
         } else if b.flags & VEINS != 0 {
             // Before fields were data, root-veins reached 15 tiles from a

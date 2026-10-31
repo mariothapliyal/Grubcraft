@@ -228,12 +228,15 @@ mod tests {
         pub stakes: u32,
         pub traps: u32,
         pub bridges: u32,
+        /// Bolt and blast towers (docs/26 stage 5).
+        pub bolts: u32,
+        pub blasts: u32,
     }
 
     impl Works {
         /// Side `p`'s works now.
         fn of(world: &World, p: PlayerId) -> Works {
-            use gc_sim::structures::{GATE, Role};
+            use gc_sim::structures::{GATE, Role, TowerShot};
             let mut w = Works::default();
             let Some(st) = world.structures() else {
                 return w;
@@ -250,6 +253,11 @@ mod tests {
                     Role::Stakes => &mut w.stakes,
                     Role::Trap => &mut w.traps,
                     Role::Bridge => &mut w.bridges,
+                    Role::Defence => match b.attack.map(|a| a.shot) {
+                        Some(TowerShot::Bolt) => &mut w.bolts,
+                        Some(TowerShot::Blast) => &mut w.blasts,
+                        _ => continue,
+                    },
                     _ => continue,
                 };
                 *n += 1;
@@ -266,6 +274,8 @@ mod tests {
                 stakes: self.stakes.max(o.stakes),
                 traps: self.traps.max(o.traps),
                 bridges: self.bridges.max(o.bridges),
+                bolts: self.bolts.max(o.bolts),
+                blasts: self.blasts.max(o.blasts),
             }
         }
     }
@@ -1086,6 +1096,10 @@ mod tests {
             (most, played.report())
         };
         let (mut traps, mut last) = (0, String::new());
+        // A General that walls has reached tier 2 or been at it a while:
+        // a blast tower behind its hall, or a bolt tower once it has seen
+        // riders or monsters, in one of its games at least.
+        let mut towers = 0;
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
         // moves where things get built, and with frontage about one in 25),
@@ -1098,6 +1112,7 @@ mod tests {
                     let most;
                     (most, last) = general(f, seed);
                     traps += most.traps;
+                    towers += most.bolts + most.blasts;
                     most.walls >= 5 && most.gates >= 1 && most.barricades >= 1
                 });
             assert!(walled, "{f:?}: no General walled in seeds 1 to 24: {last}");
@@ -1110,8 +1125,10 @@ mod tests {
             let most;
             (most, last) = general(Faction::EmberClans, seed);
             traps += most.traps;
+            towers += most.bolts + most.blasts;
         }
         assert!(traps >= 1, "no General laid a trap; the last game: {last}");
+        assert!(towers >= 1, "no bolt or blast tower put up in any game");
         let played = play(
             0,
             0,
