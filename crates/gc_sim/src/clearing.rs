@@ -434,9 +434,9 @@ impl Clearing {
         } else {
             0
         };
-        let ticks = match job.work {
-            Work::Dump => crate::rivers::debris::DUMP_SECONDS * TICKS_PER_SECOND,
-            _ if let Some(mass) = jam => {
+        let ticks = match (job.work, jam) {
+            (Work::Dump, _) => crate::rivers::debris::DUMP_SECONDS * TICKS_PER_SECOND,
+            (_, Some(mass)) => {
                 crate::rivers::debris::piers::UNJAM_SECONDS * u32::from(mass) * TICKS_PER_SECOND
             }
             _ if logs > 0 => clear_ticks(growth) * FELL_PERCENT / 100,
