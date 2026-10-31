@@ -1982,6 +1982,76 @@ fn fit_rig(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
     }
 }
 
+// TEMP heap diag: fit_rig with no dynamically indexed local (no
+// indexable temps for WARP's JIT).
+fn leg_rise(leg: u32, pos: vec2<f32>, left: vec2<f32>, facing: vec2<f32>, here: f32, scale: f32, feet: f32) -> f32 {
+    let hip = joint_at(rig_joint(leg, 0u));
+    let knee = joint_at(rig_joint(leg, 1u));
+    let ankle = joint_at(rig_joint(leg, 2u));
+    let reach = length(knee - hip) + length(ankle - knee);
+    let xz = pos + (left * ankle.x + facing * ankle.z) * scale;
+    let dy = clamp((ground_at(xz) - here) / scale, -0.4 * reach, 0.4 * reach);
+    return dy * planted(ankle.y, reach) * feet;
+}
+
+fn look_step(rig_z: u32, k: u32, share: f32, total: f32, yaw: f32, pitch: f32, state: ptr<function, LookState>) {
+    let j = rig_joint(rig_z, k);
+    if j == NO_JOINT {
+        return;
+    }
+    (*state).done += share / total;
+    let now = look_turn(yaw * (*state).done, pitch * (*state).done);
+    let pivot = ((*state).turned * vec4<f32>(joint_at(j), 1.0)).xyz;
+    (*state).turned = turn_about(pivot, now * transpose((*state).was)) * (*state).turned;
+    (*state).was = now;
+    pose_fix[7u + k] = (*state).turned;
+}
+
+struct LookState {
+    turned: mat4x4<f32>,
+    was: mat3x3<f32>,
+    done: f32,
+}
+
+fn fit_rig_flat(i: u32, rig: vec4<u32>, feet: f32, look: f32) {
+    let pos = vec2<f32>(bitcast<f32>(instances[i]), bitcast<f32>(instances[i + 1u]));
+    let facing = vec2<f32>(bitcast<f32>(instances[i + 2u]), bitcast<f32>(instances[i + 3u]));
+    let scale = bitcast<f32>(instances[i + 8u]);
+    let extra = instances[i + 15u];
+    var rise = vec2<f32>(0.0);
+    if feet > 0.0 {
+        let here = ground_at(pos);
+        let left = vec2<f32>(facing.y, -facing.x);
+        rise = vec2<f32>(
+            leg_rise(rig.x, pos, left, facing, here, scale, feet),
+            leg_rise(rig.y, pos, left, facing, here, scale, feet),
+        );
+    }
+    let drop_by = min(0.0, min(rise.x, rise.y));
+    let drop = translation(vec3<f32>(0.0, drop_by, 0.0));
+    for (var f = 0u; f < RIG_FIXES; f++) {
+        pose_fix[f] = drop;
+    }
+    if feet > 0.0 {
+        bend_leg(rig.x, 1u, rise.x - drop_by, drop);
+        bend_leg(rig.y, 4u, rise.y - drop_by, drop);
+    }
+    if look <= 0.0 {
+        return;
+    }
+    let yaw = f32(bitcast<i32>(extra << 24u) >> 24u) / 127.0 * 1.5707964 * look;
+    let pitch = f32(bitcast<i32>(extra << 16u) >> 24u) / 127.0 * 0.7853982 * look;
+    let shares = select(vec3<f32>(0.3, 0.3, 0.4), vec3<f32>(0.0), vec3<u32>(rig_joint(rig.z, 0u), rig_joint(rig.z, 1u), rig_joint(rig.z, 2u)) == vec3<u32>(NO_JOINT));
+    let total = shares.x + shares.y + shares.z;
+    if total <= 0.0 {
+        return;
+    }
+    var state = LookState(drop, look_turn(0.0, 0.0), 0.0);
+    look_step(rig.z, 0u, shares.x, total, yaw, pitch, &state);
+    look_step(rig.z, 1u, shares.y, total, yaw, pitch, &state);
+    look_step(rig.z, 2u, shares.z, total, yaw, pitch, &state);
+}
+
 // A model without a fitted skeleton: each bone straight from its frames,
 // whole-body layers mixed in.
 fn pose_unfitted(i: u32, slot: u32, bone: u32) {
@@ -2080,7 +2150,11 @@ fn cs_pose(
             if parent == 255u {
                 pose_globals[bone] = anim_matrix(fit + 2u) * local;
             } else {
-                pose_globals[bone] = pose_globals[parent] * local;
+                if GC_DIAG == 3u {
+                    pose_globals[bone] = local;
+                } else {
+                    pose_globals[bone] = pose_globals[parent] * local;
+                }
             }
         }
         workgroupBarrier();
@@ -2090,9 +2164,13 @@ fn cs_pose(
     let rig = anim[fit + 1u];
     let feet = feet_weight(i, rig);
     let look = look_weight(i);
-    let rigged = feet > 0.0 || look > 0.0;
+    let rigged = (feet > 0.0 || look > 0.0) && GC_DIAG != 2u;
     if rigged && bone == 0u {
-        fit_rig(i, rig, feet, look);
+        if GC_DIAG == 1u {
+            fit_rig_flat(i, rig, feet, look);
+        } else {
+            fit_rig(i, rig, feet, look);
+        }
     }
     workgroupBarrier();
     if bone > joints || bone >= bones {
@@ -2532,5 +2610,6 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
 }
 
 // TEMP heap diag.
+override GC_DIAG: u32 = 0u;
 @compute @workgroup_size(64)
 fn cs_noop() {}

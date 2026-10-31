@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         heap: [full]
-        skip: [none, pose, skin, nozero]
+        skip: ['1', '2', '3', '1b']
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
@@ -49,9 +49,9 @@ jobs:
           $dir = Split-Path $exe
           New-Item -ItemType Directory -Force -Path diag | Out-Null
           $cmds = 'sxd av; sxd eh; sxd ch; g; .echo ===CRASH===; .lastevent; r; kv 40; q'
-          $env:GC_DIAG_SKIP = '${{ matrix.skip }}'
+          $env:GC_DIAG_SKIP = '${{ matrix.skip }}'.TrimEnd('b')
           $crashes = 0
-          for ($i = 1; $i -le 5; $i++) {
+          for ($i = 1; $i -le 8; $i++) {
             $app = Join-Path $env:RUNNER_TEMP "gc-$i"
             New-Item -ItemType Directory -Force -Path $app | Out-Null
             $env:GRUBCRAFT_SETTINGS = Join-Path $app 'settings.ron'
@@ -63,7 +63,7 @@ jobs:
             Write-Host "run $i : $secs s, crashed=$crashed"
             if ($crashed) { $crashes++; Select-String -Path $log -Pattern '===CRASH===' -Context 0,30 }
           }
-          Write-Host "SUMMARY skip=$env:GC_DIAG_SKIP crashes=$crashes of 5"
+          Write-Host "SUMMARY skip=$env:GC_DIAG_SKIP crashes=$crashes of 8"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

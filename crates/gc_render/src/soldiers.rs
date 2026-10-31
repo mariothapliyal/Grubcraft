@@ -697,7 +697,10 @@ pub(crate) fn make(
             module: shader,
             entry_point: Some(entry),
             compilation_options: wgpu::PipelineCompilationOptions {
-                zero_initialize_workgroup_memory: std::env::var("GC_DIAG_SKIP").as_deref() != Ok("nozero"),
+                constants: &[(
+                    "GC_DIAG",
+                    std::env::var("GC_DIAG_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0),
+                )],
                 ..Default::default()
             },
             cache: None,
