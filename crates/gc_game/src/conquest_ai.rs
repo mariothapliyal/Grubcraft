@@ -1141,11 +1141,12 @@ mod tests {
         let mut towers = 0;
         // Whether a General walls depends on how its game goes (about one
         // Clans mirror in five; fewer since blocks keep their spacing, which
-        // moves where things get built), so the first seed that walls
-        // counts: a known one first, then the rest of 1 to 24.
+        // moves where things get built, and with frontage about one in 25),
+        // so the first seed that walls counts: a known one first, then the
+        // rest of 1 to 30.
         for (f, known) in [(Faction::EmberClans, 14), (Faction::CarrionConcord, 8)] {
             let walled = core::iter::once(known)
-                .chain((1..=24).filter(|&s| s != known))
+                .chain((1..=30).filter(|&s| s != known))
                 .any(|seed| {
                     let most;
                     (most, last) = general(f, seed);
@@ -1195,8 +1196,10 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
+        // An hour: since frontage a base under siege holds a little longer
+        // (seed 7 ended by the Heart at 46 minutes).
         for (factions, seed) in pairs.iter().zip([7, 8]) {
-            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 45);
+            let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
     }
