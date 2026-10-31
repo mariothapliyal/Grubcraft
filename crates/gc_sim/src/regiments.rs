@@ -333,10 +333,10 @@ regiment_fields! {
     /// The charger that ploughed into it.
     ploughed_by: Option<RegimentHandle> = None,
     /// Room along each side of its block (front, right flank, left flank,
-    /// rear) taken by foes' strikers since its last turn, in 256ths of a
-    /// tile: one striker per soldier's width of side (see
+    /// rear) taken by foes' strikers since its last turn, in quarters of a
+    /// tile (up to 63): one striker per soldier's width of side (see
     /// `combat::strikers`). Kept narrow for the sim's memory budget.
-    room_taken: [u16; 4] = [0; 4],
+    room_taken: [u8; 4] = [0; 4],
     /// Crowded out, under orders to attack: going round its foe to a less
     /// crowded side (see `combat::Round`).
     round: Option<core::num::NonZeroU8> = None,

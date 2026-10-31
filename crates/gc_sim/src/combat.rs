@@ -2179,7 +2179,7 @@ fn strikers(
     } else {
         u16::MAX
     };
-    let mut taken = Fx::from_raw(i32::from(regs.room_taken[j][room]) << 8);
+    let mut taken = Fx::from_raw(i32::from(regs.room_taken[j][room]) << 14);
     let mut strikers = 0;
     // Men fill the room from the one facing the middle of the side outwards,
     // in turn to either hand, so both ends of an overlapping line close in.
@@ -2226,7 +2226,8 @@ fn strikers(
             out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
         }
     }
-    regs.room_taken[j][room] = u16::try_from(taken.raw() >> 8).unwrap_or(u16::MAX);
+    // Kept in quarters of a tile, rounded up so the room never grows.
+    regs.room_taken[j][room] = u8::try_from((taken.raw() + 16383) >> 14).unwrap_or(u8::MAX);
     // They strike in their order along the line, as before frontage.
     let files = mine.files.max(1);
     out.slots[..out.count].sort_unstable_by_key(|&(k, _)| (k % files, k));
