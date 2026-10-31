@@ -188,9 +188,21 @@ pub struct Debris {
     choke: Vec<u8>,
     /// What the debris did to bridges this tick, for the world to apply.
     blows: Vec<Blow>,
+    /// The jams burning, by the river tile of their pier (stage 4c).
+    fires: Vec<JamFire>,
     /// The players (a bit each) whose bridges debris jammed on this tick,
     /// for the news (not hashed: told and forgotten in the tick).
     jammed_on: u8,
+}
+
+/// A jam set alight (see [`piers::BURN_SECONDS`]).
+#[derive(Clone, Copy, Debug)]
+struct JamFire {
+    /// The river tile of its pier.
+    pier: u32,
+    /// The place of the piece burning down, and the seconds it has burned.
+    piece: u8,
+    seconds: u8,
 }
 
 /// A blow debris or the water strikes a bridge tile: the tile, and the
@@ -215,6 +227,7 @@ impl Debris {
             choke: alloc::vec![0; stretches],
 
             blows: Vec::new(),
+            fires: Vec::new(),
             jammed_on: 0,
         }
     }
@@ -331,6 +344,12 @@ impl Debris {
         }
         for &c in &self.choke {
             h.u8(c);
+        }
+        // Only while a jam burns, so the goldens without one stay put.
+        for f in &self.fires {
+            h.u32(f.pier);
+            h.u8(f.piece);
+            h.u8(f.seconds);
         }
     }
 }

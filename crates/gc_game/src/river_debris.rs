@@ -27,14 +27,19 @@ const RAFT_TIMBER: [u8; 3] = [130, 110, 84];
 const WRECK_TIMBERS: usize = 2;
 const WRECK_TIMBER: [u8; 3] = [112, 106, 100];
 
-/// The trunks to draw for `pieces`, the still water drawn at `water`
-/// (tiles) and the rivers raising it by `rise` (height units, see
-/// `Terrain::river_rise`), with the trunk model `tall` tiles high; only
-/// those on tiles `seen`.
+/// The river's surface at `at` (tiles), on a map drawn with water at
+/// `level`: the river's own line over it, raised by the rivers' rise.
+pub fn surface(t: &gc_sim::terrain::Terrain, level: f32, at: gc_fixed::FxVec2) -> f32 {
+    let line = t.water_line() - i32::from(t.water_level()) + i32::from(t.river_rise(at));
+    level + line as f32 / HEIGHT_UNITS as f32
+}
+
+/// The trunks to draw for `pieces`, floating at the river's `surface` at
+/// a point (tiles, see [`surface`]), with the trunk model `tall` tiles
+/// high; only those on tiles `seen`.
 pub fn extras<'a>(
     pieces: impl Iterator<Item = Seen> + 'a,
-    rise: impl Fn(gc_fixed::FxVec2) -> u16 + 'a,
-    water: f32,
+    surface: impl Fn(gc_fixed::FxVec2) -> f32 + 'a,
     tall: f32,
     seen: impl Fn((i32, i32)) -> bool + 'a,
 ) -> impl Iterator<Item = Extra> + 'a {
@@ -46,8 +51,7 @@ pub fn extras<'a>(
             let way = Some(crate::from_fx_vec(p.way))
                 .filter(|w| w.length_squared() > 0.01)
                 .map_or(Vec2::X, Vec2::normalize);
-            let rise = f32::from(rise(p.at)) / HEIGHT_UNITS as f32;
-            let y = water + rise - if p.grounded { AGROUND } else { 0.0 };
+            let y = surface(p.at) - if p.grounded { AGROUND } else { 0.0 };
             // Base upstream, so the trunk lies across where the piece is.
             let base = at - way * (LOG_LENGTH / 2.0);
             let turn = turn_of(way);
@@ -92,7 +96,7 @@ mod tests {
     fn a_log_lies_flat_along_the_way_it_goes_centred_on_its_place() {
         let at = FxVec2::new(Fx::from_int(10), Fx::from_int(4));
         let p = seen(at, FxVec2::new(Fx::ONE, Fx::ZERO), false);
-        let e: Vec<Extra> = extras([p].into_iter(), |_| 0, 2.0, 7.0, |_| true).collect();
+        let e: Vec<Extra> = extras([p].into_iter(), |_| 2.0, 7.0, |_| true).collect();
         assert_eq!(e.len(), 1);
         let e = e[0];
         assert_eq!(e.lean, 255);
@@ -106,7 +110,7 @@ mod tests {
         let at = FxVec2::from_ints(3, 3);
         let (afloat, aground) = (seen(at, FxVec2::ZERO, false), seen(at, FxVec2::ZERO, true));
         let y = |p| {
-            extras([p].into_iter(), |_| 0, 1.0, 5.0, |_| true)
+            extras([p].into_iter(), |_| 1.0, 5.0, |_| true)
                 .next()
                 .unwrap()
                 .at
@@ -114,7 +118,7 @@ mod tests {
         };
         assert!(y(aground) < y(afloat));
         assert_eq!(
-            extras([afloat].into_iter(), |_| 0, 1.0, 5.0, |_| false).count(),
+            extras([afloat].into_iter(), |_| 1.0, 5.0, |_| false).count(),
             0
         );
     }
@@ -129,7 +133,7 @@ mod tests {
                 false,
             )
         };
-        let e: Vec<Extra> = extras([raft].into_iter(), |_| 0, 1.0, 5.0, |_| true).collect();
+        let e: Vec<Extra> = extras([raft].into_iter(), |_| 1.0, 5.0, |_| true).collect();
         assert_eq!(e.len(), RAFT_TRUNKS);
         // Along x, so they stand apart in z, at one x.
         assert!(e.iter().all(|t| (t.at.x - e[0].at.x).abs() < 1e-4));

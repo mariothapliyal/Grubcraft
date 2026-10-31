@@ -129,7 +129,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 79;
+pub const SIM_VERSION: u32 = 80;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -646,8 +646,10 @@ pub enum Command {
     /// regiments, at any time, deploying too.
     Torches { regiment: RegimentHandle, lit: bool },
     /// Set the woods beside a regiment alight: the burnable tile (scrub,
-    /// woods or thicket) nearest its centre within a tile of its block
-    /// catches, and the fire spreads with the wind (see [`fire`]). The
+    /// woods or thicket, or debris jammed against a bridge) nearest its
+    /// centre within a tile of its block catches, and the fire spreads
+    /// with the wind (see [`fire`]; a jam burns down where it lies and the
+    /// deck above with it, docs/39-water-engine.md, "Burning it"). The
     /// issuer's own regiment, not fighting or routed; refused when nothing
     /// is in reach or the ground is too wet to catch. Not while deploying.
     Burn { regiment: RegimentHandle },
@@ -2191,9 +2193,26 @@ impl World {
                         && !self.regiments.morale_state[i].broken()
                         && self.weather_lets_fire() =>
                 {
-                    self.fires
-                        .tinder(&self.terrain, &self.regiments, &self.units, i)
-                        .is_some_and(|(x, y)| self.fires.kindle(&self.terrain, x, y))
+                    // The nearest of the woods and the jams against bridges
+                    // in reach (docs/39, "Burning it").
+                    let rivers = &mut self.flood.rivers;
+                    let lit = (self.fires)
+                        .tinder(
+                            &self.terrain,
+                            &self.regiments,
+                            &self.units,
+                            i,
+                            rivers.unlit_jams(),
+                        )
+                        .filter(|&(x, y)| {
+                            if rivers.light_jam(x, y) {
+                                // A jam catching is told as woods catching are.
+                                self.fires.kindled.push((x, y));
+                                return true;
+                            }
+                            self.fires.kindle(&self.terrain, x, y)
+                        });
+                    lit.is_some()
                 }
                 _ => false,
             },
@@ -3332,6 +3351,9 @@ impl World {
         }
         if second && let Some(c) = &self.conquest {
             (self.flood.rivers).set_piers(c.structures.piers(), &self.terrain);
+        }
+        if second && !self.weather_lets_fire() {
+            self.flood.rivers.douse_jams();
         }
         let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
         let jammed = self.flood.rivers.take_jammed();
