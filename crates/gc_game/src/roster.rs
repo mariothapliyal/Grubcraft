@@ -53,16 +53,31 @@ pub fn short_name(faction: Faction) -> &'static str {
     }
 }
 
+/// What a faction's regiments cost in a Field Battle, in percent of their
+/// roster cost (docs/17-unit-rosters.md#field-battle-prices). Conquest
+/// prices are set against each faction's own economy, so the same price
+/// buys a different army when there is no economy: the Brood's cheap swarm
+/// costs more, the Choir's dear glass less.
+fn field_price_percent(faction: Faction) -> u32 {
+    match faction {
+        Faction::EmberClans => 100,
+        Faction::Brood => 128,
+        Faction::Choir => 70,
+        Faction::CarrionConcord => 110,
+    }
+}
+
 /// What `unit` costs in a Field Battle army, from its roster cost: three
-/// points a Grub and six a Marrow, to the nearest 10 (a Yari Ashigaru
-/// regiment is 360). 0 for a troop a Field Battle army can't take: the ones
-/// the sandbox leaves out, and summoned troops (a power calls them, nobody
-/// buys them).
+/// points a Grub and six a Marrow, times its faction's
+/// [`field_price_percent`], to the nearest 10 (a Yari Ashigaru regiment is
+/// 360). 0 for a troop a Field Battle army can't take: the ones the sandbox
+/// leaves out, and summoned troops (a power calls them, nobody buys them).
 pub fn field_points(unit: &ConquestUnitRecord) -> u32 {
     if left_out(unit) || unit.tier == 0 {
         return 0;
     }
     let raw = 3 * (u32::from(unit.cost_grub) + 2 * u32::from(unit.cost_marrow));
+    let raw = raw * field_price_percent(unit.faction()) / 100;
     (raw + 5) / 10 * 10
 }
 

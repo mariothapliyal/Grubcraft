@@ -134,15 +134,27 @@ pub fn pick_army_within(
             .map(|&u| points.get(u as usize).copied().unwrap_or(u32::MAX))
             .fold(0, u32::saturating_add)
     };
-    (1..=most)
-        .map(|n| {
-            pick_army_of(units, factions, faction, preset, n, |u| {
-                points.get(u).is_some_and(|&p| p > 0)
-            })
-        })
+    let usable = |u: usize| points.get(u).is_some_and(|&p| p > 0);
+    let mut army: Vec<UnitId> = (1..=most)
+        .map(|n| pick_army_of(units, factions, faction, preset, n, usable))
         .take_while(|army| cost(army) <= budget)
         .last()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // The mix's next size can cost far more than is left (a dear type's
+    // turn comes up), so fill what is left with the dearest of the
+    // faction's own types that still fits, line first.
+    let mut left = budget.saturating_sub(cost(&army));
+    while army.len() < most {
+        let Some(u) = (0..units.len())
+            .filter(|&u| factions.get(u) == Some(&faction) && usable(u) && points[u] <= left)
+            .max_by_key(|&u| (Class::of(&units[u]) == Class::Line, points[u]))
+        else {
+            break;
+        };
+        army.push(u as UnitId);
+        left -= points[u];
+    }
+    army
 }
 
 /// The part of a player's own `army` that can take the field: their
@@ -299,6 +311,27 @@ mod tests {
             6,
         );
         assert_eq!(capped.len(), 6);
+    }
+
+    /// When the mix's next size would bring in a dear type, what is left
+    /// buys line regiments instead of lying unspent.
+    #[test]
+    fn points_left_over_buy_more_line() {
+        let points = [400, 1_500, 300, 400];
+        let army = pick_army_within(
+            &DRILL_UNITS,
+            &points,
+            &factions(),
+            Faction::EmberClans,
+            Preset::Balanced,
+            4_000,
+            40,
+        );
+        let cost: u32 = army.iter().map(|&u| points[u as usize]).sum();
+        // The mix stops at five (3,000 points); two spears fill it up.
+        assert_eq!(army.len(), 7, "{army:?}");
+        assert_eq!(cost, 3_800);
+        assert_eq!(army.iter().filter(|&&u| u == 0).count(), 5);
     }
 
     #[test]
