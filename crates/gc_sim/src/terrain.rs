@@ -846,11 +846,18 @@ impl Terrain {
     /// or more over its line), or on a ford snagged with debris (see
     /// [`crate::rivers::debris`]): wading there is slower still.
     pub fn deep(&self, p: FxVec2) -> bool {
-        self.water_at(p).is_some_and(|rise| {
-            rise >= crate::rivers::DEEP_RISE
-                || (self.rivers.as_ref())
-                    .is_some_and(|w| w.snagged(p.x.floor_int(), p.y.floor_int()))
-        })
+        self.water_at(p).is_some_and(|rise| self.deep_at(p, rise))
+    }
+
+    /// [`Self::deep`] for `p` in water `rise` over its line.
+    fn deep_at(&self, p: FxVec2, rise: u16) -> bool {
+        rise >= crate::rivers::DEEP_RISE || self.snagged(p)
+    }
+
+    /// Whether `p` is on a ford snagged with debris grounded on it (see
+    /// [`crate::rivers::debris`]).
+    pub fn snagged(&self, p: FxVec2) -> bool {
+        (self.rivers.as_ref()).is_some_and(|w| w.snagged(p.x.floor_int(), p.y.floor_int()))
     }
 
     /// Which way and how fast the water runs at `p`, if it runs there and
@@ -1119,9 +1126,7 @@ impl Terrain {
         let water = self.water_at(p);
         let wet = water.is_some();
         let wading = match water {
-            Some(rise) if rise >= crate::rivers::DEEP_RISE => {
-                WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100
-            }
+            Some(rise) if self.deep_at(p, rise) => WADING_SPEED_PERCENT * DEEP_WADING_PERCENT / 100,
             Some(_) => WADING_SPEED_PERCENT,
             None => 100,
         };

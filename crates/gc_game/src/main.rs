@@ -5408,6 +5408,7 @@ impl Running {
         self.recording = None;
         // The last match's weather and fires are no news in this one.
         self.sky_news = sky_news::SkyNews::default();
+        self.debris_told = None;
         // A replay played with its own unit table; what was tuned before
         // comes back.
         if let Some(w) = self.watching.take() {

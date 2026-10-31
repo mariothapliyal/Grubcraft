@@ -38,7 +38,7 @@ use gc_fixed::{Fx, FxVec2};
 use super::{FLOOD_RISE, NONE, Rivers, Stretch, step_of, water_rise};
 use crate::hash::StateHasher;
 use crate::regiments::{RegimentHandle, Regiments};
-use crate::terrain::{Cover, Flow, Growth, HEIGHT_UNITS, Terrain, index_in};
+use crate::terrain::{Cover, Flow, Growth, Terrain, index_in};
 use crate::{TICKS_PER_SECOND, UnitStats, morale};
 
 /// Places in the pool.
@@ -74,6 +74,8 @@ const OPEN_PLACES: usize = POOL - KEPT_FOR_WRECKS;
 pub(super) const BANKS: usize = 4;
 /// No tile.
 const NO_TILE: u32 = u32::MAX;
+/// No second.
+const NEVER: u32 = u32::MAX;
 
 /// What a piece is (docs/39, "What a piece is").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -120,6 +122,9 @@ struct Piece {
     /// How far it went the last tick (zero while grounded).
     pace: Fx,
     grounded: bool,
+    /// Whether it came onto a new tile last tick (it grounds or not
+    /// there at once).
+    entered: bool,
     /// Whether a flood or a fire put it in.
     natural: bool,
     /// The tick it went in.
@@ -152,29 +157,28 @@ pub struct Debris {
     /// is coming down on it.
     snag: Vec<u8>,
     pub(super) fouled: Vec<bool>,
+    /// Per stretch, the second a flood last tore a log off its banks
+    /// ([`NEVER`] while the water is under a Major flood's).
+    torn: Vec<u32>,
     /// Whether any piece has ever gone in (it is hashed from then on).
     ever: bool,
-}
-
-/// What a tick of the debris changed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Drift {
-    /// Which fords are snags changed.
-    pub(crate) snags: bool,
-    /// Which fords a piece is coming down on changed.
-    pub(crate) fouled: bool,
+    /// Kept room for the pieces moving in a tick (not state).
+    moving: Vec<(usize, FxVec2)>,
 }
 
 impl Debris {
     /// A pool for a map with `stretches` and `groups` of fords, with
     /// `banks` per stretch.
     pub(super) fn new(banks: Vec<[(u32, u32); BANKS]>, groups: usize) -> Debris {
+        let stretches = banks.len();
         Debris {
-            pieces: alloc::vec![None; POOL],
+            pieces: Vec::new(),
             banks: banks.into(),
             snag: alloc::vec![0; groups],
             fouled: alloc::vec![false; groups],
+            torn: alloc::vec![NEVER; stretches],
             ever: false,
+            moving: Vec::new(),
         }
     }
 
@@ -212,6 +216,10 @@ impl Debris {
     /// oldest grounded piece rots away to make room, else the oldest
     /// floating one. Returns whether it went in.
     fn put(&mut self, piece: Piece) -> bool {
+        // The pool is made only when the first piece goes in.
+        if self.pieces.is_empty() {
+            self.pieces.resize(POOL, None);
+        }
         let open = |p: &Piece| matches!(p.kind, Kind::Log | Kind::Raft);
         let taken = self.pieces.iter().flatten().filter(|p| open(p)).count();
         if piece.natural {
@@ -253,8 +261,18 @@ impl Debris {
             h.u32(p.tile);
             h.u32(p.next);
             h.u32(p.along.raw() as u32);
-            h.u8(u8::from(p.grounded));
+            h.u8(p.across as u8);
+            h.u8(u8::from(p.grounded) | u8::from(p.natural) << 1 | u8::from(p.entered) << 2);
             h.u32(p.born);
+            h.u8(p.struck_next);
+            for r in p.struck {
+                let (i, g) = r.map_or((u32::MAX, 0), |r| (r.index, r.generation));
+                h.u32(i);
+                h.u16(g);
+            }
+        }
+        for &t in &self.torn {
+            h.u32(t);
         }
     }
 }
@@ -271,6 +289,7 @@ impl Piece {
             across,
             pace: Fx::ZERO,
             grounded: false,
+            entered: false,
             natural,
             born: tick,
             struck: [None; STRUCK_KEPT],
@@ -322,25 +341,26 @@ fn wooded(terrain: &Terrain, x: i32, y: i32) -> bool {
         || terrain.cover(FxVec2::from_ints(x, y) + FxVec2::new(Fx::HALF, Fx::HALF)) == Cover::Wood
 }
 
-/// The river tile next downstream of tile `i` on a map `n` across, by its
-/// `flow` and `reach`; [`NO_TILE`] where the river leaves the map or runs
-/// into still water.
-fn downstream(terrain: &Terrain, flow: &[u8], reach: &[u16], n: i32, i: u32) -> u32 {
-    let (x, y) = (i as i32 % n, i as i32 / n);
-    let Some((dx, dy)) = flow.get(i as usize).and_then(|&f| step_of(f)) else {
-        return NO_TILE;
-    };
-    match index_in(n, x + dx, y + dy) {
-        None => return NO_TILE,
-        Some(j) if flow[j] != 0 => return j as u32,
-        Some(_) if terrain.tile_under_water(x + dx, y + dy) => return NO_TILE,
-        Some(_) => {}
-    }
-    // Its flow points onto land: the next tile down the river instead.
+/// The river tile next down the river's reach from tile `i` on a map
+/// `n` across (the way the floods run): where the water's `flow` points,
+/// if that is nearer the river's end, else the neighbour nearest it;
+/// [`NO_TILE`] at the river's end (off the map, or into still water).
+fn downstream(flow: &[u8], reach: &[u16], n: i32, i: u32) -> u32 {
     let here = reach[i as usize];
+    if here == 0 || here == NONE {
+        return NO_TILE;
+    }
+    let (x, y) = (i as i32 % n, i as i32 / n);
+    let down = |j: usize| flow[j] != 0 && reach[j] < here;
+    if let Some(j) = (flow.get(i as usize).and_then(|&f| step_of(f)))
+        .and_then(|(dx, dy)| index_in(n, x + dx, y + dy))
+        .filter(|&j| down(j))
+    {
+        return j as u32;
+    }
     (crate::nav::DIRS.iter())
         .filter_map(|&(dx, dy)| index_in(n, x + dx, y + dy))
-        .filter(|&j| flow[j] != 0 && reach[j] < here)
+        .filter(|&j| down(j))
         .min_by_key(|&j| (reach[j], j))
         .map_or(NO_TILE, |j| j as u32)
 }
@@ -445,36 +465,39 @@ impl Rivers {
     /// pieces ride the current on; and once a `second`, the floods take
     /// logs off the banks, pieces ground and float off, and the snags and
     /// the fords pieces are coming down on are weighed again.
-    pub(crate) fn drift(&mut self, terrain: &Terrain, lift: i32, tick: u32, second: bool) -> Drift {
-        let mut drift = Drift::default();
+    /// Returns whether the fords that are snags changed.
+    pub(crate) fn drift(&mut self, terrain: &Terrain, lift: i32, tick: u32, second: bool) -> bool {
         if !self.any() {
-            return drift;
+            return false;
         }
         if second {
             self.flood_banks(terrain, lift, tick);
         }
         if self.debris.is_empty() {
-            return drift;
+            // The last piece may have just gone: weigh the fords clear.
+            return second && self.debris.ever && self.weigh_debris();
         }
         let (flow, n) = (terrain.flow_layer(), self.side);
-        for k in 0..POOL {
+        for k in 0..self.debris.pieces.len() {
             let Some(mut p) = self.debris.pieces[k] else {
                 continue;
             };
-            if second {
+            if second || p.entered {
                 p.grounded = self.grounds(terrain, lift, p.tile);
             }
+            p.entered = false;
             p.pace = Fx::ZERO;
             if !p.grounded {
                 if p.next == p.tile {
-                    p.next = downstream(terrain, flow, &self.reach, n, p.tile);
+                    p.next = downstream(flow, &self.reach, n, p.tile);
                 }
                 p.pace = self.pace(flow, lift, p.tile);
                 p.along += p.pace;
                 while p.along >= Fx::ONE && p.next != NO_TILE {
                     p.along -= Fx::ONE;
                     p.tile = p.next;
-                    p.next = downstream(terrain, flow, &self.reach, n, p.tile);
+                    p.next = downstream(flow, &self.reach, n, p.tile);
+                    p.entered = true;
                 }
                 if p.next == NO_TILE && p.along >= Fx::HALF {
                     // Off the map, or into still water.
@@ -484,19 +507,13 @@ impl Rivers {
             }
             self.debris.pieces[k] = Some(p);
         }
-        if second {
-            drift = self.weigh_debris();
-        }
-        drift
+        second && self.weigh_debris()
     }
 
     /// How far a floating piece on tile `i` goes in a tick: the river's
     /// pace there, up to twice it as the water rises to a full flood.
     fn pace(&self, flow: &[u8], lift: i32, i: u32) -> Fx {
-        let speed = flow
-            .get(i as usize)
-            .and_then(|&f| Flow::of(f))
-            .map_or(1, |(_, s)| s);
+        let speed = speed(flow, i).unwrap_or(1);
         // Half a tile, one, or two a second.
         let tiles = Fx::from_ratio(1 << speed.saturating_sub(1), 2);
         let up = self
@@ -519,9 +536,7 @@ impl Rivers {
         }
         let n = self.side;
         let (x, y) = (i as i32 % n, i as i32 / n);
-        let fast = (terrain.flow_layer().get(i as usize))
-            .and_then(|&f| Flow::of(f))
-            .is_some_and(|(_, s)| s >= 3);
+        let fast = speed(terrain.flow_layer(), i).is_some_and(|s| s >= 3);
         self.group_at(x, y).is_some() && !fast && water < i32::from(FLOAT_RISE)
     }
 
@@ -531,31 +546,38 @@ impl Rivers {
     /// [`CATASTROPHIC_EVERY_SECONDS`]).
     fn flood_banks(&mut self, terrain: &Terrain, lift: i32, tick: u32) {
         if self.fronts().all(|f| f.band < super::Band::Major) {
+            self.debris.torn.fill(NEVER);
             return;
         }
         let second = tick / TICKS_PER_SECOND;
-        let n = self.side;
-        for s in 0..self.stretches.len() {
+        let (n, stretches) = (self.side, self.stretches.len());
+        // Starting at a stretch rolled each second, so none is always
+        // first to the floods' share.
+        let start = (roll(self.seed, tick, u64::MAX) % stretches.max(1) as u64) as usize;
+        for j in 0..stretches {
+            let s = (start + j) % stretches;
             let Stretch { at: (x, y), .. } = self.stretches[s];
             let Some(i) = index_in(n, x, y) else {
                 continue;
             };
-            let water = self.water_on(lift, i);
-            let every = if water >= (HEIGHT_UNITS * 8 / 10) as i32 {
-                CATASTROPHIC_EVERY_SECONDS
-            } else if water >= (HEIGHT_UNITS / 2) as i32 {
-                MAJOR_EVERY_SECONDS
-            } else {
-                continue;
+            let water = self.water_on(lift, i).clamp(0, i32::from(u16::MAX)) as u16;
+            let every = match super::Band::of(water) {
+                super::Band::Catastrophic => CATASTROPHIC_EVERY_SECONDS,
+                super::Band::Major => MAJOR_EVERY_SECONDS,
+                _ => {
+                    self.debris.torn[s] = NEVER;
+                    continue;
+                }
             };
-            // Each stretch on its own beat.
-            if !(second + s as u32 * 7).is_multiple_of(every) {
+            // The first log as the water comes up, then one each `every`.
+            let last = self.debris.torn[s];
+            if last != NEVER && second < last + every {
                 continue;
             }
             let r = roll(self.seed, tick, s as u64);
             let banks = self.debris.banks[s];
             let k = (r % BANKS as u64) as usize;
-            let Some(&(river, wood)) =
+            let Some(&(river, _)) =
                 (0..BANKS)
                     .map(|j| &banks[(k + j) % BANKS])
                     .find(|&&(river, wood)| {
@@ -564,7 +586,6 @@ impl Rivers {
             else {
                 continue;
             };
-            let _ = wood;
             if !self
                 .debris
                 .put(Piece::new(Kind::Log, river, across(r), true, tick))
@@ -572,46 +593,55 @@ impl Rivers {
                 // The floods have put in all they may.
                 break;
             }
+            self.debris.torn[s] = second;
         }
     }
 
     /// Weigh again which fords are snags and which a floating piece is
     /// coming down on; the fords the minds keep off follow.
-    fn weigh_debris(&mut self) -> Drift {
-        let groups = self.groups.len();
+    /// Returns whether the fords that are snags changed.
+    fn weigh_debris(&mut self) -> bool {
         let n = self.side;
-        let mut drift = Drift::default();
-        for g in 0..groups {
+        // Each piece's ford group if grounded on one, else where it floats.
+        let (mut grounded, mut on_ford) = ([(0usize, 0u8); POOL], 0);
+        let (mut floating, mut afloat) = ([(0u16, 0u16); POOL], 0);
+        for p in self.debris.pieces.iter().flatten() {
+            let t = p.tile as usize;
+            if p.grounded {
+                let (x, y) = (p.tile as i32 % n, p.tile as i32 / n);
+                if let Some(g) = self.group_at(x, y) {
+                    grounded[on_ford] = (g, p.kind.mass());
+                    on_ford += 1;
+                }
+            } else if self.stretch_of[t] != NONE {
+                floating[afloat] = (self.stretch_of[t], self.reach[t]);
+                afloat += 1;
+            }
+        }
+        let (mut snags, mut fouled_changed) = (false, false);
+        for g in 0..self.groups.len() {
             let group = &self.groups[g];
             let here = &self.stretches[usize::from(group.stretch)];
-            let (mut mass, mut fouled) = (0u8, false);
-            for p in self.debris.pieces.iter().flatten() {
-                let (x, y) = (p.tile as i32 % n, p.tile as i32 / n);
-                if p.grounded {
-                    if self.group_at(x, y) == Some(g) {
-                        mass = mass.saturating_add(p.kind.mass());
-                    }
-                    continue;
-                }
-                let s = self.stretch_of[p.tile as usize];
-                let reach = self.reach[p.tile as usize];
-                fouled |= s != NONE
-                    && here.holds(&self.stretches[usize::from(s)])
+            let mass = (grounded[..on_ford].iter())
+                .filter(|&&(at, _)| at == g)
+                .fold(0u8, |m, &(_, kg)| m.saturating_add(kg));
+            let fouled = floating[..afloat].iter().any(|&(s, reach)| {
+                here.holds(&self.stretches[usize::from(s)])
                     && reach >= group.last
-                    && reach <= group.first.saturating_add(WARN_TILES);
-            }
+                    && reach <= group.first.saturating_add(WARN_TILES)
+            });
             let was = self.debris.snagged(g);
             self.debris.snag[g] = mass;
-            drift.snags |= was != self.debris.snagged(g);
+            snags |= was != self.debris.snagged(g);
             if fouled != self.debris.fouled[g] {
                 self.debris.fouled[g] = fouled;
-                drift.fouled = true;
+                fouled_changed = true;
             }
         }
-        if drift.fouled {
+        if fouled_changed {
             self.weigh_threats();
         }
-        drift
+        snags
     }
 
     /// Bring the terrain's copy of the water up to date with the ford
@@ -640,32 +670,41 @@ impl Rivers {
             return 0;
         }
         let n = self.side;
+        // Where each piece moving this tick is.
+        let mut moving = core::mem::take(&mut self.debris.moving);
+        moving.clear();
+        moving.extend(
+            (self.debris.pieces.iter().enumerate())
+                .filter_map(|(k, p)| {
+                    p.filter(|p| !p.grounded && p.pace != Fx::ZERO)
+                        .map(|p| (k, p))
+                })
+                .map(|(k, p)| (k, p.point(n))),
+        );
         let mut struck = 0u8;
-        for k in 0..POOL {
-            let Some(mut p) = self.debris.pieces[k] else {
-                continue;
-            };
-            if p.grounded || p.pace == Fx::ZERO {
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i] || regs.models[i] == 0 || regs.on_wall[i] {
                 continue;
             }
-            let at = p.point(n);
-            for i in 0..regs.alive.len() {
-                if !regs.alive[i] || regs.models[i] == 0 || regs.on_wall[i] {
-                    continue;
-                }
-                // Half its block's side, and half a tile.
-                let reach = Fx::from_ratio(i32::from(regs.berth(units, i)), 2) + Fx::HALF;
-                let pos = regs.position[i];
+            // Wading (not on a bridge), and not being swept away.
+            let pos = regs.position[i];
+            if !terrain.wet(pos) || self.carries(pos.x.floor_int(), pos.y.floor_int()) {
+                continue;
+            }
+            // Half its block's side, and half a tile.
+            let reach = Fx::from_ratio(i32::from(regs.berth(units, i)), 2) + Fx::HALF;
+            for &(k, at) in &moving {
                 let off = pos - at;
-                if off.x.abs() > reach || off.y.abs() > reach || off.length() > reach {
+                if off.x.abs() > reach
+                    || off.y.abs() > reach
+                    || off.x * off.x + off.y * off.y > reach * reach
+                {
                     continue;
                 }
-                // Wading, not on a bridge, and not being swept away.
-                if !terrain.wet(pos)
-                    || terrain.on_deck(pos)
-                    || self.carries(pos.x.floor_int(), pos.y.floor_int())
-                    || !p.strikes(regs.handle(i))
-                {
+                let Some(p) = self.debris.pieces[k].as_mut() else {
+                    continue;
+                };
+                if !p.strikes(regs.handle(i)) {
                     continue;
                 }
                 let per_second = p.pace * TICKS_PER_SECOND as i32;
@@ -674,16 +713,24 @@ impl Rivers {
                     .ceil_int()
                     .max(1);
                 regs.take_damage(i, hp as u32);
-                if regs.models[i] > 0 {
-                    regs.disorder(i);
-                    morale::shake(regs, i, HIT_MORALE, morale::WHY_WATER);
-                }
                 struck |= 1u8.checked_shl(u32::from(regs.owner[i])).unwrap_or(0);
+                if regs.models[i] == 0 {
+                    // Gone: no later piece strikes it.
+                    break;
+                }
+                regs.disorder(i);
+                morale::shake(regs, i, HIT_MORALE, morale::WHY_WATER);
             }
-            self.debris.pieces[k] = Some(p);
         }
+        self.debris.moving = moving;
         struck
     }
+}
+
+/// How fast the water runs on tile `i`, if it runs there.
+fn speed(flow: &[u8], i: u32) -> Option<u8> {
+    let (_, s) = Flow::of(*flow.get(i as usize)?)?;
+    Some(s)
 }
 
 /// A piece's place across the channel from a roll: within a third of a

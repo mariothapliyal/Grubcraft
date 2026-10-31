@@ -35,8 +35,8 @@ pub fn extras<'a>(
         if !seen(tile) {
             return None;
         }
-        let at = to_vec(p.at);
-        let way = Some(to_vec(p.way))
+        let at = crate::from_fx_vec(p.at);
+        let way = Some(crate::from_fx_vec(p.way))
             .filter(|w| w.length_squared() > 0.01)
             .map_or(Vec2::X, Vec2::normalize);
         let rise = f32::from(rise(p.at)) / HEIGHT_UNITS as f32;
@@ -55,10 +55,6 @@ pub fn extras<'a>(
             fall: fall_of(turn, way),
         })
     })
-}
-
-fn to_vec(v: gc_fixed::FxVec2) -> Vec2 {
-    Vec2::new(v.x.raw() as f32, v.y.raw() as f32) / 65536.0
 }
 
 #[cfg(test)]
@@ -92,12 +88,18 @@ mod tests {
     #[test]
     fn one_aground_sits_lower_and_unseen_ones_are_not_drawn() {
         let at = FxVec2::from_ints(3, 3);
-        let (afloat, aground) = (
-            seen(at, FxVec2::ZERO, false),
-            seen(at, FxVec2::ZERO, true),
-        );
-        let y = |p| extras([p].into_iter(), |_| 0, 1.0, 5.0, |_| true).next().unwrap().at.y;
+        let (afloat, aground) = (seen(at, FxVec2::ZERO, false), seen(at, FxVec2::ZERO, true));
+        let y = |p| {
+            extras([p].into_iter(), |_| 0, 1.0, 5.0, |_| true)
+                .next()
+                .unwrap()
+                .at
+                .y
+        };
         assert!(y(aground) < y(afloat));
-        assert_eq!(extras([afloat].into_iter(), |_| 0, 1.0, 5.0, |_| false).count(), 0);
+        assert_eq!(
+            extras([afloat].into_iter(), |_| 0, 1.0, 5.0, |_| false).count(),
+            0
+        );
     }
 }

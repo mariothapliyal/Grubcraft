@@ -1236,7 +1236,7 @@ impl RiverWater {
 
     /// Whether tile `(x, y)` is a ford snagged with debris: slow to wade.
     pub(crate) fn snagged(&self, x: i32, y: i32) -> bool {
-        !self.snags.is_empty() && self.snags.binary_search(&(y, x)).is_ok()
+        self.snags.binary_search(&(y, x)).is_ok()
     }
 
     /// How far it raises the water on tile `(x, y)`.

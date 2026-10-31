@@ -128,7 +128,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// lobby lets them play together and a replay made on one plays as
 /// recorded on the other. Bump it in any change that makes the golden
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks).
-pub const SIM_VERSION: u32 = 68;
+pub const SIM_VERSION: u32 = 69;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -3184,10 +3184,8 @@ impl World {
         if water && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_water(copy);
         }
-        let drift = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
-        if drift.snags
-            && let Some(copy) = self.terrain.rivers_mut()
-        {
+        let snags = (self.flood.rivers).drift(&self.terrain, lift, self.tick, second);
+        if snags && let Some(copy) = self.terrain.rivers_mut() {
             self.flood.rivers.write_snags(copy);
         }
         if coming && !self.scratch {
