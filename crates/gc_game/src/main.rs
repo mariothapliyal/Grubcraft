@@ -915,9 +915,9 @@ struct Running {
     /// How far `--wall-scene` has staged its manned wall: 0 to place it,
     /// 1 to send the archers up.
     wall_scene: Option<u8>,
-    /// `--bridge-scene`: the step it is at and where its regiment marches
-    /// to, over the bridge (see `stage_bridge_scene`).
-    bridge_scene: Option<(u8, Vec2)>,
+    /// `--bridge-scene`: the step it is at, and where its regiment stands
+    /// and marches to, over the bridge (see `stage_bridge_scene`).
+    bridge_scene: Option<(u8, [Vec2; 2])>,
     /// How high every bridge's deck is drawn, worked out again only when a
     /// bridge tile is added or lost.
     decks: bridge_deck::Decks,
@@ -2002,7 +2002,7 @@ impl App {
                     let setup = conquest::quick_conquest(0, r.menu.settings(), opts.seed);
                     r.start_match(MatchKind::Battle(setup));
                 }
-                r.bridge_scene = Some((0, Vec2::ZERO));
+                r.bridge_scene = Some((0, [Vec2::ZERO; 2]));
             }
             if let Some(n) = opts.gate_march {
                 r.start_match(MatchKind::Sandbox { roster: true });
@@ -3763,6 +3763,7 @@ impl Running {
                 game_dt.as_secs_f32()
             };
             (self.siege).advance(siege_dt, |p| hm.drawn_height(p.x, p.y));
+            self.settle_decks();
             self.note_building_looks();
             self.push_buildings();
         }
@@ -5917,6 +5918,7 @@ impl Running {
     fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
         self.heightmap = make_map(key);
+        self.decks_key = 0;
         logln!(
             "grubcraft: switching to {} (seed {:x}, {} tiles)",
             key.name(),
@@ -7422,11 +7424,12 @@ impl Running {
                 .flat_map(gc_sim::Structures::iter)
                 .filter(|s| b.is_bridge(s.building))
         };
-        // Every bridge tile's handle, folded together: a tile added or
-        // lost changes it.
+        // Every bridge tile's handle and place, folded together: a tile
+        // added or lost changes it (a new map starts it again).
         let key = bridges().fold(0xcbf2_9ce4_8422_2325u64, |k, s| {
             let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
-            (k ^ h).wrapping_mul(0x0100_0000_01b3)
+            let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
+            ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
         });
         if key == self.decks_key {
             return;
@@ -7441,7 +7444,7 @@ impl Running {
         self.decks = bridge_deck::Decks::new(
             tiles,
             |p| hm.drawn_height(p.x, p.y),
-            |p| hm.height_at(p.x, p.y) >= hm.drawn_height(p.x, p.y),
+            |p| hm.height_at(p.x, p.y) >= hm.water_level(),
         );
         self.decks_key = key;
     }
@@ -7449,7 +7452,6 @@ impl Running {
     /// Every standing building as a box, the selected one with a rim, and
     /// every gathering spot.
     fn push_buildings(&mut self) {
-        self.settle_decks();
         let haste_glow = self.haste_glow();
         let look = self.active_camera().forward();
         let across = Vec2::new(look.x, look.z).normalize_or(Vec2::NEG_Y);
@@ -7871,7 +7873,7 @@ impl Running {
     /// bank sent over it, and the camera close over the bridge: to see a
     /// bridge's deck meet its banks, and men cross it, in a real match.
     fn stage_bridge_scene(&mut self) {
-        let Some((step, far)) = self.bridge_scene else {
+        let Some((step, [at, far])) = self.bridge_scene else {
             return;
         };
         let building = |name: &str| {
@@ -7896,10 +7898,13 @@ impl Running {
                 // The crossing nearest the start: a dry tile, 3 to 12 wet
                 // ones, a dry tile, along two rows, every tile buildable.
                 let crossing = |y: i32, x0: i32| -> Option<i32> {
-                    if wet(x0, y) || wet(x0, y + 1) || !wet(x0 + 1, y) {
+                    if wet(x0, y) || wet(x0, y + 1) {
                         return None;
                     }
-                    let x1 = (x0 + 4..x0 + 14).find(|&x| !wet(x, y) && !wet(x, y + 1))?;
+                    let x1 = (x0 + 1..x0 + 14).find(|&x| !wet(x, y) || !wet(x, y + 1))?;
+                    if x1 - x0 <= 3 || wet(x1, y) || wet(x1, y + 1) {
+                        return None;
+                    }
                     (x0..=x1)
                         .all(|x| fits(x, y) && fits(x, y + 1))
                         .then_some(x1)
@@ -7951,11 +7956,13 @@ impl Running {
                 self.hud.placer = false;
                 self.sandbox.placing = false;
                 let far = Vec2::new(x1 as f32 + 6.0, row as f32 + 1.0);
-                self.bridge_scene = Some((1, far));
+                self.bridge_scene = Some((1, [at, far]));
             }
             1 => {
+                // The one spawned west of the bridge, not one of the start.
                 let regiment = (self.world.regiments.iter())
-                    .find(|r| r.owner == 0 && usize::from(r.unit) == soldiers)
+                    .filter(|r| r.owner == 0 && usize::from(r.unit) == soldiers)
+                    .find(|r| from_fx_vec(r.position).distance(at) < 2.0)
                     .map(|r| r.handle);
                 if let Some(regiment) = regiment {
                     self.human_orders.push(PlayerCommand {

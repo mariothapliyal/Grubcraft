@@ -126,45 +126,51 @@ fn straight(near: &[Vec<usize>], fixed: &[bool], ground: &[f32]) -> Vec<f32> {
     let mut bank = vec![false; n];
     let mut steps = vec![FAR; n];
     let mut height = vec![0.0f32; n];
-    let mut queue = std::collections::VecDeque::new();
+    let mut reached = Vec::new();
     for start in 0..n {
         if !fixed[start] || bank[start] {
             continue;
         }
-        // This bank's tiles, then how far every tile is from it over the
-        // bridge and the height of the bank tile nearest it.
-        steps.fill(FAR);
-        queue.push_back(start);
+        // This bank's tiles, then how far each free tile is from it over
+        // the bridge (not through another bank: the one behind that is
+        // not the next along) and the height of the bank tile nearest it.
+        // Only the tiles reached are touched, so each bank costs only its
+        // own bridge.
+        reached.clear();
+        reached.push(start);
         bank[start] = true;
-        let mut reached = Vec::new();
-        while let Some(i) = queue.pop_front() {
+        let mut k = 0;
+        while let Some(&i) = reached.get(k) {
+            k += 1;
             steps[i] = 0;
             height[i] = ground[i];
-            reached.push(i);
             for &j in &near[i] {
                 if fixed[j] && !bank[j] {
                     bank[j] = true;
-                    queue.push_back(j);
+                    reached.push(j);
                 }
             }
         }
-        queue.extend(reached);
-        while let Some(i) = queue.pop_front() {
+        let mut k = 0;
+        while let Some(&i) = reached.get(k) {
+            k += 1;
             for &j in &near[i] {
-                if steps[j] == FAR {
+                if !fixed[j] && steps[j] == FAR {
                     steps[j] = steps[i] + 1;
                     height[j] = height[i];
-                    queue.push_back(j);
+                    reached.push(j);
                 }
             }
         }
-        for (i, b) in best.iter_mut().enumerate() {
+        for &i in &reached {
+            let b = &mut best[i];
             let here = (steps[i], height[i]);
             if here.0 < b[0].0 {
                 *b = [here, b[0]];
             } else if here.0 < b[1].0 {
                 b[1] = here;
             }
+            steps[i] = FAR;
         }
     }
     (0..n)
@@ -268,6 +274,18 @@ mod tests {
         let lane = row(&decks, 0);
         assert!((lane[3] - 2.0).abs() < 1e-6, "{lane:?}");
         assert!(even(&lane[..4]) && even(&lane[3..]), "{lane:?}");
+    }
+
+    #[test]
+    fn a_deck_runs_straight_from_a_rock_to_the_far_bank() {
+        // A rock near the west bank: east of it the deck runs straight from
+        // the rock to the east bank, not bent back toward the west bank.
+        let drawn = |p: Vec2| if (3.0..4.0).contains(&p.x) { 2.0 } else { 1.2 };
+        let dry = |p: Vec2| !(3.0..9.0).contains(&p.x) || (3.0..4.0).contains(&p.x);
+        let decks = Decks::new(span(0..1), drawn, dry);
+        let lane = row(&decks, 0);
+        assert!((lane[1] - 2.0).abs() < 1e-6, "{lane:?}");
+        assert!(even(&lane[1..]), "{lane:?}");
     }
 
     #[test]

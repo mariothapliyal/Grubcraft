@@ -144,10 +144,9 @@ impl BridgeKit {
         let (ax, ay) = step(axis);
         let row = s.tile.0 * ax + s.tile.1 * ay;
         let level = usize::from(t.level.clamp(1, 3));
-        // A pier stands where the tile is over water, reaching from the
-        // deck to the bed; a crib where it is bank (even under a deck
-        // lifted level with a higher bank across the river).
-        let wet = (t.drawn)(centre) - (t.bed)(centre) >= WET;
+        // From the deck down to the ground (the bed under water): a pier
+        // where that is deep (over water, or a bank under a deck held
+        // level with a higher bank), a crib where the deck lies on it.
         let depth = floor - (t.bed)(centre);
         let neighbour = |v: Vec2| {
             let (dx, dy) = step(v);
@@ -156,7 +155,7 @@ impl BridgeKit {
 
         // Under the deck: a pier row in the water, every other tile along,
         // and the log crib on the banks.
-        if wet {
+        if depth >= WET {
             if row.rem_euclid(PIER_EVERY) == 0 {
                 let tall = PIER_REACH
                     .iter()
