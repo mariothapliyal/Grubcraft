@@ -315,8 +315,20 @@ Built 2026-10-31.
 - Pieces held in a jam don't count towards a player's 16 on the water, nor towards the 8 logs floods may have afloat at once.
 - Harm to bridges goes through the same path as fire and attacks (`wear_down`), so a fallen tile shuts and reopens the river's crossings as before.
 - **Formats:** `SIM_VERSION` 78; no new commands, so `FORMAT` and `PROTOCOL` stay. The river Conquest golden and the river storm move; the others don't.
-- **Tests:** `gc_sim/tests/river_bridges.rs`: rafts reaching a bridge strike or jam on its piers, and small jams wash free; a fallen bridge tile floats on as a wreck, a bank tile doesn't; a sound bridge stands through a catastrophic flood with nothing in the water; a catastrophic flood tears logs off the banks that batter the bridge below; rafts in a flood do far more harm than in a steady river.
+- **Tests:** `gc_sim/tests/river_bridges.rs`: rafts reaching a bridge strike or jam on its piers; a fallen bridge tile floats on as a wreck, a bank tile doesn't; a sound bridge stands through a catastrophic flood with nothing in the water; a catastrophic flood tears logs off the banks that batter the bridge below; rafts in a flood do far more harm than in a steady river.
 - *Not yet (stage 4b):* clearing and burning jams, the burst when a jammed tile falls, news of strikes and jams, computer players clearing and repairing, and the stress scenarios.
+
+## Built: stage 4b, clearing jams
+
+Built 2026-10-31.
+
+- **Clearing a jam:** the Clear (or Fell in) order takes jams too: drag over the river tiles just above a bridge where debris lies jammed. A worker on the deck or the bank beside it pulls the pieces out one at a time, 4 seconds a mass point (`UNJAM_SECONDS`, at the match's tempo), and each piece dragged ashore pays 1 Grub of timber (`UNJAM_GRUB`). Overgrown ground in the area is cleared first. An area with nothing growing and no jam is refused as before (`World::clearable`).
+- **Jams hold in steady water.** A jam of 3 mass or less washes free only when the water at its stretch falls back below a Minor flood after being up (stage 4a let small jams go every second in steady water, so rafts sent one at a time could never build a jam). Per stretch, whether the water was up this second and the last is kept (hashed).
+- **News:** when debris jams on a player's bridge they are told (`Event::BridgeJammed`), at most once every 30 seconds: "Debris has jammed against one of our bridges: send workers to Clear it before the river rises".
+- **The burst:** a jam holds back its stretch's outflow, so the water there stands higher; when the jam lets go (cleared, washed free or its tile falls) the held water runs on down at once. No separate burst front is added.
+- **Formats:** `SIM_VERSION` 79; no new commands. The river Conquest golden and the river storm move.
+- **Tests:** `river_bridges.rs`: workers clear a jam a piece at a time for its timber (and the owner is told it jammed); small jams wash free when a flood falls back; jams hold in steady water.
+- *Not yet (stage 4c):* burning jams, computer players clearing jams and repairing bridges, and the stress scenarios.
 
 ## 7. Stages (each its own pull request)
 

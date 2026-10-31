@@ -671,10 +671,11 @@ impl Conquest {
         area: [i32; 4],
         terrain: &Terrain,
         work: crate::clearing::Work,
+        jammed: bool,
     ) -> bool {
         let unit = self.unit(regs.unit[r]);
         let fells = work != crate::clearing::Work::Fell || unit.clearing.fells;
-        if !unit.worker || !fells || !overgrown(terrain, area) {
+        if !unit.worker || !fells || !(jammed || overgrown(terrain, area)) {
             return false;
         }
         self.stop_work(r);

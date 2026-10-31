@@ -171,8 +171,8 @@ impl Running {
             return;
         };
         self.input.clear_from = None;
-        if !self.world.overgrown([x, y, w, d]) {
-            self.say("Nothing grows there to clear.".into());
+        if !self.world.clearable([x, y, w, d]) {
+            self.say("Nothing grows or is jammed there to clear.".into());
             return;
         }
         // Sides are at most 16, so these fit.

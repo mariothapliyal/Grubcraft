@@ -183,8 +183,14 @@ pub struct Debris {
     piers: Vec<piers::Pier>,
     /// Per stretch, how much of its outflow its jams hold back, percent.
     choke: Vec<u8>,
+    /// Per stretch, whether the water at its piers was up (Minor or more)
+    /// this second and the last (see `piers::weigh_piers`).
+    up: Vec<u8>,
     /// What the debris did to bridges this tick, for the world to apply.
     blows: Vec<Blow>,
+    /// The players (a bit each) whose bridges debris jammed on this tick,
+    /// for the news (not hashed: told and forgotten in the tick).
+    jammed_on: u8,
 }
 
 /// A blow debris or the water strikes a bridge tile: the tile, and the
@@ -207,7 +213,9 @@ impl Debris {
             moving: Vec::new(),
             piers: Vec::new(),
             choke: alloc::vec![0; stretches],
+            up: alloc::vec![0; stretches],
             blows: Vec::new(),
+            jammed_on: 0,
         }
     }
 
@@ -321,6 +329,9 @@ impl Debris {
         }
         for &c in &self.choke {
             h.u8(c);
+        }
+        for &u in &self.up {
+            h.u8(u);
         }
     }
 }

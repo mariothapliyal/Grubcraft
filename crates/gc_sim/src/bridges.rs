@@ -13,6 +13,7 @@ use crate::conquest::overlaps;
 use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
 use crate::regiments::Regiments;
+use crate::rivers::debris::piers::Pier;
 use crate::structures::{BuildingStats, LINE, Refusal, StructureHandle, Structures};
 use crate::terrain::Terrain;
 use crate::walls::{Laying, Line, MAX_BRIDGE_LENGTH, WallTile};
@@ -48,18 +49,18 @@ impl Structures {
     /// Every finished bridge tile off the banks, where a pier stands in
     /// the water (docs/39-water-engine.md, section 4): its tile, handle,
     /// pier level and hit points left, in thousandths.
-    pub(crate) fn piers(&self) -> impl Iterator<Item = (i32, i32, StructureHandle, u8, u16)> + '_ {
+    pub(crate) fn piers(&self) -> impl Iterator<Item = (i32, i32, Pier)> + '_ {
         self.standing()
             .filter(|&i| self.is_bridge(i) && self.finished(i) && !self.ashore[i])
             .map(|i| {
                 let [x, y, _, _] = self.footprint(i);
-                (
-                    x,
-                    y,
+                let pier = Pier::new(
                     self.handle(i),
+                    self.owner(self.handle(i)).unwrap_or_default(),
                     self.pier_level(i),
                     self.left_permille(i),
-                )
+                );
+                (x, y, pier)
             })
     }
 

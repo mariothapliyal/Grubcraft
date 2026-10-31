@@ -1,13 +1,16 @@
 //! The water engine, stage 4 (docs/39-water-engine.md, section 4): debris
 //! reaching a bridge's piers jams against them or strikes them, and a
-//! bridge tile that falls floats on down as a wreck.
+//! bridge tile that falls floats on down as a wreck. Workers clear jams
+//! a piece at a time.
 
 use gc_fixed::{Fx, FxVec2};
 use gc_sim::StructureHandle;
 use gc_sim::clearing::ClearStyle;
+use gc_sim::events::Event;
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::rivers::Band;
 use gc_sim::rivers::debris::Kind;
+use gc_sim::rivers::debris::piers::UNJAM_GRUB;
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
 use gc_sim::sky::{Spell, Weather, WeatherKind};
 use gc_sim::structures::{Armour, DROP_OFF_GRUB, Role};
@@ -243,17 +246,10 @@ fn rafts_reaching_a_bridge_strike_or_jam_on_its_piers() {
         hp > whole / 2,
         "but a steady river's rafts don't bring it down"
     );
-    assert!(
-        jammed,
-        "some jammed on the piers, and washed free in low water"
-    );
-    // Nothing is left jammed in low water: small jams wash free.
+    assert!(jammed, "some jammed on the piers");
+    // In steady water a jam holds.
     run(&mut w, 30);
-    assert!(
-        !(w.flood().rivers().debris().pieces(MAP))
-            .any(|p| p.at.x.floor_int() == BRIDGE_X - 1 && p.grounded),
-        "small jams wash free"
-    );
+    assert!(jammed_pieces(&w) > 0, "jams hold in steady water");
 }
 
 #[test]
@@ -408,4 +404,107 @@ fn rafts_in_a_flood_do_far_more_harm_than_in_a_steady_river() {
     let (steady, flood) = (rafts_harm(seed, &[]), rafts_harm(seed, SQUALL));
     assert!(steady > 0);
     assert!(flood > steady * 2, "flood {flood}, steady {steady}");
+}
+
+/// The pieces jammed against the bridge (lying on the tiles above it).
+fn jammed_pieces(w: &World) -> usize {
+    (w.flood().rivers().debris().pieces(MAP))
+        .filter(|p| p.grounded && p.at.x.floor_int() == BRIDGE_X - 1)
+        .count()
+}
+
+#[test]
+fn workers_clear_a_jam_a_piece_at_a_time_for_its_timber() {
+    let mut w = world(ClearStyle::STANDARD);
+    bridge(&mut w);
+    // Rafts down one row until two jam on one pier (one alone washes free).
+    let hand = worker(&mut w, 8, 28);
+    let mut told = false;
+    for round in 0..24 {
+        if jammed_pieces(&w) >= 2 {
+            break;
+        }
+        assert!(order(
+            &mut w,
+            Command::Dump {
+                regiment: hand,
+                tile: (8 + round % 4, RIVER.start as i16)
+            }
+        ));
+        for _ in 0..30 * SECOND {
+            w.tick(&[]);
+            told |= (w.events().iter())
+                .any(|e| matches!(e, Event::BridgeJammed { owners } if owners & 1 != 0));
+            if jammed_pieces(&w) >= 2 {
+                break;
+            }
+        }
+    }
+    let pieces = jammed_pieces(&w);
+    assert!(pieces >= 2, "a jam held: {pieces}");
+    assert!(told, "the bridge's owner was told");
+    // Nothing to clear on open dry ground, but the jam can be.
+    let clearer = worker(&mut w, BRIDGE_X, RIVER.start - 2);
+    let lane = (BRIDGE_X as i16 - 1, RIVER.start as i16);
+    assert!(!order(
+        &mut w,
+        Command::Clear {
+            regiment: clearer,
+            tile: (BRIDGE_X as i16 - 1, RIVER.start as i16 - 3),
+            size: (1, 1),
+        }
+    ));
+    let before = w.bank(0).unwrap().grub;
+    assert!(order(
+        &mut w,
+        Command::Clear {
+            regiment: clearer,
+            tile: lane,
+            size: (1, RIVER.len() as u8),
+        }
+    ));
+    run(&mut w, 90);
+    assert_eq!(jammed_pieces(&w), 0, "the jam is cleared");
+    assert_eq!(
+        w.bank(0).unwrap().grub - before,
+        pieces as u32 * UNJAM_GRUB,
+        "a Grub of timber a piece"
+    );
+    assert!(w.clearing_of(clearer).is_none(), "and the order is done");
+}
+
+#[test]
+fn small_jams_wash_free_when_a_flood_falls_back() {
+    let seed = seed_of(Band::Flood);
+    let mut w = world_with(ClearStyle::STANDARD, seed, SQUALL, false);
+    bridge(&mut w);
+    // Rafts down each bank row until one jams, before the flood comes.
+    let hands = [worker(&mut w, 8, 28), worker(&mut w, 8, 35)];
+    let mut held = 0;
+    for round in 0..300 {
+        if round < 60 && round % 12 == 0 && held == 0 {
+            for (k, &h) in hands.iter().enumerate() {
+                let row = if k == 0 { RIVER.start } else { RIVER.end - 1 };
+                assert!(order(
+                    &mut w,
+                    Command::Dump {
+                        regiment: h,
+                        tile: (8 + round as i16 / 12, row as i16)
+                    }
+                ));
+            }
+        }
+        run(&mut w, 1);
+        held = held.max(jammed_pieces(&w));
+    }
+    assert!(held > 0, "a raft jammed");
+    assert!(
+        w.flood().rivers().fronts().next().is_none(),
+        "the flood has passed"
+    );
+    assert_eq!(
+        jammed_pieces(&w),
+        0,
+        "and its small jams washed free as it fell"
+    );
 }

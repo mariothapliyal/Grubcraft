@@ -186,6 +186,9 @@ pub(crate) enum Done {
     /// A worker of `owner`'s tipped a raft into river tile `(x, y)`: it
     /// goes in if `owner` can pay for it.
     Raft { x: i32, y: i32, owner: PlayerId },
+    /// A worker of `owner`'s pulled a piece out of the jam lying on river
+    /// tile `(x, y)`: it is dragged ashore for its timber.
+    Unjam { x: i32, y: i32, owner: PlayerId },
     /// Worker slot `r` cleared and left the footprint of `pledge`: lay it.
     Lay { r: usize, pledge: Pledge },
     /// Worker slot `r` (or the regiment that was in it) gave up on, or was
@@ -356,7 +359,9 @@ impl Clearing {
             let (x, y) = ((t % side) as i32, (t / side) as i32);
             let cleared =
                 |d: &Done| matches!(*d, Done::Tile { x: dx, y: dy, .. } if (dx, dy) == (x, y));
+            // A jam lying in the river is cleared a piece at a time.
             terrain.growth(x, y) != Growth::Open && !self.done.iter().any(cleared)
+                || rivers.jam_piece_at(x, y).is_some()
         };
         if job.at.is_some_and(|t| !left(t)) {
             job.next();
@@ -408,6 +413,11 @@ impl Clearing {
         }
         way.arrive(regs, r);
         let growth = terrain.growth(x, y);
+        // Pulling a piece out of a jam (docs/39 section 4), once the
+        // tile's own growth is gone.
+        let jam = (growth == Growth::Open)
+            .then(|| rivers.jam_piece_at(x, y))
+            .flatten();
         // Felling a bank tile into the river: woods and thicket only.
         let logs = if job.work == Work::Fell && rivers.fells_into(terrain, x, y) {
             match growth {
@@ -420,6 +430,9 @@ impl Clearing {
         };
         let ticks = match job.work {
             Work::Dump => crate::rivers::debris::DUMP_SECONDS * TICKS_PER_SECOND,
+            _ if let Some(mass) = jam => {
+                crate::rivers::debris::piers::UNJAM_SECONDS * u32::from(mass) * TICKS_PER_SECOND
+            }
             _ if logs > 0 => clear_ticks(growth) * FELL_PERCENT / 100,
             _ => clear_ticks(growth),
         };
@@ -434,7 +447,11 @@ impl Clearing {
         };
         // A worker's own pace: workers of different factions on the one
         // tile each do their own share.
-        let pace = if dump { 100 } else { style.pace_on(growth) };
+        let pace = if dump || jam.is_some() {
+            100
+        } else {
+            style.pace_on(growth)
+        };
         let work = (HAND * 100 / pace).max(1) * u32::from(regs.steps(r));
         self.worked[k].1 = self.worked[k].1.saturating_sub(work);
         if self.worked[k].1 == 0 {
@@ -443,6 +460,12 @@ impl Clearing {
             if dump {
                 self.done.push(Done::Raft { x, y, owner });
                 return false;
+            }
+            if jam.is_some() {
+                // One piece out; the next is worked afresh.
+                self.done.push(Done::Unjam { x, y, owner });
+                job.next();
+                return true;
             }
             self.done.push(Done::Tile {
                 x,

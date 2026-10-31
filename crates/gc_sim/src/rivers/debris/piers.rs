@@ -7,6 +7,7 @@
 //! that falls lets its jam go and floats on down as a wreck.
 
 use super::{Blow, Kind, Piece, roll};
+use crate::PlayerId;
 use crate::rivers::{Band, FLOOD_RISE, Rivers};
 use crate::structures::StructureHandle;
 use crate::terrain::index_in;
@@ -42,8 +43,18 @@ pub const STRAIN_PER_TEN_THOUSAND: [u32; 3] = [50, 12, 0];
 pub const SWEEP_BELOW: [u16; 3] = [500, 250, 0];
 /// A blow that sweeps a tile away: all its hit points.
 const SWEPT: u32 = 10_000;
-/// A jam this heavy or lighter washes free once the water falls back.
+/// A jam this heavy or lighter washes free once the water falls back
+/// below a Minor flood (it holds in steady water).
 pub const WASH_FREE_MASS: u8 = 3;
+/// A stretch's high water (Minor or more at a pier) this second and the
+/// last.
+const UP_NOW: u8 = 2;
+const UP_BEFORE: u8 = 1;
+/// Seconds workers take to pull a piece out of a jam, per mass point
+/// (the Clear order, at Standard tempo).
+pub const UNJAM_SECONDS: u32 = 4;
+/// Grub of timber each piece pulled out of a jam pays.
+pub const UNJAM_GRUB: u32 = 1;
 /// Where a jammed piece lies: this far from the middle of the tile above
 /// the pier towards it, against the pier's upstream face.
 const JAMMED_ALONG: gc_fixed::Fx = gc_fixed::Fx::from_raw(26_214);
@@ -53,6 +64,7 @@ const JAMMED_ALONG: gc_fixed::Fx = gc_fixed::Fx::from_raw(26_214);
 pub(crate) struct Pier {
     tile: u32,
     slot: StructureHandle,
+    owner: PlayerId,
     /// 1 plain, 2 braced, 3 reinforced.
     level: u8,
     /// Its tile's hit points left, thousandths.
@@ -60,6 +72,19 @@ pub(crate) struct Pier {
 }
 
 impl Pier {
+    /// The pier under bridge tile `slot`, `owner`'s, at `level`, with
+    /// `left` thousandths of its hit points (its river tile is set when
+    /// the rivers take it).
+    pub(crate) fn new(slot: StructureHandle, owner: PlayerId, level: u8, left: u16) -> Pier {
+        Pier {
+            tile: 0,
+            slot,
+            owner,
+            level,
+            left,
+        }
+    }
+
     /// Its level as an index into the tables above.
     fn at(self) -> usize {
         usize::from(self.level.clamp(1, 3) - 1)
@@ -68,24 +93,22 @@ impl Pier {
 
 impl Rivers {
     /// The piers standing now: each finished bridge tile off the banks
-    /// (tile, handle, level, hit points left in thousandths) that stands
-    /// over running river. Refreshed each second.
+    /// (its tile and pier) that stands over running river. Refreshed each
+    /// second.
     pub(crate) fn set_piers(
         &mut self,
-        decks: impl Iterator<Item = (i32, i32, StructureHandle, u8, u16)>,
+        decks: impl Iterator<Item = (i32, i32, Pier)>,
         terrain: &crate::terrain::Terrain,
     ) {
         let mut piers = core::mem::take(&mut self.debris.piers);
         piers.clear();
         if self.any() {
             let n = self.side;
-            piers.extend(decks.filter_map(|(x, y, slot, level, left)| {
+            piers.extend(decks.filter_map(|(x, y, pier)| {
                 let i = index_in(n, x, y).filter(|&i| self.runs(terrain, i))?;
                 Some(Pier {
                     tile: i as u32,
-                    slot,
-                    level,
-                    left,
+                    ..pier
                 })
             }));
             piers.sort_unstable_by_key(|p| p.tile);
@@ -131,6 +154,7 @@ impl Rivers {
                 return false;
             }
             p.jammed = true;
+            self.debris.jammed_on |= 1u8.checked_shl(u32::from(pier.owner)).unwrap_or(0);
             p.next = p.tile;
             p.tile = from;
             p.along = JAMMED_ALONG;
@@ -153,16 +177,28 @@ impl Rivers {
     /// strains hurt piers and catastrophic water sweeps weak spans away.
     pub(super) fn weigh_piers(&mut self, lift: i32) {
         self.debris.choke.fill(0);
+        // Last second's high water becomes what was.
+        for u in &mut self.debris.up {
+            *u = u8::from(*u & UP_NOW != 0);
+        }
         for k in 0..self.debris.piers.len() {
             let pier = self.debris.piers[k];
             let i = pier.tile;
+            let s = usize::from(self.stretch_of[i as usize]);
             let rise = self.water_on(lift, i as usize);
             let band = (rise >= i32::from(Band::Minor.crest()))
                 .then(|| Band::of(u16::try_from(rise).unwrap_or(u16::MAX)));
+            let was_up = self.debris.up.get(s).is_some_and(|&u| u & UP_BEFORE != 0);
+            if band.is_some()
+                && let Some(u) = self.debris.up.get_mut(s)
+            {
+                *u |= UP_NOW;
+            }
             let jam = self.jam_on(i);
             if jam > 0 {
                 match band {
-                    None if jam <= WASH_FREE_MASS => self.wash_free(i),
+                    // The water falling back loosens a small jam.
+                    None if was_up && jam <= WASH_FREE_MASS => self.wash_free(i),
                     None => {}
                     Some(band) => {
                         let push = PUSH_PER_TEN_THOUSAND
@@ -173,8 +209,7 @@ impl Rivers {
                         self.debris.blows.push((pier.slot, push.max(1)));
                     }
                 }
-                let s = self.stretch_of[i as usize];
-                if let Some(c) = self.debris.choke.get_mut(usize::from(s)) {
+                if let Some(c) = self.debris.choke.get_mut(s) {
                     *c = c
                         .saturating_add(jam.saturating_mul(CHOKE_PER_MASS))
                         .min(CHOKE_MOST);
@@ -192,6 +227,52 @@ impl Rivers {
                 }
             }
         }
+    }
+
+    /// The piece in a jam lying on river tile `i` (against the pier below
+    /// it) that workers pull out next, and its mass: the first in the
+    /// pool.
+    fn jammed_at(&self, i: u32) -> Option<(usize, u8)> {
+        (self.debris.pieces.iter().enumerate()).find_map(|(k, p)| {
+            p.filter(|p| p.jammed && p.tile == i)
+                .map(|p| (k, p.kind.mass()))
+        })
+    }
+
+    /// The mass of the piece workers pull out of a jam lying on tile
+    /// `(x, y)` next, if a jam lies there (see [`UNJAM_SECONDS`]).
+    pub(crate) fn jam_piece_at(&self, x: i32, y: i32) -> Option<u8> {
+        let i = index_in(self.side, x, y)?;
+        self.jammed_at(i as u32).map(|(_, mass)| mass)
+    }
+
+    /// Whether a jam lies on any tile of `area` (north-west tile, width,
+    /// depth).
+    pub(crate) fn jammed_in(&self, [x, y, w, d]: [i32; 4]) -> bool {
+        let n = self.side as u32;
+        (self.debris.pieces.iter().flatten()).any(|p| {
+            let (px, py) = ((p.tile % n) as i32, (p.tile / n) as i32);
+            p.jammed && (x..x + w).contains(&px) && (y..y + d).contains(&py)
+        })
+    }
+
+    /// Workers pull a piece out of the jam lying on tile `(x, y)` and drag
+    /// it ashore. Whether there was one.
+    pub(crate) fn pull_jam(&mut self, x: i32, y: i32) -> bool {
+        let Some(i) = index_in(self.side, x, y) else {
+            return false;
+        };
+        let Some((k, _)) = self.jammed_at(i as u32) else {
+            return false;
+        };
+        self.debris.pieces[k] = None;
+        true
+    }
+
+    /// The players (a bit each) whose bridges debris jammed on this tick,
+    /// told once (and forgotten).
+    pub(crate) fn take_jammed(&mut self) -> u8 {
+        core::mem::take(&mut self.debris.jammed_on)
     }
 
     /// The jam on the pier on tile `i` breaks up and floats on, past it.

@@ -154,6 +154,10 @@ pub enum Event {
     /// this tick (see [`crate::rivers::debris`]): of the players in
     /// `owners`, a bit each. Told once a tick at most.
     DebrisStruck { owners: u8 },
+    /// Debris riding a river jammed against the piers of bridges of the
+    /// players in `owners` (a bit each) this tick (see
+    /// [`crate::rivers::debris::piers`]). Told once a tick at most.
+    BridgeJammed { owners: u8 },
     /// A new season began (see [`crate::sky::Season`]); not told of the
     /// match's first spring.
     Season { season: crate::sky::Season },
@@ -261,6 +265,11 @@ impl Events {
     /// riding a river this tick.
     pub(crate) fn debris_struck(&mut self, owners: u8) {
         self.list.push(Event::DebrisStruck { owners });
+    }
+
+    /// Tell of debris jammed on bridges of `owners` (a bit each) this tick.
+    pub(crate) fn bridge_jammed(&mut self, owners: u8) {
+        self.list.push(Event::BridgeJammed { owners });
     }
 
     /// Tell of walled towns closed and breached at this tick's survey.

@@ -142,7 +142,9 @@ fn every_volley_is_told_loosed_then_landed_and_losses_add_up() {
                     unreachable!("no storms here")
                 }
                 Event::SweptAway { .. } => unreachable!("no storms here"),
-                Event::DebrisStruck { .. } => unreachable!("no rivers here"),
+                Event::DebrisStruck { .. } | Event::BridgeJammed { .. } => {
+                    unreachable!("no rivers here")
+                }
             }
         }
         // Soldiers shot down are among the losses told.
