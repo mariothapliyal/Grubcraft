@@ -17,6 +17,9 @@ const BUTTON_W: i32 = 216;
 const BUTTON_H: i32 = 38;
 const GAP: i32 = 4;
 const MARGIN: i32 = 8;
+/// How far the row of buttons reaches down from the field's top, with a
+/// gap under it: text drawn there goes below this.
+pub const ROW_BOTTOM: i32 = MARGIN + BUTTON_H + GAP;
 /// The row starts this far in from the screen's left edge, clear of an
 /// alert badge on it.
 const INDENT: i32 = 40;
