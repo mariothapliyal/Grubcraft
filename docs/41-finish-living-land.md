@@ -135,6 +135,43 @@ the Classic choices so old choices keep their numbers;
   (`SWEEP=N` for more seeds), and the AI one-on-one above (first run: wins
   by Annihilation at 25:53 and 32:42, first contact at 7:22 and 6:34).
 
+## Step 4 as built
+
+*2026-10-30.*
+
+- **Changing by default.** The lobby's Weather starts on **Changing** in
+  both modes (`WeatherSetting::default`). Fair, Rain, Snow and Fog stay as
+  choices. Nothing in the simulation changed: the spells were already there,
+  only the default was Fair.
+- **Weather news.** `gc_game/src/sky_news.rs` reads `world.weather()` after
+  each tick and says on the news line when rain, a storm, snow or fog comes
+  in, and when it clears: "Fog is rolling in: troops see much less far.
+  Watch for ambushes", "A storm is coming in: ...", "The fog has lifted".
+  Weather comes in at strength 80 (the sim's spells are 90 to 255) and has
+  cleared under 40; rain is a storm from 192 (where the picture's lightning
+  starts) and rain again under 152. The give either way means the sim's
+  slow fades and small wobbles are told once. The weather a match starts in
+  isn't told, nor is a new match told the last one's weather.
+- **Fire news.** Once a second, woods or scrub burning within 10 tiles of
+  one of the viewer's buildings or regiments are told: "Fire! It is
+  spreading near your base" or "... near your troops". Base and troops are
+  told apart: each once as a fire comes near, then not again for 45
+  seconds, so a blaze spreading tile by tile or flickering at the edge is
+  told once, and a fire that spreads from the troops to the base is told
+  again. The sim keeps its fires sorted by row, so only the rows in reach of
+  each building or regiment are looked at.
+- **Catching up.** While an online player catches up, the watcher keeps up
+  but says nothing, so a rejoin doesn't replay old news.
+- **Real use.** The alerts matter most in Conquest on grown land, where
+  storms send flash floods down the rivers (already told) and fog hides
+  ambushes in the woods. The computer players read the weather and fire
+  directly from the sim, so they need no alerts.
+- **Tests.** `sky_news::tests`: a fade in and out of rain through a storm is
+  told once each way, a wobble about the thresholds says nothing, the
+  opening weather is quiet, a new kind is told after the old fades, and a
+  fire near troops then the base is told once each, with the quiet time,
+  and a fire spreading from the troops to the base is told again.
+
 ## Not in this plan
 
 Water levels per tile, dams and debris (docs/39). Three- and five-player
