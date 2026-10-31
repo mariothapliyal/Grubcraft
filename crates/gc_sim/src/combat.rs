@@ -24,6 +24,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::Cell;
+use core::num::NonZeroU8;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
@@ -1630,7 +1631,7 @@ impl Combat {
         // has one turn in between (see `strikers`).
         for i in 0..regs.alive.len() {
             if (tick + i as u32).is_multiple_of(STRIKE_INTERVAL) {
-                regs.room_taken[i] = [Fx::ZERO; 4];
+                regs.room_taken[i] = [0; 4];
             }
         }
         // Melee.
@@ -2168,7 +2169,7 @@ fn strikers(
     } else {
         u16::MAX
     };
-    let mut taken = regs.room_taken[j][room];
+    let mut taken = Fx::from_raw(i32::from(regs.room_taken[j][room]) << 8);
     let mut strikers = 0;
     // Men fill the room from the one facing the middle of the side outwards,
     // in turn to either hand, so both ends of an overlapping line close in.
@@ -2215,7 +2216,7 @@ fn strikers(
             out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
         }
     }
-    regs.room_taken[j][room] = taken;
+    regs.room_taken[j][room] = u16::try_from(taken.raw() >> 8).unwrap_or(u16::MAX);
     // They strike in their order along the line, as before frontage.
     let files = mine.files.max(1);
     out.slots[..out.count].sort_unstable_by_key(|&(k, _)| (k % files, k));
@@ -2255,11 +2256,14 @@ struct Round {
 }
 
 impl Round {
-    fn pack(self) -> u8 {
-        self.from | self.to << 2 | u8::from(self.corner) << 4
+    /// Packed into a byte that is never zero, so `Option` of it is one byte.
+    fn pack(self) -> NonZeroU8 {
+        NonZeroU8::new(self.from | self.to << 2 | u8::from(self.corner) << 4 | 32)
+            .unwrap_or(NonZeroU8::MAX)
     }
 
-    fn unpack(code: u8) -> Round {
+    fn unpack(code: NonZeroU8) -> Round {
+        let code = code.get();
         Round {
             from: code & 3,
             to: code >> 2 & 3,

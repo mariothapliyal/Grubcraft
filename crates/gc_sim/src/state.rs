@@ -133,6 +133,18 @@ impl State for RegimentHandle {
     }
 }
 
+impl State for core::num::NonZeroU8 {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.get().write(out);
+    }
+    fn read(input: &mut &[u8]) -> Option<Self> {
+        core::num::NonZeroU8::new(u8::read(input)?)
+    }
+    fn hash(&self, h: &mut StateHasher) {
+        self.get().hash(h);
+    }
+}
+
 impl<T: State> State for Option<T> {
     fn write(&self, out: &mut Vec<u8>) {
         self.is_some().write(out);
