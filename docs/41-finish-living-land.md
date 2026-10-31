@@ -480,8 +480,10 @@ clearing woods is the second (below).
 - Real match, with it (Field Battle against a General, dry weather, my
   army hiding in the tall grass along the river near its line): at 3:39
   the General ordered a Burn (read back from the saved replay); the
-  grass burned along the bank and my army broke and ran. Screenshots in
-  project files, `screenshots/living-land-step6b/`.
+  grass burned along the bank and my army broke and ran. Played again on
+  the build after the code review's fixes: Burn at 3:37, the grass burned
+  and my army was down to 23 of 61 soldiers. Screenshots in project
+  files, `screenshots/living-land-step6b/`.
 
 ## Not in this plan
 
