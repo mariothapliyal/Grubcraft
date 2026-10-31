@@ -67,6 +67,64 @@ pub(crate) const BASE_NODES: [(Kind, i32, i32); 3] = [
     (Kind::GrubSeep, 8, -9),
     (Kind::MarrowVein, 8, 8),
 ];
+/// One piece of a Conquest share (the Classic Wilds' and grown land's,
+/// round each north start).
+pub(crate) struct SharePiece {
+    pub(crate) kind: Kind,
+    /// Where it stands from its start on open ground: tiles for a start's
+    /// own, else hundredths of the share's reach.
+    pub(crate) at: Pos,
+    /// The start's own (its base nodes and natural expansion).
+    pub(crate) owned: bool,
+    pub(crate) label: &'static str,
+}
+
+const fn piece(kind: Kind, at: Pos, owned: bool, label: &'static str) -> SharePiece {
+    SharePiece {
+        kind,
+        at,
+        owned,
+        label,
+    }
+}
+
+/// A made Conquest map's share round each north start: the base's nodes
+/// ([`BASE_NODES`]), a natural expansion of two seeps 33 tiles out (past
+/// `BASE_AREA`, inside `EXPANSION_AREA`), then a hamlet, a Shrine, a
+/// Bloodseep site, a frontier slot and three fields, each followed by the
+/// creeps that guard it.
+pub(crate) const SHARE: [SharePiece; 15] = [
+    piece(
+        BASE_NODES[0].0,
+        (BASE_NODES[0].1, BASE_NODES[0].2),
+        true,
+        "",
+    ),
+    piece(
+        BASE_NODES[1].0,
+        (BASE_NODES[1].1, BASE_NODES[1].2),
+        true,
+        "",
+    ),
+    piece(
+        BASE_NODES[2].0,
+        (BASE_NODES[2].1, BASE_NODES[2].2),
+        true,
+        "",
+    ),
+    piece(Kind::GrubSeep, (-6, 33), true, ""),
+    piece(Kind::GrubSeep, (7, 32), true, ""),
+    piece(Kind::Village, (-55, 30), false, ""),
+    piece(Kind::Shrine, (65, -15), false, ""),
+    piece(Kind::Bloodseep, (-70, -25), false, ""),
+    piece(Kind::FrontierSlot, (0, 80), false, ""),
+    piece(Kind::GrubSeep, (45, 55), false, ""),
+    piece(Kind::CreepCamp, (50, 60), false, TOADS),
+    piece(Kind::MarrowVein, (-30, 70), false, ""),
+    piece(Kind::CreepCamp, (-25, 75), false, GOLEMS),
+    piece(Kind::GrubSeep, (-65, 50), false, ""),
+    piece(Kind::CreepCamp, (-70, 55), false, TOADS),
+];
 /// The creeps that guard a contested seep and a contested vein.
 pub(crate) const TOADS: &str = "Bile Toads";
 pub(crate) const GOLEMS: &str = "Marrow Golems";
