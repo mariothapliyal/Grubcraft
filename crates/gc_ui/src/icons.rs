@@ -47,11 +47,15 @@ pub enum Icon {
     Book,
     /// A lower-case i: tips for the selected building.
     Info,
+    /// Crossed blades: a regiment in melee.
+    Fight,
+    /// Double chevrons: a forced march.
+    Hurry,
 }
 
 impl Icon {
     /// Every icon that draws something.
-    pub const ALL: [Icon; 28] = [
+    pub const ALL: [Icon; 30] = [
         Icon::Move,
         Icon::Attack,
         Icon::Hold,
@@ -80,6 +84,8 @@ impl Icon {
         Icon::Alarm,
         Icon::Book,
         Icon::Info,
+        Icon::Fight,
+        Icon::Hurry,
     ];
 
     /// The pattern, top row first; `#` is ink.
@@ -462,6 +468,34 @@ impl Icon {
                 "############",
                 "............",
                 ".....##.....",
+                "............",
+            ],
+            Icon::Fight => [
+                "............",
+                "##........##",
+                ".##......##.",
+                "..##....##..",
+                "...##..##...",
+                "....####....",
+                ".....##.....",
+                "....####....",
+                "...##..##...",
+                "..##....##..",
+                ".##......##.",
+                "##........##",
+            ],
+            Icon::Hurry => [
+                "............",
+                "##....##....",
+                ".##....##...",
+                "..##....##..",
+                "...##....##.",
+                "....##....##",
+                "...##....##.",
+                "..##....##..",
+                ".##....##...",
+                "##....##....",
+                "............",
                 "............",
             ],
             Icon::Info => [

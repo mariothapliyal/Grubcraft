@@ -15,9 +15,10 @@ use gc_ui::conquest::{
 use gc_ui::hero::{HeroAbility, HeroPanel};
 use gc_ui::hud::{
     Card, CardState, DeployStatus, Dot, GRID_SLOTS, GridSlot, HERO_SLOT_FIRST, HandOverButton,
-    HelpScroll, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain, Selection,
-    ShapeChip, SlotState, StatusStrip,
+    HelpScroll, HoverCard, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain,
+    Selection, ShapeChip, SlotState, StatusStrip,
 };
+use gc_ui::orders::{self, Order as UiOrder, Orders, Wait};
 use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
 use glam::{Vec2, Vec3};
@@ -214,6 +215,9 @@ pub struct HudState {
     /// Conquest's top bar and idle-worker count, and the tick and side
     /// they were read for: they only change on a tick.
     readout: Option<Readout>,
+    /// Your regiment the mouse rests on, whose route shows like a selected
+    /// one's.
+    pub hover_own: Option<gc_sim::RegimentHandle>,
     cards: Vec<Card>,
     view: Vec<[f32; 2]>,
     events: Vec<HudEvent>,
@@ -543,6 +547,7 @@ impl Running {
         let mut color = crate::color_of(&self.parties, side);
         let mut ground = "";
         let mut general = false;
+        let (mut orders, mut why, mut queued) = (Orders::None, 0u16, 0u8);
         let led = self
             .world
             .generals()
@@ -566,18 +571,21 @@ impl Running {
                 same &= unit == Some(r.unit);
                 same_icon &= icon == this;
             }
+            if let Some(f) = self.world.regiments.feedback(h) {
+                orders = orders.with(Orders::One(order_of(f.doing), f.waiting.map(wait_of)));
+                // The reasons of those who waver, together.
+                if r.morale != MoraleState::Steady {
+                    why |= f.why;
+                }
+            }
+            queued = r.queued;
             n += 1;
             general |= led == Some(h);
             models += u32::from(r.models);
             max_models += u32::from(stats.models);
             morale += u32::from(r.morale_points);
-            state = match (state, r.morale) {
-                (_, MoraleState::Routing | MoraleState::Shattered) | (CardState::Routing, _) => {
-                    CardState::Routing
-                }
-                (_, MoraleState::Wavering) | (CardState::Wavering, _) => CardState::Wavering,
-                _ => CardState::Steady,
-            };
+            // The worst of them: routing over wavering over steady.
+            state = state.max(card_state(r.morale));
         }
         if n == 0 {
             return None;
@@ -601,6 +609,10 @@ impl Running {
             },
             ground,
             general,
+            orders,
+            // A queue is shown for one regiment only.
+            queued: if n == 1 { queued } else { 0 },
+            why,
             shapes: &[],
         };
         Some((name, selection))
@@ -610,6 +622,33 @@ impl Running {
     /// has nothing to gather, so standing about is not idling.
     fn idle_workers(&self, side: PlayerId) -> impl Iterator<Item = gc_sim::RegimentHandle> + '_ {
         (self.world.idle_workers(side)).filter(|&h| !self.world.builds_only(h))
+    }
+
+    /// The regiment in the world the mouse is over, and whether it is an
+    /// enemy's: a visible enemy block first, else one of yours. `None` over
+    /// the HUD, while dragging a box, or off the window.
+    fn world_hover(&self) -> Option<(gc_sim::RegimentHandle, bool)> {
+        if !self.match_started
+            || self.menu_open
+            || self.input.cursor.is_none()
+            || self.input.left_down.is_some()
+            || self.sandbox.placing
+            || self.hud_wants_mouse()
+        {
+            return None;
+        }
+        let side = self.sandbox.side;
+        // A block that holds the cursor wins, yours or not; only then the
+        // looser pickers.
+        let under = self.regiment_containing_cursor();
+        let enemy_of = |h: gc_sim::RegimentHandle| {
+            (self.world.regiments.get(h)).is_some_and(|r| self.world.hostile(side, r.owner))
+        };
+        if let Some(h) = under {
+            return Some((h, enemy_of(h)));
+        }
+        (self.enemy_under_cursor().map(|h| (h, enemy_of(h))))
+            .or_else(|| self.own_regiment_at_cursor(4.0).map(|h| (h, false)))
     }
 
     /// The screen in UI pixels, as the menus see it.
@@ -673,6 +712,13 @@ impl Running {
         }
 
         let now_ms = self.now_ms();
+        let hover = self.world_hover();
+        self.hud.hover_own = hover
+            .filter(|&(_, enemy)| !enemy)
+            .map(|(h, _)| h)
+            .filter(|&h| {
+                (self.world.regiments.get(h)).is_some_and(|r| r.owner == self.sandbox.side)
+            });
         // A replay shows what happened to nobody in particular.
         if self.watching.is_some() {
             self.hud.notes.clear();
@@ -743,7 +789,8 @@ impl Running {
         let mode = self.mode_label();
         let side_name = party_name(&self.parties, side);
         let speed = format!("{}x", crate::SPEEDS[self.speed]);
-        let sky = sky_word(&self.world);
+        let gauge = self.river_watch.chip();
+        let sky = sky_word(&self.world, gauge);
         let season = season_word(&self.world);
         let status = StatusStrip {
             mode,
@@ -757,6 +804,26 @@ impl Running {
         };
         let conquest = self.conquest_match();
         let plantable = conquest && !self.plantable().is_empty();
+        // The order tabs over the selected banners, where the field has room.
+        let mut tabs: Vec<(gc_ui::Rect, UiOrder)> = Vec::new();
+        if self.ride.is_none() {
+            let field = gc_ui::hud::HudLayout::new(screen).field;
+            for &h in &self.selected {
+                let (Some(r), Some(f)) = (
+                    self.world.regiments.get(h),
+                    self.world.regiments.feedback(h),
+                ) else {
+                    continue;
+                };
+                let Some([x, y]) = project_ahead(view_proj, self.banner_top(&r), screen) else {
+                    continue;
+                };
+                let tab = gc_ui::Rect::new(x as i32 - 9, y as i32 - 18, 18, 18);
+                if field.intersect(tab) == Some(tab) {
+                    tabs.push((tab, order_of(f.doing)));
+                }
+            }
+        }
         let hud = &mut self.hud;
         // A power being aimed needs no selection, unless it shifts one (see
         // `drop_stale_power`).
@@ -841,13 +908,14 @@ impl Running {
                 models: r.models,
                 max_models: self.units.stats[r.unit as usize].models,
                 morale: r.morale_points,
-                state: match r.morale {
-                    MoraleState::Steady => CardState::Steady,
-                    MoraleState::Wavering => CardState::Wavering,
-                    MoraleState::Routing | MoraleState::Shattered => CardState::Routing,
-                },
+                state: card_state(r.morale),
                 engaged: r.engaged,
                 selected: picked(h),
+                order: self
+                    .world
+                    .regiments
+                    .feedback(h)
+                    .map_or(UiOrder::Holding, |f| order_of(f.doing)),
             });
         }
         hud.view.clear();
@@ -1072,6 +1140,28 @@ impl Running {
             hud.draw.rect(r, [120, 255, 140, 36]);
             hud.draw.border(r, 1, [170, 255, 180, 230]);
         }
+        // Over each selected regiment's banner: what it is doing.
+        for &(tab, order) in &tabs {
+            orders::draw_tab(&mut hud.draw, tab, order);
+        }
+        // The regiment the mouse rests on: its card, after the delay.
+        let hover_card = hover.and_then(|(h, enemy)| {
+            let r = self.world.regiments.get(h)?;
+            let f = self.world.regiments.feedback(h)?;
+            let stats = &self.units.stats[r.unit as usize];
+            Some(HoverCard {
+                id: u64::from(h.index) << 32 | u64::from(h.generation),
+                name: &self.units.names[r.unit as usize],
+                enemy,
+                models: r.models,
+                max_models: stats.models,
+                order: order_of(f.doing),
+                waiting: f.waiting.map(wait_of),
+                queued: r.queued,
+                state: card_state(r.morale),
+                why: f.why,
+            })
+        });
         hud.events.clear();
         let data = HudData {
             grid: &grid,
@@ -1126,6 +1216,8 @@ impl Running {
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
+        hud.hud
+            .hover_card(&mut hud.draw, screen, cursor, now_ms, hover_card.as_ref());
         self.hud.card_labels = card_labels;
         self.hud.card_details = card_details;
         self.hud.power_names = power_names;
@@ -1833,6 +1925,43 @@ fn faction_dye(f: gc_ai::Faction) -> [u8; 3] {
     [r, g, b]
 }
 
+/// What the simulation says a regiment is doing, as the UI's order.
+fn order_of(d: gc_sim::Doing) -> UiOrder {
+    use gc_sim::Doing;
+    match d {
+        Doing::Holding => UiOrder::Holding,
+        Doing::Marching => UiOrder::Marching,
+        Doing::ForcedMarch => UiOrder::ForcedMarch,
+        Doing::Attacking => UiOrder::Attacking,
+        Doing::Advancing => UiOrder::Advancing,
+        Doing::Fighting => UiOrder::Fighting,
+        Doing::Braced => UiOrder::Braced,
+        Doing::FallingBack => UiOrder::FallingBack,
+        Doing::Running => UiOrder::Running,
+    }
+}
+
+/// A regiment's morale as the UI's three states; a shattered one is routing.
+fn card_state(m: MoraleState) -> CardState {
+    match m {
+        MoraleState::Steady => CardState::Steady,
+        MoraleState::Wavering => CardState::Wavering,
+        MoraleState::Routing | MoraleState::Shattered => CardState::Routing,
+    }
+}
+
+/// What the simulation says holds a regiment up, as the UI's wait.
+fn wait_of(w: gc_sim::Waiting) -> Wait {
+    use gc_sim::Waiting;
+    match w {
+        Waiting::Pinned => Wait::Pinned,
+        Waiting::DrivenBack => Wait::DrivenBack,
+        Waiting::Reforming => Wait::Reforming,
+        Waiting::FilingThrough => Wait::FilingThrough,
+        Waiting::Trapped => Wait::Trapped,
+    }
+}
+
 /// The picture for a troop: a bow, a spear or a sword by how it fights.
 fn troop_icon(s: &gc_sim::UnitStats) -> Icon {
     if s.range.raw() > 0 {
@@ -1854,23 +1983,28 @@ fn season_word(world: &gc_sim::World) -> &'static str {
 /// daylight, else what cuts sight and range (and slows the march), e.g.
 /// "Fog: sight 40%" or "Night: sight 45%", and whether rain has turned
 /// ground to mud (docs/32-changing-land.md).
-fn sky_word(world: &gc_sim::World) -> String {
+/// `gauge` is the worst river the viewer sees, if one is out of the
+/// ordinary ([`crate::river_watch::RiverWatch::chip`]): it tells the river
+/// on a map with rivers.
+fn sky_word(world: &gc_sim::World, gauge: Option<&str>) -> String {
     let air = world.air();
     let mud = world.terrain().soaked() > 0;
     // (On its own, and after the rest.)
-    let river = if world.flood().closed() {
-        Some(("Fords flooded", "fords flooded"))
+    let river: Option<(String, String)> = if world.flood().closed() {
+        Some(("Fords flooded".into(), "fords flooded".into()))
+    } else if let Some(g) = gauge {
+        Some((crate::river_watch::capitalised(g), g.to_owned()))
     } else if world.terrain().rise() > 0 {
-        Some(("River high", "river high"))
+        Some(("River high".into(), "river high".into()))
     } else if world.flood().exposed() {
-        Some(("Low water: summer fords", "low water"))
+        Some(("Low water: summer fords".into(), "low water".into()))
     } else {
         None
     };
     if air == gc_sim::Air::CLEAR {
         return match river {
             Some((alone, _)) if mud => format!("{alone}, mud"),
-            Some((alone, _)) => alone.to_string(),
+            Some((alone, _)) => alone,
             None if mud => "Mud by the water".to_string(),
             None => String::new(),
         };
@@ -1897,7 +2031,7 @@ fn sky_word(world: &gc_sim::World) -> String {
     }
     if let Some((_, after)) = river {
         word += ", ";
-        word += after;
+        word += &after;
     }
     if mud {
         word += ", mud";
@@ -1921,7 +2055,11 @@ fn standing_word(world: &gc_sim::World, r: &gc_sim::RegimentView) -> &'static st
 /// of docs/32-changing-land.md, "Reading the ground". Empty on plain ground.
 fn ground_word(terrain: &gc_sim::Terrain, p: gc_fixed::FxVec2) -> &'static str {
     if terrain.wet(p) {
-        "In a ford: slow, no charges"
+        if terrain.deep(p) {
+            "In a river that is up: slower still, no charges"
+        } else {
+            "In a ford: slow, no charges"
+        }
     } else if terrain.rubbled(p) {
         "In rubble: slow, no charges"
     } else if terrain.soft(p) {
@@ -2069,6 +2207,13 @@ fn preview_hero(color: [u8; 3]) -> HeroPanel<'static> {
     }
 }
 
+/// Where the world point `p` appears on a screen of `screen` UI pixels;
+/// `None` when it is behind the camera.
+fn project_ahead(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> Option<[f32; 2]> {
+    let clip = view_proj * p.extend(1.0);
+    (clip.w > 1e-4).then(|| to_screen(Vec2::new(clip.x, clip.y) / clip.w, screen))
+}
+
 /// Where the ground point `p` appears on a screen of `screen` UI pixels, which
 /// may be far outside it. A point behind the camera lands on the opposite
 /// side of where it projects, so the arrow still points the right way.
@@ -2079,6 +2224,11 @@ fn project(view_proj: glam::Mat4, p: Vec3, screen: (i32, i32)) -> [f32; 2] {
     } else {
         -Vec2::new(clip.x, clip.y).normalize_or(Vec2::Y) * 1000.0
     };
+    to_screen(ndc, screen)
+}
+
+/// Normalised device coordinates as UI pixels.
+fn to_screen(ndc: Vec2, screen: (i32, i32)) -> [f32; 2] {
     [
         (ndc.x * 0.5 + 0.5) * screen.0 as f32,
         (0.5 - ndc.y * 0.5) * screen.1 as f32,
@@ -2152,6 +2302,28 @@ mod tests {
         assert!((1..=posts).contains(&marked(&conquest)));
         let lair = site_colour(Kind::CreepCamp).unwrap();
         assert!(!minimap_terrain(&conquest).colors.contains(&lair));
+    }
+
+    #[test]
+    fn the_uis_reason_bits_are_the_simulations() {
+        use gc_sim::morale as m;
+        use gc_ui::orders::why;
+        for (ui, sim) in [
+            (why::FLANK, m::WHY_FLANK),
+            (why::REAR, m::WHY_REAR),
+            (why::PINNED, m::WHY_PINNED),
+            (why::OUTNUMBERED, m::WHY_OUTNUMBERED),
+            (why::LOSSES, m::WHY_LOSSES),
+            (why::BLOODIED, m::WHY_BLOODIED),
+            (why::ALLY_BROKE, m::WHY_ALLY_BROKE),
+            (why::GENERAL, m::WHY_GENERAL),
+            (why::AMBUSH, m::WHY_AMBUSH),
+            (why::FIRE, m::WHY_FIRE),
+            (why::WATER, m::WHY_WATER),
+            (why::CHAMPION, m::WHY_CHAMPION),
+        ] {
+            assert_eq!(ui, sim);
+        }
     }
 
     #[test]
