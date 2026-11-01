@@ -82,6 +82,36 @@ impl Arena {
         });
     }
 
+    /// A hill `height` tiles high with a flat top `r` tiles round `at`,
+    /// its sides falling to the plain over `edge` tiles: steep going (a
+    /// regiment can climb it, slowly) when that is between 0.6 and 1.2
+    /// tiles of rise a tile, a cliff when steeper.
+    pub fn hill(&mut self, at: (i32, i32), r: i32, height: i32, edge: i32) {
+        self.paint().terrain.push(TerrainOp {
+            shape: Shape::Disc { at, r },
+            mode: Mode::Raise,
+            height: LAND + height * 16,
+            edge,
+        });
+    }
+
+    /// The walking grid's cost of the cell under a point (see
+    /// `gc_sim::nav`'s `BLOCKED`, `OPEN`, `STEEP` and `FORD`), the grid
+    /// built once.
+    pub fn costs(&self) -> impl Fn(FxVec2) -> u8 {
+        let map = self.map();
+        let side = map.tiles as i32 * gc_sim::nav::CELLS_PER_TILE;
+        let costs = map.nav_costs();
+        move |p| {
+            let cell = |v: Fx| {
+                (v * gc_sim::nav::CELLS_PER_TILE)
+                    .floor_int()
+                    .clamp(0, side - 1)
+            };
+            costs[(cell(p.y) * side + cell(p.x)) as usize]
+        }
+    }
+
     /// Woods: they hide regiments in them and slow the march.
     pub fn woods(&mut self, xs: Range<i32>, ys: Range<i32>) {
         self.cover(xs, ys, CoverKind::Wood);
