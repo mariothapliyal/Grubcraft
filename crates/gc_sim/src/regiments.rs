@@ -938,7 +938,10 @@ impl Regiments {
             // The column grows forward, not back into whoever follows: its
             // next steps take it on by half the added depth (but not an
             // attack column's, into the foe, nor a block turning to its
-            // way, whose depth lies across it).
+            // way, whose depth lies across it, nor one whose head would
+            // grow into a ford, which it comes out of a block at a time).
+            let deeper = formation::block_size(narrower, models, fs, rs).1 - half * 2;
+            let head = at + ahead * (half + deeper);
             let along = |t| {
                 nav.steer(i, t).is_some_and(|(w, _)| {
                     let d = w - at;
@@ -947,8 +950,11 @@ impl Regiments {
                             <= WHEEL_FULL_PACE
                 })
             };
-            if self.attack_target[i].is_none() && self.target[i].is_some_and(along) {
-                let deeper = formation::block_size(narrower, models, fs, rs).1 - half * 2;
+            if self.attack_target[i].is_none()
+                && !terrain.wet(at)
+                && !terrain.wet(head)
+                && self.target[i].is_some_and(along)
+            {
                 let owed = i32::from(self.grow[i]) + (deeper / 2).raw() / GROW_UNIT;
                 self.grow[i] = owed.clamp(0, i32::from(u8::MAX)) as u8;
             }
