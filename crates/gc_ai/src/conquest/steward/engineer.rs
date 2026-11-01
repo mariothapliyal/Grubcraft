@@ -498,7 +498,12 @@ impl Steward {
     }
 
     /// The nearest spare worker to tile `at`.
-    fn builder_at(&self, s: &Sense, look: &Look, at: (i32, i32)) -> Option<RegimentHandle> {
+    pub(super) fn builder_at(
+        &self,
+        s: &Sense,
+        look: &Look,
+        at: (i32, i32),
+    ) -> Option<RegimentHandle> {
         self.hands(s, look, false, at).flatten()
     }
 
