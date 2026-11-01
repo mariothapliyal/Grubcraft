@@ -58,7 +58,7 @@ fn run(real: &Real, report: &mut Report) {
     let mut army = west_army;
     army.extend(east_army);
     while world.tick_count() < SET_OFF {
-        world.tick(&[]);
+        report.tick(&mut world, &[]);
     }
     let rivers = world.flood().rivers();
     let flooding = rivers.fronts().any(|f| f.band() == Band::Catastrophic) && rivers.shut();

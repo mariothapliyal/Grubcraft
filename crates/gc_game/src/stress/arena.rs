@@ -277,22 +277,24 @@ pub(crate) fn spawn(
     new
 }
 
-/// Put up finished buildings of `player`'s, each (building, north-west
-/// tile, turn), all in one tick, and their handles in the same order.
 /// A Timber Bridge of `player` 0's across columns `span`, rows `rows`
-/// deep, and its tiles' handles, row by row within each column.
+/// deep, and each tile with its handle, row by row within each column.
 pub(crate) fn timber_bridge(
     real: &Real,
     world: &mut World,
     span: core::ops::RangeInclusive<i32>,
     rows: Range<i32>,
-) -> Vec<StructureHandle> {
+) -> Vec<((i32, i32), StructureHandle)> {
     let bridge = real.building("Timber Bridge");
-    let deck: Vec<_> =
-        (span.flat_map(|x| rows.clone().map(move |y| (bridge, (x, y), 0)))).collect();
-    put_up(world, 0, &deck)
+    let tiles: Vec<_> = span
+        .flat_map(|x| rows.clone().map(move |y| (x, y)))
+        .collect();
+    let deck: Vec<_> = tiles.iter().map(|&t| (bridge, t, 0)).collect();
+    tiles.into_iter().zip(put_up(world, 0, &deck)).collect()
 }
 
+/// Put up finished buildings of `player`'s, each (building, north-west
+/// tile, turn), all in one tick, and their handles in the same order.
 /// Setting up, so the tick is not timed.
 pub(crate) fn put_up(
     world: &mut World,
@@ -398,8 +400,8 @@ pub(crate) struct March {
     /// Soldiers at the start and at the end.
     pub soldiers: (u32, u32),
     /// The longest any regiment stood stuck on its way, in ticks: short of
-    /// its goal and making under [`HEADWAY`] of headway (walking in place,
-    /// or waiting its turn).
+    /// its goal and getting under [`HEADWAY`] nearer it (walking in place,
+    /// waiting its turn, or going round).
     pub stuck: u32,
     /// The limit, in seconds.
     limit: u32,
@@ -473,13 +475,12 @@ pub(crate) fn march(
     let start = soldiers(world, army);
     report.tick(world, &orders);
     each(0, world);
-    // Where each regiment last made headway from, and when.
-    let mut headway: Vec<(FxVec2, u32)> = (army.iter())
-        .map(|&r| {
-            (
-                of(world, &[r]).next().map_or(FxVec2::ZERO, |v| v.position),
-                0,
-            )
+    // How near each regiment had come to its goal when it last made
+    // headway, and when.
+    let mut headway: Vec<(Fx, u32)> = (army.iter().zip(goals))
+        .map(|(&r, g)| {
+            let at = of(world, &[r]).next().map_or(*g, |v| v.position);
+            ((*g - at).length(), 0)
         })
         .collect();
     let mut stuck = 0;
@@ -492,12 +493,13 @@ pub(crate) fn march(
         let (mut alive, mut there) = (0, 0);
         for v in of(world, army) {
             let i = army.iter().position(|&r| r == v.handle).unwrap();
-            let near = (goals[i] - v.position).length() <= NEAR;
+            let left = (goals[i] - v.position).length();
+            let near = left <= NEAR;
             alive += 1;
             there += usize::from(!v.moving && near);
             let last = &mut headway[i];
-            if near || (v.position - last.0).length() > HEADWAY {
-                *last = (v.position, t);
+            if near || left + HEADWAY < last.0 {
+                *last = (left, t);
             }
             stuck = stuck.max(t - last.1);
         }

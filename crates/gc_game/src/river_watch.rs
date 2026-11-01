@@ -370,10 +370,7 @@ mod tests {
                 flow: &flow,
             },
             champions: false,
-            sky: gc_sim::Sky {
-                spells: crate::stress::arena::SQUALL,
-                ..gc_sim::Sky::STILL
-            },
+            sky: crate::stress::arena::squall(),
             generals: false,
         })
     }
