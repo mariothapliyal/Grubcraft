@@ -1,6 +1,6 @@
 # assets-src manifest
 
-Generated 2026-10-12 right after download. SHA-256 of every file, so a later re-download can be compared. Raw Quaternius files are **not** in the repo (see docs/16): their hashes are listed here, the files live in the project's shared `assets-src/` folder.
+Generated 2026-10-12 right after download, with later downloads added in their own dated sections. SHA-256 of every downloaded file (files made in the repo, such as `models.ron`, `scenery.ron`, `buildings/*.ron` and the generated `detail/` textures, are not listed), so a later re-download can be compared. Raw Quaternius files are **not** in the repo (see docs/16): their hashes are listed here, the files live in the project's shared `assets-src/` folder.
 
 ## Licence evidence (read at download time, 2026-10-12)
 

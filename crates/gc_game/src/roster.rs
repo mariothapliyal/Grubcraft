@@ -62,7 +62,7 @@ fn field_price_percent(faction: Faction) -> u32 {
     match faction {
         Faction::EmberClans => 100,
         Faction::Brood => 128,
-        Faction::Choir => 70,
+        Faction::Choir => 78,
         Faction::CarrionConcord => 110,
     }
 }

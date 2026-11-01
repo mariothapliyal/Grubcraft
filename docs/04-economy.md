@@ -28,7 +28,7 @@ That is the entire economic HUD. Everything else is visible in the world (seep p
 - Supply costs are listed in [03 · Factions](03-factions.md#faction-design-rules). Each building's supply, with its cost, build time and hit points, is in [21 · Buildings](21-buildings.md).
 
 ### Faction meter
-One per faction (Honor, Larvae, Resonance, Tithe). See each faction.
+One per faction (Honor, Larvae, Resonance, Tithe; the Tithe is not built yet). See each faction.
 
 *Built (2026-10-17, faction depth stage 1): Brood larvae are simulated. Each Hive and Hatchery Pit holds up to 3 larvae and grows one every 12 s while it has room, at the match's tempo. The opening Hive starts full, and a Hive or Pit built from a foundation starts empty, while a tier upgrade keeps its larvae. Every Brood unit, workers included, takes a larva when it is queued, and training is refused while none is ready; calling it off gives the larva back, to whichever Hive or Pit with room holds the most. Brood regiments in one queue hatch together, in queue order: one waiting for supply holds back those behind it, and a Brood building is grown by a Gnawer that is used up at the foundation.*
 
@@ -45,7 +45,7 @@ All four economies were tuned so that a **fully developed seep produces about 20
 
 A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow per minute** (the Siphon's figure is about 40 since 2026-10-30).
 
-*Rebalanced (2026-10-30, faction rebalance PR 1): a Resonator now tunes one seep, its nearest free Grub seep within 4 tiles (one with Grub left before one run to dregs), and a Siphon one vein; tuners and nodes are paired nearest first, and a tuner that would be left idle takes a node from one that has another in reach. A tuned seep yields about 109 Grub a minute (a load of 10 every 5.5 s), down from about 200, and a tuned vein about 40 Marrow (5 every 7.5 s), down from 50. Chords add 10% to 30% (was 10% to 60%), so a large chord gives up to about 140 a minute. The Resonator costs 175 Grub (was 150) and the Choir starts with the Spire and one Resonator (was two). The Spire gives 8 supply (was 4), the Cathedral 18 (was 14) and the Grand Organ 28 (was 24), so the Choir's cap still starts at 12. Ember Clans Hands fill a load in two thirds of the time (10 Grub in 6 s, was 9 s; 5 Marrow in 8 s, was 12 s), a per-unit `gather_percent` of 150 for Hands and 100 for every other worker. With the walk unchanged that is about a fifth more income (measured +22% by minute 5), so five Hands on a seep near the hall bring in about 240 Grub a minute (was 200). The Concord starts with 300 Grub (was 400), its Caravans are paid 37 Grub plus 1.1 per tile of straight-line distance (about 81 at 40 tiles, was 40 plus 1.2), and Bone Pikes cost 110 Grub (was 90). Why: the Choir earned about 3.5 times what the Clans did and won every AI-vs-AI game, while the Clans won 8 of 96. In 192 headless AI-vs-AI Conquest games (Veteran, Ribcage Pass, seeds 1 to 8 and 101 to 108, both starts) the factions now win Ember Clans 71%, Choir 54%, Concord 39% and Brood 36%, where the Clans won 8% and the Choir 100% before. Income by minute 10 is about 3,260 Grub for the Clans, 2,090 for the Brood, 3,160 for the Choir and 2,710 for the Concord (the Choir was about 9,830). The Clans lead because their first army (450 Grub's worth) is ready at about 3:40, a minute before the others; the even early game (docs/29) is the next step, then the Brood swarm cut on top of frontage. The measuring tool is the ignored test `conquest_balance` in `gc_game`.*
+*Rebalanced (2026-10-30, faction rebalance PR 1): a Resonator now tunes one seep, its nearest free Grub seep within 4 tiles (one with Grub left before one run to dregs), and a Siphon one vein; tuners and nodes are paired nearest first, and a tuner that would be left idle takes a node from one that has another in reach. A tuned seep yields about 109 Grub a minute (a load of 10 every 5.5 s), down from about 200, and a tuned vein about 40 Marrow (5 every 7.5 s), down from 50. Chords add 10% to 30% (was 10% to 60%), so a large chord gives up to about 140 a minute. The Resonator costs 175 Grub (was 150) and the Choir starts with the Spire and one Resonator (was two). The Spire gives 8 supply (was 4), the Cathedral 18 (was 14) and the Grand Organ 28 (was 24), so the Choir's cap still starts at 12. Ember Clans Hands fill a load in two thirds of the time (10 Grub in 6 s, was 9 s; 5 Marrow in 8 s, was 12 s), a per-unit `gather_percent` of 150 for Hands and 100 for every other worker. With the walk unchanged that is about a fifth more income (measured +22% by minute 5), so five Hands on a seep near the hall bring in about 240 Grub a minute (was 200). The Concord starts with 300 Grub (was 400), its Caravans are paid 37 Grub plus 1.1 per tile of straight-line distance (about 81 at 40 tiles, was 40 plus 1.2), and Bone Pikes cost 110 Grub (was 90). Why: the Choir earned about 3.5 times what the Clans did and won every AI-vs-AI game, while the Clans won 8 of 96. In 192 headless AI-vs-AI Conquest games (Veteran, Ribcage Pass, seeds 1 to 8 and 101 to 108, both starts) the factions now win Ember Clans 71%, Choir 54%, Concord 39% and Brood 36%, where the Clans won 8% and the Choir 100% before. Income by minute 10 is about 3,260 Grub for the Clans, 2,090 for the Brood, 3,160 for the Choir and 2,710 for the Concord (the Choir was about 9,830). The Clans lead because their first army (450 Grub's worth) is ready at about 3:40, a minute before the others; the even early game (docs/29) was the next step, then the Brood swarm cut on top of frontage (both built 2026-10-31, #340 and #359). The measuring tool is the ignored test `conquest_balance` in `gc_game`.*
 
 *Built (2026-10-16, M3 step 2): workers are simulated. A worker regiment ordered to gather walks to a node, fills a load (10 Grub in 9 s, or 5 Marrow in 12 s), carries it to the nearest drop-off that takes that resource and banks it. A seep works five workers at once and a vein three; others wait beside it. A node that runs dry becomes dregs: it still gives whole loads, but each takes four times as long. In tests, five workers on a seep seven tiles from their hall bring in about 200 Grub a minute, and three on a vein about 50 Marrow a minute, so a drop-off near a seep pays. In a Conquest match with seasons, Grub fills a quarter faster in the autumn and a quarter slower in the winter ([32](32-changing-land.md#seasons-idea-7)). Nothing can be built on a seep or vein, and a worker that three times in a row gets no nearer to its node or drop-off gives up. A worker that routs goes back to work once it rallies. The Brood's Gnawers now burrow and send their loads home through root-veins (faction depth stage 2, docs/03); Choir Resonators and Siphons tune nodes with no workers since faction depth stage 3 (docs/03): at the time about 200 Grub a minute from a tuned seep and 50 Marrow from a tuned vein (rebalanced on 2026-10-30 to about 109 and 40; see Harvest rates). Concord caravans come later.*
 
@@ -64,7 +64,7 @@ A Marrow vein saturated by 3 workers (or one Siphon) yields about **50 Marrow pe
 | Grub / Marrow | 250 / 0 | 300 / 0 | 300 / 0 | 350 / 0 |
 | Supply cap | 12 | 12 | 12 | 12 |
 
-*Even early game (2026-10-30, faction rebalance PR 2): the Clans start with 250 Grub and the Concord with 350 (both were 300), so first armies come closer together. The Clans gather fastest and had their first army (450 Grub's worth) ready at about 3:40, the Choir at 4:35 and the Concord at 4:45; now they are at about 3:50, 4:30 and 4:10. The Brood's first wave (about 5:25) is set by the Brood swarm cut, which comes next.*
+*Even early game (2026-10-30, faction rebalance PR 2): the Clans start with 250 Grub and the Concord with 350 (both were 300), so first armies come closer together. The Clans gather fastest and had their first army (450 Grub's worth) ready at about 3:40, the Choir at 4:35 and the Concord at 4:45; now they are at about 3:50, 4:30 and 4:10. The Brood's first wave (about 5:25) is set by the Brood swarm cut, which came next (#359, 2026-10-31: its first army at about 6:15).*
 
 *Brood swarm (2026-10-31, faction rebalance PR 3): Gnawers fill a load in 87% of the time (`gather_percent: 115`), so a seep of five brings in about 230 Grub a minute, and Brood regiments are cheaper and weaker one by one (docs/17). In 96 headless AI-vs-AI Conquest games for each Brood pair, on the holding-until-bloodied morale rules, the Brood has about 2.3 times the Clans' soldiers by minute 10 (about 200 to 87; it was 1.5 times) and trades level (0.97 to 0.99 worth killed per worth lost). Its income by minute 10 is about 2,080 Grub, where the Clans take about 3,350, because it spends larvae on regiments rather than Gnawers. Its first army (450 worth) is ready at about 6:15 (was 5:25), well after a Clans player's first two regiments.*
 
@@ -97,11 +97,13 @@ Pacing targets at Standard tempo: first tier-2 around minute 5 to 6, first big a
 
 ## Reinforcement (Total War replenishment)
 
+*Not built yet (checked 2026-10-31): regiments never regain soldiers; a Walled Town mends wounded soldiers' hit points instead ([26](26-fortifications.md#towns)).*
+
 Regiments that lose models can **reinforce** instead of being replaced, which keeps veterans valuable:
 
 - A damaged regiment standing near a reinforcement point regains 1 model every 3 s, paying the per-model share of its original cost.
 - Reinforcement points: Clans near any Hall, Dojo or Stables; Brood anywhere on veins; Choir within a Resonator field; Concord living units near a Guildhall, undead only through Tithe.
-- **Veterancy** (3 ranks, earned by kills) survives reinforcement: +10% damage and +10 morale per rank.
+- **Veterancy** (3 ranks, earned by kills) survives reinforcement: +10% damage and 5 points off the breaking point per rank (built 2026-10-31, [05](05-combat.md#veterancy)).
 
 ## Expansion
 
@@ -113,6 +115,8 @@ Each faction expands differently, consistent with its economy:
 - **Concord:** build a Waystation, which both extends trade routes and works as a drop-off for Marrow.
 
 ## Titan Events (the living world)
+
+*Not built yet (checked 2026-10-31): no Tremor, Marrow Bloom, Heartbeat or Gut Fog in the simulation, and no lobby switch. Bloodseeps exist as map sites.*
 
 The Titan is still slightly alive. Events push players together and break stalemates. They are on by default and can be turned off in the lobby.
 
@@ -126,6 +130,8 @@ The Titan is still slightly alive. Events push players together and break stalem
 Events are deterministic (seeded by the match seed) so they work with lockstep networking and replays.
 
 ## Trading and raiding the Grubfolk
+
+*Not built yet (checked 2026-10-31), apart from hamlets as Concord caravan trade posts: no market, mercenaries, rumours or reputation.*
 
 Neutral **Grubfolk hamlets** sit near seeps across the map. Any faction can interact with them, the Concord most of all. Full detail in [07 · World and Maps](07-world-and-maps.md#grubfolk-hamlets).
 

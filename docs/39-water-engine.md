@@ -340,6 +340,18 @@ Built 2026-10-31.
 - **Tests:** `river_bridges.rs`: a jam set alight burns away and takes a slice of the deck with it.
 - *Not yet (stage 4d):* computer players clearing jams and repairing bridges; then the stress scenarios (4e).
 
+## Built: stage 4d, computer players keep their bridges standing
+
+Built 2026-11-01.
+
+- **Seeing jams:** `Rivers::jams` lists the jam against each standing pier: the tile it lies on, the bridge tile over it and its owner, its mass and whether it burns. A mind reads only its own.
+- **Clearing them** (`gc_ai::conquest::steward::bridgework`): every 5 seconds the Steward looks at its finished bridge tiles. A jam on one heavier than 3 mass (`CLEAR_JAM_ABOVE`; a natural one of 3 or less washes free when a flood falls), or on a tile under 60% of its hit points (`CLEAR_JAM_BELOW`), gets the nearest spare worker sent to Clear it, the jam on the weakest tile first, then the heaviest. A burning jam is left to burn.
+- **Mending:** failing that, a bridge tile under 75% of its hit points (`MEND_BELOW`) gets a worker sent to mend it (`Command::Construct`, as building it). The most hurt tile goes first. The AI didn't mend any building before; only bridges are mended for now. The Brood can't mend: a Gnawer is used up starting a building and can't work on a finished one.
+- A worker sent to a jam or a tile is given 30 seconds to get there before another is sent. Both choices go in the AI journal ("Debris jammed on our bridge (9 mass): sending a worker to clear it", "A bridge tile is down to 53%: sending a worker to mend it").
+- **Formats:** no sim change (`SIM_VERSION` stays 80); no golden moves.
+- **Tests:** gc_game `river_ai.rs`: on the seed-3 grown map an enemy worker tips rafts above an AI's bridge until a 9-mass jam builds, and the AI clears it within a minute; an enemy soldier then hacks a deck tile to about half, and the AI mends it to full.
+- *Not yet:* burning a jam when the bridge is lost anyway, keeping workers off a tile an enemy is still hacking at, mending buildings other than bridges, and the stress scenarios (stage 4e).
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**
@@ -367,7 +379,7 @@ Each stage updates the Guide, Quick Start, tooltips and docs/quick-reference.md 
 - **Budgets.** The engine's state is a few dozen stretches, a floodplain list built once and 48 pieces. The tick work is per stretch once a second and per piece per tick. The `field-8000pt` heap is tight (about 7.95 of 8 MB), but that map has no flow layer, so nothing is allocated there. The bench gate and conquest-6p laying budget are checked each stage.
 - **Grid churn.** Floodplain and ford groups switch with a margin, at most twice per flood each, as today's groups do.
 - **Readability.** Every effect has a message, a gauge or a drawn sign before it hits, and the forecast comes from the same numbers the simulation uses.
-- **Balance.** Dumping must not become the best use of Grub. The pool share, the 20 Grub price and the jam chances are the knobs; the arena runs check it once the minds use it.
+- **Balance.** Dumping must not become the best use of Grub. The pool share, the 12 Grub price and the jam chances are the knobs; the arena runs check it once the minds use it.
 - **Fairness up and down the river.** Grown maps are turned copies of one half, so every player has the same rivers above them as their opponent. Six-player maps and hand-made maps get checked when stage 3 lands: dumping must not belong to whoever happens to start upstream.
 - **The walkable grid's cost.** Each switch re-blocks every side's grid, and cutting an area off can renumber it. Batching each second's switches into one call keeps that to a few per flood, and the no-allocation-in-tick test is run on a flood each stage.
 - **Order with the bridge thread.** Stage 4 needs pier levels; until they land, every pier is level 1 and the levels are added in one line.

@@ -1,6 +1,6 @@
 # 36 · Habitat ground
 
-Each of a grown map's 19 habitats ([27 · Living land](27-living-land.md)) now
+Each of a grown map's habitats (19 at first, 23 since gravel bars, reed beds, beaches and trails, 2026-10-31) ([27 · Living land](27-living-land.md)) now
 has ground of its own, not just a tint by land: bog with pools of black water,
 sodden mud under alders, drifts of flowers in a meadow, purple heather,
 gravel on a scree, crazed crust and combed ripples of bone dust in the waste,
@@ -87,5 +87,3 @@ sampled textures, which the raised device limit allows
 
 - Edges blend by ragged cutoff, not by a true weight between two patterns.
 - Habitats on painted maps (the Wilds), which have none.
-- Scenery's own use of the habitat (placing models by habitat is Living Land
-  stage 4's other half).
