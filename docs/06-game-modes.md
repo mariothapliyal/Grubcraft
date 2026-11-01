@@ -21,9 +21,9 @@ Two modes at launch, and a third, the **Campaign**, planned to follow. All of th
 *Built (2026-10-30, grown land): Conquest's made maps also come on grown land (Living Land), **Land: Random, Plains, Mixed and Wild**, at the same sizes, and a new Conquest lobby starts on Land: Random. Rivers, fords, currents, flash floods and the water engine now reach Conquest. The Classic maps stay in the list. Details: [41 · Step 1 as built](41-finish-living-land.md#step-1-as-built).*
 
 ### Flow of a match
-1. **Lobby:** map, teams, factions, colours, Tempo, victory conditions, Titan Events on/off.
+1. **Lobby:** map, teams, factions, colours, Tempo, victory conditions, Titan Events on/off (not built yet).
 2. **Opening (0 to 5 min):** workers out, first structures, scout, first regiments. Creep a camp with your hero.
-3. **Mid game (5 to 20 min):** tier 2, expand to the natural, contest Marrow and Shrines, trade or raid hamlets, first big clash. Titan's first Tremor opens a Bloodseep.
+3. **Mid game (5 to 20 min):** tier 2, expand to the natural, contest Marrow and Shrines, trade or raid hamlets, first big clash. Titan's first Tremor opens a Bloodseep (Titan Events are not built yet).
 4. **Late game (20 min +):** tier 3 monsters and ultimates, upkeep pressure, the Titan's Heart becomes the decisive objective.
 
 ### Victory conditions (lobby options, both on by default)
@@ -35,16 +35,16 @@ Two modes at launch, and a third, the **Campaign**, planned to follow. All of th
 *Built (2026-10-17, Conquest step 5b): **fog of war.** A Conquest match played for a victory is played in fog. Each regiment sees 32 tiles round it (an archer's reach and a little more) and each building as far as its role allows (main building 32, outpost 28, tower 36, wall 8, the rest 20), edge to edge, and allies share what they see. An enemy regiment out of every friendly regiment's and building's sight isn't drawn and can't be targeted; woods and tall grass still hide regiments within sight, as in a Field Battle, and buildings spot into them as regiments do. Coming into sight is no surprise: only cover springs an ambush. An enemy building appears, on the field and the minimap, once your side has seen it, and stays known after that; your regiments can only be sent to attack a building your side has seen. The ground you can't see now is drawn darker, and ground you have never seen darker still. Not yet: remembering a building as it was last seen (for now it shows as it stands), ridges and slopes that block sight, scouts that see further, and a fog setting for Field Battles.*
 
 Optional:
-- **Regicide:** each player's first hero is their "lord". Lose your lord permanently (no revive) and you lose. Short, brutal, very Shogun.
+- **Regicide:** each player's first hero is their "lord". Lose your lord permanently (no revive) and you lose. Short, brutal, very Shogun. *Not built yet (needs heroes).*
 - **Score limit:** first to N points from kills, structures and Shrines held. For a fixed 30-minute evening game.
 
 ### Teams
-- Allies share vision and can trade resources (with a 10% tax), and the Concord can run caravans to allied main buildings.
+- Allies share vision and can trade resources (with a 10% tax; not built yet), and the Concord can run caravans to allied main buildings (built).
 - Allied victory: a team wins together.
-- Any slot can be an **AI player**, as an opponent or a teammate, with a difficulty and a personality. AI allies answer pings and ping back. See [18 · AI](18-ai.md).
+- Any slot can be an **AI player**, as an opponent or a teammate, with a difficulty and a personality. AI allies answer pings and ping back (pings are not built yet). See [18 · AI](18-ai.md).
 
 ### Surrender and leaving
-- Surrender is a vote in team games, instant in FFA. A surrendered player's structures crumble over 30 s (the Concord can still collect tithes from the collapse, of course).
+- Surrender is a vote in team games, instant in FFA (not built yet). A surrendered player's structures crumble over 30 s (the Concord can still collect tithes from the collapse, of course).
 - A disconnected player's units hold position and defend themselves; their ally can take shared control, or (a later lobby option) an AI runs their army until they rejoin. See [11 · Networking](11-networking.md#disconnects-and-rejoining) for rejoining.
 
 ## Field Battle
@@ -53,7 +53,7 @@ The Total War experience in a 10-minute bite: two or more armies, one battlefiel
 
 ### Flow
 1. **Lobby:** map, teams, factions, **points budget** (Skirmish 2,000 · Battle 4,000 · Grand Battle 8,000), time limit, weather/time-of-day preset, and **Champions before AI battles** (on by default).
-2. **Army builder (2 min):** spend points on regiments, one to three heroes (hero levels cost points), and upgrades. Saved army lists can be loaded with one click; the builder shows faction presets for newcomers ("Balanced", "Aggressive", "Defensive").
+2. **Army builder (2 min):** spend points on regiments, one to three heroes (hero levels cost points), and upgrades. Saved army lists can be loaded with one click; the builder shows faction presets for newcomers ("Balanced", "Aggressive", "Defensive"; only Balanced, as **Pick for me**, is built).
 3. **Deployment (90 s):** place regiments inside your deployment zone. You can see the terrain, not the enemy (unless a Field Battle option reveals deployments). Drag to place, drag to set frontage, exactly like battle orders.
 4. **Battle:** fight until victory or time.
 
@@ -61,6 +61,7 @@ The Total War experience in a 10-minute bite: two or more armies, one battlefiel
 - **Rout:** an army whose regiments are all routed, shattered or dead loses.
 - **Victory points:** some maps have 1 to 3 capture points; holding the majority when time expires wins.
 - **Time limit:** default 20 min, then victory points, then remaining point value decides.
+- *Built so far:* neither victory points nor a time limit exist yet. A Field Battle is won by **holding the field**: the first side with fighting regiments left and no enemy fighting regiments in its sight for 10 seconds wins (`gc_sim/src/verdict.rs`), which covers the rout rule above.
 
 ### Field Battle extras
 - **Pause** (team-voted in multiplayer, free in solo sandbox). Giving orders while paused is allowed only in solo.

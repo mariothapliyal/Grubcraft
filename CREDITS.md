@@ -56,6 +56,7 @@ If we change either model, say so in the credit ("adapted from ..."). The battle
 | Ultimate Monsters, Easy Enemy Pack, LowPoly RPG Characters, Ultimate Modular Men | Quaternius (quaternius.com) | https://quaternius.com/packs |
 | Universal Animation Library 1 and 2 (the Ember Clans' sword, katana and spear moves, retargeted for Grubcraft) | Quaternius, animation with Gonzalo Furnier | https://quaternius.itch.io/universal-animation-library |
 | Ground 054, Grass 001, Rock 035 textures (Rock 035 used for the in-game terrain rock) | ambientCG (ambientcg.com) | https://ambientcg.com |
+| Bark 001, Bark 014 and Moss 002 textures (bark, leaves and moss on the scenery) | ambientCG (ambientcg.com) | https://ambientcg.com |
 | Voice Clip Pack - Male Adventurer RPG (Ember Clans battle cries) | wolfwoot / 2DPIXX | https://opengameart.org/content/voice-clip-pack-male-adventurer-rpg |
 | Zombie / Skeleton / Monster Voice Effects (Carrion Concord and Ember Clans battle cries) | ArcadeParty / Snabisch | https://opengameart.org/content/zombie-skeleton-monster-voice-effects |
 | Ghost Monster Voice Moaning & Growling, Insect or alien scream (Carrion Concord and Brood battle cries) | qubodup | https://opengameart.org/content/ghost-monster-voice-moaning-growling |

@@ -114,14 +114,14 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
   - **Ride Down** · passive — +50% damage to routing regiments. [ModifyStat]
   - **Wedge** · toggle — Wedge formation: +30 charge bonus, −10 melee defence. [ModifyStat]
 - **Yabusame Riders** (new)
-  - **Parthian Shot** · passive — Can loose volleys while moving, at 75% accuracy; skirmishes by default. [ModifyStat]
+  - **Parthian Shot** · passive — Can loose volleys while moving, at 75% accuracy; skirmishes by default (the Skirmish order is not built yet). [ModifyStat]
 - **Ember Rocket Cart**
   - **Rocket Salvo** · passive — Each volley bursts over a 3-tile radius and can hit friends. [Damage, AreaPulse]
   - **Screaming Fire** · passive — Regiments hit lose 4 extra morale per salvo. [ModifyMorale]
   - *Flags: friendly fire. Cannot fire at targets closer than 10 tiles (proposed min range).*
 - **War Kite**
   - **Fire Pots** · passive — Its drops set structures burning (3 damage a second for 5 s). [ApplyStatus]
-  - **High Watch** · passive — Sees 18 tiles instead of the usual 12. [Reveal]
+  - **High Watch** · passive — Sees 18 tiles instead of the usual 12. [Reveal] *(Not built; every regiment sees 32 tiles in fog of war today, `gc_sim::vision::SIGHT`.)*
   - *Flags: flying, anti-air.*
 - **Oni-Bound**
   - **Terror** · aura · radius 10 — Enemy regiments within 10 tiles lose 1 morale a second; a regiment it charges loses 10. [ModifyMorale]
@@ -173,7 +173,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 
 ## 2 · The Brood
 
-A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (signature): a tier-1 regiment cocoons for 15 s on the battlefield (it cannot move or fight, and takes +25% damage) and emerges as one of its two tier-2 forms, paying the evolution cost below. Survivors carry over in proportion (a half-strength Skitterlings regiment becomes a half-strength Spitters regiment), and veterancy is kept. Evolving needs a Chrysalis Chamber. **Swarm instinct**: Brood regiments lose 30% less morale from casualties but 50% more when a nearby hero dies.
+A swarm that changes shape mid-battle and feeds on the dead. *Metamorphosis is not built yet (checked 2026-10-31): Field Battles can buy the evolved forms, Conquest cannot raise them.* **Metamorphosis** (signature): a tier-1 regiment cocoons for 15 s on the battlefield (it cannot move or fight, and takes +25% damage) and emerges as one of its two tier-2 forms, paying the evolution cost below. Survivors carry over in proportion (a half-strength Skitterlings regiment becomes a half-strength Spitters regiment), and veterancy is kept. Evolving needs a Chrysalis Chamber. **Swarm instinct**: Brood regiments lose 30% less morale from casualties but 50% more when a nearby hero dies.
 
 ### Regiments
 
@@ -354,7 +354,7 @@ The Choir has no summoned units.
 
 ## 4 · The Carrion Concord
 
-Merchant-necromancers: cheap undead that never break, beside living specialists that do. **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub.
+Merchant-necromancers: cheap undead that never break, beside living specialists that do. **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Not built yet: undead never rout, but they don't crumble, and there is no Tithe.*
 
 ### Regiments
 
@@ -399,7 +399,7 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
   - **Undead** · passive — As above. [ModifyMorale]
   - *Flags: undead.*
 - **Debt Collectors**
-  - **Repossess** · passive — Every 2 damage dealt to a structure steals 1 Grub. [Economy]
+  - **Repossess** · passive — Every 2 damage dealt to a structure steals 1 Grub. [Economy] *(Not built yet.)*
   - *Living riders on undead horses: they rout.*
 - **Lantern Wraiths**
   - **Dread Light** · aura · radius 8 — Enemy regiments lose 1.5 morale a second. [ModifyMorale]
@@ -421,6 +421,8 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
 *Built (2026-10-17, faction depth stage 6):* caravans. In `data/rosters/carrion_concord.ron` the Caravan has `trade: Some((base: 37, per_tile_tenths: 11))` (was 40 and 12 until 2026-10-30) (a unit's pay for a delivery: the base in Grub and tenths of a Grub for each whole tile of straight line between its post and its main building), which the baker writes as `trade_base` and `trade_tenths` in the Conquest unit table (CONQUEST_UNIT_SCHEMA is 5; the two are both zero or both nonzero, and `trades()` is true when they aren't); the simulation reads only that, never the faction. The Waystation has the `TradePost` flag (building flag 256; a building's flags are now 16 bits, BUILDING_SCHEMA 7, and loading refuses unknown flags and a non-zero pad), which makes it a trade post for its owner's caravans at half rate. The Counting House, Exchange, Grand Bourse and Waystation have `DropOffMarrow` and no `DropOffGrub`, so the Concord's Clerks mine Marrow only, and Grub comes by caravan: 37 + 1.1 a tile, half at a Waystation, full at a neutral hamlet or an ally's main building (which gains 20% of it). The Strongbox is the simulation's own rule for any unit that trades. Tests: `tools/gc_bake/tests/` (the Caravan and Waystation bake as above, and only they), `crates/gc_sim/tests/caravans.rs`. See [03 · Factions](03-factions.md#economy-trade-routes-and-tithes).
 
 ### Tithe contracts (meter 0 to 250)
+
+*Not built yet (checked 2026-10-31).*
 
 | Contract | Tithe | T | Cooldown | Effect |
 |---|---|---|---|---|

@@ -65,9 +65,21 @@ From the Every Soldier Fights study ([28](28-soldier-combat.md), concept page [E
 | # | Decision | What was decided | Where it lands |
 |---|---|---|---|
 | 29 | **How to build individual soldier combat** | Option B, duels in the simulation, is the official plan and is built when the project resumes; option C, every soldier simulated, is a later stage (Mario, 2026-10-23). Option A, look only, was not chosen | [28 · The three ways](28-soldier-combat.md#the-three-ways-and-the-decision) |
-| 30 | **Where the fighting moves come from** | Open. Recommended: Mixamo (Mario downloads) plus Blender, a bought melee pack later if swordplay still looks stiff; never moves from other games | [28 · The fight library](28-soldier-combat.md#the-fight-library-and-where-moves-come-from) |
-| 31 | **Blood** | Open. Recommended: stylised, tapestry-like splashes by default, full as a setting | [28 · Build stages](28-soldier-combat.md#build-stages) |
-| 32 | **What first when the project resumes** | Open. Recommended: the scrum (stage 1, on screen) and then duels in the sim (stage 2) straight after | [28 · Build stages](28-soldier-combat.md#build-stages) |
+| 30 | **Where the fighting moves come from** | Settled in the build (2026-10-24): Quaternius's Universal Animation Library 1 and 2 (CC0) retargeted for the Ember Clans' sword, katana and spear moves, and moves made for Grubcraft for the Brood, riders and other rigs of their own ([CREDITS](../CREDITS.md)); Mixamo or a bought pack stays open if swordplay still looks stiff; never moves from other games | [28 · The fight library](28-soldier-combat.md#the-fight-library-and-where-moves-come-from) |
+| 31 | **Blood** | Stylised splashes by default, Full blood as a setting. **Built 2026-10-24** (#286) | [28 · Build stages](28-soldier-combat.md#build-stages) |
+| 32 | **What first when the project resumes** | The scrum (stage 1, on screen), then duels in the sim (stage 2) straight after. **Both built 2026-10-24** | [28 · Build stages](28-soldier-combat.md#build-stages) |
+
+## The second restart (decided 2026-10-30)
+
+Mario's calls on the restart items of [29 · Restart plan](29-restart-plan.md), 2026-10-30 (go at 11:08 UTC).
+
+| # | Decision | What was decided | Where it lands |
+|---|---|---|---|
+| 33 | **How battles play** | Eight changes approved: unit spacing, frontage, a balance tournament, an even early game, charges by weight and speed, responsive orders, clear feedback and smarter computer generals. Two more were dropped: a travel-distance economy and fatigue. Charges and smarter generals wait until frontage and the morale redesign have landed (both merged 2026-10-31) | [29 · How battles play](29-restart-plan.md#how-battles-play-eight-changes-in-brief) |
+| 34 | **Ideas not taken up** | Supply lines, faction signature rules, learning replays and named commanders were proposed and not approved | |
+| 35 | **Morale** | Regiments hold until they are cut down to a breaking point below half strength (holding until bloodied). **Built 2026-10-31** | [29 · Holding until bloodied](29-restart-plan.md#holding-until-bloodied-in-brief) |
+| 36 | **Faction rebalance** | Fair economies, the Clans gathering about 20% faster, and the Brood a swarm of cheap, weak soldiers. **Built 2026-10-30 to 2026-10-31**; the Clans ended at `gather_percent: 125` once the passes after frontage were measured | [29 · Faction rebalance](29-restart-plan.md#faction-rebalance-in-brief) |
+| 37 | **Dynamic bridges and the water engine** | Drawn timber bridges with curves, widths and upgrades, curved walls, and a water engine whose debris strikes and jams bridges. **Built to water engine stage 4c, 2026-10-31** | [29 · Dynamic bridges](29-restart-plan.md#dynamic-bridges-in-brief), [39](39-water-engine.md) |
 
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?
