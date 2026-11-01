@@ -32,11 +32,8 @@ const REGIMENTS: usize = 11;
 const LEAST: u32 = 200;
 const LIMIT_SECONDS: u32 = 180;
 /// The longest any regiment may stand stuck on its way: walking in place,
-/// or waiting its turn at the bridgehead. The plan's mark is 10 s; the
-/// two armies share the deck rather than keeping to a side, and one
-/// regiment waits a little longer than that at the bridgehead (see
-/// docs/39, stage 4e).
-const STALL_SECONDS: u32 = 15;
+/// or waiting its turn at the bridgehead (docs/39's mark).
+const STALL_SECONDS: u32 = 10;
 
 fn run(real: &Real, report: &mut Report) {
     let mut arena = Arena::new(TILES);
