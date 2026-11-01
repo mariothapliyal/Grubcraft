@@ -346,13 +346,15 @@ impl Events {
     }
 
     /// Tell what the tick just played did. `consumed` are the workers used
-    /// up by the buildings they started.
+    /// up by the buildings they started, `left` the shattered regiments
+    /// that left the field: gone, but not killed.
     pub(crate) fn after(
         &mut self,
         regs: &Regiments,
         combat: &Combat,
         ambushes: &[Ambush],
         consumed: &[(RegimentHandle, StructureHandle)],
+        left: &[RegimentHandle],
     ) {
         let list = &mut self.list;
         list.extend(
@@ -376,7 +378,9 @@ impl Events {
             };
             // Gone: wiped out, or used up.
             let still = regs.alive[i] && regs.generation[i] == b.generation;
-            if !still && consumed.iter().any(|&(w, _)| w == regiment) {
+            if !still
+                && (consumed.iter().any(|&(w, _)| w == regiment) || left.contains(&regiment))
+            {
                 continue;
             }
             let models = if still { regs.models[i] } else { 0 };
