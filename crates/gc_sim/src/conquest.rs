@@ -217,6 +217,9 @@ pub(crate) struct Conquest {
     pub(crate) manning: crate::manning::Manning,
     /// Regiments planting stakes (see [`crate::fieldworks`]).
     pub(crate) planting: Vec<crate::fieldworks::Planting>,
+    /// Shattered regiments that left the field this tick (see
+    /// [`Conquest::see_off_shattered`]).
+    pub(crate) left: Vec<crate::RegimentHandle>,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -249,6 +252,7 @@ impl Conquest {
             blueprints: Blueprints::default(),
             manning: crate::manning::Manning::new(setup.structures as usize),
             planting: Vec::new(),
+            left: Vec::with_capacity(regiments),
         }
     }
 
@@ -904,14 +908,35 @@ impl Conquest {
             || self.clearing.job_of(regs, r).is_some()
     }
 
+    /// Shattered regiments that have got clear of the enemy leave the field
+    /// for good, as men who have given up go home, and free their supply
+    /// (see [`crate::morale`]): standing on the map forever, they filled
+    /// whole armies' supply in long matches.
+    /// Those that left this tick are in [`Conquest::left`], so the events
+    /// don't tell them as killed.
+    pub(crate) fn see_off_shattered(&mut self, regs: &mut Regiments) {
+        self.left.clear();
+        for i in 0..regs.alive.len() {
+            if regs.alive[i] && crate::morale::gone_home(regs, i) {
+                self.left.push(regs.handle(i));
+                self.remove(i, regs);
+            }
+        }
+    }
+
+    /// Regiment slot `i` leaves the field, its jobs and loads with it.
+    fn remove(&mut self, i: usize, regs: &mut Regiments) {
+        self.stop_work(i);
+        self.economy.forget(i);
+        regs.despawn(regs.handle(i));
+    }
+
     /// The parties in `out` leave the field: their regiments, then their
     /// buildings.
     pub(crate) fn eliminate(&mut self, out: u8, regs: &mut Regiments, nav: &mut Nav) {
         for i in 0..regs.alive.len() {
             if regs.alive[i] && out & (1 << regs.owner[i]) != 0 {
-                self.stop_work(i);
-                self.economy.forget(i);
-                regs.despawn(regs.handle(i));
+                self.remove(i, regs);
             }
         }
         let gone: Vec<StructureHandle> = (self.structures.iter())

@@ -31,8 +31,9 @@
 //! nearby and heartens the enemies who broke it. After [`RALLY_SECONDS`]
 //! with no enemy near, it rallies, wavering. A regiment that routs again
 //! within [`SHATTER_SECONDS`] is *shattered*: it runs, then stands where it
-//! stops and never takes orders again (later it will recover at a friendly
-//! structure). Regiments whose unit has a morale stat of 0 never rout.
+//! stops and never takes orders again; in Conquest it leaves the field
+//! then, and its supply is free again (see [`gone_home`]). Regiments whose
+//! unit has a morale stat of 0 never rout.
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
@@ -380,6 +381,17 @@ fn local_strength(
     (friends, enemies)
 }
 
+/// Whether regiment `i` is shattered and has run [`RALLY_SECONDS`] with no
+/// enemy near: done with the war.
+pub(crate) fn gone_home(regs: &Regiments, i: usize) -> bool {
+    regs.morale_state[i] == MoraleState::Shattered && clear_long_enough(regs, i)
+}
+
+/// Whether broken regiment `i` has run [`RALLY_SECONDS`] with no enemy near.
+fn clear_long_enough(regs: &Regiments, i: usize) -> bool {
+    u32::from(regs.rout_clock[i]) >= RALLY_SECONDS * TICKS_PER_SECOND
+}
+
 /// Regiment `i` gains `points` of morale at once (a champion's win), or
 /// loses them if negative (an ambush), down to no less than a tenth of a
 /// point: its own next check decides whether it breaks, and a gain may go
@@ -549,7 +561,7 @@ fn flee(
         regs.rout_clock[i] = 0;
     } else {
         regs.rout_clock[i] = regs.rout_clock[i].saturating_add(TICKS_PER_SECOND as u16);
-        if u32::from(regs.rout_clock[i]) >= RALLY_SECONDS * TICKS_PER_SECOND {
+        if clear_long_enough(regs, i) {
             regs.target[i] = None;
             if regs.morale_state[i] == MoraleState::Routing {
                 // Rally: wavering, with a little heart back.

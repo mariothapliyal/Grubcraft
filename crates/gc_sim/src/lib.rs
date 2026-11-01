@@ -131,7 +131,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 83;
+pub const SIM_VERSION: u32 = 84;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1953,6 +1953,7 @@ impl World {
             self.map_tiles,
         );
         if let Some(c) = &mut self.conquest {
+            c.see_off_shattered(&mut self.regiments);
             c.honor
                 .earn(&c.meters, &c.structures, &self.regiments, self.tick);
         }
@@ -1976,15 +1977,15 @@ impl World {
             self.tick,
         );
         if !self.scratch {
-            let consumed = self
-                .conquest
-                .as_ref()
-                .map_or(&[][..], |c| &c.structures.consumed[..]);
+            let (consumed, left) = self.conquest.as_ref().map_or((&[][..], &[][..]), |c| {
+                (&c.structures.consumed[..], &c.left[..])
+            });
             self.events.after(
                 &self.regiments,
                 &self.combat,
                 self.vision.ambushes(),
                 consumed,
+                left,
             );
             if let Some(conquest) = &self.conquest {
                 let s = &conquest.structures;

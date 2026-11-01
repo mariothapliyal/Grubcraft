@@ -13,12 +13,17 @@ const SPEARS: u16 = 0;
 const SKITTERS: u16 = 1;
 
 fn world_with(units: &[UnitStats]) -> World {
+    world_on(units, &[])
+}
+
+/// The same, on `nav` (open plane if empty).
+fn world_on(units: &[UnitStats], nav: &[u8]) -> World {
     World::new(&MatchSetup {
         seed: 23,
         capacities: Capacities::default(),
         units,
         map_tiles: 256,
-        nav: &[],
+        nav,
         teams: &[],
         ground: gc_sim::Ground::FLAT,
         champions: false,
@@ -142,17 +147,12 @@ fn routers_rally_once_the_enemy_is_gone() {
     assert!(until(&mut w, skitters, MoraleState::Steady, 20 * 30).is_some());
 }
 
-#[test]
-fn routing_twice_shatters_a_regiment() {
-    // Tougher skitterlings, so the second fight lasts long enough to break
-    // them again rather than wipe them out.
-    let mut units = DRILL_UNITS;
-    units[SKITTERS as usize].hp_per_model = 24;
-    let mut w = world_with(&units);
-    let (spears, skitters) = losing_fight(&mut w);
-    until(&mut w, skitters, MoraleState::Routing, 20 * 120).unwrap();
-    assert!(order(&mut w, 0, spears, 200, 200));
-    until(&mut w, skitters, MoraleState::Wavering, 20 * 60).unwrap();
+/// Skitterlings routed twice by spearmen in `w`: shattered.
+fn shatter(w: &mut World) -> (RegimentHandle, RegimentHandle) {
+    let (spears, skitters) = losing_fight(w);
+    until(w, skitters, MoraleState::Routing, 20 * 120).unwrap();
+    assert!(order(w, 0, spears, 200, 200));
+    until(w, skitters, MoraleState::Wavering, 20 * 60).unwrap();
     // Straight back into the fight while still shaken.
     let stats = w.tick(&[PlayerCommand {
         player: 0,
@@ -162,9 +162,25 @@ fn routing_twice_shatters_a_regiment() {
         },
     }]);
     assert_eq!(stats.commands_applied, 1);
-    assert!(until(&mut w, skitters, MoraleState::Shattered, 20 * 90).is_some());
+    assert!(until(w, skitters, MoraleState::Shattered, 20 * 90).is_some());
+    (spears, skitters)
+}
+
+/// Tougher skitterlings, so the second fight lasts long enough to break
+/// them again rather than wipe them out.
+fn tough_skitters() -> [UnitStats; DRILL_UNITS.len()] {
+    let mut units = DRILL_UNITS;
+    units[SKITTERS as usize].hp_per_model = 24;
+    units
+}
+
+#[test]
+fn routing_twice_shatters_a_regiment() {
+    let mut w = world_with(&tough_skitters());
+    let (spears, skitters) = shatter(&mut w);
     assert!(!order(&mut w, 1, skitters, 60, 60));
-    // No rally from shattered, even with the enemy gone.
+    // No rally from shattered, even with the enemy gone; in a Field Battle
+    // it stays on the field.
     assert!(order(&mut w, 0, spears, 20, 20) || w.regiments.get(spears).is_none());
     for _ in 0..20 * 30 {
         w.tick(&[]);
@@ -172,6 +188,49 @@ fn routing_twice_shatters_a_regiment() {
     if let Some(r) = w.regiments.get(skitters) {
         assert_eq!(r.morale, MoraleState::Shattered);
     }
+}
+
+/// In Conquest a shattered regiment leaves the field once the enemy is
+/// gone, so it no longer takes up supply.
+#[test]
+fn in_conquest_a_shattered_regiment_leaves_the_field() {
+    // Conquest wants a map: all open ground.
+    let side = 256 * gc_sim::nav::CELLS_PER_TILE as usize;
+    let mut w = world_on(&tough_skitters(), &vec![1; side * side]);
+    let hall = gc_sim::structures::BuildingStats {
+        role: gc_sim::structures::Role::Main,
+        tier: 1,
+        upgrades_from: None,
+        cost_grub: 400,
+        cost_marrow: 0,
+        build_ticks: 500,
+        hp: 3000,
+        armour: gc_sim::structures::Armour::Fortified,
+        width: 5,
+        depth: 5,
+        supply: 15,
+        flags: 0,
+        attack: None,
+        field: 0,
+        tunes: None,
+        links: 0,
+        twist: gc_sim::structures::WallTwist::None,
+        trap: gc_sim::structures::Trap::None,
+    };
+    assert!(w.conquest(&gc_sim::ConquestSetup {
+        buildings: &[hall],
+        ..gc_sim::ConquestSetup::default()
+    }));
+    let (spears, skitters) = shatter(&mut w);
+    assert!(order(&mut w, 0, spears, 20, 20) || w.regiments.get(spears).is_none());
+    for _ in 0..20 * 30 {
+        w.tick(&[]);
+    }
+    assert!(
+        w.regiments.get(skitters).is_none(),
+        "{:?}",
+        state(&w, skitters)
+    );
 }
 
 /// Hit from behind, a regiment's nerve goes faster than hit in front (it
