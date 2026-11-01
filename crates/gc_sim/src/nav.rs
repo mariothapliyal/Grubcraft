@@ -1395,8 +1395,13 @@ impl Nav {
             let area = Some(g.area.get(c as usize));
             // In plain sight of it, so never the plateau above a cliff
             // beside it or the ravine below.
+            // The nearest where the whole block fits, so it isn't strung
+            // out in a file along the foot of a cliff; else the nearest.
             let flat = |n: u32| g.ground[n as usize] != STEEP && g.line_open(c, n, &mut 0);
-            if let Some(n) = g.nearest_open_where(c, area, SNAP_STEEP, work, flat) {
+            let roomy = |n: u32| g.clear[n as usize] >= berth && flat(n);
+            if let Some(n) = (g.nearest_open_where(c, area, SNAP_STEEP, work, roomy))
+                .or_else(|| g.nearest_open_where(c, area, SNAP_STEEP, work, flat))
+            {
                 c = n;
             }
         }

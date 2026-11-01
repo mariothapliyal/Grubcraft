@@ -1550,12 +1550,10 @@ impl Regiments {
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
-                // Narrowed to a column in tight ground (a ford, a pass, a
-                // gate's mouth) it queues instead (below); in a fight it
-                // keeps to its foe, friends beside it or not.
+                // In tight ground (a ford, a pass) it queues instead (below);
+                // in a fight it keeps to its foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
-                let narrowed = self.files[i] < self.frontage[i].clamp(1, self.models[i].max(1));
-                let aside = if ghost || (tight && narrowed) || self.engaged[i].is_some() {
+                let aside = if ghost || tight || self.engaged[i].is_some() {
                     Fx::ZERO
                 } else if self.apart(i) > 0 {
                     self.set_apart(i, self.apart(i) - 1);
@@ -1609,11 +1607,28 @@ impl Regiments {
                             && self.stepped(j)
                     };
                     match found {
+                        Ok(j)
+                            if following(j)
+                                && (self.attack_target[i].is_some()
+                                    || [here, next, self.position[j]]
+                                        .into_iter()
+                                        .any(|p| terrain.wet(p))) =>
+                        {
+                            // Waiting its turn: in or into a ford's wading queue
+                            // (where a block pressing on would be pushed
+                            // off into deep water), and in a column going
+                            // in to attack, which comes on to the fight a
+                            // block at a time.
+                            self.held[i] = self.held[i].max(1);
+                            self.clear[i] = RECHECK - 1;
+                            continue;
+                        }
                         Ok(j) if following(j) => {
-                            // Trailing it: on at half pace this tick and
-                            // full the next (when it doesn't look), so the
-                            // column keeps moving instead of standing and
-                            // starting, and falls back off its heels.
+                            // Marching on behind it: trailing at half pace
+                            // this tick and full the next (when it doesn't
+                            // look), so the column keeps moving instead of
+                            // standing and starting, and falls back off its
+                            // heels.
                             (arriving, next) = advance(step / 2);
                             self.clear[i] = 1;
                         }
