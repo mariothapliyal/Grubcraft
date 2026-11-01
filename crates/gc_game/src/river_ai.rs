@@ -6,7 +6,6 @@
 
 use gc_ai::Difficulty;
 use gc_data::Faction;
-use gc_sim::structures::Role;
 use gc_sim::{Command, PlayerCommand, TICKS_PER_SECOND, World};
 use gc_ui::lobby::Tempo;
 
@@ -34,13 +33,7 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
     minds.add(game.mind(0, Difficulty::Veteran, 0, None));
     game.open(&mut world, World::tick);
     let worker = Kit::of(&real.data, &real.table, SIDES[0]).worker;
-    let bridge = (0..real.data.buildings.len())
-        .find(|&i| {
-            real.data.buildings[i].faction() == SIDES[0]
-                && real.table.stats[i].role == Role::Bridge
-                && real.table.stats[i].upgrades_from.is_none()
-        })
-        .unwrap() as u16;
+    let bridge = real.building("Timber Bridge");
     // The bridge, the mind's.
     let decks: Vec<_> = BRIDGE_X
         .map(|x| PlayerCommand {
@@ -80,7 +73,6 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
     let full: u32 = hp(&world).iter().sum();
     let mut cmds = Vec::new();
     let (mut most_jam, mut lowest) = (0u8, full);
-    let mut hacked = false;
     let mut hacker = None;
     let fighter = Kit::of(&real.data, &real.table, SIDES[1]).fighter;
     let end = 4 * 60 * TICKS_PER_SECOND;
@@ -127,11 +119,9 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
                 },
             });
         }
-        if !hacked
-            && deck.is_some_and(|d| d.1 < 60)
-            && let Some(hacker) = hacker
+        if deck.is_some_and(|d| d.1 < 60)
+            && let Some(hacker) = hacker.take()
         {
-            hacked = true;
             cmds.push(PlayerCommand {
                 player: 1,
                 command: Command::MoveTo {

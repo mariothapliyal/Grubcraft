@@ -227,9 +227,7 @@ impl Realm {
         sense.focus = self.sovereign.focus.map(|(o, _)| o);
         sense.push = self.sovereign.push;
         self.clicks.refresh(sense.now);
-        self.steward
-            .think(&sense, &mut self.clicks, self.marshal.rally);
-        for note in self.steward.take_notes() {
+        if let Some(note) = (self.steward).think(&sense, &mut self.clicks, self.marshal.rally) {
             captain.journal.note(sense.now, note);
         }
         self.clicks.release(sense.now, out);

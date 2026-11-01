@@ -35,7 +35,7 @@ const SERVE: f32 = 22.0;
 /// Ticks a lay may take to show on the field before it is tried again.
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
-const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
+pub(super) const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
 /// The longest an opening's building still to go up comes before arming.
 const OPENING_HOLD: u32 = 120 * TICKS_PER_SECOND;
 /// Regiments queued per production building.
@@ -176,6 +176,10 @@ impl Mine {
     fn at(&self) -> Vec2 {
         v2(self.view.centre())
     }
+    /// Its hit points left, percent.
+    fn hp_percent(&self) -> u32 {
+        self.view.hp * 100 / self.view.max_hp.max(1)
+    }
     fn takes(&self, r: Resource) -> bool {
         self.stats.flags & r.drop_off() != 0
     }
@@ -234,15 +238,13 @@ impl Steward {
     }
 
     /// Look and give the economy's orders, sending what it trains to
-    /// `rally`.
-    pub fn think(&mut self, s: &Sense, clicks: &mut Clicks, rally: Option<Vec2>) {
+    /// `rally`. What it decided worth a line in the journal, if anything.
+    pub fn think(&mut self, s: &Sense, clicks: &mut Clicks, rally: Option<Vec2>) -> Option<String> {
         if s.now < self.next_think {
-            return;
+            return None;
         }
         self.next_think = s.now + THINK_TICKS;
-        let Some(look) = self.look(s) else {
-            return;
-        };
+        let look = self.look(s)?;
         if self.home.is_none() {
             self.home = look
                 .mine
@@ -276,7 +278,7 @@ impl Steward {
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
-        self.tend_bridges(s, clicks, &look);
+        let note = self.tend_bridges(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
         // money it has goes on them first; but an opening's building still
         // due comes first, or arming would spend what it saves for it.
@@ -301,6 +303,7 @@ impl Steward {
         if let Some(rally) = rally {
             self.rally(s, clicks, &look, rally);
         }
+        note
     }
 
     fn look<'a>(&self, s: &Sense<'a>) -> Option<Look<'a>> {
