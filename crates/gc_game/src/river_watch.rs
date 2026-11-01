@@ -320,28 +320,8 @@ mod tests {
     /// A 128-tile map with one river running east off it along rows
     /// 60 to 67, a ford at columns 100 to 103, and a storm ten seconds in.
     fn river_world(seed: u64) -> gc_sim::World {
-        use gc_sim::sky::{Spell, Weather, WeatherKind};
         const MAP: i32 = 128;
         const WATER: u16 = 256;
-        static STORM: [Spell; 3] = [
-            Spell {
-                at: 0,
-                weather: Weather::FAIR,
-            },
-            Spell {
-                at: 10 * gc_sim::TICKS_PER_SECOND,
-                weather: Weather {
-                    kind: WeatherKind::Rain,
-                    strength: 255,
-                    cloud: 255,
-                    wind: (0, 0),
-                },
-            },
-            Spell {
-                at: 20 * gc_sim::TICKS_PER_SECOND,
-                weather: Weather::FAIR,
-            },
-        ];
         let river = |y: i32| (60..68).contains(&y);
         let ford = |x: i32| (100..104).contains(&x);
         let heights: Vec<u16> = (0..MAP * MAP)
@@ -390,10 +370,7 @@ mod tests {
                 flow: &flow,
             },
             champions: false,
-            sky: gc_sim::Sky {
-                spells: &STORM,
-                ..gc_sim::Sky::STILL
-            },
+            sky: crate::stress::arena::squall(),
             generals: false,
         })
     }
