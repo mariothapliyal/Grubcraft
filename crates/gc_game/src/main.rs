@@ -248,15 +248,6 @@ const TICK: Duration = Duration::from_millis(1000 / gc_sim::TICKS_PER_SECOND as 
 const HUMAN: PlayerId = 0;
 /// The news tells of debris striking our troops at most this often.
 const DEBRIS_NEWS_SECONDS: u32 = 10;
-/// The fastest ground may climb (tiles of rise a tile) from a block's
-/// centre to where one of its soldiers stands: the steepest a regiment
-/// walks (`gc_map::map::CLIFF_RISE_PER_TILE`, 1.2), and a step more for
-/// the ground's tile-sized heights. A soldier whose slot lies on steeper
-/// ground (a cliff top beside the column, a ravine) stands nearer his
-/// centre instead.
-const SOLDIER_CLIMB: f32 = 1.2;
-const SOLDIER_STEP: f32 = 0.75;
-const HEIGHT_UNITS: f32 = gc_sim::terrain::HEIGHT_UNITS as f32;
 /// The news tells of debris jamming on our bridges at most this often.
 const JAM_NEWS_SECONDS: u32 = 30;
 
@@ -3789,20 +3780,23 @@ impl Running {
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment of theirs could walk (an
-        // open gate is ground to them; a shut one is wall), and on ground
-        // that climbs from their block's centre no faster than a regiment
-        // could: not up a cliff face onto the plateau beside a column
-        // marching under it, nor down into the ravine below.
+        // open gate is ground to them; a shut one is wall), and in plain
+        // walking line of their block's centre: not up a cliff face onto
+        // the plateau beside a column marching under it, nor down into the
+        // ravine below, nor behind a wall the block stands beside.
         let nav = self.world.nav();
-        let terrain = self.world.terrain();
         let firm = |owner, centre: Vec2| {
-            let at = |p: Vec2| terrain.height(fx_vec(p)) as f32 / HEIGHT_UNITS;
-            let base = at(centre);
+            // Ground in plain sight of the block's centre (not up a cliff
+            // or down a ravine beside it), unless the centre itself is off
+            // firm ground (wading out of a flood): then any firm ground.
+            let centre = fx_vec(centre);
+            let sighted = nav.standable(owner, centre);
             move |p: Vec2| {
-                nav.standable(owner, fx_vec(p))
-                    && (at(p) - base).abs() <= SOLDIER_CLIMB * (p - centre).length() + SOLDIER_STEP
+                let p = fx_vec(p);
+                nav.standable(owner, p) && (!sighted || nav.clear_line(owner, centre, p))
             }
         };
+        let terrain = self.world.terrain();
         // Soldiers on a finished bridge stand on its deck. Most maps have
         // none, and then this is one test of an empty list.
         let deck = |p: Vec2| {

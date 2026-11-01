@@ -1,4 +1,4 @@
-//! Big armies through narrow gaps: 48 regiments, about nine hundred
+//! Big armies through narrow gaps: 48 regiments, over nine hundred
 //! soldiers, through one Gate, and 16 regiments over a two-lane bridge.
 //! Each measures how the crowd flows: when the first and last regiment
 //! are through, the soldiers through a second while the gap is busy, and
@@ -54,8 +54,10 @@ fn flow(
     at: FxVec2,
     limit: u32,
     through: impl Fn(FxVec2) -> bool,
-) -> Flow {
-    let orders: Vec<_> = (army.iter().zip(goals)).map(|(&r, &g)| move_to(0, r, g)).collect();
+) {
+    let orders: Vec<_> = (army.iter().zip(goals))
+        .map(|(&r, &g)| move_to(0, r, g))
+        .collect();
     let total = soldiers(world, army);
     report.tick(world, &orders);
     let mut f = Flow::default();
@@ -66,6 +68,7 @@ fn flow(
         let mut crowd = 0;
         for (k, v) in of(world, army).enumerate() {
             alive += 1;
+            let was = core::mem::replace(&mut last[k], v.position);
             f.disorder += u32::from(v.disorder > 0);
             if through(v.position) {
                 across += usize::from(!v.moving);
@@ -77,33 +80,17 @@ fn flow(
             if d.x.abs().floor_int() < MOUTH && d.y.abs().floor_int() < MOUTH {
                 crowd += 1;
             }
-            if v.moving && last.get(k) == Some(&v.position) {
+            if v.moving && was == v.position {
                 f.stuck += 1;
             }
         }
         f.crowd = f.crowd.max(crowd);
-        if std::env::var("TRACE").is_ok() && t % (2 * TICKS_PER_SECOND) == 0 {
-            let mut rows = vec![vec![b'.'; 128]; 128];
-            for (k, v) in of(world, army).enumerate() {
-                let (x, y) = (v.position.x.floor_int(), v.position.y.floor_int());
-                if (0..128).contains(&x) && (0..128).contains(&y) {
-                    let c = if !v.moving { b'o' } else if last.get(k) == Some(&v.position) { b'X' } else if v.disorder > 0 { b'0' + (v.files as u8).min(9) } else { b'a' + (v.files as u8).min(25) };
-                    rows[y as usize][x as usize] = c;
-                }
-            }
-            println!("t={}s", t / TICKS_PER_SECOND);
-            let (ax, ay) = (at.x.floor_int(), at.y.floor_int());
-            for y in (ay - 20).max(0)..(ay + 20).min(128) {
-                println!("{}", String::from_utf8_lossy(&rows[y as usize][(ax - 40).max(0) as usize..(ax + 40).min(128) as usize]));
-            }
-        }
         if men * 10 >= total {
             f.tenth.get_or_insert(t);
         }
         if men * 10 >= total * 9 {
             f.nine_tenths.get_or_insert(t);
         }
-        last = of(world, army).map(|v| v.position).collect();
         if alive > 0 && across == alive {
             f.done = Some(t);
             break;
@@ -118,7 +105,10 @@ fn flow(
         }
         _ => 0.0,
     };
-    report.metric("soldiers through a second, while busy", format!("{rate:.1}"));
+    report.metric(
+        "soldiers through a second, while busy",
+        format!("{rate:.1}"),
+    );
     report.metric(
         "regiment-seconds stuck before the gap",
         format!("{:.1}", f.stuck as f32 / TICKS_PER_SECOND as f32),
@@ -133,7 +123,6 @@ fn flow(
         f.done.is_some(),
     );
     report.check("no soldier lost", soldiers(world, army) == total);
-    f
 }
 
 const GATE_TILES: u32 = 128;
@@ -163,7 +152,7 @@ fn gate(real: &Real, report: &mut Report) {
     let placed: Vec<_> = (0..48).map(|i| (kinds[i % 8], at(76, i))).collect();
     let army = spawn(&mut world, 0, &placed, WEST);
     let goals: Vec<_> = (0..48).map(|i| at(8, i)).collect();
-    let f = flow(
+    flow(
         &mut world,
         report,
         &army,
@@ -172,7 +161,6 @@ fn gate(real: &Real, report: &mut Report) {
         GATE_LIMIT,
         |p| p.y.floor_int() < WALL_ROW - 1,
     );
-    let _ = f;
 }
 
 const BRIDGE_TILES: u32 = 96;
@@ -207,5 +195,4 @@ fn bridge(real: &Real, report: &mut Report) {
         BRIDGE_LIMIT,
         |p| p.x.floor_int() > RIVER.end + 3,
     );
-    let _ = WEST;
 }

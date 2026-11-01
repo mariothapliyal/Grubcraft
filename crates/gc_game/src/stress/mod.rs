@@ -28,6 +28,7 @@ mod crossing;
 mod forest;
 mod forest_pass;
 mod gate;
+mod mountain;
 mod orders;
 mod town;
 mod walls;
@@ -65,6 +66,7 @@ const SCENARIOS: &[Scenario] = &[
     town::SCENARIO,
     big_army::GATE,
     big_army::BRIDGE,
+    mountain::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

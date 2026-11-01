@@ -968,7 +968,11 @@ impl Match {
                 self.plan(p, b, w, out);
             } else if side.planned && !side.raised && !self.walling(p, w) {
                 self.raise(p, b, w, out);
-            } else if side.raised && !side.manning && !self.walling(p, w) {
+            }
+            // Its soldiers man the wall once it has risen, whatever the
+            // worker is still about, so it happens before the march
+            // however long the raising takes.
+            if side.raised && !side.manning {
                 self.man(p, out);
             }
             let on_wall = |r: RegimentView| r.owner == p && r.on_wall;

@@ -888,24 +888,30 @@ impl Regiments {
         // `CLEAR_CAP`).
         let room = (!nav.open_around(self.owner[i], self.position[i], reach_tiles)).then(|| {
             let half = formation::block_size(files, models, fs, rs).1 / 2;
+            let reach = Fx::from_int(reach_tiles);
             let here = nav.room_across(
                 self.owner[i],
                 self.position[i],
                 self.facing[i],
-                Fx::from_int(reach_tiles),
+                reach,
                 &[half + look, half, Fx::ZERO, -half],
             );
             // A narrows its route turns into just ahead (a gate, a
             // bridge's deck): it narrows to fit on the way up to it, so it
             // files in as a column instead of jamming the mouth broadside.
-            let ahead = (self.target[i]).and_then(|t| nav.steer(i, t)).filter(|&(w, _)| {
-                let d = w - self.position[i];
-                d.x.abs() < NARROWS_AHEAD && d.y.abs() < NARROWS_AHEAD
-            });
-            ahead.map_or(here, |(w, _)| {
-                let way = Angle::of_vec(w - self.position[i]);
-                here.min(nav.half_width_across(self.owner[i], w, way, Fx::from_int(reach_tiles)))
-            })
+            // (Open all round there, it is no narrows.)
+            let ahead = (self.target[i])
+                .and_then(|t| nav.steer(i, t))
+                .and_then(|(w, _)| {
+                    let d = w - self.position[i];
+                    // (On it, there is no telling which way is across.)
+                    let near =
+                        d != FxVec2::ZERO && d.x.abs() < NARROWS_AHEAD && d.y.abs() < NARROWS_AHEAD;
+                    let narrows = near && !nav.open_around(self.owner[i], w, reach_tiles);
+                    narrows
+                        .then(|| nav.half_width_across(self.owner[i], w, Angle::of_vec(d), reach))
+                });
+            ahead.map_or(here, |width| here.min(width))
         });
         let fits = |f: u16, spare: Fx| room.is_none_or(|room| outer(f) + spare <= room);
         let fit = (1..=frontage)
@@ -1544,8 +1550,9 @@ impl Regiments {
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
-                // In tight ground (a ford, a pass) it queues instead (below);
-                // in a fight it keeps to its foe, friends beside it or not.
+                // Narrowed to a column in tight ground (a ford, a pass, a
+                // gate's mouth) it queues instead (below); in a fight it
+                // keeps to its foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
                 let narrowed = self.files[i] < self.frontage[i].clamp(1, self.models[i].max(1));
                 let aside = if ghost || (tight && narrowed) || self.engaged[i].is_some() {
@@ -1566,8 +1573,11 @@ impl Regiments {
                 };
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
-                let mut arriving = dist <= step;
-                let mut next = if arriving { point } else { here + dir * step };
+                let advance = |s: Fx| {
+                    let arriving = dist <= s;
+                    (arriving, if arriving { point } else { here + dir * s })
+                };
+                let (mut arriving, mut next) = advance(step);
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
                 // behind it. In the open, blocks still pass through.
@@ -1604,9 +1614,7 @@ impl Regiments {
                             // full the next (when it doesn't look), so the
                             // column keeps moving instead of standing and
                             // starting, and falls back off its heels.
-                            let trail = Fx::from_raw(step.raw() / 2);
-                            arriving = dist <= trail;
-                            next = if arriving { point } else { here + dir * trail };
+                            (arriving, next) = advance(step / 2);
                             self.clear[i] = 1;
                         }
                         Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {

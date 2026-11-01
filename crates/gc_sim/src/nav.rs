@@ -1126,20 +1126,25 @@ impl Queue {
 
     /// Take `i` out of the queue, keeping the others' order.
     fn remove(&mut self, i: usize) {
-        if !self.queued[i] {
-            return;
+        if self.queued[i] {
+            self.retain(|j| j != i);
         }
+    }
+
+    /// Keep only those `keep` says to, oldest first, in their order.
+    fn retain(&mut self, mut keep: impl FnMut(usize) -> bool) {
         let cap = self.slots.len();
         let mut kept = 0;
         for k in 0..self.len {
-            let s = self.slots[(self.head + k) % cap];
-            if s as usize != i {
-                self.slots[(self.head + kept) % cap] = s;
+            let j = self.slots[(self.head + k) % cap];
+            if keep(j as usize) {
+                self.slots[(self.head + kept) % cap] = j;
                 kept += 1;
+            } else {
+                self.queued[j as usize] = false;
             }
         }
         self.len = kept;
-        self.queued[i] = false;
     }
 }
 
@@ -1281,9 +1286,8 @@ impl Nav {
         reach: Fx,
         lines: &[Fx],
     ) -> Fx {
-        self.room_each_side(party, centre, facing, reach, lines)
-            .into_iter()
-            .fold(reach, Fx::min)
+        let [right, left] = self.room_each_side(party, centre, facing, reach, lines, true);
+        right.min(left)
     }
 
     /// Half the width of the ground across `p` square to `facing`, out to
@@ -1291,13 +1295,20 @@ impl Nav {
     /// right and to the left. What a block passing through there in its
     /// middle has either side of its centre (a gate, a bridge's deck),
     /// wherever on that line `p` lies.
-    pub(crate) fn half_width_across(&self, party: PlayerId, p: FxVec2, facing: Angle, reach: Fx) -> Fx {
-        let [right, left] = self.room_each_side(party, p, facing, reach, &[Fx::ZERO]);
-        Fx::from_raw((right.raw() + left.raw()) / 2)
+    pub(crate) fn half_width_across(
+        &self,
+        party: PlayerId,
+        p: FxVec2,
+        facing: Angle,
+        reach: Fx,
+    ) -> Fx {
+        let [right, left] = self.room_each_side(party, p, facing, reach, &[Fx::ZERO], false);
+        (right + left) / 2
     }
 
     /// [`Nav::room_across`] on the right and on the left, each the least
-    /// along the lines.
+    /// along the lines. `least`: only the least of the two is wanted, so
+    /// neither side looks further than the other has room.
     fn room_each_side(
         &self,
         party: PlayerId,
@@ -1305,6 +1316,7 @@ impl Nav {
         facing: Angle,
         reach: Fx,
         lines: &[Fx],
+        least: bool,
     ) -> [Fx; 2] {
         let Some(g) = self.grid_of(party) else {
             return [reach; 2];
@@ -1328,13 +1340,13 @@ impl Nav {
             if clear_at(base) == 0 {
                 continue;
             }
-            for (room, side) in room.iter_mut().zip([right, FxVec2::ZERO - right]) {
+            for (k, side) in [right, FxVec2::ZERO - right].into_iter().enumerate() {
                 let mut d = quarter;
-                while d < *room {
+                while d < if least { room[0].min(room[1]) } else { room[k] } {
                     let clear = clear_at(base + side * d);
                     if clear == 0 {
                         // The edge lies somewhere in the last quarter.
-                        *room = d - quarter;
+                        room[k] = d - quarter;
                         break;
                     }
                     // Every point within `clear - 1` cells of this one is
@@ -1378,17 +1390,22 @@ impl Nav {
         // Not on a mountain's steep face: no block stands in order on
         // it. The nearest ground that isn't steep (the summit's top, the
         // foot of the slope or a ledge), if there is some near.
-        let mut off_steep = false;
+        let open = c;
         if g.ground[c as usize] == STEEP {
             let area = Some(g.area.get(c as usize));
-            let flat = |n: u32| g.ground[n as usize] != STEEP;
+            // In plain sight of it, so never the plateau above a cliff
+            // beside it or the ravine below.
+            let flat = |n: u32| g.ground[n as usize] != STEEP && g.line_open(c, n, &mut 0);
             if let Some(n) = g.nearest_open_where(c, area, SNAP_STEEP, work, flat) {
-                (c, off_steep) = (n, true);
+                c = n;
             }
         }
         match g.fitting(c, berth, work) {
+            // Not back onto the face it was moved off.
+            Some(fit) if c != open && g.ground[fit as usize] == STEEP => g.centre(c),
             Some(fit) if fit != g.cell_at(p) => g.centre(fit),
-            None if off_steep => g.centre(c),
+            // Moved off a steep face, though it doesn't fit there.
+            None if c != open => g.centre(c),
             _ => p,
         }
     }
@@ -1626,14 +1643,15 @@ impl Nav {
 
     /// Regiment slot `i` has just been given a route: lend it to those of
     /// its side still standing for a search of their own, ordered from
-    /// near where it stands to near where it is going (a group given its
-    /// orders at once), so they set off at once behind it instead of
+    /// near where it stands to near where it is going (within
+    /// [`LEND_REACH`] and a quarter of the route's length: a group given
+    /// its orders at once), so they set off at once behind it instead of
     /// waiting their turn. Each walks the lent waypoints while its own
     /// search waits ([`Route::Rerouting`]), behind those still standing:
     /// a hundred regiments ordered across the map all march on the next
     /// tick, and the search budget only puts their own routes right. Only
-    /// to one whose way to the route's first waypoint is clear, on the
-    /// same grid, with no wider a berth than the route keeps.
+    /// to the same player's, whose way to the route's first waypoint is clear,
+    /// with no wider a berth than the route keeps.
     fn lend(&mut self, i: usize, regs: &Regiments, units: &[UnitStats]) {
         if self.queue.len == 0 {
             return;
@@ -1641,61 +1659,52 @@ impl Nav {
         let Some(grid) = grid_for(&self.grids, &self.view, regs.owner[i]) else {
             return;
         };
+        let (from, to) = (regs.position[i], self.goal[i]);
+        // Near, against how far the route goes: a quarter of the way at
+        // most, so a short walk is never sent off along a route that
+        // starts or ends somewhere else.
+        let trip = to - from;
+        let reach = LEND_REACH.min(trip.x.abs().max(trip.y.abs()) / 4);
         let near = |a: FxVec2, b: FxVec2| {
             let d = a - b;
-            d.x.abs() < LEND_REACH && d.y.abs() < LEND_REACH
+            d.x.abs() < reach && d.y.abs() < reach
         };
-        let (from, to) = (regs.position[i], self.goal[i]);
         let berth = regs.berth(units, i);
         let first = self.way[i * MAX_WAYPOINTS];
-        let view = self.view[usize::from(regs.owner[i])];
-        let len = usize::from(self.way_len[i]);
-        let (cap, head) = (self.queue.slots.len(), self.queue.head);
-        let mut lent = 0;
-        for k in 0..self.queue.len {
-            let j = self.queue.slots[(head + k) % cap] as usize;
-            let (Some(t), true) = (regs.target[j], self.route[j] == Route::Waiting) else {
-                continue;
+        let (owner, len) = (regs.owner[i], usize::from(self.way_len[i]));
+        // Those lent the route wait for their own behind the rest, in the
+        // order they were queued.
+        self.queue.retain(|j| {
+            let Some(t) = regs.target[j].filter(|_| self.route[j] == Route::Waiting) else {
+                return true;
             };
-            if self.view[usize::from(regs.owner[j])] != view
+            if regs.owner[j] != owner
                 || !near(regs.position[j], from)
                 || !near(t, to)
                 || regs.berth(units, j) > berth
-                || !grid.segment_within(regs.position[j], first, CLEARANCE, u8::MAX, &mut self.search.work)
+                || !grid.segment_within(
+                    regs.position[j],
+                    first,
+                    CLEARANCE,
+                    u8::MAX,
+                    &mut self.search.work,
+                )
             {
-                continue;
+                return true;
             }
-            self.way.copy_within(i * MAX_WAYPOINTS..i * MAX_WAYPOINTS + len, j * MAX_WAYPOINTS);
+            self.way.copy_within(
+                i * MAX_WAYPOINTS..i * MAX_WAYPOINTS + len,
+                j * MAX_WAYPOINTS,
+            );
             self.way_len[j] = len as u8;
             self.way_next[j] = 0;
             // Never its end: its own search puts it right first.
             self.partial[j] = true;
             self.goal[j] = t;
             self.route[j] = Route::Rerouting;
-            lent += 1;
-        }
-        if lent == 0 {
-            return;
-        }
-        // Those lent the route wait for their own behind the rest, in the
-        // order they were queued.
-        for k in 0..self.queue.len {
-            let j = self.queue.slots[(head + k) % cap] as usize;
-            if self.route[j] == Route::Rerouting {
-                self.later.push(j);
-            }
-        }
-        let mut kept = 0;
-        for k in 0..self.queue.len {
-            let j = self.queue.slots[(head + k) % cap];
-            if self.route[j as usize] == Route::Rerouting {
-                self.queue.queued[j as usize] = false;
-            } else {
-                self.queue.slots[(head + kept) % cap] = j;
-                kept += 1;
-            }
-        }
-        self.queue.len = kept;
+            self.later.push(j);
+            false
+        });
     }
 
     /// Where regiment slot `i` should walk now on its way to `target`, and

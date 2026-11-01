@@ -330,8 +330,28 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
 }
 
 fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
-    let per_player = opts.per_player.unwrap_or(30);
-    storm(opts, nav, MAP_TILES, 4, per_player, &BUDGETS, STORM_WAIT_BUDGET)
+    // Each player's regiments stand in a block in their corner.
+    let near = MAP_TILES as i32 / 8;
+    let far = MAP_TILES as i32 - near;
+    let corner = |player: u8| {
+        (
+            if player & 1 == 0 { near } else { far },
+            if player & 2 == 0 { near } else { far },
+        )
+    };
+    storm(
+        opts,
+        nav,
+        &Storm {
+            name: "pathing-storm",
+            tiles: MAP_TILES,
+            players: 4,
+            per_player: opts.per_player.unwrap_or(30),
+            corner: &corner,
+            budgets: &BUDGETS,
+            wait_budget: STORM_WAIT_BUDGET,
+        },
+    )
 }
 
 /// The pathing storm on the biggest map: six players' regiments, each
@@ -339,48 +359,50 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
 /// side in the same tick. Held to the big-map budgets.
 fn big_storm(opts: &Options) -> bool {
     let nav = opts.nav(CONQUEST_TILES);
-    let per_player = opts.per_player.unwrap_or(60);
+    // The drill's corners: four, then the middle of two edges.
+    let mut drill = Drill::new(opts.seed);
+    drill.map_tiles = CONQUEST_TILES as i32;
     storm(
         opts,
         &nav,
-        CONQUEST_TILES,
-        6,
-        per_player,
-        &BIG_MAP_BUDGETS,
-        BIG_STORM_WAIT_BUDGET,
+        &Storm {
+            name: "big-storm",
+            tiles: CONQUEST_TILES,
+            players: 6,
+            per_player: opts.per_player.unwrap_or(60),
+            corner: &|player| drill.corner(player),
+            budgets: &BIG_MAP_BUDGETS,
+            wait_budget: BIG_STORM_WAIT_BUDGET,
+        },
     )
 }
 
-/// `players` x `per_player` regiments on a `tiles`-tile map, each player's
-/// standing in a block, all ordered across the map in the same tick; the
-/// last regiment must have its route within `wait_budget` ticks.
-fn storm(
-    opts: &Options,
-    nav: &[u8],
+/// A pathing storm: `players` x `per_player` regiments on a `tiles`-tile
+/// map, each player's standing in a block about its `corner`, all ordered
+/// across the map in the same tick; the last regiment must have its route
+/// within `wait_budget` ticks.
+struct Storm<'a> {
+    name: &'a str,
     tiles: u32,
     players: u8,
     per_player: u32,
-    budgets: &Budgets,
+    corner: &'a dyn Fn(u8) -> (i32, i32),
+    budgets: &'a Budgets,
     wait_budget: u32,
-) -> bool {
+}
+
+fn storm(opts: &Options, nav: &[u8], storm: &Storm) -> bool {
+    let &Storm {
+        name,
+        tiles,
+        players,
+        per_player,
+        corner,
+        budgets,
+        wait_budget,
+    } = storm;
     let ticks = opts.ticks.unwrap_or(1_200);
     let mut world = new_world(opts.seed, per_player * u32::from(players), nav, tiles);
-    // Each player's regiments stand in a block in their corner (the
-    // drill's corners: four, then the middle of two edges)...
-    let mut drill = Drill::new(opts.seed);
-    drill.map_tiles = tiles as i32;
-    let corner = |player: u8| {
-        if players == 4 {
-            let near = tiles as i32 / 8;
-            let far = tiles as i32 - near;
-            (
-                if player & 1 == 0 { near } else { far },
-                if player & 2 == 0 { near } else { far },
-            )
-        } else {
-            drill.corner(player)
-        }
-    };
     // ...and the far one: across the middle.
     let opposite = |player: u8| {
         let (x, y) = corner(player);
@@ -434,8 +456,7 @@ fn storm(
     let wait = wait.unwrap_or(u32::MAX);
     let stood = stood.unwrap_or(u32::MAX);
     println!(
-        "scenario     {}, {} regiments ordered across the {tiles}-tile map at once, {ticks} ticks",
-        if players == 4 { "pathing-storm" } else { "big-storm" },
+        "scenario     {name}, {} regiments ordered across the {tiles}-tile map at once, {ticks} ticks",
         per_player * u32::from(players)
     );
     println!(
