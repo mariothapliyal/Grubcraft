@@ -105,6 +105,8 @@ const CLEAR_TICKS: u8 = 8;
 /// Ticks between steps of narrowing (see [`Regiments::squeeze`]), and
 /// between widening by a file once there is room again.
 const SQUEEZE_TICKS: u8 = 2;
+/// `grow` counts in sixteenths of a tile (raw fixed point).
+const GROW_UNIT: i32 = Fx::ONE.raw() / 16;
 const WIDEN_TICKS: u8 = 6;
 /// Room kept between a squeezed block's outermost soldiers and blocked
 /// ground, in tiles.
@@ -264,6 +266,10 @@ regiment_fields! {
     frontage: u16 = 0,
     /// Ticks until it re-forms by another file, squeezing or widening.
     reform: u8 = 0,
+    /// How far its column still grows forward after narrowing, in
+    /// sixteenths of a tile (see [`Regiments::squeeze`]): added to its
+    /// next steps.
+    grow: u8 = 0,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
     /// Soldiers still standing.
@@ -927,15 +933,13 @@ impl Regiments {
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
             let narrower = files - (files - fit).div_ceil(2);
-            // Grow the column forward, not back into whoever follows (but
-            // not an attack column, into the foe).
+            // The column grows forward, not back into whoever follows: its
+            // next steps take it on by half the added depth (but not an
+            // attack column's, into the foe).
             if marching && self.attack_target[i].is_none() {
-                let depth = |f: u16| formation::block_size(f, models, fs, rs).1;
-                let grow = (depth(narrower) - depth(files)) / 2;
-                let to = self.position[i] + self.facing[i].to_vec() * grow;
-                if nav.slide(owner, self.position[i], to) == Some(to) {
-                    self.position[i] = to;
-                }
+                let deeper = formation::block_size(narrower, models, fs, rs).1 - half * 2;
+                let owed = i32::from(self.grow[i]) + (deeper / 2).raw() / GROW_UNIT;
+                self.grow[i] = owed.clamp(0, i32::from(u8::MAX)) as u8;
             }
             self.files[i] = narrower;
             self.reform[i] = SQUEEZE_TICKS;
@@ -1564,6 +1568,17 @@ impl Regiments {
                 } else {
                     crate::combat::pushing(step, self.crowd[i])
                 };
+                // A column still growing forward after narrowing steps on
+                // further, as far as the crowd check allows.
+                let step = if self.grow[i] > 0 && !shuffle {
+                    let owed = Fx::from_raw(i32::from(self.grow[i]) * GROW_UNIT);
+                    let more = owed.min(combat.max_step() - step).max(Fx::ZERO);
+                    let used = (more.raw() + GROW_UNIT - 1) / GROW_UNIT;
+                    self.grow[i] = (i32::from(self.grow[i]) - used).max(0) as u8;
+                    step + more
+                } else {
+                    step
+                };
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
@@ -1677,6 +1692,7 @@ impl Regiments {
                     if last {
                         self.target[i] = None;
                         self.falling_back[i] = 0;
+                        self.grow[i] = 0;
                     } else {
                         nav.reached(i);
                     }
