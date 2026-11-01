@@ -58,15 +58,23 @@ fn run(real: &Real, report: &mut Report) {
         &on_slope,
         LIMIT_SECONDS,
         |_, w| {
-            stood = of(w, &army).map(|v| (v.position, v.moving)).collect();
+            stood = of(w, &army)
+                .map(|v| (v.position, v.moving, v.files < v.frontage.min(v.models)))
+                .collect();
         },
     );
-    let still = stood.iter().filter(|(_, moving)| !moving).count();
-    let on_steep = stood.iter().filter(|(p, _)| cost(*p) == STEEP).count();
+    let still = stood.iter().filter(|(_, moving, _)| !moving).count();
+    let on_steep = stood.iter().filter(|(p, _, _)| cost(*p) == STEEP).count();
     report.metric(
         "standing on steep ground at the end",
         format!("{on_steep}/8"),
     );
+    let narrowed = stood.iter().filter(|(_, _, narrow)| *narrow).count();
+    report.metric("standing narrowed at the end", format!("{narrowed}/8"));
     report.check("every regiment stops", still == 8);
+    report.check(
+        "every regiment stands at its full width, not strung out",
+        narrowed == 0,
+    );
     report.check("no regiment stands on the steep slope", on_steep == 0);
 }
