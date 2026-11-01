@@ -2,7 +2,9 @@
 //! each Field Battle recipe, at both sizes, of the Wilds at each
 //! wildness and three sizes (and made for Conquest at two), of each
 //! Conquest recipe at each size, and of every kind of campaign battle
-//! map, through the checker. When a recipe is tuned, the build also looks at a few by hand,
+//! map, through the checker. The two slowest sweeps check fewer seeds and
+//! sizes on a pull request; `SWEEP=1` runs them in full, as the batched
+//! checks (.github/workflows/batch.yml) do. When a recipe is tuned, the build also looks at a few by hand,
 //! with `gc_mapcheck gen RECIPE SIZE SEED OUT.ron` (or `gc_mapcheck
 //! battle`), `gc_mapcheck check` and `gc_mapcheck png`.
 
@@ -69,13 +71,16 @@ fn every_wilds_map_passes_the_checker() {
 }
 
 /// Every grown map (Living Land), at every wildness and size from small
-/// to large, passes the checker and has room for all its sites.
+/// to large, passes the checker and has room for all its sites. A pull
+/// request checks one seed of each; the batched checks sweep four
+/// (`SWEEP=1`, .github/workflows/batch.yml).
 #[test]
 fn every_grown_map_passes_the_checker() {
+    let seeds = if sweep() { 4 } else { 1 };
     let jobs: Vec<(Wildness, i32, u64, Fairness)> = Wildness::ALL
         .into_iter()
         .flat_map(|w| [256, 512, 768].map(|t| (w, t)))
-        .flat_map(|(w, t)| (1..=4).map(move |seed| (w, t, seed)))
+        .flat_map(|(w, t)| (1..=seeds).map(move |seed| (w, t, seed)))
         .flat_map(|(w, t, seed)| Fairness::ALL.map(|f| (w, t, seed, f)))
         .collect();
     // The game makes a map whose starts are cut off from each other again
@@ -152,11 +157,15 @@ fn every_conquest_wilds_map_passes_the_checker() {
 
 /// Every lobby map at the big sizes (Medium and Large, for two to six
 /// players) is the size asked for, and its starts can all walk to each
-/// other (`gc_map`'s own tests do the Small sizes).
+/// other (`gc_map`'s own tests do the Small sizes). A pull request checks
+/// each map at one of the sizes, taking them in turn so every size is
+/// covered; the batched checks do every map at every size (`SWEEP=1`).
 #[test]
 fn every_lobby_map_joins_its_starts_at_the_big_sizes() {
+    const SIZES: [u32; 4] = [512, 640, 768, 896];
     let jobs: Vec<(usize, u32)> = (0..gc_map::FIELD_MAPS.len())
-        .flat_map(|choice| [512, 640, 768, 896].map(|tiles| (choice, tiles)))
+        .flat_map(|choice| SIZES.map(|tiles| (choice, tiles)))
+        .filter(|&(choice, tiles)| sweep() || tiles == SIZES[choice % SIZES.len()])
         .collect();
     let failed = failures(&jobs, |&(choice, tiles)| {
         let map = gc_map::FieldMap {
@@ -218,6 +227,12 @@ fn seeds_at(size: SizeClass) -> u64 {
         SizeClass::Skirmish => 25,
         _ => 12,
     }
+}
+
+/// Whether to sweep every seed and size (`SWEEP` set, as the batched
+/// checks do) rather than the few a pull request checks.
+fn sweep() -> bool {
+    std::env::var_os("SWEEP").is_some()
 }
 
 /// Why a Wilds map is short of sites, if it is: they are placed in

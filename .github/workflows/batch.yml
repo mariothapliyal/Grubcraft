@@ -1,8 +1,8 @@
 name: Batch checks
 
 # The slow checks that run once per batch of merges instead of on every pull
-# request (project rule, 2026-11-01): the balance runs and screenshots of a
-# real match against the computer. Pull requests keep the fast checks, the
+# request (project rule, 2026-11-01): the balance runs, the full map sweeps
+# and screenshots of a real match against the computer. Pull requests keep the fast checks, the
 # golden replays and the stress scenarios and Conquest soak, which take
 # seconds (ci.yml), and run scripts/pre-pr-check.sh before pushing.
 #
@@ -53,6 +53,24 @@ jobs:
             echo "Main is still at $GITHUB_SHA, which the last batch checked."
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+
+  maps:
+    # The full map sweeps (tools/gc_mapcheck/tests/recipes.rs): every grown
+    # map at four seeds and every lobby map at every big size. A pull
+    # request checks a quarter of them.
+    name: Full map sweep
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - run: cargo test -p gc_mapcheck --test recipes
+        env:
+          SWEEP: '1'
 
   balance:
     # The win tables (docs/17, the faction balance memory notes). Only the
