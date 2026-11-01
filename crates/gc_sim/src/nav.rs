@@ -1301,7 +1301,10 @@ impl Nav {
         lines: &[Fx],
         wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let [right, left] = self.room_each_side(party, centre, facing, reach, lines, true, wet);
+        let Some(g) = self.grid_of(party) else {
+            return reach;
+        };
+        let [right, left] = Nav::room_each_side(g, centre, facing, reach, lines, true, wet);
         right.min(left)
     }
 
@@ -1318,7 +1321,10 @@ impl Nav {
         reach: Fx,
         wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let [right, left] = self.room_each_side(party, p, facing, reach, &[Fx::ZERO], false, wet);
+        let Some(g) = self.grid_of(party) else {
+            return reach;
+        };
+        let [right, left] = Nav::room_each_side(g, p, facing, reach, &[Fx::ZERO], false, wet);
         (right + left) / 2
     }
 
@@ -1326,8 +1332,7 @@ impl Nav {
     /// along the lines. `least`: only the least of the two is wanted, so
     /// neither side looks further than the other has room.
     fn room_each_side(
-        &self,
-        party: PlayerId,
+        g: &Grid,
         centre: FxVec2,
         facing: Angle,
         reach: Fx,
@@ -1335,9 +1340,6 @@ impl Nav {
         least: bool,
         wet: impl Fn(FxVec2) -> bool,
     ) -> [Fx; 2] {
-        let Some(g) = self.grid_of(party) else {
-            return [reach; 2];
-        };
         // Steps to blocked ground from the cell under `p` (0 on it or off
         // the map).
         let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
