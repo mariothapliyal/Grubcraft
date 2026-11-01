@@ -115,6 +115,6 @@ below on your machine, so CI rarely finds something new.
 | Runs | Checks |
 |---|---|
 | Every pull request (`ci.yml`) | formatting, clippy, rules numbers, `cargo test --workspace` (with the clearance check), golden replays, map check, the stress scenarios and the Conquest soak (seconds in release), one Warlord determinism test, Conquest AI-only games, benchmarks and instruction counts, pack manifests, app builds and smoke runs, the oldest Rust |
-| Once per batch of merges (`batch.yml`: every six hours when main has moved, or by hand from the Actions tab) | the balance runs: the 72-battle Warlord contest, the Field Battle and full-roster tables and Conquest balance (`balance-report`); screenshots of a real battle against a General (`match-screenshots`) |
+| Once per batch of merges (`batch.yml`: every six hours when main has moved, or by hand from the Actions tab) | the balance runs: the 72-battle Warlord contest, the Field Battle and full-roster tables and Conquest balance (`balance-report`); the full map sweeps (`SWEEP=1 cargo test -p gc_mapcheck --test recipes`: every grown map at four seeds and every lobby map at every big size, where a PR checks a quarter); screenshots of a real battle against a General (`match-screenshots`) |
 
 A failure in a batch gets fixed before the next batch merges.

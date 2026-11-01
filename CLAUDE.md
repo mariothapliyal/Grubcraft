@@ -22,7 +22,9 @@
 ## Batched checks
 
 - The slow runs are not per PR: the balance runs (Warlord contest, Field
-  Battle and roster tables, Conquest balance) and real-match screenshots run
+  Battle and roster tables, Conquest balance), the full map sweeps (`SWEEP=1`;
+  a PR checks a quarter of the grown and lobby maps) and real-match
+  screenshots run
   in `.github/workflows/batch.yml`, every six hours when main has moved, and
   by hand from the Actions tab. The stress scenarios and the Conquest soak
   take seconds, so they stay on every PR.
