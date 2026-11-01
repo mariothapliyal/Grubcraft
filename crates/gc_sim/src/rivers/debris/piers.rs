@@ -63,6 +63,20 @@ pub const DECK_BURN_PER_TEN_THOUSAND: u32 = 100;
 /// the pier towards it, against the pier's upstream face.
 const JAMMED_ALONG: gc_fixed::Fx = gc_fixed::Fx::from_raw(26_214);
 
+/// A jam against a bridge's pier, as seen (see [`Rivers::jams`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Jam {
+    /// The river tile it lies on (above the pier): where workers clear it
+    /// or a Burn order lights it.
+    pub at: (i32, i32),
+    /// The bridge tile over the pier, and its owner.
+    pub deck: StructureHandle,
+    pub owner: PlayerId,
+    /// Its mass in all.
+    pub mass: u8,
+    pub burning: bool,
+}
+
 /// A pier in the water: the river tile under a finished bridge tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Pier {
@@ -129,10 +143,19 @@ impl Rivers {
     /// The mass jammed against the pier on tile `i` (lying on the tile
     /// above it).
     pub(super) fn jam_on(&self, i: u32) -> u8 {
-        (self.debris.pieces.iter().flatten())
-            .filter(|p| p.jammed && p.next == i)
-            .map(|p| p.kind.mass())
-            .sum()
+        self.jammed_against(i).map(|p| p.kind.mass()).sum()
+    }
+
+    /// The pieces jammed against the pier on tile `i`, first in the pool
+    /// first.
+    fn jammed_against(&self, i: u32) -> impl Iterator<Item = &Piece> + '_ {
+        (self.debris.pieces.iter().flatten()).filter(move |p| p.jammed && p.next == i)
+    }
+
+    /// Tile `i`'s `(x, y)`.
+    fn xy(&self, i: u32) -> (i32, i32) {
+        let n = self.side as u32;
+        ((i % n) as i32, (i / n) as i32)
     }
 
     /// Floating piece `p` (in place `k`) has just come onto tile `p.tile`
@@ -273,10 +296,9 @@ impl Rivers {
     /// The tiles the jams that don't burn yet lie on (one a piece), for the
     /// Burn order.
     pub(crate) fn unlit_jams(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
-        let n = self.side as u32;
         (self.debris.pieces.iter().flatten())
             .filter(|p| p.jammed && !self.burns(p.next))
-            .map(move |p| ((p.tile % n) as i32, (p.tile / n) as i32))
+            .map(|p| self.xy(p.tile))
     }
 
     /// Sets the jam lying on tile `(x, y)` alight (the Burn order; the
@@ -302,13 +324,24 @@ impl Rivers {
         true
     }
 
+    /// The jams against the piers standing now, one a pier.
+    pub fn jams(&self) -> impl Iterator<Item = Jam> + '_ {
+        (self.debris.piers.iter()).filter_map(|pier| {
+            let first = self.jammed_against(pier.tile).next()?;
+            Some(Jam {
+                at: self.xy(first.tile),
+                deck: pier.slot,
+                owner: pier.owner,
+                mass: self.jam_on(pier.tile),
+                burning: self.burns(pier.tile),
+            })
+        })
+    }
+
     /// Where each burning jam is (its first piece), in tiles.
     pub fn jam_fires(&self) -> impl Iterator<Item = gc_fixed::FxVec2> + '_ {
-        (self.debris.fires.iter()).filter_map(|f| {
-            (self.debris.pieces.iter().flatten())
-                .find(|p| p.jammed && p.next == f.pier)
-                .map(|p| p.point(self.side))
-        })
+        (self.debris.fires.iter())
+            .filter_map(|f| (self.jammed_against(f.pier).next()).map(|p| p.point(self.side)))
     }
 
     /// The piece in a jam lying on river tile `i` (against the pier below
@@ -331,9 +364,8 @@ impl Rivers {
     /// Whether a jam lies on any tile of `area` (north-west tile, width,
     /// depth).
     pub(crate) fn jammed_in(&self, [x, y, w, d]: [i32; 4]) -> bool {
-        let n = self.side as u32;
         (self.debris.pieces.iter().flatten()).any(|p| {
-            let (px, py) = ((p.tile % n) as i32, (p.tile / n) as i32);
+            let (px, py) = self.xy(p.tile);
             p.jammed && (x..x + w).contains(&px) && (y..y + d).contains(&py)
         })
     }
