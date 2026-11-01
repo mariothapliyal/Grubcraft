@@ -185,6 +185,8 @@ mod profile;
 mod puppets;
 mod replays;
 mod ring_tool;
+#[cfg(test)]
+mod river_ai;
 mod river_debris;
 #[cfg(test)]
 mod river_golden;

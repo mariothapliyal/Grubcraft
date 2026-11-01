@@ -11,6 +11,7 @@
 //! Resonators and Siphons tuning nodes for the Choir, whose workers only
 //! build.
 
+mod bridgework;
 mod engineer;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
@@ -157,6 +158,8 @@ pub struct Steward {
     drift: Vec<(RegimentHandle, Vec2, u32)>,
     /// The works it puts up against its enemies.
     engineer: engineer::Engineer,
+    /// Keeping its bridges standing.
+    bridgework: bridgework::Bridgework,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -273,6 +276,7 @@ impl Steward {
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
+        self.tend_bridges(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
         // money it has goes on them first; but an opening's building still
         // due comes first, or arming would spend what it saves for it.

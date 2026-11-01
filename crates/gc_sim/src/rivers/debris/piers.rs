@@ -63,6 +63,20 @@ pub const DECK_BURN_PER_TEN_THOUSAND: u32 = 100;
 /// the pier towards it, against the pier's upstream face.
 const JAMMED_ALONG: gc_fixed::Fx = gc_fixed::Fx::from_raw(26_214);
 
+/// A jam against a bridge's pier, as seen (see [`Rivers::jams`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Jam {
+    /// The river tile it lies on (above the pier): where workers clear it
+    /// or a Burn order lights it.
+    pub at: (i32, i32),
+    /// The bridge tile over the pier, and its owner.
+    pub deck: StructureHandle,
+    pub owner: PlayerId,
+    /// Its mass in all.
+    pub mass: u8,
+    pub burning: bool,
+}
+
 /// A pier in the water: the river tile under a finished bridge tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Pier {
@@ -300,6 +314,22 @@ impl Rivers {
         };
         fires.insert(at, fire);
         true
+    }
+
+    /// The jams against the piers standing now, one a pier.
+    pub fn jams(&self) -> impl Iterator<Item = Jam> + '_ {
+        let n = self.side as u32;
+        (self.debris.piers.iter()).filter_map(move |pier| {
+            let first =
+                (self.debris.pieces.iter().flatten()).find(|p| p.jammed && p.next == pier.tile)?;
+            Some(Jam {
+                at: ((first.tile % n) as i32, (first.tile / n) as i32),
+                deck: pier.slot,
+                owner: pier.owner,
+                mass: self.jam_on(pier.tile),
+                burning: self.burns(pier.tile),
+            })
+        })
     }
 
     /// Where each burning jam is (its first piece), in tiles.

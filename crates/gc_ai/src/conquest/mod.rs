@@ -229,6 +229,9 @@ impl Realm {
         self.clicks.refresh(sense.now);
         self.steward
             .think(&sense, &mut self.clicks, self.marshal.rally);
+        for note in self.steward.take_notes() {
+            captain.journal.note(sense.now, note);
+        }
         self.clicks.release(sense.now, out);
         let home = self.steward.home;
         self.marshal.tick(&mut captain, &sense, home, out);
