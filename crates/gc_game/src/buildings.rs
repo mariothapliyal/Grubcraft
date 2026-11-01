@@ -14,6 +14,7 @@ use gc_sim::{
 };
 
 use crate::Party;
+use crate::bridge_deck::Decks;
 use crate::scenery::{Extra, Model};
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
@@ -1191,12 +1192,15 @@ fn wall_block(
 /// (`joined` says whether the tile there is one) and it runs along the
 /// way the bridge goes there (its line), not across it, so the ends
 /// where the deck meets the bank stay open. `deck` is the deck's colour
-/// (with its glow), `team` the owner's, which tints the posts and rails.
+/// (with its glow), `team` the owner's, which tints the posts and rails;
+/// `raise` lifts the whole tile, so the deck runs level with its banks
+/// (see [`crate::bridge_deck`]).
 fn push_bridge_tile(
     s: &StructureView,
     deck: [u8; 4],
     team: [u8; 3],
     joined: &dyn Fn((i32, i32)) -> bool,
+    raise: f32,
     out: &mut Vec<BoxInstance>,
 ) {
     let centre = centre_of(s.tile, 1, 1);
@@ -1204,7 +1208,7 @@ fn push_bridge_tile(
     let [r, g, b, _] = deck;
     let [r, g, b] = tint([r, g, b].map(|c| (u32::from(c) * 3 / 4) as u8), team, 35);
     let wood = [r, g, b, 0];
-    let top = DECK_TOP;
+    let top = DECK_TOP + raise;
     // Just outside the deck's edge, so the whole width stays clear.
     let edge = 0.5 + POST_THIN / 2.0;
     // The outer edges: (outward, along the edge).
@@ -1233,7 +1237,7 @@ fn push_bridge_tile(
         facing: Vec2::Y.to_array(),
         size: [1.0, BRIDGE_THICK, 1.0],
         color: deck,
-        lift: DECK_LIFT,
+        lift: DECK_LIFT + raise,
     });
     for (n, along) in sides {
         let at = centre + n * edge;
@@ -1831,18 +1835,6 @@ pub fn inside_left(path: &gc_sim::drawn::DrawnPath, hall: Vec2) -> Option<bool> 
     (c.abs() > 1e-3).then_some(c > 0.0)
 }
 
-/// Every bridge tile, sorted for a binary search (so a deck rails only its
-/// outer edges); no allocation on a map with no bridges.
-pub fn bridge_tiles(structures: &gc_sim::structures::Structures, table: &Table) -> Vec<(i32, i32)> {
-    let mut bridged: Vec<(i32, i32)> = structures
-        .iter()
-        .filter(|s| table.is_bridge(s.building))
-        .map(|s| s.tile)
-        .collect();
-    bridged.sort_unstable();
-    bridged
-}
-
 /// Draw every standing building that `shown` allows: a box in its owner's
 /// colour, dimmer as its hit points fall, and a bar over it once it is
 /// damaged, white for a moment as a blow lands (`flash`, 0 to 1).
@@ -1859,16 +1851,13 @@ pub fn push(
     leaves_modelled: impl Fn(&StructureView) -> bool,
     flash: impl Fn(StructureHandle) -> f32,
     across: Vec2,
+    decks: &Decks,
     out: &mut Vec<BoxInstance>,
 ) {
     let Some(structures) = world.structures() else {
         return;
     };
     let right = Vec2::new(-across.y, across.x);
-    // The bridge tiles, so a wide deck rails only its edges (where one
-    // drawing meets another, as a mended gap does, too). Sorted for a
-    // binary search; no allocation on a map with no bridges.
-    let bridged = bridge_tiles(structures, table);
     for s in structures.iter().filter(|s| shown(s)) {
         if out.len() + 12 > MAX_BOX_INSTANCES {
             return;
@@ -1894,8 +1883,14 @@ pub fn push(
         if stats.role == Role::Bridge {
             let team = shade(team(s.owner), s.hp, s.max_hp);
             if model.is_none() {
-                let joined = |tile| bridged.binary_search(&tile).is_ok();
-                push_bridge_tile(&s, [r, g, b, look.glow], team, &joined, out);
+                // A wide deck rails only its edges (where one drawing meets
+                // another, as a mended gap does, too), level with its banks.
+                let joined = |tile| decks.has(tile);
+                let mid = centre_of(s.tile, 1, 1);
+                let raise = decks
+                    .floor(s.tile)
+                    .map_or(0.0, |f| f - ground(mid.x, mid.y));
+                push_bridge_tile(&s, [r, g, b, look.glow], team, &joined, raise, out);
             }
         } else if matches!(stats.role, Role::Stakes | Role::Barricade) {
             let (_, trim, _) = fieldwork_colours(stats.role, table.faction(s.building));
@@ -1943,7 +1938,9 @@ pub fn push(
         };
         let frac = s.hp as f32 / s.max_hp.max(1) as f32;
         let fill = len * frac;
-        let lift = height + (hi - lo) + BAR_LIFT;
+        // Over a bridge's deck, which may stand above the ground.
+        let raise = decks.floor(s.tile).map_or(0.0, |f| (f - hi).max(0.0));
+        let lift = height + (hi - lo) + raise + BAR_LIFT;
         let centre = centre_of(s.tile, s.width, s.depth);
         out.push(BoxInstance {
             pos: centre.to_array(),
@@ -2802,13 +2799,21 @@ pub fn pick(
     ground: impl Fn(f32, f32) -> f32,
     (origin, dir): (Vec3, Vec3),
     accept: impl Fn(&StructureView) -> bool,
+    decks: &Decks,
 ) -> Option<StructureHandle> {
     let mut best: Option<(f32, StructureHandle)> = None;
     for s in world.structures()?.iter().filter(|s| accept(s)) {
         let role = table.stats.get(usize::from(s.building))?.role;
         let (lo, _) = ground_range(&ground, &s);
+        // A bridge's deck may stand above the ground under it.
+        let raise = decks.floor(s.tile).map_or(0.0, |f| (f - lo).max(0.0));
         let min = Vec3::new(s.tile.0 as f32, lo, s.tile.1 as f32);
-        let max = min + Vec3::new(f32::from(s.width), height_of(role), f32::from(s.depth));
+        let max = min
+            + Vec3::new(
+                f32::from(s.width),
+                height_of(role) + raise,
+                f32::from(s.depth),
+            );
         if let Some(t) = ray_box(origin, dir, min, max)
             && best.is_none_or(|(b, _)| t < b)
         {
@@ -3181,6 +3186,7 @@ mod tests {
             [150, 106, 62, 0],
             [200, 40, 40],
             &|_| false,
+            0.0,
             &mut out,
         );
         // Deck, two rails, two posts; nothing taller than the railing.
@@ -3197,6 +3203,7 @@ mod tests {
             [150, 106, 62, 0],
             [200, 40, 40],
             &|_| false,
+            0.0,
             &mut frame,
         );
         assert_eq!(frame.len(), 2);
@@ -3207,6 +3214,7 @@ mod tests {
             [150, 106, 62, 0],
             [200, 40, 40],
             &|_| false,
+            0.0,
             &mut later,
         );
         assert!(later[0].size[1] > frame[0].size[1]);

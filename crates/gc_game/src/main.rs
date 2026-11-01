@@ -142,6 +142,7 @@ mod aftermath;
 mod ambient;
 mod army_shape;
 mod atmosphere;
+mod bridge_deck;
 mod bridge_kit;
 mod buildings;
 mod camera;
@@ -541,6 +542,7 @@ struct Options {
     gate_march: Option<usize>,
     /// `--wall-scene`: a Stone Wall south of a hall, archers manning it.
     wall_scene: bool,
+    bridge_scene: bool,
     /// Fell the trees round the camera's focus a few seconds in
     /// (`--fell-demo`), to look at them coming down.
     fell_demo: bool,
@@ -580,6 +582,7 @@ fn parse_args() -> Options {
         siege: false,
         gate_march: None,
         wall_scene: false,
+        bridge_scene: false,
         fell_demo: false,
         hamlet_demo: false,
         render: RendererOptions::default(),
@@ -600,6 +603,11 @@ fn parse_args() -> Options {
         }
         if flag == "--wall-scene" {
             opts.wall_scene = true;
+            opts.menu = Some(false);
+            continue;
+        }
+        if flag == "--bridge-scene" {
+            opts.bridge_scene = true;
             opts.menu = Some(false);
             continue;
         }
@@ -909,6 +917,14 @@ struct Running {
     /// How far `--wall-scene` has staged its manned wall: 0 to place it,
     /// 1 to send the archers up.
     wall_scene: Option<u8>,
+    /// `--bridge-scene`: the step it is at, and where its regiment stands
+    /// and marches to, over the bridge (see `stage_bridge_scene`).
+    bridge_scene: Option<(u8, [Vec2; 2])>,
+    /// How high every bridge's deck is drawn, worked out again only when a
+    /// bridge tile is added or lost.
+    decks: bridge_deck::Decks,
+    /// The bridge tiles `decks` was worked out for, folded together.
+    decks_key: u64,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1821,6 +1837,9 @@ impl App {
             siege_scene: None,
             gate_scene: None,
             wall_scene: None,
+            bridge_scene: None,
+            decks: bridge_deck::Decks::default(),
+            decks_key: 0,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -1979,6 +1998,13 @@ impl App {
                     r.start_match(MatchKind::Battle(setup));
                 }
                 r.wall_scene = Some(0);
+            }
+            if opts.bridge_scene {
+                if opts.conquest.is_none() {
+                    let setup = conquest::quick_conquest(0, r.menu.settings(), opts.seed);
+                    r.start_match(MatchKind::Battle(setup));
+                }
+                r.bridge_scene = Some((0, [Vec2::ZERO; 2]));
             }
             if let Some(n) = opts.gate_march {
                 r.start_match(MatchKind::Sandbox { roster: true });
@@ -2811,6 +2837,7 @@ impl Running {
             |x, z| hm.height_at(x, z).max(hm.water_level()),
             ray,
             |s| shown(s) && accept(s),
+            &self.decks,
         )
     }
 
@@ -3595,6 +3622,7 @@ impl Running {
         self.stage_siege();
         self.stage_gate_march();
         self.stage_wall_scene();
+        self.stage_bridge_scene();
 
         // Fixed-rate simulation; render interpolates between the last two
         // ticks. Pause and slow motion scale game time, not the camera.
@@ -3737,6 +3765,7 @@ impl Running {
                 game_dt.as_secs_f32()
             };
             (self.siege).advance(siege_dt, |p| hm.drawn_height(p.x, p.y));
+            self.settle_decks();
             self.note_building_looks();
             self.push_buildings();
         }
@@ -3785,15 +3814,19 @@ impl Running {
         // open gate is ground to them; a shut one is wall).
         let nav = self.world.nav();
         let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
-        // Soldiers on a finished bridge stand on its deck. Most maps have
-        // none, and then this is one test of an empty list.
+        // Soldiers on a finished bridge stand on its deck, as high as it is
+        // drawn there. Most maps have none, and then this is one test of
+        // an empty list.
         let terrain = self.world.terrain();
+        let (decks, hm) = (&self.decks, &self.heightmap);
         let deck = |p: Vec2| {
-            if terrain.on_deck(fx_vec(p)) {
-                buildings::DECK_TOP
-            } else {
-                0.0
+            if !terrain.on_deck(fx_vec(p)) {
+                return 0.0;
             }
+            let raise = decks
+                .floor_at(p)
+                .map_or(0.0, |f| f - hm.drawn_height(p.x, p.y));
+            raise + buildings::DECK_TOP
         };
         // Footsteps and wear follow the effects clock: none behind the menu
         // or while it stands still.
@@ -5887,6 +5920,7 @@ impl Running {
     fn use_map(&mut self, key: MapKey) {
         self.map_key = Some(key);
         self.heightmap = make_map(key);
+        self.decks_key = 0;
         logln!(
             "grubcraft: switching to {} (seed {:x}, {} tiles)",
             key.name(),
@@ -7383,6 +7417,40 @@ impl Running {
         Some((view, buildings::building_ghost_colour(fit, colour)))
     }
 
+    /// Work out again how high the bridges' decks are drawn if a bridge
+    /// tile has been added or lost since last time (see [`bridge_deck`]).
+    fn settle_decks(&mut self) {
+        let b = &self.buildings;
+        let bridges = || {
+            (self.world.structures().into_iter())
+                .flat_map(gc_sim::Structures::iter)
+                .filter(|s| b.is_bridge(s.building))
+        };
+        // Every bridge tile's handle and place, folded together: a tile
+        // added or lost changes it (a new map starts it again).
+        let key = bridges().fold(0xcbf2_9ce4_8422_2325u64, |k, s| {
+            let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
+            let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
+            ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
+        });
+        if key == self.decks_key {
+            return;
+        }
+        let tiles = bridges()
+            .map(|s| {
+                let axis = bridge_kit::snap(buildings::kit_piece(&s).1).abs();
+                (s.tile, (axis.x as i32, axis.y as i32))
+            })
+            .collect();
+        let hm = &self.heightmap;
+        self.decks = bridge_deck::Decks::new(
+            tiles,
+            |p| hm.drawn_height(p.x, p.y),
+            |p| hm.height_at(p.x, p.y) >= hm.water_level(),
+        );
+        self.decks_key = key;
+    }
+
     /// Every standing building as a box, the selected one with a rim, and
     /// every gathering spot.
     fn push_buildings(&mut self) {
@@ -7414,6 +7482,7 @@ impl Running {
             },
             |h| siege.flash(h),
             across,
+            &self.decks,
             &mut self.instances,
         );
         if let Some(h) = self.picked_structure() {
@@ -7801,6 +7870,120 @@ impl Running {
         }
     }
 
+    /// Stage `--bridge-scene`: a two-lane Timber Bridge over the nearest
+    /// river crossing east to west from the start, a regiment on its west
+    /// bank sent over it, and the camera close over the bridge: to see a
+    /// bridge's deck meet its banks, and men cross it, in a real match.
+    fn stage_bridge_scene(&mut self) {
+        let Some((step, [at, far])) = self.bridge_scene else {
+            return;
+        };
+        let building = |name: &str| {
+            (0..self.buildings.len() as BuildingId).find(|&id| self.buildings.name(id) == name)
+        };
+        let (Some(bridge), Some(soldiers)) = (
+            building("Timber Bridge"),
+            self.units.names.iter().position(|n| n == "Yari Ashigaru"),
+        ) else {
+            self.bridge_scene = None;
+            return;
+        };
+        let focus = self.camera.focus.round();
+        let (fx, fy) = (focus.x as i32, focus.y as i32);
+        match step {
+            0 => {
+                let hm = &self.heightmap;
+                let wet = |x: i32, y: i32| {
+                    hm.height_at(x as f32 + 0.5, y as f32 + 0.5) < hm.water_level()
+                };
+                let fits = |x: i32, y: i32| self.world.can_build(bridge, (x, y), 0).is_ok();
+                // The crossing nearest the start: a dry tile, 3 to 12 wet
+                // ones, a dry tile, along two rows, every tile buildable.
+                let crossing = |y: i32, x0: i32| -> Option<i32> {
+                    if wet(x0, y) || wet(x0, y + 1) {
+                        return None;
+                    }
+                    let x1 = (x0 + 1..x0 + 14).find(|&x| !wet(x, y) || !wet(x, y + 1))?;
+                    if x1 - x0 <= 3 || wet(x1, y) || wet(x1, y + 1) {
+                        return None;
+                    }
+                    (x0..=x1)
+                        .all(|x| fits(x, y) && fits(x, y + 1))
+                        .then_some(x1)
+                };
+                let found = (0..80).find_map(|r: i32| {
+                    let ring = (-r..=r).flat_map(|d| {
+                        [
+                            (fx + d, fy - r),
+                            (fx + d, fy + r),
+                            (fx - r, fy + d),
+                            (fx + r, fy + d),
+                        ]
+                    });
+                    ring.into_iter()
+                        .find_map(|(x, y)| crossing(y, x).map(|x1| (x, x1, y)))
+                });
+                let Some((x0, x1, row)) = found else {
+                    eprintln!("bridge scene: no river crossing near the start");
+                    self.bridge_scene = None;
+                    return;
+                };
+                eprintln!(
+                    "bridge scene: tiles {x0}..={x1} on rows {row} and {}",
+                    row + 1
+                );
+                for x in x0..=x1 {
+                    for y in [row, row + 1] {
+                        self.human_orders.push(PlayerCommand {
+                            player: 0,
+                            command: gc_sim::Command::SpawnStructure {
+                                building: bridge,
+                                tile: (x as i16, y as i16),
+                                turn: 0,
+                            },
+                        });
+                    }
+                }
+                let at = Vec2::new(x0 as f32 - 12.0, row as f32 + 1.0);
+                self.human_orders.push(PlayerCommand {
+                    player: 0,
+                    command: gc_sim::Command::SpawnRegiment {
+                        unit: soldiers as UnitId,
+                        position: fx_vec(at),
+                        facing: gc_fixed::Angle::of_vec(fx_vec(Vec2::X)),
+                    },
+                });
+                self.camera.focus = Vec2::new((x0 + x1) as f32 / 2.0 + 0.5, row as f32 + 1.0);
+                self.camera.distance = 14.0;
+                self.hud.placer = false;
+                self.sandbox.placing = false;
+                let far = Vec2::new(x1 as f32 + 6.0, row as f32 + 1.0);
+                self.bridge_scene = Some((1, [at, far]));
+            }
+            1 => {
+                // The one spawned west of the bridge, not one of the start.
+                let regiment = (self.world.regiments.iter())
+                    .filter(|r| r.owner == 0 && usize::from(r.unit) == soldiers)
+                    .find(|r| from_fx_vec(r.position).distance(at) < 2.0)
+                    .map(|r| r.handle);
+                if let Some(regiment) = regiment {
+                    self.human_orders.push(PlayerCommand {
+                        player: 0,
+                        command: gc_sim::Command::MoveTo {
+                            regiment,
+                            target: fx_vec(far),
+                            facing: Some(gc_fixed::Angle::of_vec(fx_vec(Vec2::X))),
+                            files: 0,
+                            pace: gc_fixed::Fx::ZERO,
+                        },
+                    });
+                    self.bridge_scene = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Stage `--gate-march`: every gate in a wall run east to west, a
     /// regiment south of each marching through it to the north, and the
     /// camera low over the one looked at.
@@ -7918,6 +8101,8 @@ impl Running {
                 _ => buildings::height_of(stats.role),
             };
             let (centre, base, lift) = buildings::model_spot(&s, &ground);
+            // A bridge's deck may stand above the ground under it.
+            let base = self.decks.floor(s.tile).map_or(base, |f| f.max(base));
             // Blows land on the model's walls, where they stand within the
             // footprint.
             let footprint = Vec2::new(f32::from(s.width), f32::from(s.depth)) / 2.0;
@@ -8271,9 +8456,9 @@ impl Running {
                 });
             }
         }
-        // The bridge tiles, so the timber kit rails only a deck's outer
-        // edges. Sorted for a binary search; empty on a map with no bridges.
-        let bridged = buildings::bridge_tiles(structures, &self.buildings);
+        // The bridge tiles (so the timber kit rails only a deck's outer
+        // edges) and how high each deck is.
+        let decks = &self.decks;
         // The tiles of each side's drawn walls and gates that this player
         // sees, so a kit wall puts an end post only where it stops (and a
         // wall hidden in the fog does not take one away). Empty on a map
@@ -8306,7 +8491,9 @@ impl Running {
                     s: &s,
                     dir,
                     level: self.buildings.level(s.building),
-                    joined: &|t| bridged.binary_search(&t).is_ok(),
+                    joined: &|t| decks.has(t),
+                    floor: (decks.floor(s.tile))
+                        .unwrap_or_else(|| ground(s.tile.0 as f32 + 0.5, s.tile.1 as f32 + 0.5)),
                     drawn: &|p: Vec2| ground(p.x, p.y),
                     bed: &|p: Vec2| hm.height_at(p.x, p.y),
                 };
