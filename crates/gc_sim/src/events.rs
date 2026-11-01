@@ -378,8 +378,7 @@ impl Events {
             };
             // Gone: wiped out, or used up.
             let still = regs.alive[i] && regs.generation[i] == b.generation;
-            if !still
-                && (consumed.iter().any(|&(w, _)| w == regiment) || left.contains(&regiment))
+            if !still && (consumed.iter().any(|&(w, _)| w == regiment) || left.contains(&regiment))
             {
                 continue;
             }

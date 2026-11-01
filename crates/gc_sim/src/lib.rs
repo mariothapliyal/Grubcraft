@@ -1977,12 +1977,9 @@ impl World {
             self.tick,
         );
         if !self.scratch {
-            let (consumed, left) = self
-                .conquest
-                .as_ref()
-                .map_or((&[][..], &[][..]), |c| {
-                    (&c.structures.consumed[..], &c.left[..])
-                });
+            let (consumed, left) = self.conquest.as_ref().map_or((&[][..], &[][..]), |c| {
+                (&c.structures.consumed[..], &c.left[..])
+            });
             self.events.after(
                 &self.regiments,
                 &self.combat,

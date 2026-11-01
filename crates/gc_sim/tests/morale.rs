@@ -226,7 +226,11 @@ fn in_conquest_a_shattered_regiment_leaves_the_field() {
     for _ in 0..20 * 30 {
         w.tick(&[]);
     }
-    assert!(w.regiments.get(skitters).is_none(), "{:?}", state(&w, skitters));
+    assert!(
+        w.regiments.get(skitters).is_none(),
+        "{:?}",
+        state(&w, skitters)
+    );
 }
 
 /// Hit from behind, a regiment's nerve goes faster than hit in front (it

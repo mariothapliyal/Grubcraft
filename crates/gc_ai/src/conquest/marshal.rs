@@ -511,8 +511,7 @@ impl Marshal {
         // while nobody else will stop them, and they win.
         let lone_alarm = |s: &Sense| heart_alarm(s) && spymaster::enemies(s).len() < 2;
         let heart_to_take = |s: &Sense| heart_to_take(s).filter(|_| !raiding || lone_alarm(s));
-        let enemy_holds_heart =
-            |s: &Sense| enemy_holds_heart(s) && (!raiding || lone_alarm(s));
+        let enemy_holds_heart = |s: &Sense| enemy_holds_heart(s) && (!raiding || lone_alarm(s));
         // Home first, but a threat to outlying buildings doesn't pull the
         // army off the Titan's Heart: a game of armies guarding sprawling
         // bases never ends otherwise.
