@@ -252,7 +252,7 @@ impl Conquest {
             blueprints: Blueprints::default(),
             manning: crate::manning::Manning::new(setup.structures as usize),
             planting: Vec::new(),
-            left: Vec::new(),
+            left: Vec::with_capacity(regiments),
         }
     }
 
