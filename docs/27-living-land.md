@@ -1,6 +1,6 @@
 # 27 · Living Land: organic world generation
 
-*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)), and stage 2, ways through (2026-10-24, see [Stage 2 as built](#stage-2-as-built)); stages 3 to 5 are not yet. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
+*Plan, 2026-10-22. Stage 1, grown land, is built (2026-10-23, see [Stage 1 as built](#stage-1-as-built)), and stage 2, ways through (2026-10-24, see [Stage 2 as built](#stage-2-as-built)); stage 3, Measured maps, and stage 4, sites by reason and habitats, are built too (2026-10-25), and [41](41-finish-living-land.md) finished the rest on 2026-10-30 and 2026-10-31 (Conquest on grown land, Measured as the Field Battle default, riversides and trails). Stage 5, water that runs downhill, is a later call for Mario. The fairness model was decided by Mario on 2026-10-22 (see [Fairness](#fairness)).*
 
 Mario asked for maps that are "truly random, truly chaotic, like nature", where no two things are alike. Today's maps tend to be lines, ovals and circles. This document says why, what replaces it, how maps stay fair, how the biomes get depth, and the order of the work. The concept page with prototype maps is the "Grubcraft Living Land" artifact (https://claude.ai/artifact/S9PTV2MgvKnoHBFZ16s6Wt). The Python prototype that made them is in the project files under `design/world-gen/proto/`.
 
@@ -194,7 +194,7 @@ Each stage is playable on its own.
   - The company camp takes the first place with room.
   - Under Measured, the best place that has a partner in the south wins.
 - **Scenery by habitat** and the five new models (stump, fallen log, alder, sedge tussock, scree): see [25 · Scenery models](25-scenery-models.md).
-- **Not built:** ~~riverside dressing (gravel bars, reeds, beaches), worn trails~~ (built 2026-10-31, [41 step 3](41-finish-living-land.md#step-3-as-built)), ground materials per habitat, and ~~Conquest lairs guarding rich fields~~ (built with [41 step 1](41-finish-living-land.md#step-1-as-built)).
+- **Not built:** ~~riverside dressing (gravel bars, reeds, beaches), worn trails~~ (built 2026-10-31, [41 step 3](41-finish-living-land.md#step-3-as-built)), ~~ground materials per habitat~~ (built 2026-10-24, [36](36-habitat-ground.md)), and ~~Conquest lairs guarding rich fields~~ (built with [41 step 1](41-finish-living-land.md#step-1-as-built)).
 
 ## Costs and risks
 

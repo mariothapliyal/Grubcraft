@@ -367,7 +367,7 @@ Each stage updates the Guide, Quick Start, tooltips and docs/quick-reference.md 
 - **Budgets.** The engine's state is a few dozen stretches, a floodplain list built once and 48 pieces. The tick work is per stretch once a second and per piece per tick. The `field-8000pt` heap is tight (about 7.95 of 8 MB), but that map has no flow layer, so nothing is allocated there. The bench gate and conquest-6p laying budget are checked each stage.
 - **Grid churn.** Floodplain and ford groups switch with a margin, at most twice per flood each, as today's groups do.
 - **Readability.** Every effect has a message, a gauge or a drawn sign before it hits, and the forecast comes from the same numbers the simulation uses.
-- **Balance.** Dumping must not become the best use of Grub. The pool share, the 20 Grub price and the jam chances are the knobs; the arena runs check it once the minds use it.
+- **Balance.** Dumping must not become the best use of Grub. The pool share, the 12 Grub price and the jam chances are the knobs; the arena runs check it once the minds use it.
 - **Fairness up and down the river.** Grown maps are turned copies of one half, so every player has the same rivers above them as their opponent. Six-player maps and hand-made maps get checked when stage 3 lands: dumping must not belong to whoever happens to start upstream.
 - **The walkable grid's cost.** Each switch re-blocks every side's grid, and cutting an area off can renumber it. Batching each second's switches into one call keeps that to a few per flood, and the no-allocation-in-tick test is run on a flood each stage.
 - **Order with the bridge thread.** Stage 4 needs pier levels; until they land, every pier is level 1 and the levels are added in one line.

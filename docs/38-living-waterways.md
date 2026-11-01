@@ -1,6 +1,6 @@
 # 38 · Living waterways
 
-*Design note, 2026-10-25, idea 23 (Mario: "water current, flash floods and season variability"; "I mean the rivers and waterways vary with seasons"). Plan only: Mario asked for it to be explored now and built later. It builds on the weather and changing land work ([32](32-changing-land.md)): fords that flood (stage 5) and seasons in Conquest (stage 6).*
+*Design note, 2026-10-25, idea 23 (Mario: "water current, flash floods and season variability"; "I mean the rivers and waterways vary with seasons"). Mario asked for it to be explored first and built later; **all four stages were built on 2026-10-25** (each marked below), and the water engine ([39](39-water-engine.md), idea 25) builds on them. It builds on the weather and changing land work ([32](32-changing-land.md)): fords that flood (stage 5) and seasons in Conquest (stage 6).*
 
 ## The idea
 

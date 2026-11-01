@@ -1,6 +1,6 @@
 # 41. Finish Living Land, then make the weather show
 
-*Plan, 2026-10-30. Mario: "Plan and build, then choose whichever one you want first."*
+*Plan, 2026-10-30. Mario: "Plan and build, then choose whichever one you want first." All six steps were built on 2026-10-30 and 2026-10-31 (each has an "as built" section below).*
 
 ## Why
 

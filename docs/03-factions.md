@@ -15,7 +15,7 @@ Tone: *whimsical-grim*. Warcraft III's bright, chunky, slightly comic world, wit
 - **Titan-spawn.** Feral creatures that grow from the corpse: gutworms, bile toads, marrow golems. They guard rich spots and drop loot (Warcraft-style creep camps).
 - **Mercenary companies** (planned). Bands of fighters with a captain and a price who camp at hamlets or wander between them, and serve whoever pays and keeps paying. See [18 · AI](18-ai.md#the-living-world-encounters).
 - **Other peoples** (later). Factions met while exploring the Reach, friendly, neutral or hostile, each with its own mind and memory of how you treated it.
-- **The Titan itself.** It is still slightly alive. Its tremors reshape matches (see *Titan Events* in [04 · Economy](04-economy.md)).
+- **The Titan itself.** It is still slightly alive. Its tremors reshape matches (see *Titan Events* in [04 · Economy](04-economy.md); not built yet).
 
 ---
 
@@ -139,7 +139,7 @@ The namesake faction. Insects that grew fat and clever eating the Titan from the
 - *Built (2026-10-17, faction depth stage 2): the root-veins are simulated. The Hive (every tier) spreads them 15 tiles from its edge, enough to reach its base's two seeps and Marrow vein on every map, and a Pustule 8 tiles from its edge. A Pustule links to the network when it stands within reach of linked veins, so Pustules chain outwards, and killing one cuts off everything linked only through it. A Gnawer sent to gather burrows in at its seep or vein and stays there: each load takes 6 s longer and then flows home through the veins, so five Gnawers on a seep bring in about 200 Grub a minute, as the other factions' walking workers do. A load waits at a node that is off the network until a Pustule links it again. The Hive no longer takes loads from walking workers. Living buildings on their owner's linked veins regrow 2 hit points a second. Burrowed Gnawers can still be seen and hurt; hiding them is a later stage.* *Built (2026-10-23, idea 19): the veins are the ground itself, a living skin of dark flesh crossed by glowing veins that pulse towards the Hive, spreading when a building links and withdrawing when one is lost (docs/33).*
 
 ### Signature rule: **Metamorphosis in the field**
-Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons for 15 s (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at.
+Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons for 15 s (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at. *Not built yet (checked 2026-10-31): the simulation has no cocoon or evolve order, so the evolved forms can be bought in Field Battles but not raised in Conquest.*
 
 ```
 Skitterlings ─┬─▶ Spitters  (ranged acid, armour-melting)
@@ -153,7 +153,7 @@ Chitin Guard ─┬─▶ Mantid Reapers (anti-cavalry, high damage)
 |---|---|
 | Hive → Great Hive → Throne Hive | Main building, larvae, tiers |
 | Pustule | Vein relay, +8 supply |
-| Hatchery Pit | +3 larva capacity, faster spawning |
+| Hatchery Pit | +3 larva capacity, and grows its own larva every 12 s like the Hive |
 | Chrysalis Chamber | Unlocks evolutions |
 | Moth Roost | Air |
 | Gorge | Monsters and siege |
@@ -274,6 +274,9 @@ A guild of merchant-necromancers who run the Reach's trade roads, buy the dead a
   An enemy's building, an unfinished Waystation and anything else is refused. Tiles of route are counted on the straight line, not the walk, so a post behind a lake pays as much as one on open ground and takes longer to reach. **Strongbox:** a caravan destroyed carrying cargo drops **half** of it as a Grub pile where it fell, a temporary node (up to 16 piles on the field; with none free the cargo is lost) that anyone's workers can gather like a seep (a Concord Clerk can't: its buildings take no Grub, so the order is refused, in the game's controls too) and that is gone once empty. An ally whose main building a caravan traded at gains its fifth only if it is still in the match when the cargo gets home. Another order to a caravan or a post that falls just stops the run, and a caravan with no main building to go home to waits for one. The economy switch goes with it: the Counting House, Exchange, Grand Bourse and Waystation take **Marrow only**, and Clerks mine Marrow only; all the Concord's Grub is from trade. The Concord's AI sends about three caravans to each route it runs (more as it tiers up), to the nearest hamlet in reach or, with none in reach, to a Waystation it builds; see [18 · AI](18-ai.md).
 
 ### Faction meter: **Tithe** (0 to 250)
+
+*Not built yet (checked 2026-10-31): the Reliquary can be built, but there is no Tithe meter, no contracts and no crumbling undead in the simulation. The Concord's undead do never rout.*
+
 - Every model that dies, *on any side*, within 12 tiles of a Concord **Reliquary** pays 1 Tithe. Reliquaries are cheap and can be built anywhere you have vision, including next to other players' fights.
 - Tithe buys:
 
