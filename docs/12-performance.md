@@ -75,7 +75,7 @@ Each tag is tracked live by the tagged allocator. GPU memory is not: there is no
 World-party rules (creep camps, hamlet garrisons, the relations ledger) sit in "everything else" and cost well under 0.01 ms.
 
 ### AI thread (host only)
-AI players think on their own thread, never inside the tick, so they have their own budget ([18 · AI](18-ai.md#performance-and-memory)):
+AI players think outside the tick (planned on their own thread; today on the main thread between turns), so they have their own budget ([18 · AI](18-ai.md#performance-and-memory)):
 
 | Work | Budget |
 |---|---|
@@ -98,7 +98,7 @@ Collected here so they're easy to find; detailed in [10 · Architecture](10-arch
 7. **Target: baked terrain lighting** for the fixed per-map sun, so only dynamic objects cast real-time shadows. Today the terrain also casts into the shadow map in real time; baking waits on a profile showing the shadow pass costs too much.
 8. **Zero-copy, GPU-ready asset packs,** compiled into the executable with `include_bytes!` and read in place.
 9. **Fixed pools, zero allocations per tick**, verified by test.
-10. **Incremental fog of war.** The first step is built (vision timers per party, for regiments in cover); sight ranges and the explored layer are a target for M3.
+10. **Incremental fog of war.** The first step is built (vision timers per party, for regiments in cover); sight ranges and the explored layer were built with Conquest fog of war (step 5b, 2026-10-17).
 11. **Target: shared flow fields** for armies heading the same way. Pathing uses waypoint routes for now.
 12. **Compressed-in-memory audio** (ADPCM decoded during mixing; music is looped from the embedded bank today, streaming is a target).
 
@@ -113,7 +113,7 @@ Performance work is continuous, measured and recorded.
 - **Allocation-in-tick tripwire:** a test and the `gc_bench` gate fail if the sim allocates during a tick.
 
 ### Benchmark suite (`gc_bench`)
-Target suite, replayed headless (sim) and rendered with a scripted camera (frame). Only `drill`, `pathing-storm` and the headless half of `field-8000pt-2v2` exist so far:
+Target suite, replayed headless (sim) and rendered with a scripted camera (frame). Only `drill`, `pathing-storm`, the headless half of `field-8000pt-2v2` and `conquest-6p` exist so far:
 
 | Scenario | What it stresses |
 |---|---|

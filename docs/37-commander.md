@@ -1,6 +1,6 @@
 # 37 · The Commander on the Field
 
-Idea 12 of the [restart plan](29-restart-plan.md) (thread T4, with [28](28-soldier-combat.md) stage 5): each side's general rides with one of its regiments, speaks to his men before the lines meet, steadies those near him, and when he falls the men around him panic. Until heroes reach Field Battles ([05](05-combat.md#heroes)), the general is a soldier of the simulation, not a hero with levels and items; when heroes come, the hero takes his place and keeps these rules.
+Idea 12 of the [restart plan](29-restart-plan.md) (thread T4, with [28](28-soldier-combat.md) stage 5): each side's general rides with one of its regiments, speaks to his men before the lines meet, steadies those near him, and when he falls the men around him panic. **Built 2026-10-24** (#226; the general as a hero who deals his men's killing blows near him, #277); the rules below are as built. Since the morale redesign (2026-10-31, [29](29-restart-plan.md#holding-until-bloodied-in-brief)) a general near his regiment also takes 5 points off its breaking point. Until heroes reach Field Battles ([05](05-combat.md#heroes)), the general is a soldier of the simulation, not a hero with levels and items; when heroes come, the hero takes his place and keeps these rules.
 
 ## Who he is
 

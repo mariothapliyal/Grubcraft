@@ -20,7 +20,7 @@
             blurb: "Tier 2 of the Counting House: unlocks the Lantern Spire and tier-2 regiments. Keeps working while it upgrades.",
             summary: "The Counting House's second tier. It keeps working while it upgrades, raises your supply cap and unlocks the Lantern Spire and every tier-2 regiment. Upgrade again for the siege engine and the Insolvent when your trade is paying.",
             notes: [
-                ("Grand Bourse", "The late game: the Mausoleum Engine, the Insolvent, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once trade and Tithe fund it."),
+                ("Grand Bourse", "The late game: the Mausoleum Engine, the Insolvent, the third hero and the top upgrades (not designed yet). Expensive, so upgrade once trade funds it."),
             ],
             tips: [
                 (icon: Hammer, text: "Upgrade while it keeps working, so training and trade do not stop during the upgrade."),
@@ -63,13 +63,13 @@
         ),
         (
             name: "Reliquary",
-            blurb: "Pays 1 Tithe per death within 12 tiles, on any side. Your undead crumble near it, so keep it clear of your army.",
-            summary: "Every model that dies within 12 tiles, on any side, pays you 1 Tithe. Small, cheap and buildable anywhere you have vision, so plant it beside other people's fights. Your own undead crumble away from Reliquaries, so keep them clear of your army.",
+            blurb: "The Concord's Tithe shrine. Its Tithe and the contracts it pays for are not in the game yet.",
+            summary: "Planned: every model that dies within 12 tiles, on any side, pays you 1 Tithe, spent on contracts such as Raise the Bound and Hire Militia. The Tithe meter is not in the game yet, so today the Reliquary is only a cheap building that stands where you put it.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Plant it near fights you can see; every death within 12 tiles pays you Tithe."),
+                (icon: Flag, text: "Not worth building yet: the Tithe it will collect is still to come."),
                 (icon: Alarm, text: "Build it on a flank, and keep your undead out of its range, since they crumble nearby."),
-                (icon: Grub, text: "Spend the Tithe it earns on Hire Militia or Raise the Bound for quick help."),
+                (icon: Grub, text: "Spend your Grub on caravans and fighters until the Tithe arrives."),
             ],
         ),
         (
@@ -86,10 +86,10 @@
         (
             name: "Guildhall",
             blurb: "Trains Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes.",
-            summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Living regiments reinforce near it. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
+            summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
             notes: [],
             tips: [
-                (icon: Heart, text: "Send wounded living regiments back here to reinforce, since they refill near this building."),
+                (icon: Heart, text: "Train living troops here to back your undead, which never rout but fight slowly."),
                 (icon: Bow, text: "Mass Crossbow Auditors against heavies and cavalry; their bolts add 30% against both."),
                 (icon: Sword, text: "Send Debt Collectors to raid enemy structures, but keep them away from enemy spears."),
             ],
@@ -324,7 +324,7 @@
         (
             name: "Ledger Clerk",
             tagline: "Worker: mines Marrow, builds and repairs.",
-            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans, Tithe and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids. They can also clear woods, scrub and thicket (S). Clerks burn it: twice as fast as other workers, but it pays no timber.",
+            summary: "The Concord's worker. Carries 5 Marrow per trip to a Counting House (your Grub comes from caravans and trade), and builds and repairs Concord structures. Weak fighters, so keep them out of raids. They can also clear woods, scrub and thicket (S). Clerks burn it: twice as fast as other workers, but it pays no timber.",
         ),
         (
             name: "Caravan",
@@ -349,7 +349,7 @@
         (
             name: "Debt Collectors",
             tagline: "Cavalry: steal Grub from structures they hit.",
-            summary: "Heavy living cavalry with a big charge. Repossess steals 1 Grub for every 2 damage dealt to a structure, so raiding pays for itself. Strong against archers and artillery; spears stop them. Needs Marrow.",
+            summary: "Heavy living cavalry with a big charge, made for raiding. Strong against archers and artillery; spears stop them. Needs Marrow.",
         ),
         (
             name: "Lantern Wraiths",

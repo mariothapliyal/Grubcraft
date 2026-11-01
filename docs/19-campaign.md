@@ -7,7 +7,7 @@ Grubcraft is a game where you **explore the Reach and meet the people who live o
 
 Both are built on what [18 · AI](18-ai.md) already defines: **parties**, the **relations ledger** (stance, liking, trust, fading memories), **deals and contracts**, the **parley panel** and the **minds** that run on the host. Nothing here invents a second diplomacy system; the campaign gives that system a world big enough and a time long enough for it to matter.
 
-**Built so far:** nothing; this is design only. What it builds on that exists today: the hostility test that reads a stance table (hook 1 in [18](18-ai.md#engine-hooks)), the battle AI, and the deterministic simulation that lets the AI and "Restage this battle" run a battle anywhere.
+**Built so far:** campaign battle maps (C2, 2026-10-16, `gc_map::battle`, `gc_mapcheck battle`; see below); the campaign itself (`gc_campaign`, the world map and seasons) is design only. What it builds on that exists today: the hostility test that reads a stance table (hook 1 in [18](18-ai.md#engine-hooks)), the battle AI, and the deterministic simulation that lets the AI and "Restage this battle" run a battle anywhere.
 
 ## Decisions this document proposes
 

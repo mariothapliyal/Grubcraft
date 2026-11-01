@@ -89,7 +89,7 @@ Tests (`crates/gc_net/tests/lan_match.rs`) run every machine in one process on a
 
 ```
 Host                         Client
- │  beacon (LAN broadcast + mDNS, every 1 s)
+ │  beacon (LAN broadcast, every 1 s; mDNS planned)
  │──────────────────────────────▶ appears in Join list
  │◀──── Hello (build hash, data hash, name, key share)
  │───── Welcome (slot, lobby state, key share) ───────▶
@@ -99,7 +99,7 @@ Host                         Client
  │───── Countdown 3·2·1, turn bundles begin ──────────▶
 ```
 
-- **Discovery:** UDP broadcast beacon plus mDNS service `_grubcraft._udp`. Friends on the same network see the game without typing anything.
+- **Discovery:** UDP broadcast beacon (built) plus mDNS service `_grubcraft._udp` (not built yet; the Mac bundle already declares it). Friends on the same network see the game without typing anything.
 - **Direct join:** IP and port, or a short **join code** that encodes them (for virtual LANs and port-forwarding). *Built in step 3 (`gc_net::joincode`):* the code is eight characters of Crockford base 32, like `K7QD-M2XA`. It holds the host's IPv4 address, which of the four game ports it is on, and six check bits that catch most typos. Case and dashes don't matter, and O, I and L read as 0, 1 and 1. The host's lobby shows its code and address. When Tailscale is running it also shows a **Tailscale code** for the host's Tailscale address (100.64.0.0/10, found by asking which address would reach Tailscale's own 100.100.100.100), so friends anywhere can join with a code (`joincode::tailscale_ip`).
 - **Version gate:** the Hello carries the build hash and the game-data hash. Mismatches are rejected with a clear message naming both versions. *Built (review fix R3, 2026-10-16):* a build's name is "VERSION sim N (COMMIT)", where N is `gc_sim::SIM_VERSION`, the simulation's rules version, bumped whenever the golden replays need blessing. The lobby blocks Start unless everyone's version and sim version match; the commit is shown but not compared, so builds that differ only in docs or art play together.
 - Optional lobby password. *Built in step 3:* the host types it on the Play screen, and it goes into the link keys rather than across the network. The Join list marks locked games "(password)". A joiner is told "That game needs a password", "Wrong password" or "That game has no password". One address gets five wrong-password answers a minute; past that the host ignores it altogether (no key exchange either, so it can't keep guessing silently) until the minute is up, unless it holds a place in the match (a player rejoining). The joiner then sees "No answer". Games without a password count no guesses.
@@ -115,7 +115,7 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 
 ## Disconnects and rejoining
 
-- A client silent for 3 s is marked disconnected. Lobby option: **Pause and wait** (default, up to 90 s) or **Continue**.
+- A client silent for 3 s is marked disconnected. Lobby option **On drop**: **Wait** (default, up to 90 s) or **Play on**.
 - A disconnected player's units do nothing new but still defend themselves by simulation rules. In team games, an ally can take control; a later lobby option lets an AI run their army until they return ([18 · AI](18-ai.md#ai-allies)).
 - **Rejoin:** the player relaunches and joins the same host. Built in step 6b without snapshots: the host sends every turn from the start and the client replays them all. Later the host sends the latest snapshot and the commands since; the client fast-forwards. A tick costs 1 to 2 ms, so catching up on a minute of play takes about 2 to 3 seconds.
 - **Host leaves:** at launch the game ends (with an automatic save so it can be resumed). **Host migration** is planned: since every client holds the full state, the client with the best connection becomes the new sequencer from the last turn everyone had, and the others reconnect to it. AI players move with it: their minds keep nothing that can't be rebuilt from the sim, so the new host restarts them and they re-scout.
@@ -143,5 +143,5 @@ In order of effort:
 
 - **Map hacking is possible** in lockstep, because every machine holds the full state. Among friends this is acceptable; we do not build anti-cheat.
 - **Everyone runs the full simulation**, so the slowest machine sets the ceiling. That is why the simulation budget is tiny ([12 · Performance](12-performance.md)).
-- **AI players run on the host only.** Each is a player whose commands the host puts in the turn bundles, tagged with the AI's slot like anyone's, so they cost the other machines nothing and replays record them like human orders ([18 · AI](18-ai.md#the-big-decision-rules-in-the-simulation-minds-outside-it)). The host pays for their thinking, on its own thread.
+- **AI players run on the host only.** Each is a player whose commands the host puts in the turn bundles, tagged with the AI's slot like anyone's, so they cost the other machines nothing and replays record them like human orders ([18 · AI](18-ai.md#the-big-decision-rules-in-the-simulation-minds-outside-it)). The host pays for their thinking (planned on its own thread; today the minds tick on the main thread between turns, timed as `ai_time` in the dev overlay).
 - **One build for everyone:** players must update together. The version gate makes this obvious rather than mysterious.

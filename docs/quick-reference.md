@@ -44,7 +44,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Selected gate: `Q` Auto, `W` Locked, `E` Open. Selected wall: `U` raises its stretch a level. No wall selected: `U` opens the Guide.
 
 **Camera**
-- Arrow keys pan. Wheel zooms. `Alt`+middle-drag rotates. `Home` resets rotation. `,` and `.` turn the view.
+- Arrow keys pan. Wheel zooms. `Alt`+middle-drag rotates. `Home` or a middle-click resets rotation. `,` and `.` turn the view.
 - `F8` director camera (any camera move turns it off). Far zoom switches to Commander View (automatic).
 
 **Help, menus, sound**
@@ -114,9 +114,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 ## 4. Factions [docs/03-factions.md]
 
 - **Ember Clans** (Shogun): Hands carry Grub to the hall or a Granary. **Honor** meter: +5 when an enemy regiment routs against yours, +10 for a win while outnumbered, +2 a minute per Shrine held, -5 when yours routs. Spent on Edicts. Tight formation gives +15% defence when still.
-- **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Gnawers fill a load in 87% of the time (`gather_percent: 115`). A swarm: Brood regiments are cheap and each soldier is weak, so a Brood army has about twice the soldiers of an equal-worth one. Tier-1 regiments evolve on the field (15 s cocoon).
+- **Brood** (vein network): Gnawers burrow into seeps and send Grub home through root-veins; cut a Pustule and seeps beyond it stop. **Larvae** meter: each Hive or Hatchery Pit holds 3, makes one every 12 s; every regiment hatches from one. Gnawers fill a load in 87% of the time (`gather_percent: 115`). A swarm: Brood regiments are cheap and each soldier is weak, so a Brood army has about twice the soldiers of an equal-worth one. Evolutions (a tier-1 regiment cocooning into a tier-2 form) are not built yet: Field Battles can buy Spitters, Burrowers, Mantid Reapers and Shellbacks, Conquest cannot raise them.
 - **Shard Choir** (chords): Each Resonator tunes one seep with no workers. Three Resonators linked within 14 tiles (not in a line) form a Chord, adding +10% to +30% Grub to the seeps they tune there. Chords charge **Resonance** (cap 100). Most Choir buildings need power from a Spire (8-tile field) or Resonator (6 tiles).
-- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 37 Grub + 1.1 per tile of straight-line distance (about 81 at 40 tiles). **Tithe** meter: each death within 12 tiles of a Reliquary pays 1. The dead do not rout.
+- **Carrion Concord** (trade and undeath): Caravans carry Grub from the Counting House to a trade post: a neutral hamlet (full), your Waystation (half), or an allied main building (full, ally gets 20%). Pay: 37 Grub + 1.1 per tile of straight-line distance (about 81 at 40 tiles). The dead do not rout. The **Tithe** meter (each death near a Reliquary pays 1) is designed but not built yet.
 - **Heroes:** up to three per faction, not in the game yet (section 8).
 - **Field Battle generals:** each side's general rides with one regiment. Select it to see "Your general rides here: guard him". His death panics nearby regiments. [docs/37-commander.md]
 
@@ -185,7 +185,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
   - Victory (default **Both**): Annihilation (destroy every opponent's main buildings; a player with none has 90 s to build one). Titan's Heart (hold the map centre for 3 minutes with an unbroken regiment within 6 tiles; unlocks at minute 20 Standard, 15 Swift, 24 Epic).
 - **Field Battle** (5 to 20 min; no economy). Play > Host > Field Battle, or `--battle recruit|veteran|general|warlord` for a 1v1 against the AI. New lobbies start on **Measured: Random**: grown land with no mirrored half, starts placed so each one's walk to its nearest enemy is within 10% of the others' (any way the lobby hands starts out). Also offered: Land (mirrored grown land), Classic and Random maps. [docs/41]
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
-  - Points budget 2,000, 4,000 (default) or 8,000. A regiment costs 3 points a Grub and 6 a Marrow of its roster price, times its faction's Field share: Clans 100%, Brood 128%, Choir 70%, Concord 110% (Yari Ashigaru 360). Build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. Win by rout or victory points. Champions before battle is on by default.
+  - Points budget 2,000, 4,000 (default) or 8,000. A regiment costs 3 points a Grub and 6 a Marrow of its roster price, times its faction's Field share: Clans 100%, Brood 128%, Choir 70%, Concord 110% (Yari Ashigaru 360). Build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. The first side left holding the field (fighting regiments, no enemy fighting regiments in its sight) for 10 seconds wins (`gc_sim/src/verdict.rs`); there is no time limit or victory points yet. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
 - **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type an address or join code. Version mismatches are shown in the lobby.
 - **Replays:** main menu. **Unit viewer:** main menu or `--viewer`. **Guide:** `U` or main-menu button (Quick Start, Buildings, Troops tabs).
@@ -203,7 +203,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 **Not built yet** (design only, or no code found)
 - Heroes in every mode (Shrine, Queen's Chamber, Sanctum, Vault exist as buildings; no hero data). Hero items, creep camps.
 - Orders: Hold, Skirmish, Run, Column and Wedge; double-click select by type; `Tab` sub-groups.
-- Concord Tithe contracts (Raise the Bound, Indenture, Foreclose, Hire Militia); Choir Silence the Chord.
+- Concord Tithe meter and its contracts (Raise the Bound, Indenture, Foreclose, Hire Militia), and undead crumbling away from Reliquaries; Choir Silence the Chord and Refraction.
+- Brood evolutions (cocoons); reinforcement (regiments regaining soldiers); the Skirmish order; unit abilities such as High Watch, Repossess and the Rocket Cart's minimum range that are roster designs only.
 - Research at Granary, Forge and Harmonics Lab (costs not designed yet).
 - Tuners' repair (10 HP/s).
 - Titan Events (Tremor, Marrow Bloom, Heartbeat, Gut Fog): no code found for Heartbeat, Marrow Bloom or Gut Fog; no lobby toggle found.
@@ -217,10 +218,4 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Commander: a command to move the general to another regiment.
 
 **Conflicts in the sources** (the code is the authority)
-- Field Battle time limit: docs/06 says 20 minutes by default; docs/08 says "There is no time limit yet"; no time-limit control found in `crates/gc_ui/src/lobby.rs`.
-- Ping wheel: docs/08 says `G` plus the mouse; in the code `G` shows blocked ground and no ping wheel was found.
-- The main-building slot reads "Cancel" in code and docs/08, not "Call off".
-- Camera: docs/08 says middle-click resets rotation; the code's `Home` does (also in the Marshal's Scroll).
-- docs/26's status header is dated 2026-10-22, older than its own "Built" markers (stages 1 to 8). Treat the markers as current.
-- docs/38's header says "Plan only", but stages 1 to 4 are marked "Built 2026-10-25".
-- docs/37 (commander) has no "Built" marker, but the code exists (`gc_sim` generals, battle messages).
+- None known (checked 2026-10-31). Add any found here, with the doc and the code that disagree.
