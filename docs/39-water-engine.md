@@ -330,6 +330,16 @@ Built 2026-10-31.
 - **Tests:** `river_bridges.rs`: workers clear a jam a piece at a time for its timber (and the owner is told it jammed); small jams wash free when a flood falls back; jams hold in steady water.
 - *Not yet (stage 4c):* burning jams, computer players clearing jams and repairing bridges, and the stress scenarios.
 
+## Built: stage 4c, burning jams
+
+Built 2026-10-31.
+
+- **Burning a jam:** the Burn order (E) from a regiment on the deck or bank beside a jam can set the jam alight: it takes the nearest of the woods and the jams in reach (`Fires::tinder` with `Rivers::unlit_jams`), and a jam catching is told as woods catching are (`Event::Kindled`). It won't light in wet weather, as woods won't. The fire belongs to the jam (`Debris::fires`, by pier), so pieces that jam on it later burn too; its pieces burn down one at a time, 3 seconds a mass point (`BURN_SECONDS`). While it burns the timber deck above loses 1% of its hit points a second whatever its level (`DECK_BURN_PER_TEN_THOUSAND`; fire goes for the deck, not the piers), so a full 12-mass jam burnt off costs a sound tile over a third of itself: fast, but costly. Rain puts it out (the same dampness that stops woods catching). A jam that washes free or lets go floats on put out. The deck's own burning stops with the jam (timber decks don't keep burning on their own).
+- **Shown:** a low blaze on the water at each burning jam (`Rivers::jam_fires`); the Burn tooltip and hint say it can light a jam beside a bridge.
+- **Formats:** `SIM_VERSION` 80; no new commands. The burning jams are hashed after the rest of the debris, and only while there are any, so no golden moves.
+- **Tests:** `river_bridges.rs`: a jam set alight burns away and takes a slice of the deck with it.
+- *Not yet (stage 4d):* computer players clearing jams and repairing bridges; then the stress scenarios (4e).
+
 ## 7. Stages (each its own pull request)
 
 1. **Rivers with water.**
