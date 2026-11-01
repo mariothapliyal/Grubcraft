@@ -855,11 +855,14 @@ impl Regiments {
     /// while it marches; once there is room again it widens back to its
     /// frontage, more slowly, so it doesn't flicker. Only while it marches
     /// or is still narrowed, never in melee or braced.
-    fn squeeze(&mut self, i: usize, nav: &Nav, units: &[UnitStats]) {
+    fn squeeze(&mut self, i: usize, nav: &Nav, terrain: &Terrain, units: &[UnitStats]) {
         let models = self.models[i].max(1);
         let frontage = self.frontage[i].clamp(1, models);
         let marching = self.target[i].is_some();
-        if (!marching && self.files[i] == frontage) || !nav.has_map() {
+        let owner = self.owner[i];
+        if !nav.has_map()
+            || (!marching && self.files[i] == frontage && !nav.on_bridge(owner, self.position[i]))
+        {
             return;
         }
         if self.reform[i] > 0 {
@@ -883,18 +886,22 @@ impl Regiments {
         // Room either side of the centre, unless open all round (then the
         // whole frontage fits, however wide: the measure stops at
         // `CLEAR_CAP`).
-        // On a bridge, the deck's edges count too (see `Nav::room_across`).
-        let owner = self.owner[i];
-        let tight = !nav.open_around(owner, self.position[i], reach_tiles)
-            || nav.on_bridge(owner, self.position[i]);
+        // On a bridge (any of the lines across the block, so the front
+        // narrows as it steps on), the deck's edges over a ford count too
+        // (see `Nav::room_across`).
+        let half = formation::block_size(files, models, fs, rs).1 / 2;
+        let lines = [half + look, half, Fx::ZERO, -half];
+        let (at, ahead) = (self.position[i], self.facing[i].to_vec());
+        let tight = !nav.open_around(owner, at, reach_tiles)
+            || lines.iter().any(|&a| nav.on_bridge(owner, at + ahead * a));
         let room = tight.then(|| {
-            let half = formation::block_size(files, models, fs, rs).1 / 2;
             nav.room_across(
-                self.owner[i],
-                self.position[i],
+                owner,
+                at,
                 self.facing[i],
                 Fx::from_int(reach_tiles),
-                &[half + look, half, Fx::ZERO, -half],
+                &lines,
+                |p| terrain.wet(p),
             )
         });
         let fits = |f: u16, spare: Fx| room.is_none_or(|room| outer(f) + spare <= room);
@@ -1418,7 +1425,7 @@ impl Regiments {
                 self.aside[i] = 0;
             }
             if self.engaged[i].is_none() && !self.braced[i] {
-                self.squeeze(i, nav, units);
+                self.squeeze(i, nav, terrain, units);
             }
             let turn = self.turn[i];
             if self.engaged[i].is_some() {

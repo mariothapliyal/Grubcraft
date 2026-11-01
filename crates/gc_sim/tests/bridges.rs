@@ -463,44 +463,92 @@ fn a_gap_in_the_upper_lane_is_mended_without_a_third_lane() {
 
 #[test]
 fn a_block_crossing_a_bridge_over_a_ford_keeps_to_the_deck() {
-    // A ford anyone may wade; a two-lane bridge over it. A block wider
-    // than the bridge narrows onto the deck instead of wading beside it.
+    // A ford anyone may wade; a two-lane bridge over it, with three dry
+    // tiles on each bank, then with only one. A block wider than the
+    // bridge narrows onto the deck as it steps on, instead of wading
+    // beside it.
+    for ends in [27..=36, 29..=34] {
+        let mut w = world_over(true);
+        for (x, y) in ends.clone().flat_map(|x| [(x, ROW), (x, ROW + 1)]) {
+            let tile = (x as i16, y as i16);
+            let building = BRIDGE;
+            assert!(order(
+                &mut w,
+                0,
+                Command::SpawnStructure {
+                    building,
+                    tile,
+                    turn: 0
+                }
+            ));
+        }
+        w.tick(&[]);
+        let foot = spawn(&mut w, FOOT, 20, ROW + 1);
+        let wide = w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+        assert!(order(
+            &mut w,
+            0,
+            Command::MoveTo {
+                regiment: foot,
+                target: FxVec2::from_ints(44, ROW + 1),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+            }
+        ));
+        let stats = DRILL_UNITS[0];
+        let mut widest_on_deck = Fx::ZERO;
+        let mut on_deck = 0;
+        for _ in 0..90 * TICKS_PER_SECOND {
+            w.tick(&[]);
+            let r = w.regiments.iter().find(|r| r.handle == foot).unwrap();
+            // From a tile short of the water (its front ranks over it) to
+            // a tile short of the far bank.
+            let over = Fx::from_int(RIVER.start - 1)..Fx::from_int(RIVER.end - 1);
+            if over.contains(&r.position.x) {
+                on_deck += 1;
+                // From the first file's soldiers to the last's.
+                let (width, _) = stats.block_size_in(r.formation, r.files, r.models);
+                let (file, _) = stats.spacing(r.formation);
+                widest_on_deck = widest_on_deck.max(width - file);
+            }
+        }
+        assert!(on_deck > 0, "it crossed by the bridge");
+        let (full, _) = stats.block_size_in(gc_sim::Formation::Line, wide, stats.models);
+        assert!(
+            full > Fx::from_int(2),
+            "wider than the bridge to begin with: {full:?}"
+        );
+        assert!(
+            widest_on_deck <= Fx::from_int(2),
+            "outer soldiers {widest_on_deck:?} apart on a 2-tile deck ({ends:?})"
+        );
+    }
+}
+
+#[test]
+fn a_block_passing_the_foot_of_a_bridge_on_the_bank_keeps_its_width() {
+    // Marching along the west bank across the bridge's dry end tiles.
     let mut w = world_over(true);
     span(&mut w);
-    let foot = spawn(&mut w, FOOT, 20, ROW + 1);
-    let wide = w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+    let foot = spawn(&mut w, FOOT, 26, ROW - 12);
+    let files = |w: &World| w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+    let wide = files(&w);
     assert!(order(
         &mut w,
         0,
         Command::MoveTo {
             regiment: foot,
-            target: FxVec2::from_ints(44, ROW + 1),
+            target: FxVec2::from_ints(26, ROW + 14),
             facing: None,
             files: 0,
             pace: Fx::ZERO,
         }
     ));
-    let stats = DRILL_UNITS[0];
-    let mut widest_on_deck = Fx::ZERO;
-    let mut on_deck = 0;
-    for _ in 0..90 * TICKS_PER_SECOND {
+    let mut narrowest = wide;
+    for _ in 0..40 * TICKS_PER_SECOND {
         w.tick(&[]);
-        let r = w.regiments.iter().find(|r| r.handle == foot).unwrap();
-        // Over the middle of the river, well onto the deck.
-        if (Fx::from_int(RIVER.start + 1)..Fx::from_int(RIVER.end - 1)).contains(&r.position.x) {
-            on_deck += 1;
-            let (width, _) = stats.block_size_in(r.formation, r.files, r.models);
-            widest_on_deck = widest_on_deck.max(width);
-        }
+        narrowest = narrowest.min(files(&w));
     }
-    assert!(on_deck > 0, "it crossed by the bridge");
-    let (full, _) = stats.block_size_in(gc_sim::Formation::Line, wide, stats.models);
-    assert!(
-        full > Fx::from_int(2),
-        "wider than the bridge to begin with: {full:?}"
-    );
-    assert!(
-        widest_on_deck <= Fx::from_int(2),
-        "{widest_on_deck:?} across a 2-tile deck"
-    );
+    assert_eq!(narrowest, wide, "squeezed on the bank");
 }

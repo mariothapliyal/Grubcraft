@@ -332,6 +332,11 @@ impl Grid {
         inside(p.x) && inside(p.y)
     }
 
+    /// Whether a finished bridge spans the ground under a map position.
+    fn bridged_at(&self, p: FxVec2) -> bool {
+        self.on_map(p) && self.is_bridged(self.cell_at(p) as usize)
+    }
+
     /// The cell under a map position (clamped onto the map).
     fn cell_at(&self, p: FxVec2) -> u32 {
         let to_cell = |v: Fx| {
@@ -1232,11 +1237,7 @@ impl Nav {
     /// Whether a finished bridge spans the ground under `p`, on the
     /// ground `party` walks (never with no map).
     pub(crate) fn on_bridge(&self, party: PlayerId, p: FxVec2) -> bool {
-        self.grid_of(party).is_some_and(|g| {
-            let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
-            let on_map = p.x >= Fx::ZERO && p.y >= Fx::ZERO && p.x < side && p.y < side;
-            on_map && g.is_bridged(g.cell_at(p) as usize)
-        })
+        self.grid_of(party).is_some_and(|g| g.bridged_at(p))
     }
 
     /// Whether a regiment of `party`'s at `p` has open ground all round
@@ -1254,9 +1255,10 @@ impl Nav {
     /// `lines` (tiles ahead of the centre; behind when negative), up to
     /// `reach`. A line that starts on blocked ground (the rear of a block
     /// hanging over the water) doesn't count. A line that starts on a
-    /// bridge ends where the bridge does, so a block crossing one keeps to
-    /// its deck rather than wading a ford beside it. Measured in quarter
-    /// tiles, on the ground `party` walks.
+    /// bridge ends at water (`wet`, which a deck isn't) as at blocked
+    /// ground, so a block crossing one keeps to its deck rather than wading
+    /// a ford beside it; where the deck meets the bank it doesn't end.
+    /// Measured in quarter tiles, on the ground `party` walks.
     pub(crate) fn room_across(
         &self,
         party: PlayerId,
@@ -1264,6 +1266,7 @@ impl Nav {
         facing: Angle,
         reach: Fx,
         lines: &[Fx],
+        wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
         let Some(g) = self.grid_of(party) else {
             return reach;
@@ -1282,25 +1285,18 @@ impl Nav {
         let ahead = facing.to_vec();
         let right = facing.wrapping_add(Angle::QUARTER).to_vec();
         let quarter = Fx::from_ratio(1, 4);
-        let bridged = |p: FxVec2| {
-            p.x >= Fx::ZERO
-                && p.y >= Fx::ZERO
-                && p.x < side
-                && p.y < side
-                && g.is_bridged(g.cell_at(p) as usize)
-        };
         for &a in lines {
             let base = centre + ahead * a;
             if clear_at(base) == 0 {
                 continue;
             }
-            let deck = bridged(base);
+            let deck = g.bridged_at(base);
             for side in [right, FxVec2::ZERO - right] {
                 let mut d = quarter;
                 while d < room {
                     let at = base + side * d;
                     let clear = clear_at(at);
-                    if clear == 0 || (deck && !bridged(at)) {
+                    if clear == 0 || (deck && wet(at)) {
                         // The edge lies somewhere in the last quarter.
                         room = d - quarter;
                         break;
