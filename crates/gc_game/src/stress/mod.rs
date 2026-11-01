@@ -21,9 +21,11 @@
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
 
-mod arena;
+pub(crate) mod arena;
 mod big_army;
 mod bridge;
+mod bridge_flood;
+mod bridge_flood_armies;
 mod crossing;
 mod forest;
 mod forest_pass;
@@ -67,6 +69,8 @@ const SCENARIOS: &[Scenario] = &[
     big_army::GATE,
     big_army::BRIDGE,
     mountain::SCENARIO,
+    bridge_flood::SCENARIO,
+    bridge_flood_armies::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

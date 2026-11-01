@@ -4,7 +4,8 @@
 use gc_sim::{MoraleState, TICKS_PER_SECOND};
 
 use super::arena::{
-    Arena, EAST, Real, WEST, attack_nearest, centre, grid, move_to, of, put_up, soldiers, spawn,
+    Arena, EAST, Real, WEST, attack_nearest, centre, grid, move_to, of, soldiers, spawn,
+    timber_bridge,
 };
 use super::{Report, Scenario, seconds};
 
@@ -26,11 +27,7 @@ fn run(real: &Real, report: &mut Report) {
     let mut arena = Arena::new(TILES);
     arena.river(RIVER, 0..TILES as i32);
     let mut world = arena.world(real, 12, 0);
-    let bridge = real.building("Timber Bridge");
-    let deck: Vec<_> = SPAN
-        .flat_map(|x| [(bridge, (x, ROW), 0), (bridge, (x, ROW + 1), 0)])
-        .collect();
-    put_up(&mut world, 0, &deck);
+    timber_bridge(real, &mut world, SPAN, ROW..ROW + 2);
 
     // In file down the west bank, two abreast, the head 7 tiles off the
     // bridge.

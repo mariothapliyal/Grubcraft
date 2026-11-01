@@ -22,6 +22,7 @@ pub(crate) use crate::headless::Real;
 const LAND: i32 = 40;
 const WATER_LINE: i32 = 24;
 const RIVER_BED: i32 = 0;
+const FORD_BED: i32 = 20;
 
 /// A square map `tiles` across, open and flat until painted, made by the
 /// game's own map maker (`gc_map`) from a description, as a map file is:
@@ -31,6 +32,9 @@ pub(crate) struct Arena {
     /// The map, made the first time it is asked for; painting after that
     /// is a mistake.
     map: OnceCell<Map>,
+    /// Which way the rivers run, if they run at all (see
+    /// [`Arena::flowing`]).
+    flowing: Option<Angle>,
 }
 
 impl Arena {
@@ -52,7 +56,16 @@ impl Arena {
                 set_pieces: Vec::new(),
             },
             map: OnceCell::new(),
+            flowing: None,
         }
+    }
+
+    /// Its rivers run along `way` at a steady pace, as a grown map's do:
+    /// they have stretches, rise in rain and flood (docs/39), and carry
+    /// debris down to the bridges.
+    pub fn flowing(&mut self, way: Angle) {
+        assert!(self.map.get().is_none(), "set after the map was made");
+        self.flowing = Some(way);
     }
 
     /// The tiles with x in `xs` and y in `ys` as a map shape.
@@ -73,11 +86,22 @@ impl Arena {
     /// so, as on a real map, the half of each bank tile next to the water
     /// is blocked to the march too.
     pub fn river(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        self.water(xs, ys, RIVER_BED);
+    }
+
+    /// Water shallow enough to wade (a quarter of a tile deep): a ford,
+    /// shut while its river floods.
+    pub fn ford(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        self.water(xs, ys, FORD_BED);
+    }
+
+    /// Water over a bed at `bed`.
+    fn water(&mut self, xs: Range<i32>, ys: Range<i32>, bed: i32) {
         let shape = Arena::rect(xs, ys);
         self.paint().terrain.push(TerrainOp {
             shape,
             mode: Mode::Set,
-            height: RIVER_BED,
+            height: bed,
             edge: 0,
         });
     }
@@ -129,7 +153,16 @@ impl Arena {
 
     /// The map as painted.
     fn map(&self) -> &Map {
-        self.map.get_or_init(|| Map::from_def(&self.def))
+        self.map.get_or_init(|| {
+            let mut map = Map::from_def(&self.def);
+            if let Some(way) = self.flowing {
+                let byte = gc_sim::Flow::byte(way, 2);
+                map.flow = (map.heights.iter())
+                    .map(|&h| if h < map.water { byte } else { 0 })
+                    .collect();
+            }
+            map
+        })
     }
 
     /// The map and tile `(x, y)`'s place in its rows, if it is on it.
@@ -154,6 +187,11 @@ impl Arena {
     /// and buildings, each player with `stores` Grub and Marrow, nobody
     /// winning however it goes.
     pub fn world(&self, real: &Real, seed: u64, stores: u32) -> World {
+        self.world_under(real, seed, stores, gc_sim::Sky::STILL)
+    }
+
+    /// [`Arena::world`] under `sky`'s weather.
+    pub fn world_under(&self, real: &Real, seed: u64, stores: u32, sky: gc_sim::Sky) -> World {
         let map = self.map();
         let nav = map.sim_nav_costs();
         let mut world = World::new(&MatchSetup {
@@ -165,7 +203,7 @@ impl Arena {
             teams: &[0, 1],
             ground: map.ground(),
             champions: false,
-            sky: gc_sim::Sky::STILL,
+            sky,
             generals: false,
         });
         let mut start = [(0, 0); gc_sim::MAX_PARTIES];
@@ -182,13 +220,53 @@ impl Arena {
     }
 }
 
+/// A heavy squall from 10 to 20 seconds in, after fair weather: on a map
+/// whose rivers run ([`Arena::flowing`]) it rolls a flood front whose
+/// band the world's seed decides (docs/39).
+pub(crate) const SQUALL: &[gc_sim::sky::Spell] = {
+    use gc_sim::sky::{Spell, Weather, WeatherKind};
+    const SECOND: u32 = gc_sim::TICKS_PER_SECOND;
+    &[
+        Spell {
+            at: 0,
+            weather: Weather::FAIR,
+        },
+        Spell {
+            at: 10 * SECOND,
+            weather: Weather {
+                kind: WeatherKind::Rain,
+                strength: 255,
+                cloud: 255,
+                wind: (0, 0),
+            },
+        },
+        Spell {
+            at: 20 * SECOND,
+            weather: Weather::FAIR,
+        },
+    ]
+};
+
+/// [`SQUALL`] as the sky of a match.
+pub(crate) fn squall() -> gc_sim::Sky<'static> {
+    gc_sim::Sky {
+        spells: SQUALL,
+        ..gc_sim::Sky::STILL
+    }
+}
+
+/// A world seed whose squall rolls a catastrophic front on an arena with
+/// one flowing river and a ford at its head (the scenarios check it does).
+pub(crate) const CATASTROPHIC_SEED: u64 = 23;
+
 /// The middle of tile `(x, y)`.
 pub(crate) fn centre(x: i32, y: i32) -> FxVec2 {
     FxVec2::new(Fx::from_ratio(2 * x + 1, 2), Fx::from_ratio(2 * y + 1, 2))
 }
 
-/// Facing east and west.
+/// Facing east, south and west.
 pub(crate) const EAST: Angle = Angle(0);
+pub(crate) const SOUTH: Angle = Angle(0x4000);
 pub(crate) const WEST: Angle = Angle(0x8000);
 
 /// Put down `regiments` (unit, where) of `player`'s in one tick, and their
@@ -227,6 +305,22 @@ pub(crate) fn spawn(
         .collect();
     new.sort_unstable_by_key(|h| h.index);
     new
+}
+
+/// A Timber Bridge of `player` 0's across columns `span`, rows `rows`
+/// deep, and each tile with its handle, row by row within each column.
+pub(crate) fn timber_bridge(
+    real: &Real,
+    world: &mut World,
+    span: core::ops::RangeInclusive<i32>,
+    rows: Range<i32>,
+) -> Vec<((i32, i32), StructureHandle)> {
+    let bridge = real.building("Timber Bridge");
+    let tiles: Vec<_> = span
+        .flat_map(|x| rows.clone().map(move |y| (x, y)))
+        .collect();
+    let deck: Vec<_> = tiles.iter().map(|&t| (bridge, t, 0)).collect();
+    tiles.into_iter().zip(put_up(world, 0, &deck)).collect()
 }
 
 /// Put up finished buildings of `player`'s, each (building, north-west
@@ -335,6 +429,12 @@ pub(crate) struct March {
     pub ideal: u32,
     /// Soldiers at the start and at the end.
     pub soldiers: (u32, u32),
+    /// The longest any regiment stood stuck on its way, in ticks: short of
+    /// its goal and getting under [`HEADWAY`] nearer it (walking in place,
+    /// waiting its turn, or going round).
+    pub stuck: u32,
+    /// Regiment-ticks in disorder from crowding into friends (jostling).
+    pub disorder: u32,
     /// The limit, in seconds.
     limit: u32,
 }
@@ -358,6 +458,14 @@ impl March {
             super::seconds(Some(self.ideal)),
         );
         report.metric("pace, percent of the straight march", pace);
+        report.metric("longest stuck", super::seconds(Some(self.stuck)));
+        report.metric(
+            "regiment-seconds in disorder from crowding",
+            format!(
+                "{:.1}",
+                self.disorder as f32 / gc_sim::TICKS_PER_SECOND as f32
+            ),
+        );
         report.check(
             format!("every regiment arrives and stands within {} s", self.limit),
             self.done.is_some(),
@@ -372,6 +480,8 @@ impl March {
 
 /// How near its goal a regiment must stand to have arrived.
 const NEAR: Fx = Fx::from_int(3);
+/// Headway a regiment must make for it not to be stuck.
+const HEADWAY: Fx = Fx::from_ratio(1, 4);
 
 /// March each of `army` to the goal of the same place in `goals`, ticking
 /// (timed) for at most `limit` seconds, calling `each` with the tick after
@@ -404,17 +514,34 @@ pub(crate) fn march(
     let start = soldiers(world, army);
     report.tick(world, &orders);
     each(0, world);
-    let mut done = None;
+    // How near each regiment had come to its goal when it last made
+    // headway, and when.
+    let mut headway: Vec<(Fx, u32)> = (army.iter().zip(goals))
+        .map(|(&r, g)| {
+            let at = of(world, &[r]).next().map_or(*g, |v| v.position);
+            ((*g - at).length(), 0)
+        })
+        .collect();
+    let mut stuck = 0;
+    let (mut done, mut disorder) = (None, 0);
     for t in 1..=limit * gc_sim::TICKS_PER_SECOND {
         report.tick(world, &[]);
         each(t, world);
+        disorder += of(world, army).filter(|v| v.disorder > 0).count() as u32;
         // Every regiment still on the field there and standing (losses
         // are checked on their own).
         let (mut alive, mut there) = (0, 0);
         for v in of(world, army) {
-            let g = goals[army.iter().position(|&r| r == v.handle).unwrap()];
+            let i = army.iter().position(|&r| r == v.handle).unwrap();
+            let left = (goals[i] - v.position).length();
+            let near = left <= NEAR;
             alive += 1;
-            there += usize::from(!v.moving && (g - v.position).length() <= NEAR);
+            there += usize::from(!v.moving && near);
+            let last = &mut headway[i];
+            if near || left + HEADWAY < last.0 {
+                *last = (left, t);
+            }
+            stuck = stuck.max(t - last.1);
         }
         if alive > 0 && there == alive {
             done = Some(t);
@@ -425,6 +552,8 @@ pub(crate) fn march(
         done,
         ideal,
         soldiers: (start, soldiers(world, army)),
+        stuck,
+        disorder,
         limit,
     }
 }
