@@ -507,7 +507,7 @@ Two Veteran AIs, one per faction, on the generated map with every rule in play (
 
 <a id="roster-field-table"></a>**Field Battles on the rosters.** Since #174 a lobby Field Battle plays every faction's full roster, priced from its roster cost (3 points a Grub, 6 a Marrow), so the `gc_match` `faction_table` below measures the five `units.ron` regiments, which players no longer field. `field_balance::roster_field_table` in `gc_game` plays them as the lobby does (each AI buys its own mix, the default lobby map with a fresh seed each battle): `AI_BATTLES=64 AI_FROM=1 cargo test -p gc_game --release roster_field_table -- --ignored --nocapture` (`AI_PAIR` narrows it, `AI_ARMY=1` prints the first battle's armies). After this pass, 64 battles a pair: Ember Clans v Brood 9%, v Choir 72%, v Concord 75%; Brood v Choir 91%, v Concord 92%; Choir v Concord 69%. The Brood wins nine in ten, and armies differ a lot in size (a 4,000-point Concord army is 4 regiments, a Brood one 9, with a Colossus Maw). Prices that also count supply (half the cost price, half 120 points a supply) lifted the Concord (the Clans won 20% against it) but left the Brood on top (86% to 91%), so cheapness is not what makes the Brood strong there. The [Field Battle prices](#field-battle-prices) below even it out.
 
-<a id="field-battle-prices"></a>**Field Battle prices (2026-10-31, faction rebalance PR 6).** Two things made the roster table lopsided. First, the AI's army builder stopped at the largest size of its preset mix that fitted the budget, and for the Concord the next size brought in a dear type, so a 4,000-point Concord army was 4 regiments costing 2,450. Now what is left buys more of the faction's own regiments, the dearest that fits and line troops first (the Concord fields 6 for 3,950). Second, Conquest prices are set against each faction's economy, which a Field Battle doesn't have. So each faction's regiments now cost a share of their roster price in Field Battles (`roster::field_price_percent`): Ember Clans 100%, Brood 128%, Choir 70%, Carrion Concord 110%. Conquest prices are unchanged. The table (48 battles a pair, seeds 1 and 1001):
+<a id="field-battle-prices"></a>**Field Battle prices (2026-10-31, faction rebalance PR 6).** Two things made the roster table lopsided. First, the AI's army builder stopped at the largest size of its preset mix that fitted the budget, and for the Concord the next size brought in a dear type, so a 4,000-point Concord army was 4 regiments costing 2,450. Now what is left buys more of the faction's own regiments, the dearest that fits and line troops first (the Concord fields 6 for 3,950). Second, Conquest prices are set against each faction's economy, which a Field Battle doesn't have. So each faction's regiments now cost a share of their roster price in Field Battles (`roster::field_price_percent`): Ember Clans 100%, Brood 128%, Choir 70% (78% since PR 7, below), Carrion Concord 110%. Conquest prices are unchanged. The table (48 battles a pair, seeds 1 and 1001):
 
 | | Brood | Choir | Carrion Concord |
 |---|---|---|---|
@@ -516,6 +516,16 @@ Two Veteran AIs, one per faction, on the generated map with every rule in play (
 | **Choir** | | | 35%, 40% |
 
 Averaged over its pairs and both sets each faction wins: Clans about 53%, Brood 39%, Choir 51%, Concord 56% (before: Brood about 91%, Clans 52%, Choir 35%, Concord 21%). The knobs move in steps, because a few points decide whether one more regiment fits: Brood 125% gave the Brood 63% and 130% gave it 34%; Concord 97% won 80% of its battles and 98% only 20% before the builder fix. The Brood against the Choir is the residual.
+
+<a id="choir-field-share"></a>**Choir Field share (2026-11-01, PR 7).** The Choir's share went from 70% to 78%, which evens the Brood against the Choir. Same table, measured after water stage 4b (#382):
+
+| | Brood | Choir | Carrion Concord |
+|---|---|---|---|
+| **Ember Clans** | 52%, 60% | 58%, 60% | 56%, 46% |
+| **Brood** | | 35%, 54% | 46%, 38% |
+| **Choir** | | | 46%, 54% |
+
+Each faction now wins on average Clans about 55%, Brood 44%, Choir 49%, Concord 52% (was 53 / 39 / 51 / 56); the Brood against the Choir is 44.5% (was 30%). The steps again: at 74% the Choir buys one regiment more (10, not 9) and the Brood won only 6% to 19% against it; at 82% the Choir fell to 12% to 27% against the Concord. Brood 126% brings back its Colossus Maw (7 regiments, not 10) and puts the Brood at about 63%. Concord 115% left the Concord at 41%. The Brood's 44% is the lowest left, inside the noise of 96 battles a pair.
 
 **Weapon room retune (2026-10-15).** Reach gave the spear regiments half their second rank as extra blows, so the Yari Ashigaru went from 30 / 45 / 3 to 27 / 45 / 2 and the Bone Pikes from 25 / 55 / 3 to 28 / 54 / 2. Before the retune the table read 50%, 47%, 61% / 45%, 53% / 53%, and after it 59%, 42%, 53% / 45%, 54% / 56%. On seeds 1 to 96 it now reads 60%, 51%, 52% / 36%, 52% / 54% (the Brood against the Choir was 36% there before the retune too). These knobs are steep too: a Bone Pikes defence of 53 or 55 instead of 54 moved the Concord's matchups by 10 to 20 points.
 
