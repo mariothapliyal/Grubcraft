@@ -54,6 +54,10 @@ pub struct Tile<'a> {
     pub level: u8,
     /// Whether another bridge tile is at a tile.
     pub joined: &'a dyn Fn((i32, i32)) -> bool,
+    /// How high the deck's underside is over this tile (see
+    /// [`crate::bridge_deck`]): level from bank to bank, not the ground
+    /// under the tile.
+    pub floor: f32,
     /// The height the game draws at a point (the water over a river).
     pub drawn: &'a dyn Fn(Vec2) -> f32,
     /// The ground (the river bed under water) at a point.
@@ -113,12 +117,13 @@ impl BridgeKit {
 
     /// The pieces that build bridge tile `t`, added to `out`. A tile going
     /// up shows its piers or abutment and stringers, then the rest once
-    /// finished. Every piece stands as high as the tile's middle, so the
-    /// tile's pieces meet even on a sloping bank.
+    /// finished. Every piece stands as high as the tile's deck, so the
+    /// tile's pieces meet even on a sloping bank, and a pier reaches from
+    /// the deck down to the river bed.
     pub fn pieces(&self, t: &Tile<'_>, out: &mut Vec<Piece>) {
         let s = t.s;
         let centre = Vec2::new(s.tile.0 as f32 + 0.5, s.tile.1 as f32 + 0.5);
-        let floor = (t.drawn)(centre);
+        let floor = t.floor;
         let mut put = |model: usize, at: Vec2, facing: Vec2| {
             out.push(Piece {
                 model,
@@ -139,6 +144,9 @@ impl BridgeKit {
         let (ax, ay) = step(axis);
         let row = s.tile.0 * ax + s.tile.1 * ay;
         let level = usize::from(t.level.clamp(1, 3));
+        // From the deck down to the ground (the bed under water): a pier
+        // where that is deep (over water, or a bank under a deck held
+        // level with a higher bank), a crib where the deck lies on it.
         let depth = floor - (t.bed)(centre);
         let neighbour = |v: Vec2| {
             let (dx, dy) = step(v);

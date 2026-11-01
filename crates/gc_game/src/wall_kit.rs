@@ -77,7 +77,7 @@ const HALF_FROM: f32 = 0.25;
 const AHEAD: f32 = -0.2;
 
 /// The eight tiles around a tile.
-const NEIGHBOURS: [(i32, i32); 8] = [
+pub(crate) const NEIGHBOURS: [(i32, i32); 8] = [
     (1, 0),
     (1, 1),
     (0, 1),

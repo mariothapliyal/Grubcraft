@@ -11,6 +11,7 @@
 //! Resonators and Siphons tuning nodes for the Choir, whose workers only
 //! build.
 
+mod bridgework;
 mod engineer;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
@@ -157,6 +158,8 @@ pub struct Steward {
     drift: Vec<(RegimentHandle, Vec2, u32)>,
     /// The works it puts up against its enemies.
     engineer: engineer::Engineer,
+    /// Keeping its bridges standing.
+    bridgework: bridgework::Bridgework,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -172,6 +175,10 @@ impl Mine {
     }
     fn at(&self) -> Vec2 {
         v2(self.view.centre())
+    }
+    /// Its hit points left, percent.
+    fn hp_percent(&self) -> u32 {
+        self.view.hp * 100 / self.view.max_hp.max(1)
     }
     fn takes(&self, r: Resource) -> bool {
         self.stats.flags & r.drop_off() != 0
@@ -231,15 +238,13 @@ impl Steward {
     }
 
     /// Look and give the economy's orders, sending what it trains to
-    /// `rally`.
-    pub fn think(&mut self, s: &Sense, clicks: &mut Clicks, rally: Option<Vec2>) {
+    /// `rally`. What it decided worth a line in the journal, if anything.
+    pub fn think(&mut self, s: &Sense, clicks: &mut Clicks, rally: Option<Vec2>) -> Option<String> {
         if s.now < self.next_think {
-            return;
+            return None;
         }
         self.next_think = s.now + THINK_TICKS;
-        let Some(look) = self.look(s) else {
-            return;
-        };
+        let look = self.look(s)?;
         if self.home.is_none() {
             self.home = look
                 .mine
@@ -273,6 +278,7 @@ impl Steward {
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
+        let note = self.tend_bridges(s, clicks, &look);
         // Short of an army, soldiers come before more workers, and the
         // money it has goes on them first; but an opening's building still
         // due comes first, or arming would spend what it saves for it.
@@ -297,6 +303,7 @@ impl Steward {
         if let Some(rally) = rally {
             self.rally(s, clicks, &look, rally);
         }
+        note
     }
 
     fn look<'a>(&self, s: &Sense<'a>) -> Option<Look<'a>> {
