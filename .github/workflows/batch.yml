@@ -1,0 +1,121 @@
+name: Batch checks
+
+# The slow checks that run once per batch of merges instead of on every pull
+# request (project rule, 2026-11-01): the balance runs and screenshots of a
+# real match against the computer. Pull requests keep the fast checks, the
+# golden replays and the stress scenarios and Conquest soak, which take
+# seconds (ci.yml), and run scripts/pre-pr-check.sh before pushing.
+#
+# It runs every six hours when main has moved since the last batch run
+# (passed or not, so a failure is not re-run all weekend), and by hand from the Actions tab (Run workflow) after a batch of
+# merges. A failure here gets fixed before the next batch merges.
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run even if main has not moved since the last batch
+        type: boolean
+        default: true
+
+concurrency:
+  group: batch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  changed:
+    # Skips a scheduled run when the last batch already checked this
+    # commit of main.
+    name: Has main moved?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          last=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/batch.yml/runs?branch=main&status=completed&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""')
+          if [ "$FORCE" = "true" ] || [ "$last" != "$GITHUB_SHA" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Main is still at $GITHUB_SHA, which the last batch checked."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  balance:
+    # The win tables (docs/17, the faction balance memory notes). Only the
+    # Warlord contest asserts; the tables are printed for a thread to read
+    # and kept as balance-report.
+    name: Balance runs
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - run: mkdir -p target/balance
+      - name: Warlord beats the General (72 battles)
+        shell: bash
+        run: cargo test --release -p gc_ai --test versus the_warlord_beats_the_general_more_often_than_not -- --exact --nocapture 2>&1 | tee target/balance/warlord.txt
+      - name: Field Battle faction table
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: AI_BATTLES=48 cargo test -p gc_match --release faction_table -- --ignored --nocapture 2>&1 | tee target/balance/faction-table.txt
+      - name: Full roster Field Battle table
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test -p gc_game --release roster_field_table -- --ignored --nocapture 2>&1 | tee target/balance/roster-field-table.txt
+      - name: Conquest balance (Ribcage Pass, Veteran)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: AI_GAMES=4 cargo test --release -p gc_game conquest_balance -- --ignored --nocapture 2>&1 | tee target/balance/conquest-balance.txt
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: balance-report
+          path: target/balance/
+          retention-days: 30
+
+  screenshots:
+    # The real game against a General on a software GPU, with screenshots
+    # through the match (scripts/match-shots.py), for the playtest thread
+    # and the status page. It fails as the smoke run does: a panic, a GPU
+    # error or the memory budget.
+    name: Real-match screenshots
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          alsa: 'true'
+      - name: Virtual screen, software Vulkan and a screen grabber
+        run: sudo apt-get install -y xvfb mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0 imagemagick
+      - run: cargo build --release -p gc_game
+      - name: Play a battle against a General
+        run: xvfb-run -a -s "-screen 0 1280x720x24" python3 scripts/match-shots.py target/release/grubcraft target/shots
+        env:
+          WGPU_BACKEND: vulkan
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: match-screenshots
+          path: target/shots/
+          retention-days: 30
