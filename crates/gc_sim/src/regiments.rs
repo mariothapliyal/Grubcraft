@@ -740,6 +740,8 @@ impl Regiments {
         self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
+        // Growth owed on the last march (see `squeeze`) is not this one's.
+        self.grow[i] = 0;
         if order.files != 0 {
             self.set_frontage(i, order.files);
         }
@@ -935,8 +937,17 @@ impl Regiments {
             let narrower = files - (files - fit).div_ceil(2);
             // The column grows forward, not back into whoever follows: its
             // next steps take it on by half the added depth (but not an
-            // attack column's, into the foe).
-            if marching && self.attack_target[i].is_none() {
+            // attack column's, into the foe, nor a block turning to its
+            // way, whose depth lies across it).
+            let along = |t| {
+                nav.steer(i, t).is_some_and(|(w, _)| {
+                    let d = w - at;
+                    d != FxVec2::ZERO
+                        && i32::from(self.facing[i].delta_to(Angle::of_vec(d))).abs()
+                            <= WHEEL_FULL_PACE
+                })
+            };
+            if self.attack_target[i].is_none() && self.target[i].is_some_and(along) {
                 let deeper = formation::block_size(narrower, models, fs, rs).1 - half * 2;
                 let owed = i32::from(self.grow[i]) + (deeper / 2).raw() / GROW_UNIT;
                 self.grow[i] = owed.clamp(0, i32::from(u8::MAX)) as u8;
@@ -1569,10 +1580,14 @@ impl Regiments {
                     crate::combat::pushing(step, self.crowd[i])
                 };
                 // A column still growing forward after narrowing steps on
-                // further, as far as the crowd check allows.
+                // further: half as far again at most (so it stays as slow as
+                // whatever slows it), and as far as the crowd check allows.
                 let step = if self.grow[i] > 0 && !shuffle {
                     let owed = Fx::from_raw(i32::from(self.grow[i]) * GROW_UNIT);
-                    let more = owed.min(combat.max_step() - step).max(Fx::ZERO);
+                    let more = owed
+                        .min(step / 2)
+                        .min(combat.max_step() - step)
+                        .max(Fx::ZERO);
                     let used = (more.raw() + GROW_UNIT - 1) / GROW_UNIT;
                     self.grow[i] = (i32::from(self.grow[i]) - used).max(0) as u8;
                     step + more
