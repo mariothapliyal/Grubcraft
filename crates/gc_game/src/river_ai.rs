@@ -169,3 +169,62 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
         "and the bridge mended"
     );
 }
+
+/// Stage 5a: a General that has seen an enemy bridge over the river near
+/// its start sends debris down onto it.
+#[test]
+fn computer_players_foul_an_enemy_bridge_with_debris() {
+    let real = Real::load();
+    let game = Headless::new(&real, conquest::make_map(GROWN, 0, SEED), &SIDES, SEED);
+    let plan = game.plan(Tempo::Swift, gc_sim::Victories::BOTH);
+    let mut world = game.world(&plan);
+    let mut minds = game.minds();
+    minds.add(game.mind(0, Difficulty::General, 0, None));
+    game.open(&mut world, World::tick);
+    let bridge = real.building("Timber Bridge");
+    // The bridge, the other side's (it has no mind), by the mind's start.
+    let decks: Vec<_> = BRIDGE_X
+        .map(|x| PlayerCommand {
+            player: 1,
+            command: Command::SpawnStructure {
+                building: bridge,
+                tile: (x as i16, BRIDGE_Y as i16),
+                turn: 0,
+            },
+        })
+        .collect();
+    assert_eq!(world.tick(&decks).commands_applied as usize, decks.len());
+    let hp = |w: &World| -> u32 {
+        let s = w.structures().unwrap();
+        (BRIDGE_X)
+            .filter_map(|x| s.iter().find(|v| v.tile == (x, BRIDGE_Y)).map(|v| v.hp))
+            .sum()
+    };
+    let full = hp(&world);
+    let mut cmds = Vec::new();
+    let (mut most_ours, mut most_jam) = (0usize, 0u8);
+    let end = 6 * 60 * TICKS_PER_SECOND;
+    while world.tick_count() < end {
+        cmds.clear();
+        minds.tick(&world, &mut cmds);
+        world.tick(&cmds);
+        if world.tick_count().is_multiple_of(TICKS_PER_SECOND) {
+            let rivers = world.flood().rivers();
+            most_ours = most_ours.max(rivers.debris().owned(0));
+            let jams = rivers.jams().filter(|j| j.owner == 1);
+            most_jam = most_jam.max(jams.map(|j| j.mass).max().unwrap_or(0));
+        }
+    }
+    let journal: Vec<_> = (minds.get(0).unwrap().journal().entries())
+        .map(|e| e.text.clone())
+        .collect();
+    let fouled = |t: &&String| t.contains("above the enemy's bridge");
+    let notes = journal.iter().filter(fouled).count();
+    eprintln!(
+        "fouling notes {notes}, most debris of ours {most_ours}, heaviest jam {most_jam}, bridge {}%",
+        hp(&world) * 100 / full
+    );
+    assert!(notes > 0, "it sent debris at the bridge: {journal:?}");
+    assert!(most_ours > 0, "its debris went in");
+    assert!(most_jam > 0, "and jammed on the enemy's bridge");
+}

@@ -13,6 +13,7 @@
 
 mod bridgework;
 mod engineer;
+mod fouling;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
 use gc_sim::structures::{
@@ -160,6 +161,7 @@ pub struct Steward {
     engineer: engineer::Engineer,
     /// Keeping its bridges standing.
     bridgework: bridgework::Bridgework,
+    fouled: fouling::Fouled,
 }
 
 /// One of its own buildings, with its type's stats.
@@ -278,7 +280,8 @@ impl Steward {
         self.put_to_work(s, clicks, &look);
         self.rebalance(s, clicks, &look);
         self.finish_buildings(s, clicks, &look);
-        let note = self.tend_bridges(s, clicks, &look);
+        let note =
+            (self.tend_bridges(s, clicks, &look)).or_else(|| self.foul_bridges(s, clicks, &look));
         // Short of an army, soldiers come before more workers, and the
         // money it has goes on them first; but an opening's building still
         // due comes first, or arming would spend what it saves for it.

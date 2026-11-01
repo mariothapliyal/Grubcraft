@@ -43,6 +43,9 @@ pub struct Strategy {
     pub raids: bool,
     /// What works it puts up (docs/26-fortifications.md, stage 8).
     pub fortifies: Fortify,
+    /// Fouls the enemy's bridges with debris (docs/39-water-engine.md,
+    /// section 5); `None` never does.
+    pub fouls: Option<Fouling>,
     /// What its opening changes while it lasts (docs/18-ai.md, "Steward"):
     /// the usual play outside one, see [`Strategy::opening`].
     pub early: Early,
@@ -99,6 +102,16 @@ pub struct Early {
     pub towers: u8,
     /// Supply its first attack sets out with.
     pub first_wave: Option<u8>,
+}
+
+/// How a mind fouls the enemy's bridges with debris it puts in the river
+/// above them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fouling {
+    /// Seconds before it sends debris at the same bridge tile again.
+    pub every: u32,
+    /// It does so in calm water too, not only with a flood coming.
+    pub calm: bool,
 }
 
 impl Early {
@@ -183,6 +196,7 @@ impl Strategy {
                 pushes: false,
                 raids: false,
                 fortifies: Fortify::None,
+                fouls: None,
                 early: Early::USUAL,
             },
             Difficulty::Veteran => Strategy {
@@ -198,6 +212,10 @@ impl Strategy {
                 pushes: false,
                 raids: false,
                 fortifies: Fortify::Field,
+                fouls: Some(Fouling {
+                    every: 90,
+                    calm: false,
+                }),
                 early: Early::USUAL,
             },
             Difficulty::General => Strategy {
@@ -213,6 +231,10 @@ impl Strategy {
                 pushes: false,
                 raids: false,
                 fortifies: Fortify::Full,
+                fouls: Some(Fouling {
+                    every: 45,
+                    calm: true,
+                }),
                 early: Early::USUAL,
             },
             Difficulty::Warlord => Strategy {
@@ -228,6 +250,10 @@ impl Strategy {
                 pushes: true,
                 raids: true,
                 fortifies: Fortify::Full,
+                fouls: Some(Fouling {
+                    every: 25,
+                    calm: true,
+                }),
                 early: Early::USUAL,
             },
         }

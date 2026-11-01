@@ -1572,6 +1572,23 @@ impl World {
         self.flood.rivers.takes_raft(&self.terrain, x, y, player)
     }
 
+    /// The river tiles a piece put in at river tile `(x, y)` drifts over
+    /// (see [`rivers::Rivers::down_river`]).
+    pub fn down_river(
+        &self,
+        x: i32,
+        y: i32,
+        most: usize,
+    ) -> impl Iterator<Item = ((i32, i32), bool)> + '_ {
+        self.flood.rivers.down_river(&self.terrain, x, y, most)
+    }
+
+    /// Whether `(x, y)` is running river along a bank, where a worker on
+    /// the land can tip a raft in.
+    pub fn bank_river(&self, x: i32, y: i32) -> bool {
+        self.flood.rivers.bank_river(&self.terrain, x, y)
+    }
+
     /// Whether land tile `(x, y)` is beside running river, so felling it
     /// drops it in.
     pub fn fells_into(&self, x: i32, y: i32) -> bool {

@@ -574,6 +574,30 @@ impl Rivers {
                 .any(|j| !self.runs(terrain, j))
     }
 
+    /// The river tiles a piece put in at river tile `(x, y)` drifts over,
+    /// in order from the next one down, at most `most` of them, each with
+    /// whether it is a ford (where a piece grounds in low water). A read
+    /// for the computer players; nothing in the simulation uses it.
+    pub fn down_river<'a>(
+        &'a self,
+        terrain: &'a Terrain,
+        x: i32,
+        y: i32,
+        most: usize,
+    ) -> impl Iterator<Item = ((i32, i32), bool)> + 'a {
+        let (flow, n) = (terrain.flow_layer(), self.side);
+        let start = (index_in(n, x, y))
+            .filter(|&i| self.runs(terrain, i))
+            .map(|i| downstream(flow, &self.reach, n, i as u32));
+        core::iter::successors(start, move |&i| Some(downstream(flow, &self.reach, n, i)))
+            .take_while(|&i| i != NO_TILE)
+            .take(most)
+            .map(move |i| {
+                let (x, y) = (i as i32 % n, i as i32 / n);
+                ((x, y), self.group_at(x, y).is_some())
+            })
+    }
+
     /// Whether `player` already has [`SHARE`] pieces on the water.
     pub fn share_used(&self, player: u8) -> bool {
         self.debris.owned(player) >= SHARE
