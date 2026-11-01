@@ -34,8 +34,30 @@ Recorded battles that the simulation must keep playing exactly as recorded. Each
   cargo run --release -p gc_replay -- bless replays
   ```
 
-- **Every bless also bumps `SIM_VERSION`** in `gc_sim/src/lib.rs` and updates the `PINNED` table in `gc_replay/tests/goldens.rs` (the test prints the new table). The sim version is in the build's name, so the lobby keeps builds with different rules apart, and it is stamped in each replay's header (format 7; format 8 adds the battle's result, `World::verdict`, as the recording ended; format 10 keeps the header and the few fields the list shows in a block of its own, so listing replays doesn't decompress them; format 11 adds the map choice; format 12 the Conquest setup; format 13 brace and fall back; format 14, from Conquest's victories on 2026-10-16: how a battle was won, and the Conquest victories and Titan's Heart; format 15, 2026-10-17: the unit types' names, so a reordered unit table is caught; format 16, the same day: the hand-over command; it has moved on with the features since, and `gc_replay::FORMAT` holds the current one, 51 on 2026-10-31), so the replay list marks replays made with other rules, and the viewer pauses at the first checkpoint where a replay plays differently and says so. A test fails if the goldens change without the bump.
+- **Every bless also bumps `SIM_VERSION`** in `gc_sim/src/lib.rs` and updates the `PINNED` table in `gc_replay/tests/goldens.rs` (`cargo run --release -p gc_replay -- pin` writes it; `scripts/rules-bump.py` below does all three). The sim version is in the build's name, so the lobby keeps builds with different rules apart, and it is stamped in each replay's header (format 7; format 8 adds the battle's result, `World::verdict`, as the recording ended; format 10 keeps the header and the few fields the list shows in a block of its own, so listing replays doesn't decompress them; format 11 adds the map choice; format 12 the Conquest setup; format 13 brace and fall back; format 14, from Conquest's victories on 2026-10-16: how a battle was won, and the Conquest victories and Titan's Heart; format 15, 2026-10-17: the unit types' names, so a reordered unit table is caught; format 16, the same day: the hand-over command; it has moved on with the features since, and `gc_replay::FORMAT` holds the current one, 51 on 2026-10-31), so the replay list marks replays made with other rules, and the viewer pauses at the first checkpoint where a replay plays differently and says so. A test fails if the goldens change without the bump.
 - **Mac and Windows disagree:** a real cross-platform determinism bug; this is what the check exists to catch. Never bless to make it go away.
+
+## Taking the next rules version
+
+Several pull requests change the simulation at once, and each takes the next `SIM_VERSION` (some also the replay `FORMAT` or the network `PROTOCOL`). Two that both took 80 used to conflict, on whichever merged second, in every golden, the `PINNED` table and `gc_sim/src/lib.rs`. GitHub's merge queue would order them, but it is only offered on repositories owned by an organization, so this repository orders them itself.
+
+**Catch up with one command.** On your branch, with your work committed:
+
+```text
+python3 scripts/rules-bump.py
+```
+
+It puts the numbers, the `PINNED` rows, the goldens and the bench baseline your branch changed back to the merge base (one commit), merges `origin/main` (a merge, never a rebase, so the bumps don't replay one by one), takes main's number + 1 for each one your branch bumps, blesses the goldens, pins them, runs the goldens test, re-measures `tools/gc_bench/baseline.json` if your branch changed it (Linux with valgrind; otherwise it says so), and commits. Goldens your branch added are kept; main's recordings of the others are kept unless you name one your branch re-recorded with `--keep replays/NAME.gcr`. About a minute and a half, then push. If the merge stops on a conflict in code, resolve it, commit, and run the command it prints (it carries `--bump`, `--take FORMAT` or `PROTOCOL`, `--keep` and `--rebench` as needed). Afterwards, fix any number your branch's docs quote, and if `FORMAT` or `PROTOCOL` moved, check the tags and `format >=` tests you added against main's.
+
+**CI says so in seconds.** The *Rules numbers ahead of main* job (`rules-bump.py --check`) fails a pull request whose `SIM_VERSION`, `FORMAT` or `PROTOCOL` bump is not ahead of main's as it is when the job runs, or that makes goldens play differently without a SIM_VERSION bump. A pull request that conflicts with main gets no CI run at all, so this mostly catches merges resolved by hand that kept a taken number.
+
+**Take turns at the end.** Only one simulation pull request at a time does its final catch-up, so no two burn a 40-minute CI run where one is sure to be wasted:
+
+1. When your pull request is otherwise done (reviews fixed, CI green), add the label `sim-next` to it. Then list the open pull requests with that label: if one with a lower number has it too, take yours off and wait for that one to merge.
+2. The holder runs `scripts/rules-bump.py`, pushes, merges on green, and takes the label off (merging takes it off the list anyway).
+3. The others keep working on their branches meanwhile, and after the holder merges, the next lowest number takes the label.
+4. A label nobody has pushed to for 2 hours may be taken over (say so in that pull request's thread).
+
 
 Retuning `data/units.ron` or changing the map generator doesn't touch these files: each replay keeps the unit table and the map it was recorded with.
 

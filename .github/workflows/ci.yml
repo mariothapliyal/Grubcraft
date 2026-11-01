@@ -40,6 +40,28 @@ jobs:
       - name: Data reload build (dev feature)
         run: cargo clippy -p gc_game --all-targets --features dev
 
+  rules-numbers:
+    # Each simulation pull request takes the next SIM_VERSION (and maybe
+    # FORMAT or PROTOCOL). When another pull request took the same number
+    # first, this says so in seconds instead of after the full run, with the
+    # one command that catches up (replays/README.md).
+    name: Rules numbers ahead of main
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Whole history for the merge base, but file contents only as read.
+          fetch-depth: 0
+          filter: blob:none
+      - name: Compare with main as it is now
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch -q origin "$BASE"
+          python3 scripts/rules-bump.py --check "origin/$BASE" "$HEAD_SHA"
+
   packs:
     # The committed art and sound packs are binaries, so this fails when one
     # no longer matches the manifest beside it. The sound bank is re-made

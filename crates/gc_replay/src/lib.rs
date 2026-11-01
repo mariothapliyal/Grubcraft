@@ -108,6 +108,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 /// - 2: the cover layer (read as a map with no woods or grass).
 ///
 /// Anything older is refused with [`Error::Format`].
+// scripts/rules-bump.py reads and sets this line as written.
 pub const FORMAT: u16 = 51;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
@@ -586,7 +587,36 @@ impl SkyRecord {
     }
 }
 
+/// The `PINNED` table of `tests/goldens.rs`, as Rust source: these goldens'
+/// fingerprints under this build's [`gc_sim::SIM_VERSION`]. The goldens test
+/// prints it when the table is out of date, and `gc_replay pin` writes it.
+pub fn pinned_table<'a>(
+    goldens: impl IntoIterator<Item = (impl AsRef<str>, &'a Replay)>,
+) -> String {
+    let rows: String = goldens
+        .into_iter()
+        .map(|(name, replay)| {
+            let name = name.as_ref();
+            format!("        (\"{name}\", {:#018x}),\n", replay.fingerprint())
+        })
+        .collect();
+    format!(
+        "const PINNED: (u32, &[(&str, u64)]) = (\n    {},\n    &[\n{rows}    ],\n);",
+        gc_sim::SIM_VERSION
+    )
+}
+
 impl Replay {
+    /// The checkpoint hashes, folded into one number: what the goldens'
+    /// `PINNED` table keeps per replay.
+    pub fn fingerprint(&self) -> u64 {
+        self.checkpoints
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325, |h, &(tick, hash)| {
+                (h ^ hash ^ u64::from(tick)).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
     /// The setup to create the recorded match's world from.
     pub fn setup(&self) -> MatchSetup<'_> {
         MatchSetup {
