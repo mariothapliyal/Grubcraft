@@ -41,10 +41,16 @@ const WEAK: [(i32, i32); 3] = [(30, ROW), (30, ROW + 1), (30, ROW + 2)];
 /// How far the archers wear it: under the strain line (75%), over the
 /// sweep line (50%), so the flood and its logs decide when it goes.
 const WEAKEN_TO: u32 = 58;
-/// When the column sets off: a regiment is on the weak span when the
-/// flood takes it (checked; setting off from 44.5 to 46.5 s does it, and
-/// this is the middle).
-const SET_OFF: u32 = 45 * SECOND + SECOND / 2;
+/// When the column's head sets off: a regiment is on the weak span when
+/// the flood takes it (checked: 47.5 s and 48.5 s do it, 48.25 s and
+/// 48.75 s don't; the closed-up column crosses quickly since columns grow
+/// forward as they narrow, 2026-11-01).
+const SET_OFF: u32 = 48 * SECOND + SECOND / 2;
+/// How many regiments lead the column, and how long after them the rest
+/// set off (closed up, the whole column would be over before the last
+/// lane went, with none left to go round).
+const HEAD: usize = 3;
+const TAIL_LAG: u32 = 6 * SECOND;
 const LIMIT_SECONDS: u32 = 150;
 /// How soon each regiment still short of the gap when the crossing breaks
 /// must be on its way round.
@@ -153,8 +159,15 @@ fn run(real: &Real, report: &mut Report) {
                 }
             }
         }
-        if t == SET_OFF {
-            orders.extend((column.iter().zip(&goals)).map(|(&r, &g)| move_to(0, r, g)));
+        // The head sets off first and the rest after it, so some are still
+        // short of the gap when the span goes.
+        for (from, to, when) in [(0, HEAD, SET_OFF), (HEAD, column.len(), SET_OFF + TAIL_LAG)] {
+            if t == when {
+                orders.extend(
+                    (column[from..to].iter().zip(&goals[from..to]))
+                        .map(|(&r, &g)| move_to(0, r, g)),
+                );
+            }
         }
         let was: Vec<_> = weak.iter().map(|&h| hp(&world, h).is_some()).collect();
         let before: Vec<_> = of(&world, &column)

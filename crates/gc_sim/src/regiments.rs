@@ -105,6 +105,8 @@ const CLEAR_TICKS: u8 = 8;
 /// Ticks between steps of narrowing (see [`Regiments::squeeze`]), and
 /// between widening by a file once there is room again.
 const SQUEEZE_TICKS: u8 = 2;
+/// `grow` counts in sixteenths of a tile (raw fixed point).
+const GROW_UNIT: i32 = Fx::ONE.raw() / 16;
 const WIDEN_TICKS: u8 = 6;
 /// Room kept between a squeezed block's outermost soldiers and blocked
 /// ground, in tiles.
@@ -264,6 +266,10 @@ regiment_fields! {
     frontage: u16 = 0,
     /// Ticks until it re-forms by another file, squeezing or widening.
     reform: u8 = 0,
+    /// How far its column still grows forward after narrowing, in
+    /// sixteenths of a tile (see [`Regiments::squeeze`]): added to its
+    /// next steps.
+    grow: u8 = 0,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
     /// Soldiers still standing.
@@ -734,6 +740,8 @@ impl Regiments {
         self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
+        // Growth owed on the last march (see `squeeze`) is not this one's.
+        self.grow[i] = 0;
         if order.files != 0 {
             self.set_frontage(i, order.files);
         }
@@ -926,7 +934,31 @@ impl Regiments {
             .unwrap_or(1);
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
-            self.files[i] = files - (files - fit).div_ceil(2);
+            let narrower = files - (files - fit).div_ceil(2);
+            // The column grows forward, not back into whoever follows: its
+            // next steps take it on by half the added depth (but not an
+            // attack column's, into the foe, nor a block turning to its
+            // way, whose depth lies across it, nor one whose head would
+            // grow into a ford, which it comes out of a block at a time).
+            let deeper = formation::block_size(narrower, models, fs, rs).1 - half * 2;
+            let head = at + ahead * (half + deeper);
+            let along = |t| {
+                nav.steer(i, t).is_some_and(|(w, _)| {
+                    let d = w - at;
+                    d != FxVec2::ZERO
+                        && i32::from(self.facing[i].delta_to(Angle::of_vec(d))).abs()
+                            <= WHEEL_FULL_PACE
+                })
+            };
+            if self.attack_target[i].is_none()
+                && !terrain.wet(at)
+                && !terrain.wet(head)
+                && self.target[i].is_some_and(along)
+            {
+                let owed = i32::from(self.grow[i]) + (deeper / 2).raw() / GROW_UNIT;
+                self.grow[i] = owed.clamp(0, i32::from(u8::MAX)) as u8;
+            }
+            self.files[i] = narrower;
             self.reform[i] = SQUEEZE_TICKS;
         } else if fit > files && fits(files + 1, WIDEN_SPARE) {
             self.files[i] = files + 1;
@@ -1553,6 +1585,21 @@ impl Regiments {
                 } else {
                     crate::combat::pushing(step, self.crowd[i])
                 };
+                // A column still growing forward after narrowing steps on
+                // further: half as far again at most (so it stays as slow as
+                // whatever slows it), and as far as the crowd check allows.
+                let step = if self.grow[i] > 0 && !shuffle {
+                    let owed = Fx::from_raw(i32::from(self.grow[i]) * GROW_UNIT);
+                    let more = owed
+                        .min(step / 2)
+                        .min(combat.max_step() - step)
+                        .max(Fx::ZERO);
+                    let used = (more.raw() + GROW_UNIT - 1) / GROW_UNIT;
+                    self.grow[i] = (i32::from(self.grow[i]) - used).max(0) as u8;
+                    step + more
+                } else {
+                    step
+                };
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
@@ -1666,6 +1713,7 @@ impl Regiments {
                     if last {
                         self.target[i] = None;
                         self.falling_back[i] = 0;
+                        self.grow[i] = 0;
                     } else {
                         nav.reached(i);
                     }
