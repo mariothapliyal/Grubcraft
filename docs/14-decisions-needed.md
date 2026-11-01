@@ -79,7 +79,7 @@ Mario's calls on the restart items of [29 · Restart plan](29-restart-plan.md), 
 | 34 | **Ideas not taken up** | Supply lines, faction signature rules, learning replays and named commanders were proposed and not approved | |
 | 35 | **Morale** | Regiments hold until they are cut down to a breaking point below half strength (holding until bloodied). **Built 2026-10-31** | [29 · Holding until bloodied](29-restart-plan.md#holding-until-bloodied-in-brief) |
 | 36 | **Faction rebalance** | Fair economies, the Clans gathering about 20% faster, and the Brood a swarm of cheap, weak soldiers. **Built 2026-10-30 to 2026-10-31**; the Clans ended at `gather_percent: 125` once the passes after frontage were measured | [29 · Faction rebalance](29-restart-plan.md#faction-rebalance-in-brief) |
-| 37 | **Dynamic bridges and the water engine** | Drawn timber bridges with curves, widths and upgrades, curved walls, and a water engine whose debris strikes and jams bridges. **Built to water engine stage 4b, 2026-10-31** | [29 · Dynamic bridges](29-restart-plan.md#dynamic-bridges-in-brief), [39](39-water-engine.md) |
+| 37 | **Dynamic bridges and the water engine** | Drawn timber bridges with curves, widths and upgrades, curved walls, and a water engine whose debris strikes and jams bridges. **Built to water engine stage 4c, 2026-10-31** | [29 · Dynamic bridges](29-restart-plan.md#dynamic-bridges-in-brief), [39](39-water-engine.md) |
 
 ## Smaller questions for later
 - Should allied players share supply or resources by default in team games?
