@@ -350,7 +350,18 @@ Built 2026-11-01.
 - A worker sent to a jam or a tile is given 30 seconds to get there before another is sent. Both choices go in the AI journal ("Debris jammed on our bridge (9 mass): sending a worker to clear it", "A bridge tile is down to 53%: sending a worker to mend it").
 - **Formats:** no sim change (`SIM_VERSION` stays 80); no golden moves.
 - **Tests:** gc_game `river_ai.rs`: on the seed-3 grown map an enemy worker tips rafts above an AI's bridge until a 9-mass jam builds, and the AI clears it within a minute; an enemy soldier then hacks a deck tile to about half, and the AI mends it to full.
-- *Not yet:* burning a jam when the bridge is lost anyway, keeping workers off a tile an enemy is still hacking at, mending buildings other than bridges, and the stress scenarios (stage 4e).
+- *Not yet:* burning a jam when the bridge is lost anyway, keeping workers off a tile an enemy is still hacking at, and mending buildings other than bridges. The stress scenarios are stage 4e (below).
+
+## Built: stage 4e, the bridge stress scenarios
+
+Built 2026-11-01. Two scenarios in the stress suite (docs/40), run by CI on every pull request.
+
+- **The arena's rivers run.** `Arena::flowing` gives its rivers a flow layer, so they have stretches, rise in rain and flood, and carry debris, as a grown map's do. `Arena::ford` paints a ford, `Arena::world_under` takes a sky, and `squall()` is a storm from 10 to 20 seconds in. A seed decides the front's band; the scenarios use one that rolls a catastrophic flood and check that it does.
+- **`bridge-flood`, a column on a bridge as debris and a flood arrive.** Enemy archers wear one span of a 3-wide bridge to 58% (under the strain line, 75%, over the sweep line, 50%). The catastrophic flood strains it and the logs torn off the bank woods strike it, and it is swept away row by row at 56 to 60 seconds, as the numbers say. Sound piers all stand. The regiments on it wash up out of the water, the column behind halts at the gap, and the regiments still short of it are on their way round by a bridge upstream within 5 seconds. All are across in 93 seconds. A regiment the fall routes runs, rallies and stands; the scenario re-orders any that halt short, as a player would.
+- **`bridge-flood-armies`, two armies on one bridge in a flood.** Over 200 soldiers a side, one player's, cross a 3-wide bridge opposite ways with the ford upstream shut. Both are across in 59 seconds with no losses and no deadlock.
+  - *Short of the plan's mark:* one regiment stands 10.6 seconds at the bridgehead, waiting its turn, against the plan's 10. The flood plays no part (it is the same on a dry river): the two armies share the whole deck rather than each keeping to a side. The suite holds it to 15 seconds; keeping to a side on bridges would bring it under.
+- **Formats:** no sim change (`SIM_VERSION` stays 80); no golden moves.
+- Stage 4 is complete. Next: stage 5, computer players use the river.
 
 ## 7. Stages (each its own pull request)
 

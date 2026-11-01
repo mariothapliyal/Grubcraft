@@ -23,6 +23,8 @@
 
 mod arena;
 mod bridge;
+mod bridge_flood;
+mod bridge_flood_armies;
 mod crossing;
 mod forest;
 mod forest_pass;
@@ -62,6 +64,8 @@ const SCENARIOS: &[Scenario] = &[
     forest_pass::SCENARIO,
     crossing::SCENARIO,
     town::SCENARIO,
+    bridge_flood::SCENARIO,
+    bridge_flood_armies::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

@@ -22,6 +22,7 @@ pub(crate) use crate::headless::Real;
 const LAND: i32 = 40;
 const WATER_LINE: i32 = 24;
 const RIVER_BED: i32 = 0;
+const FORD_BED: i32 = 20;
 
 /// A square map `tiles` across, open and flat until painted, made by the
 /// game's own map maker (`gc_map`) from a description, as a map file is:
@@ -31,6 +32,9 @@ pub(crate) struct Arena {
     /// The map, made the first time it is asked for; painting after that
     /// is a mistake.
     map: OnceCell<Map>,
+    /// Which way the rivers run, if they run at all (see
+    /// [`Arena::flowing`]).
+    flowing: Option<Angle>,
 }
 
 impl Arena {
@@ -52,7 +56,16 @@ impl Arena {
                 set_pieces: Vec::new(),
             },
             map: OnceCell::new(),
+            flowing: None,
         }
+    }
+
+    /// Its rivers run along `way` at a steady pace, as a grown map's do:
+    /// they have stretches, rise in rain and flood (docs/39), and carry
+    /// debris down to the bridges.
+    pub fn flowing(&mut self, way: Angle) {
+        assert!(self.map.get().is_none(), "set after the map was made");
+        self.flowing = Some(way);
     }
 
     /// The tiles with x in `xs` and y in `ys` as a map shape.
@@ -82,6 +95,18 @@ impl Arena {
         });
     }
 
+    /// Water shallow enough to wade (a quarter of a tile deep): a ford,
+    /// shut while its river floods.
+    pub fn ford(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().terrain.push(TerrainOp {
+            shape,
+            mode: Mode::Set,
+            height: FORD_BED,
+            edge: 0,
+        });
+    }
+
     /// Woods: they hide regiments in them and slow the march.
     pub fn woods(&mut self, xs: Range<i32>, ys: Range<i32>) {
         self.cover(xs, ys, CoverKind::Wood);
@@ -99,7 +124,16 @@ impl Arena {
 
     /// The map as painted.
     fn map(&self) -> &Map {
-        self.map.get_or_init(|| Map::from_def(&self.def))
+        self.map.get_or_init(|| {
+            let mut map = Map::from_def(&self.def);
+            if let Some(way) = self.flowing {
+                let byte = gc_sim::Flow::byte(way, 2);
+                map.flow = (map.heights.iter())
+                    .map(|&h| if h < map.water { byte } else { 0 })
+                    .collect();
+            }
+            map
+        })
     }
 
     /// The map and tile `(x, y)`'s place in its rows, if it is on it.
@@ -124,6 +158,11 @@ impl Arena {
     /// and buildings, each player with `stores` Grub and Marrow, nobody
     /// winning however it goes.
     pub fn world(&self, real: &Real, seed: u64, stores: u32) -> World {
+        self.world_under(real, seed, stores, gc_sim::Sky::STILL)
+    }
+
+    /// [`Arena::world`] under `sky`'s weather.
+    pub fn world_under(&self, real: &Real, seed: u64, stores: u32, sky: gc_sim::Sky) -> World {
         let map = self.map();
         let nav = map.sim_nav_costs();
         let mut world = World::new(&MatchSetup {
@@ -135,7 +174,7 @@ impl Arena {
             teams: &[0, 1],
             ground: map.ground(),
             champions: false,
-            sky: gc_sim::Sky::STILL,
+            sky,
             generals: false,
         });
         let mut start = [(0, 0); gc_sim::MAX_PARTIES];
@@ -151,6 +190,40 @@ impl Arena {
         world
     }
 }
+
+/// A heavy squall from 10 to 20 seconds in, after fair weather: on a map
+/// whose rivers run ([`Arena::flowing`]) it rolls a flood front whose
+/// band the world's seed decides (docs/39).
+pub(crate) fn squall() -> gc_sim::Sky<'static> {
+    use gc_sim::sky::{Spell, Weather, WeatherKind};
+    const SECOND: u32 = gc_sim::TICKS_PER_SECOND;
+    const SPELLS: &[Spell] = &[
+        Spell {
+            at: 0,
+            weather: Weather::FAIR,
+        },
+        Spell {
+            at: 10 * SECOND,
+            weather: Weather {
+                kind: WeatherKind::Rain,
+                strength: 255,
+                cloud: 255,
+                wind: (0, 0),
+            },
+        },
+        Spell {
+            at: 20 * SECOND,
+            weather: Weather::FAIR,
+        },
+    ];
+    gc_sim::Sky {
+        spells: SPELLS,
+        ..gc_sim::Sky::STILL
+    }
+}
+
+/// Facing south.
+pub(crate) const SOUTH: Angle = Angle(0x4000);
 
 /// The middle of tile `(x, y)`.
 pub(crate) fn centre(x: i32, y: i32) -> FxVec2 {
