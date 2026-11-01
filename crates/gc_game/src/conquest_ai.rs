@@ -1199,7 +1199,10 @@ mod tests {
             (most, last) = general(Faction::EmberClans, seed);
             raised += most.raised;
         }
-        assert!(raised >= 1, "no tower raised to level 2 in any game: {last}");
+        assert!(
+            raised >= 1,
+            "no tower raised to level 2 in any game: {last}"
+        );
         // Whether the wall closes round the hall depends on how the game
         // goes too (the unit stats move it): more games until one does.
         for seed in 1..=30 {
