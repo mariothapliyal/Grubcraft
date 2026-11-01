@@ -22,6 +22,7 @@
 //! same on every machine; time is held only to the generous budget.
 
 pub(crate) mod arena;
+mod big_army;
 mod bridge;
 mod bridge_flood;
 mod bridge_flood_armies;
@@ -29,6 +30,7 @@ mod crossing;
 mod forest;
 mod forest_pass;
 mod gate;
+mod mountain;
 mod orders;
 mod town;
 mod walls;
@@ -64,6 +66,9 @@ const SCENARIOS: &[Scenario] = &[
     forest_pass::SCENARIO,
     crossing::SCENARIO,
     town::SCENARIO,
+    big_army::GATE,
+    big_army::BRIDGE,
+    mountain::SCENARIO,
     bridge_flood::SCENARIO,
     bridge_flood_armies::SCENARIO,
 ];

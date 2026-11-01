@@ -3813,9 +3813,22 @@ impl Running {
         let ridden = self.ride.as_ref().map(|ride| ride.regiment);
         let haste_glow = self.haste_glow();
         // Soldiers stand only where a regiment of theirs could walk (an
-        // open gate is ground to them; a shut one is wall).
+        // open gate is ground to them; a shut one is wall), and in plain
+        // walking line of their block's centre: not up a cliff face onto
+        // the plateau beside a column marching under it, nor down into the
+        // ravine below, nor behind a wall the block stands beside.
         let nav = self.world.nav();
-        let firm = |owner| move |p: Vec2| nav.standable(owner, fx_vec(p));
+        let firm = |owner, centre: Vec2| {
+            // Ground in plain sight of the block's centre (not up a cliff
+            // or down a ravine beside it), unless the centre itself is off
+            // firm ground (wading out of a flood): then any firm ground.
+            let centre = fx_vec(centre);
+            let sighted = nav.standable(owner, centre);
+            move |p: Vec2| {
+                let p = fx_vec(p);
+                nav.standable(owner, p) && (!sighted || nav.clear_line(owner, centre, p))
+            }
+        };
         // Soldiers on a finished bridge stand on its deck, as high as it is
         // drawn there. Most maps have none, and then this is one test of
         // an empty list.
@@ -3940,7 +3953,7 @@ impl Running {
                     &block,
                     r.owner,
                     game_dt.as_secs_f32(),
-                    firm(r.owner),
+                    firm(r.owner, block.centre),
                     deck,
                     |_| {},
                 );
@@ -4053,7 +4066,7 @@ impl Running {
                     &block,
                     r.owner,
                     game_dt.as_secs_f32(),
-                    firm(r.owner),
+                    firm(r.owner, block.centre),
                     deck,
                     |_| {},
                 );
@@ -4183,7 +4196,7 @@ impl Running {
                     &block,
                     r.owner,
                     game_dt.as_secs_f32(),
-                    firm(r.owner),
+                    firm(r.owner, block.centre),
                     deck,
                     |s| {
                         let mut s = s;
@@ -4323,7 +4336,7 @@ impl Running {
                 &block,
                 r.owner,
                 game_dt.as_secs_f32(),
-                firm(r.owner),
+                firm(r.owner, block.centre),
                 deck,
                 |s| {
                     instances.push(BoxInstance {
