@@ -29,19 +29,24 @@ const CRAG: core::ops::Range<i32> = 10..13;
 const CRAG_ROW: i32 = 40;
 
 fn world() -> World {
+    world_over(false)
+}
+
+/// The test world, its river a ford (shallow, waded) if `ford`.
+fn world_over(ford: bool) -> World {
     let side = (MAP as i32 * CELLS_PER_TILE) as usize;
     let nav: Vec<u8> = (0..side * side)
         .map(|c| {
             let x = (c % side) as i32 / CELLS_PER_TILE;
             let y = (c / side) as i32 / CELLS_PER_TILE;
-            u8::from(!RIVER.contains(&x) && !(CRAG.contains(&x) && y == CRAG_ROW))
+            u8::from((ford || !RIVER.contains(&x)) && !(CRAG.contains(&x) && y == CRAG_ROW))
         })
         .collect();
     let n = MAP as usize;
     let heights: Vec<u16> = (0..n * n)
         .map(|t| {
             if RIVER.contains(&((t % n) as i32)) {
-                0
+                if ford { WATER - 20 } else { 0 }
             } else {
                 LAND
             }
@@ -454,4 +459,48 @@ fn a_gap_in_the_upper_lane_is_mended_without_a_third_lane() {
         "stored running back"
     );
     assert!(s.iter().all(|v| v.tile.1 != ROW + 2));
+}
+
+#[test]
+fn a_block_crossing_a_bridge_over_a_ford_keeps_to_the_deck() {
+    // A ford anyone may wade; a two-lane bridge over it. A block wider
+    // than the bridge narrows onto the deck instead of wading beside it.
+    let mut w = world_over(true);
+    span(&mut w);
+    let foot = spawn(&mut w, FOOT, 20, ROW + 1);
+    let wide = w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+    assert!(order(
+        &mut w,
+        0,
+        Command::MoveTo {
+            regiment: foot,
+            target: FxVec2::from_ints(44, ROW + 1),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    let stats = DRILL_UNITS[0];
+    let mut widest_on_deck = Fx::ZERO;
+    let mut on_deck = 0;
+    for _ in 0..90 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        let r = w.regiments.iter().find(|r| r.handle == foot).unwrap();
+        // Over the middle of the river, well onto the deck.
+        if (Fx::from_int(RIVER.start + 1)..Fx::from_int(RIVER.end - 1)).contains(&r.position.x) {
+            on_deck += 1;
+            let (width, _) = stats.block_size_in(r.formation, r.files, r.models);
+            widest_on_deck = widest_on_deck.max(width);
+        }
+    }
+    assert!(on_deck > 0, "it crossed by the bridge");
+    let (full, _) = stats.block_size_in(gc_sim::Formation::Line, wide, stats.models);
+    assert!(
+        full > Fx::from_int(2),
+        "wider than the bridge to begin with: {full:?}"
+    );
+    assert!(
+        widest_on_deck <= Fx::from_int(2),
+        "{widest_on_deck:?} across a 2-tile deck"
+    );
 }

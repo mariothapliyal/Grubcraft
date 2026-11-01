@@ -1229,6 +1229,16 @@ impl Nav {
         })
     }
 
+    /// Whether a finished bridge spans the ground under `p`, on the
+    /// ground `party` walks (never with no map).
+    pub(crate) fn on_bridge(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party).is_some_and(|g| {
+            let side = Fx::from_ratio(g.side, CELLS_PER_TILE);
+            let on_map = p.x >= Fx::ZERO && p.y >= Fx::ZERO && p.x < side && p.y < side;
+            on_map && g.is_bridged(g.cell_at(p) as usize)
+        })
+    }
+
     /// Whether a regiment of `party`'s at `p` has open ground all round
     /// for at least `tiles` (always true with no map): nothing blocked that
     /// near. `tiles` is at most half [`CLEAR_CAP`].
@@ -1243,8 +1253,10 @@ impl Nav {
     /// either side along each line across the block at the offsets
     /// `lines` (tiles ahead of the centre; behind when negative), up to
     /// `reach`. A line that starts on blocked ground (the rear of a block
-    /// hanging over the water) doesn't count. Measured in quarter tiles, on
-    /// the ground `party` walks.
+    /// hanging over the water) doesn't count. A line that starts on a
+    /// bridge ends where the bridge does, so a block crossing one keeps to
+    /// its deck rather than wading a ford beside it. Measured in quarter
+    /// tiles, on the ground `party` walks.
     pub(crate) fn room_across(
         &self,
         party: PlayerId,
@@ -1270,24 +1282,38 @@ impl Nav {
         let ahead = facing.to_vec();
         let right = facing.wrapping_add(Angle::QUARTER).to_vec();
         let quarter = Fx::from_ratio(1, 4);
+        let bridged = |p: FxVec2| {
+            p.x >= Fx::ZERO
+                && p.y >= Fx::ZERO
+                && p.x < side
+                && p.y < side
+                && g.is_bridged(g.cell_at(p) as usize)
+        };
         for &a in lines {
             let base = centre + ahead * a;
             if clear_at(base) == 0 {
                 continue;
             }
+            let deck = bridged(base);
             for side in [right, FxVec2::ZERO - right] {
                 let mut d = quarter;
                 while d < room {
-                    let clear = clear_at(base + side * d);
-                    if clear == 0 {
+                    let at = base + side * d;
+                    let clear = clear_at(at);
+                    if clear == 0 || (deck && !bridged(at)) {
                         // The edge lies somewhere in the last quarter.
                         room = d - quarter;
                         break;
                     }
                     // Every point within `clear - 1` cells of this one is
                     // on firm ground too, so the probes in between (a cell
-                    // less, for rounding) needn't look: two a cell.
-                    d += quarter * (2 * (i32::from(clear) - 2)).max(1);
+                    // less, for rounding) needn't look: two a cell. On a
+                    // deck, whose edge isn't in `clear`, every quarter.
+                    d += if deck {
+                        quarter
+                    } else {
+                        quarter * (2 * (i32::from(clear) - 2)).max(1)
+                    };
                 }
             }
         }

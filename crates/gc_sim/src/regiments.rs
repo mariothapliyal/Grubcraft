@@ -883,7 +883,11 @@ impl Regiments {
         // Room either side of the centre, unless open all round (then the
         // whole frontage fits, however wide: the measure stops at
         // `CLEAR_CAP`).
-        let room = (!nav.open_around(self.owner[i], self.position[i], reach_tiles)).then(|| {
+        // On a bridge, the deck's edges count too (see `Nav::room_across`).
+        let owner = self.owner[i];
+        let tight = !nav.open_around(owner, self.position[i], reach_tiles)
+            || nav.on_bridge(owner, self.position[i]);
+        let room = tight.then(|| {
             let half = formation::block_size(files, models, fs, rs).1 / 2;
             nav.room_across(
                 self.owner[i],

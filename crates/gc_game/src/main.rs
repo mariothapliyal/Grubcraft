@@ -7907,6 +7907,14 @@ impl Running {
                     if x1 - x0 <= 3 || wet(x1, y) || wet(x1, y + 1) {
                         return None;
                     }
+                    // Across a river running north to south, not along one:
+                    // water beside the middle, dry land a few tiles out.
+                    let mid = (x0 + x1) / 2;
+                    let across = wet(mid, y - 2) && wet(mid, y + 3);
+                    let banks = (1..6).all(|d| !wet(x0 - d, y) && !wet(x1 + d, y));
+                    if !across || !banks {
+                        return None;
+                    }
                     (x0..=x1)
                         .all(|x| fits(x, y) && fits(x, y + 1))
                         .then_some(x1)
@@ -7944,7 +7952,7 @@ impl Running {
                         });
                     }
                 }
-                let at = Vec2::new(x0 as f32 - 12.0, row as f32 + 1.0);
+                let at = Vec2::new(x0 as f32 - 3.0, row as f32 + 1.0);
                 self.human_orders.push(PlayerCommand {
                     player: 0,
                     command: gc_sim::Command::SpawnRegiment {
