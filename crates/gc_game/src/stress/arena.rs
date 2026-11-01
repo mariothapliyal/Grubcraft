@@ -433,6 +433,8 @@ pub(crate) struct March {
     /// its goal and getting under [`HEADWAY`] nearer it (walking in place,
     /// waiting its turn, or going round).
     pub stuck: u32,
+    /// Regiment-ticks in disorder from crowding into friends (jostling).
+    pub disorder: u32,
     /// The limit, in seconds.
     limit: u32,
 }
@@ -457,6 +459,13 @@ impl March {
         );
         report.metric("pace, percent of the straight march", pace);
         report.metric("longest stuck", super::seconds(Some(self.stuck)));
+        report.metric(
+            "regiment-seconds in disorder from crowding",
+            format!(
+                "{:.1}",
+                self.disorder as f32 / gc_sim::TICKS_PER_SECOND as f32
+            ),
+        );
         report.check(
             format!("every regiment arrives and stands within {} s", self.limit),
             self.done.is_some(),
@@ -514,10 +523,11 @@ pub(crate) fn march(
         })
         .collect();
     let mut stuck = 0;
-    let mut done = None;
+    let (mut done, mut disorder) = (None, 0);
     for t in 1..=limit * gc_sim::TICKS_PER_SECOND {
         report.tick(world, &[]);
         each(t, world);
+        disorder += of(world, army).filter(|v| v.disorder > 0).count() as u32;
         // Every regiment still on the field there and standing (losses
         // are checked on their own).
         let (mut alive, mut there) = (0, 0);
@@ -543,6 +553,7 @@ pub(crate) fn march(
         ideal,
         soldiers: (start, soldiers(world, army)),
         stuck,
+        disorder,
         limit,
     }
 }

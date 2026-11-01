@@ -926,7 +926,18 @@ impl Regiments {
             .unwrap_or(1);
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
-            self.files[i] = files - (files - fit).div_ceil(2);
+            let narrower = files - (files - fit).div_ceil(2);
+            // Grow the column forward, not back into whoever follows (but
+            // not an attack column, into the foe).
+            if marching && self.attack_target[i].is_none() {
+                let depth = |f: u16| formation::block_size(f, models, fs, rs).1;
+                let grow = (depth(narrower) - depth(files)) / 2;
+                let to = self.position[i] + self.facing[i].to_vec() * grow;
+                if nav.slide(owner, self.position[i], to) == Some(to) {
+                    self.position[i] = to;
+                }
+            }
+            self.files[i] = narrower;
             self.reform[i] = SQUEEZE_TICKS;
         } else if fit > files && fits(files + 1, WIDEN_SPARE) {
             self.files[i] = files + 1;
