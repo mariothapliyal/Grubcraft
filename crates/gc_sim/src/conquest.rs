@@ -904,14 +904,31 @@ impl Conquest {
             || self.clearing.job_of(regs, r).is_some()
     }
 
+    /// Shattered regiments that have got clear of the enemy leave the field
+    /// for good, as men who have given up go home, and free their supply
+    /// (see [`crate::morale`]): standing on the map forever, they filled
+    /// whole armies' supply in long matches.
+    pub(crate) fn see_off_shattered(&mut self, regs: &mut Regiments) {
+        for i in 0..regs.alive.len() {
+            if regs.alive[i] && crate::morale::gone_home(regs, i) {
+                self.remove(i, regs);
+            }
+        }
+    }
+
+    /// Regiment slot `i` leaves the field, its jobs and loads with it.
+    fn remove(&mut self, i: usize, regs: &mut Regiments) {
+        self.stop_work(i);
+        self.economy.forget(i);
+        regs.despawn(regs.handle(i));
+    }
+
     /// The parties in `out` leave the field: their regiments, then their
     /// buildings.
     pub(crate) fn eliminate(&mut self, out: u8, regs: &mut Regiments, nav: &mut Nav) {
         for i in 0..regs.alive.len() {
             if regs.alive[i] && out & (1 << regs.owner[i]) != 0 {
-                self.stop_work(i);
-                self.economy.forget(i);
-                regs.despawn(regs.handle(i));
+                self.remove(i, regs);
             }
         }
         let gone: Vec<StructureHandle> = (self.structures.iter())

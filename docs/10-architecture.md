@@ -220,7 +220,7 @@ A uniform grid of 8 × 8-tile buckets with intrusive index lists. Rebuilt increm
   - **Recovery:** out of the fight and losing nobody, it regains 3 points a second. The cap falls from the stat at full strength to half the stat with nobody left.
   - **States:** below 25 points a regiment wavers and deals 85% damage. At 0 it routs: it drops out of melee, rejects orders and every second aims 10 tiles away from the enemies within 20 tiles, at 90% of its speed, inside the map edge.
   - **Ripples:** a rout costs friends within 16 tiles 8 points and gives the enemies fighting the routers 5.
-  - **Rally and shatter:** after 10 s with no enemy within 20 tiles, routers rally, wavering. Routing again within 120 s shatters a regiment: it runs, then stands and never takes orders again.
+  - **Rally and shatter:** after 10 s with no enemy within 20 tiles, routers rally, wavering. Routing again within 120 s shatters a regiment: it runs, then stands and never takes orders again. In Conquest, once it has stood 10 s with no enemy within 20 tiles it leaves the field (`Conquest::see_off_shattered`), freeing its supply.
   - **Fearless:** units with a morale stat of 0 skip all of this.
   - **Bonus:** a per-party `party_morale` added to the cap of each of the party's regiments (hashed only for the parties it is set for), which the champions' duel raises or lowers.
   - Heroes and terror come later. Veterancy is built (2026-10-31, `gc_sim::veterancy`, [05 · Veterancy](05-combat.md#veterancy)).

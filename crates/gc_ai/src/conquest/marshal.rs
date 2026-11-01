@@ -40,6 +40,11 @@ const REGROUP_TICKS: u32 = 30 * TICKS_PER_SECOND;
 /// Ticks it contests the Titan's Heart, never holding it,
 /// before it gives the Heart a rest and raids a base instead.
 const HEART_PATIENCE: u32 = 10 * 60 * TICKS_PER_SECOND;
+/// Times it is beaten back from the Heart before it raids a base instead:
+/// against one enemy, and against two or more, whose armies pile onto the
+/// Heart in turn and none holds it long.
+const HEART_BEATEN: u8 = 2;
+const HEART_BEATEN_MANY: u8 = 1;
 /// Ticks such a raid lasts, Heart or no Heart.
 const RAID_TICKS: u32 = 8 * 60 * TICKS_PER_SECOND;
 /// Odds (from the estimator, -1 to +1) a level that weighs them wants
@@ -55,6 +60,15 @@ const ODDS_PER_DISTANCE: f32 = 400.0;
 const PUSH_ODDS: f32 = -0.15;
 /// What going for the enemy its Sovereign chose is worth, in odds.
 const FOCUS_BONUS: f32 = 0.3;
+/// Enemies of two or more sides with fighters within this many tiles of
+/// the Heart, and none holding it, are a brawl there: an army setting out
+/// leaves them to it and goes for a base.
+const BRAWL_REACH: f32 = 20.0;
+/// An attack under way on a base turns back for the Heart only once an
+/// enemy has held it this long: in a game of four, someone holds it for a
+/// moment every few minutes, and armies that turned back each time never
+/// broke a base.
+const HEART_ALARM: u32 = 60 * TICKS_PER_SECOND;
 /// Supply short of its current cap that counts as capped.
 const CAP_SLACK: u32 = 8;
 /// Enemies within this many tiles of its buildings are a threat to home.
@@ -168,6 +182,8 @@ pub struct Marshal {
     regroup_until: u32,
     /// Since when it has gone for the Heart without holding it.
     contesting_since: Option<u32>,
+    /// Times it has been beaten back from the Heart since it last raided.
+    heart_beaten: u8,
     /// Until this tick it raids and leaves the Heart alone.
     raid_until: u32,
     /// It has set out on an attack or for the Heart: its opening's first
@@ -210,6 +226,7 @@ impl Marshal {
             off_walls: Vec::new(),
             regroup_until: 0,
             contesting_since: None,
+            heart_beaten: 0,
             raid_until: 0,
             attacked: false,
             orders: Orders::new(party, reaction_ticks, orders_per_minute),
@@ -453,17 +470,25 @@ impl Marshal {
         self.wave = Some((have.round() as u32, want.ceil() as u32, ready));
         // Armies brawling on the Heart and nobody holding it long is a
         // stalemate (games of four or more): an army that has fought for it
-        // a long while goes to break a base instead, or to find one on a
-        // big map where it has seen none, and leaves the Heart be until it
-        // is back.
+        // a long while, or been beaten back from it, goes to break a base
+        // instead with what it has, or to find one on a big map where it
+        // has seen none, and leaves the Heart be until it is back.
         if we_hold_heart(s) || !s.world.heart().is_some_and(|h| h.open) {
             self.contesting_since = None;
         }
-        if ready
+        let beaten_enough = || {
+            if spymaster::enemies(s).len() >= 2 {
+                HEART_BEATEN_MANY
+            } else {
+                HEART_BEATEN
+            }
+        };
+        if enough
             && s.now >= self.regroup_until
-            && self
+            && (self
                 .contesting_since
                 .is_some_and(|t| s.now >= t + HEART_PATIENCE)
+                || self.heart_beaten > 0 && self.heart_beaten >= beaten_enough())
             && let Some((t, note)) = raid_target(s, centroid(army))
                 .map(|t| (t, "going to break a base"))
                 .or_else(|| {
@@ -474,6 +499,7 @@ impl Marshal {
             c.journal
                 .note(s.now, format!("The Heart is a stalemate: {note}"));
             self.contesting_since = None;
+            self.heart_beaten = 0;
             self.raid_until = s.now + RAID_TICKS;
             self.goal = Goal::Attack(t);
             self.out = army.iter().map(|r| r.handle).collect();
@@ -512,10 +538,19 @@ impl Marshal {
         match self.goal {
             Goal::Gather => {
                 // Beaten back, it gathers a while before going again; and it
-                // goes to stop an enemy on the Heart only with an army.
+                // goes to stop an enemy on the Heart only with an army. Two
+                // enemies brawling for it are left to wear each other down
+                // while it breaks a base: four armies piling onto the Heart
+                // and none holding it never ends.
                 let regrouped = s.now >= self.regroup_until;
-                let heart = heart_to_take(s)
-                    .filter(|_| regrouped && (ready || enemy_holds_heart(s) && enough));
+                let heart = heart_to_take(s).filter(|_| {
+                    regrouped
+                        && if enemy_holds_heart(s) {
+                            ready || enough
+                        } else {
+                            ready && !brawl_at_heart(s)
+                        }
+                });
                 let ready = ready && regrouped;
                 let set_out = match heart {
                     Some(h) => Some((
@@ -548,13 +583,16 @@ impl Marshal {
                         s.now,
                         "The attack has cost too much: falling back".to_string(),
                     );
+                    if matches!(self.goal, Goal::Heart(_)) {
+                        self.heart_beaten += 1;
+                    }
                     self.goal = Goal::Gather;
                     self.out.clear();
                     self.regroup_until = s.now + REGROUP_TICKS;
                 } else if let Some(heart) = heart_to_take(s).filter(|_| {
-                    // An enemy holding the Heart wins unless it is stopped;
-                    // otherwise an attack under way goes on.
-                    matches!(self.goal, Goal::Heart(_)) || enemy_holds_heart(s)
+                    // An enemy holding the Heart a while wins unless it is
+                    // stopped; otherwise an attack under way goes on.
+                    matches!(self.goal, Goal::Heart(_)) || heart_alarm(s)
                 }) {
                     if !matches!(self.goal, Goal::Heart(_)) {
                         c.journal.note(
@@ -1124,8 +1162,35 @@ fn heart_to_take(s: &Sense) -> Option<Vec2> {
 /// Who holds the Heart: `Some(true)` an enemy, `Some(false)` its own side
 /// or a friend, `None` nobody.
 fn heart_held_by_enemy(s: &Sense) -> Option<bool> {
-    let (p, _) = s.world.heart()?.held?;
-    Some(s.view.hostile(s.party, p))
+    heart_holder(s).map(|(enemy, _)| enemy)
+}
+
+/// Whether an enemy holds the Heart, and the battle tick it took it.
+fn heart_holder(s: &Sense) -> Option<(bool, u32)> {
+    let (p, since) = s.world.heart()?.held?;
+    Some((s.view.hostile(s.party, p), since))
+}
+
+/// Whether fighters of two or more enemy sides it sees stand near the
+/// open Heart.
+fn brawl_at_heart(s: &Sense) -> bool {
+    let Some(h) = s.world.heart().filter(|h| h.open) else {
+        return false;
+    };
+    let at = v2(h.at);
+    let mut sides = s
+        .view
+        .regiments
+        .iter()
+        .filter(|r| r.pos.distance(at) <= BRAWL_REACH && !r.broken() && is_foe(s, r))
+        .map(|r| r.owner);
+    sides.next().is_some_and(|first| sides.any(|o| o != first))
+}
+
+/// Whether an enemy has held the Heart for [`HEART_ALARM`] or more.
+fn heart_alarm(s: &Sense) -> bool {
+    heart_holder(s)
+        .is_some_and(|(enemy, since)| enemy && s.world.battle_ticks() >= since + HEART_ALARM)
 }
 
 fn enemy_holds_heart(s: &Sense) -> bool {

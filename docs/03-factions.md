@@ -312,8 +312,8 @@ Cost, hit points, build time and size for each: [21 · Buildings](21-buildings.m
 |---|---|---|---|---|
 | Ledger Clerk | 1 | 1 | 50 / 0 | Worker |
 | Caravan | 1 | 1 | 75 / 0 | Trade unit; no attack |
-| Bone Pikes | 1 | 19 | 110 / 0 | Undead pike line, never routs |
-| Crossbow Auditors | 1 | 12 | 140 / 0 | Living, armour-piercing ranged |
+| Bone Pikes | 1 | 19 | 100 / 0 | Undead pike line, never routs |
+| Crossbow Auditors | 1 | 12 | 125 / 0 | Living, armour-piercing ranged |
 | Gravewardens | 2 | 12 | 170 / 40 | Undead heavy infantry, shrugs off flank and rear hits (added in 17) |
 | Debt Collectors | 2 | 6 | 190 / 50 | Bone-horse heavy cavalry; hits on buildings steal Grub |
 | Lantern Wraiths | 2 | 4 | 140 / 40 | Air, drains enemy morale |

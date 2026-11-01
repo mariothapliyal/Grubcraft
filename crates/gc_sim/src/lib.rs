@@ -1953,6 +1953,7 @@ impl World {
             self.map_tiles,
         );
         if let Some(c) = &mut self.conquest {
+            c.see_off_shattered(&mut self.regiments);
             c.honor
                 .earn(&c.meters, &c.structures, &self.regiments, self.tick);
         }
