@@ -858,11 +858,14 @@ impl Regiments {
     /// while it marches; once there is room again it widens back to its
     /// frontage, more slowly, so it doesn't flicker. Only while it marches
     /// or is still narrowed, never in melee or braced.
-    fn squeeze(&mut self, i: usize, nav: &Nav, units: &[UnitStats]) {
+    fn squeeze(&mut self, i: usize, nav: &Nav, terrain: &Terrain, units: &[UnitStats]) {
         let models = self.models[i].max(1);
         let frontage = self.frontage[i].clamp(1, models);
         let marching = self.target[i].is_some();
-        if (!marching && self.files[i] == frontage) || !nav.has_map() {
+        let owner = self.owner[i];
+        if !nav.has_map()
+            || (!marching && self.files[i] == frontage && !nav.on_bridge(owner, self.position[i]))
+        {
             return;
         }
         if self.reform[i] > 0 {
@@ -886,16 +889,18 @@ impl Regiments {
         // Room either side of the centre, unless open all round (then the
         // whole frontage fits, however wide: the measure stops at
         // `CLEAR_CAP`).
-        let room = (!nav.open_around(self.owner[i], self.position[i], reach_tiles)).then(|| {
-            let half = formation::block_size(files, models, fs, rs).1 / 2;
-            let reach = Fx::from_int(reach_tiles);
-            let here = nav.room_across(
-                self.owner[i],
-                self.position[i],
-                self.facing[i],
-                reach,
-                &[half + look, half, Fx::ZERO, -half],
-            );
+        // On a bridge (any of the lines across the block, so the front
+        // narrows as it steps on), the deck's edges over a ford count too
+        // (see `Nav::room_across`).
+        let half = formation::block_size(files, models, fs, rs).1 / 2;
+        let lines = [half + look, half, Fx::ZERO, -half];
+        let (at, ahead) = (self.position[i], self.facing[i].to_vec());
+        let tight = !nav.open_around(owner, at, reach_tiles)
+            || lines.iter().any(|&a| nav.on_bridge(owner, at + ahead * a));
+        let reach = Fx::from_int(reach_tiles);
+        let room = tight.then(|| {
+            let here =
+                nav.room_across(owner, at, self.facing[i], reach, &lines, |p| terrain.wet(p));
             // A narrows its route turns into just ahead (a gate, a
             // bridge's deck): it narrows to fit on the way up to it, so it
             // files in as a column instead of jamming the mouth broadside.
@@ -903,13 +908,14 @@ impl Regiments {
             let ahead = (self.target[i])
                 .and_then(|t| nav.steer(i, t))
                 .and_then(|(w, _)| {
-                    let d = w - self.position[i];
+                    let d = w - at;
                     // (On it, there is no telling which way is across.)
                     let near =
                         d != FxVec2::ZERO && d.x.abs() < NARROWS_AHEAD && d.y.abs() < NARROWS_AHEAD;
-                    let narrows = near && !nav.open_around(self.owner[i], w, reach_tiles);
-                    narrows
-                        .then(|| nav.half_width_across(self.owner[i], w, Angle::of_vec(d), reach))
+                    let narrows = near && !nav.open_around(owner, w, reach_tiles);
+                    narrows.then(|| {
+                        nav.half_width_across(owner, w, Angle::of_vec(d), reach, |p| terrain.wet(p))
+                    })
                 });
             ahead.map_or(here, |width| here.min(width))
         });
@@ -1434,7 +1440,7 @@ impl Regiments {
                 self.aside[i] = 0;
             }
             if self.engaged[i].is_none() && !self.braced[i] {
-                self.squeeze(i, nav, units);
+                self.squeeze(i, nav, terrain, units);
             }
             let turn = self.turn[i];
             if self.engaged[i].is_some() {

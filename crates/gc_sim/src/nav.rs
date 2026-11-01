@@ -348,6 +348,11 @@ impl Grid {
         inside(p.x) && inside(p.y)
     }
 
+    /// Whether a finished bridge spans the ground under a map position.
+    fn bridged_at(&self, p: FxVec2) -> bool {
+        self.on_map(p) && self.is_bridged(self.cell_at(p) as usize)
+    }
+
     /// The cell under a map position (clamped onto the map).
     fn cell_at(&self, p: FxVec2) -> u32 {
         let to_cell = |v: Fx| {
@@ -1262,6 +1267,12 @@ impl Nav {
         })
     }
 
+    /// Whether a finished bridge spans the ground under `p`, on the
+    /// ground `party` walks (never with no map).
+    pub(crate) fn on_bridge(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party).is_some_and(|g| g.bridged_at(p))
+    }
+
     /// Whether a regiment of `party`'s at `p` has open ground all round
     /// for at least `tiles` (always true with no map): nothing blocked that
     /// near. `tiles` is at most half [`CLEAR_CAP`].
@@ -1276,8 +1287,11 @@ impl Nav {
     /// either side along each line across the block at the offsets
     /// `lines` (tiles ahead of the centre; behind when negative), up to
     /// `reach`. A line that starts on blocked ground (the rear of a block
-    /// hanging over the water) doesn't count. Measured in quarter tiles, on
-    /// the ground `party` walks.
+    /// hanging over the water) doesn't count. A line that starts on a
+    /// bridge ends at water (`wet`, which a deck isn't) as at blocked
+    /// ground, so a block crossing one keeps to its deck rather than wading
+    /// a ford beside it; where the deck meets the bank it doesn't end.
+    /// Measured in quarter tiles, on the ground `party` walks.
     pub(crate) fn room_across(
         &self,
         party: PlayerId,
@@ -1285,8 +1299,9 @@ impl Nav {
         facing: Angle,
         reach: Fx,
         lines: &[Fx],
+        wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let [right, left] = self.room_each_side(party, centre, facing, reach, lines, true);
+        let [right, left] = self.room_each_side(party, centre, facing, reach, lines, true, wet);
         right.min(left)
     }
 
@@ -1301,8 +1316,9 @@ impl Nav {
         p: FxVec2,
         facing: Angle,
         reach: Fx,
+        wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let [right, left] = self.room_each_side(party, p, facing, reach, &[Fx::ZERO], false);
+        let [right, left] = self.room_each_side(party, p, facing, reach, &[Fx::ZERO], false, wet);
         (right + left) / 2
     }
 
@@ -1317,6 +1333,7 @@ impl Nav {
         reach: Fx,
         lines: &[Fx],
         least: bool,
+        wet: impl Fn(FxVec2) -> bool,
     ) -> [Fx; 2] {
         let Some(g) = self.grid_of(party) else {
             return [reach; 2];
@@ -1340,19 +1357,26 @@ impl Nav {
             if clear_at(base) == 0 {
                 continue;
             }
+            let deck = g.bridged_at(base);
             for (k, side) in [right, FxVec2::ZERO - right].into_iter().enumerate() {
                 let mut d = quarter;
                 while d < if least { room[0].min(room[1]) } else { room[k] } {
-                    let clear = clear_at(base + side * d);
-                    if clear == 0 {
+                    let at = base + side * d;
+                    let clear = clear_at(at);
+                    if clear == 0 || (deck && wet(at)) {
                         // The edge lies somewhere in the last quarter.
                         room[k] = d - quarter;
                         break;
                     }
                     // Every point within `clear - 1` cells of this one is
                     // on firm ground too, so the probes in between (a cell
-                    // less, for rounding) needn't look: two a cell.
-                    d += quarter * (2 * (i32::from(clear) - 2)).max(1);
+                    // less, for rounding) needn't look: two a cell. On a
+                    // deck, whose edge isn't in `clear`, every quarter.
+                    d += if deck {
+                        quarter
+                    } else {
+                        quarter * (2 * (i32::from(clear) - 2)).max(1)
+                    };
                 }
             }
         }
