@@ -10,18 +10,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use gc_replay::{EXTENSION, Replay};
+use gc_replay::{Replay, pinned_table};
 use gc_sim::{Command, SIM_VERSION};
 
 /// Every golden replay, by file.
 fn goldens() -> Vec<(PathBuf, Replay)> {
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays");
-    let mut files: Vec<_> = std::fs::read_dir(&folder)
-        .expect("the replays folder")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|f| f.extension().is_some_and(|x| x == EXTENSION))
-        .collect();
-    files.sort();
+    let files = gc_replay::files_in(&folder).expect("the replays folder");
     assert!(files.len() >= 4, "golden replays missing from {folder:?}");
     files
         .into_iter()
@@ -153,20 +148,11 @@ fn the_goldens_cover_every_kind_of_command() {
     assert!(missing.is_empty(), "no golden gives {missing:?}");
 }
 
-/// Each golden's checkpoint hashes, folded into one number.
-fn fingerprint(replay: &Replay) -> u64 {
-    replay
-        .checkpoints
-        .iter()
-        .fold(0xcbf2_9ce4_8422_2325, |h, &(tick, hash)| {
-            (h ^ hash ^ u64::from(tick)).wrapping_mul(0x0100_0000_01b3)
-        })
-}
-
 /// How the goldens played under [`SIM_VERSION`] (and were blessed with it).
 /// A change that makes them play differently must bump `SIM_VERSION`, so
 /// that other builds and old replays know: this table then fails, and is
-/// updated from the test's output.
+/// rewritten by `cargo run --release -p gc_replay -- pin` (or by
+/// `scripts/rules-bump.py`, which also takes the next free version).
 const PINNED: (u32, &[(&str, u64)]) = (
     80,
     &[
@@ -192,18 +178,15 @@ const PINNED: (u32, &[(&str, u64)]) = (
 #[test]
 fn the_sim_version_changes_when_the_goldens_do() {
     let goldens = goldens();
-    let table: Vec<String> = goldens
-        .iter()
-        .map(|(file, replay)| {
-            let name = file.file_stem().unwrap().to_string_lossy();
-            format!("        (\"{name}\", {:#018x}),", fingerprint(replay))
-        })
-        .collect();
-    let table = table.join("\n");
+    let table = pinned_table(
+        goldens
+            .iter()
+            .map(|(file, replay)| (file.file_stem().unwrap().to_string_lossy(), replay)),
+    );
     assert_eq!(
         PINNED.0, SIM_VERSION,
-        "SIM_VERSION changed: bless the goldens, then set PINNED to \
-         ({SIM_VERSION}, &[\n{table}\n])"
+        "SIM_VERSION changed: bless the goldens, then run \
+         `cargo run --release -p gc_replay -- pin`, which writes\n{table}"
     );
     for (file, replay) in &goldens {
         let name = file.file_stem().unwrap().to_string_lossy();
@@ -216,10 +199,11 @@ fn the_sim_version_changes_when_the_goldens_do() {
         let pinned = PINNED.1.iter().find(|(n, _)| *n == name).map(|&(_, f)| f);
         assert_eq!(
             pinned,
-            Some(fingerprint(replay)),
+            Some(replay.fingerprint()),
             "{name} plays differently from how it did under sim version {SIM_VERSION} \
-             (or is new). If the sim changed, bump gc_sim::SIM_VERSION; then set PINNED to \
-             ({SIM_VERSION} or the new version, &[\n{table}\n])"
+             (or is new). If the sim changed, bump gc_sim::SIM_VERSION, bless, and run \
+             `cargo run --release -p gc_replay -- pin` (when main took your number first, \
+             `python3 scripts/rules-bump.py` catches up); the table now is\n{table}"
         );
     }
 }
