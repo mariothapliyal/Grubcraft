@@ -75,6 +75,7 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
     let (mut most_jam, mut lowest) = (0u8, full);
     let mut hacker = None;
     let fighter = Kit::of(&real.data, &real.table, SIDES[1]).fighter;
+    let mut fighters = Vec::new();
     let end = 4 * 60 * TICKS_PER_SECOND;
     while world.tick_count() < end {
         cmds.clear();
@@ -98,6 +99,7 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
             .find(|v| v.tile == (50, BRIDGE_Y))
             .map(|v| (v.handle, v.hp * 100 / v.max_hp));
         if t == 145 * TICKS_PER_SECOND {
+            fighters = regiments_of(&world, 1, fighter);
             cmds.push(PlayerCommand {
                 player: 1,
                 command: Command::SpawnRegiment {
@@ -110,7 +112,9 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
         if t == 150 * TICKS_PER_SECOND
             && let Some((structure, _)) = deck
         {
-            hacker = regiments_of(&world, 1, fighter).first().copied();
+            hacker = regiments_of(&world, 1, fighter)
+                .into_iter()
+                .find(|h| !fighters.contains(h));
             cmds.push(PlayerCommand {
                 player: 1,
                 command: Command::AttackStructure {
@@ -154,11 +158,12 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
         said("sending a worker to mend it"),
         "it mended the bridge: {journal:?}"
     );
-    let jam_left: u8 = (world.flood().rivers().jams())
+    let jam_left = (world.flood().rivers().jams())
         .filter(|j| j.owner == 0)
         .map(|j| j.mass)
-        .sum();
-    assert!(jam_left <= 3, "nothing heavy left jammed: {jam_left}");
+        .max()
+        .unwrap_or(0);
+    assert!(jam_left <= 3, "no heavy jam left: {jam_left}");
     assert!(
         hp(&world).iter().sum::<u32>() > lowest,
         "and the bridge mended"

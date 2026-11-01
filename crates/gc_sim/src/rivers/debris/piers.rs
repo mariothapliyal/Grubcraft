@@ -327,13 +327,12 @@ impl Rivers {
     /// The jams against the piers standing now, one a pier.
     pub fn jams(&self) -> impl Iterator<Item = Jam> + '_ {
         (self.debris.piers.iter()).filter_map(|pier| {
-            let mut pieces = self.jammed_against(pier.tile);
-            let first = pieces.next()?;
+            let first = self.jammed_against(pier.tile).next()?;
             Some(Jam {
                 at: self.xy(first.tile),
                 deck: pier.slot,
                 owner: pier.owner,
-                mass: first.kind.mass() + pieces.map(|p| p.kind.mass()).sum::<u8>(),
+                mass: self.jam_on(pier.tile),
                 burning: self.burns(pier.tile),
             })
         })

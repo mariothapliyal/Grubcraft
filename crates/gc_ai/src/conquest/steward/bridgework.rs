@@ -4,7 +4,7 @@
 //! [`CLEAR_JAM_BELOW`], gets a worker sent to clear it; a bridge tile hurt
 //! below [`MEND_BELOW`] gets one sent to mend it.
 
-use super::{Look, SENT_TICKS, Steward};
+use super::{Look, Steward};
 use crate::conquest::Sense;
 use crate::orders::Hands as Clicks;
 use gc_sim::structures::{Role, StructureHandle};
@@ -20,13 +20,16 @@ pub const CLEAR_JAM_ABOVE: u8 = 3;
 pub const CLEAR_JAM_BELOW: u32 = 60;
 /// A bridge tile with less than this of its hit points, percent, is mended.
 pub const MEND_BELOW: u32 = 75;
+/// How long a worker sent to a jam or a hurt tile is given to get there
+/// before another is sent, should the work not be under way by then.
+const SENT_FOR: u32 = 30 * TICKS_PER_SECOND;
 /// What it is doing about its bridges.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Bridgework {
     next_look: u32,
-    /// Bridge tiles (by deck) it sent a worker to, and when, until the
-    /// world shows the work under way. Kept apart from the steward's
-    /// `busy`, which reads an order on a finished building as an upgrade.
+    /// Bridge tiles (by deck) it sent a worker to, and when, for
+    /// [`SENT_FOR`]. Kept apart from the steward's `busy`, which reads an
+    /// order on a finished building as an upgrade.
     sent: Vec<(StructureHandle, u32)>,
 }
 
@@ -39,16 +42,16 @@ impl Steward {
         clicks: &mut Clicks,
         look: &Look,
     ) -> Option<String> {
-        if s.now < self.bridgework.next_look {
+        if s.now < self.bridgework.next_look || !clicks.free() {
             return None;
         }
         self.bridgework.next_look = s.now + LOOK_EVERY;
         let reaction = s.reaction;
-        (self.bridgework.sent).retain(|&(_, t)| s.now <= t + reaction + SENT_TICKS);
+        (self.bridgework.sent).retain(|&(_, t)| s.now < t + reaction + SENT_FOR);
         let bridges: Vec<_> = (look.mine.iter())
             .filter(|m| m.stats.role == Role::Bridge && m.finished())
             .collect();
-        if bridges.is_empty() || !clicks.free() {
+        if bridges.is_empty() {
             return None;
         }
         let sent = |deck: StructureHandle| self.bridgework.sent.iter().any(|b| b.0 == deck);
@@ -70,7 +73,9 @@ impl Steward {
             .filter(|j| {
                 j.mass > CLEAR_JAM_ABOVE || left(j.deck).is_some_and(|l| l < CLEAR_JAM_BELOW)
             })
-            .find(|j| !sent(j.deck) && !clearing(j.at));
+            .filter(|j| !sent(j.deck) && !clearing(j.at))
+            // The worst first: the weakest tile, then the heaviest jam.
+            .min_by_key(|j| (left(j.deck).unwrap_or(100), core::cmp::Reverse(j.mass)));
         let (deck, w, order, note) = if let Some(j) = jam {
             let w = self.builder_at(s, look, j.at)?;
             let order = Command::Clear {
@@ -84,13 +89,19 @@ impl Steward {
             );
             (j.deck, w, order, note)
         } else {
+            // A worker used up to start a building (the Brood's Gnawers)
+            // can't mend one.
+            if s.kit.worker().is_none_or(|w| w.unit.consumed) {
+                return None;
+            }
             let m = (bridges.iter())
                 .filter(|m| m.hp_percent() < MEND_BELOW)
                 .filter(|m| !sent(m.view.handle) && !self.is_busy(m.view.handle))
-                .find(|m| {
+                .filter(|m| {
                     !(look.workers.iter())
                         .any(|w| s.world.building_target(w.handle) == Some(m.view.handle))
-                })?;
+                })
+                .min_by_key(|m| m.hp_percent())?;
             let w = self.builder(s, look, m.at())?;
             let order = Command::Construct {
                 regiment: w,

@@ -345,12 +345,12 @@ Built 2026-10-31.
 Built 2026-11-01.
 
 - **Seeing jams:** `Rivers::jams` lists the jam against each standing pier: the tile it lies on, the bridge tile over it and its owner, its mass and whether it burns. A mind reads only its own.
-- **Clearing them** (`gc_ai::conquest::steward::bridgework`): every 5 seconds the Steward looks at its finished bridge tiles. A jam on one heavier than 3 mass (`CLEAR_JAM_ABOVE`; a natural one of 3 or less washes free when a flood falls), or on a tile under 60% of its hit points (`CLEAR_JAM_BELOW`), gets the nearest spare worker sent to Clear it. A burning jam is left to burn.
-- **Mending:** failing that, a bridge tile under 75% of its hit points (`MEND_BELOW`) gets a worker sent to mend it (`Command::Construct`, as building it). The AI didn't mend any building before; only bridges are mended for now.
+- **Clearing them** (`gc_ai::conquest::steward::bridgework`): every 5 seconds the Steward looks at its finished bridge tiles. A jam on one heavier than 3 mass (`CLEAR_JAM_ABOVE`; a natural one of 3 or less washes free when a flood falls), or on a tile under 60% of its hit points (`CLEAR_JAM_BELOW`), gets the nearest spare worker sent to Clear it, the jam on the weakest tile first, then the heaviest. A burning jam is left to burn.
+- **Mending:** failing that, a bridge tile under 75% of its hit points (`MEND_BELOW`) gets a worker sent to mend it (`Command::Construct`, as building it). The most hurt tile goes first. The AI didn't mend any building before; only bridges are mended for now. The Brood can't mend: a Gnawer is used up starting a building and can't work on a finished one.
 - A worker sent to a jam or a tile is given 30 seconds to get there before another is sent. Both choices go in the AI journal ("Debris jammed on our bridge (9 mass): sending a worker to clear it", "A bridge tile is down to 53%: sending a worker to mend it").
 - **Formats:** no sim change (`SIM_VERSION` stays 80); no golden moves.
 - **Tests:** gc_game `river_ai.rs`: on the seed-3 grown map an enemy worker tips rafts above an AI's bridge until a 9-mass jam builds, and the AI clears it within a minute; an enemy soldier then hacks a deck tile to about half, and the AI mends it to full.
-- *Not yet:* burning a jam when the bridge is lost anyway, mending buildings other than bridges, and the stress scenarios (stage 4e).
+- *Not yet:* burning a jam when the bridge is lost anyway, keeping workers off a tile an enemy is still hacking at, mending buildings other than bridges, and the stress scenarios (stage 4e).
 
 ## 7. Stages (each its own pull request)
 

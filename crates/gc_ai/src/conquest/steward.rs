@@ -35,7 +35,7 @@ const SERVE: f32 = 22.0;
 /// Ticks a lay may take to show on the field before it is tried again.
 const LAY_TICKS: u32 = 3 * TICKS_PER_SECOND;
 /// Ticks a worker sent somewhere is left alone before it counts as idle.
-pub(super) const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
+const SENT_TICKS: u32 = 2 * TICKS_PER_SECOND;
 /// The longest an opening's building still to go up comes before arming.
 const OPENING_HOLD: u32 = 120 * TICKS_PER_SECOND;
 /// Regiments queued per production building.
