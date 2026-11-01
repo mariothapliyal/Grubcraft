@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke run of the real game binary, for CI (docs/10-architecture.md, Testing).
 
-    smoke-run.py PATH-TO-GRUBCRAFT [FRAMES] [menu]
+    smoke-run.py PATH-TO-GRUBCRAFT [FRAMES] [menu|recruit|veteran|general|warlord]
 
 Starts the game straight into a battle against the computer, draws FRAMES
 frames (default 300) on whatever software GPU the machine has, and quits. It
@@ -10,7 +10,8 @@ than fifteen minutes, or ends using more than the 6 GB memory budget. It also
 fails if the GPU driver reports any error: a single bad pipeline throws away
 every frame and leaves the window black (the October 2026 Mac black screen).
 With "menu" it opens the main menu instead, with every effect on, as a player
-first sees the game. The game's
+first sees the game. With a computer player's level it plays against that
+level instead of a Recruit (scripts/match-shots.py plays a General). The game's
 settings, log and crash reports go in a temporary folder.
 """
 import os
@@ -26,9 +27,10 @@ TIME_LIMIT_S = 900
 
 def main():
     args = sys.argv[1:]
-    menu = args[-1:] == ["menu"]
-    if menu:
-        args = args[:-1]
+    mode = "recruit"
+    if args[-1:] and args[-1] in ("menu", "recruit", "veteran", "general", "warlord"):
+        mode = args.pop()
+    menu = mode == "menu"
     if not 1 <= len(args) <= 2 or not all(a.isdigit() for a in args[1:]):
         sys.exit(__doc__)
     binary = pathlib.Path(args[0]).resolve()
@@ -41,7 +43,7 @@ def main():
     if menu:
         cmd += ["--menu"]
     else:
-        cmd += ["--battle", "recruit", "--no-shadows", "--no-glow"]
+        cmd += ["--battle", mode, "--no-shadows", "--no-glow"]
     try:
         run = subprocess.run(
             cmd, env=env, capture_output=True, text=True, timeout=TIME_LIMIT_S

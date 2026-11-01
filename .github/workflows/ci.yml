@@ -117,19 +117,22 @@ jobs:
         run: cargo run --release -p gc_replay -- verify replays
       - name: Maps are valid and fair
         run: cargo run --release -p gc_mapcheck -- check
-      # The Warlord rehearses each plan in copies of the battle, which takes
-      # minutes in a debug build, so its tests only run here.
-      - name: Warlord in release mode
+      # One Warlord battle played twice must match. The 72-battle Warlord
+      # against General contest is a balance run and runs in batch.yml.
+      - name: Warlord determinism in release mode
         if: runner.os == 'Linux'
-        run: cargo test --release -p gc_ai --test versus warlord
-      # Whole AI-only Conquest games, which take minutes in a debug build.
+        run: cargo test --release -p gc_ai --test versus a_warlord_battle_plays_out_the_same_every_time
+      # Whole AI-only Conquest games, which take minutes in a debug build:
+      # the "AI uses it" checks (docs/40-real-play-checks.md).
       - name: Conquest AI games in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_game ai_only -- --ignored
       # The real-play stress scenarios (docs/40-real-play-checks.md): a
       # gate, a bridge under fire, a retreat through woods and a computer
-      # player attacking walls, with the real game data. About two seconds
-      # in a release build.
+      # player attacking walls, with the real game data. A few seconds in a
+      # release build, so they stay a gate on every PR. The balance runs and
+      # real-match screenshots, which take an hour or more, run once per
+      # batch of merges in batch.yml.
       - name: Stress scenarios in release mode
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_game stress_suite -- --ignored --nocapture
@@ -139,6 +142,7 @@ jobs:
           name: stress-report
           path: target/stress/report.txt
           retention-days: 14
+
       # macOS runner clocks are too noisy to gate tick time on (the same
       # code has timed 1.2 to 2.8 ms p99 there): it only warns. Linux and
       # Windows still gate it, and the instruction counts below (Linux)
@@ -147,8 +151,9 @@ jobs:
         run: cargo run --release -p gc_bench -- ${{ runner.os == 'macOS' && '--warn-on-time' || '' }}
       - name: Big-map benchmark and budgets (six-player Conquest, 768 tiles)
         run: cargo run --release -p gc_bench -- --scenario conquest-6p ${{ runner.os == 'macOS' && '--warn-on-time' || '' }}
-      # An hour of six-player Conquest on a 768-tile Wilds map, held to the
-      # 6 GB budget and the simulation's big-map heap budget.
+      # An hour of six-player Conquest on a 640-tile map, held to the
+      # 6 GB budget and the simulation's big-map heap budget (seconds in
+      # release).
       - name: Conquest soak
         if: runner.os == 'Linux'
         run: cargo test --release -p gc_game conquest_soak -- --ignored --nocapture

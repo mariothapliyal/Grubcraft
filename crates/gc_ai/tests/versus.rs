@@ -563,8 +563,10 @@ fn contest_parallel(side: Side, against: Side, seeds: std::ops::RangeInclusive<u
     })
 }
 
-// The Warlord rehearses in the real simulation, too slow unoptimised: CI
-// runs these with `cargo test --release -p gc_ai --test versus warlord`.
+// The Warlord rehearses in the real simulation, too slow unoptimised. CI
+// runs the determinism test in release on every pull request, and the
+// 72-battle contest in the batched checks (.github/workflows/batch.yml);
+// both by hand: `cargo test --release -p gc_ai --test versus warlord`.
 
 #[test]
 #[cfg_attr(

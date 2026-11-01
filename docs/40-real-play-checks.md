@@ -93,6 +93,7 @@ morale) updates its limit in the same pull request and says why.
 3. Play only through `report.tick` so the time is measured.
 4. `report.metric` what is worth seeing; `report.check` what must hold.
    Set limits about one and a half times what it measures today.
+5. Run it before the PR: `STRESS=name scripts/pre-pr-check.sh`.
 
 Every new feature units interact with (gates, bridges, dams, walls,
 terrain, buildings, water) adds its scenario, and one where a computer
@@ -104,3 +105,16 @@ Not code: when a plan stage or a batch of threads has merged, one playtest
 thread plays everything together in the real game against the AI, records
 short before/after clips of each new feature and reports what is clunky.
 See the project instructions.
+
+## 4. Per PR and batched
+
+What runs where (2026-11-01). Run `scripts/pre-pr-check.sh` before opening
+a pull request and before each push to one; it runs the per-PR Linux checks
+below on your machine, so CI rarely finds something new.
+
+| Runs | Checks |
+|---|---|
+| Every pull request (`ci.yml`) | formatting, clippy, rules numbers, `cargo test --workspace` (with the clearance check), golden replays, map check, the stress scenarios and the Conquest soak (seconds in release), one Warlord determinism test, Conquest AI-only games, benchmarks and instruction counts, pack manifests, app builds and smoke runs, the oldest Rust |
+| Once per batch of merges (`batch.yml`: every six hours when main has moved, or by hand from the Actions tab) | the balance runs: the 72-battle Warlord contest, the Field Battle and full-roster tables and Conquest balance (`balance-report`); screenshots of a real battle against a General (`match-screenshots`) |
+
+A failure in a batch gets fixed before the next batch merges.
