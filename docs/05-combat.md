@@ -34,12 +34,12 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Torches | `X` | At night: light or put out the selection's torches (seen from afar, see further, can't be ambushed; [32](32-changing-land.md)). Charges need no key: closing at speed charges |
 | Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). Skirmish, where ranged units keep distance from approaching melee, comes later |
 | Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |
-| Run | double right-click / `C` | Faster move, then **Winded** for 10 s |
+| Run | double right-click / `C` | Faster move, then **Winded** for 10 s. *Not built yet; `C` plants stakes in Conquest* |
 | Fall back | `V` | Pull out of the fight in good order: back 8 tiles at half pace, still facing the foe ([below](#brace-and-fall-back)). Retreat toward the nearest friendly structure comes with Conquest |
 
 Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [08 · UI and UX](08-ui-ux.md#screen-layout-1080p-reference)).
 
-**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation; ranged regiments fire at will and Skirmish by default; units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
+**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation; ranged regiments fire at will (and will Skirmish by default once that order exists); units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
 
 ## Facing, flanks and charges
 
@@ -174,7 +174,7 @@ It rises from:
 | **Routing** | Flees toward its home, ignores orders. Can **rally** after 10 s if no enemy is nearby |
 | **Shattered** | Routed twice in a short time; flees to the nearest structure and only recovers there |
 
-Routing regiments are slower than their pursuers, so a rout is a real loss, but they are not deleted: a commander who saves a broken regiment can reinforce it.
+Routing regiments are slower than their pursuers, so a rout is a real loss, but they are not deleted: a commander who saves a broken regiment can rally it (and reinforce it, once reinforcement is built, [04](04-economy.md#reinforcement-total-war-replenishment)).
 
 **Conquest is gentler than Field Battle.** In Conquest, rallying is faster and morale loss from casualties is lower, because losing a regiment to a rout costs economy. In Field Battle the full Shogun bite applies.
 
@@ -255,7 +255,7 @@ Counters are multipliers between 0.7× and 1.5×, never hard immunities, so a we
 
 ## Veterancy
 
-Regiments gain experience from kills. Three ranks, shown as chevrons on the regiment banner and card: +10% damage and +10 morale per rank. Veterancy survives reinforcement and Brood metamorphosis.
+Regiments gain experience from kills. Three ranks, shown as chevrons on the regiment banner and card: +10% damage and +10 morale per rank (built as 5 points off the breaking point, below). Veterancy will survive reinforcement and Brood metamorphosis, neither of which is built yet.
 
 **Built (2026-10-31, `gc_sim::veterancy`):** every enemy soldier a regiment kills, in melee or with a volley, adds his hit points to its experience, counted in thousandths of its own full hit points (rounded); kills by volleys count half, as shooting from afar is safer work. Killing its own worth makes it rank 1, twice its worth rank 2, four times its worth rank 3, so a regiment of 28 spearmen that destroys an equal regiment is rank 1, and archers must kill twice their own worth for it. Each rank adds 10% to the damage it deals (melee blows and volleys; it pushes no harder) and takes 5 points off its breaking point ([Holding until bloodied](29-restart-plan.md#holding-until-bloodied-in-brief)), so a rank 3 elite regiment breaks only near 20%. Ranks are never lost. Towers, fire, floods and falls earn nobody experience. The screen shows gold chevrons over the regiment on the field, on its card in the tray and on the selection banner, whose soldier line adds "veteran rank N". The "+10 morale" above is that lower breaking point: a higher morale ceiling as well made veterans nearly unbreakable, and computer players' Conquest games stalled for an hour. AI rehearsals keep each regiment's rank, and the AI's strength estimate counts a veteran's extra damage. Reinforcement and Brood metamorphosis do not exist in the simulation yet; when they come, they keep the regiment's experience.
 

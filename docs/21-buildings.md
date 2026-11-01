@@ -6,7 +6,7 @@ Every faction's buildings with first-pass numbers for Conquest (M3): cost, build
 
 **Built (2026-10-17, buildings brought to life):** all 46 Conquest buildings of the four factions have 3D models with visible construction stages (main halls and upgrades in PR #149, the other 33 after). The game picks the look from the simulation's percent built, and the simulation is unchanged. A building with no model is still drawn as the old placeholder box, with its hit bar. Looks, upgrades, workers, packs and budgets are in [Models and construction stages](#models-and-construction-stages) below.
 
-**Planned (approved 2026-10-22, not built):** walls for every faction, working gates, towers that fire, field works, collapses and walled towns are designed in [26 · Fortifications and Bases](26-fortifications.md). Towers shoot since stage 1, and since stage 2 the Ember Gate lets its own side and allies through (Auto, Locked or Open, see [26](26-fortifications.md#gates)).
+**Built (approved 2026-10-22, all eight stages built by 2026-10-31):** walls for every faction, working gates, towers that fire (with Bolt and Blast towers and tower levels), field works, collapses and walled towns, as [26 · Fortifications and Bases](26-fortifications.md) describes. Towers shoot since stage 1, and since stage 2 the Ember Gate lets its own side and allies through (Auto, Locked or Open, see [26](26-fortifications.md#gates)).
 
 ## Shared rules
 
@@ -92,14 +92,14 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 
 | Building | Tier | Cost (Grub / Marrow) | Build time | Hit points | Armour | Size | Supply | What it does |
 |---|---|---|---|---|---|---|---|---|
-| Clan Hall | 1 | 400 / 0 | 120 s | 3,000 | Fortified | 5×5 | +12 | Main building. Trains Hands, takes Grub and Marrow, and reinforces regiments nearby. |
+| Clan Hall | 1 | 400 / 0 | 120 s | 3,000 | Fortified | 5×5 | +12 | Main building. Trains Hands, takes Grub and Marrow, and reinforces regiments nearby (reinforcement not built yet). |
 | Castle Keep (upgrades Clan Hall) | 2 | 300 / 100 | 60 s | 3,800 | Fortified | 5×5 | +22 | Tier 2: samurai, cavalry, rocket carts, War Kites and a second hero. |
 | Daimyo's Citadel (upgrades Castle Keep) | 3 | 600 / 250 | 90 s | 4,600 | Fortified | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
-| Outpost Hall | 1 | 250 / 0 | 80 s | 2,000 | Fortified | 4×4 | +6 | A cheaper hall for expansions: takes Grub and Marrow and reinforces, but trains nothing and cannot be upgraded. |
+| Outpost Hall | 1 | 250 / 0 | 80 s | 2,000 | Fortified | 4×4 | +6 | A cheaper hall for expansions: takes Grub and Marrow and reinforces (not built yet), but trains nothing and cannot be upgraded. |
 | Farmstead | 1 | 80 / 0 | 25 s | 600 | Structure | 3×3 | +10 | Housing. |
 | Granary | 1 | 100 / 0 | 30 s | 800 | Structure | 3×3 |  | A Grub drop-off to build beside seeps, so Hands walk less. Researches the Clans' economy upgrades. |
-| Dojo | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains spearmen, archers and samurai. Reinforces regiments nearby. |
-| Stables | 2 | 180 / 40 | 60 s | 1,400 | Structure | 5×4 |  | Trains cavalry. Reinforces regiments nearby. |
+| Dojo | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains spearmen, archers and samurai. Reinforces regiments nearby (not built yet). |
+| Stables | 2 | 180 / 40 | 60 s | 1,400 | Structure | 5×4 |  | Trains cavalry. Reinforces regiments nearby (not built yet). |
 | Ember Workshop | 1 | 160 / 0 | 55 s | 1,400 | Structure | 4×4 |  | Builds battering rams and, at tier 2, rocket carts. |
 | Kite Loft | 2 | 160 / 60 | 60 s | 1,100 | Structure | 3×3 |  | Builds War Kites. |
 | Ancestor Shrine | 1 | 150 / 0 | 50 s | 1,200 | Structure | 3×3 |  | Hires and revives heroes and holds the Honor Edicts. Binds the Oni at tier 3. |
@@ -122,7 +122,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |
 | Hatchery Pit | 1 | 120 / 0 | 40 s | 900 | Living | 3×3 |  | Holds 3 more larvae and spawns its own every 12 s. |
-| Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field. |
+| Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field (not built yet). |
 | Moth Roost | 2 | 150 / 40 | 50 s | 1,000 | Living | 3×3 |  | Lets larvae hatch into Drone-Moths. |
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |
 | Spine Mound | 1 | 100 / 0 | 35 s | 900 | Living | 2×2 |  | Flings spines at ground and air. Range 30, 1 × 10 damage every 2 s. |
@@ -165,9 +165,9 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Grand Bourse (upgrades Exchange) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Waystation | 1 | 200 / 0 | 60 s | 1,200 | Structure | 4×4 |  | Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions. |
 | Tenement | 1 | 80 / 0 | 25 s | 650 | Structure | 3×3 | +10 | Housing. |
-| Reliquary | 1 | 75 / 0 | 20 s | 400 | Structure | 2×2 |  | Every model that dies within 12 tiles, on any side, pays 1 Tithe. Can be built anywhere you have vision. |
+| Reliquary | 1 | 75 / 0 | 20 s | 400 | Structure | 2×2 |  | Every model that dies within 12 tiles, on any side, pays 1 Tithe (not built yet). Can be built anywhere you have vision. |
 | Ossuary | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Raises the undead: Bone Pikes, Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. |
-| Guildhall | 1 | 160 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains living infantry and cavalry. Living regiments reinforce near it. |
+| Guildhall | 1 | 160 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains living infantry and cavalry. Living regiments reinforce near it (not built yet). |
 | Lantern Spire | 2 | 160 / 50 | 55 s | 1,000 | Structure | 3×3 |  | Trains Lantern Wraiths. |
 | Tollgate | 1 | 140 / 0 | 40 s | 1,000 | Fortified | 2×2 |  | Two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub. Range 30, 2 × 5 damage every 2 s. |
 | Toll House (upgrades Tollgate) | 2 | 85 / 50 | 30 s | 1,500 | Fortified | 2×2 |  | Level 2 of the Tollgate: two crossbows that shoot at ground and air. Every 4 damage it deals earns 1 Grub. Range 34, 2 × 6 damage every 2 s. |

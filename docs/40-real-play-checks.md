@@ -22,17 +22,17 @@ above its floor: the threshold or deck under the middle of the way through). Eac
 - and the model must leave open what the footprint lets through.
 
 Passages today: every gate and gatehouse (footprint: its long side) and
-every bridge (two lanes, 2 tiles; the model is one lane, mirrored).
+every bridge, measured at the narrowest width a player can draw (3 tiles, `gc_sim::drawn::BRIDGE_WIDTHS`); drawn bridges are built from the timber kit's pieces (`bridge_kit`).
 
 Problems already found are listed in `KNOWN` with what fixes them. A new
 problem fails the check; so does a listed one that has been fixed, so the
-list only shrinks. Found when the check was built:
+list only shrinks. It is empty today (2026-10-31): all three problems found when the check was built are fixed.
 
 | Passage | Problem | Fix |
 |---|---|---|
 | ~~All six gate and gatehouse models~~ | ~~the door leaves were modelled shut across the doorway: 0 tiles open~~ | fixed 2026-10-30: doorways 2.84 to 2.93 open, doors are separate swinging leaf models ([26](26-fortifications.md), "How gates are drawn") |
-| Timber Bridge model (every faction's bridge shows it) | its rails leave 1.4 of the 2 tiles open at chest height | rails further out |
-| Every bridge | the Broodmother Bulk (2.7 tiles) is wider than the 2-tile deck | wider bridges, or a rule for giants |
+| ~~Timber Bridge model (every faction's bridge shows it)~~ | ~~its rails leave 1.4 of the 2 tiles open at chest height~~ | fixed 2026-10-31: drawn bridges are 3 to 5 tiles wide and built from the timber kit, rails on the outer edges (#334, #362) |
+| ~~Every bridge~~ | ~~the Broodmother Bulk (2.7 tiles) is wider than the 2-tile deck~~ | fixed 2026-10-30: the narrowest bridge is 3 tiles (#334) |
 
 A new kind of passage (a dam's walkway) adds itself in `passages()`.
 

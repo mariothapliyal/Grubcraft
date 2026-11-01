@@ -29,7 +29,7 @@
 | **Grubfolk** | Neutral farmer people living in hamlets |
 | **Guest commander** | A player not in a campaign battle who takes command of one of its other sides (an ally's host, a company, a settlement's militia) |
 | **Hamlet** | A neutral Grubfolk settlement: trade, hire, or raid |
-| **Handicap** | A lobby setting for any slot, human or AI: income from 50% to 150% |
+| **Handicap** | A lobby setting for any slot, human or AI: income from 50% to 150% (planned, not built yet) |
 | **Hidden** | A regiment in cover that no enemy has spotted: enemies can't see, target or order attacks on it. Yours carry a moss-green flag |
 | **Host** | An army on the campaign map, led by a hero; up to three per player |
 | **Let the generals fight** | Resolving a campaign battle by having the battle AI command every side in the real simulation at full speed |

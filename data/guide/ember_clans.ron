@@ -13,7 +13,7 @@
         (
             name: "Clan Hall",
             blurb: "Your starting base: trains Hands and takes Grub and Marrow. Upgrade it to the Castle Keep for the mid game.",
-            summary: "Your starting base: Hands drop Grub and Marrow here, it trains new Hands, and regiments reinforce beside it. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
+            summary: "Your starting base: Hands drop Grub and Marrow here, and it trains new Hands. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
             notes: [
                 ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
             ],
@@ -49,11 +49,11 @@
         ),
         (
             name: "Outpost Hall",
-            blurb: "A forward hall at a far seep or vein: a Grub and Marrow drop-off and reinforcement point. Trains nothing.",
-            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow and a reinforcement point beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer.",
+            blurb: "A forward hall at a far seep or vein: a Grub and Marrow drop-off. Trains nothing.",
+            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Place it beside a far seep or Marrow vein to make a forward drop-off and reinforcement point."),
+                (icon: Flag, text: "Place it beside a far seep or Marrow vein to make a forward drop-off."),
                 (icon: Grub, text: "Build it once home seeps run low; it is cheaper than a Clan Hall and takes Grub and Marrow."),
                 (icon: Alarm, text: "Screen it with spears, since it trains nothing and cannot be upgraded."),
             ],
@@ -85,10 +85,10 @@
         (
             name: "Dojo",
             blurb: "Trains Yari spears, Yumi archers and, at tier 2, Katana Samurai. Your first military building; raise it near the front.",
-            summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Regiments reinforce beside it, so raise it near the front. It is your first military building and the one you will build most; without it you have no army.",
+            summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Raise it near the front so new regiments reach the fight sooner. It is your first military building and the one you will build most; without it you have no army.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Place it near the front, since regiments reinforce beside it and you will build it most."),
+                (icon: Flag, text: "Place it near the front: new regiments reach the fight sooner, and you will build it most."),
                 (icon: Spear, text: "Train Yari spears first to anchor the line, with Yumi archers kept behind them."),
                 (icon: Sword, text: "Add Katana Samurai once the Castle Keep stands, since they need Marrow as well."),
             ],
@@ -96,7 +96,7 @@
         (
             name: "Stables",
             blurb: "Trains Mounted Samurai and Yabusame Riders. Tier 2, needs Marrow. Cavalry ride down archers and routing troops.",
-            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Regiments reinforce beside it. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
+            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
             notes: [],
             tips: [
                 (icon: Spear, text: "Keep spear regiments nearby, since the enemy's own horse will come for your cavalry."),
@@ -386,18 +386,18 @@
         ),
         (
             name: "Yabusame Riders",
-            tagline: "Horse archers: shoot on the move, skirmish by default.",
-            summary: "Horse archers who loose volleys while moving, at reduced accuracy. They skirmish by default: hit, withdraw, repeat. Good for picking off archers and chasing workers, weak when pinned in melee. Fast enough to run from spears.",
+            tagline: "Horse archers: shoot on the move.",
+            summary: "Horse archers who loose volleys while moving, at reduced accuracy. Hit, withdraw and hit again. Good for picking off archers and chasing workers, weak when pinned in melee. Fast enough to run from spears.",
         ),
         (
             name: "Ember Rocket Cart",
             tagline: "Artillery: long-range area fire that bleeds morale.",
-            summary: "Long-range artillery. Each salvo bursts over 3 tiles and costs the regiments it hits extra morale. It cannot fire at targets closer than 10 tiles and can hit your own troops, so keep it behind a line of spears. Deadly to packed infantry, helpless once cavalry arrives.",
+            summary: "Long-range artillery. Each salvo bursts over 3 tiles and costs the regiments it hits extra morale. It can hit your own troops, so keep it behind a line of spears. Deadly to packed infantry, helpless once cavalry arrives.",
         ),
         (
             name: "War Kite",
             tagline: "Flyer: sees 18 tiles, burns structures.",
-            summary: "A fast flying scout that sees 18 tiles instead of the usual 12 and drops fire pots that set structures burning. Fragile, but only archers and other flyers can answer it. Use it to scout, to snipe workers and artillery, and to burn walls.",
+            summary: "A fast flying scout that drops fire pots that set structures burning. Fragile, but only archers and other flyers can answer it. Use it to scout, to snipe workers and artillery, and to burn walls.",
         ),
         (
             name: "Oni-Bound",

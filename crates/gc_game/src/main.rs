@@ -1,7 +1,8 @@
-//! Grubcraft. M1 sandbox: a rendered map with four players' regiments driven
-//! by the deterministic simulation. You command player 1 (red) to start
-//! with; the other three wander the map on their own (`--sandbox` starts on
-//! an empty field instead, with nobody moving unless you order it).
+//! Grubcraft: Conquest and Field Battle over the deterministic simulation,
+//! alone against computer players or with friends over the network. Without
+//! a menu the game opens a four-player sandbox drill: you command player 1
+//! (red) and the other three wander the map on their own (`--sandbox` starts
+//! on an empty field instead, with nobody moving unless you order it).
 //!
 //! Sandbox: Tab switches which side you command (all four can be ordered).
 //! B turns placing on and off: left-click puts down a regiment of the chosen
@@ -78,13 +79,14 @@
 //! number recalls it (Shift adds it), and pressing it twice quickly centres
 //! the camera on it.
 //!
-//! The game opens on the main menu (Play, Sandbox, Settings); Esc brings it
-//! back during a match. Play hosts or joins a lobby over the local network
-//! (`gc_net`, see `online.rs`), with AI players at Recruit, Veteran or
-//! General in any slot. Starting it opens a Field
-//! Battle (`battle.rs`): ten regiments a side on the start plateaus, the
-//! computer players commanding theirs, and VICTORY or DEFEAT once one side
-//! is left holding the field.
+//! The game opens on the main menu (Play, Sandbox, Replays, Unit viewer,
+//! Settings, Guide); Esc brings it back during a match. Play hosts or joins
+//! a lobby over the local network (`gc_net`, see `online.rs`), with AI
+//! players at Recruit, Veteran, General or Warlord in any slot. Starting it
+//! opens a Conquest match (`conquest.rs`) or a Field Battle
+//! (`gc_match::battle`), where each side's army, bought from its points
+//! budget in the lobby, deploys on its start. The computer players command
+//! theirs, and the panel says VICTORY or DEFEAT once a side has won.
 //
 //! Sound: effects and music play through the default output device; they
 //! follow the camera (quieter and panned by distance). M mutes everything, N
