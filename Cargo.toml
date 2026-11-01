@@ -105,3 +105,12 @@ opt-level = 2
 
 [profile.dev.package.gc_mapcheck]
 opt-level = 2
+
+# `cargo test` builds our own crates lightly optimised. Unoptimised, the
+# simulation-heavy tests (AI drills, goldens, Conquest games) ran about ten
+# times slower, and running the tests took 13 to 21 minutes of each CI test
+# job; at opt-level 1 the whole workspace runs in about 6 minutes on 4 cores
+# for a minute or two more of building. Debug assertions and overflow
+# checks stay on. Dev builds of the game (`cargo run`) are unchanged.
+[profile.test]
+opt-level = 1
