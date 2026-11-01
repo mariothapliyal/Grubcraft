@@ -201,8 +201,9 @@ fn the_sim_version_changes_when_the_goldens_do() {
             pinned,
             Some(replay.fingerprint()),
             "{name} plays differently from how it did under sim version {SIM_VERSION} \
-             (or is new). If the sim changed, run `python3 scripts/rules-bump.py --bump` \
-             (it takes the next free SIM_VERSION, blesses and pins); the table now is\n{table}"
+             (or is new). If the sim changed, bump gc_sim::SIM_VERSION, bless, and run \
+             `cargo run --release -p gc_replay -- pin` (when main took your number first, \
+             `python3 scripts/rules-bump.py` catches up); the table now is\n{table}"
         );
     }
 }

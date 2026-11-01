@@ -81,6 +81,11 @@ fn default_folder() -> PathBuf {
     if here.is_dir() {
         return here;
     }
+    repository_replays()
+}
+
+/// The repository's `replays/` folder, as this was built from it.
+fn repository_replays() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays")
 }
 
@@ -311,9 +316,8 @@ fn pin() -> ExitCode {
 }
 
 fn write_pins() -> Result<String, String> {
-    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let folder = crate_dir.join("../../replays");
-    let test = crate_dir.join("tests/goldens.rs");
+    let folder = repository_replays();
+    let test = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens.rs");
     // The repository's goldens (not a `replays/` in the working directory),
     // since the table pinned is the repository's test.
     let files = expand(&[folder]).map_err(|e| e.to_string())?;
