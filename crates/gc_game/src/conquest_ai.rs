@@ -1187,7 +1187,19 @@ mod tests {
         }
         assert!(traps >= 1, "no General laid a trap; the last game: {last}");
         assert!(towers >= 1, "no bolt or blast tower put up in any game");
-        assert!(raised >= 1, "no tower raised to level 2 in any game");
+        // Raising a tower waits on tier 2 with Marrow to spare, which most
+        // games end before now that shattered regiments leave the field and
+        // armies fight on (about one game in 14): more Clans games until
+        // one does, a known one first.
+        for seed in core::iter::once(7).chain((1..=30).filter(|&s| s != 7)) {
+            if raised > 0 {
+                break;
+            }
+            let most;
+            (most, last) = general(Faction::EmberClans, seed);
+            raised += most.raised;
+        }
+        assert!(raised >= 1, "no tower raised to level 2 in any game: {last}");
         // Whether the wall closes round the hall depends on how the game
         // goes too (the unit stats move it): more games until one does.
         for seed in 1..=30 {
