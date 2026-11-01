@@ -114,6 +114,9 @@ const WIDEN_SPARE: Fx = Fx::from_ratio(1, 2);
 /// How far beyond its front rank a marching block looks for narrowing
 /// ground, in tiles.
 const SQUEEZE_LOOK: Fx = Fx::from_int(2);
+/// How near (tiles, along each axis) the next waypoint of a block's route
+/// is looked at for a narrows to narrow to fit beforehand (see `squeeze`).
+const NARROWS_AHEAD: Fx = Fx::from_int(8);
 
 /// Declares [`Regiments`] from one list of its per-regiment fields, each
 /// with the value a free slot holds, and from that list alone makes the
@@ -885,13 +888,24 @@ impl Regiments {
         // `CLEAR_CAP`).
         let room = (!nav.open_around(self.owner[i], self.position[i], reach_tiles)).then(|| {
             let half = formation::block_size(files, models, fs, rs).1 / 2;
-            nav.room_across(
+            let here = nav.room_across(
                 self.owner[i],
                 self.position[i],
                 self.facing[i],
                 Fx::from_int(reach_tiles),
                 &[half + look, half, Fx::ZERO, -half],
-            )
+            );
+            // A narrows its route turns into just ahead (a gate, a
+            // bridge's deck): it narrows to fit on the way up to it, so it
+            // files in as a column instead of jamming the mouth broadside.
+            let ahead = (self.target[i]).and_then(|t| nav.steer(i, t)).filter(|&(w, _)| {
+                let d = w - self.position[i];
+                d.x.abs() < NARROWS_AHEAD && d.y.abs() < NARROWS_AHEAD
+            });
+            ahead.map_or(here, |(w, _)| {
+                let way = Angle::of_vec(w - self.position[i]);
+                here.min(nav.half_width_across(self.owner[i], w, way, Fx::from_int(reach_tiles)))
+            })
         });
         let fits = |f: u16, spare: Fx| room.is_none_or(|room| outer(f) + spare <= room);
         let fit = (1..=frontage)
@@ -1533,7 +1547,8 @@ impl Regiments {
                 // In tight ground (a ford, a pass) it queues instead (below);
                 // in a fight it keeps to its foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
-                let aside = if ghost || tight || self.engaged[i].is_some() {
+                let narrowed = self.files[i] < self.frontage[i].clamp(1, self.models[i].max(1));
+                let aside = if ghost || (tight && narrowed) || self.engaged[i].is_some() {
                     Fx::ZERO
                 } else if self.apart(i) > 0 {
                     self.set_apart(i, self.apart(i) - 1);
@@ -1551,8 +1566,8 @@ impl Regiments {
                 };
                 debug_assert!(step <= combat.max_step(), "a step outruns the crowd check");
                 let here = self.position[i];
-                let arriving = dist <= step;
-                let next = if arriving { point } else { here + dir * step };
+                let mut arriving = dist <= step;
+                let mut next = if arriving { point } else { here + dir * step };
                 // A friendly block holding its ground in the way, where the
                 // ground leaves no room beside it (a ford, a pass): wait
                 // behind it. In the open, blocks still pass through.
@@ -1585,9 +1600,14 @@ impl Regiments {
                     };
                     match found {
                         Ok(j) if following(j) => {
-                            self.held[i] = self.held[i].max(1);
-                            self.clear[i] = RECHECK - 1;
-                            continue;
+                            // Trailing it: on at half pace this tick and
+                            // full the next (when it doesn't look), so the
+                            // column keeps moving instead of standing and
+                            // starting, and falls back off its heels.
+                            let trail = Fx::from_raw(step.raw() / 2);
+                            arriving = dist <= trail;
+                            next = if arriving { point } else { here + dir * trail };
+                            self.clear[i] = 1;
                         }
                         Ok(j) if !combat.room_beside(self, units, nav, i, j, dir) => {
                             // Patience runs for the ticks until it looks

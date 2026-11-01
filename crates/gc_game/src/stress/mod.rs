@@ -22,6 +22,7 @@
 //! same on every machine; time is held only to the generous budget.
 
 mod arena;
+mod big_army;
 mod bridge;
 mod crossing;
 mod forest;
@@ -62,6 +63,8 @@ const SCENARIOS: &[Scenario] = &[
     forest_pass::SCENARIO,
     crossing::SCENARIO,
     town::SCENARIO,
+    big_army::GATE,
+    big_army::BRIDGE,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

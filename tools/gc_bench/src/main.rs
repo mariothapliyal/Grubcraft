@@ -21,8 +21,11 @@
 //!   grid alone is bigger than the 256-tile heap budget), with the ticks a
 //!   building goes up in, which may allocate, held to their own. Run only
 //!   when asked for; CI runs it as a step of its own.
+//! - `big-storm`: the pathing storm on the 768-tile map: six players' 60
+//!   regiments each, 360 in all, ordered across the map in the same tick.
+//!   Held to the big-map budgets; run only when asked for.
 //!
-//! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p]
+//! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p|big-storm]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
 //!                 [--no-fog] [--warn-on-time]
 //! `--warn-on-time` reports a p99 tick over budget as a warning instead of a
@@ -74,11 +77,19 @@ const LAYING_BUDGET_US: f64 = 40_000.0;
 /// The pathing storm's last regiment must have its route within this many
 /// ticks of the order (2 s).
 const STORM_WAIT_BUDGET: u32 = 40;
+/// The big storm's, on the biggest map (4 s).
+const BIG_STORM_WAIT_BUDGET: u32 = 80;
 const MAP_TILES: u32 = 256;
 /// The recorded grand battle, built into the benchmark so it runs from
 /// any folder.
 const GRAND_BATTLE: &[u8] = include_bytes!("../../../replays/field-8000pt-2v2.gcr");
-const SCENARIOS: [&str; 4] = ["drill", "pathing-storm", "field-8000pt-2v2", "conquest-6p"];
+const SCENARIOS: [&str; 5] = [
+    "drill",
+    "pathing-storm",
+    "field-8000pt-2v2",
+    "conquest-6p",
+    "big-storm",
+];
 /// The six-player Conquest map's edge, the largest map size.
 const CONQUEST_TILES: u32 = 768;
 
@@ -158,6 +169,9 @@ fn main() {
     }
     if opts.scenario.as_deref() == Some("conquest-6p") {
         failed |= conquest_six(&opts);
+    }
+    if opts.scenario.as_deref() == Some("big-storm") {
+        failed |= big_storm(&opts);
     }
     if !run_all && !SCENARIOS.contains(&opts.scenario.as_deref().unwrap_or("")) {
         usage();
@@ -316,20 +330,64 @@ fn drill(opts: &Options, nav: &[u8]) -> bool {
 }
 
 fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
-    let ticks = opts.ticks.unwrap_or(1_200);
     let per_player = opts.per_player.unwrap_or(30);
-    let mut world = new_world(opts.seed, per_player * 4, nav, MAP_TILES);
-    // Each player's regiments stand in a block in their corner...
+    storm(opts, nav, MAP_TILES, 4, per_player, &BUDGETS, STORM_WAIT_BUDGET)
+}
+
+/// The pathing storm on the biggest map: six players' regiments, each
+/// player's in a block near its corner (or edge), all ordered to the far
+/// side in the same tick. Held to the big-map budgets.
+fn big_storm(opts: &Options) -> bool {
+    let nav = opts.nav(CONQUEST_TILES);
+    let per_player = opts.per_player.unwrap_or(60);
+    storm(
+        opts,
+        &nav,
+        CONQUEST_TILES,
+        6,
+        per_player,
+        &BIG_MAP_BUDGETS,
+        BIG_STORM_WAIT_BUDGET,
+    )
+}
+
+/// `players` x `per_player` regiments on a `tiles`-tile map, each player's
+/// standing in a block, all ordered across the map in the same tick; the
+/// last regiment must have its route within `wait_budget` ticks.
+fn storm(
+    opts: &Options,
+    nav: &[u8],
+    tiles: u32,
+    players: u8,
+    per_player: u32,
+    budgets: &Budgets,
+    wait_budget: u32,
+) -> bool {
+    let ticks = opts.ticks.unwrap_or(1_200);
+    let mut world = new_world(opts.seed, per_player * u32::from(players), nav, tiles);
+    // Each player's regiments stand in a block in their corner (the
+    // drill's corners: four, then the middle of two edges)...
+    let mut drill = Drill::new(opts.seed);
+    drill.map_tiles = tiles as i32;
     let corner = |player: u8| {
-        let near = MAP_TILES as i32 / 8;
-        let far = MAP_TILES as i32 - near;
-        (
-            if player & 1 == 0 { near } else { far },
-            if player & 2 == 0 { near } else { far },
-        )
+        if players == 4 {
+            let near = tiles as i32 / 8;
+            let far = tiles as i32 - near;
+            (
+                if player & 1 == 0 { near } else { far },
+                if player & 2 == 0 { near } else { far },
+            )
+        } else {
+            drill.corner(player)
+        }
+    };
+    // ...and the far one: across the middle.
+    let opposite = |player: u8| {
+        let (x, y) = corner(player);
+        (tiles as i32 - x, tiles as i32 - y)
     };
     let mut spawns = Vec::new();
-    for player in 0..4u8 {
+    for player in 0..players {
         let (cx, cy) = corner(player);
         for k in 0..per_player as i32 {
             spawns.push(PlayerCommand {
@@ -344,12 +402,11 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
     }
     let mut timings = Timings::new(ticks);
     timings.tick(&mut world, &spawns);
-    // ...and all are ordered to the opposite corner in the same tick.
     let orders: Vec<_> = world
         .regiments
         .iter()
         .map(|r| {
-            let (cx, cy) = corner(3 - r.owner);
+            let (cx, cy) = opposite(r.owner);
             let k = r.handle.index as i32;
             PlayerCommand {
                 player: r.owner,
@@ -364,23 +421,29 @@ fn pathing_storm(opts: &Options, nav: &[u8]) -> bool {
         })
         .collect();
     timings.tick(&mut world, &orders);
-    let mut wait = None;
+    let (mut wait, mut stood) = (None, None);
     for t in 1..ticks.saturating_sub(1) {
+        if stood.is_none() && world.nav().standing_for_routes() == 0 {
+            stood = Some(t);
+        }
         if wait.is_none() && world.nav().queued() == 0 {
             wait = Some(t);
         }
         timings.tick(&mut world, &[]);
     }
     let wait = wait.unwrap_or(u32::MAX);
+    let stood = stood.unwrap_or(u32::MAX);
     println!(
-        "scenario     pathing-storm, {} regiments ordered across the map at once, {ticks} ticks",
-        per_player * 4
+        "scenario     {}, {} regiments ordered across the {tiles}-tile map at once, {ticks} ticks",
+        if players == 4 { "pathing-storm" } else { "big-storm" },
+        per_player * u32::from(players)
     );
     println!(
-        "route wait   {wait:>9} ticks (budget {STORM_WAIT_BUDGET}; last regiment's wait for its route)"
+        "route wait   {wait:>9} ticks (budget {wait_budget}; last regiment's wait for its own route)"
     );
-    let mut failed = timings.report(&world, &BUDGETS, opts.warn_on_time);
-    if wait > STORM_WAIT_BUDGET {
+    println!("standing     {stood:>9} ticks (until the last regiment set off)");
+    let mut failed = timings.report(&world, budgets, opts.warn_on_time);
+    if wait > wait_budget {
         eprintln!("FAIL: routes took too long to find");
         failed = true;
     }
