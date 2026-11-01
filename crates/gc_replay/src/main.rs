@@ -8,6 +8,9 @@
 //!   gc_replay info PATH...       describe each replay
 //!   gc_replay compare A B        the first second two machines' recordings
 //!                                of one match disagree (desync reports)
+//!   gc_replay pin                write the goldens' `PINNED` table (in
+//!                                `tests/goldens.rs`) for this build's
+//!                                `SIM_VERSION` and the replays as blessed
 //!
 //! A PATH may be a `.gcr` file or a folder of them. `verify` exits non-zero
 //! when any replay fails, so CI can run it on every platform.
@@ -25,6 +28,9 @@ fn main() -> ExitCode {
         return usage();
     };
     let mut paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+    if action == "pin" {
+        return if paths.is_empty() { pin() } else { usage() };
+    }
     if action == "compare" {
         return match &paths[..] {
             [a, b] => compare(a, b),
@@ -62,7 +68,9 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: gc_replay verify [PATH...] | bless PATH... | info PATH... | compare A B");
+    eprintln!(
+        "usage: gc_replay verify [PATH...] | bless PATH... | info PATH... | compare A B | pin"
+    );
     ExitCode::from(2)
 }
 
@@ -73,6 +81,11 @@ fn default_folder() -> PathBuf {
     if here.is_dir() {
         return here;
     }
+    repository_replays()
+}
+
+/// The repository's `replays/` folder, as this was built from it.
+fn repository_replays() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../replays")
 }
 
@@ -285,6 +298,53 @@ fn info(file: &Path) -> bool {
         println!("  player {p}{who}{team}: {regiments} regiments, {soldiers} soldiers");
     }
     true
+}
+
+/// Rewrites the `PINNED` table in the goldens test from the repository's
+/// replays as they are now (blessed) and this build's `SIM_VERSION`.
+fn pin() -> ExitCode {
+    match write_pins() {
+        Ok(message) => {
+            println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn write_pins() -> Result<String, String> {
+    let folder = repository_replays();
+    let test = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens.rs");
+    // The repository's goldens (not a `replays/` in the working directory),
+    // since the table pinned is the repository's test.
+    let files = expand(&[folder]).map_err(|e| e.to_string())?;
+    let goldens = files
+        .iter()
+        .map(|f| Replay::load(f).map(|r| (f.file_stem().unwrap_or_default().to_string_lossy(), r)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let source = std::fs::read_to_string(&test).map_err(|e| format!("{}: {e}", test.display()))?;
+    // The table runs from `const PINNED` to the first `\n);` after it
+    // (scripts/rules-bump.py finds it the same way).
+    let start = source
+        .find("const PINNED")
+        .ok_or_else(|| format!("no PINNED table in {}", test.display()))?;
+    let end = source[start..]
+        .find("\n);")
+        .map(|i| start + i + 3)
+        .ok_or_else(|| format!("the PINNED table in {} has no end", test.display()))?;
+    let table = gc_replay::pinned_table(goldens.iter().map(|(n, r)| (n, r)));
+    let new = format!("{}{table}{}", &source[..start], &source[end..]);
+    std::fs::write(&test, new).map_err(|e| format!("{}: {e}", test.display()))?;
+    Ok(format!(
+        "pinned {} goldens under sim version {} in {}",
+        goldens.len(),
+        gc_sim::SIM_VERSION,
+        test.display()
+    ))
 }
 
 /// Where two recordings of one match, from two machines, first disagree.
