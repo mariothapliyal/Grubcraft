@@ -8,10 +8,13 @@
 
 use gc_fixed::{Fx, FxVec2};
 use gc_sim::rivers::Band;
-use gc_sim::{Command, MoraleState, PlayerCommand, TICKS_PER_SECOND, World};
+use gc_sim::{
+    Command, MoraleState, PlayerCommand, RegimentHandle, StructureHandle, TICKS_PER_SECOND, World,
+};
 
 use super::arena::{
-    Arena, EAST, Real, SOUTH, WEST, centre, grid, move_to, of, put_up, soldiers, spawn, squall,
+    Arena, CATASTROPHIC_SEED, EAST, Real, SOUTH, WEST, centre, grid, move_to, of, soldiers, spawn,
+    squall, timber_bridge,
 };
 use super::{Report, Scenario, seconds};
 
@@ -27,7 +30,6 @@ const SECOND: u32 = TICKS_PER_SECOND;
 /// The river's columns, running south; a ford at its head that the flood
 /// shuts.
 const RIVER: core::ops::Range<i32> = 30..34;
-const FORD: core::ops::Range<i32> = 2..5;
 /// The bridge the column takes, its two rows from bank to bank, and the
 /// one upstream it can go round by.
 const ROW: i32 = 40;
@@ -39,8 +41,6 @@ const WEAK: [(i32, i32); 3] = [(30, ROW), (30, ROW + 1), (30, ROW + 2)];
 /// How far the archers wear it: under the strain line (75%), over the
 /// sweep line (50%), so the flood and its logs decide when it goes.
 const WEAKEN_TO: u32 = 58;
-/// A seed whose squall rolls a catastrophic front (checked).
-const SEED: u64 = 23;
 /// When the column sets off: its third regiment is on the weak span when
 /// the flood takes it (checked).
 const SET_OFF: u32 = 44 * SECOND;
@@ -52,27 +52,21 @@ const REROUTE_SECONDS: u32 = 10;
 fn run(real: &Real, report: &mut Report) {
     let mut arena = Arena::new(TILES);
     arena.river(RIVER, 0..TILES as i32);
-    arena.ford(RIVER, FORD);
+    arena.ford(RIVER, 2..5);
     // Bank woods between the bridges, for the flood to tear logs from.
     arena.woods(26..30, 18..28);
     arena.woods(34..38, 18..28);
     arena.flowing(SOUTH);
-    let mut world = arena.world_under(real, SEED, 0, squall());
-    let bridge = real.building("Timber Bridge");
-    let deck: Vec<_> = (SPAN.flat_map(|x| {
-        [
-            ROW,
-            ROW + 1,
-            ROW + 2,
-            UPSTREAM_ROW,
-            UPSTREAM_ROW + 1,
-            UPSTREAM_ROW + 2,
-        ]
-        .map(|y| (x, y))
-    }))
-    .map(|tile| (bridge, tile, 0))
-    .collect();
-    put_up(&mut world, 0, &deck);
+    let mut world = arena.world_under(real, CATASTROPHIC_SEED, 0, squall());
+    timber_bridge(real, &mut world, SPAN, UPSTREAM_ROW..UPSTREAM_ROW + 3);
+    let deck = timber_bridge(real, &mut world, SPAN, ROW..ROW + 3);
+    // The bridge's tiles over the water: the weak span, and the sound
+    // piers.
+    let (weak, piers): (Vec<_>, Vec<_>) = (SPAN.flat_map(|x| (ROW..ROW + 3).map(move |y| (x, y))))
+        .zip(deck)
+        .filter(|((x, _), _)| RIVER.contains(x))
+        .partition(|(tile, _)| WEAK.contains(tile));
+    let weak: Vec<StructureHandle> = weak.into_iter().map(|w| w.1).collect();
 
     let [yari, katana, yumi] = real.ember_line();
     let archers = spawn(
@@ -95,17 +89,11 @@ fn run(real: &Real, report: &mut Report) {
         .map(|i| grid((50, ROW - 6), 2, (6, 6), i))
         .collect();
 
-    let hp = |w: &World, tile| {
+    let hp = |w: &World, h: StructureHandle| {
         (w.structures().unwrap().iter())
-            .find(|v| v.tile == tile)
-            .map(|v| (v.handle, v.hp * 100 / v.max_hp.max(1)))
+            .find(|v| v.handle == h)
+            .map(|v| v.hp * 100 / v.max_hp.max(1))
     };
-    let sound = |w: &World| {
-        (w.structures().unwrap().iter())
-            .filter(|v| RIVER.contains(&v.tile.0) && !WEAK.contains(&v.tile))
-            .count()
-    };
-    let sound_at_start = sound(&world);
     let mut weakened = None;
     let mut catastrophic = false;
     let mut fell: [Option<u32>; 3] = [None; 3];
@@ -114,9 +102,11 @@ fn run(real: &Real, report: &mut Report) {
     // the water.
     let mut on_span = 0;
     let mut washed_up = true;
-    // Orders given again to those that came to a halt short of the far
-    // bank (washed up, or routed by the fall and rallied), as a player
-    // would.
+    // The regiments the fall caught (on the span, or routed by it), and the
+    // orders given again to those that came to a halt short of the far
+    // bank, washed up or rallied, as a player would. The rest go round on
+    // their own.
+    let mut caught: Vec<RegimentHandle> = Vec::new();
     let mut reordered = 0;
     // Regiment-ticks over the river, off the deck, after the first tick of
     // washing up.
@@ -132,33 +122,32 @@ fn run(real: &Real, report: &mut Report) {
         let mut orders = Vec::new();
         // The archers wear the span, a row at a time, then leave.
         if weakened.is_none() && t % SECOND == 0 {
-            match WEAK
-                .iter()
-                .find_map(|&tile| hp(&world, tile).filter(|h| h.1 > WEAKEN_TO))
-            {
-                Some((structure, _)) => {
-                    orders.extend(archers.iter().map(|&regiment| PlayerCommand {
-                        player: 1,
-                        command: Command::AttackStructure {
-                            regiment,
-                            structure,
-                        },
-                    }));
-                }
-                None => {
-                    weakened = Some(t);
-                    orders.extend(archers.iter().map(|&regiment| PlayerCommand {
-                        player: 1,
-                        command: Command::RemoveRegiment { regiment },
-                    }));
-                }
+            let target = (weak.iter()).find(|&&h| hp(&world, h).is_some_and(|p| p > WEAKEN_TO));
+            if target.is_none() {
+                weakened = Some(t);
             }
+            orders.extend(archers.iter().map(|&regiment| PlayerCommand {
+                player: 1,
+                command: match target {
+                    Some(&structure) => Command::AttackStructure {
+                        regiment,
+                        structure,
+                    },
+                    None => Command::RemoveRegiment { regiment },
+                },
+            }));
         }
         if t > SET_OFF && t % SECOND == 0 {
-            for v in of(&world, &column) {
-                let i = column.iter().position(|&c| c == v.handle).unwrap();
+            for (i, &r) in column.iter().enumerate() {
+                let Some(v) = of(&world, &[r]).next() else {
+                    continue;
+                };
+                if v.morale == MoraleState::Routing && !caught.contains(&r) {
+                    caught.push(r);
+                }
                 let short = (goals[i] - v.position).length() > Fx::from_int(3);
-                if !v.moving && short && v.morale != MoraleState::Routing {
+                let halted = !v.moving && v.morale != MoraleState::Routing;
+                if caught.contains(&r) && halted && short {
                     orders.push(move_to(0, v.handle, goals[i]));
                     reordered += 1;
                 }
@@ -167,29 +156,29 @@ fn run(real: &Real, report: &mut Report) {
         if t == SET_OFF {
             orders.extend((column.iter().zip(&goals)).map(|(&r, &g)| move_to(0, r, g)));
         }
-        let was: Vec<_> = WEAK
-            .iter()
-            .map(|&tile| hp(&world, tile).is_some())
-            .collect();
+        let was: Vec<_> = weak.iter().map(|&h| hp(&world, h).is_some()).collect();
         let before: Vec<_> = of(&world, &column)
             .map(|v| (v.handle, v.position))
             .collect();
         report.tick(&mut world, &orders);
-        let rivers = world.flood().rivers();
-        catastrophic |= rivers.fronts().any(|f| f.band() == Band::Catastrophic);
+        let raging = (world.flood().rivers().fronts()).any(|f| f.band() == Band::Catastrophic);
+        catastrophic |= raging;
         for (k, &tile) in WEAK.iter().enumerate() {
-            if !was[k] || hp(&world, tile).is_some() {
+            if !was[k] || hp(&world, weak[k]).is_some() {
                 continue;
             }
             fell[k] = Some(t);
-            fell_in_flood &= rivers.fronts().any(|f| f.band() == Band::Catastrophic);
+            fell_in_flood &= raging;
             for &(h, p) in &before {
                 // On it: its middle within a tile and a half of the
                 // tile's (its block spans more than a tile).
                 if (p - centre(tile.0, tile.1)).length() > Fx::from_ratio(3, 2) {
                     continue;
                 }
-                on_span += 1;
+                if !caught.contains(&h) {
+                    caught.push(h);
+                    on_span += 1;
+                }
                 let now = of(&world, &[h]).next().map(|v| v.position);
                 washed_up &= now.is_some_and(|q| !in_water(&arena, &world, q));
             }
@@ -205,6 +194,7 @@ fn run(real: &Real, report: &mut Report) {
             broke = Some(t);
             behind = (of(&world, &column))
                 .filter(|v| v.position.x.floor_int() < RIVER.start)
+                .filter(|v| !caught.contains(&v.handle))
                 .map(|v| {
                     let i = column.iter().position(|&r| r == v.handle).unwrap();
                     (i, (upstream - v.position).length(), None)
@@ -234,7 +224,8 @@ fn run(real: &Real, report: &mut Report) {
         .map(|b| b.2.map(|t| t - broke.unwrap_or(t)))
         .max()
         .flatten();
-    report.metric("orders given again to regiments halted short", reordered);
+    report.metric("regiments the fall caught", caught.len());
+    report.metric("orders given again to those halted short", reordered);
     report.metric("regiments short of the gap", behind.len());
     report.metric("slowest on its way round", seconds(slowest));
     report.metric("all across and standing", seconds(done));
@@ -244,7 +235,10 @@ fn run(real: &Real, report: &mut Report) {
         "the weakened span is swept away while the flood runs",
         fell.iter().all(Option::is_some) && fell_in_flood,
     );
-    report.check("every sound pier stands", sound(&world) == sound_at_start);
+    report.check(
+        "every sound pier stands",
+        piers.iter().all(|&(_, h)| hp(&world, h).is_some()),
+    );
     report.check(
         "a regiment is on the span when it goes, and washes up out of the water",
         on_span > 0 && washed_up,
@@ -254,7 +248,9 @@ fn run(real: &Real, report: &mut Report) {
         in_river == 0,
     );
     report.check(
-        format!("the column behind goes round by the upstream bridge within {REROUTE_SECONDS} s"),
+        format!(
+            "the column behind goes round by the upstream bridge on its own within {REROUTE_SECONDS} s"
+        ),
         !behind.is_empty()
             && behind.iter().all(|b| b.2.is_some())
             && slowest.is_some_and(|s| s <= REROUTE_SECONDS * SECOND),

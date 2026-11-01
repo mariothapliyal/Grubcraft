@@ -4,14 +4,14 @@
 //! water stand through any flood, so this is the bridge's traffic with
 //! the river up.
 
-use gc_fixed::{Fx, FxVec2};
 use gc_sim::TICKS_PER_SECOND;
 use gc_sim::rivers::Band;
 
 use super::arena::{
-    Arena, EAST, Real, SOUTH, WEST, grid, march, of, put_up, soldiers, spawn, squall,
+    Arena, CATASTROPHIC_SEED, EAST, Real, SOUTH, WEST, grid, march, soldiers, spawn, squall,
+    timber_bridge,
 };
-use super::{Report, Scenario, seconds};
+use super::{Report, Scenario};
 
 pub(super) const SCENARIO: Scenario = Scenario {
     name: "bridge-flood-armies",
@@ -23,11 +23,8 @@ pub(super) const SCENARIO: Scenario = Scenario {
 const TILES: u32 = 96;
 const SECOND: u32 = TICKS_PER_SECOND;
 const RIVER: core::ops::Range<i32> = 46..50;
-const FORD: core::ops::Range<i32> = 2..5;
 const ROW: i32 = 48;
 const SPAN: core::ops::RangeInclusive<i32> = 43..=52;
-/// A seed whose squall rolls a catastrophic front (checked).
-const SEED: u64 = 23;
 /// When the armies set off: the flood has shut the ford by then.
 const SET_OFF: u32 = 40 * SECOND;
 /// Regiments a side, and the least soldiers a side.
@@ -44,14 +41,10 @@ const STALL_SECONDS: u32 = 15;
 fn run(real: &Real, report: &mut Report) {
     let mut arena = Arena::new(TILES);
     arena.river(RIVER, 0..TILES as i32);
-    arena.ford(RIVER, FORD);
+    arena.ford(RIVER, 2..5);
     arena.flowing(SOUTH);
-    let mut world = arena.world_under(real, SEED, 0, squall());
-    let bridge = real.building("Timber Bridge");
-    let deck: Vec<_> = (SPAN.flat_map(|x| [(x, ROW), (x, ROW + 1), (x, ROW + 2)]))
-        .map(|tile| (bridge, tile, 0))
-        .collect();
-    put_up(&mut world, 0, &deck);
+    let mut world = arena.world_under(real, CATASTROPHIC_SEED, 0, squall());
+    timber_bridge(real, &mut world, SPAN, ROW..ROW + 3);
 
     let units = real.ember_line();
     let at = |x: i32, i: usize| grid((x, 36), 3, (6, 8), i);
@@ -70,11 +63,8 @@ fn run(real: &Real, report: &mut Report) {
     let rivers = world.flood().rivers();
     let flooding = rivers.fronts().any(|f| f.band() == Band::Catastrophic) && rivers.shut();
 
-    // Each army to where the other began; how long each regiment has stood
-    // stuck since it last made a quarter of a tile of headway.
+    // Each army to where the other began.
     let goals: Vec<_> = east.iter().chain(&west).map(|&(_, p)| p).collect();
-    let mut headway: Vec<(FxVec2, u32)> = vec![(FxVec2::ZERO, 0); army.len()];
-    let mut stall = 0;
     let walked = march(
         real,
         &mut world,
@@ -82,20 +72,9 @@ fn run(real: &Real, report: &mut Report) {
         &army,
         &goals,
         LIMIT_SECONDS,
-        |t, w| {
-            for v in of(w, &army) {
-                let i = army.iter().position(|&r| r == v.handle).unwrap();
-                let last = &mut headway[i];
-                let near = (goals[i] - v.position).length() <= Fx::from_int(3);
-                if t == 0 || near || (v.position - last.0).length() > Fx::from_ratio(1, 4) {
-                    *last = (v.position, t);
-                }
-                stall = stall.max(t - last.1);
-            }
-        },
+        |_, _| {},
     );
     report.metric("soldiers a side, the fewer", a_side);
-    report.metric("longest stuck", seconds(Some(stall)));
     report.check(
         format!("each side has at least {LEAST} soldiers"),
         a_side >= LEAST,
@@ -106,7 +85,7 @@ fn run(real: &Real, report: &mut Report) {
     );
     report.check(
         format!("no regiment stuck more than {STALL_SECONDS} s"),
-        stall <= STALL_SECONDS * SECOND,
+        walked.stuck <= STALL_SECONDS * SECOND,
     );
     walked.report(report, 20);
 }

@@ -86,23 +86,22 @@ impl Arena {
     /// so, as on a real map, the half of each bank tile next to the water
     /// is blocked to the march too.
     pub fn river(&mut self, xs: Range<i32>, ys: Range<i32>) {
-        let shape = Arena::rect(xs, ys);
-        self.paint().terrain.push(TerrainOp {
-            shape,
-            mode: Mode::Set,
-            height: RIVER_BED,
-            edge: 0,
-        });
+        self.water(xs, ys, RIVER_BED);
     }
 
     /// Water shallow enough to wade (a quarter of a tile deep): a ford,
     /// shut while its river floods.
     pub fn ford(&mut self, xs: Range<i32>, ys: Range<i32>) {
+        self.water(xs, ys, FORD_BED);
+    }
+
+    /// Water over a bed at `bed`.
+    fn water(&mut self, xs: Range<i32>, ys: Range<i32>, bed: i32) {
         let shape = Arena::rect(xs, ys);
         self.paint().terrain.push(TerrainOp {
             shape,
             mode: Mode::Set,
-            height: FORD_BED,
+            height: bed,
             edge: 0,
         });
     }
@@ -194,10 +193,10 @@ impl Arena {
 /// A heavy squall from 10 to 20 seconds in, after fair weather: on a map
 /// whose rivers run ([`Arena::flowing`]) it rolls a flood front whose
 /// band the world's seed decides (docs/39).
-pub(crate) fn squall() -> gc_sim::Sky<'static> {
+pub(crate) const SQUALL: &[gc_sim::sky::Spell] = {
     use gc_sim::sky::{Spell, Weather, WeatherKind};
     const SECOND: u32 = gc_sim::TICKS_PER_SECOND;
-    const SPELLS: &[Spell] = &[
+    &[
         Spell {
             at: 0,
             weather: Weather::FAIR,
@@ -215,23 +214,29 @@ pub(crate) fn squall() -> gc_sim::Sky<'static> {
             at: 20 * SECOND,
             weather: Weather::FAIR,
         },
-    ];
+    ]
+};
+
+/// [`SQUALL`] as the sky of a match.
+pub(crate) fn squall() -> gc_sim::Sky<'static> {
     gc_sim::Sky {
-        spells: SPELLS,
+        spells: SQUALL,
         ..gc_sim::Sky::STILL
     }
 }
 
-/// Facing south.
-pub(crate) const SOUTH: Angle = Angle(0x4000);
+/// A world seed whose squall rolls a catastrophic front on an arena with
+/// one flowing river and a ford at its head (the scenarios check it does).
+pub(crate) const CATASTROPHIC_SEED: u64 = 23;
 
 /// The middle of tile `(x, y)`.
 pub(crate) fn centre(x: i32, y: i32) -> FxVec2 {
     FxVec2::new(Fx::from_ratio(2 * x + 1, 2), Fx::from_ratio(2 * y + 1, 2))
 }
 
-/// Facing east and west.
+/// Facing east, south and west.
 pub(crate) const EAST: Angle = Angle(0);
+pub(crate) const SOUTH: Angle = Angle(0x4000);
 pub(crate) const WEST: Angle = Angle(0x8000);
 
 /// Put down `regiments` (unit, where) of `player`'s in one tick, and their
@@ -274,6 +279,20 @@ pub(crate) fn spawn(
 
 /// Put up finished buildings of `player`'s, each (building, north-west
 /// tile, turn), all in one tick, and their handles in the same order.
+/// A Timber Bridge of `player` 0's across columns `span`, rows `rows`
+/// deep, and its tiles' handles, row by row within each column.
+pub(crate) fn timber_bridge(
+    real: &Real,
+    world: &mut World,
+    span: core::ops::RangeInclusive<i32>,
+    rows: Range<i32>,
+) -> Vec<StructureHandle> {
+    let bridge = real.building("Timber Bridge");
+    let deck: Vec<_> =
+        (span.flat_map(|x| rows.clone().map(move |y| (bridge, (x, y), 0)))).collect();
+    put_up(world, 0, &deck)
+}
+
 /// Setting up, so the tick is not timed.
 pub(crate) fn put_up(
     world: &mut World,
@@ -378,6 +397,10 @@ pub(crate) struct March {
     pub ideal: u32,
     /// Soldiers at the start and at the end.
     pub soldiers: (u32, u32),
+    /// The longest any regiment stood stuck on its way, in ticks: short of
+    /// its goal and making under [`HEADWAY`] of headway (walking in place,
+    /// or waiting its turn).
+    pub stuck: u32,
     /// The limit, in seconds.
     limit: u32,
 }
@@ -401,6 +424,7 @@ impl March {
             super::seconds(Some(self.ideal)),
         );
         report.metric("pace, percent of the straight march", pace);
+        report.metric("longest stuck", super::seconds(Some(self.stuck)));
         report.check(
             format!("every regiment arrives and stands within {} s", self.limit),
             self.done.is_some(),
@@ -415,6 +439,8 @@ impl March {
 
 /// How near its goal a regiment must stand to have arrived.
 const NEAR: Fx = Fx::from_int(3);
+/// Headway a regiment must make for it not to be stuck.
+const HEADWAY: Fx = Fx::from_ratio(1, 4);
 
 /// March each of `army` to the goal of the same place in `goals`, ticking
 /// (timed) for at most `limit` seconds, calling `each` with the tick after
@@ -447,6 +473,16 @@ pub(crate) fn march(
     let start = soldiers(world, army);
     report.tick(world, &orders);
     each(0, world);
+    // Where each regiment last made headway from, and when.
+    let mut headway: Vec<(FxVec2, u32)> = (army.iter())
+        .map(|&r| {
+            (
+                of(world, &[r]).next().map_or(FxVec2::ZERO, |v| v.position),
+                0,
+            )
+        })
+        .collect();
+    let mut stuck = 0;
     let mut done = None;
     for t in 1..=limit * gc_sim::TICKS_PER_SECOND {
         report.tick(world, &[]);
@@ -455,9 +491,15 @@ pub(crate) fn march(
         // are checked on their own).
         let (mut alive, mut there) = (0, 0);
         for v in of(world, army) {
-            let g = goals[army.iter().position(|&r| r == v.handle).unwrap()];
+            let i = army.iter().position(|&r| r == v.handle).unwrap();
+            let near = (goals[i] - v.position).length() <= NEAR;
             alive += 1;
-            there += usize::from(!v.moving && (g - v.position).length() <= NEAR);
+            there += usize::from(!v.moving && near);
+            let last = &mut headway[i];
+            if near || (v.position - last.0).length() > HEADWAY {
+                *last = (v.position, t);
+            }
+            stuck = stuck.max(t - last.1);
         }
         if alive > 0 && there == alive {
             done = Some(t);
@@ -468,6 +510,7 @@ pub(crate) fn march(
         done,
         ideal,
         soldiers: (start, soldiers(world, army)),
+        stuck,
         limit,
     }
 }

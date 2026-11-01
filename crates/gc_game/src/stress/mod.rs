@@ -21,7 +21,7 @@
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
 
-mod arena;
+pub(crate) mod arena;
 mod bridge;
 mod bridge_flood;
 mod bridge_flood_armies;

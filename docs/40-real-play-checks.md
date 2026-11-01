@@ -61,5 +61,43 @@ artifact). The whole suite takes a few seconds.
 | `forest-pass` | 12 Ember regiments march 86 tiles east past a 40 by 56 tile forest packed with staggered thicket clumps, lying right across the straight way, with open fields north and south | all arrived and standing within 65 s (43 s), at least half the pace of a straight march on open ground (66%), under a tenth of regiment-ticks in the forest (0%: the army goes round), no soldier lost |
 | `armies-crossing` | two armies of the same player, 6 regiments each, swap places head on along the same rows, 54 tiles apart | all arrived and standing within 30 s (19 s), at least 70% of a straight march's pace (94%), no soldier lost |
 | `town-gaps` | 8 regiments march north through their own town of 76 Farmsteads built right across the map in 4 rows, streets and lanes 2 tiles wide, every other row shifted so no street runs straight through | all through and standing within 40 s (26 s, first through at 14 s), at least half a straight march's pace (70%), no soldier lost |
-| `bridge-flood` | a column of 6 regiments crosses a Timber Bridge 3 tiles wide over a flowing river (`Arena::flowing`) as a squall rolls a catastrophic flood down it, with logs torn off bank woods above; enemy archers first wear the bridge's first span over the water to 58% (under the strain line, over the sweep line); a second bridge 28 tiles upstream; the player re-orders any regiment that halts short (washed up, or routed and rallied) | a catastrophic flood comes; the weakened span is swept away while it runs (55.9, 58.9 and 59.9 s, row by row); every sound pier stands; a regiment is on the span when it goes and washes up out of the water (2); none walks off the deck into the river; every regiment still short of the gap is on its way round by the upstream bridge within 10 s (4.8 s); all across and standing within 150 s (93 s) |
-| `bridge-flood-armies` | two armies of the same player, 11 regiments and over 200 soldiers a side, cross one Timber Bridge 3 tiles wide opposite ways after a catastrophic flood has shut the ford upstream | at least 200 a side (212); the flood has shut the ford; no regiment stuck (under a quarter tile of headway) more than 15 s (10.6 s, at the bridgehead; docs/39's mark is 10 s); all arrived and standing within 180 s (59 s), at least 20% of a straight march's pace (31%), no soldier lost |
+| `bridge-flood` | a column of 6 regiments crosses a Timber Bridge 3 tiles wide over a flowing river (`Arena::flowing`) as a squall rolls a catastrophic flood down it, with logs torn off bank woods above; enemy archers first wear the bridge's first span over the water to 58% (under the strain line, over the sweep line); a second bridge 28 tiles upstream; the player re-orders a regiment the fall caught (on the span, or routed by it) if it halts short | a catastrophic flood comes; the weakened span is swept away while it runs (55.8, 58.8 and 59.8 s, row by row); every sound pier stands; a regiment is on the span when it goes and washes up out of the water (1); none walks off the deck into the river; every regiment still short of the gap goes round by the upstream bridge on its own, no order given again, within 10 s (2 regiments, 4.8 s); all across and standing within 150 s (93 s) |
+| `bridge-flood-armies` | two armies of the same player, 11 regiments and over 200 soldiers a side, cross one Timber Bridge 3 tiles wide opposite ways after a catastrophic flood has shut the ford upstream | at least 200 a side (212); the flood has shut the ford; no regiment stuck (under a quarter tile of headway short of its goal, `March::stuck`, now reported by every march) more than 15 s (10.6 s, at the bridgehead; docs/39's mark is 10 s); all arrived and standing within 180 s (59 s), at least 20% of a straight march's pace (31%), no soldier lost |
+
+Checks are on what the simulation decides (ticks, positions, losses), the
+same on every machine, so they don't flake. Time is held only to each
+scenario's generous budget, which catches a slowdown of several times.
+A change that moves a scenario's numbers on purpose (better pathfinding, new
+morale) updates its limit in the same pull request and says why.
+
+### Adding a scenario
+
+1. Write `crates/gc_game/src/stress/<name>.rs` with a
+   `pub(super) const SCENARIO: Scenario` (name, one line about it, time
+   budget, and `run(&Real, &mut Report)`; the game data is loaded once for
+   the suite) and list it in `SCENARIOS` in `stress/mod.rs`.
+2. Build the world with `arena::Arena` (a flat map: paint `river`, `woods`,
+   `thicket` on it and the game's own map maker, gc_map, makes it, with
+   the same banks, cover and blocking rules as a real map; `world()` gives a two-player Conquest world with every
+   faction's units and buildings) or any gc_map map, as `ai-walls` does.
+   `Real` looks units and buildings up by name; `spawn` and `put_up` set
+   the field up (untimed), `move_to`, `attack_nearest` and `grid` give
+   the usual orders and places, `of` and `soldiers` read regiments back,
+   and `march` sends an army to its goals and says when every regiment
+   stood there and how that compares with a straight march on open ground
+   (`March::report` adds those metrics and the usual checks: there in
+   time, a pace floor, no soldier lost).
+3. Play only through `report.tick` so the time is measured.
+4. `report.metric` what is worth seeing; `report.check` what must hold.
+   Set limits about one and a half times what it measures today.
+
+Every new feature units interact with (gates, bridges, dams, walls,
+terrain, buildings, water) adds its scenario, and one where a computer
+player uses it (crosses it, opens it, clears it, repairs it).
+
+## 3. Batched playtests
+
+Not code: when a plan stage or a batch of threads has merged, one playtest
+thread plays everything together in the real game against the AI, records
+short before/after clips of each new feature and reports what is clunky.
+See the project instructions.
