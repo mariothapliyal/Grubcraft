@@ -131,7 +131,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 81;
+pub const SIM_VERSION: u32 = 80;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
