@@ -29,19 +29,24 @@ const CRAG: core::ops::Range<i32> = 10..13;
 const CRAG_ROW: i32 = 40;
 
 fn world() -> World {
+    world_over(false)
+}
+
+/// The test world, its river a ford (shallow, waded) if `ford`.
+fn world_over(ford: bool) -> World {
     let side = (MAP as i32 * CELLS_PER_TILE) as usize;
     let nav: Vec<u8> = (0..side * side)
         .map(|c| {
             let x = (c % side) as i32 / CELLS_PER_TILE;
             let y = (c / side) as i32 / CELLS_PER_TILE;
-            u8::from(!RIVER.contains(&x) && !(CRAG.contains(&x) && y == CRAG_ROW))
+            u8::from((ford || !RIVER.contains(&x)) && !(CRAG.contains(&x) && y == CRAG_ROW))
         })
         .collect();
     let n = MAP as usize;
     let heights: Vec<u16> = (0..n * n)
         .map(|t| {
             if RIVER.contains(&((t % n) as i32)) {
-                0
+                if ford { WATER - 20 } else { 0 }
             } else {
                 LAND
             }
@@ -454,4 +459,96 @@ fn a_gap_in_the_upper_lane_is_mended_without_a_third_lane() {
         "stored running back"
     );
     assert!(s.iter().all(|v| v.tile.1 != ROW + 2));
+}
+
+#[test]
+fn a_block_crossing_a_bridge_over_a_ford_keeps_to_the_deck() {
+    // A ford anyone may wade; a two-lane bridge over it, with three dry
+    // tiles on each bank, then with only one. A block wider than the
+    // bridge narrows onto the deck as it steps on, instead of wading
+    // beside it.
+    for ends in [27..=36, 29..=34] {
+        let mut w = world_over(true);
+        for (x, y) in ends.clone().flat_map(|x| [(x, ROW), (x, ROW + 1)]) {
+            let tile = (x as i16, y as i16);
+            let building = BRIDGE;
+            assert!(order(
+                &mut w,
+                0,
+                Command::SpawnStructure {
+                    building,
+                    tile,
+                    turn: 0
+                }
+            ));
+        }
+        w.tick(&[]);
+        let foot = spawn(&mut w, FOOT, 20, ROW + 1);
+        let wide = w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+        assert!(order(
+            &mut w,
+            0,
+            Command::MoveTo {
+                regiment: foot,
+                target: FxVec2::from_ints(44, ROW + 1),
+                facing: None,
+                files: 0,
+                pace: Fx::ZERO,
+            }
+        ));
+        let stats = DRILL_UNITS[0];
+        let mut widest_on_deck = Fx::ZERO;
+        let mut on_deck = 0;
+        for _ in 0..90 * TICKS_PER_SECOND {
+            w.tick(&[]);
+            let r = w.regiments.iter().find(|r| r.handle == foot).unwrap();
+            // From a tile short of the water (its front ranks over it) to
+            // a tile short of the far bank.
+            let over = Fx::from_int(RIVER.start - 1)..Fx::from_int(RIVER.end - 1);
+            if over.contains(&r.position.x) {
+                on_deck += 1;
+                // From the first file's soldiers to the last's.
+                let (width, _) = stats.block_size_in(r.formation, r.files, r.models);
+                let (file, _) = stats.spacing(r.formation);
+                widest_on_deck = widest_on_deck.max(width - file);
+            }
+        }
+        assert!(on_deck > 0, "it crossed by the bridge");
+        let (full, _) = stats.block_size_in(gc_sim::Formation::Line, wide, stats.models);
+        assert!(
+            full > Fx::from_int(2),
+            "wider than the bridge to begin with: {full:?}"
+        );
+        assert!(
+            widest_on_deck <= Fx::from_int(2),
+            "outer soldiers {widest_on_deck:?} apart on a 2-tile deck ({ends:?})"
+        );
+    }
+}
+
+#[test]
+fn a_block_passing_the_foot_of_a_bridge_on_the_bank_keeps_its_width() {
+    // Marching along the west bank across the bridge's dry end tiles.
+    let mut w = world_over(true);
+    span(&mut w);
+    let foot = spawn(&mut w, FOOT, 26, ROW - 12);
+    let files = |w: &World| w.regiments.iter().find(|r| r.handle == foot).unwrap().files;
+    let wide = files(&w);
+    assert!(order(
+        &mut w,
+        0,
+        Command::MoveTo {
+            regiment: foot,
+            target: FxVec2::from_ints(26, ROW + 14),
+            facing: None,
+            files: 0,
+            pace: Fx::ZERO,
+        }
+    ));
+    let mut narrowest = wide;
+    for _ in 0..40 * TICKS_PER_SECOND {
+        w.tick(&[]);
+        narrowest = narrowest.min(files(&w));
+    }
+    assert_eq!(narrowest, wide, "squeezed on the bank");
 }

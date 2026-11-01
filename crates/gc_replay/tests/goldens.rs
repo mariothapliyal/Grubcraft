@@ -154,7 +154,7 @@ fn the_goldens_cover_every_kind_of_command() {
 /// rewritten by `cargo run --release -p gc_replay -- pin` (or by
 /// `scripts/rules-bump.py`, which also takes the next free version).
 const PINNED: (u32, &[(&str, u64)]) = (
-    80,
+    81,
     &[
         ("conquest-ribcage-1v1", 0x10b1e5e5cd3807e0),
         ("conquest-river-1v1", 0x5dcef7c6e97045a1),
