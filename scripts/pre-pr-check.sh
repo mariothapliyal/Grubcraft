@@ -44,12 +44,16 @@ run() {
 if [ "$(uname)" = Linux ] && ! pkg-config --exists alsa 2>/dev/null; then
   if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
     step "Installing the ALSA headers"
-    (apt-get update -qq && apt-get install -y -qq libasound2-dev pkg-config) >/dev/null
+    (apt-get update -qq && apt-get install -y -qq libasound2-dev pkg-config valgrind) >/dev/null
   else
     echo "Install the ALSA headers first: sudo apt-get install -y libasound2-dev pkg-config"
     exit 1
   fi
 fi
+
+# A fresh container takes the compiled third-party crates from the shared
+# build cache instead of building them (scripts/build-cache.sh).
+scripts/build-cache.sh restore || echo "note: build cache not restored"
 
 # What this branch changed since it left main (committed or not).
 git fetch -q origin main 2>/dev/null || echo "note: could not fetch origin/main, using the copy already here"
@@ -129,6 +133,10 @@ if ! $quick; then
   else
     step "Benchmark instruction counts: skipped (valgrind not installed; CI runs it)"
   fi
+fi
+
+if ! $quick; then
+  scripts/build-cache.sh save || echo "note: build cache not saved"
 fi
 
 printf '\n\033[32mAll pre-PR checks passed\033[0m in %dm%02ds%s.\n' \
