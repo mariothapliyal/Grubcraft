@@ -6,8 +6,10 @@
   push to one. It runs the Linux checks GitHub CI runs on a PR: formatting,
   rules numbers, clippy, packs (when art or the bake tools changed), tests
   (including the clearance check), golden replays, the map check, benchmark
-  budgets and instruction counts. A full run takes about 30 minutes from a
-  cold build on 4 cores, much less with a warm build.
+  budgets and instruction counts. In a fresh cloud container it first
+  unpacks the shared build cache (`scripts/build-cache.sh`, the compiled
+  third-party crates, about 30 s), so a first full run takes about 23
+  minutes instead of 29; later runs are faster still.
 - While iterating, use `scripts/pre-pr-check.sh --quick`, which tests only the
   crates the branch changed. Run the full script before the final push.
 - Fix failures locally. Do not push to see whether CI finds them.
