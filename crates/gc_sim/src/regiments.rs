@@ -1838,7 +1838,7 @@ pub struct RegimentView {
     pub morale_points: u8,
     /// Its breaking point as it stands (lowered while its general is near):
     /// the percent of its full hit points it must be down to before it can
-    /// rout or waver (100 for workers, whose nerve is low by design).
+    /// rout or waver (100 for non-fighters such as Caravans, whose nerve is low by design).
     pub break_at: u8,
     /// Its veteran rank, 0 to 3, from its kills (see [`crate::veterancy`]).
     pub rank: u8,

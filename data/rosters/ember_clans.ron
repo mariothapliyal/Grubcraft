@@ -493,7 +493,7 @@
                 melee_defence: 5,
                 melee_damage: 2,
                 charge_bonus: 0,
-                morale: 20,
+                never_routs: true,
             ),
         ),
         (

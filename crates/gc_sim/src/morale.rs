@@ -48,8 +48,8 @@ pub const SCALE: i16 = 10;
 /// point.
 pub const WAVER_BELOW: i16 = 25;
 /// Breaking points, in percent of full hit points, by the unit's morale
-/// stat: workers and other non-fighters (stat up to [`WORKER_MORALE`])
-/// can break at any strength; levies (under [`LINE_MORALE`]) at 45%, line
+/// stat: non-fighters (stat up to [`WORKER_MORALE`]: Caravans; workers
+/// have a stat of 0 and never rout) can break at any strength; levies (under [`LINE_MORALE`]) at 45%, line
 /// troops at 40%, elite troops ([`ELITE_MORALE`] and up) at 35%.
 pub const WORKER_MORALE: u8 = 30;
 pub const LINE_MORALE: u8 = 55;
@@ -202,7 +202,7 @@ pub(crate) fn breaking_point(stats: &UnitStats, index: u32, generation: u16) -> 
 /// veteran rank (see [`crate::veterancy`]) and while its side's general is
 /// near it.
 pub(crate) fn break_at_now(regs: &Regiments, i: usize) -> u8 {
-    // Workers break at any strength, general or rank or not.
+    // Non-fighters break at any strength, general or rank or not.
     let base = regs.break_at[i];
     if base >= 100 {
         return base;
