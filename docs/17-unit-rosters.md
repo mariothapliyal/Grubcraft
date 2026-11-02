@@ -73,7 +73,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 20 | |
+| Hands | 1 | Worker | 50 / 0 | 1 | 12 | Clan Hall | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | — | |
 | Yari Ashigaru | 1 | Spear | 120 / 0 | 4 | 22 | Dojo | 28 × 9 | 8 | 3.0 | 60 | 0.75 / 0.85 | 25 / 45 / 2 | 20 | 60 | |
 | Yumi Ashigaru | 1 | Ranged | 130 / 0 | 3 | 22 | Dojo | 16 × 8 | 8 | 3.0 | 70 | 0.8 / 1.0 | 15 / 20 / 2 | 5 | 50 | 30, 4, 4.0 s, 32% |
 | Battering Ram | 1 | Siege | 100 / 0 | 4 | 25 | Ember Workshop | 1 × 300 | 1 | 2.0 | 45 | 1.5 / 3.0 | 20 / 10 / 40 | 0 | 50 | |
@@ -179,7 +179,7 @@ A swarm that changes shape mid-battle and feeds on the dead. *Metamorphosis is n
 
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 15 | |
+| Gnawer | 1 | Worker | 50 / 0 | 1 | 12 | Hive | 1 × 18 | 1 | 3.25 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | — | |
 | Skitterlings | 1 | Light | 65 / 0 | 2 | 13 | Hive | 32 × 6 | 8 | 4.0 | 120 | 0.8 / 0.8 | 46 / 22 / 3 | 40 | 60 | |
 | Chitin Guard | 1 | Heavy | 90 / 0 | 4 | 22 | Hive | 12 × 12 | 6 | 2.75 | 70 | 0.9 / 1.0 | 24 / 45 / 4 | 15 | 60 | |
 | Reclaimer | 1 | Support | 75 / 0 | 2 | 18 | Hive | 1 × 60 | 1 | 2.5 | 120 | 1.5 / 1.5 | 10 / 20 / 3 | 0 | 40 | |
@@ -280,7 +280,7 @@ Few, costly crystal soldiers who blink across the map and bend light through eac
 
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | 30 | |
+| Tuner | 1 | Worker | 60 / 0 | 1 | 14 | Spire | 1 × 30 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 10 / 2 | 0 | — | |
 | Shardlings | 1 | Light | 100 / 0 | 3 | 20 | Forge of Facets | 14 × 10 | 6 | 3.25 | 80 | 0.6 / 0.9 | 40 / 40 / 4 | 30 | 54 | |
 | Prism Lancers | 1 | Ranged | 125 / 0 | 4 | 24 | Forge of Facets | 10 × 8 | 5 | 3.0 | 70 | 0.9 / 1.0 | 15 / 25 / 2 | 0 | 55 | 26, 6, 4.5 s, 45% |
 | Harmonic Walkers | 2 | Heavy | 170 / 50 | 5 | 32 | Forge of Facets | 6 × 32 | 3 | 2.75 | 50 | 1.6 / 1.8 | 40 / 50 / 7 | 20 | 70 | |
@@ -354,13 +354,13 @@ The Choir has no summoned units.
 
 ## 4 · The Carrion Concord
 
-Merchant-necromancers: cheap undead that never break, beside living specialists that do. **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Not built yet: undead never rout, but they don't crumble, and there is no Tithe.*
+Merchant-necromancers: cheap undead that never break, beside living specialists that do (all but the Ledger Clerks: no faction's workers rout). **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Not built yet: undead never rout, but they don't crumble, and there is no Tithe.*
 
 ### Regiments
 
 | Unit | T | Class | Cost | Sup | Time | From | Models × HP | Files | Speed | Turn | Spacing | Atk / Def / Dmg | Chg | Mor | Ranged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | 25 | |
+| Ledger Clerk | 1 | Worker | 50 / 0 | 1 | 12 | Counting House | 1 × 20 | 1 | 3.0 | 180 | 1.0 / 1.0 | 5 / 5 / 2 | 0 | — | |
 | Caravan | 1 | Support | 75 / 0 | 2 | 20 | Counting House | 1 × 220 | 1 | 2.25 | 45 | 2.5 / 3.5 | 0 / 10 / 1 | 0 | 30 | |
 | Bone Pikes | 1 | Spear | 100 / 0 | 3 | 18 | Ossuary | 19 × 8 | 10 | 2.75 | 45 | 0.7 / 0.9 | 28 / 52 / 2 | 14 | — | |
 | Crossbow Auditors | 1 | Ranged | 125 / 0 | 4 | 24 | Guildhall | 12 × 9 | 6 | 3.0 | 70 | 0.8 / 1.0 | 20 / 25 / 2 | 0 | 55 | 26, 7, 6.0 s, 40% |

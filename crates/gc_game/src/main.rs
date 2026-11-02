@@ -1076,6 +1076,20 @@ struct UnitTable {
     /// Each type's blows on buildings, from its class; empty for the Field
     /// types, which are all plain regiments.
     breakers: Vec<Breaker>,
+    /// Which types are undead (the Concord's dead); empty for the Field
+    /// types, where the Concord's never-routing troops are its dead.
+    undead: Vec<bool>,
+}
+
+impl UnitTable {
+    /// Whether type `unit` is undead: flagged so in Conquest, else it never
+    /// routs (living workers never rout either, but only in Conquest).
+    fn undead(&self, unit: usize) -> bool {
+        self.undead
+            .get(unit)
+            .copied()
+            .unwrap_or_else(|| self.stats.get(unit).is_some_and(|s| s.morale == 0))
+    }
 }
 
 impl UnitTable {
@@ -1096,6 +1110,7 @@ impl UnitTable {
             }),
             roles: Vec::new(),
             breakers: Vec::new(),
+            undead: Vec::new(),
         }
     }
 }
@@ -1617,6 +1632,11 @@ impl App {
             .conquest_units
             .iter()
             .map(|u| army_shape::role_of(u.class()))
+            .collect();
+        other_units.undead = game_data
+            .conquest_units
+            .iter()
+            .map(|u| u.flags & gc_data::conquest::UNIT_UNDEAD != 0)
             .collect();
         other_units.breakers = game_data
             .conquest_units
@@ -6835,8 +6855,8 @@ impl Running {
                 gc_ai::Faction::EmberClans => HitStyle::Flesh,
                 gc_ai::Faction::Brood => HitStyle::Ichor,
                 gc_ai::Faction::Choir => HitStyle::Crystal,
-                // Only the dead, who never rout, bleed ghost-light.
-                gc_ai::Faction::CarrionConcord if stats.morale == 0 => HitStyle::Ghost,
+                // Only the dead bleed ghost-light.
+                gc_ai::Faction::CarrionConcord if self.units.undead(unit) => HitStyle::Ghost,
                 gc_ai::Faction::CarrionConcord => HitStyle::Flesh,
             };
             let armoured = stats.shield || stats.melee_defence >= ARMOURED_DEFENCE;

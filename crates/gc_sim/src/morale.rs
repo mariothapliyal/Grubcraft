@@ -175,7 +175,8 @@ pub(crate) fn fresh(stats: &UnitStats) -> i16 {
 }
 
 /// The breaking point of a unit with this morale stat before the roll, in
-/// percent of full hit points (100: it can break at any strength).
+/// percent of full hit points (100: it can break at any strength, or with
+/// a stat of 0 it never breaks at all).
 pub fn grade_break(morale: u8) -> u8 {
     match morale {
         m if m <= NON_FIGHTER_MORALE => 100,

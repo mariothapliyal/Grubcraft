@@ -130,10 +130,6 @@ fn rosters_follow_the_design_rules() {
             if u.flags.contains(&Flag::Undead) {
                 assert!(u.stats.never_routs, "{at}: undead never rout");
             }
-            // Workers work on and die where they stand (Mario, 2026-11-02).
-            if u.class == Class::Worker {
-                assert!(u.stats.never_routs, "{at}: workers never rout");
-            }
             // Every Brood unit that is trained hatches from a larva, and its
             // workers are used up by the buildings they start (docs/03).
             let brood_trained = faction == FactionDef::Brood && matches!(u.from, From::Building(_));
@@ -148,6 +144,8 @@ fn rosters_follow_the_design_rules() {
                 "{at}: Brood workers, and only they, are used up to build"
             );
             if u.class == Class::Worker {
+                // They work on and die where they stand (Mario, 2026-11-02).
+                assert!(u.stats.never_routs, "{at}: workers never rout");
                 assert_eq!(
                     u.flags.contains(&Flag::Burrows),
                     faction == FactionDef::Brood,

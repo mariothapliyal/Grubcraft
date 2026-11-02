@@ -297,7 +297,7 @@ mod tests {
                 from: Building("{faction} Hall"), abilities: [],
                 stats: (name: "{faction} Hand", faction: {faction}, models: 1, hp_per_model: 20,
                     files: 1, speed: 3.0, turn_rate: 180.0, file_spacing: 1.0, rank_spacing: 1.0,
-                    melee_attack: 5, melee_defence: 5, melee_damage: 2, charge_bonus: 0, morale: 20))],
+                    melee_attack: 5, melee_defence: 5, melee_damage: 2, charge_bonus: 0, never_routs: true))],
             heroes: [])"#
         )
     }
@@ -341,7 +341,7 @@ mod tests {
         let hex: String = baked.data_hash.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "9c19533ddb20898f5c8a68c9b516fcedab1812d674faf097cbaa490ddd0d76f6"
+            "86222d806c20ccb4991128a4c0050f2a22560667ed8b7aa34b7b05ccd700448a"
         );
     }
 
@@ -431,6 +431,13 @@ mod tests {
             ),
         );
         assert!(err.contains("Brood Hall: a tower needs"), "{err}");
+
+        // Workers never rout (Mario, 2026-11-02).
+        let err = bake_with(
+            "brood.ron",
+            brood.replace("never_routs: true", "morale: 20"),
+        );
+        assert!(err.contains("a worker never routs"), "{err}");
 
         let err = bake_with("brood.ron", brood.replace("Brood Hand\", 2", "Nobody\", 2"));
         assert!(err.contains("starting_units: no unit Nobody"), "{err}");
