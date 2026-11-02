@@ -534,6 +534,13 @@ mod tests {
                 l.last = (b.grub, b.marrow);
             }
             if t.is_multiple_of(TICKS_PER_SECOND) {
+                // Workers never run, whatever comes at them (Mario,
+                // 2026-11-02): they work on and die where they stand.
+                if let Some(r) = (world.regiments.iter())
+                    .find(|r| r.morale.broken() && world.is_worker(r.handle))
+                {
+                    panic!("a worker broke at tick {t}: {r:?}");
+                }
                 // Fighters lost since the last second, worth pro rata (a
                 // regiment gone loses all it had; one that changed type,
                 // a Brood evolution, loses nothing).
