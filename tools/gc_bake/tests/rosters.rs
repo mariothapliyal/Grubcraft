@@ -144,6 +144,8 @@ fn rosters_follow_the_design_rules() {
                 "{at}: Brood workers, and only they, are used up to build"
             );
             if u.class == Class::Worker {
+                // They work on and die where they stand (Mario, 2026-11-02).
+                assert!(u.stats.never_routs, "{at}: workers never rout");
                 assert_eq!(
                     u.flags.contains(&Flag::Burrows),
                     faction == FactionDef::Brood,

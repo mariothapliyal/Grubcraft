@@ -747,6 +747,9 @@ pub fn validate_conquest_unit(
     if u.flags & !UNIT_FLAGS != 0 {
         return Err("unknown unit flags");
     }
+    if u.worker() && u.stats.morale != 0 {
+        return Err("a worker never routs: its morale is 0");
+    }
     if (u.trade_base > 0) != (u.trade_tenths > 0) {
         return Err("a trader has a base pay and a pay per tile, and nothing else has either");
     }

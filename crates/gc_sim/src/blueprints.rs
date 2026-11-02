@@ -226,7 +226,7 @@ impl Conquest {
             if self.has_job(regs, r) {
                 return true;
             }
-            // A worker in melee or routing is left to it.
+            // A worker in melee (or, were it ever to, routing) is left to it.
             if regs.engaged[r].is_some() || regs.morale_state[r].broken() {
                 return true;
             }
