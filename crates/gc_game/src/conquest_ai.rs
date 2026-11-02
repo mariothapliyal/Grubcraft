@@ -535,11 +535,17 @@ mod tests {
             }
             if t.is_multiple_of(TICKS_PER_SECOND) {
                 // Workers never run, whatever comes at them (Mario,
-                // 2026-11-02): they work on and die where they stand.
-                if let Some(r) = (world.regiments.iter())
-                    .find(|r| r.morale.broken() && world.is_worker(r.handle))
-                {
-                    panic!("a worker broke at tick {t}: {r:?}");
+                // 2026-11-02): they work on and die where they stand, with
+                // no nerve to lose (no "bloodied" or other reasons shown).
+                if let Some(r) = (world.regiments.iter()).find(|r| {
+                    (r.morale.broken()
+                        || world
+                            .regiments
+                            .feedback(r.handle)
+                            .is_some_and(|f| f.why != 0))
+                        && world.is_worker(r.handle)
+                }) {
+                    panic!("a worker lost its nerve at tick {t}: {r:?}");
                 }
                 // Fighters lost since the last second, worth pro rata (a
                 // regiment gone loses all it had; one that changed type,
