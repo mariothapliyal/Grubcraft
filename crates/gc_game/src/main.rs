@@ -4010,8 +4010,8 @@ impl Running {
                 });
             }
             let blink = self.started.elapsed().as_millis() % 600 < 300;
-            // Workers carry no morale banner: their nerve is low by design
-            // (they waver all the time) and they are not in the battle line.
+            // Workers carry no morale banner: they never rout and are not in
+            // the battle line.
             let banner = match r.morale {
                 _ if self.world.is_worker(r.handle) => None,
                 // Drawn as a standard model with the scenery instead.

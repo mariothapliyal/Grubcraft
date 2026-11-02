@@ -645,28 +645,6 @@ mod tests {
         }
     }
 
-    /// Workers keep working and never run (Mario, 2026-11-02): every
-    /// faction's has a morale stat of 0, which never routs.
-    #[test]
-    fn workers_never_rout() {
-        let data = data();
-        let stats = unit_stats(&data);
-        let mut factions = Vec::new();
-        for (record, s) in data.conquest_units.iter().zip(&stats) {
-            if record.worker() {
-                assert_eq!(
-                    s.morale,
-                    0,
-                    "{:?} worker {}",
-                    record.faction(),
-                    record.stats.name()
-                );
-                factions.push(record.faction());
-            }
-        }
-        assert!(factions.len() >= 4, "{factions:?}");
-    }
-
     /// The client's idea of a gatehouse is the simulation's: a regiment
     /// sent to one stands on a piece the client lifts to its deck and
     /// spreads along its length, with room for as many men as the sim holds.

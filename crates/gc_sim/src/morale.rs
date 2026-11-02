@@ -48,10 +48,11 @@ pub const SCALE: i16 = 10;
 /// point.
 pub const WAVER_BELOW: i16 = 25;
 /// Breaking points, in percent of full hit points, by the unit's morale
-/// stat: non-fighters (stat up to [`WORKER_MORALE`]: Caravans; workers
-/// have a stat of 0 and never rout) can break at any strength; levies (under [`LINE_MORALE`]) at 45%, line
+/// stat: non-fighters such as Caravans (stat up to
+/// [`NON_FIGHTER_MORALE`]; workers have 0 and never rout) can break at any
+/// strength; levies (under [`LINE_MORALE`]) at 45%, line
 /// troops at 40%, elite troops ([`ELITE_MORALE`] and up) at 35%.
-pub const WORKER_MORALE: u8 = 30;
+pub const NON_FIGHTER_MORALE: u8 = 30;
 pub const LINE_MORALE: u8 = 55;
 pub const ELITE_MORALE: u8 = 70;
 pub const LEVY_BREAK: u8 = 45;
@@ -177,7 +178,7 @@ pub(crate) fn fresh(stats: &UnitStats) -> i16 {
 /// percent of full hit points (100: it can break at any strength).
 pub fn grade_break(morale: u8) -> u8 {
     match morale {
-        m if m <= WORKER_MORALE => 100,
+        m if m <= NON_FIGHTER_MORALE => 100,
         m if m < LINE_MORALE => LEVY_BREAK,
         m if m < ELITE_MORALE => LINE_BREAK,
         _ => ELITE_BREAK,

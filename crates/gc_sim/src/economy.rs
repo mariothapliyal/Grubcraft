@@ -646,7 +646,8 @@ impl Economy {
                 continue;
             }
             if regs.morale_state[r].broken() {
-                // Running for it; back to work once rallied.
+                // Running for it (a Caravan: workers never rout); back to work
+                // once rallied.
                 self.leave_node(r);
                 continue;
             }

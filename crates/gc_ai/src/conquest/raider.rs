@@ -37,7 +37,7 @@ const KEEP_SHARE: f32 = 0.5;
 /// Workers in sight this near the party are attacked.
 const CHASE: f32 = 40.0;
 /// A place this much further from an enemy tower than its range is still
-/// covered by it (workers run, raiders chase).
+/// covered by it (workers move about its edge, raiders chase).
 const TOWER_MARGIN: f32 = 4.0;
 /// A place this near an enemy fighter it knows of is guarded.
 const GUARD_REACH: f32 = 22.0;
