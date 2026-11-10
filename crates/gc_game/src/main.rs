@@ -175,6 +175,8 @@ mod land;
 mod lights;
 #[cfg(test)]
 mod stress;
+#[cfg(test)]
+mod wall_survey;
 // The Guide's data (docs/08-ui-ux.md#guide).
 mod drawn_tool;
 mod guide_data;
@@ -204,6 +206,7 @@ mod sky_news;
 mod sounds;
 mod viewer;
 mod wall_kit;
+mod wall_lines;
 mod wall_tool;
 
 use std::sync::{Arc, mpsc};

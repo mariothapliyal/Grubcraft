@@ -1142,6 +1142,13 @@ impl World {
         self.structures().is_some_and(|s| s.towns().walled(p))
     }
 
+    /// Whether a walled town's ground stops at tile `(x, y)` of itself,
+    /// with no wall there: a cliff, deep water, the map's edge (see
+    /// [`towns`]). For laying out a ring.
+    pub fn town_ground_shut(&self, x: i32, y: i32) -> bool {
+        towns::shut_ground(&self.nav, &self.terrain, x, y)
+    }
+
     /// The buildings on the field (Conquest only).
     pub fn structures(&self) -> Option<&Structures> {
         Some(&self.conquest.as_ref()?.structures)
@@ -1362,6 +1369,20 @@ impl World {
         to: (i32, i32),
     ) -> Result<Vec<walls::WallTile>, Refusal> {
         self.line_fits(player, building, &walls::Line::straight(from, to))
+    }
+
+    /// Whether a tile of wall `building` could go up at `tile` for
+    /// `player` going by the ground alone, whoever stands there now and
+    /// whatever of its own is built there: for laying out a wall to draw
+    /// later. The wall's tier and price are not looked at.
+    pub fn wall_ground(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+    ) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.wall_tile_ground(player, building, tile, &self.nav, None, &self.terrain)
     }
 
     /// [`World::wall_fits`] for a line drawn along a path.

@@ -476,7 +476,21 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
-        self.check(&[], building, tile, 0, nav, regs, terrain)?;
+        self.wall_tile_ground(player, building, tile, nav, Some(regs), terrain)
+    }
+
+    /// [`Conquest::wall_tile_fits`], whoever stands there with no `regs`
+    /// (see [`Conquest::check_ground`]).
+    pub(crate) fn wall_tile_ground(
+        &self,
+        player: PlayerId,
+        building: BuildingId,
+        tile: (i32, i32),
+        nav: &Nav,
+        regs: Option<&Regiments>,
+        terrain: &Terrain,
+    ) -> Result<(), Refusal> {
+        self.check_ground(&[], building, tile, 0, nav, regs, terrain)?;
         self.powered(player, building, tile, 0)?;
         self.rooted(player, building, tile, 0)?;
         if overgrown(terrain, [tile.0, tile.1, 1, 1]) {

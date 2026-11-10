@@ -227,12 +227,7 @@ impl Structures {
                 if bit(inside, n) || bit(wall, n) {
                     continue;
                 }
-                // Ground nobody walks on (as a wall can't be laid on it),
-                // but a bridge's deck, which anyone crosses.
-                let (tx, ty) = (x0 + nx, y0 + ny);
-                let at = FxVec2::new(Fx::from_int(tx), Fx::from_int(ty));
-                let rough = nav.deep_ground(tx, ty) || !nav.walkable_ground(tx, ty);
-                if rough && !terrain.on_deck(at) {
+                if shut_ground(nav, terrain, x0 + nx, y0 + ny) {
                     continue;
                 }
                 set(inside, n);
@@ -255,6 +250,14 @@ impl Structures {
         }
         Some((x0, y0))
     }
+}
+
+/// Whether a town's ground stops at tile `(x, y)` of itself: ground nobody
+/// walks on (as a wall can't be laid on it), but a bridge's deck, which
+/// anyone crosses.
+pub(crate) fn shut_ground(nav: &Nav, terrain: &Terrain, x: i32, y: i32) -> bool {
+    let rough = nav.deep_ground(x, y) || !nav.walkable_ground(x, y);
+    rough && !terrain.on_deck(FxVec2::new(Fx::from_int(x), Fx::from_int(y)))
 }
 
 /// Once a second: each wounded soldier of a regiment resting in its own

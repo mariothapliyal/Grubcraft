@@ -396,6 +396,22 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> Result<(), Refusal> {
+        self.check_ground(replaced, building, tile, turn, nav, Some(regs), terrain)
+    }
+
+    /// [`Conquest::check`], whoever stands there with no `regs`: the
+    /// ground alone, for laying out what is built later.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn check_ground(
+        &self,
+        replaced: &[usize],
+        building: BuildingId,
+        tile: (i32, i32),
+        turn: u8,
+        nav: &Nav,
+        regs: Option<&Regiments>,
+        terrain: &Terrain,
+    ) -> Result<(), Refusal> {
         if (self.structures.buildings().get(usize::from(building)))
             .is_some_and(BuildingStats::is_bridge)
         {
