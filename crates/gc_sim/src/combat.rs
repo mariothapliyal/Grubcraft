@@ -1782,8 +1782,7 @@ impl Combat {
                     && (target - regs.position[i]).length_sq_raw()
                         < (PLACE_NEAR.raw() as u64).pow(2)
                 {
-                    let spot = regs.spot[i];
-                    regs.target[i] = Some(self.own_place(regs, units, nav, i, spot, target, true));
+                    regs.target[i] = Some(self.own_place(regs, units, nav, i, target, true));
                 }
             }
             if regs.crowded(i) {
@@ -1809,29 +1808,31 @@ impl Combat {
         block
     }
 
-    /// Where regiment `i`, just ordered to `target`, should go so that it
-    /// has a place of its own: `target` unless a friend of its own side
-    /// stands there or is on its way there, and then the free place
-    /// nearest it among those up to [`PLACES`] blocks beside, before and
-    /// behind it ([`PLACE_GAP`] apart), on ground where the block fits and
-    /// in plain sight of `target`. So regiments sent to one spot one after
-    /// another (a rally point, an army all sent to the same place) draw
-    /// up side by side and in ranks instead of on top of each other.
-    /// `target` again when every place is taken; workers and caravans go
-    /// where they are sent.
+    /// Where regiment `i`, whose order sent it to [`Regiments::spot`] and
+    /// which is now going to `target` (the spot, or a place it was given
+    /// beside it), should go so that it has a place of its own: `target`
+    /// unless a friend of its own side is well into it (standing there,
+    /// counted from `near` only, or on its way there), and then the free
+    /// place nearest the spot among those up to [`PLACES`] blocks beside,
+    /// before and behind it ([`PLACE_GAP`] apart), on ground where the
+    /// block fits, not steep, and in plain sight of the spot. So regiments
+    /// sent to one spot one after another (a rally point, an army all sent
+    /// to the same place) draw up side by side and in ranks instead of on
+    /// top of each other. `target` again when every place is taken;
+    /// workers and caravans go where they are sent.
     pub(crate) fn own_place(
         &self,
         regs: &Regiments,
         units: &[UnitStats],
         nav: &Nav,
         i: usize,
-        spot: FxVec2,
         target: FxVec2,
         near: bool,
     ) -> FxVec2 {
         if self.civil(regs, i) {
             return target;
         }
+        let spot = regs.spot[i];
         let owner = regs.owner[i];
         let from = regs.position[i];
         let mine = Combat::arriving(regs, units, i, target);

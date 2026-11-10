@@ -98,7 +98,7 @@ Since 2026-11-11 regiments also stop standing in each other. Before this, in rea
 - **Workers and caravans** crowd nobody: about their own business they walk through soldiers and each other without slowing or disordering anyone.
 - **In a base** a marching regiment keeps its spacing and goes round friends wherever it has 5 tiles clear around it, not only on open ground far from any building; in a gateway, a street or a ford it still queues.
 
-With all four, the same AI matches (nine matches of four Generals, 40 minutes) have fighters out of melee in disorder 15% of the time. What is left is mostly armies marching in a clump and regiments stacked on one front in a fight.
+With all four, the same AI matches (nine matches of four Generals, 40 minutes) have fighters out of melee in disorder 16% of the time. What is left is mostly armies marching in a clump and regiments stacked on one front in a fight.
 
 **Built so far (2026-10-15):** as described. Other rules can disorder a regiment too (the sim's `Regiments::disorder`), which the Mount & Blade work uses.
 
