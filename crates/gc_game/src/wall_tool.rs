@@ -544,7 +544,10 @@ impl Running {
         };
         let ghost = (ghost.into_iter().enumerate())
             .map(|(k, (tile, fit))| {
-                let piece = shapes.get(k).and_then(|s| s.as_ref()).map(|s| s.piece());
+                let piece = shapes
+                    .get(k)
+                    .and_then(|s| s.as_ref())
+                    .map(crate::wall_lines::Shape::piece);
                 (tile, fit, chord(tile), piece)
             })
             .collect();

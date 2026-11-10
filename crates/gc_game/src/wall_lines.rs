@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(last.ends, [Joint::Bare, Joint::Post]);
         assert_eq!(last.to, Vec2::new(3.0, 0.5), "to the gate's edge");
         assert!(
-            lines.shapes.get(&(0, 0, (4, 0))).is_none(),
+            !lines.shapes.contains_key(&(0, 0, (4, 0))),
             "a gate shows no piece"
         );
         assert_eq!(shape(&lines, (0, 0)).ends[0], Joint::Stop);

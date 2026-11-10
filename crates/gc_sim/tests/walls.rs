@@ -504,7 +504,7 @@ fn a_worker_drawing_a_second_line_still_comes_back_for_the_first_ones_tiles() {
 
 #[test]
 fn a_line_that_cant_go_up_at_all_is_refused() {
-    let mut w = world();
+    let w = world();
     // Too long, and the hall is no wall.
     assert!(w.wall_plan(0, PALISADE, (0, 0), (40, 0)).is_err());
     assert_eq!(w.wall_plan(0, HALL, (0, 0), (4, 0)), Err(Refusal::Unknown));
