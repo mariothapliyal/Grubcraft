@@ -79,6 +79,10 @@ const NO_GATES: usize = 8;
 const GATE_WAIT: u32 = 30 * TICKS_PER_SECOND;
 /// The barricade: tiles across, and how far in front of the rally point.
 const BARRICADE_HALF: i32 = 2;
+/// How long after ordering a bridge it looks whether the deck was laid,
+/// and how often it orders it.
+const BRIDGE_RETRY: u32 = 10 * TICKS_PER_SECOND;
+const BRIDGE_TRIES: u8 = 4;
 const BARRICADE_OUT: f32 = 4.0;
 /// Looks it tries for a barricade at a rally point before giving it up
 /// (troops may stand where it would go).
@@ -178,6 +182,11 @@ pub(super) struct Engineer {
     /// crossing and its tiles, or none where it needs or can draw none (or
     /// has drawn it).
     bridge: Option<Option<(Line, u32)>>,
+    /// When it last ordered that bridge, and how often: an order the sim
+    /// turned down (the Grub spent meanwhile, its worker taken) is sent
+    /// again, [`BRIDGE_TRIES`] times at most.
+    bridge_sent: Option<u32>,
+    bridge_tries: u8,
     /// When it next looks for thicket in the way, and the worker it last
     /// sent to clear some (no other is sent while that one is at it).
     next_clear: u32,
@@ -669,13 +678,26 @@ impl Steward {
             narrowest_crossing(s, b.id, home, target)
         }))?;
         let ((from, to), tiles) = line;
+        // Ordered: drawn once a deck of its own lies there, else the order
+        // is sent again after a while.
+        if let Some(sent) = self.engineer.bridge_sent {
+            let drawn = look.mine.iter().any(|m| m.stats.role == Role::Bridge);
+            if drawn || self.engineer.bridge_tries >= BRIDGE_TRIES {
+                self.engineer.bridge = Some(None);
+                return None;
+            }
+            if s.now < sent + BRIDGE_RETRY {
+                return None;
+            }
+        }
         if spare < u32::from(b.stats.cost_grub) * tiles {
             return None;
         }
         // Standard width, so its army crosses a few files abreast.
         let deck = bridge_line(from, to);
         let w = self.builder_at(s, look, from)?;
-        self.engineer.bridge = Some(None);
+        self.engineer.bridge_sent = Some(s.now);
+        self.engineer.bridge_tries += 1;
         let order = Command::DrawLine {
             regiment: Some(w),
             building: b.id,
