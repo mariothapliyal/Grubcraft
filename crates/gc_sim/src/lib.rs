@@ -3861,7 +3861,10 @@ pub mod streams {
 }
 
 /// Slot `i` was just sent somewhere: if its block would hang over the
-/// water there, it stands back from the edge instead (see [`Nav::settle`]).
+/// water there, it stands back from the edge instead (see [`Nav::settle`]),
+/// and if a friend is going to that very spot already, it takes a place
+/// beside it (see [`Combat::own_place`]), which it looks at again as it
+/// arrives.
 fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, combat: &Combat, i: usize) {
     if let Some(target) = regs.target[i] {
         let berth = regs.berth(units, i);

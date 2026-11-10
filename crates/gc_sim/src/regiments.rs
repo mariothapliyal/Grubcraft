@@ -824,8 +824,6 @@ impl Regiments {
         Some(i)
     }
 
-    /// Slot `i` forms up `files` soldiers wide (it narrows again at once
-    /// if the ground is too tight for that).
     /// Whether slot `i` is narrower than the frontage it was given: in a
     /// column for tight ground, or still widening out of one (see
     /// [`Regiments::squeeze`]).
@@ -839,6 +837,8 @@ impl Regiments {
         self.narrowed(i) && self.reform[i] > 0
     }
 
+    /// Slot `i` forms up `files` soldiers wide (it narrows again at once
+    /// if the ground is too tight for that).
     pub(crate) fn set_frontage(&mut self, i: usize, files: u16) {
         let files = files.clamp(1, self.models[i].max(1));
         self.files[i] = files;
@@ -1047,6 +1047,7 @@ impl Regiments {
     /// Slot `i` drops its orders: no move, no facing to turn to, no enemy.
     pub(crate) fn halt(&mut self, i: usize) {
         self.target[i] = None;
+        self.set_seeks_place(i, false);
         self.target_facing[i] = None;
         self.attack_target[i] = None;
     }
@@ -1110,6 +1111,7 @@ impl Regiments {
             // `combat::Round`): an order repeated keeps it on its way.
             self.round[i] = None;
         }
+        self.set_seeks_place(i, false);
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
         self.braced[i] = false;
@@ -1141,6 +1143,7 @@ impl Regiments {
         }
         self.leave_fight(i);
         self.target[i] = Some(to);
+        self.set_seeks_place(i, false);
         self.target_facing[i] = Some(self.facing[i]);
         self.attack_target[i] = None;
         self.braced[i] = false;
@@ -1631,8 +1634,10 @@ impl Regiments {
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
-                // In tight ground (a ford, a pass) it queues instead (below);
-                // in a fight it keeps to its foe, friends beside it or not.
+                // In cramped ground (a ford, a gateway, a street) it queues
+                // instead (below), where a step aside would only push it
+                // into the wall or the water; in a fight it keeps to its
+                // foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
                 let cramped = tight
                     && !nav.open_around(self.owner[i], self.position[i], crate::combat::ELBOW_ROOM);

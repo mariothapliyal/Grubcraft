@@ -148,7 +148,8 @@ const PLACE_GAP: Fx = Fx::HALF;
 /// It looks again, at the friends standing there too, each time it looks
 /// while this near the spot, in tiles.
 const PLACE_NEAR: Fx = Fx::from_int(8);
-/// No block's radius is more than this, in tiles (a cheap first test).
+/// A friend whose place is further than this from a place's edge, in
+/// tiles, isn't looked at for it (no block is as wide).
 const PLACE_REACH: Fx = Fx::from_int(16);
 /// It stays put when the friends standing in it push it less than this,
 /// in tiles: wedged between two with nowhere to go, it doesn't shuffle to
@@ -493,10 +494,10 @@ pub struct Combat {
     /// Marks for visiting each regiment once per search (see `each_near`).
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
-    /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
     /// By unit: whether it is a worker or a caravan (Conquest only, see
     /// [`Combat::set_civil`]); empty when none is.
     civil: Vec<bool>,
+    /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
     give: Vec<FxVec2>,
     /// Where each regiment steps in [`Combat::push_lines`], worked out for
     /// everyone before anyone moves.
@@ -1043,10 +1044,6 @@ impl Combat {
         });
     }
 
-    /// Call `f` for every other live friend of `i` whose bounding circle
-    /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
-    /// circle, and every regiment is filed in each cell its circle touches,
-    /// so only the cells under `i`'s own circle need looking in.
     /// Tell which units are workers and caravans, by unit: they go about
     /// their business among the regiments, so they neither make room for
     /// friends standing in them nor are made room for.
@@ -1054,9 +1051,15 @@ impl Combat {
         self.civil = civil.collect();
     }
 
+    /// Whether regiment `i` is a worker or a caravan.
     fn civil(&self, regs: &Regiments, i: usize) -> bool {
         (self.civil.get(usize::from(regs.unit[i]))).is_some_and(|&c| c)
     }
+
+    /// Call `f` for every other live friend of `i` whose bounding circle
+    /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
+    /// circle, and every regiment is filed in each cell its circle touches,
+    /// so only the cells under `i`'s own circle need looking in.
 
     fn each_friend_touching(
         &self,
@@ -1822,6 +1825,42 @@ impl Combat {
         let owner = regs.owner[i];
         let from = regs.position[i];
         let mine = Combat::arriving(regs, units, i, target);
+        // Far enough apart each way that neighbours can turn where they
+        // stand.
+        let step = mine.half_width.max(mine.half_depth) * 2 + PLACE_GAP;
+        // The friends that could have any of the places, found once: all
+        // of them when there are more than fit here.
+        let counts = |j: usize| {
+            j != i
+                && regs.alive[j]
+                && regs.owner[j] == owner
+                && !regs.on_wall[j]
+                && !regs.morale_state[j].broken()
+                && !self.civil(regs, j)
+        };
+        let place = |j: usize| regs.target[j].unwrap_or(regs.position[j]);
+        let mut friends = [0usize; 64];
+        let mut found = 0;
+        {
+            // Every place is within `out` of the spot, and its lane (from
+            // near only) no longer than from here to the spot and on.
+            let out = step * (2 * PLACES);
+            let lane = if near {
+                (target - from).length() + out
+            } else {
+                Fx::ZERO
+            };
+            let reach = (mine.radius() + PLACE_REACH + lane + out + Fx::ONE).raw() as u64;
+            for j in (0..regs.alive.len()).filter(|&j| counts(j)) {
+                if (place(j) - target).length_sq_raw() > reach * reach {
+                    continue;
+                }
+                if found < friends.len() {
+                    friends[found] = j;
+                }
+                found += 1;
+            }
+        }
         let taken = |at: FxVec2, fresh: bool| {
             let me = Block { centre: at, ..mine };
             // It keeps the place it has unless a friend is well into it
@@ -1832,7 +1871,7 @@ impl Combat {
             let way = at - from;
             let long = way.length();
             let lane = (fresh && near && long > Fx::ONE).then(|| {
-                let forward = FxVec2::new(way.x / long, way.y / long);
+                let forward = way.normalized();
                 Block {
                     centre: from + way * Fx::HALF,
                     forward,
@@ -1841,19 +1880,10 @@ impl Combat {
                     half_depth: long / 2,
                 }
             });
-            (0..regs.alive.len()).any(|j| {
-                if j == i
-                    || !regs.alive[j]
-                    || regs.owner[j] != owner
-                    || regs.on_wall[j]
-                    || regs.morale_state[j].broken()
-                    || self.civil(regs, j)
-                {
-                    return false;
-                }
-                let reach = (me.radius() + PLACE_REACH + long).raw() as u64;
-                if (regs.target[j].unwrap_or(regs.position[j]) - at).length_sq_raw() > reach * reach
-                {
+            let reach = if lane.is_some() { long } else { Fx::ZERO };
+            let reach = (me.radius() + PLACE_REACH + reach).raw() as u64;
+            let has = |j: usize| {
+                if (place(j) - at).length_sq_raw() > reach * reach {
                     return false;
                 }
                 match regs.target[j] {
@@ -1877,15 +1907,17 @@ impl Combat {
                             || lane.is_some_and(|l| l.overlap_over(&them, CROWDING).is_some())
                     }
                 }
-            })
+            };
+            if found <= friends.len() {
+                friends[..found].iter().any(|&j| has(j))
+            } else {
+                (0..regs.alive.len()).any(|j| counts(j) && has(j))
+            }
         };
         if !taken(target, false) {
             return target;
         }
         let berth = regs.berth(units, i);
-        // Far enough apart each way that neighbours can turn where they
-        // stand.
-        let step = mine.half_width.max(mine.half_depth) * 2 + PLACE_GAP;
         let mut best = (Fx::MAX, target);
         for rank in -PLACES..=PLACES {
             for file in -PLACES..=PLACES {
@@ -1895,7 +1927,9 @@ impl Combat {
                 // its own side of it.
                 let out = (at - target).length();
                 let far = out + (at - from).length() / 2;
-                if far < best.0
+                // The spot itself is taken.
+                if (rank, file) != (0, 0)
+                    && far < best.0
                     && nav.fits(owner, at, berth)
                     && nav.clear_line(owner, target, at)
                     && !taken(at, true)
@@ -1973,7 +2007,7 @@ impl Combat {
             return;
         }
         let step = if length > ROOM_STEP {
-            FxVec2::new(push.x / length, push.y / length) * ROOM_STEP
+            push.normalized() * ROOM_STEP
         } else {
             push
         };

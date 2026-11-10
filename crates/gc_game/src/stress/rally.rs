@@ -69,8 +69,7 @@ fn run(real: &Real, report: &mut Report) {
     put_up(&mut world, 0, &houses);
 
     // In single file from the west, seven tiles apart.
-    let [yari, katana, yumi] = real.ember_line();
-    let kinds = [yari, katana, yumi];
+    let kinds = real.ember_line();
     let placed: Vec<_> = (0..REGIMENTS)
         .map(|i| (kinds[i % 3], centre(RALLY.0 - 14 - 7 * i as i32, RALLY.1)))
         .collect();
