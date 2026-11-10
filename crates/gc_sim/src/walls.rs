@@ -552,18 +552,14 @@ impl Conquest {
         let now: Vec<WallTile> = (laying.tiles.iter().copied())
             .filter(|t| t.fits.is_ok())
             .collect();
-        let mut room = if waits {
+        let room = if waits {
             self.blueprints.room(player)
         } else {
             0
         };
         let later: Vec<(i32, i32)> = (laying.tiles.iter())
             .filter(|t| t.fits.is_err_and(passing) && !self.blueprints.planned(player, t.tile))
-            .filter(|_| {
-                let fits = room > 0;
-                room = room.saturating_sub(1);
-                fits
-            })
+            .take(room)
             .map(|t| t.tile)
             .collect();
         if (now.is_empty() && later.is_empty()) || self.structures.free_slots() < now.len() {

@@ -17,17 +17,15 @@
 //! All of it is worked out from the tiles shown, so a wall looks the same
 //! every frame; a wall hidden in the fog takes no end post away.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gc_sim::drawn::{Drawing, DrawnPath, SUB};
 use gc_sim::structures::StructureView;
 use gc_sim::{PlayerId, World};
 use glam::Vec2;
 
-use crate::buildings::WallPiece;
+use crate::buildings::{LINE_JOINT, WallPiece};
 
-/// How far a piece reaches past a joint, to overlap the next.
-const JOINT: f32 = 0.05;
 /// A free end joins a tile beside it that lies this far ahead of it at
 /// least (as the cosine of the angle off straight on): ahead or to the
 /// side, not behind.
@@ -93,20 +91,25 @@ impl Shape {
         piece_of(self.from, self.to, self.ends)
     }
 
-    /// The same for each arm (see [`Shape::arms`]), with what stands at
-    /// its two ends: nothing at the tile's own point but for the first,
+    /// Each arm (see [`Shape::arms`]) from end to end, with what stands
+    /// at its two ends: nothing at the tile's own point but for the first,
     /// which puts the post there.
-    pub fn arm_pieces(&self) -> impl Iterator<Item = (WallPiece, [Joint; 2])> + '_ {
+    pub fn arm_spans(&self) -> impl Iterator<Item = (Vec2, Vec2, [Joint; 2])> + '_ {
         self.arms.iter().enumerate().map(|(k, &(a, b, joint))| {
             let ends = [if k == 0 { Joint::Post } else { Joint::Bare }, joint];
-            (piece_of(a, b, ends), ends)
+            (a, b, ends)
         })
+    }
+
+    /// The arms as slabs are laid (see [`Shape::piece`]).
+    pub fn arm_pieces(&self) -> impl Iterator<Item = WallPiece> + '_ {
+        self.arm_spans().map(|(a, b, ends)| piece_of(a, b, ends))
     }
 }
 
 fn piece_of(from: Vec2, to: Vec2, ends: [Joint; 2]) -> WallPiece {
     let dir = (to - from).normalize_or(Vec2::X);
-    let over = ends.map(|e| if e == Joint::Stop { 0.0 } else { JOINT });
+    let over = ends.map(|e| if e == Joint::Stop { 0.0 } else { LINE_JOINT });
     WallPiece {
         centre: (from + to) / 2.0 + dir * (over[1] - over[0]) / 2.0,
         dir,
@@ -316,9 +319,16 @@ impl WallLines {
             seed: 0,
         };
         let mut curve = Curve::along(drawing, path);
+        // Only the standing tiles near enough to change a ghost tile's
+        // piece: its neighbours, and theirs, whose links they count.
+        const NEAR: i32 = 3;
+        let ghost: HashSet<(i32, i32)> = tiles.iter().copied().collect();
+        let near = |t: (i32, i32)| {
+            (-NEAR..=NEAR).any(|dy| (-NEAR..=NEAR).any(|dx| ghost.contains(&(t.0 + dx, t.1 + dy))))
+        };
         let mut nodes: Vec<Node> = (self.nodes.iter())
             .filter(|n| n.owner == owner && n.kind.class() == kind.class())
-            .filter(|n| !tiles.contains(&n.tile))
+            .filter(|n| !ghost.contains(&n.tile) && near(n.tile))
             .map(|n| Node {
                 links: Vec::new(),
                 ..n.clone()
@@ -438,7 +448,7 @@ fn shape_of(nodes: &[Node], i: usize) -> Shape {
         })
         .collect();
     let way = |j: Vec2| (j - n.at).normalize_or(Vec2::X);
-    let (mut from, mut to, mut ends, mut arms) = match joints.len() {
+    let (mut from, mut to, mut ends, arms) = match joints.len() {
         0 => {
             let dir = n.dir.unwrap_or(Vec2::X);
             (
@@ -474,26 +484,14 @@ fn shape_of(nodes: &[Node], i: usize) -> Shape {
             };
             if least > HAIRPIN {
                 let (a, joint) = joints[pair.0];
-                (a, n.at, [joint, Joint::Post], {
-                    let mut arms = rest(&[pair.0]);
-                    // The post at the tile's point is the piece's.
-                    arms.insert(0, (n.at, n.at, Joint::Bare));
-                    arms
-                })
+                // The first arm puts the post at the tile's point.
+                (a, n.at, [joint, Joint::Bare], rest(&[pair.0]))
             } else {
                 let ((a, ja), (b, jb)) = (joints[pair.0], joints[pair.1]);
                 (a, b, [ja, jb], rest(&[pair.0, pair.1]))
             }
         }
     };
-    // A hairpin's stand-in first arm only says the post is taken.
-    if arms.first().is_some_and(|a| a.0 == a.1) {
-        arms.remove(0);
-        for arm in &mut arms {
-            // No arm puts the post at the tile's point again.
-            arm.0 = n.at;
-        }
-    }
     // The way its line was drawn, so its front is told from its back.
     if let Some(dir) = n.dir
         && (to - from).dot(dir) < 0.0

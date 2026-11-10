@@ -61,7 +61,7 @@ const WALL_HEIGHT: f32 = 1.5;
 /// its share of the line at a joint. At an end of the line it reaches half
 /// a step, to the edge of its tile.
 const LINE_THICK: f32 = 0.5;
-const LINE_JOINT: f32 = 0.05;
+pub(crate) const LINE_JOINT: f32 = 0.05;
 /// Bone Fence: pale bone, a little lower than a palisade.
 const BONE_COLOR: [u8; 3] = [214, 206, 180];
 const BONE_HEIGHT: f32 = 1.2;
@@ -1942,7 +1942,7 @@ pub fn push(
             let shape = joined_piece(table, lines, &s);
             let piece = shape.map(Shape::piece).or_else(|| own_piece(&s));
             push_fieldwork_tile(&s, works, piece, &ground, out);
-            for (arm, _) in shape.into_iter().flat_map(Shape::arm_pieces) {
+            for arm in shape.into_iter().flat_map(Shape::arm_pieces) {
                 push_fieldwork_tile(&s, works, Some(arm), &ground, out);
             }
         } else if stats.role == Role::Trap {
@@ -1963,7 +1963,7 @@ pub fn push(
                     let shape = joined_piece(table, lines, &s);
                     let piece = shape.map(Shape::piece).or_else(|| own_piece(&s));
                     let arms = shape.into_iter().flat_map(Shape::arm_pieces);
-                    for piece in std::iter::once(piece).chain(arms.map(|(arm, _)| Some(arm))) {
+                    for piece in std::iter::once(piece).chain(arms.map(Some)) {
                         let colour = [r, g, b, look.glow];
                         let body = wall_block(&s, height, look.thick, colour, piece, &ground);
                         out.push(body);

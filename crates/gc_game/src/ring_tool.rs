@@ -86,10 +86,11 @@ pub struct Piece {
 }
 
 impl Piece {
-    /// Whether the order for it would go through: some tiles to lay and
-    /// every one of them can.
+    /// Whether the order for it would go through: some tile of it can go
+    /// up, or waits for its ground (see [`gc_sim::walls::passing`]); the
+    /// rest of it is left out, as of any drawn line.
     pub fn sendable(&self) -> bool {
-        matches!(&self.plan, Ok(p) if !p.is_empty() && p.iter().all(|t| t.fits.is_ok()))
+        matches!(&self.plan, Ok(p) if p.iter().any(|t| t.fits.is_ok() || t.fits.is_err_and(gc_sim::walls::passing)))
     }
 
     /// Whether it is left out for a reason (it shows red).
@@ -146,14 +147,14 @@ pub fn ring_pieces(
     out
 }
 
-/// The tiles the sendable pieces would lay, each once (pieces share the
-/// tile they meet on).
+/// The tiles the sendable pieces would lay at once, each once (pieces
+/// share the tile they meet on).
 pub fn laid_tiles(pieces: &[Piece]) -> HashSet<Tile> {
     pieces
         .iter()
         .filter(|p| p.sendable())
         .filter_map(|p| p.plan.as_ref().ok())
-        .flat_map(|plan| plan.iter().map(|t| t.tile))
+        .flat_map(|plan| plan.iter().filter(|t| t.fits.is_ok()).map(|t| t.tile))
         .collect()
 }
 
@@ -404,24 +405,17 @@ mod tests {
     }
 
     #[test]
-    fn other_refusals_are_kept_red_and_not_sent() {
+    fn a_piece_goes_but_for_the_tiles_that_never_fit() {
         let bad = vec![((5, 0), Refusal::Built), ((15, 0), Refusal::Rough)];
         let pieces = ring_pieces(&[(0, 0), (20, 0)], &check_with(bad));
-        // The rough tile is cut round; the built one stays in its piece.
+        // The rough tile is cut round; the built one stays in its piece,
+        // which goes up without it, as any drawn line does.
         assert_eq!(pieces.len(), 2);
-        assert!(!pieces[0].sendable());
+        assert!(pieces.iter().all(Piece::sendable));
         assert_eq!(pieces[0].why(), Some(Refusal::Built));
-        assert!(pieces[1].sendable());
-        let cmds = ring_commands(&pieces, 3, false, None);
-        assert_eq!(cmds.len(), 1);
-        assert!(matches!(
-            cmds[0],
-            Command::BuildWall {
-                from: (16, 0),
-                to: (20, 0),
-                ..
-            }
-        ));
+        let laid = laid_tiles(&pieces);
+        assert!(laid.contains(&(4, 0)) && !laid.contains(&(5, 0)));
+        assert_eq!(ring_commands(&pieces, 3, false, None).len(), 2);
     }
 
     #[test]

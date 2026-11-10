@@ -158,7 +158,7 @@ fn fit_of(tile: &WallTile, open: Fit, waits: bool) -> Fit {
     match tile.fits {
         Ok(()) => open,
         Err(Refusal::Overgrown) if waits => Fit::Overgrown,
-        Err(Refusal::Crowded) if waits => Fit::Planned,
+        Err(why) if waits && gc_sim::walls::passing(why) => Fit::Planned,
         Err(_) => Fit::Refused,
     }
 }

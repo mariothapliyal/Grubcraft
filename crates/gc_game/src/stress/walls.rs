@@ -100,12 +100,7 @@ fn run(real: &Real, report: &mut Report) {
             break;
         }
     }
-    let at = |t: Option<u32>| {
-        t.map_or("never".into(), |t| {
-            let s = t / TICKS_PER_SECOND;
-            format!("{}:{:02}", s / 60, s % 60)
-        })
-    };
+    let at = super::clock;
     let (hp, standing) = wall_hp(&world);
     report.metric("game time played", at(Some(world.tick_count())));
     report.metric("first blow on the wall", at(hurt));

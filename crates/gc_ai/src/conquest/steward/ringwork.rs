@@ -104,18 +104,6 @@ pub(super) struct Piece {
     at: [usize; 2],
 }
 
-impl Piece {
-    /// A single tile of wall, `round` tiles round the ring from its front.
-    pub fn one(tile: (i32, i32), round: u32) -> Piece {
-        Piece {
-            from: tile,
-            to: tile,
-            round,
-            at: [0; 2],
-        }
-    }
-}
-
 /// A ring laid out.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Layout {

@@ -413,35 +413,31 @@ impl Steward {
                 self.engineer.works.as_mut()?.pieces.remove(k);
                 continue;
             }
-            if tiles.iter().all(|t| t.fits.is_ok()) {
-                // The whole line is paid for as it is drawn.
-                if spare < cost * tiles.len() as u32 {
-                    return None;
-                }
-                let worker = self.hands(s, look, grown, p.from)?;
-                self.engineer.works.as_mut()?.pieces.remove(k);
-                let order = Command::BuildWall {
-                    regiment: worker,
-                    building: wall.id,
-                    from: (p.from.0 as i16, p.from.1 as i16),
-                    to: (p.to.0 as i16, p.to.1 as i16),
-                };
-                return Some((order, worker));
-            }
             // Someone standing there: tried again at the next look, and
             // the lines after it meanwhile.
-            if tiles.iter().all(|t| t.fits.is_ok() || crowded(t)) {
+            if tiles.iter().any(crowded) && tiles.iter().all(|t| t.fits.is_ok() || crowded(t)) {
                 k += 1;
                 continue;
             }
-            // Not all of it can go up: tile by tile, what can.
-            let pieces = &mut self.engineer.works.as_mut()?.pieces;
-            pieces.remove(k);
-            if p.from != p.to {
-                for t in tiles.iter().rev().filter(|t| t.fits.is_ok() || crowded(t)) {
-                    pieces.insert(k, Piece::one(t.tile, p.round));
-                }
+            // What fits of it goes up, and is paid for as it is drawn;
+            // the rest is left out (see `gc_sim::walls`).
+            let now = tiles.iter().filter(|t| t.fits.is_ok()).count() as u32;
+            if now == 0 {
+                self.engineer.works.as_mut()?.pieces.remove(k);
+                continue;
             }
+            if spare < cost * now {
+                return None;
+            }
+            let worker = self.hands(s, look, grown, p.from)?;
+            self.engineer.works.as_mut()?.pieces.remove(k);
+            let order = Command::BuildWall {
+                regiment: worker,
+                building: wall.id,
+                from: (p.from.0 as i16, p.from.1 as i16),
+                to: (p.to.0 as i16, p.to.1 as i16),
+            };
+            return Some((order, worker));
         }
         if let Some(order) = self.clear_ring(s, look) {
             return Some(order);
@@ -855,17 +851,16 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
     site.keep_joined(at);
     // Where wall could go up, on the ground that matters: what joins the
     // kept ground.
-    let ground = |t: (i32, i32)| s.world.wall_ground(s.party, wall.id, t);
+    // Asked once a tile: the second look below is at tiles of the first.
+    let mut asked: Vec<Option<Result<(), Refusal>>> = vec![None; site.keep.len()];
+    let mut ground = |site: &Site, i: usize| {
+        *asked[i].get_or_insert_with(|| s.world.wall_ground(s.party, wall.id, site.tile(i)))
+    };
     // Walls that must stand on its veins or in its power: the ring stays
     // on them, giving up what it would have kept past their edge.
     if wall.stats.flags & (GROWN | NEEDS_POWER) != 0 {
         let unfed: Vec<usize> = (site.joined().into_iter())
-            .filter(|&i| {
-                matches!(
-                    ground(site.tile(i)),
-                    Err(Refusal::NoVeins | Refusal::Unpowered)
-                )
-            })
+            .filter(|&i| matches!(ground(&site, i), Err(Refusal::NoVeins | Refusal::Unpowered)))
             .collect();
         for i in unfed {
             let (x, y) = site.tile(i);
@@ -880,7 +875,7 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
         site.keep_joined(at);
     }
     for i in site.joined().into_iter().filter(|&i| !site.keep[i]) {
-        site.ground[i] = match ground(site.tile(i)) {
+        site.ground[i] = match ground(&site, i) {
             Ok(()) => Ground::Open,
             Err(Refusal::Overgrown) => Ground::Grown,
             Err(_) => Ground::Hard,
@@ -954,7 +949,6 @@ fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Opti
             first
         }
     };
-    let front = door.map(|d| d.mid).or(way.map(|d| d.mid));
     Some(Works {
         gate: new.map(gate_at),
         crowded: None,
@@ -965,7 +959,7 @@ fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Opti
                 .pieces
                 .first()
                 .map(|p| p.from)
-                .or(front)
+                .or(way.map(|d| d.mid))
                 .into_iter()
                 .collect(),
         },

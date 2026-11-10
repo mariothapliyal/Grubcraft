@@ -206,9 +206,8 @@ impl WallKit {
         // Whole runs to the tile's length, and a half run
         // where they would come well short (a diagonal); without a half
         // run, one more whole run, the runs closing up to fit.
-        let core = t.len;
-        let mut count = (core + SLACK).floor().max(1.0) as usize;
-        let short = core - count as f32;
+        let mut count = (t.len + SLACK).floor().max(1.0) as usize;
+        let short = t.len - count as f32;
         let half_run = self
             .half
             .filter(|_| short > HALF_FROM && hp >= BROKEN_BELOW);
@@ -222,8 +221,8 @@ impl WallKit {
         };
         // Laid end to end from one end, or evenly over the core when the
         // runs are more than it.
-        let step = if laid > core && half_run.is_none() && count > 1 {
-            (core - 1.0) / (count as f32 - 1.0)
+        let step = if laid > t.len && half_run.is_none() && count > 1 {
+            (t.len - 1.0) / (count as f32 - 1.0)
         } else {
             1.0
         };
@@ -248,9 +247,9 @@ impl WallKit {
         // Footing, bands and walkway are a tile long each, laid evenly over
         // the tile's core: one on a straight tile, two overlapping on a
         // diagonal, the second a hair higher.
-        let works = (core - SLACK).ceil().max(1.0) as usize;
+        let works = (t.len - SLACK).ceil().max(1.0) as usize;
         let spread = if works > 1 {
-            (core - 1.0).max(0.0) / (works as f32 - 1.0)
+            (t.len - 1.0).max(0.0) / (works as f32 - 1.0)
         } else {
             0.0
         };

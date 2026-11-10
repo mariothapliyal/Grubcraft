@@ -58,15 +58,10 @@ fn run(real: &Real, report: &mut Report) {
             break;
         }
     }
-    let at = |t: Option<u32>| {
-        t.map_or("never".into(), |t| {
-            let s = t / TICKS_PER_SECOND;
-            format!("{}:{:02}", s / 60, s % 60)
-        })
-    };
+    let at = super::clock;
     let count = |p: u8, gates: bool| {
         (world.structures().unwrap().iter())
-            .filter(|s| s.owner == p && s.line.is_some() || s.gate.is_some() && s.owner == p)
+            .filter(|s| s.owner == p && (s.line.is_some() || s.gate.is_some()))
             .filter(|s| (real.table.stats[usize::from(s.building)].flags & GATE != 0) == gates)
             .count()
     };

@@ -196,3 +196,11 @@ fn scenario_names_are_unique() {
     names.dedup();
     assert_eq!(names.len(), SCENARIOS.len());
 }
+
+/// A tick as game time, `m:ss`; "never" for none.
+fn clock(t: Option<u32>) -> String {
+    t.map_or("never".into(), |t| {
+        let s = t / gc_sim::TICKS_PER_SECOND;
+        format!("{}:{:02}", s / 60, s % 60)
+    })
+}

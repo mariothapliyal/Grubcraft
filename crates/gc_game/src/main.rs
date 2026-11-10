@@ -7480,11 +7480,7 @@ impl Running {
         };
         // Every bridge tile's handle and place, folded together: a tile
         // added or lost changes it (a new map starts it again).
-        let key = bridges().fold(0xcbf2_9ce4_8422_2325u64, |k, s| {
-            let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
-            let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
-            ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
-        });
+        let key = tiles_key(bridges());
         if key == self.decks_key {
             return;
         }
@@ -7514,12 +7510,7 @@ impl Running {
                 .filter(|s| shown(s))
                 .filter_map(|s| Some((s, b.line_kind(s.building)?)))
         };
-        // As `settle_decks` folds the bridge tiles.
-        let key = tiles().fold(0xcbf2_9ce4_8422_2325u64, |k, (s, _)| {
-            let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
-            let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
-            ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
-        });
+        let key = tiles_key(tiles().map(|(s, _)| s));
         if key == self.wall_lines_key {
             return;
         }
@@ -8588,14 +8579,9 @@ impl Running {
                         };
                         let (centre, dir, len) = span(shape.from, shape.to);
                         lay(centre, dir, len, shape.ends, false);
-                        for (k, &(from, to, joint)) in shape.arms.iter().enumerate() {
+                        for (from, to, ends) in shape.arm_spans() {
                             let (centre, dir, len) = span(from, to);
-                            let first = if k == 0 {
-                                wall_lines::Joint::Post
-                            } else {
-                                wall_lines::Joint::Bare
-                            };
-                            lay(centre, dir, len, [first, joint], true);
+                            lay(centre, dir, len, ends, true);
                         }
                     }
                     None => {
@@ -9807,4 +9793,14 @@ mod tests {
         assert_eq!(pose_between(prev, HANDLE, now, 0.5), now);
         assert_eq!(pose_between(None, HANDLE, now, 0.5), now);
     }
+}
+
+/// The tiles' handles and places folded together: a tile added or lost
+/// changes it.
+fn tiles_key(tiles: impl Iterator<Item = gc_sim::StructureView>) -> u64 {
+    tiles.fold(0xcbf2_9ce4_8422_2325u64, |k, s| {
+        let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
+        let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
+        ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
+    })
 }
