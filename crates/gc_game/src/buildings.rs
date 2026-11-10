@@ -7,7 +7,7 @@ use gc_assets::model::Models;
 use gc_data::conquest::{self as record, BuildingRecord};
 use gc_data::{Faction, GameData};
 use gc_render::{BoxInstance, MAX_BOX_INSTANCES};
-use gc_sim::structures::{Armour, Role, TowerAttack, TowerShot};
+use gc_sim::structures::{Armour, GATE, LINE, Role, TowerAttack, TowerShot};
 use gc_sim::{
     BuildingId, BuildingStats, ConquestSetup, ConquestUnit, HeartView, PlayerId, Refusal, Resource,
     StructureHandle, StructureView, World,
@@ -16,6 +16,7 @@ use gc_sim::{
 use crate::Party;
 use crate::bridge_deck::Decks;
 use crate::scenery::{Extra, Model};
+use crate::wall_lines::{Kind, Shape, WallLines};
 use gc_ui::conquest::node_color;
 use glam::{Vec2, Vec3};
 
@@ -60,7 +61,7 @@ const WALL_HEIGHT: f32 = 1.5;
 /// its share of the line at a joint. At an end of the line it reaches half
 /// a step, to the edge of its tile.
 const LINE_THICK: f32 = 0.5;
-const LINE_JOINT: f32 = 0.05;
+pub(crate) const LINE_JOINT: f32 = 0.05;
 /// Bone Fence: pale bone, a little lower than a palisade.
 const BONE_COLOR: [u8; 3] = [214, 206, 180];
 const BONE_HEIGHT: f32 = 1.2;
@@ -385,6 +386,21 @@ impl Table {
     pub fn is_fieldwork(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
             .is_some_and(|s| matches!(s.role, Role::Stakes | Role::Barricade))
+    }
+
+    /// What `building` is for joining the tiles of drawn lines (see
+    /// [`crate::wall_lines`]): a wall, a gate, stakes or a barricade.
+    /// `None` for a bridge and for anything not laid along a line.
+    pub fn line_kind(&self, building: BuildingId) -> Option<Kind> {
+        let stats = self.stats.get(usize::from(building))?;
+        match stats.role {
+            Role::Bridge => None,
+            Role::Stakes if stats.flags & LINE != 0 => Some(Kind::Stakes),
+            Role::Barricade if stats.flags & LINE != 0 => Some(Kind::Barricade),
+            _ if stats.flags & GATE != 0 => Some(Kind::Gate),
+            _ if stats.flags & LINE != 0 => Some(Kind::Wall),
+            _ => None,
+        }
     }
 
     /// Whether `building` is a hidden trap (seen by its owner alone).
@@ -1161,16 +1177,18 @@ fn wall_colour(look: &WallLook, team: [u8; 3]) -> [u8; 3] {
     }
 }
 
-/// One box for the wall tile `s`: a straight slab along the line it was
-/// drawn in, or the usual block if it has no line or the line is one tile.
+/// One box for the wall tile `s`: a straight slab along `piece`, its piece
+/// of the wall, or the usual block if it has none (no line, or a line of
+/// one tile).
 fn wall_block(
     s: &StructureView,
     height: f32,
     thick: f32,
     color: [u8; 4],
+    piece: Option<WallPiece>,
     ground: &impl Fn(f32, f32) -> f32,
 ) -> BoxInstance {
-    let Some(piece) = s.line.and_then(|line| wall_piece(line, s.tile)) else {
+    let Some(piece) = piece else {
         return block(s, height, color, ground);
     };
     let slab = Slab {
@@ -1259,6 +1277,7 @@ fn push_bridge_tile(
 const RAIL_ACROSS: f32 = 0.75;
 
 /// What one tile of a field work is drawn in.
+#[derive(Clone, Copy)]
 struct Fieldwork {
     /// Stakes, or else a barricade.
     stakes: bool,
@@ -1411,10 +1430,11 @@ fn push_trap_tile(
 fn push_fieldwork_tile(
     s: &StructureView,
     works: Fieldwork,
+    piece: Option<WallPiece>,
     ground: &impl Fn(f32, f32) -> f32,
     out: &mut Vec<BoxInstance>,
 ) {
-    let (centre, dir, len) = match s.line.and_then(|line| wall_piece(line, s.tile)) {
+    let (centre, dir, len) = match piece {
         Some(p) => (p.centre, p.dir, p.len),
         None => (centre_of(s.tile, s.width, s.depth), Vec2::X, 1.0),
     };
@@ -1468,7 +1488,7 @@ fn push_fieldwork_tile(
         return;
     }
     let base_height = BARRICADE_BASE * grow;
-    let base = wall_block(s, base_height, BARRICADE_THICK, wood, ground);
+    let base = wall_block(s, base_height, BARRICADE_THICK, wood, piece, ground);
     out.push(base);
     if !s.finished() {
         return;
@@ -1732,10 +1752,27 @@ pub fn shown_to(
 /// the line, the way it runs and how long it is; a tile with no line, a
 /// tile at its centre running east.
 pub fn kit_piece(s: &StructureView) -> (Vec2, Vec2, f32) {
-    (s.line.and_then(|line| wall_piece(line, s.tile)))
-        .map_or((centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
-            (p.centre, p.dir, p.len)
-        })
+    own_piece(s).map_or((centre_of(s.tile, 1, 1), Vec2::X, 1.0), |p| {
+        (p.centre, p.dir, p.len)
+    })
+}
+
+/// The piece of its line tile `s` shows going by its own line alone (see
+/// [`wall_piece`]).
+pub fn own_piece(s: &StructureView) -> Option<WallPiece> {
+    s.line.and_then(|line| wall_piece(line, s.tile))
+}
+
+/// The piece of its wall, stakes or barricade tile `s` shows, with what
+/// stands at its ends and any further arms (see [`crate::wall_lines`]):
+/// joined to its neighbours as `lines` has it. `None` for a tile `lines`
+/// does not know (a bridge, a tile out of sight).
+pub fn joined_piece<'a>(
+    table: &Table,
+    lines: &'a WallLines,
+    s: &StructureView,
+) -> Option<&'a Shape> {
+    lines.shape(s, table.line_kind(s.building)?)
 }
 
 /// Which side of each drawn wall is outside its owner's fort, worked out
@@ -1852,6 +1889,7 @@ pub fn push(
     flash: impl Fn(StructureHandle) -> f32,
     across: Vec2,
     decks: &Decks,
+    lines: &WallLines,
     out: &mut Vec<BoxInstance>,
 ) {
     let Some(structures) = world.structures() else {
@@ -1901,7 +1939,12 @@ pub fn push(
                 trim: shade(trim, s.hp, s.max_hp),
                 team,
             };
-            push_fieldwork_tile(&s, works, &ground, out);
+            let shape = joined_piece(table, lines, &s);
+            let piece = shape.map(Shape::piece).or_else(|| own_piece(&s));
+            push_fieldwork_tile(&s, works, piece, &ground, out);
+            for arm in shape.into_iter().flat_map(Shape::arm_pieces) {
+                push_fieldwork_tile(&s, works, Some(arm), &ground, out);
+            }
         } else if stats.role == Role::Trap {
             let dim = |c: [u8; 3]| shade(c, s.hp, s.max_hp);
             push_trap_tile(&s, stats.trap, dim, out);
@@ -1917,10 +1960,16 @@ pub fn push(
                     out,
                 ),
                 (false, None) => {
-                    let body = wall_block(&s, height, look.thick, [r, g, b, look.glow], &ground);
-                    out.push(body);
-                    if s.line.is_some() {
-                        push_wall_top(&body, look, out);
+                    let shape = joined_piece(table, lines, &s);
+                    let piece = shape.map(Shape::piece).or_else(|| own_piece(&s));
+                    let arms = shape.into_iter().flat_map(Shape::arm_pieces);
+                    for piece in std::iter::once(piece).chain(arms.map(Some)) {
+                        let colour = [r, g, b, look.glow];
+                        let body = wall_block(&s, height, look.thick, colour, piece, &ground);
+                        out.push(body);
+                        if s.line.is_some() {
+                            push_wall_top(&body, look, out);
+                        }
                     }
                 }
                 (false, Some(_)) => {}
@@ -2729,19 +2778,19 @@ pub fn push_ghost(
 pub fn push_wall_ghost(
     line: [i32; 4],
     look: WallLook,
-    tiles: impl Iterator<Item = ((i32, i32), Fit)>,
+    tiles: impl Iterator<Item = ((i32, i32), Fit, Option<WallPiece>)>,
     colour: [u8; 3],
     ground: impl Fn(f32, f32) -> f32,
     out: &mut Vec<BoxInstance>,
 ) {
-    for (tile, fit) in tiles {
+    for (tile, fit, piece) in tiles {
         if out.len() >= MAX_BOX_INSTANCES {
             return;
         }
         let colour = ghost_colour(fit, colour);
-        let mut view = footprint_view(tile, 1, 1, 0);
-        view.line = Some(line);
-        let mut slab = wall_block(&view, look.height, look.thick, colour, &ground);
+        let view = footprint_view(tile, 1, 1, 0);
+        let piece = piece.or_else(|| wall_piece(line, tile));
+        let mut slab = wall_block(&view, look.height, look.thick, colour, piece, &ground);
         slab.lift += look.lift;
         out.push(slab);
     }
@@ -2874,20 +2923,32 @@ pub fn wall_slot(table: &Table, s: &StructureView) -> crate::puppets::WallSlot {
 
 /// Where men manning wall tile `s` stand: on a kit wall with a walkway (the
 /// Ember Stone Wall), on the walkway's deck behind it, inside the fort; on
-/// another kit wall, on its runs' top; else as [`wall_slot`] has it.
+/// another kit wall, on its runs' top; else as [`wall_slot`] has it, on
+/// the tile's piece of the wall as `lines` joins it.
 pub fn manned_slot(
     table: &Table,
     looks: Option<&Looks>,
     sides: &mut WallSides<'_>,
+    lines: &WallLines,
     s: &StructureView,
 ) -> crate::puppets::WallSlot {
     let mut slot = wall_slot(table, s);
+    let shape = joined_piece(table, lines, s).filter(|_| s.gate.is_none());
+    if let Some(shape) = shape {
+        slot.centre = (shape.from + shape.to) / 2.0;
+    }
     let Some((looks, kit)) = looks.and_then(|l| l.wall_kit_for(s.building).map(|k| (l, k))) else {
         return slot;
     };
     if kit.has_walkway() {
         // As the kit is laid.
-        let (centre, dir, _) = kit_piece(s);
+        let (centre, dir) = match shape {
+            Some(shape) => (slot.centre, (shape.to - shape.from).normalize_or(Vec2::X)),
+            None => {
+                let (centre, dir, _) = kit_piece(s);
+                (centre, dir)
+            }
+        };
         let front = crate::wall_kit::front(dir, sides.out(s, centre, dir));
         slot.centre = centre - front * crate::wall_kit::WALKWAY_BACK;
         slot.lift = crate::wall_kit::WALKWAY_DECK;
@@ -3263,13 +3324,13 @@ mod tests {
             let mut view = footprint_view((10, 5), 1, 1, 0);
             view.line = Some([10, 3, 10, 9]);
             let mut done = Vec::new();
-            push_fieldwork_tile(&view, works(stakes), &flat, &mut done);
+            push_fieldwork_tile(&view, works(stakes), own_piece(&view), &flat, &mut done);
             assert!(done.len() >= 4 && done.len() <= 10, "{}", done.len());
             let top = done.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
             assert!(top <= BARRICADE_HEIGHT + 0.1 && top > 0.5, "{top}");
             view.built_percent = 20;
             let mut early = Vec::new();
-            push_fieldwork_tile(&view, works(stakes), &flat, &mut early);
+            push_fieldwork_tile(&view, works(stakes), own_piece(&view), &flat, &mut early);
             let early_top = early.iter().map(|b| b.lift + b.size[1]).fold(0.0, f32::max);
             assert!(!early.is_empty() && early.len() < done.len(), "{stakes}");
             assert!(early_top < top, "{early_top} {top}");

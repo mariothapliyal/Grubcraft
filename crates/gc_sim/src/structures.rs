@@ -1474,7 +1474,8 @@ impl Structures {
     /// Whether a building of type `building` may stand with its north-west
     /// tile at `tile`, turned `turn` quarter turns: on the map, on ground
     /// regiments can walk, clear of other buildings (see `Nav::footing`),
-    /// and with no regiment standing on it or node (`nodes`) within it.
+    /// and with no regiment standing on it (none looked for without `regs`:
+    /// for laying out what is built later) or node (`nodes`) within it.
     /// `spare` counts what stands on a tile that will be gone first:
     /// thicket, cleared first (docs/32-changing-land.md), and the wall tiles
     /// a gate replaces.
@@ -1485,7 +1486,7 @@ impl Structures {
         tile: (i32, i32),
         turn: u8,
         nav: &Nav,
-        regs: &Regiments,
+        regs: Option<&Regiments>,
         nodes: &[FxVec2],
         spare: impl Fn(i32, i32) -> u8,
     ) -> Result<(), Refusal> {
@@ -1506,7 +1507,10 @@ impl Structures {
             FxVec2::from_ints(tile.0 + w, tile.1 + d) + FxVec2::new(margin, margin),
         );
         let near = |p: FxVec2| p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y;
-        if (0..regs.alive.len()).any(|i| regs.alive[i] && near(regs.position[i])) {
+        let crowded = regs.is_some_and(|regs| {
+            (0..regs.alive.len()).any(|i| regs.alive[i] && near(regs.position[i]))
+        });
+        if crowded {
             Err(Refusal::Crowded)
         } else if nodes.iter().any(|&at| near(at)) {
             // Workers must be able to stand at it.

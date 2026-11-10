@@ -419,31 +419,110 @@ fn lines_join_and_cross_the_owners_walls_but_not_others() {
     // Across the first line, again leaving out the tile they share.
     assert!(draw(&mut w, 0, a, (12, 8), (12, 12)));
     assert_eq!(walls(&w, 0).0.len(), 9 + 4);
-    // Another side's line can't run through them.
+    // Another side's line can't run through them: the tile they stand on
+    // is left out, and a line with no other tile is refused.
     let b = spawn(&mut w, 1, 30, 30);
     assert_eq!(
         w.wall_plan(1, PALISADE, (11, 9), (11, 11)).unwrap()[1].fits,
         Err(Refusal::Built)
     );
-    assert!(!draw(&mut w, 1, b, (11, 9), (11, 11)));
+    assert!(!draw(&mut w, 1, b, (11, 10), (11, 10)));
+    assert!(draw(&mut w, 1, b, (11, 9), (11, 11)));
+    assert_eq!(walls(&w, 1).0, vec![(11, 9), (11, 11)]);
+    assert!(w.plans().is_empty());
 }
 
 #[test]
-fn a_line_with_any_tile_it_cant_have_is_refused_whole() {
+fn a_line_lays_what_fits_and_its_worker_clears_and_builds_the_rest() {
     let mut w = world();
     let worker = spawn(&mut w, 0, 30, 20);
-    // Into the woods: clear them first.
+    // Into the woods: what stands on open ground goes up and is paid for
+    // now; the tiles under the trees wait as plans.
     let plan = w.wall_plan(0, PALISADE, (36, 32), (41, 32)).unwrap();
     assert_eq!(plan[5].fits, Err(Refusal::Overgrown));
     assert!(plan[..4].iter().all(|t| t.fits.is_ok()));
-    assert!(!draw(&mut w, 0, worker, (36, 32), (41, 32)));
-    // Over the worker itself.
-    assert!(!draw(&mut w, 0, worker, (26, 20), (34, 20)));
+    assert!(draw(&mut w, 0, worker, (36, 32), (41, 32)));
+    assert_eq!(walls(&w, 0).0.len(), 4);
+    assert_eq!(grub(&w, 0), START_GRUB - 4 * TILE_COST);
+    assert_eq!(w.plans().len(), 2);
+    assert!(w.works_plans(worker));
+    // The worker builds the four, then clears and builds the two.
+    let mut t = 0;
+    while walls(&w, 0).1 < 6 {
+        w.tick(&[]);
+        t += 1;
+        assert!(
+            t < 400 * TICKS_PER_SECOND,
+            "the wall never reached the woods"
+        );
+    }
+    assert!(w.plans().is_empty());
+    assert_eq!(
+        walls(&w, 0).0,
+        (36..=41).map(|x| (x, 32)).collect::<Vec<_>>()
+    );
+    // Over the worker itself: the tile it stands on waits until it has
+    // stepped off to build the rest.
+    let at = w.regiments.iter().find(|r| r.handle == worker).unwrap();
+    let (x, y) = (at.position.x.floor_int() as i16, 26);
+    let mover = spawn(&mut w, 0, i32::from(x), i32::from(y));
+    assert!(draw(&mut w, 0, mover, (x - 4, y), (x + 4, y)));
+    assert!(!w.plans().is_empty(), "the tile under the worker waits");
+    let mut t = 0;
+    while walls(&w, 0).1 < 6 + 9 {
+        w.tick(&[]);
+        t += 1;
+        assert!(
+            t < 400 * TICKS_PER_SECOND,
+            "the tile under the worker never went up"
+        );
+    }
+    assert!(w.plans().is_empty());
+}
+
+#[test]
+fn a_worker_drawing_a_second_line_still_comes_back_for_the_first_ones_tiles() {
+    let mut w = world();
+    let worker = spawn(&mut w, 0, 30, 20);
+    // As a ring's sides are ordered: one after another, the same worker.
+    assert!(draw(&mut w, 0, worker, (36, 32), (41, 32)));
+    assert_eq!(w.plans().len(), 2);
+    assert!(draw(&mut w, 0, worker, (30, 26), (34, 26)));
+    assert_eq!(w.plans().len(), 2);
+    assert!(w.works_plans(worker), "the open line took it off the plans");
+    let mut t = 0;
+    while walls(&w, 0).1 < 6 + 5 {
+        w.tick(&[]);
+        t += 1;
+        assert!(
+            t < 600 * TICKS_PER_SECOND,
+            "the tiles under the trees never went up"
+        );
+    }
+    assert!(w.plans().is_empty());
+}
+
+#[test]
+fn a_line_that_cant_go_up_at_all_is_refused() {
+    let w = world();
     // Too long, and the hall is no wall.
     assert!(w.wall_plan(0, PALISADE, (0, 0), (40, 0)).is_err());
     assert_eq!(w.wall_plan(0, HALL, (0, 0), (4, 0)), Err(Refusal::Unknown));
     assert_eq!(grub(&w, 0), START_GRUB);
     assert!(walls(&w, 0).0.is_empty());
+}
+
+#[test]
+fn a_ridge_drawn_past_its_veins_grows_as_far_as_they_reach() {
+    let mut w = world();
+    let plan = w.wall_plan(0, RIDGE, (6, 10), (24, 10)).unwrap();
+    let on = plan.iter().filter(|t| t.fits.is_ok()).count();
+    assert!(on >= 8 && on < plan.len());
+    assert!(draw_as(&mut w, 0, None, RIDGE, (6, 10), (24, 10)));
+    assert_eq!(walls(&w, 0).0.len(), on);
+    assert_eq!(grub(&w, 0), START_GRUB - on as u32 * TILE_COST);
+    // No plans for a wall that grows on its own.
+    assert!(w.plans().is_empty());
 }
 
 #[test]
@@ -580,7 +659,7 @@ fn the_brood_grows_its_ridge_along_its_veins_with_no_worker() {
     let plan = w.wall_plan(0, RIDGE, (6, 10), (24, 10)).unwrap();
     assert!(plan[..8].iter().all(|t| t.fits.is_ok()));
     assert_eq!(plan.last().unwrap().fits, Err(Refusal::NoVeins));
-    assert!(!draw_as(&mut w, 0, None, RIDGE, (6, 10), (24, 10)));
+    assert!(!draw_as(&mut w, 0, None, RIDGE, (23, 10), (24, 10)));
     // Every tile grows at once, on its own.
     assert!(draw_as(&mut w, 0, None, RIDGE, (6, 10), (12, 10)));
     assert_eq!(grub(&w, 0), START_GRUB - 7 * TILE_COST);

@@ -93,7 +93,7 @@ pub fn kit(data: &GameData, table: &Table, map: &Map, faction: Faction) -> Kit {
 
 /// The temper (personality roll) of player `i`'s mind in a game rolled
 /// `roll`.
-fn temper(roll: u64, i: usize) -> u32 {
+pub(crate) fn temper(roll: u64, i: usize) -> u32 {
     Pcg32::new(roll, i as u64).next_u32()
 }
 

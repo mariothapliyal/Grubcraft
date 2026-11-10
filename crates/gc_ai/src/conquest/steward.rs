@@ -13,6 +13,7 @@
 
 mod bridgework;
 mod engineer;
+mod ringwork;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
 use gc_sim::structures::{
@@ -1152,7 +1153,8 @@ impl Steward {
             .map(|n| n.index)
     }
 
-    /// Lanes from each hall to the nodes it serves, kept free of buildings.
+    /// Lanes kept free of buildings: from each hall to the nodes it serves,
+    /// and where its walls are still to go up.
     fn lanes(&self, s: &Sense, look: &Look) -> Vec<(Vec2, Vec2)> {
         let mut lanes = Vec::new();
         for m in look.mine.iter().filter(|m| m.hub(s.kit.economy)) {
@@ -1162,6 +1164,8 @@ impl Steward {
                 }
             }
         }
+        // And off the walls it has still to draw, and its gate's way.
+        lanes.extend(self.engineer.keep_clear());
         lanes
     }
 

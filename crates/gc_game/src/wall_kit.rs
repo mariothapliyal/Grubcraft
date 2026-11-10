@@ -14,6 +14,7 @@ use gc_sim::structures::StructureView;
 use glam::Vec2;
 
 use crate::bridge_kit::Piece;
+use crate::wall_lines::Joint;
 
 /// One look of a wall kit: the models of one wall type.
 #[derive(Clone, Debug)]
@@ -48,33 +49,29 @@ const OVERLAP_LIFT: f32 = 0.01;
 /// What the generator needs to know of one wall tile.
 pub struct Tile<'a> {
     pub s: &'a StructureView,
-    /// The middle of the tile's piece of the line, the way it runs and how
-    /// long it is (a tile, or more on a diagonal).
+    /// The middle of the tile's piece of the wall, the way it runs and how
+    /// long it is from joint to joint (a tile, more on a diagonal, less on
+    /// the inside of a bend).
     pub centre: Vec2,
     pub dir: Vec2,
     pub len: f32,
     /// The way out of the fort (the side its front faces), if known: away
     /// from its owner's nearest hall. Without it a line faces one fixed way.
     pub out: Option<Vec2>,
-    /// Whether a tile of the same side's walls or gates stands at a tile.
-    pub walled: &'a dyn Fn((i32, i32)) -> bool,
+    /// What stands at the piece's two ends, behind and ahead along `dir`
+    /// (see [`crate::wall_lines`]).
+    pub ends: [Joint; 2],
+    /// A further arm of a tile where three walls or more meet: its runs
+    /// alone are doubled, not the tile's brace and works.
+    pub arm: bool,
 }
 
 /// How much of a run's length a piece may come short by before it takes
 /// another run (as `buildings::SPOT_SLACK`).
 const SLACK: f32 = 0.15;
 
-/// How far a tile's piece of the line reaches past each joint, to overlap
-/// the next (`buildings::LINE_JOINT`).
-const JOINT: f32 = 0.05;
-
 /// How much a tile's runs may come short by before a half run fills it out.
 const HALF_FROM: f32 = 0.25;
-
-/// A wall that carries on past a joint has a tile on that side: ahead, to
-/// the side at a corner, but not behind (in a drawn line the tile before is
-/// always well behind, so this never mistakes it for the next).
-const AHEAD: f32 = -0.2;
 
 /// The eight tiles around a tile.
 pub(crate) const NEIGHBOURS: [(i32, i32); 8] = [
@@ -172,8 +169,8 @@ impl WallKit {
     }
 
     /// The pieces that build wall tile `t`, added to `out`: runs end to
-    /// end along its piece of the line, a post at a joint where the wall
-    /// carries on and an end post where it stops. A tile going up shows its
+    /// end along its piece of the wall, a post at a joint that is its to
+    /// put and an end post where the wall stops. A tile going up shows its
     /// posts, and its runs from half built.
     pub fn pieces(&self, t: &Tile<'_>, out: &mut Vec<Piece>) {
         let s = t.s;
@@ -190,21 +187,11 @@ impl WallKit {
         };
         let mut put = |model: usize, at: Vec2| lay(model, at, 0.0);
         let half = t.dir * (t.len / 2.0);
-        // Does the wall carry on past a joint: is any of the tile's eight
-        // neighbours on that side one of its side's walls or gates?
-        let goes_on = |way: Vec2| {
-            NEIGHBOURS.iter().any(|&(dx, dy)| {
-                Vec2::new(dx as f32, dy as f32).normalize().dot(way) > AHEAD
-                    && (t.walled)((s.tile.0 + dx, s.tile.1 + dy))
-            })
-        };
-        for (joint, way) in [(t.centre - half, -t.dir), (t.centre + half, t.dir)] {
-            if !goes_on(way) {
-                put(self.end, joint);
-            } else if forward(way) {
-                // Of the two tiles meeting at a joint, the one it lies
-                // ahead of puts the post, however each was drawn.
-                put(self.post, joint);
+        for (joint, end) in [(t.centre - half, t.ends[0]), (t.centre + half, t.ends[1])] {
+            match end {
+                Joint::Stop => put(self.end, joint),
+                Joint::Post => put(self.post, joint),
+                Joint::Bare => {}
             }
         }
         if !s.finished() && s.built_percent < 50 {
@@ -216,12 +203,11 @@ impl WallKit {
             _ if hp < BROKEN_BELOW => self.broken,
             _ => self.runs[pick(s.tile, k, self.runs.len())],
         };
-        // Whole runs to the tile's length less its overlaps, and a half run
+        // Whole runs to the tile's length, and a half run
         // where they would come well short (a diagonal); without a half
         // run, one more whole run, the runs closing up to fit.
-        let core = t.len - 2.0 * JOINT;
-        let mut count = (core + SLACK).floor().max(1.0) as usize;
-        let short = core - count as f32;
+        let mut count = (t.len + SLACK).floor().max(1.0) as usize;
+        let short = t.len - count as f32;
         let half_run = self
             .half
             .filter(|_| short > HALF_FROM && hp >= BROKEN_BELOW);
@@ -235,8 +221,8 @@ impl WallKit {
         };
         // Laid end to end from one end, or evenly over the core when the
         // runs are more than it.
-        let step = if laid > core && half_run.is_none() && count > 1 {
-            (core - 1.0) / (count as f32 - 1.0)
+        let step = if laid > t.len && half_run.is_none() && count > 1 {
+            (t.len - 1.0) / (count as f32 - 1.0)
         } else {
             1.0
         };
@@ -249,6 +235,9 @@ impl WallKit {
             let at = from + step * (count as f32 - 1.0) + 1.25;
             put(half_run, t.centre + t.dir * at);
         }
+        if t.arm {
+            return;
+        }
         if let Some(brace) = self.brace
             && s.finished()
             && pick(s.tile, 7, BRACE_EVERY) == 0
@@ -258,9 +247,9 @@ impl WallKit {
         // Footing, bands and walkway are a tile long each, laid evenly over
         // the tile's core: one on a straight tile, two overlapping on a
         // diagonal, the second a hair higher.
-        let works = (core - SLACK).ceil().max(1.0) as usize;
+        let works = (t.len - SLACK).ceil().max(1.0) as usize;
         let spread = if works > 1 {
-            (core - 1.0).max(0.0) / (works as f32 - 1.0)
+            (t.len - 1.0).max(0.0) / (works as f32 - 1.0)
         } else {
             0.0
         };
@@ -351,20 +340,19 @@ mod tests {
         let kit = WallKit::for_wall(&models, "Palisade").unwrap();
         let mut s = crate::buildings::footprint_view((5, 5), 1, 1, 0);
         s.built_percent = 100;
-        let walled = |t: (i32, i32)| t == (6, 5);
         let tile = Tile {
             s: &s,
             centre: Vec2::new(5.5, 5.5),
             dir: Vec2::X,
             len: 1.0,
             out: None,
-            walled: &walled,
+            ends: [Joint::Stop, Joint::Post],
+            arm: false,
         };
         let mut out = Vec::new();
         kit.pieces(&tile, &mut out);
-        // An end post at the west end (nothing beyond), a post at the east
-        // joint (the joint lies east of this tile, so it is this tile's),
-        // and one run.
+        // An end post at the west end (the wall stops), a post at the east
+        // joint (this tile's to put), and one run.
         let ends: Vec<_> = out.iter().filter(|p| p.model == kit.end).collect();
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].at, Vec2::new(5.0, 5.5));
@@ -382,7 +370,7 @@ mod tests {
             out.clear();
             let piece = Tile {
                 dir: dir.normalize(),
-                len: len + 2.0 * JOINT,
+                len,
                 ..tile
             };
             kit.pieces(&piece, &mut out);
@@ -393,76 +381,32 @@ mod tests {
     }
 
     #[test]
-    fn a_corner_and_lines_drawn_toward_each_other_join_without_end_posts() {
+    fn posts_stand_only_where_the_joints_say() {
         let models = crate::models::load().unwrap();
         let kit = WallKit::for_wall(&models, "Palisade").unwrap();
-        // Drawn east to (5, 0), then north from there; and a second line
-        // drawn west from (9, 0) back to (6, 0).
-        let walled = |t: (i32, i32)| matches!(t, (0..=9, 0)) || t == (5, -1) || t == (5, -2);
-        let pieces = |tile: (i32, i32), dir: Vec2| {
-            let mut s = crate::buildings::footprint_view(tile, 1, 1, 0);
-            s.built_percent = 100;
-            let t = Tile {
+        let mut s = crate::buildings::footprint_view((5, 5), 1, 1, 0);
+        s.built_percent = 100;
+        let count = |ends: [Joint; 2], arm: bool| {
+            let tile = Tile {
                 s: &s,
-                centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
-                dir,
+                centre: Vec2::new(5.5, 5.5),
+                dir: Vec2::X,
                 len: 1.0,
                 out: None,
-                walled: &walled,
+                ends,
+                arm,
             };
             let mut out = Vec::new();
-            kit.pieces(&t, &mut out);
-            out
+            kit.pieces(&tile, &mut out);
+            let n = |m: usize| out.iter().filter(|p| p.model == m).count();
+            (n(kit.end), n(kit.post), out.len())
         };
-        let ends = |out: &[Piece]| out.iter().filter(|p| p.model == kit.end).count();
-        let posts = |out: &[Piece]| out.iter().filter(|p| p.model == kit.post).count();
-        // The corner tile carries on to the side: no end post.
-        assert_eq!(ends(&pieces((5, 0), Vec2::X)), 0);
-        // At the joint where the two lines meet, one post between them.
-        let west = pieces((5, 0), Vec2::X);
-        let east = pieces((6, 0), Vec2::NEG_X);
-        let at = |out: &[Piece]| {
-            (out.iter())
-                .filter(|p| p.model == kit.post && (p.at.x - 6.0).abs() < 0.1)
-                .count()
-        };
-        assert_eq!(at(&west) + at(&east), 1);
-        assert!(posts(&east) <= 1);
-        // Both lines face the same way.
-        assert_eq!(west[0].facing, east[0].facing);
-    }
-
-    #[test]
-    fn a_stepped_curve_has_end_posts_only_at_its_two_ends() {
-        let models = crate::models::load().unwrap();
-        let kit = WallKit::for_wall(&models, "Palisade").unwrap();
-        // A wall stepping east, then north-east, then north: every middle
-        // tile has a neighbour each way, though not straight on.
-        let line = [(0, 0), (1, 0), (2, 1), (3, 2), (3, 3), (4, 4), (4, 5)];
-        let walled = |t: (i32, i32)| line.contains(&t);
-        let mut ends = 0;
-        for (i, &tile) in line.iter().enumerate() {
-            let prev = line[i.saturating_sub(1)];
-            let next = line[(i + 1).min(line.len() - 1)];
-            let way = Vec2::new((next.0 - prev.0) as f32, (next.1 - prev.1) as f32);
-            let mut s = crate::buildings::footprint_view(tile, 1, 1, 0);
-            s.built_percent = 100;
-            let t = Tile {
-                s: &s,
-                centre: Vec2::new(tile.0 as f32 + 0.5, tile.1 as f32 + 0.5),
-                dir: way.normalize(),
-                len: 1.0,
-                out: None,
-                walled: &walled,
-            };
-            let mut out = Vec::new();
-            kit.pieces(&t, &mut out);
-            let here = out.iter().filter(|p| p.model == kit.end).count();
-            let first_or_last = i == 0 || i == line.len() - 1;
-            assert_eq!(here, usize::from(first_or_last), "tile {tile:?}");
-            ends += here;
-        }
-        assert_eq!(ends, 2);
+        // A middle tile whose neighbours put the posts shows its run alone.
+        let bare = count([Joint::Bare, Joint::Bare], false);
+        assert_eq!((bare.0, bare.1), (0, 0));
+        assert_eq!(count([Joint::Post, Joint::Stop], false), (1, 1, bare.2 + 2));
+        // An arm doubles no brace.
+        assert!(count([Joint::Bare, Joint::Bare], true).2 <= bare.2);
     }
 
     #[test]
@@ -490,14 +434,14 @@ mod tests {
         s.built_percent = 100;
         let mut hurt = s;
         hurt.hp = s.max_hp / 10;
-        let walled = |_: (i32, i32)| true;
         let tile = Tile {
             s: &s,
             centre: Vec2::new(5.5, 5.5),
             dir: Vec2::X,
-            len: 1.0 + 2.0 * JOINT,
+            len: 1.0,
             out: Some(Vec2::Y),
-            walled: &walled,
+            ends: [Joint::Bare; 2],
+            arm: false,
         };
         let mut out = Vec::new();
         kit.pieces(&tile, &mut out);
@@ -519,7 +463,7 @@ mod tests {
         out.clear();
         let diagonal = Tile {
             dir: Vec2::new(1.0, 1.0).normalize(),
-            len: std::f32::consts::SQRT_2 + 2.0 * JOINT,
+            len: std::f32::consts::SQRT_2,
             ..tile
         };
         kit.pieces(&diagonal, &mut out);

@@ -826,7 +826,13 @@ mod tests {
 
         for &t in world.wall_tiles(regiment) {
             let s = structures.get(t).unwrap();
-            let slot = manned_slot(&table, Some(&looks), &mut sides, &s);
+            let slot = manned_slot(
+                &table,
+                Some(&looks),
+                &mut sides,
+                &crate::wall_lines::WallLines::default(),
+                &s,
+            );
             let (centre, _, _) = kit_piece(&s);
             assert_eq!(slot.lift, WALKWAY_DECK);
             // Behind the logs by the walkway's depth, on the hall's side.
