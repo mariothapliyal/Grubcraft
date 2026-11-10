@@ -38,7 +38,14 @@ pub struct Plan {
     pub line: [i16; 4],
     /// The drawing it was planned along (see [`crate::drawn`]).
     pub drawing: u32,
+    /// How often a worker has set out to clear its ground (see
+    /// [`CLEARS`]).
+    pub clears: u8,
 }
+
+/// How often a worker sets out to clear a planned tile's ground before
+/// the plan is dropped: ground it can't get to is never cleared.
+const CLEARS: u8 = 3;
 
 #[derive(Default)]
 pub(crate) struct Blueprints {
@@ -132,6 +139,7 @@ impl Blueprints {
                 h.u16(v as u16);
             }
             h.u32(p.drawing);
+            h.u8(p.clears);
         }
         for w in &self.workers {
             if regs.resolve(*w).is_some() {
@@ -179,6 +187,7 @@ impl Conquest {
                 tile: t.tile,
                 line: place(t.tile).0,
                 drawing,
+                clears: 0,
             });
         }
         true
@@ -270,6 +279,11 @@ impl Conquest {
                     // Something grows there: it clears the tile first,
                     // and comes back to the plan after.
                     Err(Refusal::Overgrown) => {
+                        if plan.clears >= CLEARS {
+                            self.blueprints.take(n);
+                            return true;
+                        }
+                        self.blueprints.plans[n].clears += 1;
                         let area = [plan.tile.0, plan.tile.1, 1, 1];
                         let work = crate::clearing::Work::Clear;
                         self.clearing.start(regs, r, area, None, work);

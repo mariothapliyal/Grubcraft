@@ -77,8 +77,8 @@ fn run(real: &Real, report: &mut Report) {
         );
     }
     report.check(
-        format!("a General walls its town all round within {LIMIT_MINUTES} minutes"),
-        walled.iter().any(Option::is_some),
+        format!("each General walls its town all round within {LIMIT_MINUTES} minutes"),
+        walled.iter().all(Option::is_some),
     );
     report.check(
         "a town walled all round has a gate",

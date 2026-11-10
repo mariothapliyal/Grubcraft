@@ -235,10 +235,12 @@ impl Steward {
         }
         // A barricade ordered but never begun is tried again, a few times.
         if let Some(at) = self.engineer.barricade_at.take() {
-            let begun = look
-                .mine
-                .iter()
-                .any(|m| m.view.tile == at && m.stats.role == Role::Barricade);
+            // Any tile of it: a line lays what fits, so its first tile
+            // may be the one left out.
+            let begun = look.mine.iter().any(|m| {
+                let (dx, dy) = (m.view.tile.0 - at.0, m.view.tile.1 - at.1);
+                m.stats.role == Role::Barricade && dx.abs().max(dy.abs()) <= 2 * BARRICADE_HALF
+            });
             if !begun && self.engineer.barricade_redone < BARRICADE_TRIES {
                 self.engineer.barricade_redone += 1;
                 self.engineer.barricaded = None;
@@ -338,7 +340,8 @@ impl Steward {
             }
             // Raised stretches stay raised: only a new gate's are looked
             // at again.
-            if works.as_ref().map(|w| &w.raise) != self.engineer.works.as_ref().map(|w| &w.raise) {
+            let old = self.engineer.works.as_ref().map(|w| &w.raise);
+            if works.as_ref().is_some_and(|w| Some(&w.raise) != old) {
                 self.engineer.raised = 0;
             }
             match works {
@@ -363,12 +366,14 @@ impl Steward {
                 return None;
             }
             // Troops standing there move on: it waits a while for them.
+            let works = self.engineer.works.as_mut()?;
             if laid == Err(Refusal::Crowded) {
-                let works = self.engineer.works.as_mut()?;
                 let since = *works.crowded.get_or_insert(s.now);
                 if s.now < since + GATE_WAIT {
                     return None;
                 }
+            } else {
+                works.crowded = None;
             }
             // Its ground taken meanwhile, or troops that never leave it:
             // the ring is laid out again, with its gate somewhere else.
@@ -413,17 +418,18 @@ impl Steward {
                 self.engineer.works.as_mut()?.pieces.remove(k);
                 continue;
             }
-            // Someone standing there: tried again at the next look, and
-            // the lines after it meanwhile.
-            if tiles.iter().any(crowded) && tiles.iter().all(|t| t.fits.is_ok() || crowded(t)) {
-                k += 1;
-                continue;
-            }
-            // What fits of it goes up, and is paid for as it is drawn;
-            // the rest is left out (see `gc_sim::walls`).
+            // What fits of it goes up, and is paid for as it is drawn; a
+            // worker comes back for the tiles someone stands on, and the
+            // rest is left out (see `gc_sim::walls`). With nothing to
+            // go up while someone stands there, it is tried again at the
+            // next look, and the lines after it meanwhile.
             let now = tiles.iter().filter(|t| t.fits.is_ok()).count() as u32;
             if now == 0 {
-                self.engineer.works.as_mut()?.pieces.remove(k);
+                if tiles.iter().any(crowded) {
+                    k += 1;
+                } else {
+                    self.engineer.works.as_mut()?.pieces.remove(k);
+                }
                 continue;
             }
             if spare < cost * now {
@@ -810,9 +816,6 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
             _ if near => inside.push(m),
             _ => foot(m).for_each(|t| set(&mut site, t, Ground::Walled)),
         }
-    }
-    for p in s.world.plans().iter().filter(|p| p.owner == s.party) {
-        set(&mut site, p.tile, Ground::Walled);
     }
     // What it keeps inside.
     let keep = |site: &mut Site, t: (i32, i32), room: i32| {

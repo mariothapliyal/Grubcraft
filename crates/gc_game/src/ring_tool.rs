@@ -83,14 +83,22 @@ pub fn cut_around(tiles: &[(Tile, bool)]) -> Vec<(Tile, Tile)> {
 pub struct Piece {
     pub line: [i32; 4],
     pub plan: Result<Vec<WallTile>, Refusal>,
+    /// Whether its tiles under trees or soldiers wait for their ground: a
+    /// worker's wall or a blueprint (a grown wall's are left out).
+    pub waits: bool,
 }
 
 impl Piece {
-    /// Whether the order for it would go through: some tile of it can go
-    /// up, or waits for its ground (see [`gc_sim::walls::passing`]); the
-    /// rest of it is left out, as of any drawn line.
+    /// Whether tile `t` of it goes up, now or once its ground is free
+    /// (see [`gc_sim::walls::passing`]).
+    fn goes(&self, t: &WallTile) -> bool {
+        t.fits.is_ok() || (self.waits && t.fits.is_err_and(gc_sim::walls::passing))
+    }
+
+    /// Whether the order for it would go through: some tile of it goes
+    /// up; the rest of it is left out, as of any drawn line.
     pub fn sendable(&self) -> bool {
-        matches!(&self.plan, Ok(p) if p.iter().any(|t| t.fits.is_ok() || t.fits.is_err_and(gc_sim::walls::passing)))
+        matches!(&self.plan, Ok(p) if p.iter().any(|t| self.goes(t)))
     }
 
     /// Whether it is left out for a reason (it shows red).
@@ -119,6 +127,7 @@ fn rough(t: &WallTile) -> bool {
 pub fn ring_pieces(
     points: &[Tile],
     check: &dyn Fn(Tile, Tile) -> Result<Vec<WallTile>, Refusal>,
+    waits: bool,
 ) -> Vec<Piece> {
     let mut out = Vec::new();
     for (a, b) in ring_segments(points) {
@@ -140,6 +149,7 @@ pub fn ring_pieces(
                 out.push(Piece {
                     line: [f.0, f.1, t.0, t.1],
                     plan,
+                    waits,
                 });
             }
         }
@@ -147,15 +157,18 @@ pub fn ring_pieces(
     out
 }
 
-/// The tiles the sendable pieces would lay at once, each once (pieces
-/// share the tile they meet on).
-pub fn laid_tiles(pieces: &[Piece]) -> HashSet<Tile> {
-    pieces
-        .iter()
-        .filter(|p| p.sendable())
-        .filter_map(|p| p.plan.as_ref().ok())
-        .flat_map(|plan| plan.iter().filter(|t| t.fits.is_ok()).map(|t| t.tile))
-        .collect()
+/// The tiles the pieces would lay at once, each once (pieces share their
+/// corners); with `waiting`, those that wait for their ground too.
+pub fn laid_tiles(pieces: &[Piece], waiting: bool) -> HashSet<Tile> {
+    let mut out = HashSet::new();
+    for p in pieces {
+        for t in p.plan.iter().flatten() {
+            if t.fits.is_ok() || (waiting && p.goes(t)) {
+                out.insert(t.tile);
+            }
+        }
+    }
+    out
 }
 
 /// The orders for a ring: one per sendable piece, in order. A drawn wall
@@ -338,7 +351,7 @@ mod tests {
     #[test]
     fn a_ring_of_long_sides_orders_only_pieces_the_sim_takes() {
         let ring = [(0, 0), (90, 0), (90, 70)];
-        let pieces = ring_pieces(&ring, &check_with(vec![]));
+        let pieces = ring_pieces(&ring, &check_with(vec![]), true);
         assert!(pieces.iter().all(Piece::sendable));
         let cmds = ring_commands(&pieces, 7, true, None);
         assert_eq!(cmds.len(), pieces.len());
@@ -363,12 +376,12 @@ mod tests {
     fn rough_ground_is_cut_out_and_the_rest_kept() {
         // A flat side from 0 to 20 with rough ground at 8..=11.
         let bad: Vec<_> = (8..=11).map(|x| ((x, 0), Refusal::Rough)).collect();
-        let pieces = ring_pieces(&[(0, 0), (20, 0)], &check_with(bad));
+        let pieces = ring_pieces(&[(0, 0), (20, 0)], &check_with(bad), true);
         let lines: Vec<_> = pieces.iter().map(|p| p.line).collect();
         assert_eq!(lines, [[0, 0, 7, 0], [12, 0, 20, 0]]);
         assert!(pieces.iter().all(Piece::sendable));
         // None of the cut tiles is laid.
-        let laid = laid_tiles(&pieces);
+        let laid = laid_tiles(&pieces, false);
         assert!(!laid.contains(&(9, 0)));
         assert!(laid.contains(&(7, 0)) && laid.contains(&(12, 0)));
     }
@@ -376,7 +389,7 @@ mod tests {
     #[test]
     fn rough_ground_at_the_end_of_a_side_leaves_a_shorter_piece() {
         let bad: Vec<_> = (0..=3).map(|x| ((x, 5), Refusal::Rough)).collect();
-        let pieces = ring_pieces(&[(0, 5), (10, 5)], &check_with(bad));
+        let pieces = ring_pieces(&[(0, 5), (10, 5)], &check_with(bad), true);
         let lines: Vec<_> = pieces.iter().map(|p| p.line).collect();
         assert_eq!(lines, [[4, 5, 10, 5]]);
     }
@@ -384,16 +397,16 @@ mod tests {
     #[test]
     fn a_side_that_is_all_rough_gives_no_piece() {
         let bad: Vec<_> = (0..=10).map(|x| ((x, 0), Refusal::Rough)).collect();
-        assert!(ring_pieces(&[(0, 0), (10, 0)], &check_with(bad)).is_empty());
+        assert!(ring_pieces(&[(0, 0), (10, 0)], &check_with(bad), true).is_empty());
     }
 
     #[test]
     fn rough_ground_in_a_long_side_is_cut_in_its_piece() {
         // 100 across, rough at 40..=44, which falls in the second piece.
         let bad: Vec<_> = (40..=44).map(|x| ((x, 0), Refusal::Rough)).collect();
-        let pieces = ring_pieces(&[(0, 0), (99, 0)], &check_with(bad));
+        let pieces = ring_pieces(&[(0, 0), (99, 0)], &check_with(bad), true);
         assert!(pieces.iter().all(Piece::sendable));
-        let laid = laid_tiles(&pieces);
+        let laid = laid_tiles(&pieces, false);
         for x in 0..=99 {
             assert_eq!(laid.contains(&(x, 0)), !(40..=44).contains(&x), "{x}");
         }
@@ -407,21 +420,34 @@ mod tests {
     #[test]
     fn a_piece_goes_but_for_the_tiles_that_never_fit() {
         let bad = vec![((5, 0), Refusal::Built), ((15, 0), Refusal::Rough)];
-        let pieces = ring_pieces(&[(0, 0), (20, 0)], &check_with(bad));
+        let pieces = ring_pieces(&[(0, 0), (20, 0)], &check_with(bad), true);
         // The rough tile is cut round; the built one stays in its piece,
         // which goes up without it, as any drawn line does.
         assert_eq!(pieces.len(), 2);
         assert!(pieces.iter().all(Piece::sendable));
         assert_eq!(pieces[0].why(), Some(Refusal::Built));
-        let laid = laid_tiles(&pieces);
+        let laid = laid_tiles(&pieces, false);
         assert!(laid.contains(&(4, 0)) && !laid.contains(&(5, 0)));
         assert_eq!(ring_commands(&pieces, 3, false, None).len(), 2);
     }
 
     #[test]
+    fn a_piece_under_trees_goes_only_if_its_wall_waits_for_them() {
+        let bad: Vec<_> = (0..=10).map(|x| ((x, 0), Refusal::Overgrown)).collect();
+        let waits = ring_pieces(&[(0, 0), (10, 0)], &check_with(bad.clone()), true);
+        assert!(waits[0].sendable());
+        assert!(laid_tiles(&waits, false).is_empty());
+        assert_eq!(laid_tiles(&waits, true).len(), 11);
+        // A wall that grows on its own leaves them out: red, and not sent.
+        let grown = ring_pieces(&[(0, 0), (10, 0)], &check_with(bad), false);
+        assert!(!grown[0].sendable() && grown[0].red());
+        assert!(ring_commands(&grown, 3, false, None).is_empty());
+    }
+
+    #[test]
     fn a_side_the_check_refuses_whole_is_not_sent() {
         let refuse = |_: Tile, _: Tile| Err(Refusal::Tier);
-        let pieces = ring_pieces(&[(0, 0), (10, 0), (10, 10)], &refuse);
+        let pieces = ring_pieces(&[(0, 0), (10, 0), (10, 10)], &refuse, true);
         assert_eq!(pieces.len(), 3);
         assert!(pieces.iter().all(|p| p.why() == Some(Refusal::Tier)));
         assert!(ring_commands(&pieces, 1, true, None).is_empty());
@@ -430,14 +456,14 @@ mod tests {
     #[test]
     fn tiles_already_walled_make_no_order() {
         let none = |_: Tile, _: Tile| Ok(Vec::new());
-        let pieces = ring_pieces(&[(0, 0), (10, 0), (10, 10)], &none);
+        let pieces = ring_pieces(&[(0, 0), (10, 0), (10, 10)], &none, true);
         assert!(ring_commands(&pieces, 1, true, None).is_empty());
     }
 
     #[test]
     fn corners_and_joins_are_counted_once() {
-        let pieces = ring_pieces(&[(0, 0), (5, 0), (5, 5)], &check_with(vec![]));
-        let laid = laid_tiles(&pieces);
+        let pieces = ring_pieces(&[(0, 0), (5, 0), (5, 5)], &check_with(vec![]), true);
+        let laid = laid_tiles(&pieces, false);
         // A 5-by-5 triangle: 6 + 5 along the legs sharing (5,0), and the
         // diagonal sharing both its ends.
         let sum: usize = pieces
@@ -474,8 +500,8 @@ mod tests {
     fn square_walls() -> (Vec<(Tile, Tile)>, HashSet<Tile>) {
         let corners = [(10, 10), (30, 10), (30, 30), (10, 30)];
         let sides = ring_segments(&corners);
-        let pieces = ring_pieces(&corners, &check_with(vec![]));
-        (sides, laid_tiles(&pieces))
+        let pieces = ring_pieces(&corners, &check_with(vec![]), true);
+        (sides, laid_tiles(&pieces, false))
     }
 
     #[test]

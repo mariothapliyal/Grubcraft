@@ -481,6 +481,28 @@ fn a_line_lays_what_fits_and_its_worker_clears_and_builds_the_rest() {
 }
 
 #[test]
+fn a_worker_drawing_a_second_line_still_comes_back_for_the_first_ones_tiles() {
+    let mut w = world();
+    let worker = spawn(&mut w, 0, 30, 20);
+    // As a ring's sides are ordered: one after another, the same worker.
+    assert!(draw(&mut w, 0, worker, (36, 32), (41, 32)));
+    assert_eq!(w.plans().len(), 2);
+    assert!(draw(&mut w, 0, worker, (30, 26), (34, 26)));
+    assert_eq!(w.plans().len(), 2);
+    assert!(w.works_plans(worker), "the open line took it off the plans");
+    let mut t = 0;
+    while walls(&w, 0).1 < 6 + 5 {
+        w.tick(&[]);
+        t += 1;
+        assert!(
+            t < 600 * TICKS_PER_SECOND,
+            "the tiles under the trees never went up"
+        );
+    }
+    assert!(w.plans().is_empty());
+}
+
+#[test]
 fn a_line_that_cant_go_up_at_all_is_refused() {
     let mut w = world();
     // Too long, and the hall is no wall.

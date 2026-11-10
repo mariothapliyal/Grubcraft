@@ -592,14 +592,18 @@ impl Conquest {
                 tile,
                 line: place(tile).0,
                 drawing,
+                clears: 0,
             });
         }
         let Some(r) = worker else {
             // Grown: every tile grows on its own.
             return true;
         };
+        // It works the plans after: this line's, and those an earlier
+        // line of the same wall (a ring's other sides) left it on.
+        let hired = self.blueprints.workers().contains(&regs.handle(r));
         self.stop_work(r);
-        if !later.is_empty() {
+        if hired || !later.is_empty() {
             self.blueprints.hire(regs.handle(r));
         }
         let Some((a, b)) = ends else {

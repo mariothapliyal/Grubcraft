@@ -553,6 +553,7 @@ impl Running {
             piece: Piece {
                 line: [a.0, a.1, b.0, b.1],
                 plan,
+                waits,
             },
             ghost,
             key,
@@ -574,6 +575,7 @@ impl Running {
         Some(Piece {
             line: [from.0, from.1, to.0, to.1],
             plan: self.wall_check(building, self.hud.wall_mode.blueprint, from, to),
+            waits: self.wall_waits(building, self.hud.wall_mode.blueprint),
         })
     }
 
@@ -590,7 +592,7 @@ impl Running {
                 self.world.wall_fits(side, building, from, to)
             }
         };
-        ring_tool::ring_pieces(corners, &check)
+        ring_tool::ring_pieces(corners, &check, self.wall_waits(building, blueprint))
     }
 
     /// Whether a click now would close the ring: it has three corners and
@@ -660,7 +662,7 @@ impl Running {
             return Some(old);
         }
         let pieces = self.ring_pieces(building, blueprint, &key.corners);
-        let laid = ring_tool::laid_tiles(&pieces);
+        let laid = ring_tool::laid_tiles(&pieces, blueprint);
         let gates = match self.buildings.gate_for(building) {
             Some(gate) if key.corners.len() >= 3 => {
                 let stats = &self.buildings.stats[usize::from(gate)];
@@ -1110,7 +1112,8 @@ impl Running {
             };
             return self.say(buildings::why(why).into());
         }
-        let tiles = ring_tool::laid_tiles(&pieces).len();
+        // A blueprint plans the tiles that wait as well.
+        let tiles = ring_tool::laid_tiles(&pieces, blueprint).len();
         if blueprint {
             let side = self.sandbox.side;
             let planned = self
