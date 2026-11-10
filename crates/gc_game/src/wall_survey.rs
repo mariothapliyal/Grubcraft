@@ -115,7 +115,7 @@ struct Stuck {
 }
 
 /// Watches every regiment that is marching and not fighting: each second
-/// it has moved less than a tile in the last ten is a stuck second.
+/// it has walked less than a tile in the last ten is a stuck second.
 #[derive(Default)]
 struct Marches {
     /// By regiment: where it stood each of the last ten seconds it marched.
@@ -158,7 +158,11 @@ impl Marches {
             if trail.len() > WINDOW {
                 trail.remove(0);
             }
-            let moved = (r.position - trail[0]).length();
+            // How far it walked, not how far it got: a caravan turning
+            // round at home has walked, and is not stuck.
+            let moved = (trail.windows(2))
+                .map(|w| (w[1] - w[0]).length())
+                .fold(Fx::ZERO, |a, b| a + b);
             if trail.len() < WINDOW || moved >= Fx::ONE {
                 self.open.remove(&r.handle);
                 continue;
@@ -180,7 +184,30 @@ impl Marches {
                 at: r.position,
                 goal,
                 files: (r.files, r.frontage),
-                waiting: format!("{:?} {:?}", fb.doing, fb.waiting),
+                waiting: {
+                    // Friends fighting close by, friends standing with no
+                    // order close by, and foes near: what it may be
+                    // waiting behind.
+                    let near = |o: &gc_sim::RegimentView, d: i32| {
+                        (o.position - r.position).length() <= Fx::from_int(d)
+                    };
+                    let (mut fighting, mut standing, mut foes) = (0, 0, 0);
+                    for o in world.regiments.iter() {
+                        if o.handle == r.handle {
+                            continue;
+                        }
+                        if o.owner == r.owner && near(&o, 6) {
+                            fighting += u32::from(o.engaged);
+                            standing += u32::from(!o.engaged && !o.moving);
+                        } else if o.owner != r.owner && near(&o, 12) {
+                            foes += 1;
+                        }
+                    }
+                    format!(
+                        "{:?} {:?} friends-fighting {fighting} friends-standing {standing} foes {foes}",
+                        fb.doing, fb.waiting
+                    )
+                },
                 worker,
                 map: local_map(world, real, &r, 9),
             });
@@ -345,6 +372,44 @@ fn wall_survey() {
         let t = world.tick_count();
         if t.is_multiple_of(TICKS_PER_SECOND) {
             marches.second(&world, &real);
+        }
+        // AI_TRACE=name: where each regiment of that unit is, every two
+        // seconds for the first AI_TRACE_SECS, and the orders given it.
+        if let Ok(name) = std::env::var("AI_TRACE") {
+            let secs = env_number("AI_TRACE_SECS", 120) as u32;
+            if t < secs * TICKS_PER_SECOND {
+                for c in &cmds {
+                    let text = format!("{:?}", c.command);
+                    if text.starts_with("Trade") {
+                        println!("TRACE t{t} p{} {text}", c.player);
+                    }
+                }
+                if t.is_multiple_of(2 * TICKS_PER_SECOND) {
+                    for r in world.regiments.iter() {
+                        let unit = real.data.conquest_units[usize::from(r.unit)].name();
+                        if unit == name {
+                            let fb = world.regiments.feedback(r.handle);
+                            println!(
+                                "TRACE t{t} p{} {:?} at ({:.1},{:.1}) moving {} route {:?} {:?}",
+                                r.owner,
+                                r.handle.index,
+                                crate::from_fx_vec(r.position).x,
+                                crate::from_fx_vec(r.position).y,
+                                r.moving,
+                                world
+                                    .route(r.handle)
+                                    .iter()
+                                    .map(|p| {
+                                        let v = crate::from_fx_vec(*p);
+                                        (v.x as i32, v.y as i32)
+                                    })
+                                    .collect::<Vec<_>>(),
+                                fb.map(|f| (f.doing, f.waiting)),
+                            );
+                        }
+                    }
+                }
+            }
         }
         if !walls {
             continue;
