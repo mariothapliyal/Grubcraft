@@ -7,8 +7,9 @@
 //! ([`crate::Command::WorkPlan`]) each take the nearest planned tile of
 //! their side's whenever they have nothing else to do, pay for it, lay it
 //! and build it, then go on to the next; when their side can't pay yet
-//! they wait. A planned tile whose ground has been taken meanwhile (a
-//! building, a regiment standing there, lost power) is dropped.
+//! they wait. A planned tile where something grows is cleared first by the
+//! worker that takes it; one someone stands on waits; one whose ground has
+//! been taken for good meanwhile (a building, lost power) is dropped.
 
 use crate::conquest::Conquest;
 use crate::nav::Nav;
@@ -16,7 +17,7 @@ use crate::regiments::{RegimentHandle, Regiments};
 use crate::structures::Refusal;
 use crate::structures::{BuildingId, Work};
 use crate::terrain::Terrain;
-use crate::walls::{Line, WallTile};
+use crate::walls::{Line, WallTile, passing};
 use crate::{PlayerId, StateHasher, Vec};
 
 /// The most planned tiles a side holds at once.
@@ -143,8 +144,10 @@ impl Blueprints {
 
 impl Conquest {
     /// `player` plans a wall of type `building` along `line` (see
-    /// [`Conquest::blueprint`]): nothing is paid or laid yet. Refused if
-    /// any tile couldn't go up now, or there is nothing new to plan.
+    /// [`Conquest::blueprint`]): nothing is paid or laid yet. Tiles that
+    /// could never go up are left out; those that only wait (see
+    /// [`crate::walls::passing`]) are planned with the rest. Refused if
+    /// there is nothing to plan.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn plan_wall(
         &mut self,
@@ -155,10 +158,13 @@ impl Conquest {
         regs: &Regiments,
         terrain: &Terrain,
     ) -> bool {
-        let Ok(laying) = self.blueprint(player, building, line, nav, regs, terrain) else {
+        let Ok(mut laying) = self.blueprint(player, building, line, nav, regs, terrain) else {
             return false;
         };
-        if laying.tiles.is_empty() || laying.tiles.iter().any(|t| t.fits.is_err()) {
+        laying
+            .tiles
+            .retain(|t| t.fits.is_ok() || t.fits.is_err_and(passing));
+        if laying.tiles.is_empty() {
             return false;
         }
         let drawing = self
@@ -261,6 +267,14 @@ impl Conquest {
                     Ok(()) => {}
                     // Someone standing by it: try the next nearest.
                     Err(Refusal::Crowded) => continue,
+                    // Something grows there: it clears the tile first,
+                    // and comes back to the plan after.
+                    Err(Refusal::Overgrown) => {
+                        let area = [plan.tile.0, plan.tile.1, 1, 1];
+                        let work = crate::clearing::Work::Clear;
+                        self.clearing.start(regs, r, area, None, work);
+                        return true;
+                    }
                     Err(_) => {
                         // The ground was taken meanwhile.
                         self.blueprints.take(n);

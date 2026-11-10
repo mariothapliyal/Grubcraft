@@ -1326,7 +1326,9 @@ impl World {
     /// The tiles of a wall of type `building` that `player` would draw
     /// from tile `from` to tile `to`, each with whether it can go up there
     /// now, or why the whole line can't (see [`walls`]). The check
-    /// [`Command::BuildWall`] makes: it goes up only if every tile can.
+    /// [`Command::BuildWall`] makes: the tiles that can go up do, a wall's
+    /// tiles that only wait (see [`walls::passing`]) are planned for its
+    /// worker, and the rest are left out.
     pub fn wall_plan(
         &self,
         player: PlayerId,

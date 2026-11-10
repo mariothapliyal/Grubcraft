@@ -149,12 +149,52 @@ pub fn clamp_end(from: (i32, i32), to: (i32, i32)) -> (i32, i32) {
 }
 
 /// How a planned tile sits on the ground; `open` is how one that fits is
-/// drawn (the side's colour for a wall, pale blue for a blueprint).
-fn fit_of(tile: &WallTile, open: Fit) -> Fit {
+/// drawn (the side's colour for a wall, pale blue for a blueprint). With
+/// `waits` (a wall a worker builds: see [`Sandbox::wall_waits`]) a tile
+/// under something growing shows as ground to clear and one someone
+/// stands on as planned; any other tile that can't go up is left out, in
+/// red.
+fn fit_of(tile: &WallTile, open: Fit, waits: bool) -> Fit {
     match tile.fits {
         Ok(()) => open,
-        Err(Refusal::Overgrown) => Fit::Overgrown,
+        Err(Refusal::Overgrown) if waits => Fit::Overgrown,
+        Err(Refusal::Crowded) if waits => Fit::Planned,
         Err(_) => Fit::Refused,
+    }
+}
+
+/// What ordering a line whose tiles are `plan` would do: how many go up
+/// (or are planned) and how many are left out, or why nothing is ordered:
+/// none of it can go up, or it is a bridge (`whole`) and some of it can't.
+fn outcome(plan: &[WallTile], waits: bool, whole: bool) -> Result<(usize, usize), Refusal> {
+    let goes = |t: &&WallTile| match t.fits {
+        Ok(()) => true,
+        Err(why) => waits && gc_sim::walls::passing(why),
+    };
+    let n = plan.iter().filter(goes).count();
+    let out = plan.len() - n;
+    match plan.iter().find(|t| !goes(t)).and_then(|t| t.fits.err()) {
+        Some(why) if n == 0 || whole => Err(why),
+        _ => Ok((n, out)),
+    }
+}
+
+/// The hint's words for the tiles of `plan` that wait as plans.
+fn waiting(plan: &[WallTile], waits: bool) -> &'static str {
+    let has = |why| waits && plan.iter().any(|t| t.fits == Err(why));
+    match (has(Refusal::Overgrown), has(Refusal::Crowded)) {
+        (true, _) => ", ground to clear first",
+        (false, true) => ", some once the way is clear",
+        (false, false) => "",
+    }
+}
+
+/// The hint's words for tiles left out of a line.
+fn left_out(out: usize) -> String {
+    if out == 0 {
+        String::new()
+    } else {
+        format!(", {out} left out (red)")
     }
 }
 
@@ -206,7 +246,9 @@ struct DragKey {
 /// line it lies along.
 pub struct DragPreview {
     pub piece: Piece,
-    ghost: Vec<(Tile, Fit, [i32; 4])>,
+    /// Each tile to draw: how it fits, its chord of the path, and its
+    /// piece of the wall as it would stand joined to the walls there.
+    ghost: Vec<(Tile, Fit, [i32; 4], Option<buildings::WallPiece>)>,
     key: DragKey,
 }
 
@@ -470,9 +512,10 @@ impl Running {
         let curve = path.curve();
         let chord = |t| curve.chord(t).map(i32::from);
         let open = if blueprint { Fit::Blueprint } else { Fit::Open };
-        let ghost = match &plan {
+        let waits = self.wall_waits(building, blueprint);
+        let ghost: Vec<(Tile, Fit)> = match &plan {
             Ok(tiles) => (tiles.iter())
-                .map(|t| (t.tile, fit_of(t, open), chord(t.tile)))
+                .map(|t| (t.tile, fit_of(t, open, waits)))
                 .collect(),
             // Far too long or not a path at all: no tiles to show in red.
             Err(_)
@@ -489,11 +532,22 @@ impl Running {
                 } else {
                     path.wall_tiles()
                 };
-                (tiles.into_iter())
-                    .map(|t| (t, Fit::Refused, chord(t)))
-                    .collect()
+                tiles.into_iter().map(|t| (t, Fit::Refused)).collect()
             }
         };
+        // What you see is what goes up: each tile's piece as the finished
+        // wall will show it, joined to the walls and gates standing.
+        let tiles: Vec<Tile> = ghost.iter().map(|g| g.0).collect();
+        let shapes = match self.buildings.line_kind(building) {
+            Some(kind) => self.wall_lines.ghost(side, kind, &path, &tiles),
+            None => Vec::new(),
+        };
+        let ghost = (ghost.into_iter().enumerate())
+            .map(|(k, (tile, fit))| {
+                let piece = shapes.get(k).and_then(|s| s.as_ref()).map(|s| s.piece());
+                (tile, fit, chord(tile), piece)
+            })
+            .collect();
         let (a, b) = path.ends();
         Some(DragPreview {
             piece: Piece {
@@ -503,6 +557,16 @@ impl Running {
             ghost,
             key,
         })
+    }
+
+    /// Whether a line of `building` ordered now keeps its tiles that can't
+    /// go up yet (someone stands there, something grows there) as plans a
+    /// worker clears and builds after: a blueprint, or a wall a worker
+    /// builds. A grown wall, a bridge and field works leave them out.
+    fn wall_waits(&self, building: BuildingId, blueprint: bool) -> bool {
+        blueprint
+            || (self.buildings.line_kind(building) == Some(crate::wall_lines::Kind::Wall)
+                && !self.buildings.is_grown(building))
     }
 
     fn wall_preview(&self, building: BuildingId) -> Option<Piece> {
@@ -729,14 +793,15 @@ impl Running {
         let blueprint = self.hud.wall_mode.blueprint;
         let open = if blueprint { Fit::Blueprint } else { Fit::Open };
         let look = self.buildings.wall_look(id, false);
+        let waits = self.wall_waits(id, blueprint);
         if let Some(drag) = &self.hud.drag_preview {
             self.hud.wall_preview = None;
             self.hud.ring_preview = None;
-            for &(tile, fit, line) in &drag.ghost {
+            for &(tile, fit, line, piece) in &drag.ghost {
                 buildings::push_wall_ghost(
                     line,
                     look,
-                    std::iter::once((tile, fit)),
+                    std::iter::once((tile, fit, piece)),
                     colour,
                     ground,
                     &mut self.instances,
@@ -754,9 +819,10 @@ impl Running {
             // The corners and joins are shared by two pieces: drawn once.
             let mut drawn = std::collections::HashSet::new();
             for piece in &ring.pieces {
-                let tiles = ghost_tiles(piece, open)
+                let tiles = ghost_tiles(piece, open, waits)
                     .into_iter()
-                    .filter(|&(t, _)| drawn.insert(t));
+                    .filter(|&(t, _)| drawn.insert(t))
+                    .map(|(t, fit)| (t, fit, None));
                 buildings::push_wall_ghost(
                     piece.line,
                     look,
@@ -795,7 +861,7 @@ impl Running {
         buildings::push_wall_ghost(
             piece.line,
             look,
-            ghost_tiles(piece, open).into_iter(),
+            (ghost_tiles(piece, open, waits).into_iter()).map(|(t, fit)| (t, fit, None)),
             colour,
             ground,
             &mut self.instances,
@@ -816,7 +882,7 @@ impl Running {
             buildings::push_wall_ghost(
                 p.line.map(i32::from),
                 self.buildings.wall_look(p.building, false),
-                std::iter::once((p.tile, Fit::Planned)),
+                std::iter::once((p.tile, Fit::Planned, None)),
                 colour,
                 ground,
                 &mut self.instances,
@@ -883,9 +949,6 @@ impl Running {
             Ok(plan) => plan,
             Err(why) => return self.say(self.why_now(building, why).into()),
         };
-        if let Some(why) = plan.iter().find_map(|t| t.fits.err()) {
-            return self.say(self.why_now(building, why).into());
-        }
         if plan.is_empty() {
             self.say(if blueprint {
                 "Those tiles are already walled or planned.".into()
@@ -893,6 +956,10 @@ impl Running {
                 "Your walls already stand there.".into()
             });
             return;
+        }
+        let waits = self.wall_waits(building, blueprint);
+        if let Err(why) = outcome(&plan, waits, self.buildings.is_bridge(building)) {
+            return self.say(self.why_now(building, why).into());
         }
         if self.buildings.is_bridge(building) {
             // Bridges are always drawn lines, as wide as chosen.
@@ -963,15 +1030,16 @@ impl Running {
         match plan {
             Err(why) => return self.say(self.why_now(building, why).into()),
             Ok(plan) => {
-                if let Some(why) = plan.iter().find_map(|t| t.fits.err()) {
-                    return self.say(self.why_now(building, why).into());
-                }
                 if plan.is_empty() {
                     return self.say(if blueprint {
                         "Those tiles are already walled or planned.".into()
                     } else {
                         "Your walls already stand there.".into()
                     });
+                }
+                let waits = self.wall_waits(building, blueprint);
+                if let Err(why) = outcome(&plan, waits, bridge) {
+                    return self.say(self.why_now(building, why).into());
                 }
             }
         }
@@ -1147,23 +1215,20 @@ impl Running {
             Ok(plan) => plan,
             Err(why) => return Some(self.why_now(id, *why).into()),
         };
-        if let Some(why) = plan.iter().find_map(|t| t.fits.err())
-            && why != Refusal::Overgrown
-        {
-            return Some(self.why_now(id, why).into());
-        }
-        let n = plan.len();
-        let (grub, marrow) = wall_price(stats, n as u32);
-        let price = (!blueprint).then(|| buildings::price_text(grub, marrow));
-        let clear = if plan.iter().any(|t| t.fits.is_err()) {
-            ", ground to clear"
-        } else {
-            ""
+        let waits = self.wall_waits(id, blueprint);
+        let (n, out) = match outcome(plan, waits, bridge) {
+            Ok(counts) => counts,
+            Err(why) => return Some(self.why_now(id, why).into()),
         };
+        // Only what goes up now is paid for now.
+        let now = plan.iter().filter(|t| t.fits.is_ok()).count();
+        let (grub, marrow) = wall_price(stats, now as u32);
+        let price = (!blueprint).then(|| buildings::price_text(grub, marrow));
+        let clear = format!("{}{}", waiting(plan, waits), left_out(out));
         Some(hint_line(
             n,
             price.as_deref(),
-            clear,
+            &clear,
             self.buildings.is_grown(id),
         ))
     }
@@ -1176,19 +1241,17 @@ impl Running {
             Ok(plan) => plan,
             Err(why) => return Some(self.why_now(id, *why).into()),
         };
-        if let Some(why) = plan.iter().find_map(|t| t.fits.err())
-            && why != Refusal::Overgrown
-        {
-            return Some(self.why_now(id, why).into());
-        }
-        let n = plan.len();
-        let (grub, marrow) = wall_price(stats, n as u32);
-        let price = (!self.hud.wall_mode.blueprint).then(|| buildings::price_text(grub, marrow));
-        let clear = if plan.iter().any(|t| t.fits.is_err()) {
-            ", ground to clear"
-        } else {
-            ""
+        let blueprint = self.hud.wall_mode.blueprint;
+        let waits = self.wall_waits(id, blueprint);
+        let (n, out) = match outcome(plan, waits, self.buildings.is_bridge(id)) {
+            Ok(counts) => counts,
+            Err(why) => return Some(self.why_now(id, why).into()),
         };
+        // Only what goes up now is paid for now.
+        let now = plan.iter().filter(|t| t.fits.is_ok()).count();
+        let (grub, marrow) = wall_price(stats, now as u32);
+        let price = (!blueprint).then(|| buildings::price_text(grub, marrow));
+        let clear = format!("{}{}", waiting(plan, waits), left_out(out));
         let bridge = self.buildings.is_bridge(id).then(|| {
             (
                 width_name(self.hud.wall_mode.width),
@@ -1198,7 +1261,7 @@ impl Running {
         Some(drag_hint_line(
             n,
             price.as_deref(),
-            clear,
+            &clear,
             self.buildings.is_grown(id),
             bridge,
         ))
@@ -1232,9 +1295,11 @@ fn wall_price(stats: &BuildingStats, n: u32) -> (u32, u32) {
 /// The tiles of a checked line to draw, each with how it sits. A line that
 /// only crosses your own walls plans no tile: show where it lies. A line
 /// that can't be planned is all red.
-fn ghost_tiles(piece: &Piece, open: Fit) -> Vec<(Tile, Fit)> {
+fn ghost_tiles(piece: &Piece, open: Fit, waits: bool) -> Vec<(Tile, Fit)> {
     match &piece.plan {
-        Ok(plan) => plan.iter().map(|t| (t.tile, fit_of(t, open))).collect(),
+        Ok(plan) => (plan.iter())
+            .map(|t| (t.tile, fit_of(t, open, waits)))
+            .collect(),
         Err(_) => {
             let [x0, y0, x1, y1] = piece.line;
             (gc_sim::walls::wall_tiles((x0, y0), (x1, y1)).unwrap_or_default())
@@ -1384,6 +1449,34 @@ mod tests {
             rect: [x, y, 1, 1],
             joins: true,
         }
+    }
+
+    #[test]
+    fn a_line_goes_up_but_for_what_can_never_stand() {
+        let tile = |x: i32, fits| WallTile { tile: (x, 0), fits };
+        let plan = [
+            tile(0, Ok(())),
+            tile(1, Err(Refusal::Overgrown)),
+            tile(2, Err(Refusal::Crowded)),
+            tile(3, Err(Refusal::Rough)),
+        ];
+        // A wall a worker builds: the tree and the soldier only wait, the
+        // rock is left out.
+        assert_eq!(outcome(&plan, true, false), Ok((3, 1)));
+        assert_eq!(fit_of(&plan[1], Fit::Open, true), Fit::Overgrown);
+        assert_eq!(fit_of(&plan[2], Fit::Open, true), Fit::Planned);
+        assert_eq!(fit_of(&plan[3], Fit::Open, true), Fit::Refused);
+        assert_eq!(waiting(&plan, true), ", ground to clear first");
+        assert_eq!(left_out(1), ", 1 left out (red)");
+        // A wall that grows on its own leaves them all out.
+        assert_eq!(outcome(&plan, false, false), Ok((1, 3)));
+        assert_eq!(fit_of(&plan[1], Fit::Open, false), Fit::Refused);
+        assert_eq!(waiting(&plan, false), "");
+        // A bridge is all or nothing, and a line with nothing to go up
+        // says why.
+        assert_eq!(outcome(&plan, false, true), Err(Refusal::Overgrown));
+        assert_eq!(outcome(&plan[3..], true, false), Err(Refusal::Rough));
+        assert_eq!(outcome(&plan[..1], true, false), Ok((1, 0)));
     }
 
     #[test]

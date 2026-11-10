@@ -20,6 +20,7 @@
 //! once on its own. A tile its veins no longer reach withers
 //! ([`WITHER_PER_SECOND`]) until it dies.
 
+use crate::blueprints::Plan;
 use crate::conquest::{Conquest, overgrown, overlaps};
 use crate::drawn::{self, DrawnPath};
 use crate::nav::Nav;
@@ -325,7 +326,7 @@ impl Conquest {
     /// each with whether it can go up there. Refused as a whole for a
     /// building that isn't a drawn wall, a line too long or bent too
     /// sharply, or one its owner may not lay now (tier, or the price of all
-    /// of it).
+    /// of what can go up now).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn wall_plan(
         &self,
@@ -340,7 +341,8 @@ impl Conquest {
         if self.structures.free_slots() < laying.tiles.len() {
             return Err(Refusal::NoRoom);
         }
-        let n = laying.tiles.len() as u32;
+        // Only what goes up now is paid for now (a bridge is all or none).
+        let n = laying.tiles.iter().filter(|t| t.fits.is_ok()).count() as u32;
         let b = laying.stats;
         if !self.economy.can_afford(
             player,
@@ -502,9 +504,12 @@ impl Conquest {
     /// Worker slot `r`, `player`'s, lays a wall of type `building` along
     /// `line` (see [`Conquest::wall_plan`]), pays for all of it and goes to
     /// build the tile nearest it; a wall grown along veins takes no worker
-    /// (`r` is `None`) and grows on its own. Refused if any tile can't go
-    /// up, or there is nothing new to build. The line is kept for the rest
-    /// of the match (see [`crate::drawn::Drawing`]).
+    /// (`r` is `None`) and grows on its own. Tiles that can't go up are
+    /// left out, but for a wall's that only wait (see [`passing`]): those
+    /// are planned, and the worker works the plans after. Refused if
+    /// nothing can go up or wait, and for a bridge if any tile can't go
+    /// up. The line is kept for the rest of the match (see
+    /// [`crate::drawn::Drawing`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn lay_wall(
         &mut self,
@@ -535,10 +540,33 @@ impl Conquest {
         let Ok(laying) = self.wall_plan(player, building, line, nav, regs, terrain) else {
             return false;
         };
-        if laying.tiles.is_empty()
-            || laying.tiles.iter().any(|t| t.fits.is_err())
-            || self.structures.free_slots() < laying.tiles.len()
-        {
+        // A bridge is laid whole or not at all. Of any other line, what
+        // fits goes up now; a wall's tiles that someone stands on or
+        // something grows on wait as plans (see [`crate::blueprints`]),
+        // the worker clearing and building them in turn; the rest (rock,
+        // water, a building in the way) is left out.
+        if stats.is_bridge() && laying.tiles.iter().any(|t| t.fits.is_err()) {
+            return false;
+        }
+        let waits = worker.is_some_and(|r| self.is_builder(r, regs)) && stats.role == Role::Wall;
+        let now: Vec<WallTile> = (laying.tiles.iter().copied())
+            .filter(|t| t.fits.is_ok())
+            .collect();
+        let mut room = if waits {
+            self.blueprints.room(player)
+        } else {
+            0
+        };
+        let later: Vec<(i32, i32)> = (laying.tiles.iter())
+            .filter(|t| t.fits.is_err_and(passing) && !self.blueprints.planned(player, t.tile))
+            .filter(|_| {
+                let fits = room > 0;
+                room = room.saturating_sub(1);
+                fits
+            })
+            .map(|t| t.tile)
+            .collect();
+        if (now.is_empty() && later.is_empty()) || self.structures.free_slots() < now.len() {
             return false;
         }
         // Only a line that is laid is remembered.
@@ -546,19 +574,11 @@ impl Conquest {
             .structures
             .drawings
             .add(player, laying.path, laying.width);
-        let ends = self.structures.found_wall(
-            player,
-            building,
-            &laying.tiles,
-            drawing,
-            laying.placer(terrain),
-            nav,
-            regs,
-        );
-        let Some((a, b)) = ends else {
-            return false;
-        };
-        let n = laying.tiles.len() as u32;
+        let place = laying.placer(terrain);
+        let ends = self
+            .structures
+            .found_wall(player, building, &now, drawing, &place, nav, regs);
+        let n = now.len() as u32;
         self.economy.spend(
             player,
             u32::from(stats.cost_grub) * n,
@@ -566,11 +586,28 @@ impl Conquest {
         );
         // Tiles drawn over the player's own blueprint are no longer planned.
         if !self.blueprints.plans().is_empty() {
-            let tiles: Vec<(i32, i32)> = laying.tiles.iter().map(|t| t.tile).collect();
+            let tiles: Vec<(i32, i32)> = now.iter().map(|t| t.tile).collect();
             self.blueprints.drop_tiles(player, &tiles);
+        }
+        for &tile in &later {
+            self.blueprints.add(Plan {
+                owner: player,
+                building,
+                tile,
+                line: place(tile).0,
+                drawing,
+            });
         }
         let Some(r) = worker else {
             // Grown: every tile grows on its own.
+            return true;
+        };
+        self.stop_work(r);
+        if !later.is_empty() {
+            self.blueprints.hire(regs.handle(r));
+        }
+        let Some((a, b)) = ends else {
+            // Nothing to build yet: it starts on the plans.
             return true;
         };
         // The worker starts at the end nearer it and works along (a
@@ -585,10 +622,15 @@ impl Conquest {
         if stats.is_bridge() && !s.reachable_deck(first.index as usize) {
             first = if first == a { b } else { a };
         }
-        self.stop_work(r);
         self.structures.send(regs, r, first, Work::Build);
         true
     }
+}
+
+/// Whether a wall tile refused for `why` only waits: whoever stands there
+/// will move on, and what grows there can be cleared.
+pub fn passing(why: Refusal) -> bool {
+    matches!(why, Refusal::Crowded | Refusal::Overgrown)
 }
 
 /// The box of tiles (`[x, y, width, depth]`) `tiles` lie in.

@@ -100,6 +100,20 @@ pub(super) struct Piece {
     pub to: (i32, i32),
     /// How far round the ring from its front (its gate) it starts, tiles.
     pub round: u32,
+    /// Where its two ends are in the ring's order round the town.
+    at: [usize; 2],
+}
+
+impl Piece {
+    /// A single tile of wall, `round` tiles round the ring from its front.
+    pub fn one(tile: (i32, i32), round: u32) -> Piece {
+        Piece {
+            from: tile,
+            to: tile,
+            round,
+            at: [0; 2],
+        }
+    }
 }
 
 /// A ring laid out.
@@ -116,9 +130,46 @@ pub(super) struct Layout {
     pub clear: Vec<((i32, i32), u32)>,
     /// The town's ground once they are drawn, by the site's tiles.
     town: Vec<bool>,
+    /// The ring's tiles in order round the town, by the site's tiles.
+    order: Vec<usize>,
 }
 
 impl Layout {
+    /// Turn the ring to face tile `front` (the middle of its gate, or
+    /// where its gate would be): its lines and the ground to clear are
+    /// put in order from there, each line drawn from its end nearer it.
+    pub fn face(&mut self, site: &Site, front: Option<(i32, i32)>) {
+        let len = self.order.len().max(1);
+        let front = front
+            .and_then(|f| {
+                (self.order.iter().enumerate())
+                    .min_by_key(|&(_, &i)| {
+                        let a = site.tile(i);
+                        (a.0 - f.0).pow(2) + (a.1 - f.1).pow(2)
+                    })
+                    .map(|(k, _)| k)
+            })
+            .unwrap_or(0);
+        let round_from = |place: usize| {
+            let d = (place % len).abs_diff(front);
+            d.min(len - d) as u32
+        };
+        for p in &mut self.pieces {
+            let (ra, rb) = (round_from(p.at[0]), round_from(p.at[1]));
+            if rb < ra {
+                (p.from, p.to) = (p.to, p.from);
+                p.at.swap(0, 1);
+            }
+            p.round = ra.min(rb);
+        }
+        self.pieces.sort_by_key(|p| p.round);
+        for c in &mut self.clear {
+            let i = site.index(c.0);
+            c.1 = (self.order.iter().position(|&r| Some(r) == i)).map_or(u32::MAX, round_from);
+        }
+        self.clear.sort_by_key(|c| c.1);
+    }
+
     /// Whether tile `t` of `site` (which this was laid on) is the town's
     /// ground once the ring is drawn.
     pub fn town(&self, site: &Site, t: (i32, i32)) -> bool {
@@ -600,16 +651,6 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
     }
     let in_cut = &in_cut;
     let gap = |g: Ground| (0..n).filter(move |&i| in_cut[i] && site.ground[i] == g);
-    let front = front
-        .and_then(|f| {
-            (round.iter().enumerate())
-                .min_by_key(|&(_, &i)| {
-                    let a = site.tile(i);
-                    (a.0 - f.0).pow(2) + (a.1 - f.1).pow(2)
-                })
-                .map(|(k, _)| k)
-        })
-        .unwrap_or(0);
     let core = site.core();
     let ok = |t: (i32, i32)| {
         site.index(t).is_some_and(|i| {
@@ -619,10 +660,6 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
                 && !site.clear[i]
                 && !site.rim(i)
         })
-    };
-    let round_from = |place: usize| {
-        let d = (place % round.len().max(1)).abs_diff(front);
-        d.min(round.len() - d) as u32
     };
     let fits =
         |a: (i32, i32), b: (i32, i32)| wall_tiles(a, b).is_some_and(|t| t.into_iter().all(ok));
@@ -636,13 +673,11 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
                         laid[i] = true;
                     }
                 }
-                // Drawn from its end nearer the front.
-                let (ra, rb) = (round_from(from + pa), round_from(from + pb));
-                let (from, to) = if ra <= rb { (a, b) } else { (b, a) };
                 pieces.push(Piece {
-                    from,
-                    to,
-                    round: ra.min(rb),
+                    from: a,
+                    to: b,
+                    round: 0,
+                    at: [from + pa, from + pb],
                 });
             }
         }
@@ -653,38 +688,25 @@ pub(super) fn lay(site: &Site, front: Option<(i32, i32)>) -> Option<Layout> {
         let open = (0..n).any(|i| town[i] && (site.rim(i) || site.out[i]));
         (!open).then_some((pieces, town))
     };
-    let (mut pieces, town) = build(STRAIGHTEN).or_else(|| build(EXACT))?;
-    pieces.sort_by_key(|p| p.round);
-    let place = |i: usize| {
-        round
-            .iter()
-            .position(|&r| r == i)
-            .map_or(u32::MAX, round_from)
-    };
-    let mut clear: Vec<_> = gap(Ground::Grown)
-        .map(|i| (site.tile(i), place(i)))
-        .collect();
-    clear.sort_by_key(|c| c.1);
-    Some(Layout {
+    let (pieces, town) = build(STRAIGHTEN).or_else(|| build(EXACT))?;
+    let mut layout = Layout {
         pieces,
         closes: gap(Ground::Hard).next().is_none(),
-        clear,
+        clear: gap(Ground::Grown).map(|i| (site.tile(i), 0)).collect(),
         town,
-    })
+        order: round,
+    };
+    layout.face(site, front);
+    Some(layout)
 }
 
 /// Where the way out of the town toward `toward` (a tile, far off or
-/// near) crosses the ring laid on `site`, and the way it goes there: the
-/// place for a gate. `None` when no way leads out (the ground closes the
-/// town of itself, or the ring is closed already).
-pub(super) fn way_out(site: &Site, toward: (i32, i32)) -> Option<Door> {
+/// near) crosses the ring `layout` laid on `site`, and the way it goes
+/// there: the place for a gate. `None` when no way leads out (the ground
+/// closes the town of itself, or the ring is closed already).
+pub(super) fn way_out(site: &Site, layout: &Layout, toward: (i32, i32)) -> Option<Door> {
     let n = site.ground.len();
-    let cut = cut(site)?;
-    let mut in_cut = vec![false; n];
-    for &i in &cut {
-        in_cut[i] = true;
-    }
-    let inside = site.spread((0..n).filter(|&i| site.keep[i]), |i| in_cut[i]);
+    let inside = &layout.town;
     // The shortest ways from the kept ground, walls not yet built aside.
     let mut came = vec![usize::MAX; n];
     let mut dist = vec![u32::MAX; n];
@@ -716,7 +738,10 @@ pub(super) fn way_out(site: &Site, toward: (i32, i32)) -> Option<Door> {
         way.push(came[*way.last()?]);
     }
     way.reverse();
-    let k = way.iter().position(|&i| !inside[i])?;
+    let k = way.iter().rposition(|&i| inside[i])? + 1;
+    if k >= way.len() {
+        return None;
+    }
     let (a, b) = (
         site.tile(way[k.saturating_sub(3)]),
         site.tile(way[(k + 3).min(way.len() - 1)]),
@@ -1021,7 +1046,7 @@ mod tests {
             "...............",
         ]);
         // The enemy is far to the east.
-        let door = way_out(&s, (400, 207)).unwrap();
+        let door = way_out(&s, &lay(&s, None).unwrap(), (400, 207)).unwrap();
         assert_eq!(door.out, (1, 0));
         assert_eq!(door.mid.0, 110, "just east of the kept ground");
         assert!(door_fits(&s, door));
@@ -1058,7 +1083,7 @@ mod tests {
         ]);
         let l = lay(&s, None).unwrap();
         assert!(l.closes && l.pieces.is_empty());
-        assert_eq!(way_out(&s, (300, 203)), None);
+        assert_eq!(way_out(&s, &l, (300, 203)), None);
     }
 
     #[test]
@@ -1067,28 +1092,6 @@ mod tests {
         s.keep[2 * 5 + 1] = true;
         s.keep[2 * 5] = true;
         assert!(lay(&s, None).is_none());
-    }
-
-    #[test]
-    #[ignore = "timing, by hand"]
-    fn timing() {
-        let mut s = Site::round((100, 100));
-        for dy in -12i32..=12 {
-            for dx in -12i32..=12 {
-                if dx * dx + dy * dy <= 100 || (dx.abs() < 3 && dy > 0) {
-                    s.keep_tile((100 + dx, 100 + dy));
-                }
-            }
-        }
-        for k in 0..3 {
-            let t = std::time::Instant::now();
-            let c = cut(&s).unwrap();
-            let t1 = t.elapsed();
-            let l = lay(&s, None).unwrap();
-            let t2 = t.elapsed();
-            let w = way_out(&s, (400, 100));
-            eprintln!("run {k}: cut {} tiles {:?}, lay {} pieces {:?}, way {:?} {:?}", c.len(), t1, l.pieces.len(), t2 - t1, w.map(|d| d.mid), t.elapsed() - t2);
-        }
     }
 
     #[test]

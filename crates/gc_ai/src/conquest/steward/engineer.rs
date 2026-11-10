@@ -26,7 +26,7 @@
 //! caution how soon and how much. Manning the walls and assaulting the
 //! enemy's are the Marshal's.
 
-use gc_sim::structures::{GATE, GROWN, Refusal, Role, StructureHandle};
+use gc_sim::structures::{GATE, GROWN, NEEDS_POWER, Refusal, Role, StructureHandle};
 use gc_sim::walls::WallTile;
 use gc_sim::{BuildingId, Command, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
@@ -52,6 +52,9 @@ const FRONT: u32 = 9;
 const HOME_ROOM: i32 = 8;
 const ROOM: i32 = 3;
 const NODE_ROOM: i32 = 2;
+/// How far inside the edge of its veins or power the ground a ring keeps
+/// stays, tiles, so the ring itself has fed ground to stand on.
+const FED_ROOM: i32 = 2;
 const NODES_IN: f32 = 16.0;
 /// Its buildings this far from home, tiles, are inside the ring; any
 /// further out is left outside.
@@ -329,28 +332,7 @@ impl Steward {
             }
         };
         if again {
-            let t0 = std::time::Instant::now();
             let works = lay_works(s, look, home, &self.engineer.no_gate);
-            if std::env::var("AI_RING_DEBUG").is_ok() {
-                eprintln!(
-                    "RING p{} t{}s tier{} took {:?}: {}",
-                    s.party,
-                    s.now / TICKS_PER_SECOND,
-                    look.tier,
-                    t0.elapsed(),
-                    match &works {
-                        Some(w) => format!(
-                            "{} pieces ({} front), closes {}, door {:?}, new gate {:?}",
-                            w.pieces.len(),
-                            w.pieces.iter().filter(|p| p.round <= FRONT).count(),
-                            w.closes,
-                            w.door,
-                            w.gate
-                        ),
-                        None => "none".into(),
-                    }
-                );
-            }
             if works.is_none() && self.engineer.works.is_none() {
                 self.engineer.next_line = s.now + LINE_RETRY;
             }
@@ -377,6 +359,9 @@ impl Steward {
                 return None;
             }
             let laid = s.world.can_lay(s.party, gate.id, tile, turn);
+            if laid == Err(Refusal::Price) {
+                return None;
+            }
             // Troops standing there move on: it waits a while for them.
             if laid == Err(Refusal::Crowded) {
                 let works = self.engineer.works.as_mut()?;
@@ -423,15 +408,6 @@ impl Steward {
                 .wall_fits(s.party, wall.id, p.from, p.to)
                 .unwrap_or_default();
             let crowded = |t: &WallTile| t.fits == Err(Refusal::Crowded);
-            if std::env::var("AI_RING_DEBUG").is_ok() {
-                eprintln!(
-                    "RING p{} t{}s piece {:?} spare {spare}: {:?}",
-                    s.party,
-                    s.now / TICKS_PER_SECOND,
-                    p,
-                    tiles.iter().map(|t| t.fits).collect::<Vec<_>>()
-                );
-            }
             // Walled already: on to the next.
             if tiles.is_empty() {
                 self.engineer.works.as_mut()?.pieces.remove(k);
@@ -463,12 +439,7 @@ impl Steward {
             pieces.remove(k);
             if p.from != p.to {
                 for t in tiles.iter().rev().filter(|t| t.fits.is_ok() || crowded(t)) {
-                    let one = Piece {
-                        from: t.tile,
-                        to: t.tile,
-                        round: p.round,
-                    };
-                    pieces.insert(k, one);
+                    pieces.insert(k, Piece::one(t.tile, p.round));
                 }
             }
         }
@@ -811,7 +782,6 @@ fn tile_of(p: Vec2) -> (i32, i32) {
 fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
     let wall = s.kit.wall()?;
     let at = tile_of(home);
-    let t0 = std::time::Instant::now();
     let mut site = Site::round(at);
     let n = site.ground.len();
     for i in 0..n {
@@ -883,23 +853,38 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
         }
     }
     site.keep_joined(at);
-    let t1 = t0.elapsed();
     // Where wall could go up, on the ground that matters: what joins the
     // kept ground.
-    let joined = site.joined();
-    let t2 = t0.elapsed();
-    if std::env::var("AI_RING_DEBUG").is_ok() {
-        eprintln!("RING site: shut+keep {t1:?}, joined {:?} ({} tiles)", t2 - t1, joined.len());
+    let ground = |t: (i32, i32)| s.world.wall_ground(s.party, wall.id, t);
+    // Walls that must stand on its veins or in its power: the ring stays
+    // on them, giving up what it would have kept past their edge.
+    if wall.stats.flags & (GROWN | NEEDS_POWER) != 0 {
+        let unfed: Vec<usize> = (site.joined().into_iter())
+            .filter(|&i| {
+                matches!(
+                    ground(site.tile(i)),
+                    Err(Refusal::NoVeins | Refusal::Unpowered)
+                )
+            })
+            .collect();
+        for i in unfed {
+            let (x, y) = site.tile(i);
+            for dy in -FED_ROOM..=FED_ROOM {
+                for dx in -FED_ROOM..=FED_ROOM {
+                    if let Some(j) = site.index((x + dx, y + dy)) {
+                        site.keep[j] = false;
+                    }
+                }
+            }
+        }
+        site.keep_joined(at);
     }
-    for i in joined.into_iter().filter(|&i| !site.keep[i]) {
-        site.ground[i] = match s.world.wall_ground(s.party, wall.id, site.tile(i)) {
+    for i in site.joined().into_iter().filter(|&i| !site.keep[i]) {
+        site.ground[i] = match ground(site.tile(i)) {
             Ok(()) => Ground::Open,
             Err(Refusal::Overgrown) => Ground::Grown,
             Err(_) => Ground::Hard,
         };
-    }
-    if std::env::var("AI_RING_DEBUG").is_ok() {
-        eprintln!("RING site: classify {:?}", t0.elapsed() - t2);
     }
     Some(site)
 }
@@ -909,20 +894,12 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
 /// where its way out toward the nearest enemy crosses it. `None` when no
 /// ring can be laid out now, or its faction builds gates and none fits.
 fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Option<Works> {
-    let site = ring_site(s, look, home);
-    if site.is_none() && std::env::var("AI_RING_DEBUG").is_ok() {
-        eprintln!("RING p{} no site", s.party);
-    }
-    let mut site = site?;
+    let mut site = ring_site(s, look, home)?;
     let toward = super::super::nearest_other_start(s, home).map_or(tile_of(home), tile_of);
-    let way = ringwork::way_out(&site, toward);
     let gate = s.kit.gate();
+    let mut first = ringwork::lay(&site, None)?;
+    let way = ringwork::way_out(&site, &first, toward);
     // A gate of its own the ring runs through already.
-    let first = ringwork::lay(&site, way.map(|d| d.mid));
-    if first.is_none() && std::env::var("AI_RING_DEBUG").is_ok() {
-        eprintln!("RING p{} no first layout, way {:?}", s.party, way);
-    }
-    let first = first?;
     let standing = look
         .mine
         .iter()
@@ -950,24 +927,13 @@ fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Opti
         let fits = !no_gate.iter().any(near)
             && ringwork::door_fits(&site, d)
             && match s.world.can_lay(s.party, gate?.id, tile, turn) {
-                Ok(()) => true,
+                // What it can't pay for yet it waits for, once laid out.
+                Ok(()) | Err(Refusal::Price) => true,
                 Err(Refusal::Crowded) => crowded,
                 Err(_) => false,
             };
         fits.then_some(d)
     };
-    if std::env::var("AI_RING_DEBUG").is_ok() {
-        eprintln!(
-            "RING p{} first: {} pieces closes {} way {:?} standing {:?} kept {} hard {}",
-            s.party,
-            first.pieces.len(),
-            first.closes,
-            way,
-            standing,
-            site.keep.iter().filter(|&&k| k).count(),
-            site.ground.iter().filter(|&&g| g == Ground::Hard).count(),
-        );
-    }
     let new = match (standing, gate, way) {
         (None, Some(_), Some(way)) => Some(
             (ringwork::door_places(way).find_map(|d| lays(d, false)))
@@ -983,7 +949,10 @@ fn lay_works(s: &Sense, look: &Look, home: Vec2, no_gate: &[(i32, i32)]) -> Opti
             site.set_door(d);
             ringwork::lay(&site, Some(d.mid))?
         }
-        None => first,
+        None => {
+            first.face(&site, way.map(|d| d.mid));
+            first
+        }
     };
     let front = door.map(|d| d.mid).or(way.map(|d| d.mid));
     Some(Works {

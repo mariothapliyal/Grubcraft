@@ -371,7 +371,11 @@ impl WallLines {
         let mut along: Vec<(PlayerId, u8, u32, f32, usize)> = (nodes.iter().enumerate())
             .filter_map(|(i, n)| Some((n.owner, n.kind.class(), n.drawing?, n.arc, i)))
             .collect();
-        along.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)).then(a.3.total_cmp(&b.3)));
+        along.sort_by(|a, b| {
+            (a.0, a.1, a.2)
+                .cmp(&(b.0, b.1, b.2))
+                .then(a.3.total_cmp(&b.3))
+        });
         for w in along.windows(2) {
             let same = (w[0].0, w[0].1, w[0].2) == (w[1].0, w[1].1, w[1].2);
             if same && touch(nodes[w[0].4].tile, nodes[w[1].4].tile) {
@@ -540,7 +544,9 @@ mod tests {
         let ends: Vec<(Vec2, Joint)> = (lines.shapes.values())
             .flat_map(|s| {
                 let arms = s.arms.iter().map(|a| (a.1, a.2));
-                [(s.from, s.ends[0]), (s.to, s.ends[1])].into_iter().chain(arms)
+                [(s.from, s.ends[0]), (s.to, s.ends[1])]
+                    .into_iter()
+                    .chain(arms)
             })
             .collect();
         for &(p, joint) in ends.iter().filter(|e| e.1 != Joint::Stop) {
@@ -562,7 +568,11 @@ mod tests {
             .collect();
         let lines = settled(nodes);
         unbroken(&lines);
-        let stops = |t| (shape(&lines, t).ends.iter()).filter(|&&e| e == Joint::Stop).count();
+        let stops = |t| {
+            (shape(&lines, t).ends.iter())
+                .filter(|&&e| e == Joint::Stop)
+                .count()
+        };
         assert_eq!(stops((0, 3)), 1);
         assert_eq!(stops((4, 3)), 1);
         assert_eq!(stops((2, 3)), 0);
@@ -570,7 +580,10 @@ mod tests {
         // joint to joint, a tile long.
         assert_eq!(shape(&lines, (0, 3)).from, Vec2::new(0.0, 3.5));
         let mid = shape(&lines, (2, 3));
-        assert_eq!((mid.from, mid.to), (Vec2::new(2.0, 3.5), Vec2::new(3.0, 3.5)));
+        assert_eq!(
+            (mid.from, mid.to),
+            (Vec2::new(2.0, 3.5), Vec2::new(3.0, 3.5))
+        );
     }
 
     #[test]
@@ -589,7 +602,10 @@ mod tests {
         // The corner tile runs from its joint with the tile before to its
         // joint with the tile below: across the corner.
         let corner = shape(&lines, (3, 0));
-        assert_eq!((corner.from, corner.to), (Vec2::new(3.0, 0.5), Vec2::new(3.5, 1.0)));
+        assert_eq!(
+            (corner.from, corner.to),
+            (Vec2::new(3.0, 0.5), Vec2::new(3.5, 1.0))
+        );
     }
 
     #[test]
@@ -617,7 +633,9 @@ mod tests {
     #[test]
     fn steps_on_the_slant_run_corner_to_corner() {
         // Single tiles stepping down to the south-east.
-        let nodes = (0..4).map(|k| node((k, k), Some((10 + k as u32, 0.0)), None)).collect();
+        let nodes = (0..4)
+            .map(|k| node((k, k), Some((10 + k as u32, 0.0)), None))
+            .collect();
         let lines = settled(nodes);
         unbroken(&lines);
         let mid = shape(&lines, (1, 1));
@@ -636,7 +654,10 @@ mod tests {
         unbroken(&lines);
         let tee = shape(&lines, (2, 2));
         assert_eq!(tee.arms.len(), 1);
-        assert_eq!((tee.from, tee.to), (Vec2::new(2.0, 2.5), Vec2::new(3.0, 2.5)));
+        assert_eq!(
+            (tee.from, tee.to),
+            (Vec2::new(2.0, 2.5), Vec2::new(3.0, 2.5))
+        );
         // The wall coming down has no end post at the meeting.
         assert!(!shape(&lines, (2, 1)).ends.contains(&Joint::Stop));
     }
@@ -656,7 +677,10 @@ mod tests {
         let last = shape(&lines, (2, 0));
         assert_eq!(last.ends, [Joint::Bare, Joint::Post]);
         assert_eq!(last.to, Vec2::new(3.0, 0.5), "to the gate's edge");
-        assert!(lines.shapes.get(&(0, 0, (4, 0))).is_none(), "a gate shows no piece");
+        assert!(
+            lines.shapes.get(&(0, 0, (4, 0))).is_none(),
+            "a gate shows no piece"
+        );
         assert_eq!(shape(&lines, (0, 0)).ends[0], Joint::Stop);
     }
 

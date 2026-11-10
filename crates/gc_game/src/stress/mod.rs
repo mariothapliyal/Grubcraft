@@ -21,6 +21,7 @@
 //! what the simulation decides (ticks, positions, losses), which are the
 //! same on every machine; time is held only to the generous budget.
 
+mod ai_ring;
 pub(crate) mod arena;
 mod big_army;
 mod bridge;
@@ -33,6 +34,7 @@ mod gate;
 mod mountain;
 mod orders;
 mod town;
+mod wall_line;
 mod walls;
 
 use std::fmt::Write as _;
@@ -71,6 +73,8 @@ const SCENARIOS: &[Scenario] = &[
     mountain::SCENARIO,
     bridge_flood::SCENARIO,
     bridge_flood_armies::SCENARIO,
+    wall_line::SCENARIO,
+    ai_ring::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

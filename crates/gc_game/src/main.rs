@@ -930,6 +930,12 @@ struct Running {
     decks: bridge_deck::Decks,
     /// The bridge tiles `decks` was worked out for, folded together.
     decks_key: u64,
+    /// How the drawn wall, stakes and barricade tiles in sight join their
+    /// neighbours (see [`wall_lines`]), each drawing's curve as found, and
+    /// what the tiles they were worked out from fold to.
+    wall_lines: wall_lines::WallLines,
+    wall_anchors: wall_lines::Anchors,
+    wall_lines_key: u64,
     /// Soldier models; None if the embedded pack failed to load (boxes then).
     art: Option<Art>,
     /// Soldiers have given way to one banner block per regiment (zoomed out).
@@ -1865,6 +1871,9 @@ impl App {
             bridge_scene: None,
             decks: bridge_deck::Decks::default(),
             decks_key: 0,
+            wall_lines: wall_lines::WallLines::default(),
+            wall_anchors: wall_lines::Anchors::default(),
+            wall_lines_key: 0,
             art,
             commander: false,
             shooting: vec![false; capacities.regiments as usize],
@@ -3587,7 +3596,10 @@ impl Running {
         let mut sides = buildings::WallSides::new(&self.world, &self.buildings);
         (self.world.wall_tiles(h).iter())
             .filter_map(|&t| structures.get(t))
-            .map(|s| buildings::manned_slot(&self.buildings, looks, &mut sides, &s))
+            .map(|s| {
+                let lines = &self.wall_lines;
+                buildings::manned_slot(&self.buildings, looks, &mut sides, lines, &s)
+            })
             .collect()
     }
 
@@ -3774,6 +3786,7 @@ impl Running {
         // battlefield is drawn behind it.
         let viewing = self.viewer.is_some();
         if !viewing {
+            self.settle_wall_lines();
             self.push_placement_ghost();
             self.push_building_ghost();
             self.push_wall_ghost();
@@ -5959,6 +5972,7 @@ impl Running {
         self.map_key = Some(key);
         self.heightmap = make_map(key);
         self.decks_key = 0;
+        self.wall_lines_key = 0;
         logln!(
             "grubcraft: switching to {} (seed {:x}, {} tiles)",
             key.name(),
@@ -7489,6 +7503,30 @@ impl Running {
         self.decks_key = key;
     }
 
+    /// Work out again how the tiles of walls and field works join if one
+    /// in sight has been added or lost since last time (see [`wall_lines`]).
+    fn settle_wall_lines(&mut self) {
+        let b = &self.buildings;
+        let shown = buildings::shown_to(b, self.sandbox.side, self.reveal_all);
+        let tiles = || {
+            (self.world.structures().into_iter())
+                .flat_map(gc_sim::Structures::iter)
+                .filter(|s| shown(s))
+                .filter_map(|s| Some((s, b.line_kind(s.building)?)))
+        };
+        // As `settle_decks` folds the bridge tiles.
+        let key = tiles().fold(0xcbf2_9ce4_8422_2325u64, |k, (s, _)| {
+            let h = (u64::from(s.handle.index) << 16) | u64::from(s.handle.generation);
+            let at = (u64::from(s.tile.0 as u32) << 32) | u64::from(s.tile.1 as u32);
+            ((k ^ h).wrapping_mul(0x0100_0000_01b3) ^ at).wrapping_mul(0x0100_0000_01b3)
+        });
+        if key == self.wall_lines_key {
+            return;
+        }
+        self.wall_lines = wall_lines::WallLines::new(&self.world, &mut self.wall_anchors, tiles());
+        self.wall_lines_key = key;
+    }
+
     /// Every standing building as a box, the selected one with a rim, and
     /// every gathering spot.
     fn push_buildings(&mut self) {
@@ -7521,6 +7559,7 @@ impl Running {
             |h| siege.flash(h),
             across,
             &self.decks,
+            &self.wall_lines,
             &mut self.instances,
         );
         if let Some(h) = self.picked_structure() {
@@ -8505,27 +8544,9 @@ impl Running {
         // The bridge tiles (so the timber kit rails only a deck's outer
         // edges) and how high each deck is.
         let decks = &self.decks;
-        // The tiles of each side's drawn walls and gates that this player
-        // sees, so a kit wall puts an end post only where it stops (and a
-        // wall hidden in the fog does not take one away). Empty on a map
-        // with no kit walls.
-        let b = &self.buildings;
-        let mut walled: Vec<((i32, i32), PlayerId)> = Vec::new();
-        if (structures.iter()).any(|s| art.looks.wall_kit_for(s.building).is_some()) {
-            for s in structures.iter().filter(|s| shown(s)) {
-                let wall = b.is_wall(s.building) && !b.is_bridge(s.building);
-                if (wall && !b.is_fieldwork(s.building)) || b.is_gate(s.building) {
-                    for x in 0..i32::from(s.width) {
-                        for y in 0..i32::from(s.depth) {
-                            walled.push(((s.tile.0 + x, s.tile.1 + y), s.owner));
-                        }
-                    }
-                }
-            }
-            walled.sort_unstable();
-        }
         // Which side of each kit wall is outside.
-        let mut sides = buildings::WallSides::new(&self.world, b);
+        let table = &self.buildings;
+        let mut sides = buildings::WallSides::new(&self.world, table);
         let mut pieces = Vec::new();
         for s in structures.iter().filter(|s| shown(s)) {
             let [r, g, b] = color_of(&self.parties, s.owner);
@@ -8545,16 +8566,43 @@ impl Running {
                 };
                 kit.pieces(&tile, &mut pieces);
             } else if let Some(kit) = art.looks.wall_kit_for(s.building) {
-                let (centre, dir, len) = buildings::kit_piece(&s);
-                let tile = wall_kit::Tile {
-                    s: &s,
-                    centre,
-                    dir,
-                    len,
-                    out: sides.out(&s, centre, dir),
-                    walled: &|t| walled.binary_search(&(t, s.owner)).is_ok(),
+                // As the lines join it to its neighbours: a post at each
+                // joint, an end post only where the wall stops.
+                let mut lay = |centre: Vec2, dir: Vec2, len: f32, ends, arm| {
+                    let tile = wall_kit::Tile {
+                        s: &s,
+                        centre,
+                        dir,
+                        len,
+                        out: sides.out(&s, centre, dir),
+                        ends,
+                        arm,
+                    };
+                    kit.pieces(&tile, &mut pieces);
                 };
-                kit.pieces(&tile, &mut pieces);
+                match buildings::joined_piece(table, &self.wall_lines, &s) {
+                    Some(shape) => {
+                        let span = |from: Vec2, to: Vec2| {
+                            let dir = (to - from).normalize_or(Vec2::X);
+                            ((from + to) / 2.0, dir, from.distance(to))
+                        };
+                        let (centre, dir, len) = span(shape.from, shape.to);
+                        lay(centre, dir, len, shape.ends, false);
+                        for (k, &(from, to, joint)) in shape.arms.iter().enumerate() {
+                            let (centre, dir, len) = span(from, to);
+                            let first = if k == 0 {
+                                wall_lines::Joint::Post
+                            } else {
+                                wall_lines::Joint::Bare
+                            };
+                            lay(centre, dir, len, [first, joint], true);
+                        }
+                    }
+                    None => {
+                        let (centre, dir, len) = buildings::kit_piece(&s);
+                        lay(centre, dir, len, [wall_lines::Joint::Stop; 2], false);
+                    }
+                }
             }
             if !pieces.is_empty() {
                 let highlight = if picked == Some(s.handle) { 40 } else { 0 };
