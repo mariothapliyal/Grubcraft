@@ -39,10 +39,21 @@ fn world(nav: &[u8]) -> World {
 }
 
 fn seeded_world(nav: &[u8], seed: u64) -> World {
+    world_of(nav, seed, &fearless())
+}
+
+/// A world whose spears can brace, to hold their ground where they stand.
+fn bracing_world(nav: &[u8], seed: u64) -> World {
+    let mut units = fearless();
+    units[SPEARS as usize].reach = true;
+    world_of(nav, seed, &units)
+}
+
+fn world_of(nav: &[u8], seed: u64, units: &[UnitStats]) -> World {
     World::new(&MatchSetup {
         seed,
         capacities: Capacities { regiments: 64 },
-        units: &fearless(),
+        units,
         map_tiles: MAP as u32,
         nav,
         teams: &[],
@@ -254,16 +265,18 @@ fn friends_pushing_through_each_other_fall_out_of_order_and_re_form() {
 fn a_disordered_block_fights_worse() {
     // Hit points the enemy loses in ten seconds to the friend, with and
     // without a second friendly block standing most of the way inside the
-    // friend's
-    // (too far back to reach the enemy itself).
+    // friend's (too far back to reach the enemy itself).
     let enemy_losses = |crowded: bool| -> u32 {
         (1..=4)
             .map(|seed| {
-                let mut w = seeded_world(&[], seed);
+                let mut w = bracing_world(&[], seed);
                 let enemy = spawn(&mut w, 1, 32, 20, SOUTH);
                 let _friend = spawn(&mut w, 0, 32, 23, NORTH);
                 if crowded {
-                    spawn(&mut w, 0, 32, 24, NORTH);
+                    // Braced, so it holds its ground instead of stepping
+                    // back out of the friend to make room.
+                    let regiment = spawn(&mut w, 0, 32, 24, NORTH);
+                    order(&mut w, Command::Brace { regiment, on: true });
                 }
                 let hp = |w: &World| -> u32 {
                     w.regiments
@@ -284,4 +297,121 @@ fn a_disordered_block_fights_worse() {
         crowded * 100 <= calm * 85 && crowded * 100 >= calm * 70,
         "{crowded} with a friend inside its block vs {calm} without"
     );
+}
+
+/// Ticks `w` for `seconds`, and the ticks any of `who` spent out of order.
+fn disorder_over(w: &mut World, who: &[RegimentHandle], seconds: u32) -> u32 {
+    let mut ticks = 0;
+    for _ in 0..seconds * 20 {
+        w.tick(&[]);
+        ticks += (who.iter())
+            .filter(|&&h| w.regiments.get(h).unwrap().disorder > 0)
+            .count() as u32;
+    }
+    ticks
+}
+
+#[test]
+fn regiments_standing_in_each_other_step_apart() {
+    let mut w = world(&nav(false));
+    // Raised on almost one spot, as at a rally point.
+    let a = spawn(&mut w, 0, 32, 30, NORTH);
+    let b = spawn(&mut w, 0, 33, 30, NORTH);
+    assert!(overlap(&w, a, b) > Fx::ONE);
+    disorder_over(&mut w, &[a, b], 20);
+    assert!(
+        overlap(&w, a, b) <= Fx::from_ratio(3, 8),
+        "still {:?} tiles into each other",
+        overlap(&w, a, b)
+    );
+    // And then they stay put, in good order.
+    let at = |w: &World| (w.regiments.position(a), w.regiments.position(b));
+    let settled = at(&w);
+    assert_eq!(disorder_over(&mut w, &[a, b], 10), 0);
+    assert_eq!(at(&w), settled);
+}
+
+#[test]
+fn a_regiment_makes_no_room_onto_ground_it_cannot_stand_on() {
+    // A corridor one block wide: nowhere to step aside to.
+    let mut w = world(&nav(true));
+    let a = spawn(&mut w, 0, 32, 30, NORTH);
+    let b = spawn(&mut w, 0, 33, 30, NORTH);
+    disorder_over(&mut w, &[a, b], 20);
+    for h in [a, b] {
+        let x = w.regiments.position(h).unwrap().x;
+        assert!(
+            x >= Fx::from_int(28) && x <= Fx::from_int(37),
+            "stepped out of the corridor to x {x:?}"
+        );
+    }
+}
+
+#[test]
+fn a_regiment_holding_its_ground_makes_no_room() {
+    let mut w = bracing_world(&nav(false), 3);
+    let a = spawn(&mut w, 0, 32, 30, NORTH);
+    let b = spawn(&mut w, 0, 33, 30, NORTH);
+    for regiment in [a, b] {
+        order(&mut w, Command::Brace { regiment, on: true });
+    }
+    let at = (w.regiments.position(a), w.regiments.position(b));
+    disorder_over(&mut w, &[a, b], 10);
+    assert_eq!((w.regiments.position(a), w.regiments.position(b)), at);
+}
+
+#[test]
+fn regiments_sent_to_one_spot_draw_up_beside_each_other() {
+    let mut w = world(&nav(false));
+    let hs: Vec<_> = (0..4)
+        .map(|k| spawn(&mut w, 0, 14 + 12 * k, 50, NORTH))
+        .collect();
+    for &h in &hs {
+        order(&mut w, move_to(h, 32, 20));
+    }
+    disorder_over(&mut w, &hs, 40);
+    // All arrived, none standing in another, all within a few blocks of
+    // the spot, and the first to be sent on the spot itself.
+    let spot = FxVec2::from_ints(32, 20);
+    assert_eq!(w.regiments.position(hs[0]), Some(spot));
+    for (k, &a) in hs.iter().enumerate() {
+        let r = w.regiments.get(a).unwrap();
+        assert!(!r.moving, "regiment {k} still marching");
+        assert!(
+            (r.position - spot).length() < Fx::from_int(20),
+            "regiment {k} drew up far off at {:?}",
+            r.position
+        );
+        for &b in &hs[k + 1..] {
+            assert_eq!(
+                overlap(&w, a, b),
+                Fx::ZERO,
+                "regiment {k} stands in another"
+            );
+        }
+    }
+    assert_eq!(disorder_over(&mut w, &hs, 5), 0);
+}
+
+#[test]
+fn regiments_sent_to_spots_of_their_own_go_exactly_there() {
+    let mut w = world(&nav(false));
+    let hs: Vec<_> = (0..3)
+        .map(|k| spawn(&mut w, 0, 16 + 16 * k, 50, NORTH))
+        .collect();
+    // A line drawn up by the player, blocks touching: nobody is moved off
+    // its place for a neighbour that brushes it.
+    let r = w.regiments.get(hs[0]).unwrap();
+    let stats = &w.units()[SPEARS as usize];
+    let width = (stats.block_size_in(r.formation, r.files, r.models).0).floor_int() + 1;
+    for (k, &h) in hs.iter().enumerate() {
+        order(&mut w, move_to(h, 20 + width * k as i32, 20));
+    }
+    disorder_over(&mut w, &hs, 40);
+    for (k, &h) in hs.iter().enumerate() {
+        assert_eq!(
+            w.regiments.position(h),
+            Some(FxVec2::from_ints(20 + width * k as i32, 20))
+        );
+    }
 }

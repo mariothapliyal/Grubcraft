@@ -124,6 +124,11 @@ struct Marches {
     stuck: Vec<Stuck>,
     marched: [u64; 2],
     stood: [u64; 2],
+    /// Fighter regiment-seconds out of melee, and those in disorder:
+    /// marching near home, marching away, standing near home, standing
+    /// away.
+    free: u64,
+    disorder: [u64; 4],
 }
 
 const WINDOW: usize = 10;
@@ -132,7 +137,28 @@ impl Marches {
     fn second(&mut self, world: &World, real: &Real) {
         use gc_sim::Doing;
         let mut seen = Vec::new();
+        let homes: Vec<(PlayerId, FxVec2)> = world
+            .structures()
+            .map(|all| {
+                all.iter()
+                    .filter(|s| real.table.stats[usize::from(s.building)].role == Role::Main)
+                    .map(|s| {
+                        let c = FxVec2::new(Fx::from_int(s.tile.0 + 2), Fx::from_int(s.tile.1 + 2));
+                        (s.owner, c)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         for r in world.regiments.iter() {
+            if !r.engaged && !world.is_worker(r.handle) {
+                self.free += 1;
+                if r.disorder > 0 {
+                    let home = homes.iter().any(|&(p, c)| {
+                        p == r.owner && (c - r.position).length() < Fx::from_int(30)
+                    });
+                    self.disorder[usize::from(!r.moving) * 2 + usize::from(!home)] += 1;
+                }
+            }
             let Some(fb) = world.regiments.feedback(r.handle) else {
                 continue;
             };
@@ -225,6 +251,12 @@ impl Marches {
                 self.stood[k] as f64 * 100.0 / self.marched[k].max(1) as f64
             );
         }
+        println!(
+            "fighters out of melee: {} regiment-seconds, in disorder {:?} [marching home, marching away, standing home, standing away] ({:.2}%)",
+            self.free,
+            self.disorder,
+            self.disorder.iter().sum::<u64>() as f64 * 100.0 / self.free.max(1) as f64
+        );
         let mut worst: Vec<&Stuck> = self.stuck.iter().collect();
         worst.sort_by_key(|s| std::cmp::Reverse(s.seconds));
         println!("{} times a march stood still; the longest:", worst.len());
@@ -377,10 +409,13 @@ fn wall_survey() {
         // seconds for the first AI_TRACE_SECS, and the orders given it.
         if let Ok(name) = std::env::var("AI_TRACE") {
             let secs = env_number("AI_TRACE_SECS", 120) as u32;
-            if t < secs * TICKS_PER_SECOND {
+            let from = env_number("AI_TRACE_FROM", 0) as u32;
+            if t >= from * TICKS_PER_SECOND && t < (from + secs) * TICKS_PER_SECOND {
                 for c in &cmds {
                     let text = format!("{:?}", c.command);
-                    if text.starts_with("Trade") {
+                    if text.starts_with("Trade")
+                        || std::env::var("AI_TRACE_ORDERS").is_ok_and(|p| p == c.player.to_string())
+                    {
                         println!("TRACE t{t} p{} {text}", c.player);
                     }
                 }
@@ -405,6 +440,14 @@ fn wall_survey() {
                                     })
                                     .collect::<Vec<_>>(),
                                 fb.map(|f| (f.doing, f.waiting)),
+                            );
+                            println!(
+                                "      engaged {} siege {:?} files {}/{} disorder {}",
+                                r.engaged,
+                                world.siege_target(r.handle).map(|s| s.index),
+                                r.files,
+                                r.frontage,
+                                r.disorder
                             );
                         }
                     }

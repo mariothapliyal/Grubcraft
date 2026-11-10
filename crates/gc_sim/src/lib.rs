@@ -1111,6 +1111,11 @@ impl World {
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.combat.reserve_towers();
+        let conquest = self.conquest.as_ref().unwrap();
+        self.combat.set_civil((0..self.units.len()).map(|u| {
+            let unit = conquest.unit(u as UnitId);
+            unit.worker || unit.trades()
+        }));
         // Conquest's commanders will be its heroes.
         self.generals = None;
         self.events
@@ -1823,6 +1828,7 @@ impl World {
             &self.terrain,
             &self.vision,
             &self.nav,
+            self.conquest.as_ref(),
             self.tick,
         );
         self.combat.push_lines(
@@ -2921,7 +2927,7 @@ impl World {
                     },
                 );
                 let i = h.index as usize;
-                stand_back(&mut self.regiments, &self.units, &self.nav, i);
+                stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
             }
         }
         conquest.production.trained = trained;
@@ -2974,6 +2980,7 @@ impl World {
             &mut self.regiments,
             &self.units,
             &self.nav,
+            &self.combat,
             h.index as usize,
         );
         self.leave_off(h);
@@ -3855,9 +3862,11 @@ pub mod streams {
 
 /// Slot `i` was just sent somewhere: if its block would hang over the
 /// water there, it stands back from the edge instead (see [`Nav::settle`]).
-fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, i: usize) {
+fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, combat: &Combat, i: usize) {
     if let Some(target) = regs.target[i] {
         let berth = regs.berth(units, i);
-        regs.target[i] = Some(nav.settle(regs.owner[i], target, berth));
+        let target = nav.settle(regs.owner[i], target, berth);
+        regs.target[i] = Some(combat.own_place(regs, units, nav, i, target, false));
+        regs.set_seeks_place(i, true);
     }
 }

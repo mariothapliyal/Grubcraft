@@ -28,6 +28,7 @@ use core::num::NonZeroU8;
 
 use gc_fixed::{Angle, Fx, FxVec2, Pcg32};
 
+use crate::conquest::Conquest;
 use crate::events::{Event, Shooter, VolleyId};
 use crate::morale::{MoraleState, SHOCK_FLANK, SHOCK_PINNED, SHOCK_REAR, WAVERING_DAMAGE_PERCENT};
 use crate::nav::Nav;
@@ -128,6 +129,31 @@ pub const DISORDER_PERCENT: u64 = 20;
 /// ticks (staggered by index; 0.2 s, short against the 3 s it takes to
 /// re-form).
 const CROWD_EVERY: u32 = 4;
+/// A regiment standing with no order steps at most this far, each time it
+/// looks (see [`CROWD_EVERY`]), out of the friends standing in it (see
+/// [`Combat::make_room`]): a walk of 1.25 tiles a second.
+const ROOM_STEP: Fx = Fx::from_ratio(1, 4);
+/// With nothing blocked within this many tiles a marching regiment still
+/// keeps its spacing and goes round friends standing in its way (see
+/// [`Combat::keep_apart`]), though it is in a base or near a wall; nearer
+/// than that (a gateway, a ford, a street) a step aside would only push
+/// it into the wall or the water.
+pub(crate) const ELBOW_ROOM: i32 = 5;
+/// A regiment sent where a friend stands, or is going, looks this many
+/// places each way beside and behind the spot for one of its own, and
+/// leaves this much room between itself and its neighbours there (see
+/// [`Combat::own_place`]).
+const PLACES: i32 = 3;
+const PLACE_GAP: Fx = Fx::HALF;
+/// It looks again, at the friends standing there too, each time it looks
+/// while this near the spot, in tiles.
+const PLACE_NEAR: Fx = Fx::from_int(8);
+/// No block's radius is more than this, in tiles (a cheap first test).
+const PLACE_REACH: Fx = Fx::from_int(16);
+/// It stays put when the friends standing in it push it less than this,
+/// in tiles: wedged between two with nowhere to go, it doesn't shuffle to
+/// and fro.
+const ROOM_QUIET: Fx = Fx::from_ratio(1, 16);
 /// Pushing into friends slows a regiment to this share of its pace, in
 /// percent, once it is [`PUSH_RAMP`] past [`CROWDING`] deep.
 const PUSH_PERCENT: i64 = 40;
@@ -325,6 +351,19 @@ impl Block {
         }
     }
 
+    /// Regiment `i`'s block at `centre` at the frontage it was given,
+    /// though it marches narrower now (see [`Regiments::narrowed`]).
+    fn drawn_up(regs: &Regiments, units: &[UnitStats], i: usize, centre: FxVec2) -> Block {
+        let stats = &units[regs.unit[i] as usize];
+        let files = regs.frontage[i].max(regs.files[i]);
+        let (w, d) = stats.block_size_in(regs.formation[i], files, regs.models[i]);
+        Block {
+            half_width: Fx::from_raw(w.raw() / 2),
+            half_depth: Fx::from_raw(d.raw() / 2),
+            ..Block::at(regs, units, i, centre)
+        }
+    }
+
     /// Radius of a circle that holds the block.
     pub(crate) fn radius(&self) -> Fx {
         self.half_width + self.half_depth
@@ -368,6 +407,29 @@ impl Block {
                 return None;
             }
             least = least.min(depth);
+        }
+        Some(least)
+    }
+
+    /// The shortest way for this block out of `other`, if it is more than
+    /// `limit` into it: how deep, and the way (a unit vector; `level`
+    /// times the axis when the two are dead level along it).
+    fn way_out(&self, other: &Block, limit: Fx, level: Fx) -> Option<(Fx, FxVec2)> {
+        let d = self.centre - other.centre;
+        let mut least = (Fx::MAX, FxVec2::ZERO);
+        for axis in [self.forward, self.right, other.forward, other.right] {
+            let along = d.dot(axis);
+            let depth = self.extent_along(axis) + other.extent_along(axis) - along.abs();
+            if depth <= limit {
+                return None;
+            }
+            if depth < least.0 {
+                let sign = match along.raw().signum() {
+                    0 => level,
+                    s => Fx::from_int(s),
+                };
+                least = (depth, axis * sign);
+            }
         }
         Some(least)
     }
@@ -432,6 +494,9 @@ pub struct Combat {
     seen: Vec<Cell<u32>>,
     search: Cell<u32>,
     /// Ground each regiment gives this tick (see [`Combat::push_lines`]).
+    /// By unit: whether it is a worker or a caravan (Conquest only, see
+    /// [`Combat::set_civil`]); empty when none is.
+    civil: Vec<bool>,
     give: Vec<FxVec2>,
     /// Where each regiment steps in [`Combat::push_lines`], worked out for
     /// everyone before anyone moves.
@@ -640,6 +705,7 @@ impl Combat {
             marked: vec![false; regiment_capacity],
             seen: vec![Cell::new(0); regiment_capacity],
             search: Cell::new(0),
+            civil: Vec::new(),
             give: vec![FxVec2::ZERO; regiment_capacity],
             steps: vec![None; regiment_capacity],
             drifted: false,
@@ -981,6 +1047,17 @@ impl Combat {
     /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
     /// circle, and every regiment is filed in each cell its circle touches,
     /// so only the cells under `i`'s own circle need looking in.
+    /// Tell which units are workers and caravans, by unit: they go about
+    /// their business among the regiments, so they neither make room for
+    /// friends standing in them nor are made room for.
+    pub(crate) fn set_civil(&mut self, civil: impl Iterator<Item = bool>) {
+        self.civil = civil.collect();
+    }
+
+    fn civil(&self, regs: &Regiments, i: usize) -> bool {
+        (self.civil.get(usize::from(regs.unit[i]))).is_some_and(|&c| c)
+    }
+
     fn each_friend_touching(
         &self,
         regs: &Regiments,
@@ -1373,10 +1450,11 @@ impl Combat {
         terrain: &Terrain,
         vision: &Vision,
         nav: &Nav,
+        conquest: Option<&Conquest>,
         tick: u32,
     ) {
         self.build_grid(regs, units);
-        self.crowding(regs, stances, tick);
+        self.crowding(regs, units, stances, nav, conquest, tick);
         self.drifted = false;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
@@ -1643,12 +1721,20 @@ impl Combat {
     /// full while overlapping by more than [`PUSHING`], fading over
     /// [`DISORDER_TICKS`] once clear. Routers neither crowd nor are
     /// crowded (they are past caring about order).
-    fn crowding(&self, regs: &mut Regiments, stances: &Stances, tick: u32) {
+    fn crowding(
+        &self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        nav: &Nav,
+        conquest: Option<&Conquest>,
+        tick: u32,
+    ) {
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
             }
-            if regs.morale_state[i].broken() {
+            if regs.morale_state[i].broken() || self.civil(regs, i) {
                 regs.crowd[i] = Fx::ZERO;
                 regs.set_crowded(i, false);
                 regs.disorder[i] = 0;
@@ -1661,6 +1747,7 @@ impl Combat {
                     // Deeper than this changes nothing (see `SATURATED`).
                     if into < SATURATED
                         && !regs.morale_state[j].broken()
+                        && !self.civil(regs, j)
                         && let Some(more) = me.overlap_over(&self.blocks[j], into)
                     {
                         deepest = deepest.max(more);
@@ -1673,12 +1760,226 @@ impl Combat {
                 });
                 regs.crowd[i] = into.min(SATURATED);
                 regs.set_crowded(i, deepest > PUSHING);
+                if deepest > CROWDING {
+                    self.make_room(regs, stances, nav, conquest, i);
+                }
+                // Coming up to where it was sent, it looks whether a
+                // friend has taken the place since.
+                if regs.seeks_place(i)
+                    && regs.attack_target[i].is_none()
+                    && let Some(target) = regs.target[i].filter(|_| regs.marching(i))
+                    && (target - regs.position[i]).length_sq_raw()
+                        < (PLACE_NEAR.raw() as u64).pow(2)
+                {
+                    regs.target[i] = Some(self.own_place(regs, units, nav, i, target, true));
+                }
             }
             if regs.crowded(i) {
                 regs.disorder(i);
             } else {
                 regs.disorder[i] = regs.disorder[i].saturating_sub(1);
             }
+        }
+    }
+
+    /// Regiment `k`'s block as it will stand at `at` when it gets there:
+    /// facing as it was told to, or the way it comes.
+    fn arriving(regs: &Regiments, units: &[UnitStats], k: usize, at: FxVec2) -> Block {
+        let mut block = Block::drawn_up(regs, units, k, at);
+        let way = at - regs.position[k];
+        let forward = match regs.target_facing[k] {
+            Some(facing) => facing.to_vec(),
+            None if way.length() > Fx::ONE => Angle::of_vec(way).to_vec(),
+            None => block.forward,
+        };
+        block.forward = forward;
+        block.right = FxVec2::new(-forward.y, forward.x);
+        block
+    }
+
+    /// Where regiment `i`, just ordered to `target`, should go so that it
+    /// has a place of its own: `target` unless a friend of its own side
+    /// stands there or is on its way there, and then the free place
+    /// nearest it among those up to [`PLACES`] blocks beside, before and
+    /// behind it ([`PLACE_GAP`] apart), on ground where the block fits and
+    /// in plain sight of `target`. So regiments sent to one spot one after
+    /// another (a rally point, an army all sent to the same place) draw
+    /// up side by side and in ranks instead of on top of each other.
+    /// `target` again when every place is taken; workers and caravans go
+    /// where they are sent.
+    pub(crate) fn own_place(
+        &self,
+        regs: &Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+        i: usize,
+        target: FxVec2,
+        near: bool,
+    ) -> FxVec2 {
+        if self.civil(regs, i) {
+            return target;
+        }
+        let owner = regs.owner[i];
+        let from = regs.position[i];
+        let mine = Combat::arriving(regs, units, i, target);
+        let taken = |at: FxVec2, fresh: bool| {
+            let me = Block { centre: at, ..mine };
+            // It keeps the place it has unless a friend is well into it
+            // (it isn't sent off again for a friend that brushes it), and
+            // takes a fresh one only where nobody touches it and it needn't
+            // cross friends standing to get there.
+            let deep = if fresh { Fx::ZERO } else { PUSHING };
+            let way = at - from;
+            let long = way.length();
+            let lane = (fresh && near && long > Fx::ONE).then(|| {
+                let forward = FxVec2::new(way.x / long, way.y / long);
+                Block {
+                    centre: from + way * Fx::HALF,
+                    forward,
+                    right: FxVec2::new(-forward.y, forward.x),
+                    half_width: mine.half_width.min(mine.half_depth),
+                    half_depth: long / 2,
+                }
+            });
+            (0..regs.alive.len()).any(|j| {
+                if j == i
+                    || !regs.alive[j]
+                    || regs.owner[j] != owner
+                    || regs.on_wall[j]
+                    || regs.morale_state[j].broken()
+                    || self.civil(regs, j)
+                {
+                    return false;
+                }
+                let reach = (me.radius() + PLACE_REACH + long).raw() as u64;
+                if (regs.target[j].unwrap_or(regs.position[j]) - at).length_sq_raw() > reach * reach
+                {
+                    return false;
+                }
+                match regs.target[j] {
+                    // On its way to a place: it has it, unless this one
+                    // is all but there and nearer its own (of two as near,
+                    // the lower slot has it, so every pair agrees).
+                    Some(goal) => {
+                        (!near
+                            || ((goal - regs.position[j]).length_sq_raw(), j)
+                                < (way.length_sq_raw(), i))
+                            && (me.overlap_over(&Combat::arriving(regs, units, j, goal), deep))
+                                .is_some()
+                    }
+                    // Standing: counted only from near, as one sent off in
+                    // the same breath has not got its order yet; one going
+                    // for a foe has no place.
+                    None if !near || regs.attack_target[j].is_some() => false,
+                    None => {
+                        let them = Block::drawn_up(regs, units, j, regs.position[j]);
+                        me.overlap_over(&them, deep).is_some()
+                            || lane.is_some_and(|l| l.overlap_over(&them, CROWDING).is_some())
+                    }
+                }
+            })
+        };
+        if !taken(target, false) {
+            return target;
+        }
+        let berth = regs.berth(units, i);
+        // Far enough apart each way that neighbours can turn where they
+        // stand.
+        let step = mine.half_width.max(mine.half_depth) * 2 + PLACE_GAP;
+        let mut best = (Fx::MAX, target);
+        for rank in -PLACES..=PLACES {
+            for file in -PLACES..=PLACES {
+                let at = target
+                    + (mine.right * Fx::from_int(file) + mine.forward * Fx::from_int(rank)) * step;
+                // The nearest to the spot, and of two as near the one on
+                // its own side of it.
+                let out = (at - target).length();
+                let far = out + (at - from).length() / 2;
+                if far < best.0
+                    && nav.fits(owner, at, berth)
+                    && nav.clear_line(owner, target, at)
+                    && !taken(at, true)
+                {
+                    best = (far, at);
+                }
+            }
+        }
+        best.1
+    }
+
+    /// Whether regiment `i` stands with nothing to do, free to shift
+    /// where it stands: no order, no fight and no work (battering a
+    /// building, say), in good order, not braced, held in a trap or
+    /// re-forming, and not a worker or a caravan about its business.
+    fn at_ease(&self, regs: &Regiments, conquest: Option<&Conquest>, i: usize) -> bool {
+        regs.idle(i)
+            && regs.engaged[i].is_none()
+            && !regs.morale_state[i].broken()
+            && !regs.braced[i]
+            && regs.trapped_left[i] == 0
+            && !regs.re_forming(i)
+            && !self.civil(regs, i)
+            && conquest.is_none_or(|c| !c.has_job(regs, i))
+    }
+
+    /// Regiment `i`, standing at ease in friends that stand too, makes
+    /// room: it steps out of every such friend it is more than
+    /// [`CROWDING`] into, straight away from each (half of the way when
+    /// the friend is at ease too and steps the other half), at most
+    /// [`ROOM_STEP`] and never onto blocked ground. So regiments sent to
+    /// one spot, or raised at one rally point, end up side by side instead
+    /// of standing in each other out of order. One a friend is marching
+    /// through stays where it is: the marcher is soon gone.
+    fn make_room(
+        &self,
+        regs: &mut Regiments,
+        stances: &Stances,
+        nav: &Nav,
+        conquest: Option<&Conquest>,
+        i: usize,
+    ) {
+        if !self.at_ease(regs, conquest, i) {
+            return;
+        }
+        let me = self.blocks[i];
+        let mut push = FxVec2::ZERO;
+        self.each_friend_touching(regs, stances, i, |j| {
+            // One marching through is soon gone, and one still widening
+            // out of its column soon takes less room.
+            if regs.marching(j)
+                || regs.morale_state[j].broken()
+                || regs.re_forming(j)
+                || self.civil(regs, j)
+            {
+                return;
+            }
+            let them = &self.blocks[j];
+            // Dead level, the lower slot goes one way and the higher the
+            // other.
+            let level = if i < j { Fx::ONE } else { -Fx::ONE };
+            let Some((depth, away)) = me.way_out(them, CROWDING, level) else {
+                return;
+            };
+            let depth = depth - CROWDING;
+            push += away
+                * if self.at_ease(regs, conquest, j) {
+                    depth / 2
+                } else {
+                    depth
+                };
+        });
+        let length = push.length();
+        if length < ROOM_QUIET {
+            return;
+        }
+        let step = if length > ROOM_STEP {
+            FxVec2::new(push.x / length, push.y / length) * ROOM_STEP
+        } else {
+            push
+        };
+        let (owner, from) = (regs.owner[i], regs.position[i]);
+        if !nav.blocks(owner, from, from + step) && nav.standable(owner, from + step) {
+            regs.position[i] = from + step;
         }
     }
 
