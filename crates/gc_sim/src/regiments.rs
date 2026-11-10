@@ -272,6 +272,10 @@ regiment_fields! {
     /// sixteenths of a tile (see [`Regiments::squeeze`]): added to its
     /// next steps.
     grow: u8 = 0,
+    /// The spot its order sent it to, while it [`Regiments::seeks_place`]:
+    /// its target is that spot or a place of its own beside it (see
+    /// `Combat::own_place`).
+    spot: FxVec2 = FxVec2::ZERO,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
     /// Soldiers still standing.

@@ -91,7 +91,7 @@ impl World {
             tick: self.tick,
             rng: Pcg32::new(seed, streams::WORLD),
             combat_rng: Pcg32::new(seed, streams::COMBAT),
-            combat: Combat::new(n as usize).untold(),
+            combat: Combat::new(n as usize).like(&self.combat).untold(),
             units: self.units.clone(),
             map_tiles: self.map_tiles,
             nav: self.nav.sharing(n as usize),

@@ -371,9 +371,9 @@ fn regiments_sent_to_one_spot_draw_up_beside_each_other() {
     }
     disorder_over(&mut w, &hs, 40);
     // All arrived, none standing in another, all within a few blocks of
-    // the spot, and the first to be sent on the spot itself.
+    // the spot, and one of them on the spot itself.
     let spot = FxVec2::from_ints(32, 20);
-    assert_eq!(w.regiments.position(hs[0]), Some(spot));
+    assert!(hs.iter().any(|&h| w.regiments.position(h) == Some(spot)));
     for (k, &a) in hs.iter().enumerate() {
         let r = w.regiments.get(a).unwrap();
         assert!(!r.moving, "regiment {k} still marching");
@@ -413,5 +413,34 @@ fn regiments_sent_to_spots_of_their_own_go_exactly_there() {
             w.regiments.position(h),
             Some(FxVec2::from_ints(20 + width * k as i32, 20))
         );
+    }
+}
+
+#[test]
+fn a_line_given_new_spots_on_the_march_ends_on_them() {
+    let mut w = world(&nav(false));
+    let hs: Vec<_> = (0..3)
+        .map(|k| spawn(&mut w, 0, 16 + 16 * k, 55, NORTH))
+        .collect();
+    let r = w.regiments.get(hs[0]).unwrap();
+    let stats = &w.units()[SPEARS as usize];
+    let width = (stats.block_size_in(r.formation, r.files, r.models).0).floor_int() + 1;
+    let slot = |k: usize, shift: i32| FxVec2::from_ints(16 + width * (k as i32 + shift), 15);
+    for (k, &h) in hs.iter().enumerate() {
+        order(&mut w, move_to(h, slot(k, 0).x.floor_int(), 15));
+    }
+    disorder_over(&mut w, &hs, 3);
+    // The whole line one place to the right, all in one tick: each new
+    // spot but the last is where the next regiment was going till now.
+    let again: Vec<_> = (hs.iter().enumerate())
+        .map(|(k, &h)| PlayerCommand {
+            player: 0,
+            command: move_to(h, slot(k, 1).x.floor_int(), 15),
+        })
+        .collect();
+    assert_eq!(w.tick(&again).commands_applied, 3);
+    disorder_over(&mut w, &hs, 40);
+    for (k, &h) in hs.iter().enumerate() {
+        assert_eq!(w.regiments.position(h), Some(slot(k, 1)), "regiment {k}");
     }
 }

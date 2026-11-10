@@ -413,9 +413,11 @@ impl Block {
     }
 
     /// The shortest way for this block out of `other`, if it is more than
-    /// `limit` into it: how deep, and the way (a unit vector; `level`
-    /// times the axis when the two are dead level along it).
-    fn way_out(&self, other: &Block, limit: Fx, level: Fx) -> Option<(Fx, FxVec2)> {
+    /// `limit` into it: how deep, and the way (a unit vector; along the
+    /// axis when the two are dead level on it). The way for `other` out of
+    /// this one is the opposite only when asked the same way round, as
+    /// which axis is the shortest of two as short depends on the order.
+    fn way_out(&self, other: &Block, limit: Fx) -> Option<(Fx, FxVec2)> {
         let d = self.centre - other.centre;
         let mut least = (Fx::MAX, FxVec2::ZERO);
         for axis in [self.forward, self.right, other.forward, other.right] {
@@ -426,7 +428,7 @@ impl Block {
             }
             if depth < least.0 {
                 let sign = match along.raw().signum() {
-                    0 => level,
+                    0 => Fx::ONE,
                     s => Fx::from_int(s),
                 };
                 least = (depth, axis * sign);
@@ -734,6 +736,13 @@ impl Combat {
     }
 
     /// This combat for a world that tells no one what happens in it.
+    /// A combat for a copy of this one's world: with the same workers and
+    /// caravans (see [`Combat::set_civil`]).
+    pub(crate) fn like(mut self, other: &Combat) -> Combat {
+        self.civil.clone_from(&other.civil);
+        self
+    }
+
     pub(crate) fn untold(self) -> Combat {
         Combat {
             landed: Vec::new(),
@@ -1060,7 +1069,6 @@ impl Combat {
     /// touches `i`'s. Any block overlapping `i`'s shares a point inside `i`'s
     /// circle, and every regiment is filed in each cell its circle touches,
     /// so only the cells under `i`'s own circle need looking in.
-
     fn each_friend_touching(
         &self,
         regs: &Regiments,
@@ -1764,7 +1772,7 @@ impl Combat {
                 regs.crowd[i] = into.min(SATURATED);
                 regs.set_crowded(i, deepest > PUSHING);
                 if deepest > CROWDING {
-                    self.make_room(regs, stances, nav, conquest, i);
+                    self.make_room(regs, units, stances, nav, conquest, i);
                 }
                 // Coming up to where it was sent, it looks whether a
                 // friend has taken the place since.
@@ -1774,7 +1782,8 @@ impl Combat {
                     && (target - regs.position[i]).length_sq_raw()
                         < (PLACE_NEAR.raw() as u64).pow(2)
                 {
-                    regs.target[i] = Some(self.own_place(regs, units, nav, i, target, true));
+                    let spot = regs.spot[i];
+                    regs.target[i] = Some(self.own_place(regs, units, nav, i, spot, target, true));
                 }
             }
             if regs.crowded(i) {
@@ -1816,6 +1825,7 @@ impl Combat {
         units: &[UnitStats],
         nav: &Nav,
         i: usize,
+        spot: FxVec2,
         target: FxVec2,
         near: bool,
     ) -> FxVec2 {
@@ -1839,20 +1849,20 @@ impl Combat {
                 && !self.civil(regs, j)
         };
         let place = |j: usize| regs.target[j].unwrap_or(regs.position[j]);
-        let mut friends = [0usize; 64];
+        let mut friends = [0usize; 256];
         let mut found = 0;
         {
             // Every place is within `out` of the spot, and its lane (from
             // near only) no longer than from here to the spot and on.
             let out = step * (2 * PLACES);
             let lane = if near {
-                (target - from).length() + out
+                (spot - from).length() + out
             } else {
                 Fx::ZERO
             };
             let reach = (mine.radius() + PLACE_REACH + lane + out + Fx::ONE).raw() as u64;
             for j in (0..regs.alive.len()).filter(|&j| counts(j)) {
-                if (place(j) - target).length_sq_raw() > reach * reach {
+                if (place(j) - spot).length_sq_raw() > reach * reach {
                     continue;
                 }
                 if found < friends.len() {
@@ -1914,6 +1924,11 @@ impl Combat {
                 (0..regs.alive.len()).any(|j| counts(j) && has(j))
             }
         };
+        // Moved aside for a friend that went elsewhere after all (one
+        // given a new order in the same breath, say): back to the spot.
+        if near && target != spot && !taken(spot, true) {
+            return spot;
+        }
         if !taken(target, false) {
             return target;
         }
@@ -1921,17 +1936,18 @@ impl Combat {
         let mut best = (Fx::MAX, target);
         for rank in -PLACES..=PLACES {
             for file in -PLACES..=PLACES {
-                let at = target
+                let at = spot
                     + (mine.right * Fx::from_int(file) + mine.forward * Fx::from_int(rank)) * step;
                 // The nearest to the spot, and of two as near the one on
                 // its own side of it.
-                let out = (at - target).length();
+                let out = (at - spot).length();
                 let far = out + (at - from).length() / 2;
-                // The spot itself is taken.
-                if (rank, file) != (0, 0)
+                // The place it has is taken.
+                if at != target
                     && far < best.0
                     && nav.fits(owner, at, berth)
-                    && nav.clear_line(owner, target, at)
+                    && !nav.steep(owner, at)
+                    && nav.clear_line(owner, spot, at)
                     && !taken(at, true)
                 {
                     best = (far, at);
@@ -1967,6 +1983,7 @@ impl Combat {
     fn make_room(
         &self,
         regs: &mut Regiments,
+        units: &[UnitStats],
         stances: &Stances,
         nav: &Nav,
         conquest: Option<&Conquest>,
@@ -1988,10 +2005,15 @@ impl Combat {
                 return;
             }
             let them = &self.blocks[j];
-            // Dead level, the lower slot goes one way and the higher the
-            // other.
-            let level = if i < j { Fx::ONE } else { -Fx::ONE };
-            let Some((depth, away)) = me.way_out(them, CROWDING, level) else {
+            // Asked from the lower slot's side for both, so that the two
+            // always step opposite ways, dead level and facing as they may.
+            let out = if i < j {
+                me.way_out(them, CROWDING)
+            } else {
+                them.way_out(&me, CROWDING)
+                    .map(|(d, away)| (d, FxVec2::ZERO - away))
+            };
+            let Some((depth, away)) = out else {
                 return;
             };
             let depth = depth - CROWDING;
@@ -2012,8 +2034,16 @@ impl Combat {
             push
         };
         let (owner, from) = (regs.owner[i], regs.position[i]);
-        if !nav.blocks(owner, from, from + step) && nav.standable(owner, from + step) {
-            regs.position[i] = from + step;
+        let to = from + step;
+        // Never off ground where its block fits onto ground where it
+        // doesn't (a bank, the foot of a wall), nor onto a steep slope.
+        let berth = regs.berth(units, i);
+        if !nav.blocks(owner, from, to)
+            && nav.standable(owner, to)
+            && !nav.steep(owner, to)
+            && (nav.fits(owner, to, berth) || !nav.fits(owner, from, berth))
+        {
+            regs.position[i] = to;
         }
     }
 

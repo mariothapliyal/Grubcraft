@@ -3869,7 +3869,8 @@ fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, combat: &Com
     if let Some(target) = regs.target[i] {
         let berth = regs.berth(units, i);
         let target = nav.settle(regs.owner[i], target, berth);
-        regs.target[i] = Some(combat.own_place(regs, units, nav, i, target, false));
+        regs.spot[i] = target;
+        regs.target[i] = Some(combat.own_place(regs, units, nav, i, target, target, false));
         regs.set_seeks_place(i, true);
     }
 }
