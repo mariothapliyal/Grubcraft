@@ -1996,9 +1996,12 @@ impl Combat {
         let me = self.blocks[i];
         let mut push = FxVec2::ZERO;
         self.each_friend_touching(regs, stances, i, |j| {
-            // One marching through is soon gone, and one still widening
-            // out of its column soon takes less room.
+            // One marching through is soon gone, one still widening out
+            // of its column soon takes less room, and one driven back in
+            // a fight is given no ground: it is pinned against its friends
+            // (see [`Combat::push_lines`]).
             if regs.marching(j)
+                || regs.giving[j] > 0
                 || regs.morale_state[j].broken()
                 || regs.re_forming(j)
                 || self.civil(regs, j)

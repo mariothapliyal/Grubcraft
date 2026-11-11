@@ -14,17 +14,17 @@ const TICKS: u32 = 2_400; // two minutes of game time
 /// Expected state hash every 600 ticks (30 s of game time).
 const GOLDEN: [(u32, u64); 4] = [
     (600, 0x4a01_a339_2983_d181),
-    (1200, 0xf504_fc3c_8292_4585),
-    (1800, 0xca50_2548_94cb_7b7b),
-    (2400, 0x9f78_98cb_5c55_2b42),
+    (1200, 0x72fe_fbfa_e2f4_4812),
+    (1800, 0xfb47_1ce0_828a_ae86),
+    (2400, 0xb85c_c748_bf40_e0f0),
 ];
 
 /// The same drill on the ridged test map, where most orders need routes.
 const GOLDEN_RIBS: [(u32, u64); 4] = [
     (600, 0x29d7_1b8e_a821_9706),
-    (1200, 0x514c_be96_4470_1655),
-    (1800, 0x4fea_3b67_06ac_fec4),
-    (2400, 0xde4f_0954_3cc5_1a7f),
+    (1200, 0x06a7_915e_961b_5ab6),
+    (1800, 0x6632_d87b_0b87_b947),
+    (2400, 0x0d1e_ec11_b5b0_9e0f),
 ];
 
 /// The same drill on terraced, river-cut ground, where high ground and
