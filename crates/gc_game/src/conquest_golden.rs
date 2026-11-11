@@ -68,9 +68,11 @@ const MARCH_AT: u32 = 145 * TICKS_PER_SECOND;
 /// the factions' Conquest starts. The Concord side's Grub comes by
 /// caravan, slowly at first, so it opens with more and the sides arm alike.
 const STARTS: [(u32, u32); 2] = [(300, 0), (900, 100)];
-/// How much later side 1 marches (10 s, from 30, so it still sees and
-/// climbs the other's wall in time once the Clans gathered faster).
-const MARCH_LATER: u32 = 10 * TICKS_PER_SECOND;
+/// How much later side 1 marches (30 s again, from 10: since regiments
+/// sent to one spot draw up beside each other the armies set out spread
+/// wider, and at 10 s they met halfway, where side 0 never saw the wall
+/// it is to climb).
+const MARCH_LATER: u32 = 30 * TICKS_PER_SECOND;
 const REMOVE_AT: u32 = (MINUTES * 60 - 5) * TICKS_PER_SECOND;
 /// When the second side's chord goes up.
 const CHORD_AT: u32 = 10 * TICKS_PER_SECOND;

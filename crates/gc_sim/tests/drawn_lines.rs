@@ -477,7 +477,9 @@ fn a_gate_in_a_curved_wall_lets_its_army_through_and_keeps_others_out() {
     let mut breached = false;
     for t in 0..150 * TICKS_PER_SECOND {
         w.tick(&[]);
-        if out.is_none() && army.iter().all(|&r| position(&w, r).x > Fx::from_int(64)) {
+        // East of the whole wall (which runs no further east than 60):
+        // sent to one spot, they draw up beside each other round it.
+        if out.is_none() && army.iter().all(|&r| position(&w, r).x > Fx::from_int(61)) {
             out = Some(t / TICKS_PER_SECOND);
         }
         let enemy_at = w

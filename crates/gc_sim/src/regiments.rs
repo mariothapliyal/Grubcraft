@@ -91,8 +91,10 @@ const GHOST: u8 = 200;
 /// It looks for friends to keep its spacing from at most every this
 /// many ticks, keeping up its last step aside in between.
 const KEEP_EVERY: u8 = 4;
-/// The parts of [`Regiments::keep`]: ticks to the next look, and two flags.
-const KEEP_APART: u8 = 0x3F;
+/// The parts of [`Regiments::keep`]: ticks to the next look, and three
+/// flags.
+const KEEP_APART: u8 = 0x1F;
+const KEEP_PLACE: u8 = 0x20;
 const KEEP_STEPPED: u8 = 0x40;
 const KEEP_CROWDED: u8 = 0x80;
 
@@ -270,6 +272,10 @@ regiment_fields! {
     /// sixteenths of a tile (see [`Regiments::squeeze`]): added to its
     /// next steps.
     grow: u8 = 0,
+    /// The spot its order sent it to, while it [`Regiments::seeks_place`]:
+    /// its target is that spot or a place of its own beside it (see
+    /// `Combat::own_place`).
+    spot: FxVec2 = FxVec2::ZERO,
     /// How closely the soldiers stand.
     formation: Formation = Formation::Line,
     /// Soldiers still standing.
@@ -343,7 +349,9 @@ regiment_fields! {
     /// last step, so friends behind can tell a block filing on ahead from
     /// one stopped in the way; [`KEEP_CROWDED`] whether it overlaps a
     /// friend past [`crate::combat::PUSHING`] (see `Combat::crowding`), so
-    /// both fall out of order.
+    /// both fall out of order; [`KEEP_PLACE`] whether it marches to a spot
+    /// it was sent to stand at, and takes a place of its own beside it if
+    /// a friend has the spot (see `Combat::own_place`).
     keep: u8 = 0,
     /// The step aside it last found it needed, kept up between looks.
     aside: i16 = 0,
@@ -735,6 +743,7 @@ impl Regiments {
         }
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing;
+        self.set_seeks_place(i, false);
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.falling_back[i] = 0;
@@ -817,6 +826,19 @@ impl Regiments {
         }
         self.halt(i);
         Some(i)
+    }
+
+    /// Whether slot `i` is narrower than the frontage it was given: in a
+    /// column for tight ground, or still widening out of one (see
+    /// [`Regiments::squeeze`]).
+    pub(crate) fn narrowed(&self, i: usize) -> bool {
+        self.files[i] < self.frontage[i].min(self.models[i])
+    }
+
+    /// Whether slot `i` is re-forming file by file just now: one narrowed
+    /// that is not stands where its frontage doesn't fit, and stays so.
+    pub(crate) fn re_forming(&self, i: usize) -> bool {
+        self.narrowed(i) && self.reform[i] > 0
     }
 
     /// Slot `i` forms up `files` soldiers wide (it narrows again at once
@@ -978,6 +1000,16 @@ impl Regiments {
         self.keep[j] & KEEP_CROWDED != 0
     }
 
+    /// Whether regiment `j` marches to a spot it was sent to stand at
+    /// (see [`KEEP_PLACE`]).
+    pub(crate) fn seeks_place(&self, j: usize) -> bool {
+        self.keep[j] & KEEP_PLACE != 0
+    }
+
+    pub(crate) fn set_seeks_place(&mut self, j: usize, seeks: bool) {
+        self.set_keep(j, KEEP_PLACE, seeks);
+    }
+
     pub(crate) fn set_crowded(&mut self, j: usize, crowded: bool) {
         self.set_keep(j, KEEP_CROWDED, crowded);
     }
@@ -1019,6 +1051,7 @@ impl Regiments {
     /// Slot `i` drops its orders: no move, no facing to turn to, no enemy.
     pub(crate) fn halt(&mut self, i: usize) {
         self.target[i] = None;
+        self.set_seeks_place(i, false);
         self.target_facing[i] = None;
         self.attack_target[i] = None;
     }
@@ -1082,6 +1115,7 @@ impl Regiments {
             // `combat::Round`): an order repeated keeps it on its way.
             self.round[i] = None;
         }
+        self.set_seeks_place(i, false);
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
         self.braced[i] = false;
@@ -1113,6 +1147,7 @@ impl Regiments {
         }
         self.leave_fight(i);
         self.target[i] = Some(to);
+        self.set_seeks_place(i, false);
         self.target_facing[i] = Some(self.facing[i]);
         self.attack_target[i] = None;
         self.braced[i] = false;
@@ -1419,7 +1454,7 @@ impl Regiments {
             Some(Waiting::DrivenBack)
         } else if self.target[i].is_some() && self.disorder[i] > 0 {
             Some(Waiting::Reforming)
-        } else if self.target[i].is_some() && self.files[i] < self.frontage[i].min(self.models[i]) {
+        } else if self.target[i].is_some() && self.narrowed(i) {
             Some(Waiting::FilingThrough)
         } else {
             None
@@ -1603,10 +1638,20 @@ impl Regiments {
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
-                // In tight ground (a ford, a pass) it queues instead (below);
-                // in a fight it keeps to its foe, friends beside it or not.
+                // In cramped ground (a gateway, a street, and any ford,
+                // wide as it may be: blocks wading side by side pile up
+                // there) it queues instead (below), where a step aside
+                // would only push it into the wall or the water; in a fight
+                // it keeps to its foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
-                let aside = if ghost || tight || self.engaged[i].is_some() {
+                let cramped = tight
+                    && (terrain.wet(self.position[i])
+                        || !nav.open_around(
+                            self.owner[i],
+                            self.position[i],
+                            crate::combat::ELBOW_ROOM,
+                        ));
+                let aside = if ghost || cramped || self.engaged[i].is_some() {
                     Fx::ZERO
                 } else if self.apart(i) > 0 {
                     self.set_apart(i, self.apart(i) - 1);

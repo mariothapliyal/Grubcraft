@@ -91,6 +91,15 @@ Friendly regiments can march into and through each other, but it costs them. A b
 
 Since 2026-10-30 friends rarely end up overlapping at all: a marching block steps aside from a friend beside it or standing in its way ahead, and follows one marching on ahead the same way, so blocks keep about half a tile apart, go round a friend standing in the road in good time, and only the one pushing into a friend from behind is slowed. Routes go round woods and soft ground when that is quicker than wading through, and cut straight across them when it isn't.
 
+Since 2026-11-11 regiments also stop standing in each other. Before this, in real AI matches a fighter out of melee spent over a third of its time (37%) in disorder, most of it standing at a rally point or drawn up before a gate on top of its friends:
+
+- **A spot that is taken:** a regiment ordered to a spot where a friend is already going, or (seen as it comes within 8 tiles) already stands, draws up beside it instead: the nearest free place a block's width away, within three blocks, that it can walk to without crossing the friends standing there. One of them stands on the spot itself: the first to be sent, unless another gets there sooner. A line you place yourself, each regiment on its own spot, stands exactly where you put it, blocks touching, also when you move the whole line while it marches.
+- **Making room:** a regiment standing with no orders, no fight and no work, more than a quarter tile into a friend that is standing too, steps out of it (1.25 tiles a second at most, each going half the way when both are free to move), so regiments raised at one rally point spread out side by side within a few seconds. One that is braced, fighting, working (a ram at a wall), running or held in a trap stays where it is, and nobody makes room for a friend marching through, who is soon gone.
+- **Workers and caravans** crowd nobody: about their own business they walk through soldiers and each other without slowing or disordering anyone.
+- **In a base** a marching regiment keeps its spacing and goes round friends wherever it has 5 tiles clear around it, not only on open ground far from any building; in a gateway, a street or a ford it still queues.
+
+With all four, the same AI matches (nine matches of four Generals, 40 minutes) have fighters out of melee in disorder 16% of the time. What is left is mostly armies marching in a clump and regiments stacked on one front in a fight.
+
 **Built so far (2026-10-15):** as described. Other rules can disorder a regiment too (the sim's `Regiments::disorder`), which the Mount & Blade work uses.
 
 ## Lines that push

@@ -839,6 +839,13 @@ fn ring_site(s: &Sense, look: &Look, home: Vec2) -> Option<Site> {
             _ => foot(m).for_each(|t| set(&mut site, t, Ground::Walled)),
         }
     }
+    // Wall of its own planned and not begun (a tile waiting for scrub to
+    // be cleared, or for a regiment to move off).
+    for plan in s.world.plans().iter().filter(|p| p.owner == s.party) {
+        if let Some(i) = site.index(plan.tile) {
+            site.planned[i] = true;
+        }
+    }
     // What it keeps inside.
     let keep = |site: &mut Site, t: (i32, i32), room: i32| {
         for dy in -room..=room {

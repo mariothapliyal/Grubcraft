@@ -1441,6 +1441,13 @@ impl Nav {
         }
     }
 
+    /// Whether `p` is on a steep slope, where no block stands in order
+    /// (see [`Nav::settle`]); never with no map.
+    pub(crate) fn steep(&self, party: PlayerId, p: FxVec2) -> bool {
+        self.grid_of(party)
+            .is_some_and(|g| g.ground[g.cell_at(p) as usize] == STEEP)
+    }
+
     /// Whether a block of `party`'s wanting `berth` fits with its centre
     /// at `p`: the ground there is that far from blocked ground (always
     /// true with no map).

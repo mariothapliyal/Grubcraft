@@ -64,6 +64,11 @@ pub(super) struct Site {
     pub out: Vec<bool>,
     /// Tiles no wall may go on (the way through its gate).
     pub clear: Vec<bool>,
+    /// Tiles a wall of its own is planned on and not begun: open ground
+    /// still, so the ring is laid over them as over any other, but soon
+    /// shut, so what lies beyond one is no part of the town (see
+    /// [`Site::keep_joined`]).
+    pub planned: Vec<bool>,
 }
 
 /// A gate in the ring: its middle tile, and the step from there out of
@@ -176,6 +181,7 @@ impl Site {
             keep: vec![false; n],
             out: vec![false; n],
             clear: vec![false; n],
+            planned: vec![false; n],
         }
     }
 
@@ -307,10 +313,13 @@ impl Site {
 
     /// Drop the kept tiles not joined to tile `home` through kept ground
     /// alone: a building over a cliff from the rest, or far off with no
-    /// kept lane to it, is no part of this town, and is left outside.
+    /// kept lane to it, is no part of this town, and is left outside. So
+    /// is one beyond a wall of its own, standing or planned: a ring laid
+    /// round both would shut it, and all it trains, in a yard with no
+    /// gate once the wall between them is whole.
     pub fn keep_joined(&mut self, home: (i32, i32)) {
         let Some(h) = self.index(home) else { return };
-        let joined = self.spread(std::iter::once(h), |i| !self.keep[i]);
+        let joined = self.spread(std::iter::once(h), |i| !self.keep[i] || self.planned[i]);
         self.keep = joined;
     }
 }
@@ -1107,5 +1116,16 @@ mod tests {
         }
         s.keep_joined((102, 202));
         assert!(s.keep[s.index((106, 203)).unwrap()]);
+        // A wall of its own planned across the lane will shut it: what is
+        // past it is left out, though the tile is still open ground.
+        let mut s = site(&rows);
+        for x in 102..=106 {
+            s.keep_tile((x, 201));
+        }
+        let gap = s.index((104, 201)).unwrap();
+        s.planned[gap] = true;
+        s.keep_joined((102, 202));
+        assert!(!s.keep[s.index((106, 203)).unwrap()]);
+        assert!(s.keep[s.index((103, 203)).unwrap()]);
     }
 }

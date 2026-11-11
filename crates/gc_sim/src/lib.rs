@@ -131,7 +131,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 85;
+pub const SIM_VERSION: u32 = 86;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1111,6 +1111,11 @@ impl World {
         }
         self.conquest = Some(Conquest::new(setup, self.regiments.capacity()));
         self.combat.reserve_towers();
+        let conquest = self.conquest.as_ref().unwrap();
+        self.combat.set_civil((0..self.units.len()).map(|u| {
+            let unit = conquest.unit(u as UnitId);
+            unit.worker || unit.trades()
+        }));
         // Conquest's commanders will be its heroes.
         self.generals = None;
         self.events
@@ -1823,6 +1828,7 @@ impl World {
             &self.terrain,
             &self.vision,
             &self.nav,
+            self.conquest.as_ref(),
             self.tick,
         );
         self.combat.push_lines(
@@ -2921,7 +2927,7 @@ impl World {
                     },
                 );
                 let i = h.index as usize;
-                stand_back(&mut self.regiments, &self.units, &self.nav, i);
+                stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
             }
         }
         conquest.production.trained = trained;
@@ -2974,6 +2980,7 @@ impl World {
             &mut self.regiments,
             &self.units,
             &self.nav,
+            &self.combat,
             h.index as usize,
         );
         self.leave_off(h);
@@ -3854,10 +3861,16 @@ pub mod streams {
 }
 
 /// Slot `i` was just sent somewhere: if its block would hang over the
-/// water there, it stands back from the edge instead (see [`Nav::settle`]).
-fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, i: usize) {
+/// water there, it stands back from the edge instead (see [`Nav::settle`]),
+/// and if a friend is going to that very spot already, it takes a place
+/// beside it (see [`Combat::own_place`]), which it looks at again as it
+/// arrives.
+fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, combat: &Combat, i: usize) {
     if let Some(target) = regs.target[i] {
         let berth = regs.berth(units, i);
-        regs.target[i] = Some(nav.settle(regs.owner[i], target, berth));
+        let target = nav.settle(regs.owner[i], target, berth);
+        regs.spot[i] = target;
+        regs.target[i] = Some(combat.own_place(regs, units, nav, i, target, false));
+        regs.set_seeks_place(i, true);
     }
 }

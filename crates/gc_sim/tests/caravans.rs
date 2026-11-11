@@ -749,3 +749,24 @@ fn what_dead_workers_took_goes_back_to_their_pile_before_it_is_cleared() {
     let left: Vec<_> = piles(&w).iter().map(|n| n.left).collect();
     assert_eq!(left, [38]);
 }
+
+#[test]
+fn workers_and_caravans_crowd_nobody() {
+    // A caravan and a worker stand inside a block of spears: about their
+    // own business, they neither throw it out of order nor make it shift
+    // to give them room.
+    let mut w = conquest(&[], &[]);
+    let spears = spawn(&mut w, 0, SPEARS, 20, 20);
+    let others = [
+        spawn(&mut w, 0, CARAVAN, 20, 20),
+        spawn(&mut w, 0, WORKER, 21, 20),
+    ];
+    let at = w.regiments.position(spears);
+    for _ in 0..10 * SECOND {
+        w.tick(&[]);
+        for h in [spears, others[0], others[1]] {
+            assert_eq!(w.regiments.get(h).unwrap().disorder, 0);
+        }
+    }
+    assert_eq!(w.regiments.position(spears), at);
+}
