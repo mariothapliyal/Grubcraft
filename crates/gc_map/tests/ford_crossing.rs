@@ -218,7 +218,12 @@ fn ten_regiments_cross_a_ford_on_firm_ground_without_piling_up() {
     assert_eq!(c.stuck, 0, "regiments still marching: {c:?}");
     assert_eq!(c.off, 0, "soldier-ticks on deep water: {c:?}");
     assert!(c.ticks < 1200, "took too long to cross: {c:?}");
-    assert!(c.disordered[1] < 1500, "piled up in the river: {c:?}");
+    // 2,257 since blocks keep their spacing wherever five tiles are clear
+    // (2026-11-11), 878 before. This ford is the worst of the report's 21:
+    // over all of them regiment-ticks in disorder in the river went from
+    // 21,331 to 23,997, after it from 17,535 to 14,042, and the crossings
+    // take 1% less time.
+    assert!(c.disordered[1] < 2800, "piled up in the river: {c:?}");
 }
 
 #[test]

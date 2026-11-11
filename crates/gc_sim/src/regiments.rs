@@ -1638,13 +1638,19 @@ impl Regiments {
                 // Keeping its spacing from friends (docs/29): a step aside
                 // from any it comes too near.
                 let goal = last.then_some(point);
-                // In cramped ground (a ford, a gateway, a street) it queues
-                // instead (below), where a step aside would only push it
-                // into the wall or the water; in a fight it keeps to its
-                // foe, friends beside it or not.
+                // In cramped ground (a gateway, a street, and any ford,
+                // wide as it may be: blocks wading side by side pile up
+                // there) it queues instead (below), where a step aside
+                // would only push it into the wall or the water; in a fight
+                // it keeps to its foe, friends beside it or not.
                 let tight = !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND);
                 let cramped = tight
-                    && !nav.open_around(self.owner[i], self.position[i], crate::combat::ELBOW_ROOM);
+                    && (terrain.wet(self.position[i])
+                        || !nav.open_around(
+                            self.owner[i],
+                            self.position[i],
+                            crate::combat::ELBOW_ROOM,
+                        ));
                 let aside = if ghost || cramped || self.engaged[i].is_some() {
                     Fx::ZERO
                 } else if self.apart(i) > 0 {
