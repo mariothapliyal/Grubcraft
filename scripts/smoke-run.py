@@ -28,11 +28,13 @@ MEMORY_BUDGET_MB = 6144
 TIME_LIMIT_S = 900
 # Frames played as if the window were hidden. Without the fix the process
 # grew about 0.3 MB a frame in a battle (185 MB over 600 frames on Linux);
-# with it, under 1 MB in all.
+# with it, under 1 MB in all. Growth is judged over the second half: on
+# Windows' software GPU the working set is still settling from the drawn
+# frames early on.
 # SMOKE_HIDDEN_FRAMES=0 leaves them out (scripts/match-shots.py, whose
 # screenshots would show a frozen picture).
 HIDDEN_FRAMES = int(os.environ.get("SMOKE_HIDDEN_FRAMES", "600"))
-HIDDEN_GROWTH_LIMIT_MB = 32
+HIDDEN_GROWTH_LIMIT_MB = 32  # over the second half
 # A hidden frame waits a 60th of a second; well under that is spinning.
 HIDDEN_FRAME_MIN_S = 0.012
 
@@ -87,20 +89,21 @@ def main():
     elif used > MEMORY_BUDGET_MB:
         problems.append(f"{used:.1f} MB used at the peak, budget {MEMORY_BUDGET_MB} MB")
     hidden = re.search(
-        r"hidden window: (\d+) frames in ([\d.]+) s, process ([\d.?]+) MB before, ([\d.?]+) MB after",
+        r"hidden window: (\d+) frames in ([\d.]+) s, process ([\d.?]+) MB before, "
+        r"([\d.?]+) MB halfway, ([\d.?]+) MB after",
         run.stdout,
     )
     growth = seconds = 0.0
     if HIDDEN_FRAMES and hidden is None:
         problems.append("no hidden window line (did it play the hidden frames?)")
-    elif HIDDEN_FRAMES and "?" in hidden.group(3) + hidden.group(4):
+    elif HIDDEN_FRAMES and "?" in "".join(hidden.groups()[2:]):
         problems.append("no memory figure for the hidden frames")
     elif HIDDEN_FRAMES:
-        n, seconds, before, after = (float(g) for g in hidden.groups())
-        growth = after - before
+        n, seconds, before, halfway, after = (float(g) for g in hidden.groups())
+        growth = after - halfway
         if growth > HIDDEN_GROWTH_LIMIT_MB:
             problems.append(
-                f"{n:.0f} hidden frames grew the process {growth:.1f} MB "
+                f"the last {n / 2:.0f} hidden frames grew the process {growth:.1f} MB "
                 f"(limit {HIDDEN_GROWTH_LIMIT_MB} MB): undrawn frames are piling up memory"
             )
         if seconds < n * HIDDEN_FRAME_MIN_S:
@@ -114,7 +117,8 @@ def main():
         sys.exit(1)
     print(
         f"ok: {frames} frames, {used:.1f} MB process at the peak (budget {MEMORY_BUDGET_MB} MB), "
-        f"{HIDDEN_FRAMES} hidden frames grew it {growth:+.1f} MB in {seconds:.1f} s"
+        f"the last {HIDDEN_FRAMES // 2} of {HIDDEN_FRAMES} hidden frames grew it {growth:+.1f} MB "
+        f"({seconds:.1f} s in all)"
     )
 
 

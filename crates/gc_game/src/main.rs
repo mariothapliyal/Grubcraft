@@ -1002,9 +1002,8 @@ struct Running {
     input: Input,
     stats: Stats,
     memory_timeline: MemoryTimeline,
-    /// When `--hidden-frames` hid the window: the time, the frame count
-    /// and the process memory then.
-    hidden_since: Option<(Instant, u64, Option<u64>)>,
+    /// What `--hidden-frames` measures while the window is hidden.
+    hidden_check: Option<HiddenCheck>,
     /// When the next frame is due after one that drew nothing (see
     /// [`SKIPPED_FRAME_PAUSE`]).
     resume_at: Option<Instant>,
@@ -1521,6 +1520,18 @@ struct Watching {
 #[derive(Default)]
 struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
 
+/// `--hidden-frames`: when the window was hidden, at which frame, and the
+/// process memory then and halfway through. The smoke run judges growth
+/// over the second half: on Windows' software GPU the working set is
+/// still settling from the drawn frames for a while after they stop
+/// (+300 MB over the first hidden frames, November 2026).
+struct HiddenCheck {
+    since: Instant,
+    from: u64,
+    before: Option<u64>,
+    halfway: Option<u64>,
+}
+
 /// How long the event loop waits after a frame that drew nothing, rather
 /// than asking for the next at once: a hidden Mac window skips every frame
 /// straight away, which spun a core at thousands of frames a second (see
@@ -1973,7 +1984,7 @@ impl App {
                 game_data.units.len()
             ),
             memory_timeline: std::mem::take(&mut self.memory_timeline),
-            hidden_since: None,
+            hidden_check: None,
             resume_at: None,
             seed: opts.seed,
             capacities,
@@ -2492,10 +2503,15 @@ impl ApplicationHandler for App {
                 }
                 let limit = self.opts.as_ref().and_then(|o| o.frames);
                 let hidden = self.opts.as_ref().and_then(|o| o.hidden_frames);
-                if let (Some(limit), Some(n)) = (limit, hidden)
-                    && r.stats.frames == limit.saturating_sub(n)
-                {
-                    r.hide_window_for_check();
+                if let (Some(limit), Some(n)) = (limit, hidden) {
+                    let from = limit.saturating_sub(n);
+                    if r.stats.frames == from {
+                        r.hide_window_for_check();
+                    } else if r.stats.frames == from + n / 2
+                        && let Some(check) = &mut r.hidden_check
+                    {
+                        check.halfway = gc_platform::memory::process_memory().current;
+                    }
                 }
                 if limit.is_some_and(|n| r.stats.frames >= n) {
                     // Log what the driver said about the last frame too: the
@@ -2547,22 +2563,27 @@ impl Running {
     fn hide_window_for_check(&mut self) {
         self.renderer.pretend_hidden(true);
         self.memory_timeline.mark("window hidden");
-        let memory = gc_platform::memory::process_memory().current;
-        self.hidden_since = Some((Instant::now(), self.stats.frames, memory));
+        self.hidden_check = Some(HiddenCheck {
+            since: Instant::now(),
+            from: self.stats.frames,
+            before: gc_platform::memory::process_memory().current,
+            halfway: None,
+        });
     }
 
     fn print_hidden_window_check(&self) {
-        let Some((since, from, before)) = self.hidden_since else {
+        let Some(check) = &self.hidden_check else {
             return;
         };
         let after = gc_platform::memory::process_memory().current;
         let figure =
             |bytes: Option<u64>| bytes.map_or("?".into(), |b| format!("{:.1}", mb(b as usize)));
         println!(
-            "hidden window: {} frames in {:.1} s, process {} MB before, {} MB after",
-            self.stats.frames - from,
-            since.elapsed().as_secs_f32(),
-            figure(before),
+            "hidden window: {} frames in {:.1} s, process {} MB before, {} MB halfway, {} MB after",
+            self.stats.frames - check.from,
+            check.since.elapsed().as_secs_f32(),
+            figure(check.before),
+            figure(check.halfway),
             figure(after)
         );
     }
