@@ -293,6 +293,40 @@ mod tests {
     }
 
     #[test]
+    fn a_workers_repeated_trips_wear_a_lasting_track() {
+        // A worker (a regiment of one model, walking at about 1.2 tiles a
+        // second) goes along a 12-tile way and back every 30 seconds. Wear
+        // is stamped each `EVERY`, and heals by `HEAL` a second.
+        let mut v = view();
+        let radius = 0.6 + 0.12;
+        let (every, speed) = (EVERY.as_secs_f32(), 1.2);
+        let trip = |v: &mut ScarView| {
+            for pass in 0..2 {
+                let mut along = 0.0;
+                while along < 12.0 {
+                    let x = if pass == 0 { 4.5 + along } else { 16.5 - along };
+                    v.stamp(Vec2::new(x, 10.5), radius, MARCH);
+                    along += speed * every;
+                }
+            }
+            v.heal(HEAL * 30.0);
+        };
+        for _ in 0..8 {
+            trip(&mut v);
+        }
+        // Midway along the way the ground is bare enough to show (the shader
+        // starts to turn it at a quarter), and beside the way it is not.
+        assert!(worn(&v, 10, 10) > 128, "{}", worn(&v, 10, 10));
+        assert_eq!(worn(&v, 10, 14), 0);
+        // Once the worker stops it takes minutes to heal: still there after
+        // two, gone before five.
+        v.heal(HEAL * 120.0);
+        assert!(worn(&v, 10, 10) > 32);
+        v.heal(HEAL * 180.0);
+        assert_eq!(worn(&v, 10, 10), 0);
+    }
+
+    #[test]
     fn cleared_tiles_are_felled_by_what_stood_on_them() {
         let mut v = ScarView::default();
         let cleared = |x, y, was| Event::Cleared {

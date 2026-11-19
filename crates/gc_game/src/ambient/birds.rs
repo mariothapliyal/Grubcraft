@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use gc_map::Map;
 use glam::Vec2;
 
-use super::wildlife::{CELL, hash, open, reach, suits_at, turn_toward};
+use super::wildlife::{CELL, Species, hash, open, reach, suits_at, turn_toward};
 
 /// The share of cells with a flock where the land suits one.
 const CHANCE: f32 = 0.3;
@@ -244,7 +244,7 @@ fn found(
         (c.0 as f32 + 0.15 + 0.7 * hash(c, 22)) * CELL as f32,
         (c.1 as f32 + 0.15 + 0.7 * hash(c, 23)) * CELL as f32,
     );
-    let fits = |p: Vec2| suits_at(map, p) && open(map, p) && clear(p);
+    let fits = |p: Vec2| suits_at(Species::Deer, map, p) && open(map, p) && clear(p);
     if !fits(ground) || tame(ground) {
         return None;
     }
