@@ -167,8 +167,11 @@ pub(crate) const DIRS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
+#[path = "nav_cells.rs"]
+mod cells;
 #[path = "nav_reblock.rs"]
 mod reblock;
+use cells::Cells;
 use reblock::Areas;
 pub(crate) use reblock::Door;
 
@@ -181,36 +184,36 @@ struct Grid {
     side: i32,
     /// Each cell's cost: the ground's own ([`Grid::ground`]), or
     /// [`BLOCKED`] under a building (but for an open door).
-    cost: Vec<u8>,
+    cost: Cells<u8>,
     /// The ground's own cost of each cell, as the map gave it.
-    ground: Vec<u8>,
+    ground: Cells<u8>,
     /// The share of its pace (percent) a regiment keeps on each tile, row
     /// by row, for what grows there and how it holds the feet (see
     /// [`going_of`]); empty while every tile keeps it all. Prices the
     /// cells with [`price`].
-    going: Vec<u8>,
+    going: Cells<u8>,
     /// Buildings standing on each cell (see [`Nav::set_built`]).
-    built: Vec<u8>,
+    built: Cells<u8>,
     /// Doors open on each cell, to the sides walking this grid (see
     /// [`Nav::set_door`]): a cell is blocked while more buildings stand on
     /// it than doors are open there. Empty until the first door opens.
-    opened: Vec<u8>,
+    opened: Cells<u8>,
     /// Cells a flood has shut (see [`Nav::set_flooded_all`]): blocked
     /// whatever stands there. Empty until the first flood.
-    flooded: Vec<bool>,
+    flooded: Cells<bool>,
     /// Deep-water cells low water has made wadeable (see
     /// [`Nav::set_exposed_all`]). Empty until the first low water.
-    exposed: Vec<bool>,
+    exposed: Cells<bool>,
     /// Finished bridge tiles on each cell (see [`Nav::set_bridged_all`]):
     /// open at [`DECK`] cost over deep water or a flood, unless a building
     /// stands there too. Empty until the first bridge.
-    bridged: Vec<u8>,
+    bridged: Cells<u8>,
     /// The fords are frozen over (see [`Nav::set_frozen`]): costed as open
     /// ground. Every ford freezes and thaws at once.
     frozen: bool,
     /// Steps (8-way) to the nearest blocked cell or the map edge, capped at
     /// [`CLEAR_CAP`].
-    clear: Vec<u8>,
+    clear: Cells<u8>,
     /// Connected area of each open cell (1, 2, ...); 0 for cells not open.
     area: Areas,
     /// The highest area number given out so far (areas brought up to date
@@ -2377,16 +2380,16 @@ impl Grid {
         let n = (side * side) as usize;
         let mut grid = Grid {
             side,
-            cost: Vec::new(),
-            ground: costs.to_vec(),
-            going,
-            built: vec![0; n],
-            opened: Vec::new(),
-            flooded: Vec::new(),
-            exposed: Vec::new(),
-            bridged: Vec::new(),
+            cost: Cells::none(),
+            ground: Cells::from_slice(costs),
+            going: Cells::from_slice(&going),
+            built: Cells::new(n, 0),
+            opened: Cells::none(),
+            flooded: Cells::none(),
+            exposed: Cells::none(),
+            bridged: Cells::none(),
             frozen: false,
-            clear: vec![0; n],
+            clear: Cells::new(n, 0),
             area: Areas::new(n),
             areas: 0,
             sectors: (side + SECTOR - 1) / SECTOR,
@@ -2399,7 +2402,8 @@ impl Grid {
             edge_cost: Vec::new(),
             node_room: 0,
         };
-        grid.cost = (0..n).map(|i| grid.priced(i, grid.ground[i])).collect();
+        let cost: Vec<u8> = (0..n).map(|i| grid.priced(i, grid.ground[i])).collect();
+        grid.cost = Cells::from_slice(&cost);
         for t in standing {
             let Some([x0, y0, x1, y1]) = grid.cells(t) else {
                 continue;

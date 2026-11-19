@@ -650,6 +650,109 @@ mod tests {
         }
     }
 
+    /// How fast a real Conquest match runs with 2, 4 and 6 computer
+    /// players on a Large Wilds map (docs/12-performance.md, "Match
+    /// speed"): the simulation's and the minds' time a tick, and their
+    /// heaps. `MATCH_MINUTES` (default 20) and `MATCH_PLAYERS` (default
+    /// "2,4,6") change the run, and `MATCH_LEVEL` the minds' level
+    /// (default General, the one that walls and gates its towns).
+    ///
+    /// `MATCH_MINUTES=20 cargo test --release -p gc_game match_speed -- --ignored --nocapture`
+    #[test]
+    #[ignore = "a measuring run, not a check: run it by hand with --release"]
+    fn match_speed() {
+        use gc_ai::personality::Faction::*;
+        use gc_platform::tagged_alloc::{self, Tag};
+        use std::time::Instant;
+        let minutes = env_number("MATCH_MINUTES", 20) as u32;
+        let counts: Vec<usize> = std::env::var("MATCH_PLAYERS")
+            .unwrap_or_else(|_| "2,4,6".into())
+            .split(',')
+            .filter_map(|n| n.trim().parse().ok())
+            .collect();
+        let all = [EmberClans, Brood, Choir, CarrionConcord, EmberClans, Brood];
+        let wilds = gc_map::SHIPPED.len();
+        let large = gc_ui::lobby::MapSize::Large.conquest_tiles();
+        let level = std::env::var("MATCH_LEVEL")
+            .ok()
+            .and_then(|v| level_named(&v))
+            .unwrap_or(Difficulty::General);
+        let real = Real::load();
+        let pct = |v: &mut Vec<f64>, q: f64| {
+            v.sort_by(f64::total_cmp);
+            v.get(((v.len() as f64 - 1.0) * q) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        println!(
+            "players  ticks  regts  sim p50  sim p99  sim max   ai p50   ai p99   ai max  both p99  sim MB   ai MB"
+        );
+        for n in counts {
+            let factions = &all[..n];
+            let map = conquest::make_map(wilds, large, 2);
+            let game = Headless::new(&real, map, factions, 2);
+            let defaults = gc_ui::lobby::LobbySettings::default();
+            let plan = game.plan(Tempo::Standard, conquest::victories(defaults.victory));
+            let mut world = tagged_alloc::scope(Tag::Sim, || game.world(&plan));
+            let mut minds = tagged_alloc::scope(Tag::Ai, || {
+                let mut minds = game.minds();
+                for i in 0..n {
+                    minds.add(game.mind(i, level, temper(2, i), None));
+                }
+                minds
+            });
+            game.open(&mut world, |w, c| {
+                tagged_alloc::scope(Tag::Sim, || w.tick(c))
+            });
+            let end = minutes * 60 * TICKS_PER_SECOND;
+            let (mut sim, mut ai, mut both) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut sim_heap, mut ai_heap, mut regts) = (0, 0, 0);
+            let mut cmds = Vec::new();
+            let mut marks = Vec::new();
+            while world.verdict().is_none() && world.tick_count() < end {
+                cmds.clear();
+                let t0 = Instant::now();
+                tagged_alloc::scope(Tag::Ai, || minds.tick(&world, &mut cmds));
+                let t1 = Instant::now();
+                tagged_alloc::scope(Tag::Sim, || world.tick(&cmds));
+                let t2 = Instant::now();
+                let (a, s) = ((t1 - t0).as_secs_f64() * 1e3, (t2 - t1).as_secs_f64() * 1e3);
+                ai.push(a);
+                sim.push(s);
+                both.push(a + s);
+                sim_heap = sim_heap.max(tagged_alloc::live_bytes(Tag::Sim));
+                ai_heap = ai_heap.max(tagged_alloc::live_bytes(Tag::Ai));
+                regts = regts.max(world.regiments.iter().count());
+                if world
+                    .tick_count()
+                    .is_multiple_of(10 * 60 * TICKS_PER_SECOND)
+                {
+                    marks.push(tagged_alloc::live_bytes(Tag::Sim) as f64 / (1 << 20) as f64);
+                }
+            }
+            let ticks = sim.len();
+            let (sm, am) = (
+                sim.iter().copied().fold(0.0, f64::max),
+                ai.iter().copied().fold(0.0, f64::max),
+            );
+            println!(
+                "{n:>7}  {ticks:>5}  {regts:>5}  {:>7.2}  {:>7.2}  {sm:>7.2}  {:>7.2}  {:>7.2}  {am:>7.2}  {:>8.2}  {:>6.2}  {:>6.2}",
+                pct(&mut sim, 0.5),
+                pct(&mut sim, 0.99),
+                pct(&mut ai, 0.5),
+                pct(&mut ai, 0.99),
+                pct(&mut both, 0.99),
+                sim_heap as f64 / (1 << 20) as f64,
+                ai_heap as f64 / (1 << 20) as f64,
+            );
+            let marks: Vec<String> = marks.iter().map(|m| format!("{m:.1}")).collect();
+            println!("         sim MB every 10 minutes: {}", marks.join(" "));
+            // Drop the minds' and the world's heap before the next size.
+            drop(minds);
+            drop(world);
+        }
+    }
+
     /// The levels named by `AI_LEVEL`, a name or an index each, one per
     /// side and comma-separated (the last covers any more sides); Veteran
     /// if unset.
