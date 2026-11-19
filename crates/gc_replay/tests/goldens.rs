@@ -93,8 +93,9 @@ fn the_goldens_cover_every_kind_of_command() {
         Command::Climb { .. } => "Climb",
         Command::PlantStakes { .. } => "PlantStakes",
         Command::Burn { .. } => "Burn",
+        Command::Concede => "Concede",
     };
-    const KINDS: [&str; 43] = [
+    const KINDS: [&str; 44] = [
         "SpawnRegiment",
         "MoveTo",
         "Attack",
@@ -138,6 +139,7 @@ fn the_goldens_cover_every_kind_of_command() {
         "Climb",
         "Burn",
         "PlantStakes",
+        "Concede",
     ];
     let seen: BTreeSet<&str> = goldens()
         .iter()
@@ -154,24 +156,24 @@ fn the_goldens_cover_every_kind_of_command() {
 /// rewritten by `cargo run --release -p gc_replay -- pin` (or by
 /// `scripts/rules-bump.py`, which also takes the next free version).
 const PINNED: (u32, &[(&str, u64)]) = (
-    86,
+    87,
     &[
-        ("conquest-ribcage-1v1", 0xdc06540669915501),
-        ("conquest-river-1v1", 0x7c4c363c695a390c),
-        ("field-1v1", 0x82861b5bcf2e04b0),
-        ("field-2v2", 0x5675cb8a0bf81b01),
-        ("field-8000pt-2v2", 0x827e800a2c0cc6a3),
-        ("field-brace-1v1", 0x145097f0ac438a2c),
-        ("field-champions-1v1", 0xe338ad6046b8130e),
-        ("field-deploy-1v1", 0x8fd2a6e8883dacce),
-        ("field-fire-1v1", 0xb6c896f8ac9ea5d1),
-        ("field-flood-1v1", 0x64bbd7c612dbd498),
-        ("field-handover-2v2", 0x9b5881639afaea37),
-        ("field-night-rain-1v1", 0xca86d5672d079cf9),
-        ("field-orders-1v1", 0x8a472e7b41bb889c),
-        ("field-river-storm-1v1", 0xe94beb7cf379296c),
-        ("field-woods-1v1", 0x1d47643d4de4c22d),
-        ("sandbox-tuning", 0x78bdd92e5c112fff),
+        ("conquest-ribcage-1v1", 0xef8ad50ed3ecdb78),
+        ("conquest-river-1v1", 0x508af77b0e3839d9),
+        ("field-1v1", 0x04aeb0903305d6a0),
+        ("field-2v2", 0xbf4c10a61c8ea423),
+        ("field-8000pt-2v2", 0x2a1efd342492208c),
+        ("field-brace-1v1", 0xa53a60546f140214),
+        ("field-champions-1v1", 0x9ab13da35a715386),
+        ("field-deploy-1v1", 0x1939c10f227bdc14),
+        ("field-fire-1v1", 0x29f8f6c5e3956ad3),
+        ("field-flood-1v1", 0x8db9a11252fd9dab),
+        ("field-handover-2v2", 0x4c4305aa0167cf78),
+        ("field-night-rain-1v1", 0xad7df71b402b74b9),
+        ("field-orders-1v1", 0xc941561514c08244),
+        ("field-river-storm-1v1", 0x482efc9b000ccad6),
+        ("field-woods-1v1", 0xbca92916e3fed3a9),
+        ("sandbox-tuning", 0x38d21e7654e902d2),
     ],
 );
 

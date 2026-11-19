@@ -20,6 +20,11 @@
 //!   side with regiments within [`HEART_REACH`] tiles of the Heart and no
 //!   enemy there holds it; holding it for [`HEART_HOLD_TICKS`] in a row
 //!   wins.
+//!
+//! In any match a side can also **surrender** ([`crate::Command::Concede`],
+//! given by each of its players once a team's vote passes): once every
+//! party still in the match that hasn't conceded is on one side, that side
+//! wins ([`Win::Surrender`]).
 
 use gc_fixed::{Fx, FxVec2};
 
@@ -50,16 +55,25 @@ pub enum Win {
     Annihilation,
     /// A side held the Titan's Heart.
     Heart,
-    /// The last players in a Conquest match were put out together: nobody
-    /// won (the verdict's holder is the lowest of them).
+    /// The last players in a Conquest match were put out together, or
+    /// everyone conceded: nobody won (the verdict's holder is the lowest of
+    /// them).
     Draw,
+    /// Every enemy of the holder's side surrendered.
+    Surrender,
 }
 
 impl Win {
     pub fn from_u8(v: u8) -> Option<Win> {
-        [Win::Field, Win::Annihilation, Win::Heart, Win::Draw]
-            .get(usize::from(v))
-            .copied()
+        [
+            Win::Field,
+            Win::Annihilation,
+            Win::Heart,
+            Win::Draw,
+            Win::Surrender,
+        ]
+        .get(usize::from(v))
+        .copied()
     }
 }
 
@@ -323,6 +337,8 @@ pub(crate) struct Judge {
     decided: Option<Verdict>,
     /// Conquest's rulings, which take the place of holding the field.
     throne: Option<Throne>,
+    /// Parties that have surrendered.
+    conceded: u8,
 }
 
 impl Judge {
@@ -398,6 +414,58 @@ impl Judge {
         }
     }
 
+    /// Party `party` surrenders (see the module docs). Refused once the
+    /// match is decided, for a party that already has, or one that is out.
+    pub(crate) fn concede(&mut self, party: PlayerId) -> bool {
+        if usize::from(party) >= MAX_PARTIES {
+            return false;
+        }
+        let bit = 1u8 << party;
+        if self.decided.is_some()
+            || self.conceded & bit != 0
+            || self.throne.as_ref().is_some_and(|t| t.is_out(party))
+        {
+            return false;
+        }
+        self.conceded |= bit;
+        true
+    }
+
+    /// Whether `party` has surrendered.
+    pub(crate) fn has_conceded(&self, party: PlayerId) -> bool {
+        1u8.checked_shl(party.into())
+            .is_some_and(|bit| self.conceded & bit != 0)
+    }
+
+    /// After a surrender, look at who is left, after tick `now`: the
+    /// parties with an army, or a main building in Conquest, that are
+    /// neither out nor have conceded. When they are all friends they win;
+    /// when nobody is left (everyone conceded) it is a draw.
+    pub(crate) fn update_surrender(&mut self, regs: &Regiments, stances: &Stances, now: u32) {
+        if self.conceded == 0 || self.decided.is_some() {
+            return;
+        }
+        let armies = (0..regs.alive.len())
+            .filter(|&i| regs.alive[i] && regs.models[i] > 0)
+            .fold(0u8, |m, i| m | 1 << regs.owner[i]);
+        let (mains, out) = self.throne.as_ref().map_or((0, 0), |t| (t.had_main, t.out));
+        let present = (armies | mains) & !out;
+        let left = present & !self.conceded;
+        self.decided = match one_side(left, stances) {
+            Some(holder) => Some(Verdict {
+                holder,
+                tick: now,
+                by: Win::Surrender,
+            }),
+            None if left == 0 => Some(Verdict {
+                holder: self.conceded.trailing_zeros() as PlayerId,
+                tick: now,
+                by: Win::Draw,
+            }),
+            None => None,
+        };
+    }
+
     /// Nobody holds the field while the armies deploy.
     pub(crate) fn deploying(&mut self) {
         self.held = None;
@@ -424,6 +492,7 @@ impl Judge {
         if let Some(t) = &self.throne {
             t.hash_into(h);
         }
+        h.u8(self.conceded);
     }
 }
 

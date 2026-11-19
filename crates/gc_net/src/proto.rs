@@ -16,7 +16,7 @@ use crate::wire::{Reader, Writer, read_player_commands, write_player_commands};
 /// Bumped whenever any message changes shape. Machines on different
 /// protocols cannot talk; the joiner is told which build the host runs.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const PROTOCOL: u8 = 44;
+pub const PROTOCOL: u8 = 45;
 
 const MAGIC: [u8; 2] = *b"GC";
 
@@ -166,7 +166,37 @@ pub enum Msg {
     /// Host → everyone: a player's world stopped matching the host's at
     /// `tick`; everyone saves a desync report.
     Desync { tick: u32 },
+    /// Player → host: a chat line, for my team or for everyone.
+    Chat { team: bool, text: String },
+    /// Host → the players it is for: player `from` said this.
+    Said { from: u8, team: bool, text: String },
+    /// Player → host: a ping of `kind` ([`crate::PingKind`]) at a point on
+    /// the map, in sixteenths of a tile.
+    Ping { kind: u8, x: u32, y: u32 },
+    /// Host → the pinger's allies: player `from` pinged there.
+    Pinged { from: u8, kind: u8, x: u32, y: u32 },
+    /// Player → host: start my team's surrender vote, or vote in it.
+    Surrender { yes: bool },
+    /// Host → a team: its surrender vote as it stands. `by` is the player
+    /// who called it ([`NOBODY`] once it is over), `yes` the players who
+    /// have said yes (a bit each), `needed` how many must, and `seconds`
+    /// how long is left.
+    Vote {
+        by: u8,
+        yes: u8,
+        needed: u8,
+        seconds: u16,
+    },
+    /// Player → host: pause the match (`on`), or carry on.
+    Pause { on: bool },
+    /// Host → everyone: the match is paused by player `who` ([`NOBODY`]
+    /// when it carries on) for at most `seconds` more; the reader has
+    /// `yours` pauses left.
+    Hold { who: u8, seconds: u16, yours: u8 },
 }
+
+/// A player number that is nobody: no vote, no pause.
+pub const NOBODY: u8 = u8::MAX;
 
 fn write_slot(w: &mut Writer, s: &Slot) {
     w.u8(match s.kind {
@@ -428,6 +458,60 @@ impl Msg {
                 w.u8(14);
                 w.var(u64::from(*tick));
             }
+            Msg::Chat { team, text } => {
+                w.u8(15);
+                w.bool(*team);
+                w.str(text);
+            }
+            Msg::Said { from, team, text } => {
+                w.u8(16);
+                w.u8(*from);
+                w.bool(*team);
+                w.str(text);
+            }
+            Msg::Ping { kind, x, y } => {
+                w.u8(17);
+                w.u8(*kind);
+                w.var(u64::from(*x));
+                w.var(u64::from(*y));
+            }
+            Msg::Pinged { from, kind, x, y } => {
+                w.u8(18);
+                w.u8(*from);
+                w.u8(*kind);
+                w.var(u64::from(*x));
+                w.var(u64::from(*y));
+            }
+            Msg::Surrender { yes } => {
+                w.u8(19);
+                w.bool(*yes);
+            }
+            Msg::Vote {
+                by,
+                yes,
+                needed,
+                seconds,
+            } => {
+                w.u8(20);
+                w.u8(*by);
+                w.u8(*yes);
+                w.u8(*needed);
+                w.var(u64::from(*seconds));
+            }
+            Msg::Pause { on } => {
+                w.u8(21);
+                w.bool(*on);
+            }
+            Msg::Hold {
+                who,
+                seconds,
+                yours,
+            } => {
+                w.u8(22);
+                w.u8(*who);
+                w.var(u64::from(*seconds));
+                w.u8(*yours);
+            }
         }
         w.buf
     }
@@ -502,6 +586,39 @@ impl Msg {
                 seconds: r.var_as()?,
             },
             14 => Msg::Desync { tick: r.var_as()? },
+            15 => Msg::Chat {
+                team: r.bool()?,
+                text: r.str()?,
+            },
+            16 => Msg::Said {
+                from: r.u8()?,
+                team: r.bool()?,
+                text: r.str()?,
+            },
+            17 => Msg::Ping {
+                kind: r.u8()?,
+                x: r.var_as()?,
+                y: r.var_as()?,
+            },
+            18 => Msg::Pinged {
+                from: r.u8()?,
+                kind: r.u8()?,
+                x: r.var_as()?,
+                y: r.var_as()?,
+            },
+            19 => Msg::Surrender { yes: r.bool()? },
+            20 => Msg::Vote {
+                by: r.u8()?,
+                yes: r.u8()?,
+                needed: r.u8()?,
+                seconds: r.var_as()?,
+            },
+            21 => Msg::Pause { on: r.bool()? },
+            22 => Msg::Hold {
+                who: r.u8()?,
+                seconds: r.var_as()?,
+                yours: r.u8()?,
+            },
             _ => return None,
         };
         r.is_empty().then_some(msg)
@@ -714,6 +831,39 @@ mod tests {
             seconds: 90,
         });
         round_trip(Msg::Desync { tick: 1230 });
+        round_trip(Msg::Chat {
+            team: true,
+            text: "flank left".into(),
+        });
+        round_trip(Msg::Said {
+            from: 2,
+            team: false,
+            text: "gg".into(),
+        });
+        round_trip(Msg::Ping {
+            kind: 1,
+            x: 4096,
+            y: 77,
+        });
+        round_trip(Msg::Pinged {
+            from: 3,
+            kind: 4,
+            x: 0,
+            y: 9000,
+        });
+        round_trip(Msg::Surrender { yes: false });
+        round_trip(Msg::Vote {
+            by: 1,
+            yes: 0b101,
+            needed: 3,
+            seconds: 30,
+        });
+        round_trip(Msg::Pause { on: true });
+        round_trip(Msg::Hold {
+            who: NOBODY,
+            seconds: 0,
+            yours: 2,
+        });
         round_trip(Msg::Bye {
             reason: "bye".into(),
         });
