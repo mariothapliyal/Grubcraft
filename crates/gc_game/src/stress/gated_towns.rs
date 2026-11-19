@@ -78,8 +78,8 @@ fn run(real: &Real, report: &mut Report) {
     let mut swings = Vec::new();
     let mut swung_gates = 0;
     let mut slowest = 0.0f64;
-    let mut done_all = true;
     for m in 0..MARCHES {
+        let mut done = true;
         let to = if m % 2 == 0 { &away } else { &home };
         let orders: Vec<PlayerCommand> = (0..SIDES)
             .map(|k| move_to(k as u8, armies[k], to[k]))
@@ -109,20 +109,20 @@ fn run(real: &Real, report: &mut Report) {
                 break;
             }
             if t > LIMIT_SECONDS * TICKS_PER_SECOND {
-                done_all = false;
+                done = false;
                 break;
             }
         }
         // Each regiment where it was sent.
-        let near = of(&world, &armies)
-            .zip(to)
-            .all(|(v, &p)| (v.position - p).length() < gc_fixed::Fx::from_int(6));
+        let near = armies.iter().zip(to).all(|(&h, &p)| {
+            of(&world, &[h]).any(|v| (v.position - p).length() < gc_fixed::Fx::from_int(6))
+        });
         report.check(
             format!(
                 "march {} done within {LIMIT_SECONDS} s, every regiment where sent",
                 m + 1
             ),
-            done_all && near,
+            done && near,
         );
     }
     let six_grids = tagged_alloc::live_bytes(Tag::Sim);

@@ -108,7 +108,7 @@ impl<T: Copy + PartialEq> Cells<T> {
     pub(super) fn share_from(&mut self, other: &Cells<T>) {
         if self.len == other.len {
             for k in either_written(&self.written, &other.written) {
-                if alike_apart(&self.runs[k], &other.runs[k]) {
+                if self.alike_apart(other, k) {
                     self.runs[k] = other.runs[k].clone();
                 }
             }
@@ -119,8 +119,15 @@ impl<T: Copy + PartialEq> Cells<T> {
     /// Whether [`Cells::share_from`] would share a run it doesn't yet.
     pub(super) fn shares_more_with(&self, other: &Cells<T>) -> bool {
         self.len == other.len
-            && either_written(&self.written, &other.written)
-                .any(|k| alike_apart(&self.runs[k], &other.runs[k]))
+            && either_written(&self.written, &other.written).any(|k| self.alike_apart(other, k))
+    }
+
+    /// Whether run `k` is held apart from `other`'s but holds the same
+    /// cells (the last run's filling out past the cells isn't compared).
+    fn alike_apart(&self, other: &Cells<T>, k: usize) -> bool {
+        let (a, b) = (&self.runs[k], &other.runs[k]);
+        let n = (self.len - k * RUN).min(RUN);
+        !Arc::ptr_eq(a, b) && a[..n] == b[..n]
     }
 
     /// Start counting writes afresh.
@@ -147,11 +154,6 @@ fn either_written<'a>(a: &'a [u64], b: &'a [u64]) -> impl Iterator<Item = usize>
             k
         })
     })
-}
-
-/// Whether two runs are held apart but hold the same cells.
-fn alike_apart<T: PartialEq>(a: &Arc<[T; RUN]>, b: &Arc<[T; RUN]>) -> bool {
-    !Arc::ptr_eq(a, b) && **a == **b
 }
 
 impl<T> Index<usize> for Cells<T> {

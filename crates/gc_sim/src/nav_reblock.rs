@@ -238,6 +238,10 @@ where
     Some(next)
 }
 
+/// Numbers a grid keeps free above those it gives out from, when the
+/// grids give them out from the same one (see [`Nav::on_every_grid`]).
+const ROOM: u32 = 4096;
+
 /// The set `k` is in, as its first member (halving the way up as it goes):
 /// each member of `set` holds one nearer the set's first, itself for that.
 fn root(set: &mut [usize], mut k: usize) -> usize {
@@ -407,7 +411,11 @@ impl Nav {
         // Linking the grid again isn't the routes' search work this tick.
         let work = self.search.work;
         let grid = Arc::make_mut(&mut self.grids[v]);
-        grid.areas = grid.areas.max(from);
+        // Not so near the most its cells hold that it would have to number
+        // the whole map for want of new numbers (and so again each time).
+        if grid.area.holds(from.saturating_add(ROOM)) {
+            grid.areas = grid.areas.max(from);
+        }
         let changed = grid.change_all(all, change, &mut self.search);
         self.search.work = work;
         let freed = match change {
@@ -989,12 +997,17 @@ impl Grid {
     /// - Ground that opened can only join areas: each set of areas joined
     ///   floods within its own cells, and those that run out take the
     ///   number of the one still going.
-    /// - Ground that shut can only cut them: each piece of an area left in
-    ///   the box floods over the area's cells, pieces whose floods meet
-    ///   are one, and each that runs out on its own takes a new number.
+    /// - Ground that shut can only cut them: the pieces of each piece from
+    ///   before that was cut in two or more flood over their area's cells,
+    ///   pieces whose floods meet are one, and each that runs out on its
+    ///   own takes a new number (and so does any other piece of the area
+    ///   its flood reached). An area none of whose pieces was cut in the
+    ///   box keeps its number unraced.
     ///
     /// Returns false, for the whole map to be numbered again, when ground
-    /// both opened and shut, or the numbers wouldn't fit 16 bits.
+    /// both opened and shut, the numbers wouldn't fit 16 bits, or the
+    /// floods would cover more cells than the map holds (numbering the
+    /// map costs about that).
     pub(super) fn renumber_far(&mut self, near: [i32; 4], was_open: &[bool]) -> bool {
         let (mut opened, mut shut) = (false, false);
         for (c, &was) in self.cells_in(near).zip(was_open) {
@@ -1016,6 +1029,8 @@ impl Grid {
         let h = now.len() / w.max(1);
         let (_, pieces, local) = pieces_of(&now, w, h);
         let cells: Vec<u32> = local.iter().map(|&l| cell(l)).collect();
+        // Cells the floods may still cover, all races together.
+        let mut budget = (side * side) as usize;
         // Each piece's areas from before, in order, once each.
         let held: Vec<Vec<u32>> = pieces
             .iter()
@@ -1059,7 +1074,7 @@ impl Grid {
                         vec![*c.expect("a cell of each held area")]
                     })
                     .collect();
-                let Some(won) = self.race(areas, seeds, false) else {
+                let Some(won) = self.race(areas, seeds, false, &mut budget) else {
                     return false;
                 };
                 for &a in areas {
@@ -1072,27 +1087,47 @@ impl Grid {
                 }
             }
         } else {
-            // The pieces each area was cut into.
-            let mut by_area: Vec<(u32, usize)> = (held.iter().enumerate())
-                .filter_map(|(p, a)| a.first().map(|&a| (a, p)))
+            // Each piece now lies in one piece from before (cells only
+            // shut): the pieces from before, as the box stood.
+            let mut before = now.clone();
+            let [nx0, ny0, nx1, ny1] = near;
+            let near_local = (ny0..ny1).flat_map(|y| (nx0..nx1).map(move |x| (x, y)));
+            for ((x, y), &was) in near_local.zip(was_open) {
+                before[(y - by0) as usize * w + (x - bx0) as usize] = was;
+            }
+            let (piece_before, _, _) = pieces_of(&before, w, h);
+            // The pieces of each area, by the piece from before each was
+            // part of.
+            let mut by_area: Vec<(u32, u32, usize)> = (held.iter().enumerate())
+                .filter_map(|(p, a)| {
+                    let was = piece_before[local[pieces[p].start] as usize];
+                    a.first().map(|&a| (a, was, p))
+                })
                 .collect();
             by_area.sort_unstable();
             for run in by_area.chunk_by(|x, y| x.0 == y.0) {
                 let area = run[0].0;
-                if run.len() == 1 {
-                    number[run[0].1] = area;
+                // Pieces of a piece from before that was cut.
+                let cut: Vec<usize> = (run.chunk_by(|x, y| x.1 == y.1))
+                    .filter(|was| was.len() > 1)
+                    .flat_map(|was| was.iter().map(|&(_, _, p)| p))
+                    .collect();
+                if cut.is_empty() {
+                    for &(_, _, p) in run {
+                        number[p] = area;
+                    }
                     continue;
                 }
-                let seeds: Vec<Vec<u32>> = run
-                    .iter()
-                    .map(|&(_, p)| cells[pieces[p].clone()].to_vec())
+                let seeds: Vec<Vec<u32>> = (cut.iter())
+                    .map(|&p| cells[pieces[p].clone()].to_vec())
                     .collect();
-                let areas = vec![area; run.len()];
-                let Some(_) = self.race(&areas, seeds, true) else {
+                let areas = vec![area; cut.len()];
+                let Some(_) = self.race(&areas, seeds, true, &mut budget) else {
                     return false;
                 };
-                // The race left each piece's ground numbered: read it back.
-                for &(_, p) in run {
+                // The race left each piece's ground numbered (the pieces
+                // it didn't start from too): read it back.
+                for &(_, _, p) in run {
                     number[p] = self.area.get(cells[pieces[p].start] as usize);
                 }
             }
@@ -1122,8 +1157,16 @@ impl Grid {
     /// the first) keeps the area's. Otherwise each flood stays in its own
     /// area, and every area takes the number of the one still going (or,
     /// if none is, the biggest): that number is returned. `None` if the
-    /// numbers wouldn't fit 16 bits (nothing is then left as it was).
-    fn race(&mut self, areas: &[u32], seeds: Vec<Vec<u32>>, meet: bool) -> Option<u32> {
+    /// numbers wouldn't fit 16 bits, or the floods would cover more than
+    /// `budget` cells (which counts down by those they cover); the areas
+    /// must then be numbered afresh.
+    fn race(
+        &mut self,
+        areas: &[u32],
+        seeds: Vec<Vec<u32>>,
+        meet: bool,
+        budget: &mut usize,
+    ) -> Option<u32> {
         let n = seeds.len() as u32;
         // Each flood marks the cells it covers with a number of its own,
         // above every number given out, and its cells double as its queue.
@@ -1157,6 +1200,7 @@ impl Grid {
                 }
                 let c = floods[k].0[floods[k].1];
                 floods[k].1 += 1;
+                *budget = budget.checked_sub(1)?;
                 let (x, y) = (c as i32 % side, c as i32 / side);
                 let next = [
                     (x + 1 < side).then(|| c + 1),
