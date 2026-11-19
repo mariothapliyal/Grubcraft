@@ -5311,15 +5311,13 @@ impl Running {
         }
         match key.physical_key {
             // Paste (Cmd+V on a Mac, Ctrl+V elsewhere) types the clipboard's
-            // first line into the focused box: a join code, an address.
-            PhysicalKey::Code(KeyCode::KeyV) if self.input.command => {
-                if let Some(text) = gc_platform::clipboard::get() {
-                    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
-                    self.ui_input.typed.extend(
-                        line.unwrap_or("")
-                            .chars()
-                            .filter(|c| (' '..='~').contains(c)),
-                    );
+            // first line into the focused box: a join code, an address. The
+            // box keeps only what it can show.
+            PhysicalKey::Code(KeyCode::KeyV) if self.input.command && !key.repeat => {
+                if let Some(text) = gc_platform::clipboard::get()
+                    && let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty())
+                {
+                    self.ui_input.typed.push_str(line);
                 }
             }
             PhysicalKey::Code(KeyCode::Backspace) => self.ui_input.backspace = true,
@@ -5379,6 +5377,11 @@ impl Running {
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox { roster: false }),
             MenuAction::OpenViewer => self.open_viewer("start"),
             MenuAction::OpenGuide => self.open_guide(),
+            MenuAction::Copy(text) => {
+                if !gc_platform::clipboard::set(&text) {
+                    logln!("grubcraft: could not put the join code on the clipboard");
+                }
+            }
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();

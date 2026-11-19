@@ -63,6 +63,8 @@ pub enum MenuAction {
     OpenViewer,
     /// The Guide button: the game should open the Guide.
     OpenGuide,
+    /// Put this text on the system clipboard (the lobby's Copy code).
+    Copy(String),
     Quit,
 }
 
@@ -134,7 +136,7 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The `address` of the listed game picked on the Play screen.
     selected_game: Option<String>,
     message: Option<(String, bool)>,
-    /// The lobby's Copy code button put the code on the clipboard.
+    /// The lobby's Copy code button was pressed.
     copied: bool,
     in_match: bool,
     /// The regiment types the army builder offers.
@@ -341,10 +343,7 @@ impl<N: Network> Menu<N> {
     }
 
     fn go(&mut self, ui: &mut Ui, screen: Screen) {
-        self.screen = screen;
-        self.message = None;
-        self.copied = false;
-        self.forget_code_entry();
+        self.show(screen);
         ui.reset();
     }
 
@@ -763,9 +762,8 @@ impl<N: Network> Menu<N> {
             // Two lines at most, broken at spaces.
             let mut lines = crate::draw::wrap(text, chars);
             if lines.len() > 2 {
-                let rest = fit(&lines[1..].join(" "), chars);
-                lines.truncate(1);
-                lines.push(rest);
+                lines[1] = fit(&lines[1..].join(" "), chars);
+                lines.truncate(2);
             }
             let top = note.y + (note.h - lines.len() as i32 * 18 + 2) / 2;
             for (i, line) in lines.iter().enumerate() {
@@ -1223,23 +1221,21 @@ impl<N: Network> Menu<N> {
         let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
         let why = fit(why, room);
         ui.label_right(panel.right() - 24, footer_y + 22, 1, color, &why);
-        if let Some(invite) = self.net.invite() {
+        let mut action = MenuAction::None;
+        if let Some((invite, code)) = self.net.invite() {
             // A Copy button for the code, so the host can paste it to
             // friends, then the codes and addresses.
-            let mut x = panel.x + 24;
-            if let Some(code) = self.net.invite_code() {
-                let copy = Rect::new(x, footer_y + 41, 112, 22);
-                let label = if self.copied { "Copied" } else { "Copy code" };
-                if ui.button(copy, label, ButtonStyle::Normal, true) {
-                    self.copied = gc_platform::clipboard::set(code);
-                }
-                x = copy.right() + 12;
+            let copy = Rect::new(panel.x + 24, footer_y + 41, 112, 22);
+            let label = if self.copied { "Copied" } else { "Copy code" };
+            if ui.button(copy, label, ButtonStyle::Normal, true) {
+                action = MenuAction::Copy(code.to_string());
+                self.copied = true;
             }
+            let x = copy.right() + 12;
             let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
             ui.label(x, footer_y + 44, 1, theme::INK_MUTED, &fit(invite, room));
         }
         let btn_y = panel.bottom() - 52;
-        let mut action = MenuAction::None;
         let leave = ui.button(
             Rect::new(panel.x + 24, btn_y, 140, 44),
             "Leave",
@@ -2435,6 +2431,8 @@ mod tests {
     struct Found {
         inner: LocalNetwork,
         games: Vec<DiscoveredGame>,
+        /// What the host's lobby shows for friends to join by, and its code.
+        invite: Option<(String, String)>,
     }
 
     impl Network for Found {
@@ -2443,6 +2441,9 @@ mod tests {
         }
         fn discovered(&mut self) -> &[DiscoveredGame] {
             &self.games
+        }
+        fn invite(&self) -> Option<(&str, &str)> {
+            self.invite.as_ref().map(|(t, c)| (t.as_str(), c.as_str()))
         }
         fn join(&mut self, me: &Profile, target: &str, pw: &str) -> Result<(), NetError> {
             self.inner.join(me, target, pw)
@@ -2484,6 +2485,46 @@ mod tests {
         ui.begin_frame(input, (1280, 760));
         menu.frame(ui);
         ui.end_frame();
+    }
+
+    #[test]
+    fn the_host_copies_the_join_code_from_the_lobby() {
+        let net = Found {
+            invite: Some((
+                "Tailscale code K7QD-M2XA (100.101.7.3) - Wi-Fi code 9ABC-DEF0 (192.168.1.20)"
+                    .into(),
+                "K7QD-M2XA".into(),
+            )),
+            ..Found::default()
+        };
+        let mut menu = Menu::new(net, Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Play);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        let click = |ui: &Ui, t: &str| {
+            let (x, y) = *find_all(&ui.draw, t).last().unwrap();
+            UiInput {
+                mouse: (x, y),
+                pressed: true,
+                released: true,
+                ..Default::default()
+            }
+        };
+        let host = click(&ui, "Host");
+        found_frame(&mut menu, &mut ui, host);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert_eq!(menu.screen(), Screen::Lobby);
+        assert!(find_text(&ui.draw, "Tailscale code K7QD-M2XA").is_some());
+        let copy = click(&ui, "Copy code");
+        ui.begin_frame(copy, (1280, 760));
+        let action = menu.frame(&mut ui);
+        ui.end_frame();
+        assert!(
+            matches!(action, MenuAction::Copy(ref c) if c == "K7QD-M2XA"),
+            "{action:?}"
+        );
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert!(find_text(&ui.draw, "Copied").is_some());
     }
 
     #[test]

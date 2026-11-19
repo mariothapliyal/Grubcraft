@@ -202,9 +202,7 @@ struct Host {
     /// Empty for none.
     password: String,
     /// How friends reach this lobby, for the lobby screen.
-    invite: Option<String>,
-    /// The code in `invite` a Copy button copies.
-    invite_code: Option<String>,
+    invite: Option<joincode::Invite>,
     /// Recent wrong passwords: from where, and when.
     guesses: Vec<(IpAddr, Instant)>,
     lobby: LobbyState,
@@ -1737,9 +1735,7 @@ impl Network for Lan {
         self.leave();
         let socket = self.bind_host()?;
         let port = socket.local_addr().map_or(DEFAULT_PORT, |a| a.port());
-        let (tailscale, local) = (joincode::tailscale_ip(), joincode::local_ip());
-        let invite = joincode::invite(port, tailscale, local);
-        let invite_code = joincode::invite_code(port, tailscale, local);
+        let invite = joincode::invite(port, joincode::tailscale_ip(), joincode::local_ip());
         let mut slots: [Slot; MAX_PLAYERS] = std::array::from_fn(Slot::open);
         slots[0] = Slot {
             kind: SlotKind::Human,
@@ -1756,7 +1752,6 @@ impl Network for Lan {
         self.role = Role::Host(Box::new(Host {
             password: password.trim().to_string(),
             invite,
-            invite_code,
             guesses: Vec::new(),
             lobby: LobbyState {
                 slots,
@@ -1780,16 +1775,12 @@ impl Network for Lan {
         &self.games
     }
 
-    fn invite(&self) -> Option<&str> {
+    fn invite(&self) -> Option<(&str, &str)> {
         match &self.role {
-            Role::Host(h) => h.invite.as_deref(),
-            _ => None,
-        }
-    }
-
-    fn invite_code(&self) -> Option<&str> {
-        match &self.role {
-            Role::Host(h) => h.invite_code.as_deref(),
+            Role::Host(h) => h
+                .invite
+                .as_ref()
+                .map(|i| (i.text.as_str(), i.code.as_str())),
             _ => None,
         }
     }

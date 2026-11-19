@@ -854,14 +854,9 @@ pub trait Network {
     /// Join by a discovered game's `address`, or whatever the player typed
     /// (`ip:port` or a join code), with the lobby's password if it has one.
     fn join(&mut self, me: &Profile, target: &str, password: &str) -> Result<(), NetError>;
-    /// While hosting: how friends reach this lobby (a join code and the
-    /// address), to show in it.
-    fn invite(&self) -> Option<&str> {
-        None
-    }
-    /// While hosting: the join code friends anywhere should type (the
-    /// first one [`NetSession::invite`] shows), for its Copy button.
-    fn invite_code(&self) -> Option<&str> {
+    /// While hosting: how friends reach this lobby, to show in it (the join
+    /// codes and addresses), and the code its Copy button copies.
+    fn invite(&self) -> Option<(&str, &str)> {
         None
     }
     /// The lobby we are in, if any.
