@@ -126,8 +126,9 @@ pub struct Terrain<'a> {
     /// How each tile's ground looks, row by row, `size - 1` over
     /// `samples_per_tile` tiles a side: red, green and blue multiply the
     /// grass (128 leaves it as it is, 255 doubles it; blended between tiles),
-    /// and alpha is one of the `GROUND_*` patterns drawn over it (0 for none).
-    /// Empty for none.
+    /// and alpha's low four bits are one of the `GROUND_*` patterns drawn
+    /// over it (0 for none), its high four how much snow lies on it whatever
+    /// the weather (0 to 15, the Highland's peaks). Empty for none.
     pub look: &'a [[u8; 4]],
 }
 

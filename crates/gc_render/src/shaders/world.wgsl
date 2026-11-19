@@ -404,8 +404,29 @@ fn snow_blanket(xz: vec2<f32>, lying: f32) -> f32 {
 const SNOW_ON_MODELS: f32 = 0.4;
 // And what covers the tops of trees, bushes, rocks and grass.
 const SNOW_ON_SCENERY: f32 = 0.7;
-fn dusting(n: vec3<f32>) -> f32 {
-    return g.light_meta.y * smoothstep(0.45, 0.9, n.y);
+// A tile's ground-look alpha byte (Terrain::look): the pattern in its low
+// four bits, the snow the Highland keeps on it in its high four. 0 for a
+// map with no look.
+fn look_byte(tile: vec2<i32>) -> u32 {
+    let side = i32(textureDimensions(ground_look).x);
+    if side <= 1 {
+        return 0u;
+    }
+    let t = clamp(tile, vec2<i32>(0), vec2<i32>(side - 1));
+    return u32(textureLoad(ground_look, t, 0).a * 255.0 + 0.5);
+}
+// How much snow lies where a look byte is (0 bare to 1 a blanket): the
+// weather's, and on the Highland's high ground what it keeps whatever the
+// weather, the weather's on top of it.
+fn snow_lying(byte: u32) -> f32 {
+    let lying = g.light_meta.y;
+    let kept = f32(byte >> 4u) / 15.0;
+    return min(max(lying, kept) + lying * kept, 1.0);
+}
+// How much snow settles on a surface facing `n` at `at` (tiles): only on
+// what faces up, and thinner the steeper it is.
+fn dusting(n: vec3<f32>, at: vec2<f32>) -> f32 {
+    return snow_lying(look_byte(vec2<i32>(at))) * smoothstep(0.45, 0.9, n.y);
 }
 
 fn shade(albedo: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
@@ -1099,11 +1120,13 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let look_tiles = f32(textureDimensions(ground_look).x);
     let has_look = textureDimensions(ground_look).x > 1u;
     var look_at = xz;
+    var look = 0u;
     if has_look {
         let look_wobble = (vec2<f32>(vnoise(xz * 0.3), vnoise(xz * 0.3 + vec2<f32>(23.0, 5.0))) - 0.5) * 2.6
             + (vec2<f32>(vnoise(xz * 1.1), vnoise(xz * 1.1 + vec2<f32>(7.0, 31.0))) - 0.5) * 0.8;
         // Kept to the map: the sampler repeats.
         look_at = clamp(xz + look_wobble, vec2<f32>(0.5), vec2<f32>(look_tiles - 0.5));
+        look = look_byte(vec2<i32>(look_at));
         let look_mult = textureSampleLevel(ground_look, soft_sampler, look_at / look_tiles, 0.0).rgb;
         grass = grass * look_mult * (255.0 / 128.0);
     }
@@ -1171,8 +1194,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // like, the pattern the tile's own (a nearest lookup), its edge ragged
         // by the wobble.
         if has_look {
-            let tile = vec2<i32>(look_at);
-            let pattern = u32(textureLoad(ground_look, tile, 0).a * 255.0 + 0.5);
+            let pattern = look & 15u;
             if pattern > 0u {
                 let hg = habitat_ground(pattern, xz, max(length(dpx.xz), length(dpy.xz)));
                 albedo = mix(albedo, hg.albedo, hg.k);
@@ -1261,7 +1283,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // on ground that is not steep, over the dirt but not bare rock, and never
     // over what the game says with the ground (a faction's land and its glow,
     // soft footing and standing water) nor the riverbed under shallow water.
-    let lying = g.light_meta.y;
+    let lying = snow_lying(look);
     if lying > 0.0 {
         let clings = 1.0 - smoothstep(0.08, 0.35, slope);
         let blanket = snow_blanket(xz, lying);
@@ -1301,7 +1323,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // Dust and soil settle on the ledges.
         rc = mix(rc, soil * 0.9, smoothstep(0.82, 0.95, n.y) * 0.3);
         // Snow lies on the ledges and crests.
-        rc = mix(rc, SNOW_ALBEDO, g.light_meta.y * smoothstep(0.8, 0.95, n.y) * 0.6);
+        rc = mix(rc, SNOW_ALBEDO, lying * smoothstep(0.8, 0.95, n.y) * 0.6);
         let ns = normalize(mix(nd, r.n, rock));
         let rough = mix(1.0, max(r.rough, 0.75), rock);
         let ao = mix(1.0, cavity * tall, rock);
@@ -2312,7 +2334,9 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
     let dry = srgb_to_linear(in.color);
-    let albedo = mix(dry * (1.0 - WET_DARK * drench(n)), SNOW_ALBEDO, dusting(n) * SNOW_ON_MODELS);
+    // Only falling snow settles on soldiers: they don't stand still long
+    // enough on the Highland's peaks to gather what lies there.
+    let albedo = mix(dry * (1.0 - WET_DARK * drench(n)), SNOW_ALBEDO, snow_lying(0u) * smoothstep(0.45, 0.9, n.y) * SNOW_ON_MODELS);
     let c = shade(albedo, n, in.world) + albedo * rim(n, in.world);
     // The selection glows as brightly in rain as in the dry.
     return vec4<f32>(c + dry * in.highlight * HIGHLIGHT, 1.0);
@@ -2427,7 +2451,7 @@ fn fs_soldier_textured(in: TexturedOut) -> @location(0) vec4<f32> {
     albedo = albedo * (1.0 - WET_DARK * soaked * (1.0 - 0.5 * a.a));
     rough = mix(rough, min(rough, 0.3), soaked * 0.7);
     // Snow settles on helmets, shoulders and roofs, and not on metal.
-    let dust = dusting(n) * SNOW_ON_MODELS * (1.0 - e.a) * (1.0 - 0.75 * a.a);
+    let dust = dusting(n, in.world.xz) * SNOW_ON_MODELS * (1.0 - e.a) * (1.0 - 0.75 * a.a);
     albedo = mix(albedo, SNOW_ALBEDO, dust);
     rough = mix(rough, 0.9, dust);
     let c = shade_material(albedo, n, in.world, rough, e.a, ao, e.rgb) + albedo * rim(n, in.world);

@@ -55,7 +55,7 @@ Outside the eleven threads: the Hand over button to give your army to an ally (#
 2. Fortifications stage 8, the town half: ~~the walled-town bonus~~ (done 2026-10-31, #377) and town life.
 3. ~~The building re-bake with the stronger bake~~ (done 2026-10-27 at Mario's word, see [31](31-surface-detail.md#built-so-far)).
 4. Soldiers drawn where they stand, with the duel spacing kept (done by T4, 2026-10-30, at draw time rather than in the bake); the rest of the fight library (more kills per weapon, kanabo, sword and shield, the other factions' weapons).
-5. Smaller extras: ~~lightning as a game event~~ (done 2026-10-31, #369), burning buildings lighting the ground, Highland snow, and ambient polish (supply carts, forge sparks, more fauna).
+5. Smaller extras: ~~lightning as a game event~~ (done 2026-10-31, #369), ~~burning buildings lighting the ground, Highland snow~~ (done 2026-11-20, drawing only, [32](32-changing-land.md#later-stages)), and ambient polish (supply carts, forge sparks, more fauna).
 6. Tuning on Mario's Mac: lighting with F10, and sound by ear.
 7. Mario's later calls: option C (every soldier a body in the simulation), Living Land stage 5, prisoners after battles, faction depth stages 7 to 9.
 8. *Built 2026-10-30 to 2026-10-31, apart from computer players repairing bridges (see the table above).* Dynamic bridges, first wave at the restart: drawn curved paths, a choice of width, upgrades to braced and reinforced piers, and models generated from a timber kit; walls, fences and palisades drawn on the same curves; once the water engine (idea 25) is built, debris and floods strike, jam and break bridges ([in brief](#dynamic-bridges-in-brief)).
