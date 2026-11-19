@@ -264,6 +264,9 @@ pub struct Look {
     /// Share of its hit points left, as the damage shows (1 while it goes
     /// up: it has few hit points yet, and doesn't smoke for it).
     pub hp: f32,
+    /// What it is in the life of a town: a forge, a store, a gate, a tower
+    /// (see [`crate::ambient::town`]).
+    pub part: crate::ambient::town::Part,
 }
 
 impl Look {
@@ -1402,6 +1405,7 @@ mod tests {
             role: Role::Housing,
             finished: true,
             hp,
+            part: crate::ambient::town::Part::None,
         }
     }
 

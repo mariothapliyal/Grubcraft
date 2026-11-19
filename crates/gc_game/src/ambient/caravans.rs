@@ -78,19 +78,19 @@ const DEMO_AHEAD: f32 = 14.0;
 
 /// A way between two hamlets, the stops at its ends in tiles.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Route {
-    from: Vec2,
-    to: Vec2,
+pub(super) struct Route {
+    pub(super) from: Vec2,
+    pub(super) to: Vec2,
     /// The sizes of the hamlets at the ends.
-    sizes: (Size, Size),
+    pub(super) sizes: (Size, Size),
 }
 
 impl Route {
-    fn len(&self) -> f32 {
+    pub(super) fn len(&self) -> f32 {
         self.from.distance(self.to)
     }
 
-    fn at(&self, along: f32) -> Vec2 {
+    pub(super) fn at(&self, along: f32) -> Vec2 {
         self.from
             .lerp(self.to, (along / self.len()).clamp(0.0, 1.0))
     }
@@ -103,7 +103,7 @@ impl Route {
 
 /// What a caravan is made of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Load {
+pub(super) enum Load {
     /// An ox cart and the man who leads it.
     Cart,
     /// Porters in file, this many.
@@ -111,19 +111,19 @@ enum Load {
 }
 
 #[derive(Clone, Debug)]
-struct Train {
+pub(super) struct Train {
     route: usize,
-    load: Load,
+    pub(super) load: Load,
     /// Tiles from the route's start, and the way it is going.
-    along: f32,
-    forward: bool,
+    pub(super) along: f32,
+    pub(super) forward: bool,
     /// Seconds still to wait at the end, and still to wait for calm.
     unload: f32,
     hold: f32,
     /// Seconds spent looking at the army that is near.
     looked: f32,
     /// Whether it stood still this step, for an army or a fight.
-    still: bool,
+    pub(super) still: bool,
     facing: Vec2,
     rng: Rng,
     phase: f32,
@@ -335,22 +335,55 @@ impl Caravans {
         visible: impl Fn((i32, i32)) -> bool,
         fx: &mut effects::Field,
     ) {
-        if dt <= 0.0 || wet >= DUST_UNTIL_WET {
-            return;
+        dust_of(&self.seen, dt, wet, ground, visible, fx);
+    }
+}
+
+/// The dust `pieces` (any caravan's or town cart's) throw up: see
+/// [`Caravans::dust`].
+pub fn dust_of(
+    pieces: &[Seen],
+    dt: f32,
+    wet: f32,
+    ground: impl Fn(Vec2) -> f32,
+    visible: impl Fn((i32, i32)) -> bool,
+    fx: &mut effects::Field,
+) {
+    if dt <= 0.0 || wet >= DUST_UNTIL_WET {
+        return;
+    }
+    for c in pieces {
+        let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
+        if c.piece != Piece::Cart || !c.rolling || !visible(tile) {
+            continue;
         }
-        for c in &self.seen {
-            let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
-            if c.piece != Piece::Cart || !c.rolling || !visible(tile) {
-                continue;
-            }
-            for w in c.wheels() {
-                fx.footstep(dt, Vec3::new(w.x, ground(w), w.y), c.facing, DUST_PACE);
-            }
+        for w in c.wheels() {
+            fx.footstep(dt, Vec3::new(w.x, ground(w), w.y), c.facing, DUST_PACE);
         }
     }
 }
 
 impl Train {
+    /// An ox cart on `route`, one of a town's supply carts (`town.rs`):
+    /// somewhere along it, going either way, from a `seed`.
+    pub(super) fn supply(seed: u32, route: &Route) -> Train {
+        let mut rng = Rng::seeded(seed.wrapping_mul(7919).wrapping_add(route.len() as u32));
+        let forward = rng.unit() < 0.5;
+        Train {
+            route: 0,
+            load: Load::Cart,
+            along: route.len() * rng.unit(),
+            forward,
+            unload: 0.0,
+            hold: 0.0,
+            looked: 0.0,
+            still: false,
+            facing: route.heading(forward),
+            phase: rng.unit() * 4.0,
+            rng,
+        }
+    }
+
     fn new(index: usize, route: &Route) -> Train {
         let mut rng = Rng::seeded(index as u32 * 7919 + route.len() as u32);
         // Carts mostly on the routes that serve a town or the bazaar, and now
@@ -398,7 +431,13 @@ impl Train {
         }
     }
 
-    fn step(&mut self, dt: f32, route: &Route, eyes: Eyes, occupied: &dyn Fn((i32, i32)) -> bool) {
+    pub(super) fn step(
+        &mut self,
+        dt: f32,
+        route: &Route,
+        eyes: Eyes,
+        occupied: &dyn Fn((i32, i32)) -> bool,
+    ) {
         let pos = route.at(self.along);
         let near = |all: &[Vec2], reach: f32| all.iter().any(|a| a.distance(pos) < reach);
         let army = near(eyes.armies, WATCH);
@@ -452,7 +491,7 @@ impl Train {
         !self.still && (self.unload <= 0.0 || self.turning(route))
     }
 
-    fn show(&self, route: &Route, out: &mut Vec<Seen>) {
+    pub(super) fn show(&self, route: &Route, out: &mut Vec<Seen>) {
         let pos = route.at(self.along);
         let facing = self.facing;
         let side = facing.perp();

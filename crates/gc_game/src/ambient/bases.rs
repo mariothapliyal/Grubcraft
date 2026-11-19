@@ -12,14 +12,14 @@ use crate::effects::Field;
 use crate::siege::{Look, SMOKES_BELOW, Style};
 
 /// Warm window light, and the colour of each faction's own glow.
-const WINDOW: [u8; 3] = [255, 184, 96];
+pub(super) const WINDOW: [u8; 3] = [255, 184, 96];
 const GHOST: [u8; 3] = [150, 255, 190];
-const RESONANCE: [u8; 3] = [150, 226, 255];
+pub(super) const RESONANCE: [u8; 3] = [150, 226, 255];
 const SPORE: [u8; 3] = [214, 204, 116];
 /// Windows are under a pixel from a camera farther than this many tiles of
 /// distance, and fade out from `LAMPS_NEAR`.
-const LAMPS_NEAR: f32 = 35.0;
-const LAMPS_FAR: f32 = 75.0;
+pub(super) const LAMPS_NEAR: f32 = 35.0;
+pub(super) const LAMPS_FAR: f32 = 75.0;
 /// Smoke and drifting lights can be seen farther; past `SMALL_FAR` only the
 /// big buildings make any, so a crowded town doesn't flood the particles.
 pub const REACH: f32 = 110.0;
@@ -131,6 +131,7 @@ pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ambient::town::Part;
     use crate::siege::stuff;
     use gc_data::Faction;
     use gc_sim::structures::Armour;
@@ -154,6 +155,7 @@ mod tests {
             role,
             finished,
             hp,
+            part: Part::None,
         }
     }
 

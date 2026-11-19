@@ -154,6 +154,7 @@ mod tests {
             role,
             finished,
             hp: 1.0,
+            part: crate::ambient::town::Part::None,
         }
     }
 
