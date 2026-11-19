@@ -661,6 +661,18 @@ struct Search {
     /// Cells of the route being built, before smoothing.
     chain: Vec<u32>,
     work: u32,
+    /// Sectors linked during a change made on several grids, kept while
+    /// it lasts (see [`Search::linked`]); `None` at any other time.
+    linked: Option<Vec<Linked>>,
+}
+
+/// A sector's links within it as [`Grid::sector_costs`] found them, and
+/// all they were found from: the sector's weights and its nodes' cells.
+struct Linked {
+    sec: u32,
+    weights: Vec<u32>,
+    cells: Vec<u32>,
+    costs: Vec<u32>,
 }
 
 impl Search {
@@ -731,6 +743,33 @@ impl Search {
             coarse: Vec::with_capacity(2),
             chain: Vec::with_capacity(CHAIN_CAPACITY),
             work: 0,
+            linked: None,
+        }
+    }
+
+    /// The links of sector `sec`, with nodes at `cells`, found earlier in
+    /// this change on a grid whose sector weighed the same as the weights
+    /// [`Search::weigh`] just noted: a sector's links depend on nothing
+    /// else. (Which of its nodes share an area only spares searches for
+    /// nodes that can't be reached.) A gate swinging changes the same
+    /// sectors alike on every grid that sees it shut, so each is searched
+    /// once, not once a side.
+    fn linked(&self, sec: u32, cells: &[u32]) -> Option<&[u32]> {
+        (self.linked.as_ref()?.iter())
+            .find(|l| l.sec == sec && l.cells == cells && l.weights == self.weights)
+            .map(|l| l.costs.as_slice())
+    }
+
+    /// Keep sector `sec`'s links for [`Search::linked`], while a change on
+    /// several grids lasts.
+    fn remember(&mut self, sec: u32, cells: Vec<u32>, costs: &[u32]) {
+        if let Some(linked) = &mut self.linked {
+            linked.push(Linked {
+                sec,
+                weights: self.weights.clone(),
+                cells,
+                costs: costs.to_vec(),
+            });
         }
     }
 
@@ -1058,8 +1097,10 @@ enum Route {
 /// so from the first gate a side whose own gates let it through where they
 /// stop others walks a grid of its own, a copy of the shared one kept up
 /// to date alongside it. A side is a party and its allies. Searches on
-/// each grid run just as on the one, at no extra cost; the price is the
-/// copies' memory and bringing each up to date when the ground changes.
+/// each grid run just as on the one, at no extra cost; the price is
+/// bringing each up to date when the ground changes, and the cells round
+/// its own gates: the rest it shares with the shared grid (see
+/// [`cells`]).
 pub struct Nav {
     /// The grid each side may walk; empty on an open plane with no map
     /// (tests), where everyone walks straight. The first is shared by every
@@ -2615,10 +2656,15 @@ impl Grid {
         let nodes = self.nodes_in(sec);
         let n = nodes.len();
         let mut costs = vec![NONE; n * n];
-        let mut wanted = Vec::with_capacity(n);
-        if n > 1 {
-            search.weigh(self, sec as u32, GRAPH_BERTH);
+        if n < 2 {
+            return costs;
         }
+        search.weigh(self, sec as u32, GRAPH_BERTH);
+        let cells: Vec<u32> = nodes.iter().map(|&u| self.node_cell[u as usize]).collect();
+        if let Some(found) = search.linked(sec as u32, &cells) {
+            return found.to_vec();
+        }
+        let mut wanted = Vec::with_capacity(n);
         for (a, &u) in nodes.iter().enumerate() {
             let cell = self.node_cell[u as usize];
             let area = self.area.get(cell as usize);
@@ -2644,6 +2690,7 @@ impl Grid {
                 }
             }
         }
+        search.remember(sec as u32, cells, &costs);
         costs
     }
 

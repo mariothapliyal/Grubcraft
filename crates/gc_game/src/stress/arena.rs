@@ -192,6 +192,20 @@ impl Arena {
 
     /// [`Arena::world`] under `sky`'s weather.
     pub fn world_under(&self, real: &Real, seed: u64, stores: u32, sky: gc_sim::Sky) -> World {
+        self.world_of(real, seed, stores, sky, 2)
+    }
+
+    /// [`Arena::world_under`] for `players` players, each on a side of
+    /// their own.
+    pub fn world_of(
+        &self,
+        real: &Real,
+        seed: u64,
+        stores: u32,
+        sky: gc_sim::Sky,
+        players: usize,
+    ) -> World {
+        let teams: Vec<u8> = (0..players as u8).collect();
         let map = self.map();
         let nav = map.sim_nav_costs();
         let mut world = World::new(&MatchSetup {
@@ -200,15 +214,16 @@ impl Arena {
             units: &real.units,
             map_tiles: map.tiles,
             nav: &nav,
-            teams: &[0, 1],
+            teams: &teams,
             ground: map.ground(),
             champions: false,
             sky,
             generals: false,
         });
         let mut start = [(0, 0); gc_sim::MAX_PARTIES];
-        start[0] = (stores, stores);
-        start[1] = (stores, stores);
+        for s in &mut start[..players] {
+            *s = (stores, stores);
+        }
         assert!(world.conquest(&ConquestSetup {
             buildings: &real.table.stats,
             units: &real.conquest_units,

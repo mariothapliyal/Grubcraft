@@ -727,7 +727,7 @@ mod tests {
                     .tick_count()
                     .is_multiple_of(10 * 60 * TICKS_PER_SECOND)
                 {
-                    marks.push(tagged_alloc::live_bytes(Tag::Sim) as f64 / (1 << 20) as f64);
+                    marks.push(tagged_alloc::live_bytes(Tag::Sim) as f64 / 1_048_576.0);
                 }
             }
             let ticks = sim.len();
@@ -742,11 +742,19 @@ mod tests {
                 pct(&mut ai, 0.5),
                 pct(&mut ai, 0.99),
                 pct(&mut both, 0.99),
-                sim_heap as f64 / (1 << 20) as f64,
-                ai_heap as f64 / (1 << 20) as f64,
+                sim_heap as f64 / 1_048_576.0,
+                ai_heap as f64 / 1_048_576.0,
             );
             let marks: Vec<String> = marks.iter().map(|m| format!("{m:.1}")).collect();
             println!("         sim MB every 10 minutes: {}", marks.join(" "));
+            // Ticks longer than a frame at 60 frames a second.
+            let over = |v: &[f64]| v.iter().filter(|&&t| t > 1000.0 / 60.0).count();
+            println!(
+                "         ticks over 16.7 ms: sim {}, minds {}, both {}",
+                over(&sim),
+                over(&ai),
+                over(&both)
+            );
             // Drop the minds' and the world's heap before the next size.
             drop(minds);
             drop(world);

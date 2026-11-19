@@ -72,6 +72,15 @@ impl<T: Copy + PartialEq> Cells<T> {
         (i < self.len).then(|| &self[i])
     }
 
+    /// Set cell `i` to `value`, leaving its run alone (and shared, if it
+    /// is) when it is already that.
+    #[inline]
+    pub(super) fn set(&mut self, i: usize, value: T) {
+        if self[i] != value {
+            self[i] = value;
+        }
+    }
+
     /// Every cell, in order.
     pub(super) fn iter(&self) -> impl Iterator<Item = &T> + '_ {
         self.runs.iter().flat_map(|r| r.iter()).take(self.len)

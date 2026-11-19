@@ -10,17 +10,25 @@
 //! - **Areas** are numbered again only in a box a sector wider than the
 //!   change, when that box can tell (a new piece of ground, or an area cut
 //!   in two where at most one side runs on out of the box). Otherwise
-//!   (two areas joined, or a wall cut an area right across) they are
-//!   numbered again across the map, in two passes (see
-//!   [`Grid::number_areas`]) that are about ten times faster than a flood
-//!   fill (on a 768-tile map a flood fill took most of the 200 ms a
-//!   building cost).
+//!   (two areas joined, or a wall cut an area right across, as a gate in
+//!   a town wall does each time it swings) floods race out of the box,
+//!   one cell each a turn, until all but one have run out of ground (see
+//!   [`Grid::renumber_far`]): that costs about the second biggest area's
+//!   cells, the town's rather than the map's. Only ground that both
+//!   opened and shut in one change, or numbers past 16 bits, number the
+//!   whole map again, in two passes (see [`Grid::number_areas`]).
 //! - **Portals** are placed again only on sector edges within
 //!   [`CLEAR_CAP`] of the change (a portal sits where clearance is
 //!   greatest, so no other edge's can move), and linked again only in the
 //!   sectors where a cell may have opened or shut (within [`CLEARANCE`] of
 //!   the change), or whose portals moved because a neighbour's did: every
-//!   other edge's portals and sector's links are copied across.
+//!   other edge's portals and sector's links are copied across. A sector
+//!   linked on one side's grid in a change is not searched again on
+//!   another's whose sector came out the same (see `Search::linked`).
+//! - **Each side's grid** (see [`Nav`]) shares every run of cells it holds
+//!   alike with the shared grid (see [`super::cells`]): after a change,
+//!   runs that came out the same are shared again, and every grid gives
+//!   out new area numbers from the same one so that they can.
 //!
 //! The result has the same areas, portals and links as building the grid
 //! from scratch (tests check), though an area's number may differ, as
@@ -91,10 +99,10 @@ impl Areas {
     pub(super) fn set(&mut self, c: usize, n: u32) {
         match self {
             Areas::Narrow(a) => match u16::try_from(n) {
-                Ok(n) => a[c] = n,
+                Ok(n) => a.set(c, n),
                 Err(_) => self.widen_to_set(c, n),
             },
-            Areas::Wide(a) => a[c] = n,
+            Areas::Wide(a) => a.set(c, n),
         }
     }
 
@@ -289,6 +297,7 @@ impl Nav {
     /// portals stay put and only routes passing through a sector with a
     /// ford are found again.
     pub(crate) fn set_frozen(&mut self, on: bool, regs: &Regiments) {
+        self.align_areas();
         for v in 0..self.grids.len() {
             if self.grids[v].frozen == on {
                 continue;
@@ -306,6 +315,7 @@ impl Nav {
     /// out. Only costs change, so the portals stay put and only routes
     /// passing near the changed tiles are found again.
     pub(crate) fn set_going(&mut self, tiles: &[(i32, i32, u8)], regs: &Regiments) {
+        self.align_areas();
         for v in 0..self.grids.len() {
             let work = self.search.work;
             let changed = Arc::make_mut(&mut self.grids[v]).regoing(tiles, &mut self.search);
@@ -363,6 +373,8 @@ impl Nav {
     /// Before a change made on several grids: every grid gives out new
     /// area numbers from the same one, so ground that changes alike on two
     /// grids is numbered alike and its cells can be shared again after.
+    /// The search keeps each sector it links meanwhile, so the grids that
+    /// change alike link it once (see `Search::linked`).
     fn align_areas(&mut self) {
         let most = self.grids.iter().map(|g| g.areas).max().unwrap_or(0);
         for g in &mut self.grids {
@@ -370,12 +382,16 @@ impl Nav {
                 Arc::make_mut(g).areas = most;
             }
         }
+        if self.grids.len() > 1 {
+            self.search.linked = Some(Vec::new());
+        }
     }
 
     /// After a change: each side's grid shares again with the first every
     /// run of cells that came out alike on both (see [`super::cells`]), so
     /// a side's own grid keeps only the cells round its own gates.
     fn share_alike(&mut self) {
+        self.search.linked = None;
         let Some((first, rest)) = self.grids.split_first_mut() else {
             return;
         };
@@ -786,61 +802,65 @@ impl Grid {
     /// cell outside it is more than [`CLEAR_CAP`] from the cells that
     /// changed.
     pub(super) fn measure_clearance_in(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let i = self.idx(x, y) as usize;
-                self.clear[i] = if self.cost[i] == BLOCKED {
-                    0
-                } else {
-                    CLEAR_CAP
+        // Measured in a list of the window's cells and a ring of cells
+        // round it (as they stand; 0 beyond the map's edge), then written
+        // back where they changed, so cells shared with other grids that
+        // come out the same stay shared.
+        let side = self.side;
+        let (w, h) = ((x1 - x0 + 2) as usize, (y1 - y0 + 2) as usize);
+        let mut local = vec![0u8; w * h];
+        for (ly, y) in (y0 - 1..=y1).enumerate() {
+            for (lx, x) in (x0 - 1..=x1).enumerate() {
+                if x < 0 || y < 0 || x >= side || y >= side {
+                    continue;
+                }
+                let i = (y * side + x) as usize;
+                let inside = (x0..x1).contains(&x) && (y0..y1).contains(&y);
+                local[ly * w + lx] = match () {
+                    _ if !inside => self.clear[i],
+                    _ if self.cost[i] == BLOCKED => 0,
+                    _ => CLEAR_CAP,
                 };
             }
         }
-        let side = self.side;
         let whole = x0 == 0 && y0 == 0 && x1 == side && y1 == side;
-        let at = |clear: &Cells<u8>, x: i32, y: i32| -> u8 {
-            if x < 0 || y < 0 || x >= side || y >= side {
-                0
-            } else {
-                clear[(y * side + x) as usize]
+        // The window's cells, as places in the list.
+        let cells = (1..h - 1).flat_map(|ly| (1..w - 1).map(move |lx| ly * w + lx));
+        let step = |d: u8, here: u8| here.min(d.saturating_add(1).min(CLEAR_CAP));
+        for l in cells.clone() {
+            if local[l] == 0 {
+                continue;
             }
-        };
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let i = (y * side + x) as usize;
-                if self.clear[i] == 0 {
-                    continue;
-                }
-                let c = &self.clear;
-                let mut d = at(c, x - 1, y)
-                    .min(at(c, x - 1, y - 1))
-                    .min(at(c, x, y - 1))
-                    .min(at(c, x + 1, y - 1));
-                // In a window, every neighbour, so the cells just outside it
-                // on the far sides are read too (over the whole map there
-                // are none, and the cells ahead are still to be measured).
-                if !whole {
-                    d = d
-                        .min(at(c, x + 1, y))
-                        .min(at(c, x + 1, y + 1))
-                        .min(at(c, x, y + 1))
-                        .min(at(c, x - 1, y + 1));
-                }
-                self.clear[i] = self.clear[i].min(d.saturating_add(1).min(CLEAR_CAP));
+            let mut d = local[l - 1]
+                .min(local[l - 1 - w])
+                .min(local[l - w])
+                .min(local[l + 1 - w]);
+            // In a window, every neighbour, so the cells just outside it
+            // on the far sides are read too (over the whole map there
+            // are none, and the cells ahead are still to be measured).
+            if !whole {
+                d = d
+                    .min(local[l + 1])
+                    .min(local[l + 1 + w])
+                    .min(local[l + w])
+                    .min(local[l - 1 + w]);
             }
+            local[l] = step(d, local[l]);
         }
-        for y in (y0..y1).rev() {
-            for x in (x0..x1).rev() {
-                let i = (y * side + x) as usize;
-                if self.clear[i] == 0 {
-                    continue;
-                }
-                let c = &self.clear;
-                let d = at(c, x + 1, y)
-                    .min(at(c, x + 1, y + 1))
-                    .min(at(c, x, y + 1))
-                    .min(at(c, x - 1, y + 1));
-                self.clear[i] = self.clear[i].min(d.saturating_add(1).min(CLEAR_CAP));
+        for l in cells.clone().rev() {
+            if local[l] == 0 {
+                continue;
+            }
+            let d = local[l + 1]
+                .min(local[l + 1 + w])
+                .min(local[l + w])
+                .min(local[l - 1 + w]);
+            local[l] = step(d, local[l]);
+        }
+        for (ly, y) in (y0..y1).enumerate() {
+            for (lx, x) in (x0..x1).enumerate() {
+                self.clear
+                    .set((y * side + x) as usize, local[(ly + 1) * w + lx + 1]);
             }
         }
     }
@@ -1140,31 +1160,21 @@ impl Grid {
             k
         };
         let side = self.side;
-        // The sets still going, each by its first flood.
-        let running = |floods: &[(Vec<u32>, usize)], set: &mut [usize], going: &mut Vec<usize>| {
-            going.clear();
+        // Floods still going in each set (by its first flood), and how many
+        // sets have any.
+        let mut left: Vec<usize> = vec![1; floods.len()];
+        for (k, (cells, _)) in floods.iter().enumerate() {
+            if cells.is_empty() {
+                left[k] = 0;
+            }
+        }
+        let mut alive = left.iter().filter(|&&l| l > 0).count();
+        'race: while alive > 1 {
+            // Each flood still going takes one cell.
             for k in 0..floods.len() {
-                if floods[k].1 < floods[k].0.len() {
-                    going.push(root(set, k));
-                }
-            }
-            going.sort_unstable();
-            going.dedup();
-        };
-        let mut going = Vec::with_capacity(floods.len());
-        loop {
-            running(&floods, &mut set, &mut going);
-            if going.len() <= 1 {
-                break;
-            }
-            // Each set still going takes one cell, from its first flood
-            // with any left.
-            for &g in &going {
-                let Some(k) = (0..floods.len())
-                    .find(|&k| root(&mut set, k) == g && floods[k].1 < floods[k].0.len())
-                else {
+                if floods[k].1 == floods[k].0.len() {
                     continue;
-                };
+                }
                 let c = floods[k].0[floods[k].1];
                 floods[k].1 += 1;
                 let (x, y) = (c as i32 % side, c as i32 / side);
@@ -1181,12 +1191,31 @@ impl Grid {
                         floods[k].0.push(m);
                     } else if meet && (mark..mark + n).contains(&a) {
                         let (ra, rb) = (root(&mut set, k), root(&mut set, (a - mark) as usize));
-                        set[ra.max(rb)] = ra.min(rb);
+                        if ra != rb {
+                            let (lo, hi) = (ra.min(rb), ra.max(rb));
+                            if left[lo] > 0 && left[hi] > 0 {
+                                alive -= 1;
+                            }
+                            set[hi] = lo;
+                            left[lo] += left[hi];
+                        }
                     }
+                }
+                if floods[k].1 == floods[k].0.len() {
+                    let r = root(&mut set, k);
+                    left[r] -= 1;
+                    if left[r] == 0 {
+                        alive -= 1;
+                    }
+                }
+                if alive <= 1 {
+                    break 'race;
                 }
             }
         }
-        let going = going.first().copied();
+        let going = (0..floods.len())
+            .find(|&k| floods[k].1 < floods[k].0.len())
+            .map(|k| root(&mut set, k));
         if meet {
             // Sets out of ground take new numbers; the one going keeps it.
             let keep = going.unwrap_or(0);
