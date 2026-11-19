@@ -462,6 +462,20 @@ impl Writer {
                 self.u8(39);
                 self.handle(regiment);
             }
+            Command::Hold { regiment, on } => {
+                self.u8(49);
+                self.handle(regiment);
+                self.bool(on);
+            }
+            Command::Skirmish { regiment, on } => {
+                self.u8(50);
+                self.handle(regiment);
+                self.bool(on);
+            }
+            Command::Run { regiment } => {
+                self.u8(51);
+                self.handle(regiment);
+            }
             Command::HandOver { to } => {
                 self.u8(21);
                 self.u8(to);
@@ -1073,6 +1087,17 @@ impl<'a> Reader<'a> {
             39 => Command::Burn {
                 regiment: self.handle()?,
             },
+            49 => Command::Hold {
+                regiment: self.handle()?,
+                on: self.bool()?,
+            },
+            50 => Command::Skirmish {
+                regiment: self.handle()?,
+                on: self.bool()?,
+            },
+            51 => Command::Run {
+                regiment: self.handle()?,
+            },
             tag @ (29 | 30) => Command::BuildWall {
                 regiment: if tag == 29 {
                     Some(self.handle()?)
@@ -1432,6 +1457,33 @@ mod tests {
                     index: 6,
                     generation: 1,
                 },
+            },
+            Command::Hold {
+                regiment: RegimentHandle {
+                    index: 3,
+                    generation: 1,
+                },
+                on: true,
+            },
+            Command::Skirmish {
+                regiment: RegimentHandle {
+                    index: 5,
+                    generation: 0,
+                },
+                on: false,
+            },
+            Command::Run {
+                regiment: RegimentHandle {
+                    index: 8,
+                    generation: 2,
+                },
+            },
+            Command::SetFormation {
+                regiment: RegimentHandle {
+                    index: 1,
+                    generation: 0,
+                },
+                formation: Formation::Wedge,
             },
             Command::PlanWall {
                 building: 2,

@@ -565,6 +565,10 @@ impl Captain {
         wants: &mut Vec<Want>,
     ) {
         let view = ctx.view;
+        // Stepping back from melee on its own: no new order until it has.
+        if r.stepping_back {
+            return;
+        }
         let range = view.unit(r).range;
         let danger_at = if m.role == Role::Screen {
             SCREEN_DANGER
@@ -598,7 +602,9 @@ impl Captain {
                 });
                 return;
             }
-            if !ctx.slip() {
+            // A skirmisher steps back by itself (see `crate::stances`), as
+            // soon as the threat comes near, quicker than a look comes round.
+            if !r.skirmish && !ctx.slip() {
                 // Step back out of reach, away from the threat. Keep going
                 // to the same place while it is still out of reach, rather
                 // than giving a new order every look.

@@ -40,6 +40,7 @@ pub mod personality;
 pub mod reading;
 pub mod rehearsal;
 pub mod scripted;
+pub mod stances;
 pub mod terrain;
 
 use std::sync::Arc;
@@ -143,6 +144,9 @@ pub struct Mind {
     /// The last torches order given to each regiment, by pool index, so
     /// one still on its way isn't given again.
     torches_given: Vec<Option<(gc_sim::RegimentHandle, bool)>>,
+    /// The last stance order given to each regiment (see [`stances`]), by
+    /// pool index, and when, so one still on its way isn't given again.
+    stances_given: Vec<Option<(Command, u32)>>,
     /// What its side sees, with the enemies it remembers (on a map with
     /// cover).
     sight: Perception,
@@ -213,6 +217,7 @@ impl Mind {
             next_slip: 0,
             wants: Vec::new(),
             torches_given: Vec::new(),
+            stances_given: Vec::new(),
             sight: Perception::new(),
             round: None,
             // Rounds start on a beat of their own too, so several Warlords
@@ -343,6 +348,7 @@ impl Mind {
             // No fires of its own in Conquest: its realm doesn't march its
             // troops out of one (docs/41, step 6).
             self.torches(view);
+            self.stances(view);
             self.orders.release(view.tick, out);
             return;
         }
@@ -368,6 +374,7 @@ impl Mind {
             self.orders.decide(view, &mut self.wants);
         }
         self.torches(view);
+        self.stances(view);
         self.fire_woods(view, world);
         self.orders.release(view.tick, out);
     }
@@ -458,6 +465,42 @@ impl Mind {
                 break;
             }
             self.torches_given[slot] = Some((r.handle, lit));
+        }
+    }
+
+    /// Once a second, after its other orders: hold, skirmish, run, column
+    /// and wedge where they pay (see [`stances`]), one order a regiment at
+    /// most, each costing an order as a person's would.
+    fn stances(&mut self, view: &Perception) {
+        let second = gc_sim::TICKS_PER_SECOND;
+        if !self.knobs.stances || !(view.tick + u32::from(self.party)).is_multiple_of(second) {
+            return;
+        }
+        // In Conquest, the Captain of the battle under way, if any.
+        let captain = match &self.realm {
+            Some(realm) => realm.marshal.captain(),
+            None => Some(&self.captain),
+        };
+        let wanted: Vec<_> = (view.regiments.iter())
+            .filter(|r| r.owner == self.party)
+            .filter_map(|r| Some((r.handle, stances::wanted(view, self.party, r, captain)?)))
+            .collect();
+        for (handle, command) in wanted {
+            let slot = handle.index as usize;
+            if self.stances_given.len() <= slot {
+                self.stances_given.resize(slot + 1, None);
+            }
+            // The same order is on its way (or was refused): not again for
+            // a few seconds.
+            if self.stances_given[slot]
+                .is_some_and(|(c, at)| c == command && view.tick < at + 3 * second)
+            {
+                continue;
+            }
+            if !self.orders.give(view.tick, command) {
+                break;
+            }
+            self.stances_given[slot] = Some((command, view.tick));
         }
     }
 

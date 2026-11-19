@@ -1203,6 +1203,56 @@ pub(crate) mod tests {
         assert!(wins >= 2, "the computer won {wins} of 3");
     }
 
+    /// Two Generals, Ember Clans against Carrion Concord (both with bows
+    /// and horse), give the new orders (docs/05-combat.md, "Hold, Skirmish
+    /// and Run") in battle: their bows skirmish, their horse forms a wedge,
+    /// and at least one regiment stands fast or runs.
+    #[test]
+    fn computer_generals_give_the_new_orders() {
+        use gc_sim::Formation;
+        let ai = Some(Difficulty::General);
+        let mut setup = lobby(&[ai, ai], &[0, 1]);
+        setup.players[1].faction = gc_ui::lobby::Faction::CarrionConcord;
+        let seed = 3;
+        let map = Heightmap::generate(seed, MAP);
+        let tables = crate::Tables::new(crate::test_data());
+        let mut m = crate::play::Match::new(&setup, seed, &map, &tables, false, None);
+        let mut given = [0u32; 5];
+        let mut out = Vec::new();
+        while m.world.tick_count() < 6 * 60 * gc_sim::TICKS_PER_SECOND {
+            out.clear();
+            m.think(&mut out);
+            for c in &out {
+                let k = match c.command {
+                    Command::Skirmish { on: true, .. } => 0,
+                    Command::SetFormation {
+                        formation: Formation::Wedge,
+                        ..
+                    } => 1,
+                    Command::Hold { on: true, .. } => 2,
+                    Command::Run { .. } => 3,
+                    Command::SetFormation {
+                        formation: Formation::Column,
+                        ..
+                    } => 4,
+                    _ => continue,
+                };
+                given[k] += 1;
+            }
+            if m.play_turn(&out).decided {
+                break;
+            }
+        }
+        let [skirmish, wedge, hold, run, column] = given;
+        println!(
+            "skirmish {skirmish}, wedge {wedge}, hold {hold}, run {run}, column {column} in {} s",
+            m.world.tick_count() / gc_sim::TICKS_PER_SECOND
+        );
+        assert!(skirmish > 0, "no bows skirmished");
+        assert!(wedge > 0, "no horse formed a wedge");
+        assert!(hold + run > 0, "nobody stood fast or ran");
+    }
+
     /// Three computers against three: every plateau is used, every army is
     /// raised, and the battle plays out to a result.
     #[test]

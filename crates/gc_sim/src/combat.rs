@@ -40,7 +40,9 @@ use crate::towers::{
     BLAST_DENSITY_MAX, BLAST_SPLASH, BOLT_BIG_PERCENT, MAX_SPLASHED, SPLASH_PERCENT, big_to_bolt,
 };
 use crate::vision::{OFF_GUARD_DAMAGE_PERCENT, Vision};
-use crate::{PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation, veterancy};
+use crate::{
+    Formation, PlayerId, Stances, StateHasher, TICKS_PER_SECOND, UnitStats, formation, veterancy,
+};
 
 /// Percent of its full weight a melee blow lands with: the one knob for how
 /// long fights last. Below 100, locked lines bleed (and so lose heart, see
@@ -229,7 +231,10 @@ fn driven(regs: &Regiments, i: usize) -> u8 {
 /// or loose infantry but stalls on a deep, close block, and anyone hit on
 /// the flank or rear is easily bowled over.
 fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: bool) -> u8 {
-    let weight = units[regs.unit[i] as usize].mass.heft() * PLOUGH_SPEED;
+    let weight = units[regs.unit[i] as usize].mass.heft()
+        * PLOUGH_SPEED
+        * regs.formation[i].charge_percent()
+        / 100;
     let depth = if front {
         formation::ranks(regs.files[j], regs.models[j]).min(PLOUGH_DEPTH)
     } else {
@@ -241,6 +246,17 @@ fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: boo
     let over = (weight * 100).saturating_sub(hold) / 100;
     (over * PLOUGH_TICKS_PER).min(u64::from(PLOUGH_TICKS)) as u8
 }
+
+/// A skirmisher steps back when an enemy melee block comes within this
+/// many tiles of its own block, by this many tiles, looking every this
+/// many ticks (staggered by slot); a step back lasts at most this long.
+pub const SKIRMISH_GAP: Fx = Fx::from_int(6);
+pub const SKIRMISH_STEP: Fx = Fx::from_int(8);
+const SKIRMISH_EVERY: u32 = 5;
+const SKIRMISH_TICKS: u8 = 5 * TICKS_PER_SECOND as u8;
+/// Turns tried, either way, off straight back from the foe when that way
+/// is blocked: about 30 and 60 degrees.
+const SKIRMISH_TURNS: [u16; 2] = [0x1555, 0x2AAA];
 
 /// Spatial hash cell edge, in tiles, and bucket count (a power of two).
 const CELL_TILES: i32 = 16;
@@ -1541,6 +1557,7 @@ impl Combat {
                 && regs.target[i].is_none()
                 && regs.attack_target[i].is_none()
                 && !regs.braced[i]
+                && !regs.hold[i]
                 && previous
                     .and_then(|h| regs.resolve(h))
                     .is_some_and(|j| regs.falling_back[j] == 0 && !regs.morale_state[j].broken())
@@ -1593,11 +1610,16 @@ impl Combat {
                         regs.strike[i] = Strike::Rest;
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
-                        regs.charge_bonus[i] = terrain.charge_bonus(
+                        // A wedge drives its point home harder.
+                        let bonus = terrain.charge_bonus(
                             units[regs.unit[i] as usize].charge_bonus,
                             regs.position[i],
                             regs.position[j],
                         );
+                        regs.charge_bonus[i] = (u64::from(bonus)
+                            * regs.formation[i].charge_percent()
+                            / 100)
+                            .min(u64::from(u8::MAX)) as u8;
                         // Heavy enough, it ploughs into the ranks: they are
                         // driven back from it, and the charger strikes the
                         // men it knocks aside at once. (Routers are only
@@ -1639,9 +1661,16 @@ impl Combat {
             }
         }
 
-        // Regiments ordered to attack close on their target.
+        self.skirmish(regs, units, stances, vision, nav, conquest, tick);
+
+        // Regiments ordered to attack close on their target (a skirmisher
+        // stepping back first steps back).
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] || regs.engaged[i].is_some() || regs.morale_state[i].broken() {
+            if !regs.alive[i]
+                || regs.engaged[i].is_some()
+                || regs.morale_state[i].broken()
+                || regs.backing[i] > 0
+            {
                 continue;
             }
             let Some(t) = regs.attack_target[i] else {
@@ -1724,6 +1753,83 @@ impl Combat {
                 regs.target[i] = Some(regs.position[j]);
                 regs.target_facing[i] = None;
             }
+        }
+    }
+
+    /// Skirmishers keep away from melee (see [`crate::Command::Skirmish`]):
+    /// one that shoots, standing or closing to shoot, and isn't held, in a
+    /// fight, at work or up on a wall, steps back [`SKIRMISH_STEP`] from
+    /// the nearest enemy melee block it can see that is coming free (not
+    /// fighting, routing or falling back) within [`SKIRMISH_GAP`] of it,
+    /// straight away from it, or turned off that if the way is blocked,
+    /// then turns to face it again. Cornered, it stands and fights.
+    #[allow(clippy::too_many_arguments)]
+    fn skirmish(
+        &self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        vision: &Vision,
+        nav: &Nav,
+        conquest: Option<&Conquest>,
+        tick: u32,
+    ) {
+        for i in 0..regs.alive.len() {
+            if !regs.alive[i]
+                || !regs.skirmish[i]
+                || !(tick + i as u32).is_multiple_of(SKIRMISH_EVERY)
+                || regs.hold[i]
+                || regs.backing[i] > 0
+                || regs.engaged[i].is_some()
+                || regs.morale_state[i].broken()
+                || regs.falling_back[i] > 0
+                || regs.on_wall[i]
+                || regs.trapped_left[i] > 0
+                // Marching on its own orders: it goes where it was sent.
+                || (regs.target[i].is_some() && regs.attack_target[i].is_none())
+                || conquest.is_some_and(|c| c.has_job(regs, i))
+            {
+                continue;
+            }
+            let (me, owner) = (regs.position[i], regs.owner[i]);
+            let mut nearest: Option<(Fx, usize)> = None;
+            let radius = &self.radius;
+            self.near_enemies(me, radius[i] + SKIRMISH_GAP, owner, |j| {
+                if !regs.alive[j]
+                    || !stances.hostile(owner, regs.owner[j])
+                    || units[regs.unit[j] as usize].range.raw() > 0
+                    || regs.engaged[j].is_some()
+                    || regs.falling_back[j] > 0
+                    || regs.morale_state[j].broken()
+                    || !regs.meet(i, j)
+                    || !vision.sees(owner, j, regs.owner[j])
+                {
+                    return;
+                }
+                let gap = (regs.position[j] - me).length() - radius[i] - radius[j];
+                if gap <= SKIRMISH_GAP && nearest.is_none_or(|(g, k)| (gap, j) < (g, k)) {
+                    nearest = Some((gap, j));
+                }
+            });
+            let Some((_, j)) = nearest else {
+                continue;
+            };
+            let away = Angle::of_vec(me - regs.position[j]);
+            let ways = core::iter::once(away).chain(
+                SKIRMISH_TURNS
+                    .iter()
+                    .flat_map(|&t| [away.wrapping_add(Angle(t)), away.wrapping_add(Angle(t.wrapping_neg()))]),
+            );
+            let Some(to) = ways.map(|a| me + a.to_vec() * SKIRMISH_STEP).find(|&to| {
+                nav.standable(owner, to) && nav.clear_line(owner, me, to)
+            }) else {
+                continue;
+            };
+            regs.target[i] = Some(to);
+            regs.target_facing[i] = Some(Angle::of_vec(regs.position[j] - to));
+            regs.backing[i] = SKIRMISH_TICKS;
+            regs.held[i] = 0;
+            regs.clear[i] = 0;
         }
     }
 
@@ -1967,6 +2073,7 @@ impl Combat {
             && regs.engaged[i].is_none()
             && !regs.morale_state[i].broken()
             && !regs.braced[i]
+            && !regs.hold[i]
             && regs.trapped_left[i] == 0
             && !regs.re_forming(i)
             && !self.civil(regs, i)
@@ -2370,7 +2477,10 @@ impl Combat {
                 + u128::from(regs.charge_bonus[i]) * u128::from(regs.charge[i])
                     / u128::from(CHARGE_TICKS);
             let heart = u128::from(heart_percent(regs.morale_state[i]));
-            let room = u128::from(attacker.weapon_room_percent(regs.formation[i]));
+            let mut room = u128::from(attacker.weapon_room_percent(regs.formation[i]));
+            if regs.winded_left[i] > 0 {
+                room = room * u128::from(crate::regiments::WINDED_BLOW_PERCENT) / 100;
+            }
             let mut ground = terrain.melee_percent(regs.position[i], regs.position[j]);
             if side == Side::Front && terrain.sheltered(regs.owner[j], regs.position[j]) {
                 ground = ground * crate::fieldworks::COVER_MELEE_PERCENT / 100;
@@ -2985,6 +3095,15 @@ fn strikers(
         out.push(k, 100);
         if my_side == Side::Front && attacker.reach && k + mine.files < models {
             out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
+        }
+        // A wedge's charge drives the riders behind the point home too, a
+        // file each behind every man at the point (docs/05, "Wedge").
+        if my_side == Side::Front && regs.formation[i] == Formation::Wedge && regs.charge[i] > 0 {
+            let mut behind = k + mine.files;
+            while behind < models && out.count < out.slots.len() {
+                out.push(behind, 100);
+                behind += mine.files;
+            }
         }
     }
     // Kept in quarters of a tile, rounded up so the room never grows.

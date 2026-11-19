@@ -28,6 +28,12 @@ pub enum Order {
     Braced,
     FallingBack,
     Running,
+    /// On a Hold order.
+    StandingFast,
+    /// A skirmisher stepping back from melee.
+    Skirmishing,
+    /// Marching or closing at the run.
+    AtTheRun,
 }
 
 impl Order {
@@ -43,6 +49,9 @@ impl Order {
             Order::Braced => "Braced",
             Order::FallingBack => "Falling back",
             Order::Running => "Running",
+            Order::StandingFast => "Standing fast",
+            Order::Skirmishing => "Skirmishing back",
+            Order::AtTheRun => "At the run",
         }
     }
 
@@ -58,6 +67,9 @@ impl Order {
             Order::Braced => Icon::Brace,
             Order::FallingBack => Icon::FallBack,
             Order::Running => Icon::Run,
+            Order::StandingFast => Icon::Hold,
+            Order::Skirmishing => Icon::Bow,
+            Order::AtTheRun => Icon::Hurry,
         }
     }
 }
@@ -70,6 +82,7 @@ pub enum Wait {
     Reforming,
     FilingThrough,
     Trapped,
+    Winded,
 }
 
 impl Wait {
@@ -81,6 +94,7 @@ impl Wait {
             Wait::Reforming => "re-forming ranks",
             Wait::FilingThrough => "filing through",
             Wait::Trapped => "trapped",
+            Wait::Winded => "winded",
         }
     }
 }
@@ -217,6 +231,9 @@ mod tests {
             Order::Braced,
             Order::FallingBack,
             Order::Running,
+            Order::StandingFast,
+            Order::Skirmishing,
+            Order::AtTheRun,
         ];
         let words: Vec<_> = all.iter().map(|o| o.word()).collect();
         assert_eq!(
@@ -229,7 +246,10 @@ mod tests {
                 "Fighting",
                 "Braced",
                 "Falling back",
-                "Running"
+                "Running",
+                "Standing fast",
+                "Skirmishing back",
+                "At the run"
             ]
         );
         assert!(all.iter().all(|o| o.icon() != Icon::None));

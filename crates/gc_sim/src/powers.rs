@@ -781,6 +781,16 @@ impl Regiments {
             // Slowed by a Choir Singing Wall (see [`crate::twists`]).
             percent = percent * crate::twists::SUNG_PACE_PERCENT / 100;
         }
+        // Marching in column; running, or winded after a run (see
+        // [`Regiments::run`]).
+        if self.formation[i] == crate::Formation::Column {
+            percent = percent * crate::COLUMN_PACE_PERCENT / 100;
+        }
+        if self.run_left[i] > 0 {
+            percent = percent * crate::regiments::RUN_PERCENT / 100;
+        } else if self.winded_left[i] > 0 {
+            percent = percent * crate::regiments::WINDED_PACE_PERCENT / 100;
+        }
         if percent == 100 {
             return pace;
         }

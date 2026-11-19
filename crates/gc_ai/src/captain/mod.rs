@@ -391,6 +391,18 @@ pub struct Ctx<'a> {
     pub next_slip: &'a mut u32,
 }
 
+impl Captain {
+    /// What regiment `h` is doing in this battle, if it is one of the
+    /// Captain's: its role, the enemy it was sent at, and, for a hammer,
+    /// whether it has committed to its strike.
+    pub(crate) fn part_of(&self, h: RegimentHandle) -> Option<(Role, Option<RegimentHandle>, bool)> {
+        self.members
+            .iter()
+            .find(|m| m.handle == h && !m.lost)
+            .map(|m| (m.role, m.target, m.striking))
+    }
+}
+
 impl Ctx<'_> {
     /// Whether to make a deliberate slip at this chance to make one (easier
     /// levels slip more, and more often). Slips are spaced out, so a level
