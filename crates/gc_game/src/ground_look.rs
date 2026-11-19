@@ -215,7 +215,7 @@ mod tests {
         let n = 64 * 64;
         // A ramp: the west half meadow, the east half Highland, rising east.
         map.heights = (0..n)
-            .map(|i| (map.water + 10 + (i % 64) as u16 * 100))
+            .map(|i| map.water + 10 + (i % 64) as u16 * 100)
             .collect();
         map.land = (0..n)
             .map(|i| {
