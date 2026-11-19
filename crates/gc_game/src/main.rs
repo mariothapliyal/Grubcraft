@@ -1156,8 +1156,10 @@ struct Art {
     looks: buildings::Looks,
     /// Each model's height, in tiles.
     heights: Vec<f32>,
-    /// The deer of the ambient wildlife, if the pack has it.
-    deer: Option<usize>,
+    /// The wild animals' models, by `ambient::wildlife::Species`, each if
+    /// the pack has it (a pack without the goat or the hare shows only the
+    /// others).
+    fauna: [Option<usize>; ambient::wildlife::Species::ALL.len()],
     /// The dove of the ambient birds, if the pack has it.
     dove: Option<usize>,
     /// The crow of the battlefield's aftermath, if the pack has it (else
@@ -1705,7 +1707,7 @@ impl App {
             clips: models::Clips::new(&models),
             looks: buildings::Looks::new(&buildings::Table::new(&game_data), &models),
             heights: models.models.iter().map(|m| m.height).collect(),
-            deer: models.by_name("Deer"),
+            fauna: ambient::wildlife::Species::ALL.map(|k| models.by_name(k.model())),
             dove: models.by_name("Dove"),
             crow: models.by_name("Crow"),
             folk: ambient::villagers::Kind::ALL
@@ -4804,10 +4806,13 @@ impl Running {
                 && self.viewer.is_none()
                 && !self.commander
                 && self.art.as_ref().is_some_and(|a| {
-                    a.deer.is_some() || a.dove.is_some() || a.folk.is_some() || a.cart.is_some()
+                    a.fauna.iter().any(Option::is_some)
+                        || a.dove.is_some()
+                        || a.folk.is_some()
+                        || a.cart.is_some()
                 });
             if showing {
-                // Deer and doves stand on ground no building or tree covers, keep away
+                // Deer, goats, hares and doves stand on ground no building or tree covers, keep away
                 // from buildings, and bolt or fly from the soldiers the viewer sees
                 // (so unseen armies give nothing away).
                 let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
@@ -8402,7 +8407,7 @@ impl Running {
     }
 
     /// The living things of the ambient pass that are on the ground and in
-    /// the air: deer, insects, doves, the villagers of the hamlets and the
+    /// the air: deer, goats, hares, insects, doves, the villagers of the hamlets and the
     /// caravans between them, as soldier instances. In every kind of match
     /// that makes them (the hamlets are Conquest's; the rest are on any
     /// land).
@@ -8413,15 +8418,19 @@ impl Running {
         let hm = &self.heightmap;
         let ground = |x, z| hm.drawn_height(x, z);
         let time = self.puppets.time();
-        if let Some(deer) = art.deer {
+        {
             let (reveal, fog) = (self.reveal_all, &self.fog);
             for d in self.ambient.wildlife.seen() {
+                // An animal whose model the pack lacks is not drawn.
+                let Some(model) = art.fauna[d.kind.index()] else {
+                    continue;
+                };
                 let tile = (d.pos.x.floor() as i32, d.pos.y.floor() as i32);
                 if !(reveal || fog.sees_tile(tile)) {
                     continue;
                 }
                 let foot = Vec3::new(d.pos.x, ground(d.pos.x, d.pos.y), d.pos.y);
-                let Some(lod) = art.view.place(art.heights[deer] * d.scale, foot) else {
+                let Some(lod) = art.view.place(art.heights[model] * d.scale, foot) else {
                     continue;
                 };
                 let (action, rate) = match d.doing {
@@ -8430,10 +8439,11 @@ impl Running {
                     ambient::wildlife::Doing::Walk => (Action::Walk, 1.0),
                     ambient::wildlife::Doing::Bolt => (Action::Run, ambient::wildlife::RUN_RATE),
                 };
-                let Some(pose) = art.clips.pose(deer, action, (time + d.phase * 4.0) * rate) else {
+                let Some(pose) = art.clips.pose(model, action, (time + d.phase * 4.0) * rate)
+                else {
                     continue;
                 };
-                art.buckets[deer * LODS + lod].push(SoldierInstance {
+                art.buckets[model * LODS + lod].push(SoldierInstance {
                     pos: d.pos.to_array(),
                     facing: d.facing.to_array(),
                     frames: pose.rows,

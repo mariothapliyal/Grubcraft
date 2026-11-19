@@ -20,6 +20,26 @@
             )),
         ),
         (
+            name: "Goat",
+            source: "shared:grubcraft/creatures/goat/goat.glb",
+            height: 1.1,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (2400, 1200, 520, 200),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/goat/albedo.png",
+            )),
+        ),
+        (
+            name: "Hare",
+            source: "shared:grubcraft/creatures/hare/hare.glb",
+            height: 0.46,
+            clips: { "Idle": "Idle", "Walk": "Walk", "Run": "Run", "Cheer": "Cheer" },
+            lod_triangles: (1500, 800, 380, 150),
+            textures: Some((
+                albedo: "shared:grubcraft/creatures/hare/albedo.png",
+            )),
+        ),
+        (
             name: "Dove",
             source: "shared:grubcraft/creatures/dove/dove.glb",
             height: 0.4,
