@@ -28,9 +28,10 @@
 //! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p|big-storm]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
 //!                 [--no-fog] [--warn-on-time]
-//! `--warn-on-time` reports a p99 tick over budget as a warning instead of a
-//! failure, for runners whose clocks are too noisy to gate on (CI's macOS
-//! runner); heap, allocation, laying and route-wait budgets still fail.
+//! `--warn-on-time` reports a p99 tick, or a laying tick, over budget as a
+//! warning instead of a failure, for runners whose clocks are too noisy to
+//! gate on (CI's macOS runner); heap, allocation and route-wait budgets
+//! still fail.
 //! `--open` runs the scripted scenarios on an open plane with no obstacles
 //! (no route searches); `--ticks` cuts the replay short. The grand battle
 //! takes its map, armies and seed from the replay. With no `--scenario`,
@@ -651,9 +652,19 @@ fn conquest_six(opts: &Options) -> bool {
          budget {LAYING_BUDGET_US:.0} us)",
         laid_us.get(laid_us.len() / 2).copied().unwrap_or(0.0)
     );
-    let mut failed = worst > LAYING_BUDGET_US;
-    if failed {
-        eprintln!("FAIL: a building took too long to go up");
+    // Wall-clock, like the p99 tick: one scheduling spike on a noisy runner
+    // (CI's macOS one) can make a single tick slow, so there it only warns.
+    let mut failed = false;
+    if worst > LAYING_BUDGET_US {
+        if opts.warn_on_time {
+            println!(
+                "::warning title=gc_bench::worst laying tick {worst:.0} us over the \
+                 {LAYING_BUDGET_US:.0} us budget (not gated on this runner)"
+            );
+        } else {
+            eprintln!("FAIL: a building took too long to go up");
+            failed = true;
+        }
     }
     failed |= timings.report(&world, &BIG_MAP_BUDGETS, opts.warn_on_time);
     failed

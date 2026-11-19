@@ -107,6 +107,16 @@ pub fn invite(port: u16, tailscale: Option<Ipv4Addr>, local: Option<Ipv4Addr>) -
     (!lines.is_empty()).then(|| lines.join(" - "))
 }
 
+/// The code [`invite`] shows first: the Tailscale one when there is one,
+/// as friends on this Wi-Fi find the game without a code.
+pub fn invite_code(
+    port: u16,
+    tailscale: Option<Ipv4Addr>,
+    local: Option<Ipv4Addr>,
+) -> Option<String> {
+    encode(tailscale.or(local)?, port)
+}
+
 /// The address this machine would send from to reach `target`.
 fn ip_toward(target: Ipv4Addr) -> Option<Ipv4Addr> {
     let s = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
@@ -143,6 +153,19 @@ mod tests {
                 .starts_with("Join code ")
         );
         assert_eq!(invite(DEFAULT_PORT, None, None), None);
+    }
+
+    #[test]
+    fn the_copied_code_is_the_first_one_shown() {
+        let ts = Ipv4Addr::new(100, 101, 7, 3);
+        let wifi = Ipv4Addr::new(192, 168, 1, 20);
+        for (t, l) in [(Some(ts), Some(wifi)), (None, Some(wifi)), (Some(ts), None)] {
+            let code = invite_code(DEFAULT_PORT, t, l).unwrap();
+            let shown = invite(DEFAULT_PORT, t, l).unwrap();
+            let first = shown.split(" - ").next().unwrap();
+            assert!(first.contains(&format!(" {code} ")), "{code} in {shown}");
+        }
+        assert_eq!(invite_code(DEFAULT_PORT, None, None), None);
     }
 
     #[test]

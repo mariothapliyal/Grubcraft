@@ -1,5 +1,6 @@
-//! Platform glue for Grubcraft: memory accounting, per-OS process stats, the log file and crash reports, atomic file writes.
+//! Platform glue for Grubcraft: the clipboard, memory accounting, per-OS process stats, the log file and crash reports, atomic file writes.
 
+pub mod clipboard;
 pub mod diag;
 pub mod fsutil;
 pub mod memory;

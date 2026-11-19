@@ -859,6 +859,11 @@ pub trait Network {
     fn invite(&self) -> Option<&str> {
         None
     }
+    /// While hosting: the join code friends anywhere should type (the
+    /// first one [`NetSession::invite`] shows), for its Copy button.
+    fn invite_code(&self) -> Option<&str> {
+        None
+    }
     /// The lobby we are in, if any.
     fn lobby(&self) -> Option<&LobbyState>;
     /// Change a slot: your own, or any AI slot if you host.

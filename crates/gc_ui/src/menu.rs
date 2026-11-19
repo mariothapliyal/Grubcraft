@@ -134,6 +134,8 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The `address` of the listed game picked on the Play screen.
     selected_game: Option<String>,
     message: Option<(String, bool)>,
+    /// The lobby's Copy code button put the code on the clipboard.
+    copied: bool,
     in_match: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
@@ -203,6 +205,7 @@ impl<N: Network> Menu<N> {
             join_password: String::new(),
             selected_game: None,
             message: None,
+            copied: false,
             in_match: false,
             roster: Vec::new(),
             army_draft: None,
@@ -312,6 +315,7 @@ impl<N: Network> Menu<N> {
     pub fn show(&mut self, screen: Screen) {
         self.screen = screen;
         self.message = None;
+        self.copied = false;
         self.forget_code_entry();
     }
 
@@ -339,6 +343,7 @@ impl<N: Network> Menu<N> {
     fn go(&mut self, ui: &mut Ui, screen: Screen) {
         self.screen = screen;
         self.message = None;
+        self.copied = false;
         self.forget_code_entry();
         ui.reset();
     }
@@ -737,7 +742,8 @@ impl<N: Network> Menu<N> {
             }
         }
 
-        // Footer.
+        // Footer: Back, and beside it why hosting or joining failed, on a
+        // light box of its own clear of the Host and Join buttons.
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         if let Some((text, is_error)) = &self.message {
             let color = if *is_error {
@@ -745,19 +751,25 @@ impl<N: Network> Menu<N> {
             } else {
                 theme::GOOD_INK
             };
-            let chars = ((panel.w - 48) / 8) as usize;
-            // Two lines at most.
-            let first: String = text.chars().take(chars).collect();
-            let rest: String = text.chars().skip(chars).take(chars).collect();
-            ui.label(panel.x + 24, back.y - sp(46), 1, color, &first);
-            if !rest.is_empty() {
-                ui.label(
-                    panel.x + 24,
-                    back.y - sp(46) + 18,
-                    1,
-                    color,
-                    &fit(&rest, chars),
-                );
+            let note = Rect::new(
+                back.right() + 16,
+                back.y,
+                panel.right() - 24 - back.right() - 16,
+                back.h,
+            );
+            ui.draw.rect(note, theme::FIELD_CLOTH);
+            ui.draw.border(note, 1, color);
+            let chars = ((note.w - 16) / 8).max(1) as usize;
+            // Two lines at most, broken at spaces.
+            let mut lines = crate::draw::wrap(text, chars);
+            if lines.len() > 2 {
+                let rest = fit(&lines[1..].join(" "), chars);
+                lines.truncate(1);
+                lines.push(rest);
+            }
+            let top = note.y + (note.h - lines.len() as i32 * 18 + 2) / 2;
+            for (i, line) in lines.iter().enumerate() {
+                ui.label(note.x + 8, top + i as i32 * 18, 1, color, line);
             }
         }
         if ui.button(back, "Back", ButtonStyle::Normal, true) || escape {
@@ -1212,7 +1224,19 @@ impl<N: Network> Menu<N> {
         let why = fit(why, room);
         ui.label_right(panel.right() - 24, footer_y + 22, 1, color, &why);
         if let Some(invite) = self.net.invite() {
-            ui.label(panel.x + 24, footer_y + 44, 1, theme::INK_MUTED, invite);
+            // A Copy button for the code, so the host can paste it to
+            // friends, then the codes and addresses.
+            let mut x = panel.x + 24;
+            if let Some(code) = self.net.invite_code() {
+                let copy = Rect::new(x, footer_y + 41, 112, 22);
+                let label = if self.copied { "Copied" } else { "Copy code" };
+                if ui.button(copy, label, ButtonStyle::Normal, true) {
+                    self.copied = gc_platform::clipboard::set(code);
+                }
+                x = copy.right() + 12;
+            }
+            let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
+            ui.label(x, footer_y + 44, 1, theme::INK_MUTED, &fit(invite, room));
         }
         let btn_y = panel.bottom() - 52;
         let mut action = MenuAction::None;
@@ -2295,6 +2319,31 @@ mod tests {
         let lobby = h.menu.net.lobby().unwrap();
         assert_eq!(lobby.settings.mode, GameMode::Conquest);
         assert_eq!(lobby.settings.map_name(), "Land: Plains");
+    }
+
+    #[test]
+    fn a_join_error_sits_clear_of_the_host_and_join_buttons() {
+        let mut h = Harness::new();
+        h.click("Play");
+        let (x, y) = h.text_pos("Address or join code");
+        h.click_at(x, y);
+        type_text(&mut h, "192.168.1.9:7777");
+        h.click_last("Join");
+        // The error's text sits in the footer row beside Back (44 tall),
+        // under the Host and Join buttons, in two lines at most.
+        let (_, back_y) = h.text_pos("Back");
+        let rows: std::collections::BTreeSet<u16> =
+            h.ui.draw
+                .quads
+                .iter()
+                .filter(|q| q.glyph != crate::draw::SOLID && q.color == theme::BAD_INK)
+                .map(|q| q.pos[1])
+                .collect();
+        assert!(!rows.is_empty() && rows.len() <= 2, "{rows:?}");
+        assert!(
+            rows.iter().all(|&r| (i32::from(r) - back_y).abs() < 22),
+            "{rows:?} {back_y}"
+        );
     }
 
     #[test]

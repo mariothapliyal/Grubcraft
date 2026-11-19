@@ -5310,6 +5310,18 @@ impl Running {
                 .extend(text.chars().filter(|c| (' '..='~').contains(c)));
         }
         match key.physical_key {
+            // Paste (Cmd+V on a Mac, Ctrl+V elsewhere) types the clipboard's
+            // first line into the focused box: a join code, an address.
+            PhysicalKey::Code(KeyCode::KeyV) if self.input.command => {
+                if let Some(text) = gc_platform::clipboard::get() {
+                    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
+                    self.ui_input.typed.extend(
+                        line.unwrap_or("")
+                            .chars()
+                            .filter(|c| (' '..='~').contains(c)),
+                    );
+                }
+            }
             PhysicalKey::Code(KeyCode::Backspace) => self.ui_input.backspace = true,
             PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => self.ui_input.enter = true,
             PhysicalKey::Code(KeyCode::Escape) if !key.repeat => self.ui_input.escape = true,
