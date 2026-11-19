@@ -11,6 +11,7 @@ virtual screen: xvfb-run -a -s "-screen 0 1280x720x24" python3 ...
 A software GPU draws about a frame a second, so the default 400 frames
 stay well inside the smoke run's fifteen-minute limit.
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -24,7 +25,9 @@ every = int(args[3]) if len(args) > 3 else 45
 out.mkdir(parents=True, exist_ok=True)
 
 smoke = pathlib.Path(__file__).with_name("smoke-run.py")
-game = subprocess.Popen([sys.executable, str(smoke), binary, frames, "general"])
+# No hidden frames at the end: they would freeze the last screenshots.
+env = dict(os.environ, SMOKE_HIDDEN_FRAMES="0")
+game = subprocess.Popen([sys.executable, str(smoke), binary, frames, "general"], env=env)
 shot = 0
 while True:
     try:

@@ -798,6 +798,13 @@ fn parse_args() -> Options {
     if opts.showroom_clip.is_some() && opts.showroom.is_none() {
         usage();
     }
+    // The hidden frames are the last of `--frames`, after at least one drawn.
+    if let Some(n) = opts.hidden_frames
+        && opts.frames.is_none_or(|frames| n >= frames)
+    {
+        eprintln!("--hidden-frames N needs --frames greater than N");
+        usage();
+    }
     // The showroom is not a match: nothing to fight, host or join.
     if opts.showroom.is_some()
         && (opts.sandbox
@@ -2497,6 +2504,10 @@ impl ApplicationHandler for App {
                     r.memory_timeline.mark("exit");
                     r.print_hidden_window_check();
                     println!("{}", r.stats_line());
+                    // For scripts/smoke-run.py: the budget is for the peak.
+                    if let Some(peak) = gc_platform::memory::process_memory().peak {
+                        println!("peak process memory: {:.1} MB", mb(peak as usize));
+                    }
                     r.memory_timeline.print();
                     print_memory(&r.renderer);
                     event_loop.exit();
@@ -2541,18 +2552,18 @@ impl Running {
     }
 
     fn print_hidden_window_check(&self) {
-        let Some((since, from, Some(before))) = self.hidden_since else {
+        let Some((since, from, before)) = self.hidden_since else {
             return;
         };
-        let Some(after) = gc_platform::memory::process_memory().current else {
-            return;
-        };
+        let after = gc_platform::memory::process_memory().current;
+        let figure =
+            |bytes: Option<u64>| bytes.map_or("?".into(), |b| format!("{:.1}", mb(b as usize)));
         println!(
-            "hidden window: {} frames in {:.1} s, process {:.1} MB before, {:.1} MB after",
+            "hidden window: {} frames in {:.1} s, process {} MB before, {} MB after",
             self.stats.frames - from,
             since.elapsed().as_secs_f32(),
-            mb(before as usize),
-            mb(after as usize)
+            figure(before),
+            figure(after)
         );
     }
 
@@ -9457,10 +9468,6 @@ fn print_memory(renderer: &Renderer) {
     eprintln!("  {:<8} {:>8.2}", "gpu", mb(renderer.gpu_bytes() as usize));
     if let Some(c) = mem.current {
         eprintln!("  process  {:>8.2}", mb(c as usize));
-    }
-    // On stdout, for scripts/smoke-run.py: the budget is for the peak.
-    if let Some(p) = mem.peak {
-        println!("peak process memory: {:.1} MB", mb(p as usize));
     }
 }
 

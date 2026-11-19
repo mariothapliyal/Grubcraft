@@ -29,7 +29,9 @@ TIME_LIMIT_S = 900
 # Frames played as if the window were hidden. Without the fix the process
 # grew about 0.3 MB a frame in a battle (185 MB over 600 frames on Linux);
 # with it, under 1 MB in all.
-HIDDEN_FRAMES = 600
+# SMOKE_HIDDEN_FRAMES=0 leaves them out (scripts/match-shots.py, whose
+# screenshots would show a frozen picture).
+HIDDEN_FRAMES = int(os.environ.get("SMOKE_HIDDEN_FRAMES", "600"))
 HIDDEN_GROWTH_LIMIT_MB = 32
 # A hidden frame waits a 60th of a second; well under that is spinning.
 HIDDEN_FRAME_MIN_S = 0.012
@@ -49,14 +51,9 @@ def main():
     env = dict(os.environ, GRUBCRAFT_SETTINGS=str(app_dir / "settings.ron"))
     # Shadows and glow are left out only because a software GPU draws them
     # very slowly; everything else is what a player runs.
-    cmd = [
-        str(binary),
-        "--frames",
-        str(int(frames) + HIDDEN_FRAMES),
-        "--hidden-frames",
-        str(HIDDEN_FRAMES),
-        "--no-audio",
-    ]
+    cmd = [str(binary), "--frames", str(int(frames) + HIDDEN_FRAMES), "--no-audio"]
+    if HIDDEN_FRAMES:
+        cmd += ["--hidden-frames", str(HIDDEN_FRAMES)]
     if menu:
         cmd += ["--menu"]
     else:
@@ -84,18 +81,21 @@ def main():
         problems.append(f"crash report written: {crashes[0].name}")
     memory = re.search(r"([\d.]+) MB process", run.stdout)
     peak = re.search(r"peak process memory: ([\d.]+) MB", run.stdout)
-    used = peak or memory
+    used = max(float(m.group(1)) for m in (peak, memory) if m) if memory else None
     if memory is None:
         problems.append("no memory figure in the game's final line (did it draw its frames?)")
-    elif float(used.group(1)) > MEMORY_BUDGET_MB:
-        problems.append(f"{used.group(1)} MB used at the peak, budget {MEMORY_BUDGET_MB} MB")
+    elif used > MEMORY_BUDGET_MB:
+        problems.append(f"{used:.1f} MB used at the peak, budget {MEMORY_BUDGET_MB} MB")
     hidden = re.search(
-        r"hidden window: (\d+) frames in ([\d.]+) s, process ([\d.]+) MB before, ([\d.]+) MB after",
+        r"hidden window: (\d+) frames in ([\d.]+) s, process ([\d.?]+) MB before, ([\d.?]+) MB after",
         run.stdout,
     )
-    if hidden is None:
+    growth = seconds = 0.0
+    if HIDDEN_FRAMES and hidden is None:
         problems.append("no hidden window line (did it play the hidden frames?)")
-    else:
+    elif HIDDEN_FRAMES and "?" in hidden.group(3) + hidden.group(4):
+        problems.append("no memory figure for the hidden frames")
+    elif HIDDEN_FRAMES:
         n, seconds, before, after = (float(g) for g in hidden.groups())
         growth = after - before
         if growth > HIDDEN_GROWTH_LIMIT_MB:
@@ -113,7 +113,7 @@ def main():
             print(f"--- {log} ---\n{log_text}")
         sys.exit(1)
     print(
-        f"ok: {frames} frames, {used.group(1)} MB process at the peak (budget {MEMORY_BUDGET_MB} MB), "
+        f"ok: {frames} frames, {used:.1f} MB process at the peak (budget {MEMORY_BUDGET_MB} MB), "
         f"{HIDDEN_FRAMES} hidden frames grew it {growth:+.1f} MB in {seconds:.1f} s"
     )
 

@@ -19,9 +19,9 @@ pub fn process_memory() -> ProcessMemory {
 mod imp {
     use super::ProcessMemory;
 
-    // From <mach/task_info.h>: the TASK_VM_INFO layout up to
-    // `ledger_phys_footprint_peak` (revision 3). The kernel fills as many
-    // revisions as `count` allows.
+    // From <mach/task_info.h>: the TASK_VM_INFO layout through revision 3.
+    // The kernel fills as many whole revisions as `count` allows, so the
+    // struct must hold all of revision 3 for `ledger_phys_footprint_peak`.
     #[repr(C)]
     #[derive(Default)]
     struct TaskVmInfo {
@@ -47,7 +47,9 @@ mod imp {
         phys_footprint: u64,
         min_address: u64,
         max_address: u64,
-        ledger_phys_footprint_peak: i64,
+        /// `ledger_phys_footprint_peak`, then the purgeable and tagged
+        /// (network, media, graphics, neural) ledgers.
+        ledger: [i64; 21],
     }
 
     const TASK_VM_INFO: u32 = 22;
@@ -75,8 +77,8 @@ mod imp {
         // at, GPU memory included) where the kernel gave it, else the
         // resident peak, which leaves out compressed memory. An older
         // kernel leaves it at zero.
-        let peak = if info.ledger_phys_footprint_peak > 0 {
-            info.ledger_phys_footprint_peak as u64
+        let peak = if info.ledger[0] > 0 {
+            info.ledger[0] as u64
         } else {
             info.resident_size_peak
         };
