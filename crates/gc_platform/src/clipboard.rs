@@ -4,7 +4,8 @@
 //! The Mac uses `pbpaste` and `pbcopy`, which every Mac has. Windows calls
 //! the clipboard functions in `user32` directly. Linux tries `wl-paste` and
 //! `wl-copy` (Wayland), then `xclip` and `xsel` (X11); with none of them
-//! installed, the clipboard just reads as empty.
+//! installed, the clipboard just reads as empty. A tool that takes over
+//! half a second is stopped, so a stuck clipboard can't freeze the game.
 
 /// The clipboard's text, or `None` when it holds none (or can't be read).
 pub fn get() -> Option<String> {
@@ -18,24 +19,58 @@ pub fn set(text: &str) -> bool {
 
 #[cfg(not(target_os = "windows"))]
 mod tool {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::io::{Read, Write};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
 
-    /// What `program args..` prints, when it runs and succeeds.
+    /// How long a clipboard tool may take. It runs on the game's main
+    /// thread, and on X11 it waits for whichever app holds the clipboard,
+    /// which may never answer.
+    const PATIENCE: Duration = Duration::from_millis(500);
+
+    /// Wait for `child` to finish, killing it once it has taken too long.
+    /// True when it finished and succeeded.
+    fn finish(mut child: Child) -> bool {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status.success(),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+            }
+        }
+    }
+
+    /// What `program args..` prints, when it runs and succeeds in time.
     pub fn read(program: &str, args: &[&str]) -> Option<String> {
-        let out = Command::new(program)
+        let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .output()
+            .spawn()
             .ok()?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        // A thread reads the output, so a tool that fills the pipe can't
+        // stall before it finishes.
+        let mut out = child.stdout.take()?;
+        let reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            out.read_to_end(&mut bytes).map(|_| bytes)
+        });
+        let ok = finish(child);
+        // Killed or finished, the pipe has closed, so this ends.
+        let bytes = reader.join().ok()?.ok()?;
+        ok.then(|| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Run `program args..` with `text` on its input. True when it ran and
-    /// succeeded.
+    /// succeeded in time.
     pub fn write(program: &str, args: &[&str], text: &str) -> bool {
         let Ok(mut child) = Command::new(program)
             .args(args)
@@ -51,7 +86,7 @@ mod tool {
             .take()
             .is_some_and(|mut input| input.write_all(text.as_bytes()).is_ok());
         // The input closes above, so the tool can finish.
-        child.wait().is_ok_and(|s| s.success()) && wrote
+        finish(child) && wrote
     }
 }
 
@@ -97,9 +132,17 @@ mod imp {
     struct Open;
 
     impl Open {
+        /// Another program may hold the clipboard open for a moment: try a
+        /// few times.
         fn new() -> Option<Open> {
-            // SAFETY: no window owns it; closed again on drop.
-            (unsafe { OpenClipboard(0) } != 0).then_some(Open)
+            for _ in 0..5 {
+                // SAFETY: no window owns it; closed again on drop.
+                if unsafe { OpenClipboard(0) } != 0 {
+                    return Some(Open);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            None
         }
     }
 
@@ -169,7 +212,7 @@ mod imp {
     use super::tool;
 
     pub fn get() -> Option<String> {
-        tool::read("wl-paste", &["--no-newline"])
+        tool::read("wl-paste", &["--no-newline", "--type", "text"])
             .or_else(|| tool::read("xclip", &["-selection", "clipboard", "-o"]))
             .or_else(|| tool::read("xsel", &["--clipboard", "--output"]))
     }

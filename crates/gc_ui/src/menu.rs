@@ -63,7 +63,8 @@ pub enum MenuAction {
     OpenViewer,
     /// The Guide button: the game should open the Guide.
     OpenGuide,
-    /// Put this text on the system clipboard (the lobby's Copy code).
+    /// Put this text on the system clipboard (the lobby's Copy button),
+    /// then tell the menu whether that worked ([`Menu::copied`]).
     Copy(String),
     Quit,
 }
@@ -136,8 +137,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The `address` of the listed game picked on the Play screen.
     selected_game: Option<String>,
     message: Option<(String, bool)>,
-    /// The lobby's Copy code button was pressed.
-    copied: bool,
+    /// Whether the lobby's Copy button put the code on the clipboard, once
+    /// the game has tried ([`Menu::copied`]).
+    copied: Option<bool>,
     in_match: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
@@ -207,7 +209,7 @@ impl<N: Network> Menu<N> {
             join_password: String::new(),
             selected_game: None,
             message: None,
-            copied: false,
+            copied: None,
             in_match: false,
             roster: Vec::new(),
             army_draft: None,
@@ -317,7 +319,7 @@ impl<N: Network> Menu<N> {
     pub fn show(&mut self, screen: Screen) {
         self.screen = screen;
         self.message = None;
-        self.copied = false;
+        self.copied = None;
         self.forget_code_entry();
     }
 
@@ -325,6 +327,12 @@ impl<N: Network> Menu<N> {
     fn forget_code_entry(&mut self) {
         self.code_for = None;
         self.code_note = None;
+    }
+
+    /// Whether the text of a [`MenuAction::Copy`] reached the clipboard, for
+    /// the Copy button to say.
+    pub fn copied(&mut self, ok: bool) {
+        self.copied = Some(ok);
     }
 
     /// Whether a match is running behind the menu, which adds Resume.
@@ -724,7 +732,8 @@ impl<N: Network> Menu<N> {
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
-        if target.is_empty() {
+        // The footer's error box takes this hint's place while it shows.
+        if target.is_empty() && self.message.is_none() {
             ui.label(
                 join_btn.x,
                 join_btn.bottom() + 8,
@@ -1225,13 +1234,16 @@ impl<N: Network> Menu<N> {
         if let Some((invite, code)) = self.net.invite() {
             // A Copy button for the code, so the host can paste it to
             // friends, then the codes and addresses.
-            let copy = Rect::new(panel.x + 24, footer_y + 41, 112, 22);
-            let label = if self.copied { "Copied" } else { "Copy code" };
+            let copy = Rect::new(panel.x + 24, footer_y + 41, 64, 22);
+            let label = match self.copied {
+                None => "Copy",
+                Some(true) => "Copied",
+                Some(false) => "Failed",
+            };
             if ui.button(copy, label, ButtonStyle::Normal, true) {
                 action = MenuAction::Copy(code.to_string());
-                self.copied = true;
             }
-            let x = copy.right() + 12;
+            let x = copy.right() + 8;
             let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
             ui.label(x, footer_y + 44, 1, theme::INK_MUTED, &fit(invite, room));
         }
@@ -2515,7 +2527,7 @@ mod tests {
         found_frame(&mut menu, &mut ui, UiInput::default());
         assert_eq!(menu.screen(), Screen::Lobby);
         assert!(find_text(&ui.draw, "Tailscale code K7QD-M2XA").is_some());
-        let copy = click(&ui, "Copy code");
+        let copy = click(&ui, "Copy");
         ui.begin_frame(copy, (1280, 760));
         let action = menu.frame(&mut ui);
         ui.end_frame();
@@ -2523,8 +2535,15 @@ mod tests {
             matches!(action, MenuAction::Copy(ref c) if c == "K7QD-M2XA"),
             "{action:?}"
         );
+        // The button says what happened once the game has tried.
+        menu.copied(false);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert!(find_text(&ui.draw, "Failed").is_some());
+        menu.copied(true);
         found_frame(&mut menu, &mut ui, UiInput::default());
         assert!(find_text(&ui.draw, "Copied").is_some());
+        // The whole line still shows, both codes and addresses.
+        assert!(find_text(&ui.draw, "(192.168.1.20)").is_some());
     }
 
     #[test]

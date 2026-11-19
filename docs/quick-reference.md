@@ -190,7 +190,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000. A regiment costs 3 points a Grub and 6 a Marrow of its roster price, times its faction's Field share: Clans 100%, Brood 128%, Choir 78%, Concord 110% (Yari Ashigaru 360). Build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. The first side left holding the field (fighting regiments, no enemy fighting regiments in its sight) for 10 seconds wins (`gc_sim/src/verdict.rs`); there is no time limit or victory points yet. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
-- **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type (or paste, Cmd+V or Ctrl+V) an address or join code; the host's lobby has a **Copy code** button for the code to send friends. Version mismatches are shown in the lobby.
+- **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type (or paste, Cmd+V or Ctrl+V) an address or join code; the host's lobby has a **Copy** button for the code to send friends. Version mismatches are shown in the lobby.
 - **Replays:** main menu. **Unit viewer:** main menu or `--viewer`. **Guide:** `U` or main-menu button (Quick Start, Buildings, Troops tabs).
 
 ## 8. Built vs not yet built
