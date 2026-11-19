@@ -331,7 +331,8 @@ fn fs_scenery(in: SceneryOut, @builtin(front_facing) front: bool) -> @location(0
     albedo *= 1.0 - OCCLUDED_DARK * in.occ;
     albedo *= 1.0 - WET_DARK * drench(n);
     let unsnowed = albedo;
-    albedo = mix(albedo, SNOW_ALBEDO, dusting(n) * SNOW_ON_SCENERY);
+    // Snow on what faces up, the Highland's peaks' too.
+    albedo = mix(albedo, SNOW_ALBEDO, dusting(n, in.at) * SNOW_ON_SCENERY);
     var c = shade(albedo, n, in.world);
     // Leaves and blades pass light on: with the sun behind them they glow,
     // yellower than they are lit from the front.
