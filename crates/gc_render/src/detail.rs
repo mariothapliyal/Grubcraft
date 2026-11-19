@@ -20,7 +20,7 @@ impl DetailGpu {
     /// otherwise (or with none) a texture of the same shape whose every
     /// texel leaves a surface as it is, since the binding must exist.
     pub fn new(up: &mut Uploader<'_>, detail: Option<&Detail<'_>>) -> Self {
-        let (device, queue) = (up.device, up.queue);
+        let device = up.device;
         let real = detail.filter(|_| {
             device
                 .features()
@@ -59,7 +59,7 @@ impl DetailGpu {
                     } else {
                         [128, 128, 128, 128]
                     };
-                    queue.write_texture(
+                    up.texture(
                         wgpu::TexelCopyTextureInfo {
                             texture: &texture,
                             mip_level: 0,

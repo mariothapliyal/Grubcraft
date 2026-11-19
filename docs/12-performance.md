@@ -34,6 +34,8 @@ If a friend's machine is older than the low tier, the Battery preset is the safe
 
 **Hidden windows (fixed November 2026):** a Mac skips every frame while the game's window is hidden (covered by another window, minimised, or in another Space), and the game asked for the next frame at once, thousands a second. Each frame's uploads (particles, instances, lights, the fog map) still went to the GPU queue, where wgpu keeps each in a staging buffer until the next submit, and a skipped frame submitted nothing: the process grew by hundreds of MB a second, to the 7 to 9 GB Mario saw. Now a skipped frame still submits its uploads (`Renderer::skip`), and the game waits a 60th of a second before the next. The smoke run's hidden frames guard both.
 
+**Loading a match (November 2026):** the models and their textures (about 350 MB on the GPU) were written all at once, and wgpu stages every write until the next submit, so a match load held two extra copies and peaked about 300 MB above where it settled (1.6 GB against 1.3 GB in a Linux Recruit battle). They now go up 32 MB at a time (`gc_render`'s `Uploader`), and the peak is where it settles.
+
 The target is that the whole game stays under **6 GB** on the largest map with six players at maximum supply. Apart from the simulation's heap gate and the AI target below, there are no per-subsystem limits inside that ceiling; instead each subsystem is tracked so growth is visible:
 
 | Subsystem (tag) | Main contents |

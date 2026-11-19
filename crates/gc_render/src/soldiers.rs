@@ -1185,7 +1185,7 @@ pub(crate) fn upload(
     });
     let mut texels: Vec<[u16; 4]> = m.bones.to_vec();
     texels.resize((BONE_TEXELS_PER_ROW * rows) as usize, [0; 4]);
-    queue.write_texture(
+    up.texture(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
@@ -1259,8 +1259,8 @@ pub(crate) fn upload(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&anim, 16, bytemuck::cast_slice(m.anim.frames));
-    queue.write_buffer(&anim, poses * 16, bytemuck::cast_slice(&anim_head));
+    up.write(&anim, 16, bytemuck::cast_slice(m.anim.frames));
+    up.write(&anim, poses * 16, bytemuck::cast_slice(&anim_head));
     let (skin_pos, skin_shade) = skin_buffers(device, SKIN_START);
     let palette = palette_buffer(device, PALETTE_START);
     let (bind_group, skin_group) = bind_groups(
