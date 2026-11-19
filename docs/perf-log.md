@@ -2,6 +2,25 @@
 
 Before and after numbers from each milestone's performance pass ([12 · Performance](12-performance.md#the-loop)). Newest first.
 
+## Sim memory and six-player speed (2026-11-20)
+
+Each side's walking grid from its first gate was a whole copy of the shared one. Now the grid's layers of cells are held in runs of 4,096 that grids share until written, and shared again after each change wherever they came out alike, so a side's grid keeps only the cells round its own gates. A gate opening or shutting settles the walking areas by racing floods out from it (a gate in a town wall walks the town) instead of numbering the whole map, and a sector that changes alike on several grids is linked once. No change to how battles play out: every golden replay verifies and every benchmark hash is unchanged. Cloud container.
+
+| | Before | After |
+|---|---|---|
+| 6 General AIs, 60 min, Large Wilds (`match_speed`): sim p99 | 38.87 ms | 6.48 ms |
+| the same: worst sim tick | 85.4 ms | 16.6 ms |
+| the same: sim ticks over 16.7 ms | 885 | 0 |
+| the same: sim heap at its peak | 73.4 MB | 26.5 MB |
+| 4 General AIs: sim p99, heap | 8.83 ms, 60.5 MB | 4.34 ms, 24.9 MB |
+| 2 General AIs: sim p99, heap | 2.12 ms, 34.7 MB | 2.05 ms, 21.5 MB |
+| `gated-towns` stress: gate swing tick, typical and slowest | 20.7 ms, 41.6 ms | 8.7 ms, 17.8 to 21 ms |
+| `gated-towns`: heap the six sides' grids add to one | 5.44 MB | 0.93 MB |
+| `field-8000pt-2v2` sim heap | 6.86 MB | 6.31 MB |
+| `conquest-6p` sim heap | 19.6 MB | 17.6 MB |
+
+Reading a cell costs one more look-up, so the instruction counts rose a little against the baseline (drill +1.4%, pathing-storm +1.7%, field +1.9%); the baseline was kept. The AI minds are unchanged (about 0.9 ms p99 with six, with rare ticks over 100 ms when a General plans): the next place to look for six-player speed.
+
 ## Pathfinding overhaul (2026-10-24, restart plan T1)
 
 Routes now use the ground as drawn: a regiment's centre may stand on any open cell (clearance 1, was 3), straight lines are checked exactly, regiments slide along walls instead of stopping, and a long route keeps being walked while the rest is searched for ([10 · Architecture](10-architecture.md#pathfinding)). Linking the route graph searches each sector once instead of once per portal pair, and portals are placed again only near a change. Cloud container; instruction counts under callgrind.

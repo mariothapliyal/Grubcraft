@@ -31,6 +31,7 @@ mod crossing;
 mod forest;
 mod forest_pass;
 mod gate;
+mod gated_towns;
 mod mountain;
 mod orders;
 mod rally;
@@ -77,6 +78,7 @@ const SCENARIOS: &[Scenario] = &[
     wall_line::SCENARIO,
     ai_ring::SCENARIO,
     rally::SCENARIO,
+    gated_towns::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
