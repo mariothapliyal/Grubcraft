@@ -12,9 +12,9 @@ use crate::effects::Field;
 use crate::siege::{Look, SMOKES_BELOW, Style};
 
 /// Warm window light, and the colour of each faction's own glow.
-const WINDOW: [u8; 3] = [255, 184, 96];
+pub(super) const WINDOW: [u8; 3] = [255, 184, 96];
 const GHOST: [u8; 3] = [150, 255, 190];
-const RESONANCE: [u8; 3] = [150, 226, 255];
+pub(super) const RESONANCE: [u8; 3] = [150, 226, 255];
 const SPORE: [u8; 3] = [214, 204, 116];
 /// Windows are under a pixel from a camera farther than this many tiles of
 /// distance, and fade out from `LAMPS_NEAR`.
@@ -25,7 +25,7 @@ const LAMPS_FAR: f32 = 75.0;
 pub const REACH: f32 = 110.0;
 const SMALL_FAR: f32 = 60.0;
 /// The most effects time one frame makes smoke and light for, in seconds.
-const MOST_DT: f32 = 0.25;
+pub(super) const MOST_DT: f32 = 0.25;
 /// How far outside its walls a lamp hangs, in tiles.
 const OUTSIDE: f32 = 0.1;
 
@@ -37,18 +37,28 @@ fn lived_in(role: Role) -> bool {
     )
 }
 
-/// A number from 0 to 1 that stays the same for a building and a `salt`.
-pub(super) fn hash(look: &Look, salt: u32) -> f32 {
-    let mut x = look
-        .handle
-        .index
+/// A number from 0 to 1 that stays the same for a building (by its
+/// [`super::id_of`]) and a `salt`.
+pub(super) fn hash_of(id: u64, salt: u32) -> f32 {
+    let mut x = (id as u32)
         .wrapping_mul(0x9e37_79b1)
-        .wrapping_add(u32::from(look.handle.generation).wrapping_mul(0x85eb_ca6b))
+        .wrapping_add(((id >> 32) as u32).wrapping_mul(0x85eb_ca6b))
         .wrapping_add(salt.wrapping_mul(0xc2b2_ae35));
     x ^= x >> 15;
     x = x.wrapping_mul(0x2c1b_3c6d);
     x ^= x >> 12;
     (x >> 8) as f32 / (1 << 24) as f32
+}
+
+/// [`hash_of`] for building `look`.
+pub(super) fn hash(look: &Look, salt: u32) -> f32 {
+    hash_of(super::id_of(look.handle), salt)
+}
+
+/// How much of full the camera at `distance` still sees of a small light
+/// (a window, a lantern): all of it near, none far.
+pub(super) fn lamp_fade(distance: f32) -> f32 {
+    1.0 - ((distance - LAMPS_NEAR) / (LAMPS_FAR - LAMPS_NEAR)).clamp(0.0, 1.0)
 }
 
 /// Make this frame's smoke and light for building `look`, which the viewer
@@ -108,7 +118,7 @@ pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
         _ => dusk,
     };
     let lamps = 1 + u32::from(size.x * size.y >= 4.0) + u32::from(size.x * size.y >= 12.0);
-    let fade = 1.0 - ((distance - LAMPS_NEAR) / (LAMPS_FAR - LAMPS_NEAR)).clamp(0.0, 1.0);
+    let fade = lamp_fade(distance);
     if glow * fade > 0.0 {
         for k in 0..lamps {
             let (a, b) = (hash(look, 10 + 2 * k), hash(look, 11 + 2 * k));
@@ -131,6 +141,7 @@ pub fn emit(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ambient::town::Part;
     use crate::siege::stuff;
     use gc_data::Faction;
     use gc_sim::structures::Armour;
@@ -154,6 +165,7 @@ mod tests {
             role,
             finished,
             hp,
+            part: Part::None,
         }
     }
 

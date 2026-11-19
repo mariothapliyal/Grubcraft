@@ -135,8 +135,8 @@ const ROUTE_STEP: f32 = 0.75;
 pub(super) const ROUTE_CLIMB: f32 = 0.12;
 
 /// Whether a cart can go from `a` to `b` in a straight line over dry,
-/// gently sloping ground that is not woods.
-pub(super) fn route_clear(map: &Map, a: Vec2, b: Vec2) -> bool {
+/// gently sloping ground that is not woods, and `ok` at every step.
+pub(super) fn route_clear(map: &Map, a: Vec2, b: Vec2, ok: impl Fn(Vec2) -> bool) -> bool {
     let ground = Ground { map };
     let side = map.tiles as i32;
     let steps = (a.distance(b) / ROUTE_STEP).ceil().max(1.0) as usize;
@@ -149,6 +149,7 @@ pub(super) fn route_clear(map: &Map, a: Vec2, b: Vec2) -> bool {
             || (h - last).abs() > ROUTE_CLIMB
             || !(0..side).contains(&tx)
             || !(0..side).contains(&ty)
+            || !ok(p)
             || ground.wooded((ty * side + tx) as usize)
         {
             return false;
