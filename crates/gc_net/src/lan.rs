@@ -202,7 +202,7 @@ struct Host {
     /// Empty for none.
     password: String,
     /// How friends reach this lobby, for the lobby screen.
-    invite: Option<String>,
+    invite: Option<joincode::Invite>,
     /// Recent wrong passwords: from where, and when.
     guesses: Vec<(IpAddr, Instant)>,
     lobby: LobbyState,
@@ -1775,9 +1775,12 @@ impl Network for Lan {
         &self.games
     }
 
-    fn invite(&self) -> Option<&str> {
+    fn invite(&self) -> Option<(&str, &str)> {
         match &self.role {
-            Role::Host(h) => h.invite.as_deref(),
+            Role::Host(h) => h
+                .invite
+                .as_ref()
+                .map(|i| (i.text.as_str(), i.code.as_str())),
             _ => None,
         }
     }

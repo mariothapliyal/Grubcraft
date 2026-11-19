@@ -28,9 +28,10 @@
 //! Usage: gc_bench [--scenario drill|pathing-storm|field-8000pt-2v2|conquest-6p|big-storm]
 //!                 [--ticks N] [--regiments-per-player N] [--seed N] [--open]
 //!                 [--no-fog] [--warn-on-time]
-//! `--warn-on-time` reports a p99 tick over budget as a warning instead of a
-//! failure, for runners whose clocks are too noisy to gate on (CI's macOS
-//! runner); heap, allocation, laying and route-wait budgets still fail.
+//! `--warn-on-time` reports a p99 tick, or a laying tick, over budget as a
+//! warning instead of a failure, for runners whose clocks are too noisy to
+//! gate on (CI's macOS runner); heap, allocation and route-wait budgets
+//! still fail.
 //! `--open` runs the scripted scenarios on an open plane with no obstacles
 //! (no route searches); `--ticks` cuts the replay short. The grand battle
 //! takes its map, armies and seed from the replay. With no `--scenario`,
@@ -283,20 +284,13 @@ impl Timings {
         }
         println!("final hash   {:#018x}", world.state_hash());
 
-        let mut failed = false;
-        if pct(0.99) > budgets.p99_us {
-            if warn_on_time {
-                // A GitHub Actions annotation, so the warning shows on the run.
-                println!(
-                    "::warning title=gc_bench::p99 tick {:.0} us over the {:.0} us budget (not gated on this runner)",
-                    pct(0.99),
-                    budgets.p99_us
-                );
-            } else {
-                eprintln!("FAIL: p99 tick time over budget");
-                failed = true;
-            }
-        }
+        let mut failed = time_over_budget(
+            "p99 tick",
+            "p99 tick time over budget",
+            pct(0.99),
+            budgets.p99_us,
+            warn_on_time,
+        );
         if sim_heap > budgets.sim_heap {
             eprintln!("FAIL: simulation heap over budget");
             failed = true;
@@ -651,12 +645,35 @@ fn conquest_six(opts: &Options) -> bool {
          budget {LAYING_BUDGET_US:.0} us)",
         laid_us.get(laid_us.len() / 2).copied().unwrap_or(0.0)
     );
-    let mut failed = worst > LAYING_BUDGET_US;
-    if failed {
-        eprintln!("FAIL: a building took too long to go up");
-    }
+    let mut failed = time_over_budget(
+        "worst laying tick",
+        "a building took too long to go up",
+        worst,
+        LAYING_BUDGET_US,
+        opts.warn_on_time,
+    );
     failed |= timings.report(&world, &BIG_MAP_BUDGETS, opts.warn_on_time);
     failed
+}
+
+/// Whether a wall-clock time over its budget fails the run. With
+/// `warn_on_time` (a runner whose clock is too noisy to gate on, like CI's
+/// macOS one, where one scheduling spike can slow a single tick) it only
+/// warns, as a GitHub Actions annotation so the warning shows on the run.
+fn time_over_budget(what: &str, fail: &str, us: f64, budget_us: f64, warn_on_time: bool) -> bool {
+    if us <= budget_us {
+        return false;
+    }
+    if warn_on_time {
+        println!(
+            "::warning title=gc_bench::{what} {us:.0} us over the {budget_us:.0} us budget \
+             (not gated on this runner)"
+        );
+        false
+    } else {
+        eprintln!("FAIL: {fail}");
+        true
+    }
 }
 
 fn mb(bytes: usize) -> f64 {

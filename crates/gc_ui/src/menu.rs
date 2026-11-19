@@ -63,6 +63,9 @@ pub enum MenuAction {
     OpenViewer,
     /// The Guide button: the game should open the Guide.
     OpenGuide,
+    /// Put this text on the system clipboard (the lobby's Copy button),
+    /// then tell the menu whether that worked ([`Menu::copied`]).
+    Copy(String),
     Quit,
 }
 
@@ -134,6 +137,9 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// The `address` of the listed game picked on the Play screen.
     selected_game: Option<String>,
     message: Option<(String, bool)>,
+    /// Whether the lobby's Copy button put the code on the clipboard, once
+    /// the game has tried ([`Menu::copied`]).
+    copied: Option<bool>,
     in_match: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
@@ -203,6 +209,7 @@ impl<N: Network> Menu<N> {
             join_password: String::new(),
             selected_game: None,
             message: None,
+            copied: None,
             in_match: false,
             roster: Vec::new(),
             army_draft: None,
@@ -312,6 +319,7 @@ impl<N: Network> Menu<N> {
     pub fn show(&mut self, screen: Screen) {
         self.screen = screen;
         self.message = None;
+        self.copied = None;
         self.forget_code_entry();
     }
 
@@ -319,6 +327,12 @@ impl<N: Network> Menu<N> {
     fn forget_code_entry(&mut self) {
         self.code_for = None;
         self.code_note = None;
+    }
+
+    /// Whether the text of a [`MenuAction::Copy`] reached the clipboard, for
+    /// the Copy button to say.
+    pub fn copied(&mut self, ok: bool) {
+        self.copied = Some(ok);
     }
 
     /// Whether a match is running behind the menu, which adds Resume.
@@ -337,9 +351,7 @@ impl<N: Network> Menu<N> {
     }
 
     fn go(&mut self, ui: &mut Ui, screen: Screen) {
-        self.screen = screen;
-        self.message = None;
-        self.forget_code_entry();
+        self.show(screen);
         ui.reset();
     }
 
@@ -720,7 +732,8 @@ impl<N: Network> Menu<N> {
             Some(g) => (g.address.clone(), self.join_password.as_str()),
             None => (self.address.trim().to_string(), self.join_password.as_str()),
         };
-        if target.is_empty() {
+        // The footer's error box takes this hint's place while it shows.
+        if target.is_empty() && self.message.is_none() {
             ui.label(
                 join_btn.x,
                 join_btn.bottom() + 8,
@@ -737,7 +750,8 @@ impl<N: Network> Menu<N> {
             }
         }
 
-        // Footer.
+        // Footer: Back, and beside it why hosting or joining failed, on a
+        // light box of its own clear of the Host and Join buttons.
         let back = Rect::new(panel.x + 24, panel.bottom() - 52, 140, 44);
         if let Some((text, is_error)) = &self.message {
             let color = if *is_error {
@@ -745,19 +759,24 @@ impl<N: Network> Menu<N> {
             } else {
                 theme::GOOD_INK
             };
-            let chars = ((panel.w - 48) / 8) as usize;
-            // Two lines at most.
-            let first: String = text.chars().take(chars).collect();
-            let rest: String = text.chars().skip(chars).take(chars).collect();
-            ui.label(panel.x + 24, back.y - sp(46), 1, color, &first);
-            if !rest.is_empty() {
-                ui.label(
-                    panel.x + 24,
-                    back.y - sp(46) + 18,
-                    1,
-                    color,
-                    &fit(&rest, chars),
-                );
+            let note = Rect::new(
+                back.right() + 16,
+                back.y,
+                panel.right() - 24 - back.right() - 16,
+                back.h,
+            );
+            ui.draw.rect(note, theme::FIELD_CLOTH);
+            ui.draw.border(note, 1, color);
+            let chars = ((note.w - 16) / 8).max(1) as usize;
+            // Two lines at most, broken at spaces.
+            let mut lines = crate::draw::wrap(text, chars);
+            if lines.len() > 2 {
+                lines[1] = fit(&lines[1..].join(" "), chars);
+                lines.truncate(2);
+            }
+            let top = note.y + (note.h - lines.len() as i32 * 18 + 2) / 2;
+            for (i, line) in lines.iter().enumerate() {
+                ui.label(note.x + 8, top + i as i32 * 18, 1, color, line);
             }
         }
         if ui.button(back, "Back", ButtonStyle::Normal, true) || escape {
@@ -1211,11 +1230,24 @@ impl<N: Network> Menu<N> {
         let room = ((panel.w - 48 - text_width(todo, 1) - 24) / 8).max(0) as usize;
         let why = fit(why, room);
         ui.label_right(panel.right() - 24, footer_y + 22, 1, color, &why);
-        if let Some(invite) = self.net.invite() {
-            ui.label(panel.x + 24, footer_y + 44, 1, theme::INK_MUTED, invite);
+        let mut action = MenuAction::None;
+        if let Some((invite, code)) = self.net.invite() {
+            // A Copy button for the code, so the host can paste it to
+            // friends, then the codes and addresses.
+            let copy = Rect::new(panel.x + 24, footer_y + 41, 64, 22);
+            let label = match self.copied {
+                None => "Copy",
+                Some(true) => "Copied",
+                Some(false) => "Failed",
+            };
+            if ui.button(copy, label, ButtonStyle::Normal, true) {
+                action = MenuAction::Copy(code.to_string());
+            }
+            let x = copy.right() + 8;
+            let room = ((panel.right() - 24 - x) / 8).max(0) as usize;
+            ui.label(x, footer_y + 44, 1, theme::INK_MUTED, &fit(invite, room));
         }
         let btn_y = panel.bottom() - 52;
-        let mut action = MenuAction::None;
         let leave = ui.button(
             Rect::new(panel.x + 24, btn_y, 140, 44),
             "Leave",
@@ -2298,6 +2330,31 @@ mod tests {
     }
 
     #[test]
+    fn a_join_error_sits_clear_of_the_host_and_join_buttons() {
+        let mut h = Harness::new();
+        h.click("Play");
+        let (x, y) = h.text_pos("Address or join code");
+        h.click_at(x, y);
+        type_text(&mut h, "192.168.1.9:7777");
+        h.click_last("Join");
+        // The error's text sits in the footer row beside Back (44 tall),
+        // under the Host and Join buttons, in two lines at most.
+        let (_, back_y) = h.text_pos("Back");
+        let rows: std::collections::BTreeSet<u16> =
+            h.ui.draw
+                .quads
+                .iter()
+                .filter(|q| q.glyph != crate::draw::SOLID && q.color == theme::BAD_INK)
+                .map(|q| q.pos[1])
+                .collect();
+        assert!(!rows.is_empty() && rows.len() <= 2, "{rows:?}");
+        assert!(
+            rows.iter().all(|&r| (i32::from(r) - back_y).abs() < 22),
+            "{rows:?} {back_y}"
+        );
+    }
+
+    #[test]
     fn play_screen_explains_that_joining_is_not_built() {
         let mut h = Harness::new();
         h.click("Play");
@@ -2386,6 +2443,8 @@ mod tests {
     struct Found {
         inner: LocalNetwork,
         games: Vec<DiscoveredGame>,
+        /// What the host's lobby shows for friends to join by, and its code.
+        invite: Option<(String, String)>,
     }
 
     impl Network for Found {
@@ -2394,6 +2453,9 @@ mod tests {
         }
         fn discovered(&mut self) -> &[DiscoveredGame] {
             &self.games
+        }
+        fn invite(&self) -> Option<(&str, &str)> {
+            self.invite.as_ref().map(|(t, c)| (t.as_str(), c.as_str()))
         }
         fn join(&mut self, me: &Profile, target: &str, pw: &str) -> Result<(), NetError> {
             self.inner.join(me, target, pw)
@@ -2435,6 +2497,53 @@ mod tests {
         ui.begin_frame(input, (1280, 760));
         menu.frame(ui);
         ui.end_frame();
+    }
+
+    #[test]
+    fn the_host_copies_the_join_code_from_the_lobby() {
+        let net = Found {
+            invite: Some((
+                "Tailscale code K7QD-M2XA (100.101.7.3) - Wi-Fi code 9ABC-DEF0 (192.168.1.20)"
+                    .into(),
+                "K7QD-M2XA".into(),
+            )),
+            ..Found::default()
+        };
+        let mut menu = Menu::new(net, Settings::default(), None, "0.1.0");
+        let mut ui = Ui::new();
+        menu.show(Screen::Play);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        let click = |ui: &Ui, t: &str| {
+            let (x, y) = *find_all(&ui.draw, t).last().unwrap();
+            UiInput {
+                mouse: (x, y),
+                pressed: true,
+                released: true,
+                ..Default::default()
+            }
+        };
+        let host = click(&ui, "Host");
+        found_frame(&mut menu, &mut ui, host);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert_eq!(menu.screen(), Screen::Lobby);
+        assert!(find_text(&ui.draw, "Tailscale code K7QD-M2XA").is_some());
+        let copy = click(&ui, "Copy");
+        ui.begin_frame(copy, (1280, 760));
+        let action = menu.frame(&mut ui);
+        ui.end_frame();
+        assert!(
+            matches!(action, MenuAction::Copy(ref c) if c == "K7QD-M2XA"),
+            "{action:?}"
+        );
+        // The button says what happened once the game has tried.
+        menu.copied(false);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert!(find_text(&ui.draw, "Failed").is_some());
+        menu.copied(true);
+        found_frame(&mut menu, &mut ui, UiInput::default());
+        assert!(find_text(&ui.draw, "Copied").is_some());
+        // The whole line still shows, both codes and addresses.
+        assert!(find_text(&ui.draw, "(192.168.1.20)").is_some());
     }
 
     #[test]

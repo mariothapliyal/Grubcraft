@@ -243,7 +243,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use camera::{ActiveCamera, FollowCamera, RideTarget, RtsCamera};
@@ -5417,6 +5417,21 @@ impl Running {
                 .typed
                 .extend(text.chars().filter(|c| (' '..='~').contains(c)));
         }
+        // Paste (Cmd+V on a Mac, Ctrl+V elsewhere, by the key's letter so
+        // any layout works) types the clipboard's first line into the
+        // focused box: a join code, an address. The box keeps only what it
+        // can show.
+        if self.input.command
+            && !key.repeat
+            && matches!(&key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("v"))
+        {
+            if let Some(text) = gc_platform::clipboard::get()
+                && let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty())
+            {
+                self.ui_input.typed.push_str(line);
+            }
+            return;
+        }
         match key.physical_key {
             PhysicalKey::Code(KeyCode::Backspace) => self.ui_input.backspace = true,
             PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => self.ui_input.enter = true,
@@ -5475,6 +5490,13 @@ impl Running {
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox { roster: false }),
             MenuAction::OpenViewer => self.open_viewer("start"),
             MenuAction::OpenGuide => self.open_guide(),
+            MenuAction::Copy(text) => {
+                let ok = gc_platform::clipboard::set(&text);
+                if !ok {
+                    logln!("grubcraft: could not copy to the clipboard");
+                }
+                self.menu.copied(ok);
+            }
             MenuAction::ListReplays => {
                 // A replay being saved now belongs in the list.
                 self.save_recording();

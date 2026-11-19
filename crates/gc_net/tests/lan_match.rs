@@ -918,10 +918,15 @@ fn friends_join_with_a_code() {
         .unwrap();
     // The lobby shows a code for this machine's network address (when it
     // has one); here, a code for this machine itself.
-    if let Some(invite) = host.invite() {
+    // Its Copy button copies the first code shown.
+    if let Some((invite, copied)) = host.invite() {
         assert!(
             invite.starts_with("Join code ") || invite.starts_with("Tailscale code "),
             "{invite}"
+        );
+        assert!(
+            invite.contains(&format!(" {copied} ")),
+            "{copied} in {invite}"
         );
     }
     let code =
