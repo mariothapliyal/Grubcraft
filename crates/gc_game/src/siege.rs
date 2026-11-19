@@ -85,6 +85,8 @@ const WALL_STEP: f32 = 2.4;
 /// Below these shares of its hit points a building smokes, and burns.
 pub const SMOKES_BELOW: f32 = 0.7;
 const BURNS_BELOW: f32 = 0.35;
+/// How far a burning building's light reaches past its walls, in tiles.
+const FIRE_LIGHT_REACH: f32 = 5.0;
 /// Arrows leave the bow this high (as `ARROW_HEIGHT` in the field).
 const RELEASE_HEIGHT: f32 = crate::ARROW_HEIGHT;
 
@@ -1016,6 +1018,14 @@ impl Siege {
                     self.fx.flames(at - Vec3::Y * 0.15, 0.45, dt);
                     self.fx.embers(at, 0.3, 2.5 * dt);
                 }
+            }
+            if fire {
+                // The fire lights the ground round the building, the wider
+                // the bigger it is and the harder it burns.
+                let burning = (BURNS_BELOW - look.hp) / BURNS_BELOW;
+                let reach = FIRE_LIGHT_REACH + look.size().length() * 0.5 * (1.0 + burning);
+                let at = up(centre, look.base + look.top * 0.7);
+                self.fx.fire_light(at, reach, 1.15 + 0.35 * burning);
             }
         }
         for f in &self.falls {
