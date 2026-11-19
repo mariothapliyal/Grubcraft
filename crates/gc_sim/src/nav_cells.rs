@@ -42,12 +42,17 @@ impl<T: Copy + PartialEq> Cells<T> {
     }
 
     /// The cells of `list`, in order (the last run filled out with copies
-    /// of its last cell).
+    /// of its last cell), every run counted as written.
     pub(super) fn from_slice(list: &[T]) -> Cells<T> {
         let runs = (list.chunks(RUN))
             .map(|c| Arc::new(core::array::from_fn(|i| c[i.min(c.len() - 1)])))
             .collect();
-        Cells::of_runs(runs, list.len())
+        let mut cells = Cells::of_runs(runs, list.len());
+        // Every run is new, so sharing compares each.
+        for k in 0..cells.runs.len() {
+            cells.written[k / 64] |= 1 << (k % 64);
+        }
+        cells
     }
 
     fn of_runs(runs: Vec<Arc<[T; RUN]>>, len: usize) -> Cells<T> {
@@ -102,19 +107,20 @@ impl<T: Copy + PartialEq> Cells<T> {
     /// and start counting writes afresh.
     pub(super) fn share_from(&mut self, other: &Cells<T>) {
         if self.len == other.len {
-            for (w, (&a, &b)) in self.written.iter().zip(&other.written).enumerate() {
-                let mut bits = a | b;
-                while bits != 0 {
-                    let k = w * 64 + bits.trailing_zeros() as usize;
-                    bits &= bits - 1;
-                    let (mine, theirs) = (&self.runs[k], &other.runs[k]);
-                    if !Arc::ptr_eq(mine, theirs) && **mine == **theirs {
-                        self.runs[k] = theirs.clone();
-                    }
+            for k in either_written(&self.written, &other.written) {
+                if alike_apart(&self.runs[k], &other.runs[k]) {
+                    self.runs[k] = other.runs[k].clone();
                 }
             }
         }
         self.settle();
+    }
+
+    /// Whether [`Cells::share_from`] would share a run it doesn't yet.
+    pub(super) fn shares_more_with(&self, other: &Cells<T>) -> bool {
+        self.len == other.len
+            && either_written(&self.written, &other.written)
+                .any(|k| alike_apart(&self.runs[k], &other.runs[k]))
     }
 
     /// Start counting writes afresh.
@@ -129,6 +135,23 @@ impl<T: Copy + PartialEq> Cells<T> {
             .filter(|(a, b)| !Arc::ptr_eq(a, b))
             .count()
     }
+}
+
+/// The runs marked in either of `a` and `b` (one bit a run).
+fn either_written<'a>(a: &'a [u64], b: &'a [u64]) -> impl Iterator<Item = usize> + 'a {
+    (a.iter().zip(b).enumerate()).flat_map(|(w, (&a, &b))| {
+        let mut bits = a | b;
+        core::iter::from_fn(move || {
+            let k = (bits != 0).then(|| w * 64 + bits.trailing_zeros() as usize);
+            bits &= bits.wrapping_sub(1);
+            k
+        })
+    })
+}
+
+/// Whether two runs are held apart but hold the same cells.
+fn alike_apart<T: PartialEq>(a: &Arc<[T; RUN]>, b: &Arc<[T; RUN]>) -> bool {
+    !Arc::ptr_eq(a, b) && **a == **b
 }
 
 impl<T> Index<usize> for Cells<T> {

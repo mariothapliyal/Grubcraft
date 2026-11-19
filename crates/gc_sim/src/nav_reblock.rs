@@ -136,6 +136,15 @@ impl Areas {
         }
     }
 
+    /// Whether [`Areas::share_from`] would share a run it doesn't yet.
+    pub(super) fn shares_more_with(&self, other: &Areas) -> bool {
+        match (self, other) {
+            (Areas::Narrow(a), Areas::Narrow(b)) => a.shares_more_with(b),
+            (Areas::Wide(a), Areas::Wide(b)) => a.shares_more_with(b),
+            _ => false,
+        }
+    }
+
     pub(super) fn settle(&mut self) {
         match self {
             Areas::Narrow(a) => a.settle(),
@@ -229,6 +238,16 @@ where
     Some(next)
 }
 
+/// The set `k` is in, as its first member (halving the way up as it goes):
+/// each member of `set` holds one nearer the set's first, itself for that.
+fn root(set: &mut [usize], mut k: usize) -> usize {
+    while set[k] != k {
+        set[k] = set[set[k]];
+        k = set[k];
+    }
+    k
+}
+
 /// A change to a rectangle of cells.
 #[derive(Clone, Copy)]
 enum Change {
@@ -251,44 +270,28 @@ impl Nav {
     /// that might cross the changed ground are searched again. No effect
     /// with no map.
     pub(crate) fn set_built_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            self.change(v, all, Change::Built(on), regs);
-        }
-        self.share_alike();
+        self.on_every_grid(|nav, v, from| nav.change(v, all, Change::Built(on), from, regs));
     }
 
     /// Shut (`on`) the ground on each of `all`'s tiles to everyone, as a
     /// flood shuts the fords (see [`crate::flood`]), or open it again, on
     /// every side's grid. A tile stays shut while anything stands on it.
     pub(crate) fn set_flooded_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            self.change(v, all, Change::Flooded(on), regs);
-        }
-        self.share_alike();
+        self.on_every_grid(|nav, v, from| nav.change(v, all, Change::Flooded(on), from, regs));
     }
 
     /// Make the deep water on each of `all`'s tiles wadeable (`on`), as low
     /// water does (see [`crate::flood`]), or deep again, on every side's
     /// grid. Cells the map gave as walkable are left as they are.
     pub(crate) fn set_exposed_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            self.change(v, all, Change::Exposed(on), regs);
-        }
-        self.share_alike();
+        self.on_every_grid(|nav, v, from| nav.change(v, all, Change::Exposed(on), from, regs));
     }
 
     /// Open (`on`) each of `all`'s tiles as a finished bridge's deck, over
     /// water or a flood, on every side's grid, or shut it again as the
     /// bridge falls (see [`crate::bridges`]).
     pub(crate) fn set_bridged_all(&mut self, all: &[[i32; 4]], on: bool, regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            self.change(v, all, Change::Bridged(on), regs);
-        }
-        self.share_alike();
+        self.on_every_grid(|nav, v, from| nav.change(v, all, Change::Bridged(on), from, regs));
     }
 
     /// Freeze the fords (`on`), so routes cost them as open ground, or
@@ -297,17 +300,15 @@ impl Nav {
     /// portals stay put and only routes passing through a sector with a
     /// ford are found again.
     pub(crate) fn set_frozen(&mut self, on: bool, regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            if self.grids[v].frozen == on {
-                continue;
+        self.on_every_grid(|nav, v, _| {
+            if nav.grids[v].frozen == on {
+                return;
             }
-            let work = self.search.work;
-            let changed = Arc::make_mut(&mut self.grids[v]).reprice(on, &mut self.search);
-            self.search.work = work;
-            self.reroute_near(v, &changed, 0, false, regs);
-        }
-        self.share_alike();
+            let work = nav.search.work;
+            let changed = Arc::make_mut(&mut nav.grids[v]).reprice(on, &mut nav.search);
+            nav.search.work = work;
+            nav.reroute_near(v, &changed, 0, false, regs);
+        });
     }
 
     /// The going on each of `tiles` (`(x, y, percent)`, those on the map)
@@ -315,14 +316,12 @@ impl Nav {
     /// out. Only costs change, so the portals stay put and only routes
     /// passing near the changed tiles are found again.
     pub(crate) fn set_going(&mut self, tiles: &[(i32, i32, u8)], regs: &Regiments) {
-        self.align_areas();
-        for v in 0..self.grids.len() {
-            let work = self.search.work;
-            let changed = Arc::make_mut(&mut self.grids[v]).regoing(tiles, &mut self.search);
-            self.search.work = work;
-            self.reroute_near(v, &changed, 0, false, regs);
-        }
-        self.share_alike();
+        self.on_every_grid(|nav, v, _| {
+            let work = nav.search.work;
+            let changed = Arc::make_mut(&mut nav.grids[v]).regoing(tiles, &mut nav.search);
+            nav.search.work = work;
+            nav.reroute_near(v, &changed, 0, false, regs);
+        });
     }
 
     /// The gate standing on `tiles` (put up with [`Nav::set_built`], so a
@@ -360,44 +359,40 @@ impl Nav {
             }
         }
         let own = usize::from(self.view[usize::from(owner)]);
-        self.align_areas();
-        for v in 0..self.grids.len() {
+        self.on_every_grid(|nav, v, from| {
             let pick = |d: Door| if v == own { d.own } else { d.others };
             if pick(was) != pick(now) {
-                self.change(v, &[tiles], Change::Opened(pick(now)), regs);
+                nav.change(v, &[tiles], Change::Opened(pick(now)), from, regs);
             }
-        }
-        self.share_alike();
+        });
     }
 
-    /// Before a change made on several grids: every grid gives out new
-    /// area numbers from the same one, so ground that changes alike on two
-    /// grids is numbered alike and its cells can be shared again after.
-    /// The search keeps each sector it links meanwhile, so the grids that
-    /// change alike link it once (see `Search::linked`).
-    fn align_areas(&mut self) {
-        let most = self.grids.iter().map(|g| g.areas).max().unwrap_or(0);
-        for g in &mut self.grids {
-            if g.areas != most {
-                Arc::make_mut(g).areas = most;
-            }
-        }
+    /// Make a change on every grid, `each` making it on grid `v` (and
+    /// given the area number the grids give out new ones from). Every
+    /// grid gives them out from the same one, so ground that changes alike
+    /// on two grids is numbered alike; and the search keeps each sector it
+    /// links meanwhile, so the grids that change alike link it once (see
+    /// `Search::linked`). After, each side's grid shares again with the
+    /// first every run of cells that came out alike on both (see
+    /// [`super::cells`]), so a side's own grid keeps only the cells round
+    /// its own gates.
+    fn on_every_grid(&mut self, mut each: impl FnMut(&mut Nav, usize, u32)) {
+        let from = self.grids.iter().map(|g| g.areas).max().unwrap_or(0);
         if self.grids.len() > 1 {
             self.search.linked = Some(Vec::new());
         }
-    }
-
-    /// After a change: each side's grid shares again with the first every
-    /// run of cells that came out alike on both (see [`super::cells`]), so
-    /// a side's own grid keeps only the cells round its own gates.
-    fn share_alike(&mut self) {
+        for v in 0..self.grids.len() {
+            each(self, v, from);
+        }
         self.search.linked = None;
         let Some((first, rest)) = self.grids.split_first_mut() else {
             return;
         };
         for g in rest {
-            if g.written() || first.written() {
+            if g.shares_more_with(first) {
                 Arc::make_mut(g).share_from(first);
+            } else if g.written() {
+                Arc::make_mut(g).settle();
             }
         }
         if first.written() {
@@ -406,11 +401,14 @@ impl Nav {
     }
 
     /// Make `change` on each of `all`'s tiles on grid `v`, rerouting the
-    /// regiments walking it whose routes pass near.
-    fn change(&mut self, v: usize, all: &[[i32; 4]], change: Change, regs: &Regiments) {
+    /// regiments walking it whose routes pass near. New areas are numbered
+    /// on from `from`.
+    fn change(&mut self, v: usize, all: &[[i32; 4]], change: Change, from: u32, regs: &Regiments) {
         // Linking the grid again isn't the routes' search work this tick.
         let work = self.search.work;
-        let changed = Arc::make_mut(&mut self.grids[v]).change_all(all, change, &mut self.search);
+        let grid = Arc::make_mut(&mut self.grids[v]);
+        grid.areas = grid.areas.max(from);
+        let changed = grid.change_all(all, change, &mut self.search);
         self.search.work = work;
         let freed = match change {
             Change::Built(on) | Change::Flooded(on) => !on,
@@ -475,6 +473,14 @@ impl Nav {
             }
         }
     }
+}
+
+/// Calls macro `$m` with the names of every layer of a grid's cells, so
+/// what is done to each (sharing, settling) can't leave one out.
+macro_rules! layers {
+    ($m:ident) => {
+        $m!(cost ground going built opened flooded exposed bridged clear area)
+    };
 }
 
 impl Grid {
@@ -552,21 +558,25 @@ impl Grid {
                 for cy in cy0..cy1 {
                     for cx in cx0..cx1 {
                         let i = self.idx(cx, cy) as usize;
-                        let bump = |count: &mut u8, on: bool| {
-                            *count = if on {
-                                count.saturating_add(1)
-                            } else {
-                                count.saturating_sub(1)
-                            };
+                        let bump = |count: &mut Cells<u8>, on: bool| {
+                            let n = count[i];
+                            count.set(
+                                i,
+                                if on {
+                                    n.saturating_add(1)
+                                } else {
+                                    n.saturating_sub(1)
+                                },
+                            );
                         };
                         match change {
-                            Change::Built(on) => bump(&mut self.built[i], on),
-                            Change::Opened(open) => bump(&mut self.opened[i], open),
-                            Change::Flooded(on) => self.flooded[i] = on,
-                            Change::Exposed(on) => self.exposed[i] = on,
-                            Change::Bridged(on) => bump(&mut self.bridged[i], on),
+                            Change::Built(on) => bump(&mut self.built, on),
+                            Change::Opened(open) => bump(&mut self.opened, open),
+                            Change::Flooded(on) => self.flooded.set(i, on),
+                            Change::Exposed(on) => self.exposed.set(i, on),
+                            Change::Bridged(on) => bump(&mut self.bridged, on),
                         }
-                        self.cost[i] = self.cell_cost(i);
+                        self.cost.set(i, self.cell_cost(i));
                     }
                 }
             }
@@ -579,44 +589,26 @@ impl Grid {
     /// Share with `other` every run of cells written on either since they
     /// were last shared that came out alike (see [`Cells::share_from`]).
     fn share_from(&mut self, other: &Grid) {
-        self.cost.share_from(&other.cost);
-        self.ground.share_from(&other.ground);
-        self.going.share_from(&other.going);
-        self.built.share_from(&other.built);
-        self.opened.share_from(&other.opened);
-        self.flooded.share_from(&other.flooded);
-        self.exposed.share_from(&other.exposed);
-        self.bridged.share_from(&other.bridged);
-        self.clear.share_from(&other.clear);
-        self.area.share_from(&other.area);
+        macro_rules! each { ($($l:ident)*) => { $(self.$l.share_from(&other.$l);)* } }
+        layers!(each);
+    }
+
+    /// Whether [`Grid::share_from`] would share a run it doesn't yet.
+    fn shares_more_with(&self, other: &Grid) -> bool {
+        macro_rules! any { ($($l:ident)*) => { $(self.$l.shares_more_with(&other.$l))||* } }
+        layers!(any)
     }
 
     /// Whether any run of cells was written since they were last shared.
     fn written(&self) -> bool {
-        self.cost.written()
-            || self.ground.written()
-            || self.going.written()
-            || self.built.written()
-            || self.opened.written()
-            || self.flooded.written()
-            || self.exposed.written()
-            || self.bridged.written()
-            || self.clear.written()
-            || self.area.written()
+        macro_rules! any { ($($l:ident)*) => { $(self.$l.written())||* } }
+        layers!(any)
     }
 
     /// Start counting writes afresh.
     fn settle(&mut self) {
-        self.cost.settle();
-        self.ground.settle();
-        self.going.settle();
-        self.built.settle();
-        self.opened.settle();
-        self.flooded.settle();
-        self.exposed.settle();
-        self.bridged.settle();
-        self.clear.settle();
-        self.area.settle();
+        macro_rules! each { ($($l:ident)*) => { $(self.$l.settle();)* } }
+        layers!(each);
     }
 
     /// What cell `i` costs to walk as things stand: blocked under a
@@ -664,11 +656,11 @@ impl Grid {
             if self.going[t] == g {
                 continue;
             }
-            self.going[t] = g;
+            self.going.set(t, g);
             for c in self.cells_in(cells).collect::<Vec<_>>() {
                 let cost = self.cell_cost(c as usize);
                 if cost != self.cost[c as usize] {
-                    self.cost[c as usize] = cost;
+                    self.cost.set(c as usize, cost);
                     dirty[self.sector_of(c) as usize] = true;
                 }
             }
@@ -705,7 +697,7 @@ impl Grid {
             }
             let cost = self.cell_cost(i);
             if cost != self.cost[i] {
-                self.cost[i] = cost;
+                self.cost.set(i, cost);
                 dirty[self.sector_of(i as u32) as usize] = true;
             }
         }
@@ -816,10 +808,12 @@ impl Grid {
                 }
                 let i = (y * side + x) as usize;
                 let inside = (x0..x1).contains(&x) && (y0..y1).contains(&y);
-                local[ly * w + lx] = match () {
-                    _ if !inside => self.clear[i],
-                    _ if self.cost[i] == BLOCKED => 0,
-                    _ => CLEAR_CAP,
+                local[ly * w + lx] = if !inside {
+                    self.clear[i]
+                } else if self.cost[i] == BLOCKED {
+                    0
+                } else {
+                    CLEAR_CAP
                 };
             }
         }
@@ -865,13 +859,13 @@ impl Grid {
         }
     }
 
-    /// The cells of the box `[x0, y0, x1, y1]` (end exclusive), row by row.
     /// Cell `c`'s clearance as links' costs read it (see [`Grid::weight`]),
     /// and whether it is open.
     fn link_room(&self, c: u32) -> u8 {
         self.clear[c as usize].min(GRAPH_BERTH)
     }
 
+    /// The cells of the box `[x0, y0, x1, y1]` (end exclusive), row by row.
     fn cells_in(&self, [x0, y0, x1, y1]: [i32; 4]) -> impl Iterator<Item = u32> + '_ {
         (y0..y1).flat_map(move |y| (x0..x1).map(move |x| self.idx(x, y)))
     }
@@ -1045,13 +1039,6 @@ impl Grid {
             all.dedup();
             let at = |a: u32| all.binary_search(&a).expect("a held area");
             let mut set: Vec<usize> = (0..all.len()).collect();
-            let root = |set: &mut [usize], mut k: usize| {
-                while set[k] != k {
-                    set[k] = set[set[k]];
-                    k = set[k];
-                }
-                k
-            };
             for areas in &held {
                 for pair in areas.windows(2) {
                     let (ra, rb) = (root(&mut set, at(pair[0])), root(&mut set, at(pair[1])));
@@ -1152,13 +1139,6 @@ impl Grid {
         }
         // Floods that met, as sets (each flood's set by its first flood).
         let mut set: Vec<usize> = (0..floods.len()).collect();
-        let root = |set: &mut [usize], mut k: usize| {
-            while set[k] != k {
-                set[k] = set[set[k]];
-                k = set[k];
-            }
-            k
-        };
         let side = self.side;
         // Floods still going in each set (by its first flood), and how many
         // sets have any.
@@ -1742,32 +1722,6 @@ mod tests {
         }
     }
 
-    /// Put up (or pull down) a building as [`Grid::set_built`] does, but
-    /// bring only clearance and areas up to date, and say whether the areas
-    /// could be told from near the building alone.
-    fn renumbered_near(g: &mut Grid, tiles: [i32; 4], on: bool) -> bool {
-        let [x0, y0, x1, y1] = g.cells(tiles).unwrap();
-        let near = g.grow([x0, y0, x1, y1], i32::from(CLEARANCE));
-        let was_open: Vec<bool> = g.cells_in(near).map(|c| g.open_cell(c)).collect();
-        for c in g.cells_in([x0, y0, x1, y1]).collect::<Vec<_>>() {
-            let c = c as usize;
-            g.built[c] = if on { g.built[c] + 1 } else { g.built[c] - 1 };
-            g.cost[c] = if g.built[c] > 0 {
-                BLOCKED
-            } else {
-                g.priced(c, g.ground[c])
-            };
-        }
-        g.measure_clearance_in(0, 0, g.side, g.side);
-        let near_only = g.renumber_near(near, &was_open);
-        if !near_only {
-            g.number_areas();
-        }
-        let fresh = Grid::build(&unpriced(g), g.side);
-        same_areas(g, &fresh);
-        near_only
-    }
-
     /// How [`Grid::changed`] brought the areas up to date.
     #[derive(Debug, PartialEq, Eq)]
     enum Numbered {
@@ -1776,8 +1730,10 @@ mod tests {
         WholeMap,
     }
 
-    /// [`renumbered_near`], falling back as [`Grid::changed`] does: to the
-    /// race out of the box, and then to numbering the whole map.
+    /// Put up (or pull down) a building as [`Grid::set_built`] does, but
+    /// bring only clearance and areas up to date, as [`Grid::changed`]
+    /// does (near it, by the race out of the box, or over the whole map),
+    /// and say which it took.
     fn renumbered(g: &mut Grid, tiles: [i32; 4], on: bool) -> Numbered {
         let [x0, y0, x1, y1] = g.cells(tiles).unwrap();
         let near = g.grow([x0, y0, x1, y1], i32::from(CLEARANCE));
@@ -1873,34 +1829,37 @@ mod tests {
         let open = vec![1u8; (tiles * CELLS_PER_TILE * tiles * CELLS_PER_TILE) as usize];
         let mut g = Grid::build(&open, tiles * CELLS_PER_TILE);
         // A building in the open: nothing cut off.
-        assert!(renumbered_near(&mut g, [30, 30, 2, 2], true));
+        assert_eq!(renumbered(&mut g, [30, 30, 2, 2], true), Numbered::Near);
         // A ring of walls round a pocket in the middle of the map: the last
         // wall cuts the pocket off, inside the box looked in.
         let ring = [[20, 20, 8, 1], [20, 27, 8, 1], [20, 21, 1, 6]];
         for wall in ring {
-            assert!(renumbered_near(&mut g, wall, true));
+            assert_eq!(renumbered(&mut g, wall, true), Numbered::Near);
         }
-        assert!(
-            renumbered_near(&mut g, [27, 21, 1, 6], true),
+        assert_eq!(
+            renumbered(&mut g, [27, 21, 1, 6], true),
+            Numbered::Near,
             "pocket cut off"
         );
-        // Pulling a wall down joins two areas: the whole map is numbered.
-        assert!(!renumbered_near(&mut g, [27, 21, 1, 6], false));
+        // Pulling a wall down joins two areas: not told near it.
+        assert_ne!(renumbered(&mut g, [27, 21, 1, 6], false), Numbered::Near);
         // A wall right across the map: the last piece cuts it in two, and
         // both sides reach out of the box.
         for x in (0..tiles - 8).step_by(8) {
-            assert!(renumbered_near(&mut g, [x, 50, 8, 1], true));
+            assert_eq!(renumbered(&mut g, [x, 50, 8, 1], true), Numbered::Near);
         }
         // Beside the wall, an area is two pieces in the box, joined round
         // the wall's end out of it; a building there cuts neither.
-        assert!(renumbered_near(&mut g, [8, 47, 2, 2], true));
-        assert!(renumbered_near(&mut g, [8, 47, 2, 2], false));
-        assert!(
-            !renumbered_near(&mut g, [tiles - 8, 50, 8, 1], true),
+        assert_eq!(renumbered(&mut g, [8, 47, 2, 2], true), Numbered::Near);
+        assert_eq!(renumbered(&mut g, [8, 47, 2, 2], false), Numbered::Near);
+        assert_ne!(
+            renumbered(&mut g, [tiles - 8, 50, 8, 1], true),
+            Numbered::Near,
             "map cut in two"
         );
-        assert!(
-            !renumbered_near(&mut g, [0, 50, 8, 1], false),
+        assert_ne!(
+            renumbered(&mut g, [0, 50, 8, 1], false),
+            Numbered::Near,
             "halves joined"
         );
     }
@@ -1916,9 +1875,9 @@ mod tests {
         g.areas = u32::from(u16::MAX);
         let ring = [[20, 20, 8, 1], [20, 27, 8, 1], [20, 21, 1, 6]];
         for wall in ring {
-            assert!(renumbered_near(&mut g, wall, true));
+            assert_eq!(renumbered(&mut g, wall, true), Numbered::Near);
         }
-        assert!(!renumbered_near(&mut g, [27, 21, 1, 6], true));
+        assert_ne!(renumbered(&mut g, [27, 21, 1, 6], true), Numbered::Near);
         assert_eq!(g.areas, 2);
         assert!(matches!(g.area, Areas::Narrow(_)));
     }

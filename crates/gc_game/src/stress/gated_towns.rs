@@ -145,12 +145,13 @@ fn run(real: &Real, report: &mut Report) {
     );
     // Out and home, each gate opens and shuts at least once a march.
     report.check("every gate swung", swung_gates >= 2 * SIDES * MARCHES);
-    // Six grids that shared nothing would cost five more whole grids'
-    // cells (six bytes a cell, and the portal graphs); shared, they cost
-    // the cells round six gates and their own portal graphs.
+    // A whole grid here is about seven bytes a cell (its layers of cells
+    // and its portal graph), so six grids that shared nothing would cost
+    // five more of those (5.4 MB). Shared, they cost the cells round each
+    // side's own gate and their own portal graphs.
     report.check(
-        "six sides' grids cost less than one more grid's cells",
-        six_grids.saturating_sub(one_grid) < 6 * cells,
+        "six sides' grids cost less than one more whole grid",
+        six_grids.saturating_sub(one_grid) < 7 * cells,
     );
 }
 

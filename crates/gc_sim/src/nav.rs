@@ -2660,8 +2660,10 @@ impl Grid {
             return costs;
         }
         search.weigh(self, sec as u32, GRAPH_BERTH);
-        let cells: Vec<u32> = nodes.iter().map(|&u| self.node_cell[u as usize]).collect();
-        if let Some(found) = search.linked(sec as u32, &cells) {
+        // The nodes' cells, while the search keeps sectors it links.
+        let cells: Option<Vec<u32>> = (search.linked.is_some())
+            .then(|| nodes.iter().map(|&u| self.node_cell[u as usize]).collect());
+        if let Some(found) = cells.as_deref().and_then(|c| search.linked(sec as u32, c)) {
             return found.to_vec();
         }
         let mut wanted = Vec::with_capacity(n);
@@ -2690,7 +2692,9 @@ impl Grid {
                 }
             }
         }
-        search.remember(sec as u32, cells, &costs);
+        if let Some(cells) = cells {
+            search.remember(sec as u32, cells, &costs);
+        }
         costs
     }
 
