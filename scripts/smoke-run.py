@@ -39,6 +39,20 @@ HIDDEN_GROWTH_LIMIT_MB = 32  # over the second half
 HIDDEN_FRAME_MIN_S = 0.012
 
 
+def log_path(app_dir):
+    return app_dir / "logs" / "grubcraft.log"
+
+
+def read_log(app_dir):
+    log = log_path(app_dir)
+    return log.read_text(errors="replace") if log.exists() else ""
+
+
+def print_log(app_dir):
+    if text := read_log(app_dir):
+        print(f"--- {log_path(app_dir)} ---\n{text}")
+
+
 def main():
     args = sys.argv[1:]
     mode = "recruit"
@@ -66,6 +80,9 @@ def main():
         )
     except subprocess.TimeoutExpired as e:
         print(e.stdout or "")
+        # The game prints its figures only at the end: its log says how far
+        # it got.
+        print_log(app_dir)
         sys.exit(f"FAIL: still running after {TIME_LIMIT_S} s")
     print(run.stdout)
     print(run.stderr, file=sys.stderr)
@@ -73,8 +90,7 @@ def main():
     problems = []
     if run.returncode != 0:
         problems.append(f"exit code {run.returncode}")
-    log = app_dir / "logs" / "grubcraft.log"
-    log_text = log.read_text(errors="replace") if log.exists() else ""
+    log_text = read_log(app_dir)
     for word in ("PANIC", "GPU device lost", "GPU error"):
         if word in log_text or word in run.stderr:
             problems.append(f"the log says {word!r}")
@@ -112,8 +128,7 @@ def main():
             )
     if problems:
         print(f"FAIL: {'; '.join(problems)}")
-        if log_text:
-            print(f"--- {log} ---\n{log_text}")
+        print_log(app_dir)
         sys.exit(1)
     print(
         f"ok: {frames} frames, {used:.1f} MB process at the peak (budget {MEMORY_BUDGET_MB} MB), "

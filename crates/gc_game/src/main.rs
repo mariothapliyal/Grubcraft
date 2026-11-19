@@ -1524,7 +1524,8 @@ struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
 /// process memory then and halfway through. The smoke run judges growth
 /// over the second half: on Windows' software GPU the working set is
 /// still settling from the drawn frames for a while after they stop
-/// (+300 MB over the first hidden frames, November 2026).
+/// (+300 MB over the first hidden frames, November 2026). Each reading
+/// waits for the GPU to catch up first ([`gc_render::Renderer::wait_idle`]).
 struct HiddenCheck {
     since: Instant,
     from: u64,
@@ -1540,9 +1541,13 @@ struct HiddenCheck {
 const SKIPPED_FRAME_PAUSE: Duration = Duration::from_millis(16);
 
 impl MemoryTimeline {
+    /// Also logged as it happens, so a run that hangs shows how far it got.
     fn mark(&mut self, stage: &'static str) {
-        self.0
-            .push((stage, gc_platform::memory::process_memory().current));
+        let current = gc_platform::memory::process_memory().current;
+        if let Some(bytes) = current {
+            logln!("memory at {stage}: {:.1} MB", mb(bytes as usize));
+        }
+        self.0.push((stage, current));
     }
 
     fn print(&self) {
@@ -2510,6 +2515,7 @@ impl ApplicationHandler for App {
                     } else if r.stats.frames == from + n / 2
                         && let Some(check) = &mut r.hidden_check
                     {
+                        r.renderer.wait_idle();
                         check.halfway = gc_platform::memory::process_memory().current;
                     }
                 }
@@ -2562,6 +2568,7 @@ impl Running {
     /// on growth) and how long it took (it fails if the frames didn't pause).
     fn hide_window_for_check(&mut self) {
         self.renderer.pretend_hidden(true);
+        self.renderer.wait_idle();
         self.memory_timeline.mark("window hidden");
         self.hidden_check = Some(HiddenCheck {
             since: Instant::now(),
@@ -2575,6 +2582,7 @@ impl Running {
         let Some(check) = &self.hidden_check else {
             return;
         };
+        self.renderer.wait_idle();
         let after = gc_platform::memory::process_memory().current;
         let figure =
             |bytes: Option<u64>| bytes.map_or("?".into(), |b| format!("{:.1}", mb(b as usize)));

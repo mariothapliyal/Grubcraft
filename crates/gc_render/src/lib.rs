@@ -1741,6 +1741,20 @@ impl Renderer {
         FrameOutcome::Skipped
     }
 
+    /// Wait (up to a minute) for the GPU to finish everything submitted so
+    /// far, so a memory reading counts what is kept rather than work still
+    /// queued: Windows' software GPU in CI runs well behind the game.
+    pub fn wait_idle(&self) {
+        let index = self.queue.submit([]);
+        let wait = wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(std::time::Duration::from_secs(60)),
+        };
+        if let Err(e) = self.device.poll(wait) {
+            gc_platform::logln!("waiting for the GPU: {e}");
+        }
+    }
+
     /// Skip every frame as a hidden window does, until called with false:
     /// lets a test on any platform check that a hidden window's frames do
     /// not pile up memory (`--hidden-frames`, run by `scripts/smoke-run.py`).
