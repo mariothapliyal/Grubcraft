@@ -13,7 +13,7 @@ use crate::draw::{CELL_H, CELL_W, Color, DrawList, Rect, fit, mix, text_width, w
 use crate::hud::{HudEvent, HudInput, SlotState, WIDGET_KIT, muted_ink, slot_colors};
 use crate::ui::{Press, theme};
 
-/// Longest chat line, in characters (the network cuts at the same length).
+/// Longest chat line, in characters (`gc_net` cuts lines it carries to it).
 pub const MAX_CHAT: usize = 120;
 /// How many chat lines show at once.
 pub const SHOWN_LINES: usize = 6;
@@ -41,36 +41,52 @@ const BOX_H: i32 = 26;
 const PLATE: Color = [20, 12, 6, 150];
 const SOFT_INK: Color = [250, 244, 222, 255];
 
-/// What a ping says. The same five as `gc_net::PingKind`, in the same order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PingChoice {
-    Look,
-    Attack,
-    Defend,
-    Danger,
-    OnMyWay,
+/// What a ping says. Pings go to the pinger's allies only; on the network
+/// a kind is its number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum PingKind {
+    /// "Look here": a plain marker.
+    Look = 0,
+    Attack = 1,
+    Defend = 2,
+    /// "Danger": enemies, or keep away.
+    Danger = 3,
+    OnMyWay = 4,
 }
 
-impl PingChoice {
+impl PingKind {
+    pub const ALL: [PingKind; 5] = [
+        PingKind::Look,
+        PingKind::Attack,
+        PingKind::Defend,
+        PingKind::Danger,
+        PingKind::OnMyWay,
+    ];
+
+    pub fn from_u8(v: u8) -> Option<PingKind> {
+        PingKind::ALL.get(usize::from(v)).copied()
+    }
+
     /// The words beside a ping's marker.
     pub fn label(self) -> &'static str {
         match self {
-            PingChoice::Look => "Look here",
-            PingChoice::Attack => "Attack here",
-            PingChoice::Defend => "Defend here",
-            PingChoice::Danger => "Danger",
-            PingChoice::OnMyWay => "On my way",
+            PingKind::Look => "Look here",
+            PingKind::Attack => "Attack here",
+            PingKind::Defend => "Defend here",
+            PingKind::Danger => "Danger",
+            PingKind::OnMyWay => "On my way",
         }
     }
 
     /// The short word on the wheel's plate.
     fn plate(self) -> &'static str {
         match self {
-            PingChoice::Look => "Look",
-            PingChoice::Attack => "Attack",
-            PingChoice::Defend => "Defend",
-            PingChoice::Danger => "Danger",
-            PingChoice::OnMyWay => "On my way",
+            PingKind::Look => "Look",
+            PingKind::Attack => "Attack",
+            PingKind::Defend => "Defend",
+            PingKind::Danger => "Danger",
+            PingKind::OnMyWay => "On my way",
         }
     }
 
@@ -78,11 +94,11 @@ impl PingChoice {
     /// danger, green on the way, pale for a plain look.
     pub fn color(self) -> Color {
         match self {
-            PingChoice::Look => [244, 236, 204, 255],
-            PingChoice::Attack => [224, 84, 64, 255],
-            PingChoice::Defend => [98, 150, 214, 255],
-            PingChoice::Danger => [236, 176, 56, 255],
-            PingChoice::OnMyWay => [132, 188, 84, 255],
+            PingKind::Look => [244, 236, 204, 255],
+            PingKind::Attack => [224, 84, 64, 255],
+            PingKind::Defend => [98, 150, 214, 255],
+            PingKind::Danger => [236, 176, 56, 255],
+            PingKind::OnMyWay => [132, 188, 84, 255],
         }
     }
 }
@@ -90,20 +106,20 @@ impl PingChoice {
 /// The ping a drag from the wheel's middle to `(dx, dy)` picks: near the
 /// middle "Look here", else up Attack, right On my way, down Defend, left
 /// Danger (whichever way the drag goes furthest).
-pub fn wheel_pick(dx: i32, dy: i32) -> PingChoice {
+pub fn wheel_pick(dx: i32, dy: i32) -> PingKind {
     if dx * dx + dy * dy < WHEEL_DEAD * WHEEL_DEAD {
-        return PingChoice::Look;
+        return PingKind::Look;
     }
     if dx.abs() >= dy.abs() {
         if dx > 0 {
-            PingChoice::OnMyWay
+            PingKind::OnMyWay
         } else {
-            PingChoice::Danger
+            PingKind::Danger
         }
     } else if dy < 0 {
-        PingChoice::Attack
+        PingKind::Attack
     } else {
-        PingChoice::Defend
+        PingKind::Defend
     }
 }
 
@@ -265,7 +281,7 @@ pub struct PingMark<'a> {
     pub from: &'a str,
     /// The pinger's colour.
     pub color: Color,
-    pub choice: PingChoice,
+    pub choice: PingKind,
     /// Where it is on the map, in tiles.
     pub at_tiles: [f32; 2],
     /// Where it is on the screen, in UI pixels (may be off it); `None` when
@@ -308,7 +324,7 @@ pub struct Wheel {
 
 impl Wheel {
     /// What letting go now would ping.
-    pub fn pick(&self) -> PingChoice {
+    pub fn pick(&self) -> PingKind {
         wheel_pick(self.mouse.0 - self.centre.0, self.mouse.1 - self.centre.1)
     }
 
@@ -546,7 +562,7 @@ fn chat_log(draw: &mut DrawList, field: Rect, kit: &KitData, now_ms: u64) {
     if lines.is_empty() {
         return;
     }
-    let width = (field.w / 2).clamp(360, 760).min(field.w - 2 * MARGIN);
+    let width = chat_box_rect(field).w;
     let max_chars = ((width - 12) / CELL_W).max(8) as usize;
     // Each line wrapped; the oldest are dropped if the lot would be tall.
     let mut rows: Vec<(Vec<String>, &ChatLine, f32)> = lines
@@ -603,7 +619,7 @@ fn chat_log(draw: &mut DrawList, field: Rect, kit: &KitData, now_ms: u64) {
                 }
             }
             let ink = if line.kind == LineKind::Ping {
-                bright(PingChoice::Look.color())
+                bright(PingKind::Look.color())
             } else {
                 SOFT_INK
             };
@@ -616,7 +632,7 @@ fn chat_log(draw: &mut DrawList, field: Rect, kit: &KitData, now_ms: u64) {
 /// The chat box: who it speaks to, the line with a caret, and the keys.
 fn chat_box(draw: &mut DrawList, field: Rect, b: &ChatBox, now_ms: u64) {
     let r = chat_box_rect(field);
-    draw.boxed(r, linen_field(), 2);
+    draw.boxed(r, theme::FIELD_CLOTH, 2);
     let who = if b.team() { "[Team] " } else { "[All] " };
     let who_color = if b.team() { theme::WOAD } else { theme::MADDER };
     draw.text_bold(r.x + 8, r.y + (r.h - CELL_H) / 2, 1, who_color, who);
@@ -657,10 +673,6 @@ fn chat_box(draw: &mut DrawList, field: Rect, b: &ChatBox, now_ms: u64) {
             &n,
         );
     }
-}
-
-fn linen_field() -> Color {
-    theme::FIELD_CLOTH
 }
 
 /// The surrender vote banner at the top right, under the top bar; returns a tooltip for the
@@ -710,12 +722,11 @@ fn vote_banner(
         if clicked {
             events.push(HudEvent::SurrenderVote(vote));
         }
-        let (mut back, edge, ink) = slot_colors(SlotState::Ready, hot);
+        let (mut back, _, ink) = slot_colors(SlotState::Ready, hot);
         if down {
             back = mix(back, theme::INK, 0.15);
         }
         draw.boxed(r, back, 2);
-        let _ = edge;
         draw.text_centered(r, 1, ink, label);
         if hot {
             tip = Some(if vote {
@@ -785,11 +796,11 @@ fn wheel(draw: &mut DrawList, w: &Wheel) {
         [20, 12, 6, 70],
     );
     let plates = [
-        (PingChoice::Look, (0, 0)),
-        (PingChoice::Attack, (0, -WHEEL_Y)),
-        (PingChoice::OnMyWay, (WHEEL_X, 0)),
-        (PingChoice::Defend, (0, WHEEL_Y)),
-        (PingChoice::Danger, (-WHEEL_X, 0)),
+        (PingKind::Look, (0, 0)),
+        (PingKind::Attack, (0, -WHEEL_Y)),
+        (PingKind::OnMyWay, (WHEEL_X, 0)),
+        (PingKind::Defend, (0, WHEEL_Y)),
+        (PingKind::Danger, (-WHEEL_X, 0)),
     ];
     for (choice, (dx, dy)) in plates {
         let label = choice.plate();
@@ -1122,15 +1133,15 @@ mod tests {
 
     #[test]
     fn the_wheel_picks_by_direction_and_the_middle_is_look() {
-        assert_eq!(wheel_pick(0, 0), PingChoice::Look);
-        assert_eq!(wheel_pick(10, -10), PingChoice::Look);
-        assert_eq!(wheel_pick(0, -60), PingChoice::Attack);
-        assert_eq!(wheel_pick(60, 5), PingChoice::OnMyWay);
-        assert_eq!(wheel_pick(-5, 60), PingChoice::Defend);
-        assert_eq!(wheel_pick(-60, -10), PingChoice::Danger);
+        assert_eq!(wheel_pick(0, 0), PingKind::Look);
+        assert_eq!(wheel_pick(10, -10), PingKind::Look);
+        assert_eq!(wheel_pick(0, -60), PingKind::Attack);
+        assert_eq!(wheel_pick(60, 5), PingKind::OnMyWay);
+        assert_eq!(wheel_pick(-5, 60), PingKind::Defend);
+        assert_eq!(wheel_pick(-60, -10), PingKind::Danger);
         // Diagonals go to the longer way.
-        assert_eq!(wheel_pick(50, -30), PingChoice::OnMyWay);
-        assert_eq!(wheel_pick(-30, -50), PingChoice::Attack);
+        assert_eq!(wheel_pick(50, -30), PingKind::OnMyWay);
+        assert_eq!(wheel_pick(-30, -50), PingKind::Attack);
     }
 
     #[test]
@@ -1150,7 +1161,7 @@ mod tests {
         for p in ["Look", "Attack", "On my way", "Defend", "Danger"] {
             assert!(w.contains(p), "{p} in {w:?}");
         }
-        let lit = PingChoice::Attack.color();
+        let lit = PingKind::Attack.color();
         assert!(
             r.draw
                 .quads
@@ -1161,13 +1172,13 @@ mod tests {
             !r.draw
                 .quads
                 .iter()
-                .any(|q| q.glyph == SOLID && q.color == PingChoice::Danger.color())
+                .any(|q| q.glyph == SOLID && q.color == PingKind::Danger.color())
         );
     }
 
     fn mark(
         from: &str,
-        choice: PingChoice,
+        choice: PingKind,
         at_screen: Option<[f32; 2]>,
         age_ms: u64,
     ) -> PingMark<'_> {
@@ -1184,7 +1195,7 @@ mod tests {
 
     #[test]
     fn a_ping_marks_the_ground_the_minimap_and_says_who_and_what() {
-        let pings = [mark("Ana", PingChoice::Attack, Some([640.0, 300.0]), 100)];
+        let pings = [mark("Ana", PingKind::Attack, Some([640.0, 300.0]), 100)];
         let kit = KitData {
             map_tiles: 256.0,
             pings: &pings,
@@ -1192,7 +1203,7 @@ mod tests {
         };
         let r = run(&kit, &mut Press::default(), at_ms(100));
         assert!(words(&r.draw).contains("Ana: Attack here"));
-        let red = PingChoice::Attack.color();
+        let red = PingKind::Attack.color();
         let on_ground = |d: &DrawList| {
             d.quads.iter().any(|q| {
                 q.glyph == SOLID
@@ -1214,7 +1225,7 @@ mod tests {
 
     #[test]
     fn a_ping_off_screen_has_no_ground_marker_but_still_the_minimap_dot() {
-        let pings = [mark("Ana", PingChoice::Look, Some([-400.0, 300.0]), 100)];
+        let pings = [mark("Ana", PingKind::Look, Some([-400.0, 300.0]), 100)];
         let kit = KitData {
             map_tiles: 256.0,
             pings: &pings,
@@ -1232,7 +1243,7 @@ mod tests {
     #[test]
     fn a_ping_fades_and_ends_after_six_seconds() {
         let at = |age| {
-            let pings = [mark("Ana", PingChoice::Danger, Some([640.0, 300.0]), age)];
+            let pings = [mark("Ana", PingKind::Danger, Some([640.0, 300.0]), age)];
             let kit = KitData {
                 map_tiles: 256.0,
                 pings: &pings,

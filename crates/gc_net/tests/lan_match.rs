@@ -1083,7 +1083,7 @@ fn pings_reach_allies_only() {
             .collect()
     };
     let attack = ("Alex".to_string(), PingKind::Attack, [40.5, 100.25]);
-    assert_eq!(pings(m.lans[0].match_events()), [attack.clone()]);
+    assert_eq!(pings(m.lans[0].match_events()), std::slice::from_ref(&attack));
     assert_eq!(pings(m.lans[1].match_events()), [attack]);
     assert_eq!(pings(m.lans[2].match_events()), []);
 }
@@ -1098,12 +1098,7 @@ fn a_pause_stops_everyone_and_each_player_has_three() {
     let held = m.ticks();
     let sam = m.lans[2].hold().unwrap();
     assert_eq!((sam.who.as_str(), sam.can_resume), ("Alex", false));
-    assert!(
-        m.lans[0]
-            .waiting()
-            .unwrap()
-            .starts_with("Match paused by Alex")
-    );
+    assert_eq!(m.lans[0].hold().unwrap().who, "Alex");
     assert_eq!(m.lans[1].pauses_left(), Some(2));
     // Sam can't carry on yet; Alex can.
     m.lans[2].toggle_pause();

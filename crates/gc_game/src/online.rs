@@ -9,9 +9,8 @@
 
 use std::time::{Duration, Instant};
 
-use gc_net::PingKind;
 use gc_platform::logln;
-use gc_ui::match_kit::{self, ChatBox, ChatLine, LineKind, PING_LIFE_MS, PingChoice};
+use gc_ui::match_kit::{self, ChatBox, ChatLine, LineKind, PING_LIFE_MS, PingKind};
 
 /// How long a notice ("Alex lost connection") stays on screen.
 const NOTICE_TIME: Duration = Duration::from_secs(8);
@@ -39,7 +38,7 @@ pub struct LivePing {
     pub from: String,
     /// The pinger's colour.
     pub color: [u8; 4],
-    pub choice: PingChoice,
+    pub choice: PingKind,
     /// Where, in map tiles.
     pub at: [f32; 2],
     /// When it came, on the HUD's clock (`Running::now_ms`).
@@ -52,28 +51,6 @@ pub struct LivePing {
 pub struct PingPress {
     pub screen: (i32, i32),
     pub at: [f32; 2],
-}
-
-/// The UI's ping choice for the network's ping kind.
-pub fn choice_of(kind: PingKind) -> PingChoice {
-    match kind {
-        PingKind::Look => PingChoice::Look,
-        PingKind::Attack => PingChoice::Attack,
-        PingKind::Defend => PingChoice::Defend,
-        PingKind::Danger => PingChoice::Danger,
-        PingKind::OnMyWay => PingChoice::OnMyWay,
-    }
-}
-
-/// The network's ping kind for the UI's choice.
-pub fn kind_of(choice: PingChoice) -> PingKind {
-    match choice {
-        PingChoice::Look => PingKind::Look,
-        PingChoice::Attack => PingKind::Attack,
-        PingChoice::Defend => PingKind::Defend,
-        PingChoice::Danger => PingKind::Danger,
-        PingChoice::OnMyWay => PingKind::OnMyWay,
-    }
 }
 
 /// A networked match under way.
@@ -139,13 +116,12 @@ impl Online {
         at: [f32; 2],
         now_ms: u64,
     ) {
-        let choice = choice_of(kind);
         self.next_ping += 1;
         self.pings.push(LivePing {
             id: self.next_ping,
             from: from.clone(),
             color,
-            choice,
+            choice: kind,
             at,
             born_ms: now_ms,
         });
@@ -156,7 +132,7 @@ impl Online {
             kind: LineKind::Ping,
             from,
             color,
-            text: choice.label().to_string(),
+            text: kind.label().to_string(),
             born_ms: now_ms,
         };
         match_kit::push_line(&mut self.lines, line);
@@ -254,14 +230,6 @@ mod tests {
             map_hash(&a, &covered(&wood)),
             map_hash(&a, &covered(&grass))
         );
-    }
-
-    #[test]
-    fn ping_kinds_and_choices_match_both_ways() {
-        for k in PingKind::ALL {
-            assert_eq!(kind_of(choice_of(k)), k);
-            assert_eq!(choice_of(k).label(), k.label());
-        }
     }
 
     #[test]

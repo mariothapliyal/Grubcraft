@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use gc_sim::PlayerId;
 
-/// Longest chat line, in characters; longer ones are cut.
-pub const MAX_CHAT: usize = 120;
+pub use gc_ui::match_kit::{MAX_CHAT, PingKind};
+
 /// Chat lines one player may send in [`CHAT_WINDOW`]; more are dropped.
 pub const CHAT_BURST: usize = 5;
 pub const CHAT_WINDOW: Duration = Duration::from_secs(5);
@@ -28,44 +28,6 @@ pub const RESUME_AFTER: Duration = Duration::from_secs(10);
 pub const VOTE_TIME: Duration = Duration::from_secs(30);
 /// After a vote fails, its caller waits this long to call another.
 pub const VOTE_AGAIN_AFTER: Duration = Duration::from_secs(60);
-
-/// What a ping says. Pings go to the pinger's allies only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum PingKind {
-    /// "Look here": a plain marker.
-    Look = 0,
-    Attack = 1,
-    Defend = 2,
-    /// "Danger": enemies, or keep away.
-    Danger = 3,
-    OnMyWay = 4,
-}
-
-impl PingKind {
-    pub const ALL: [PingKind; 5] = [
-        PingKind::Look,
-        PingKind::Attack,
-        PingKind::Defend,
-        PingKind::Danger,
-        PingKind::OnMyWay,
-    ];
-
-    pub fn from_u8(v: u8) -> Option<PingKind> {
-        PingKind::ALL.get(usize::from(v)).copied()
-    }
-
-    /// The words shown beside the marker and in the chat log.
-    pub fn label(self) -> &'static str {
-        match self {
-            PingKind::Look => "Look here",
-            PingKind::Attack => "Attack here",
-            PingKind::Defend => "Defend here",
-            PingKind::Danger => "Danger",
-            PingKind::OnMyWay => "On my way",
-        }
-    }
-}
 
 /// A point on the map, in tiles, as sixteenths of a tile on the wire.
 pub(crate) fn to_wire(at: [f32; 2]) -> (u32, u32) {
@@ -120,7 +82,6 @@ impl Burst {
 pub struct HoldView {
     /// Who paused.
     pub who: String,
-    pub player: PlayerId,
     /// Until it carries on by itself.
     pub left: Duration,
     /// Whether this machine may carry on now.

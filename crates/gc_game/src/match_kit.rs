@@ -15,7 +15,7 @@ use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::Running;
-use crate::online::{PingPress, kind_of};
+use crate::online::PingPress;
 
 /// What to say when a ping or chat is tried offline.
 const OFFLINE_PINGS: &str = "Pings are for network battles.";
@@ -109,9 +109,9 @@ impl Running {
         let choice = if self.input.cursor.is_some() {
             wheel_pick(now.0 - press.screen.0, now.1 - press.screen.1)
         } else {
-            gc_ui::match_kit::PingChoice::Look
+            gc_ui::match_kit::PingKind::Look
         };
-        self.menu.net().ping(kind_of(choice), press.at);
+        self.menu.net().ping(choice, press.at);
     }
 
     /// P in a network battle: pause, or carry on (the host's rules decide
