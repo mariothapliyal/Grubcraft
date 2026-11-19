@@ -4812,9 +4812,9 @@ impl Running {
                         || a.cart.is_some()
                 });
             if showing {
-                // Deer, goats, hares and doves stand on ground no building or tree covers, keep away
-                // from buildings, and bolt or fly from the soldiers the viewer sees
-                // (so unseen armies give nothing away).
+                // Deer, goats, hares and doves stand on ground no building or
+                // tree covers, keep away from buildings, and bolt or fly from the
+                // soldiers the viewer sees (so unseen armies give nothing away).
                 let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
                 let threats: Vec<Vec2> = world
                     .regiments
@@ -8407,8 +8407,8 @@ impl Running {
     }
 
     /// The living things of the ambient pass that are on the ground and in
-    /// the air: deer, goats, hares, insects, doves, the villagers of the hamlets and the
-    /// caravans between them, as soldier instances. In every kind of match
+    /// the air: deer, goats, hares, insects, doves, the villagers of the
+    /// hamlets and the caravans between them, as soldier instances. In every kind of match
     /// that makes them (the hamlets are Conquest's; the rest are on any
     /// land).
     fn push_creatures(&mut self) {

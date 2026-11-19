@@ -98,6 +98,39 @@ impl Species {
         self as usize
     }
 
+    /// Whether this kind lives on a grown map's habitat `h`: deer on open
+    /// land and light woods, goats on the Highland's scree, rock, heather and
+    /// tree line, hares on open grass and its edges.
+    fn lives_on(self, h: Habitat) -> bool {
+        use Habitat::*;
+        match self {
+            Species::Deer => matches!(
+                h,
+                FlowerMeadow
+                    | Grassland
+                    | ScrubEdge
+                    | OldGrowth
+                    | BirchFringe
+                    | FernHollow
+                    | Glade
+                    | HeatherMoor
+                    | TreeLine
+                    | WetMeadow
+            ),
+            Species::Goat => matches!(h, Scree | BareRock | HeatherMoor | TreeLine),
+            Species::Hare => matches!(h, FlowerMeadow | Grassland | ScrubEdge | Glade | DyingGrass),
+        }
+    }
+
+    /// Whether this kind lives on a painted map's land `l`.
+    fn lives_in(self, l: Land) -> bool {
+        match self {
+            Species::Deer => !matches!(l, Land::Fen | Land::Waste),
+            Species::Goat => l == Land::Highland,
+            Species::Hare => matches!(l, Land::Meadow | Land::Valley),
+        }
+    }
+
     pub fn traits(self) -> &'static Traits {
         const DEER: Traits = Traits {
             chance: 0.4,
@@ -207,7 +240,7 @@ struct Herd {
     kind: Species,
     home: Vec2,
     pasture: Vec2,
-    deer: Vec<Animal>,
+    animals: Vec<Animal>,
     rng: u32,
     /// Seconds until the herd moves to new pasture, and until a bolting
     /// herd stops (zero when it is not bolting).
@@ -231,8 +264,8 @@ pub struct Seen {
 #[derive(Default)]
 pub struct Wildlife {
     herds: HashMap<((i32, i32), Species), Herd>,
-    /// Cells looked at that hold no herd of a kind (the land is wrong or a spot was
-    /// not found), so they are not looked at again every frame.
+    /// Cells looked at that hold no herd of a kind (the land is wrong or a
+    /// spot was not found), so they are not looked at again every frame.
     empty: HashSet<((i32, i32), Species)>,
     seen: Vec<Seen>,
 }
@@ -251,77 +284,19 @@ pub(super) fn hash(cell: (i32, i32), salt: u32) -> f32 {
     (x >> 8) as f32 / (1 << 24) as f32
 }
 
-/// Whether deer live on this habitat: open land and light woods, not bog,
-/// rock or the waste.
-fn suits(h: Habitat) -> bool {
-    use Habitat::*;
-    matches!(
-        h,
-        FlowerMeadow
-            | Grassland
-            | ScrubEdge
-            | OldGrowth
-            | BirchFringe
-            | FernHollow
-            | Glade
-            | HeatherMoor
-            | TreeLine
-            | WetMeadow
-    )
-}
-
-/// Whether goats live on this habitat: the Highland's scree and rock, the
-/// heather and the tree line where it climbs out of the woods.
-fn goats_like(h: Habitat) -> bool {
-    use Habitat::*;
-    matches!(h, Scree | BareRock | HeatherMoor | TreeLine)
-}
-
-/// Whether hares live on this habitat: open grass and its edges.
-fn hares_like(h: Habitat) -> bool {
-    use Habitat::*;
-    matches!(h, FlowerMeadow | Grassland | ScrubEdge | Glade | DyingGrass)
-}
-
 /// Whether a `kind` lives at `p`: by the habitat of a grown map, else by the
 /// land of a painted one (a map with neither is open meadow).
-pub(super) fn suits_for(kind: Species, map: &Map, p: Vec2) -> bool {
-    if kind == Species::Deer {
-        return suits_at(map, p);
-    }
+pub(super) fn suits_at(kind: Species, map: &Map, p: Vec2) -> bool {
     let tiles = map.tiles as i32;
     let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
     if !(0..tiles).contains(&x) || !(0..tiles).contains(&y) {
         return false;
     }
     let tile = y as usize * tiles as usize + x as usize;
-    if let Some(&b) = map.habitat.get(tile) {
-        let h = Habitat::from_u8(b);
-        return match kind {
-            Species::Goat => goats_like(h),
-            _ => hares_like(h),
-        };
+    match map.habitat.get(tile) {
+        Some(&b) => kind.lives_on(Habitat::from_u8(b)),
+        None => kind.lives_in(map.land_at(tile).unwrap_or_default()),
     }
-    map.land_at(tile).is_none_or(|l| match kind {
-        Species::Goat => l == Land::Highland,
-        _ => matches!(l, Land::Meadow | Land::Valley),
-    })
-}
-
-/// Whether deer live at `p`: by the habitat of a grown map, else by the
-/// land of a painted one (a map with neither is open meadow).
-pub(super) fn suits_at(map: &Map, p: Vec2) -> bool {
-    let tiles = map.tiles as i32;
-    let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
-    if !(0..tiles).contains(&x) || !(0..tiles).contains(&y) {
-        return false;
-    }
-    let tile = y as usize * tiles as usize + x as usize;
-    if let Some(&b) = map.habitat.get(tile) {
-        return suits(Habitat::from_u8(b));
-    }
-    map.land_at(tile)
-        .is_none_or(|l| !matches!(l, Land::Fen | Land::Waste))
 }
 
 /// Whether an animal may stand at `p`: on the map, on dry ground.
@@ -367,7 +342,7 @@ impl Herd {
     }
 
     fn centre(&self) -> Vec2 {
-        self.deer.iter().map(|d| d.pos).sum::<Vec2>() / self.deer.len().max(1) as f32
+        self.animals.iter().map(|d| d.pos).sum::<Vec2>() / self.animals.len().max(1) as f32
     }
 
     /// A random spot within `reach` of `at`.
@@ -397,7 +372,7 @@ impl Wildlife {
     }
 
     /// Move the herds on by `dt` seconds of effects time, near `focus` with
-    /// the camera `distance` away. `clear(p)` says a deer may stand at `p`
+    /// the camera `distance` away. `clear(p)` says an animal may stand at `p`
     /// to graze (no building or tree there), `tame(p)` that a building is
     /// near, and `threats` are the soldiers the viewer sees.
     #[allow(clippy::too_many_arguments)]
@@ -452,7 +427,7 @@ impl Wildlife {
         }
         self.seen.clear();
         for h in self.herds.values() {
-            for d in &h.deer {
+            for d in &h.animals {
                 self.seen.push(Seen {
                     kind: h.kind,
                     pos: d.pos,
@@ -466,8 +441,9 @@ impl Wildlife {
     }
 
     /// The herd of `kind` in cell `c`, if it has one. Each kind has its own
-    /// hash salts (the deer's are the first set), so a place keeps its herds
-    /// of every kind.
+    /// hash salts (the deer's are the first set, 1 to 5; the others are 100
+    /// on, clear of the doves' 21 to 25 on the same cells), so a place keeps
+    /// its herds of every kind.
     fn found(
         c: (i32, i32),
         kind: Species,
@@ -476,7 +452,7 @@ impl Wildlife {
         tame: &impl Fn(Vec2) -> bool,
     ) -> Option<Herd> {
         let tr = kind.traits();
-        let salt = |n: u32| n + 16 * kind.index() as u32;
+        let salt = |n: u32| n + 100 * kind.index() as u32;
         if hash(c, salt(1)) >= tr.chance {
             return None;
         }
@@ -484,7 +460,7 @@ impl Wildlife {
             (c.0 as f32 + 0.15 + 0.7 * hash(c, salt(2))) * CELL as f32,
             (c.1 as f32 + 0.15 + 0.7 * hash(c, salt(3))) * CELL as f32,
         );
-        let fits = |p: Vec2| suits_for(kind, map, p) && open(map, p) && clear(p);
+        let fits = |p: Vec2| suits_at(kind, map, p) && open(map, p) && clear(p);
         if !fits(home) || tame(home) {
             return None;
         }
@@ -492,7 +468,7 @@ impl Wildlife {
             kind,
             home,
             pasture: home,
-            deer: Vec::new(),
+            animals: Vec::new(),
             rng: (hash(c, salt(4)) * 4_294_967_000.0) as u32 | 1,
             move_in: 0.0,
             bolt: 0.0,
@@ -514,7 +490,7 @@ impl Wildlife {
                 k as f32 * 0.37 + herd.unit(),
                 tr.scale.0 + tr.scale.1 * herd.unit(),
             );
-            herd.deer.push(Animal {
+            herd.animals.push(Animal {
                 pos,
                 facing: Vec2::from_angle(a),
                 doing,
@@ -552,7 +528,7 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
         {
             h.bolt = tr.bolt_most;
             h.wary = 0.0;
-            for d in &mut h.deer {
+            for d in &mut h.animals {
                 d.doing = Doing::Bolt;
             }
         }
@@ -565,34 +541,27 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
         if safe || h.bolt <= 0.0 {
             h.bolt = 0.0;
             h.wary = tr.calm;
-            for d in &mut h.deer {
+            for d in &mut h.animals {
                 d.doing = Doing::Stand;
                 d.left = tr.calm;
             }
         } else {
-            for i in 0..h.deer.len() {
+            for i in 0..h.animals.len() {
                 let jitter = (h.unit() - 0.5) * 0.4;
-                let (bolt, d) = (h.bolt, &mut h.deer[i]);
+                let (bolt, d) = (h.bolt, &mut h.animals[i]);
                 // A hare jinks: each swerves to and fro out of step with the
                 // others.
                 let jink = tr.zigzag * (bolt * 4.0 + d.phase * 7.0).sin();
                 let away = (d.pos - from).normalize_or(Vec2::X);
-                run(
-                    d,
-                    Vec2::from_angle(jitter + jink).rotate(away),
-                    tr,
-                    tr.run,
-                    tr.turn_run,
-                    dt,
-                    map,
-                );
+                let want = Vec2::from_angle(jitter + jink).rotate(away);
+                run(d, want, tr.run, tr.turn_run, tr.steepest, dt, map);
             }
             return;
         }
     }
     if h.wary > 0.0 {
         // Standing alert; a soldier coming back starts the bolt again, above,
-        // and the herd stays wary while one is within `SAFE`.
+        // and the herd stays wary while one is within `safe`.
         h.wary = if danger.is_some_and(|(_, d)| d < tr.safe) {
             tr.calm
         } else {
@@ -600,7 +569,7 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
         };
         if h.wary <= 0.0 {
             h.pasture = h.home;
-            for d in &mut h.deer {
+            for d in &mut h.animals {
                 d.doing = Doing::Walk;
                 d.fresh = true;
             }
@@ -618,17 +587,17 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
                 break;
             }
         }
-        for d in &mut h.deer {
+        for d in &mut h.animals {
             d.doing = Doing::Walk;
             d.fresh = true;
         }
     }
-    for i in 0..h.deer.len() {
+    for i in 0..h.animals.len() {
         let pick = h.unit();
         let spot = h.near(h.pasture, tr.scatter);
         let rest = h.between(tr.graze);
         let stand = h.between(tr.stand);
-        let d = &mut h.deer[i];
+        let d = &mut h.animals[i];
         match d.doing {
             Doing::Walk => {
                 if d.fresh {
@@ -647,7 +616,7 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
                     d.doing = Doing::Graze;
                     d.left = rest;
                 } else {
-                    run(d, to, tr, tr.walk, tr.turn_walk, dt, map);
+                    run(d, to, tr.walk, tr.turn_walk, tr.steepest, dt, map);
                     d.doing = Doing::Walk;
                 }
             }
@@ -673,7 +642,7 @@ fn step(h: &mut Herd, dt: f32, map: &Map, clear: &impl Fn(Vec2) -> bool, threats
 /// Move `d` along `want` at `speed`, turning towards it, round ground too
 /// steep for its kind or wet by turning aside. Keeps `doing` as `Bolt` when
 /// it is one.
-fn run(d: &mut Animal, want: Vec2, tr: &Traits, speed: f32, turn: f32, dt: f32, map: &Map) {
+fn run(d: &mut Animal, want: Vec2, speed: f32, turn: f32, steepest: f32, dt: f32, map: &Map) {
     let want = want.normalize_or(d.facing);
     d.facing = turn_toward(d.facing, want, turn * dt);
     // Walk only once nearly facing the way: an animal turns on the spot first.
@@ -684,7 +653,7 @@ fn run(d: &mut Animal, want: Vec2, tr: &Traits, speed: f32, turn: f32, dt: f32, 
     for angle in [0.0f32, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6] {
         let dir = Vec2::from_angle(angle).rotate(d.facing);
         let to = d.pos + dir * reach.max(STEP * 0.5);
-        if passable(map, d.pos, to, tr.steepest) {
+        if passable(map, d.pos, to, steepest) {
             d.pos += dir * reach;
             return;
         }
@@ -755,7 +724,7 @@ mod tests {
         let kinds: HashSet<_> = w.seen().iter().map(|s| format!("{:?}", s.doing)).collect();
         assert!(!kinds.contains("Bolt"));
         for h in w.herds.values() {
-            for d in &h.deer {
+            for d in &h.animals {
                 let tr = h.kind.traits();
                 assert!(d.pos.distance(h.home) < tr.roam + tr.scatter + 6.0);
             }
@@ -768,27 +737,19 @@ mod tests {
         let mut w = Wildlife::default();
         let focus = Vec2::new(64.0, 64.0);
         run_for(&mut w, &map, 1.0, focus, &[]);
-        let before: Vec<Vec2> = w
-            .herds
-            .values()
-            .next()
-            .unwrap()
-            .deer
-            .iter()
-            .map(|d| d.pos)
-            .collect();
         let key = *w.herds.keys().find(|k| k.1 == Species::Deer).unwrap();
+        let before: Vec<Vec2> = w.herds[&key].animals.iter().map(|d| d.pos).collect();
         let mid = w.herds[&key].centre();
         let threat = mid + Vec2::new(6.0, 0.0);
         run_for(&mut w, &map, 2.0, focus, &[threat]);
         let herd = &w.herds[&key];
-        assert!(herd.deer.iter().all(|d| d.doing == Doing::Bolt));
+        assert!(herd.animals.iter().all(|d| d.doing == Doing::Bolt));
         assert!(herd.centre().distance(threat) > mid.distance(threat) + 3.0);
-        assert!(herd.deer.iter().zip(&before).all(|(d, b)| d.pos != *b));
+        assert!(herd.animals.iter().zip(&before).all(|(d, b)| d.pos != *b));
         // No threat any more: they stop, stand alert and go back to grazing.
         run_for(&mut w, &map, 40.0, focus, &[]);
         let herd = &w.herds[&key];
-        assert!(herd.deer.iter().all(|d| d.doing != Doing::Bolt));
+        assert!(herd.animals.iter().all(|d| d.doing != Doing::Bolt));
     }
 
     #[test]
@@ -844,20 +805,21 @@ mod tests {
             phase: 0.0,
             scale: 1.0,
         };
-        run(&mut d, Vec2::NEG_X, tr, tr.walk, tr.turn_walk, 0.05, &map);
+        run(
+            &mut d,
+            Vec2::NEG_X,
+            tr.walk,
+            tr.turn_walk,
+            tr.steepest,
+            0.05,
+            &map,
+        );
         assert_eq!(d.pos, start);
         assert!(d.facing.x < 1.0);
         let mut moved = false;
         for _ in 0..400 {
-            run(
-                &mut d,
-                Vec2::new(-1.0, 0.3),
-                tr,
-                tr.run,
-                tr.turn_run,
-                0.05,
-                &map,
-            );
+            let want = Vec2::new(-1.0, 0.3);
+            run(&mut d, want, tr.run, tr.turn_run, tr.steepest, 0.05, &map);
             moved |= d.pos != start;
             assert!(open(&map, d.pos), "{:?}", d.pos);
         }
@@ -954,6 +916,12 @@ mod tests {
             assert_eq!(kinds.contains(&Species::Goat), goats, "{land:?}");
             assert_eq!(kinds.contains(&Species::Hare), hares, "{land:?}");
         }
+        // A map with neither habitat nor land is all meadow: no goats.
+        map.land.clear();
+        let mut w = Wildlife::default();
+        run_for(&mut w, &map, 0.1, Vec2::new(64.0, 64.0), &[]);
+        let kinds: HashSet<_> = w.seen().iter().map(|s| s.kind).collect();
+        assert!(!kinds.contains(&Species::Goat) && kinds.contains(&Species::Hare));
     }
 
     #[test]
@@ -966,15 +934,15 @@ mod tests {
         let mid = w.herds[&key].centre();
         // Ten tiles off: inside a deer's fear, outside a hare's.
         run_for(&mut w, &map, 1.0, focus, &[mid + Vec2::new(10.0, 0.0)]);
-        assert!(w.herds[&key].deer.iter().all(|d| d.doing != Doing::Bolt));
+        assert!(w.herds[&key].animals.iter().all(|d| d.doing != Doing::Bolt));
         // Five tiles off: it dashes, faster than a deer's walk, and swerves.
-        let start: Vec<Vec2> = w.herds[&key].deer.iter().map(|d| d.pos).collect();
+        let start: Vec<Vec2> = w.herds[&key].animals.iter().map(|d| d.pos).collect();
         let threat = w.herds[&key].centre() + Vec2::new(5.0, 0.0);
         run_for(&mut w, &map, 1.0, focus, &[threat]);
         let herd = &w.herds[&key];
-        assert!(herd.deer.iter().all(|d| d.doing == Doing::Bolt));
+        assert!(herd.animals.iter().all(|d| d.doing == Doing::Bolt));
         assert!(
-            herd.deer
+            herd.animals
                 .iter()
                 .zip(&start)
                 .all(|(d, s)| d.pos.distance(*s) > 3.0)
