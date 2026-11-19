@@ -1323,7 +1323,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         // Dust and soil settle on the ledges.
         rc = mix(rc, soil * 0.9, smoothstep(0.82, 0.95, n.y) * 0.3);
         // Snow lies on the ledges and crests.
-        rc = mix(rc, SNOW_ALBEDO, lying * smoothstep(0.75, 0.95, n.y) * 0.6);
+        rc = mix(rc, SNOW_ALBEDO, lying * smoothstep(0.8, 0.95, n.y) * 0.6);
         let ns = normalize(mix(nd, r.n, rock));
         let rough = mix(1.0, max(r.rough, 0.75), rock);
         let ao = mix(1.0, cavity * tall, rock);
@@ -2334,7 +2334,9 @@ fn fs_soldier(in: SoldierOut, @builtin(front_facing) front: bool) -> @location(0
     // Thin double-sided parts (cloaks, blades) light from whichever side shows.
     let n = select(-in.normal, in.normal, front);
     let dry = srgb_to_linear(in.color);
-    let albedo = mix(dry * (1.0 - WET_DARK * drench(n)), SNOW_ALBEDO, dusting(n, in.world.xz) * SNOW_ON_MODELS);
+    // Only falling snow settles on soldiers: they don't stand still long
+    // enough on the Highland's peaks to gather what lies there.
+    let albedo = mix(dry * (1.0 - WET_DARK * drench(n)), SNOW_ALBEDO, snow_lying(0u) * smoothstep(0.45, 0.9, n.y) * SNOW_ON_MODELS);
     let c = shade(albedo, n, in.world) + albedo * rim(n, in.world);
     // The selection glows as brightly in rain as in the dry.
     return vec4<f32>(c + dry * in.highlight * HIGHLIGHT, 1.0);
