@@ -30,6 +30,8 @@ pub enum AlertKind {
     Ambush,
     /// One of your regiments broke and ran.
     Rout,
+    /// An ally pinged this spot (online battles).
+    Ping,
 }
 
 impl AlertKind {
@@ -38,6 +40,7 @@ impl AlertKind {
             AlertKind::Attack => "!",
             AlertKind::Ambush => "A",
             AlertKind::Rout => "R",
+            AlertKind::Ping => "P",
         }
     }
 
@@ -46,6 +49,7 @@ impl AlertKind {
             AlertKind::Attack => theme::MADDER,
             AlertKind::Ambush => theme::WELD,
             AlertKind::Rout => ROUT,
+            AlertKind::Ping => theme::WOAD,
         }
     }
 }

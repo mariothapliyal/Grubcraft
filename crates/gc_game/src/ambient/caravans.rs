@@ -78,19 +78,19 @@ const DEMO_AHEAD: f32 = 14.0;
 
 /// A way between two hamlets, the stops at its ends in tiles.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Route {
-    from: Vec2,
-    to: Vec2,
-    /// The sizes of the hamlets at the ends.
-    sizes: (Size, Size),
+pub(super) struct Route {
+    pub(super) from: Vec2,
+    pub(super) to: Vec2,
+    /// The chance a caravan on it is a cart, not porters.
+    pub(super) cart_odds: f32,
 }
 
 impl Route {
-    fn len(&self) -> f32 {
+    pub(super) fn len(&self) -> f32 {
         self.from.distance(self.to)
     }
 
-    fn at(&self, along: f32) -> Vec2 {
+    pub(super) fn at(&self, along: f32) -> Vec2 {
         self.from
             .lerp(self.to, (along / self.len()).clamp(0.0, 1.0))
     }
@@ -103,7 +103,7 @@ impl Route {
 
 /// What a caravan is made of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Load {
+pub(super) enum Load {
     /// An ox cart and the man who leads it.
     Cart,
     /// Porters in file, this many.
@@ -111,19 +111,19 @@ enum Load {
 }
 
 #[derive(Clone, Debug)]
-struct Train {
+pub(super) struct Train {
     route: usize,
-    load: Load,
+    pub(super) load: Load,
     /// Tiles from the route's start, and the way it is going.
-    along: f32,
-    forward: bool,
+    pub(super) along: f32,
+    pub(super) forward: bool,
     /// Seconds still to wait at the end, and still to wait for calm.
-    unload: f32,
+    pub(super) unload: f32,
     hold: f32,
     /// Seconds spent looking at the army that is near.
     looked: f32,
     /// Whether it stood still this step, for an army or a fight.
-    still: bool,
+    pub(super) still: bool,
     facing: Vec2,
     rng: Rng,
     phase: f32,
@@ -289,15 +289,23 @@ fn route_between(map: &Map, hamlets: &Hamlets, i: usize, j: usize) -> Option<Rou
     {
         return None;
     }
-    route_clear(map, from, to).then_some(Route {
+    // Carts mostly on the routes that serve a town or the bazaar, and now
+    // and then between villages; the rest are walked by porters.
+    let trade = |s: Size| matches!(s, Size::Town | Size::Bazaar);
+    let cart_odds = if trade(hamlets.size(i)) || trade(hamlets.size(j)) {
+        0.8
+    } else {
+        0.25
+    };
+    route_clear(map, from, to, |_| true).then_some(Route {
         from,
         to,
-        sizes: (hamlets.size(i), hamlets.size(j)),
+        cart_odds,
     })
 }
 
 /// How far `p` is from the segment `a`-`b`.
-fn near_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+pub(super) fn near_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let t = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
     p.distance(a + ab * t)
@@ -335,33 +343,41 @@ impl Caravans {
         visible: impl Fn((i32, i32)) -> bool,
         fx: &mut effects::Field,
     ) {
-        if dt <= 0.0 || wet >= DUST_UNTIL_WET {
-            return;
+        dust_of(&self.seen, dt, wet, ground, visible, fx);
+    }
+}
+
+/// The dust `pieces` (any caravan's or town cart's) throw up: see
+/// [`Caravans::dust`].
+pub fn dust_of(
+    pieces: &[Seen],
+    dt: f32,
+    wet: f32,
+    ground: impl Fn(Vec2) -> f32,
+    visible: impl Fn((i32, i32)) -> bool,
+    fx: &mut effects::Field,
+) {
+    if dt <= 0.0 || wet >= DUST_UNTIL_WET {
+        return;
+    }
+    for c in pieces {
+        let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
+        if c.piece != Piece::Cart || !c.rolling || !visible(tile) {
+            continue;
         }
-        for c in &self.seen {
-            let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
-            if c.piece != Piece::Cart || !c.rolling || !visible(tile) {
-                continue;
-            }
-            for w in c.wheels() {
-                fx.footstep(dt, Vec3::new(w.x, ground(w), w.y), c.facing, DUST_PACE);
-            }
+        for w in c.wheels() {
+            fx.footstep(dt, Vec3::new(w.x, ground(w), w.y), c.facing, DUST_PACE);
         }
     }
 }
 
 impl Train {
-    fn new(index: usize, route: &Route) -> Train {
+    /// A caravan on `route`, somewhere along it, going either way, from a
+    /// `index` that seeds it (a route's own number; a town's supply cart,
+    /// whose route has `cart_odds` of 1, takes its store's).
+    pub(super) fn new(index: usize, route: &Route) -> Train {
         let mut rng = Rng::seeded(index as u32 * 7919 + route.len() as u32);
-        // Carts mostly on the routes that serve a town or the bazaar, and now
-        // and then between villages; the rest are walked by porters.
-        let trade = |s: Size| matches!(s, Size::Town | Size::Bazaar);
-        let cart = if trade(route.sizes.0) || trade(route.sizes.1) {
-            0.8
-        } else {
-            0.25
-        };
-        let load = if rng.unit() < cart {
+        let load = if rng.unit() < route.cart_odds {
             Load::Cart
         } else {
             Load::Porters(if rng.unit() < 0.5 { 1 } else { 2 })
@@ -398,7 +414,13 @@ impl Train {
         }
     }
 
-    fn step(&mut self, dt: f32, route: &Route, eyes: Eyes, occupied: &dyn Fn((i32, i32)) -> bool) {
+    pub(super) fn step(
+        &mut self,
+        dt: f32,
+        route: &Route,
+        eyes: Eyes,
+        occupied: &dyn Fn((i32, i32)) -> bool,
+    ) {
         let pos = route.at(self.along);
         let near = |all: &[Vec2], reach: f32| all.iter().any(|a| a.distance(pos) < reach);
         let army = near(eyes.armies, WATCH);
@@ -452,7 +474,7 @@ impl Train {
         !self.still && (self.unload <= 0.0 || self.turning(route))
     }
 
-    fn show(&self, route: &Route, out: &mut Vec<Seen>) {
+    pub(super) fn show(&self, route: &Route, out: &mut Vec<Seen>) {
         let pos = route.at(self.along);
         let facing = self.facing;
         let side = facing.perp();

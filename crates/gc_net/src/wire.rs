@@ -359,6 +359,7 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.fx(radius);
         }
         Command::Ready => w.u8(7),
+        Command::Concede => w.u8(46),
         Command::SpawnStructure {
             building,
             tile,
@@ -686,6 +687,7 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             radius: r.fx()?,
         },
         7 => Command::Ready,
+        46 => Command::Concede,
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -976,6 +978,7 @@ mod tests {
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::Concede,
             Command::SpawnStructure {
                 building: 40,
                 tile: (-1, 4000),

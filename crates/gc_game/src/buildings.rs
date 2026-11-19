@@ -14,6 +14,7 @@ use gc_sim::{
 };
 
 use crate::Party;
+use crate::ambient::town::Part;
 use crate::bridge_deck::Decks;
 use crate::scenery::{Extra, Model};
 use crate::wall_lines::{Kind, Shape, WallLines};
@@ -308,6 +309,28 @@ pub fn stats_of(b: &BuildingRecord) -> BuildingStats {
     }
 }
 
+/// What a building type is in the life of a town (see [`Table::town_part`]).
+fn part_of(stats: &BuildingStats, faction: Faction, name: &str) -> Part {
+    let forge = matches!(
+        (faction, name),
+        (Faction::EmberClans, "Forge" | "Ember Workshop") | (Faction::Choir, "Forge of Facets")
+    );
+    let drops = stats.flags
+        & (gc_sim::structures::DROP_OFF_GRUB | gc_sim::structures::DROP_OFF_MARROW)
+        != 0;
+    if stats.flags & gc_sim::structures::GATE != 0 {
+        Part::Gate
+    } else if stats.role == Role::Defence {
+        Part::Tower
+    } else if forge {
+        Part::Forge
+    } else if drops && matches!(stats.role, Role::Economy | Role::Outpost) {
+        Part::Store
+    } else {
+        Part::None
+    }
+}
+
 /// Every building type in the game data, as Conquest worlds read them.
 pub struct Table {
     pub stats: Vec<BuildingStats>,
@@ -316,6 +339,8 @@ pub struct Table {
     /// Each type's level: 1 for a first-level building, one more for each
     /// type it upgrades from.
     levels: Vec<u8>,
+    /// Each type's part in the life of a town (`ambient::town`).
+    parts: Vec<Part>,
     /// What the sandbox's Conquest world knows of each regiment type. The
     /// sandbox plays with the Field Battle units, which are all plain
     /// regiments (no workers, no supply); Conquest matches use their own
@@ -327,8 +352,15 @@ impl Table {
     pub fn new(data: &GameData) -> Table {
         let stats: Vec<BuildingStats> = data.buildings.iter().map(stats_of).collect();
         let levels = (0..stats.len()).map(|i| level_in(&stats, i)).collect();
+        let parts = data
+            .buildings
+            .iter()
+            .zip(&stats)
+            .map(|(b, s)| part_of(s, b.faction(), b.name()))
+            .collect();
         Table {
             levels,
+            parts,
             stats,
             names: data
                 .buildings
@@ -419,6 +451,17 @@ impl Table {
     pub fn is_gate(&self, building: BuildingId) -> bool {
         (self.stats.get(usize::from(building)))
             .is_some_and(|s| s.flags & gc_sim::structures::GATE != 0)
+    }
+
+    /// What `building` is in the life of a town (`ambient::town`): a gate
+    /// or gatehouse, a tower, a forge (the Clans' Forge and Ember Workshop,
+    /// the Choir's Forge of Facets), or a store that takes what workers
+    /// carry (a Granary, or an expansion hall).
+    pub fn town_part(&self, building: BuildingId) -> Part {
+        self.parts
+            .get(usize::from(building))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Whether `building` is a gatehouse: a gate that upgrades from

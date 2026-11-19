@@ -19,7 +19,7 @@ struct Step {
     scene: fn(&mut Art),
 }
 
-const STEPS: [Step; 5] = [
+const STEPS: [Step; 6] = [
     Step {
         title: "Gather",
         scene: gather,
@@ -44,6 +44,11 @@ const STEPS: [Step; 5] = [
         title: "Win",
         scene: win,
         text: "Right-click enemy buildings to attack; smoke and fire show the damage. Break every enemy main building. Click i for tips.",
+    },
+    Step {
+        title: "Team up",
+        scene: team,
+        text: "Network battles: Enter chats your team, Shift+Enter all. Alt+click pings a spot. P pauses. Esc surrenders by team vote.",
     },
 ];
 
@@ -248,6 +253,25 @@ fn win(a: &mut Art) {
     icons::icon(a.d, info.inset(2), Icon::Info, theme::INK);
     a.dashes(58, 96, 52, theme::INK_MUTED);
     a.regiment(60, 56, 3, 2, FRIEND);
+}
+
+fn team(a: &mut Art) {
+    // Our regiment talks in a chat bubble, a ping flag marks a spot with its ring.
+    a.regiment(8, 50, 3, 2, FRIEND);
+    a.rect(8, 10, 66, 24, theme::INK);
+    a.rect(10, 12, 62, 20, theme::LINEN);
+    a.rect(14, 18, 44, 2, theme::INK_MUTED);
+    a.rect(14, 24, 30, 2, theme::INK_MUTED);
+    a.rect(20, 34, 6, 6, theme::LINEN);
+    a.icon(108, 8, 18, Icon::Flag, theme::INK);
+    let ring = a.at(96, 30, 40, 36);
+    a.d.border(ring, 2, FOE);
+    a.regiment(104, 52, 2, 2, FOE);
+    // The P key: pause.
+    let key = a.at(132, 66, 20, 20);
+    a.d.rect(key, theme::INK);
+    a.d.rect(key.inset(2), theme::LINEN);
+    a.d.text_centered(key, 1, theme::INK, "P");
 }
 
 #[cfg(test)]

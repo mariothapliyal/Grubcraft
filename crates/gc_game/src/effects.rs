@@ -345,6 +345,17 @@ impl Field {
         self.fx.smoke(pos, size, 0.05, dt);
     }
 
+    /// A forge's mouth at `pos`: now and then (`rate` bursts a second, for
+    /// `dt` seconds) it throws a burst of `sparks` up and out along `dir`,
+    /// with a flare of its fire that lasts a moment.
+    pub fn forge(&mut self, pos: Vec3, dir: Vec3, rate: f32, sparks: f32, dt: f32) {
+        if self.fx.chance(rate * dt) {
+            self.fx.sparks(pos, dir, sparks);
+            self.fx.embers(pos, 0.1, sparks * 0.4);
+            self.fx.lamp(pos, [255, 170, 80], 0.2, 0.9, 0.1);
+        }
+    }
+
     /// A torch held at `pos`, for `dt` seconds.
     pub fn torch(&mut self, pos: Vec3, dt: f32) {
         self.fx.torch(pos, dt);

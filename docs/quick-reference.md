@@ -71,7 +71,12 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `--showroom all|buildings|NAME[,NAME]`; `--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel`; `--viewer NAME|start`; `--siege`; `--gate-march N` (a regiment through each gate, looking at the Nth); `--bridge-scene` (a Conquest match with a two-lane Timber Bridge over the nearest crossing from your start and a regiment marching over it); `--watch REPLAY`.
 - Look and display: `--time-of-day`, `--sky`, `--look`, `--weather`, `--air`, `--no-audio`, `--no-shadows`, `--no-aa`, `--no-glow`, `--draw`, `--lod`, `--render-scale`, `--latency`, `--overlay`.
 
-**Not in the game:** key rebinding, ping wheel (`G` is blocked-ground view), text chat, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
+**Network battles** (match kit)
+- `Enter` chats to your team, `Shift+Enter` to everyone; `Tab` switches while typing, `Enter` sends, `Esc` closes. Lines are cut at 120 characters; the last six show at the lower left for 10 s. While the box is open no hotkey fires. With the wall tool armed, `Enter` is still the ring's close key.
+- `Alt`+left-click pings "Look here" for your allies; `Alt`+left-drag opens the wheel (up Attack, right On my way, down Defend, left Danger; let go near the middle for Look). Pings show on the ground, the minimap and as an edge badge for 6 s. Offline: "Pings are for network battles."
+- `P` pauses and carries on for everyone (3 pauses each, 60 s longest; others can carry on after 10 s). `Esc` menu, Surrender: click twice; your team votes (Yes/No at the top right), and a passed vote is a defeat. Offline it concedes at once. Greyed while armies deploy and once the battle is decided.
+
+**Not in the game:** key rebinding, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
 
 ## 2. Economy [docs/04-economy.md, docs/03-factions.md, docs/21-buildings.md]
 

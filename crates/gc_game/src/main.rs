@@ -185,6 +185,7 @@ mod guide_data;
 mod hud;
 mod lens;
 mod map_preview;
+mod match_kit;
 mod models;
 mod moves;
 mod online;
@@ -1599,6 +1600,9 @@ struct Input {
     turn: [bool; 2],
     /// Where a left-drag (box select) started.
     left_down: Option<PhysicalPosition<f64>>,
+    /// The left button went down with Alt: its release is the ping's
+    /// (or nothing's), never a click on the field.
+    alt_left: bool,
     /// The ground where a left-drag after the Clear button started.
     clear_from: Option<Vec2>,
     /// Where a right-drag (line order) started: the cursor and the ground under it.
@@ -2154,6 +2158,9 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(f) => {
                 r.input.focused = f;
                 r.input.turn = [false; 2];
+                if let Some(o) = &mut r.online {
+                    o.ping_press = None;
+                }
                 // A button let go outside the window never reports it.
                 r.hud.reset();
             }
@@ -2213,6 +2220,12 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => r.mouse_button(state, button),
             WindowEvent::KeyboardInput { event, .. } => {
+                // The chat box takes every key while it is open, Esc
+                // included (which closes it, not the menu).
+                if r.chat_is_open() {
+                    r.chat_key(&event);
+                    return;
+                }
                 let down = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
                     // The light tuning panel keeps its keys while it is open,
@@ -2246,9 +2259,7 @@ impl ApplicationHandler for App {
                     // also change what a replay plays.
                     let clock_or_side = matches!(
                         code,
-                        KeyCode::KeyP
-                            | KeyCode::Pause
-                            | KeyCode::Minus
+                        KeyCode::Minus
                             | KeyCode::NumpadSubtract
                             | KeyCode::Equal
                             | KeyCode::NumpadAdd
@@ -2272,6 +2283,14 @@ impl ApplicationHandler for App {
                         && r.menu.network().paused_for_player()
                     {
                         r.menu.net().carry_on();
+                        return;
+                    }
+                    // Otherwise P pauses a network battle for everyone (and
+                    // carries on), by the host's rules.
+                    if matches!(code, KeyCode::KeyP | KeyCode::Pause) && r.online.is_some() {
+                        if down && !event.repeat {
+                            r.pause_key();
+                        }
                         return;
                     }
                     let off = if r.online.is_some() && (clock_or_side || edit_tool) {
@@ -2489,6 +2508,17 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down && !event.repeat => r.open_menu(),
+                        // Enter talks to the team, Shift+Enter to everyone (the
+                        // wall tool had Enter first, above).
+                        KeyCode::Enter | KeyCode::NumpadEnter
+                            if down
+                                && !event.repeat
+                                && !r.input.command
+                                && !r.input.alt
+                                && r.online.is_some() =>
+                        {
+                            r.open_chat(!r.input.shift);
+                        }
                         _ if down && !event.repeat && digit(code).is_some() => {
                             r.control_group(digit(code).unwrap());
                         }
@@ -2624,7 +2654,19 @@ impl Running {
             (MouseButton::Right, ElementState::Released) if self.hud.right_captured() => {
                 self.hud.release_right();
             }
+            // Alt+left pings (a drag opens the wheel); it starts no
+            // selection or order.
+            (MouseButton::Left, ElementState::Pressed) if self.input.alt && self.match_started => {
+                self.input.alt_left = true;
+                self.begin_ping();
+            }
+            (MouseButton::Left, ElementState::Released) if self.input.alt_left => {
+                self.input.alt_left = false;
+                self.finish_ping();
+            }
             (MouseButton::Left, ElementState::Pressed) => {
+                // A release missed (focus lost mid-press) is not waited for.
+                self.input.alt_left = false;
                 self.input.left_down = self.input.cursor;
                 // The wall tool: a drag from here draws a curve.
                 self.begin_wall_drag();
@@ -4557,6 +4599,9 @@ impl Running {
             self.run_guide();
         } else if self.menu_open {
             self.hud.hover_own = None;
+            // A network battle goes on behind the menu.
+            let offer = self.surrender_offer();
+            self.menu.set_surrender(offer);
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
@@ -4732,6 +4777,14 @@ impl Running {
                 |tile| reveal || fog.sees_tile(tile),
                 &mut self.effects,
             );
+            ambient::caravans::dust_of(
+                self.ambient.town.seen(),
+                dt.as_secs_f32() * fx_speed,
+                look.wet.max(look.snow),
+                |p| hm.drawn_height(p.x, p.y),
+                |tile| reveal || fog.sees_tile(tile),
+                &mut self.effects,
+            );
         }
         // Insects follow the effects clock, which stops while paused, so they
         // hang where they are; behind the menu, in the unit viewer and in
@@ -4772,6 +4825,19 @@ impl Running {
                         view_distance,
                         &mut self.effects,
                     );
+                    // Forge sparks, and lanterns on the gates and towers of the
+                    // viewer's own walled town (an enemy's ring is not for
+                    // them to see closed).
+                    let walled = (reveal || look.owner == self.sandbox.side)
+                        && self.world.walled_town(look.owner);
+                    ambient::town::emit(
+                        look,
+                        walled,
+                        dt.as_secs_f32() * fx_speed,
+                        dusk,
+                        view_distance,
+                        &mut self.effects,
+                    );
                 }
             }
         }
@@ -4787,16 +4853,10 @@ impl Running {
                 Vec::new()
             };
             let (hm, scenery) = (&self.heightmap, &self.scenery);
-            let dry = hm.water_level() + ambient::walkers::SHORE;
             self.ambient.walkers.advance(
                 dt.as_secs_f32() * fx_speed,
                 &homes,
-                |p| {
-                    hm.height_at(p.x, p.y) > dry
-                        && !scenery
-                            .standing((p.x.floor() as i32, p.y.floor() as i32))
-                            .any(|s| s.tree)
-                },
+                ambient::walkers::open_ground(hm, scenery),
                 |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
             );
         }
@@ -4887,11 +4947,27 @@ impl Running {
                     .advance(step, view_focus, view_distance, eyes, |t| {
                         scenery.occupied_at(t)
                     });
+                // Carts by the stores, and between a far store and its hall.
+                // (Buildings are the sites' business: `occupied_at` also
+                // covers a margin round each, where the carts stand.)
+                let mut sites = std::mem::take(&mut self.ambient.town.sites);
+                self.town_sites(view_focus, &mut sites);
+                self.ambient.town.advance(
+                    step,
+                    view_focus,
+                    eyes,
+                    heightmap,
+                    &sites,
+                    ambient::walkers::open_ground(heightmap, scenery),
+                    |t| scenery.occupied_at(t),
+                );
+                self.ambient.town.sites = sites;
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
                 self.ambient.villagers.hush();
                 self.ambient.caravans.hush();
+                self.ambient.town.hush();
             }
         }
         // Rain, wind and the air's muffling are heard from the weather on
@@ -5288,12 +5364,29 @@ impl Running {
         lan.pump(now);
         let events = lan.match_events();
         let in_match = lan.in_match();
+        let now_ms = self.now_ms();
         let Some(o) = &mut self.online else {
             return 0;
         };
         let mut new_desync = None;
+        let tint = |player| {
+            let [r, g, b] = color_of(&self.parties, player);
+            [r, g, b, 255]
+        };
         for e in events {
             match e {
+                gc_net::MatchEvent::Chat {
+                    player,
+                    from,
+                    team,
+                    text,
+                } => o.hear(from, tint(player), team, text, now_ms),
+                gc_net::MatchEvent::Ping {
+                    player,
+                    from,
+                    kind,
+                    at,
+                } => o.ping(from, tint(player), kind, at, now_ms),
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
                     if o.desync.is_none() {
@@ -5402,6 +5495,13 @@ impl Running {
         self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);
+        self.menu.set_surrender(gc_ui::SurrenderItem::Hidden);
+        let offer = self.surrender_offer();
+        self.menu.set_surrender(offer);
+        if let Some(o) = &mut self.online {
+            o.chat_box.close();
+            o.ping_press = None;
+        }
         self.ui.reset();
         self.ui_input = UiInput::default();
         // Drop any half-made drag so it doesn't fire when the menu closes.
@@ -5491,6 +5591,7 @@ impl Running {
                 }
             }
             MenuAction::Resume => self.close_menu(),
+            MenuAction::Surrender => self.surrender_now(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox { roster: false }),
             MenuAction::OpenViewer => self.open_viewer("start"),
@@ -6018,6 +6119,7 @@ impl Running {
         self.ambient.wildlife.clear();
         self.ambient.birds.clear();
         self.ambient.villagers.clear();
+        self.ambient.town.clear();
         self.ambient.hamlets = ambient::Hamlets::new(&self.heightmap);
         self.ambient.caravans = ambient::Caravans::new(&self.heightmap, &self.ambient.hamlets);
         match kind {
@@ -8354,6 +8456,7 @@ impl Running {
                 } else {
                     1.0
                 },
+                part: self.buildings.town_part(s.building),
             });
         }
     }
@@ -8555,7 +8658,8 @@ impl Running {
         {
             use ambient::caravans::Piece;
             let (reveal, fog) = (self.reveal_all, &self.fog);
-            for c in self.ambient.caravans.seen() {
+            let town = self.ambient.town.seen();
+            for c in self.ambient.caravans.seen().iter().chain(town) {
                 let tile = (c.pos.x.floor() as i32, c.pos.y.floor() as i32);
                 if !(reveal || fog.sees_tile(tile)) {
                     continue;
@@ -8850,6 +8954,34 @@ impl Running {
         }
     }
 
+    /// The buildings the viewer sees near `focus`, as the town's carts see
+    /// them: what stores they park beside and go to, and what is in the way.
+    fn town_sites(&self, focus: Vec2, out: &mut Vec<ambient::town::Site>) {
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, reveal);
+        let reach = ambient::town::RUN_REACH + 16.0;
+        out.clear();
+        out.extend(
+            (self.world.structures().into_iter())
+                .flat_map(gc_sim::Structures::iter)
+                .filter(|s| shown(s))
+                .filter_map(|s| {
+                    let look = self.siege.look(s.handle)?;
+                    let c = look.centre();
+                    (c.distance(focus) <= reach).then_some(ambient::town::Site {
+                        id: ambient::id_of(s.handle),
+                        owner: look.owner,
+                        role: look.role,
+                        part: look.part,
+                        finished: look.finished,
+                        visible: reveal || fog.sees_tile((c.x.floor() as i32, c.y.floor() as i32)),
+                        min: look.min,
+                        max: look.max,
+                    })
+                }),
+        );
+    }
+
     /// The buildings walkers start from, go to and walk round: those the
     /// viewer sees within [`ambient::walkers::REACH`] of `focus`, with the
     /// ones on screen the only ones to live at or be visited.
@@ -8882,7 +9014,7 @@ impl Running {
             let done = s.finished() && on_screen;
             let worker = art.looks.worker_of(s.building);
             homes.push(ambient::walkers::Home {
-                id: u64::from(s.handle.index) | u64::from(s.handle.generation) << 32,
+                id: ambient::id_of(s.handle),
                 owner: s.owner,
                 lives: done
                     && matches!(

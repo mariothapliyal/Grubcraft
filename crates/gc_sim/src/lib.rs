@@ -131,7 +131,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 86;
+pub const SIM_VERSION: u32 = 87;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -759,6 +759,12 @@ pub enum Command {
     /// orders (moving, attacking, formations); `to` the issuer itself takes
     /// it back (see [`Stances::commander`]). Refused for an enemy.
     HandOver { to: PlayerId },
+    /// The issuing party surrenders: once everyone left in the match who
+    /// hasn't is on one side, that side wins ([`Win::Surrender`], see
+    /// [`verdict`]). A network match's host gives it for each player of a
+    /// team whose surrender vote passed, so it is not a player order.
+    /// Refused while the armies deploy and once the match is decided.
+    Concede,
     /// Conquest: use faction power `power` (an index into
     /// [`ConquestSetup::powers`]) on `target`, paid from the issuer's
     /// faction meter (see [`powers`]). Refused before their tier allows it,
@@ -961,7 +967,8 @@ impl Command {
             | Command::TuneUnit { .. }
             | Command::DeployZone { .. }
             | Command::SpawnStructure { .. }
-            | Command::RemoveStructure { .. } => false,
+            | Command::RemoveStructure { .. }
+            | Command::Concede => false,
         }
     }
 }
@@ -2026,6 +2033,7 @@ impl World {
         self.judge
             .update(&self.regiments, &self.stances, &self.vision, self.tick);
         self.judge_conquest();
+        (self.judge).update_surrender(&self.regiments, &self.stances, self.tick);
         stats
     }
 
@@ -2253,6 +2261,7 @@ impl World {
                     .set_zone(pc.player, Zone { center, radius }, self.tick)
             }
             Command::Ready => self.deploy.set_ready(pc.player, self.tick),
+            Command::Concede => self.judge.concede(pc.player),
             // Nobody hands an army to, or from, a party that is out.
             Command::HandOver { to } => {
                 !self.is_out(pc.player) && !self.is_out(to) && self.stances.hand_over(pc.player, to)
@@ -3645,6 +3654,11 @@ impl World {
     /// its last).
     pub fn exiled(&self, party: PlayerId) -> Option<u32> {
         self.judge.throne()?.exiled(party)
+    }
+
+    /// Whether `party` has surrendered ([`Command::Concede`]).
+    pub fn has_conceded(&self, party: PlayerId) -> bool {
+        self.judge.has_conceded(party)
     }
 
     /// Whether Conquest player `party` is out of the match.

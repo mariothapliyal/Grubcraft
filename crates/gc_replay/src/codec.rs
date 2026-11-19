@@ -336,6 +336,7 @@ impl Writer {
                 self.fx(radius);
             }
             Command::Ready => self.u8(7),
+            Command::Concede => self.u8(48),
             Command::SpawnStructure {
                 building,
                 tile,
@@ -995,6 +996,7 @@ impl<'a> Reader<'a> {
                 radius: self.fx()?,
             },
             7 => Command::Ready,
+            48 => Command::Concede,
             tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1247,6 +1249,7 @@ mod tests {
                 radius: Fx::from_int(30),
             },
             Command::Ready,
+            Command::Concede,
             Command::SpawnStructure {
                 building: 3,
                 tile: (-2, 140),
