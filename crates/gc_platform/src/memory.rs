@@ -19,8 +19,9 @@ pub fn process_memory() -> ProcessMemory {
 mod imp {
     use super::ProcessMemory;
 
-    // From <mach/task_info.h>: the TASK_VM_INFO layout up to `phys_footprint`
-    // (revision 1). The kernel fills as many revisions as `count` allows.
+    // From <mach/task_info.h>: the TASK_VM_INFO layout up to
+    // `ledger_phys_footprint_peak` (revision 3). The kernel fills as many
+    // revisions as `count` allows.
     #[repr(C)]
     #[derive(Default)]
     struct TaskVmInfo {
@@ -44,6 +45,9 @@ mod imp {
         compressed_peak: u64,
         compressed_lifetime: u64,
         phys_footprint: u64,
+        min_address: u64,
+        max_address: u64,
+        ledger_phys_footprint_peak: i64,
     }
 
     const TASK_VM_INFO: u32 = 22;
@@ -67,9 +71,18 @@ mod imp {
         if kr != 0 {
             return ProcessMemory::default();
         }
+        // The footprint's own peak (what Activity Monitor's figure peaked
+        // at, GPU memory included) where the kernel gave it, else the
+        // resident peak, which leaves out compressed memory. An older
+        // kernel leaves it at zero.
+        let peak = if info.ledger_phys_footprint_peak > 0 {
+            info.ledger_phys_footprint_peak as u64
+        } else {
+            info.resident_size_peak
+        };
         ProcessMemory {
             current: Some(info.phys_footprint),
-            peak: Some(info.resident_size_peak),
+            peak: Some(peak),
         }
     }
 }

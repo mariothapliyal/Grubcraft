@@ -114,6 +114,8 @@
 //! `--host` opens a LAN lobby at once and `--join ADDRESS` joins one; `--no-menu` skips the main menu
 //! (`--frames` implies it, `--menu` overrides); `--seed N` picks the map seed the Host a game card and a `--battle` start on; `--frames N` quits after N frames
 //! and prints a final stats line (for measuring memory on real machines);
+//! `--hidden-frames N` leaves the last N of them undrawn, as for a hidden window,
+//! and prints how much the process grew meanwhile;
 //! `--map NAME|FILE` opens on a shipped map (`ribcage_pass`, `four_teeth`) or
 //! a map file instead of the seeded map, to look round it in the sandbox
 //! (Field Battles, replays and network matches still play on seeded maps,
@@ -492,6 +494,9 @@ struct Options {
     /// Start on an empty field with nobody moving on their own.
     sandbox: bool,
     frames: Option<u64>,
+    /// Leave the last this many of the `--frames` undrawn, as for a hidden
+    /// window (`--hidden-frames N`; see `Running::hide_window_for_check`).
+    hidden_frames: Option<u64>,
     overlay: bool,
     /// Whether to open on the main menu. Defaults to yes, except for
     /// `--frames` runs, which measure the sandbox itself.
@@ -562,6 +567,7 @@ fn parse_args() -> Options {
         map: None,
         sandbox: false,
         frames: None,
+        hidden_frames: None,
         overlay: false,
         menu: None,
         audio: true,
@@ -682,6 +688,7 @@ fn parse_args() -> Options {
                 true
             }
             "--frames" => value.parse().map(|v| opts.frames = Some(v)).is_ok(),
+            "--hidden-frames" => value.parse().map(|v| opts.hidden_frames = Some(v)).is_ok(),
             "--gate-march" => value
                 .parse()
                 .map(|v| {
@@ -844,7 +851,7 @@ fn showroom_models(spec: &str) -> Vec<usize> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
+        "usage: grubcraft [--menu|--no-menu] [--sandbox] [--battle recruit|veteran|general|warlord] [--conquest ribcage_pass|four_teeth|land-random|land-mixed|classic-wild|...] [--host] [--join ADDRESS] [--seed N] [--map NAME|FILE] [--frames N] [--hidden-frames N] [--overlay] [--no-audio] [--no-shadows] [--no-glow] [--no-aa] [--latency 1|2|3] \
          [--render-scale 0.25..1] [--draw all|terrain|blocks|none] [--lod 0..3] [--look noon|golden-hour|overcast|storm|dusk|night] [--weather clear|rain|snow|fog] [--season spring|summer|autumn|winter] [--time-of-day golden-hour|noon|dusk|overcast|night] [--sky fair|changing|rain|snow|fog] [--air meadow|forest|fen|highland|waste|valley] [--distance 14..260] [--showroom all|buildings|NAME[,NAME...]] [--showroom-clip idle|walk|attack|shoot|cheer|die|march|look|kill|finish|blows|reel] [--viewer NAME|start] [--watch REPLAY_FILE] [--fx-demo] [--fx-still]"
     );
     std::process::exit(2);
@@ -988,6 +995,12 @@ struct Running {
     input: Input,
     stats: Stats,
     memory_timeline: MemoryTimeline,
+    /// When `--hidden-frames` hid the window: the time, the frame count
+    /// and the process memory then.
+    hidden_since: Option<(Instant, u64, Option<u64>)>,
+    /// When the next frame is due after one that drew nothing (see
+    /// [`SKIPPED_FRAME_PAUSE`]).
+    resume_at: Option<Instant>,
     /// Whether the dev overlay is showing.
     overlay: bool,
     /// Whether the AI lens is showing (L).
@@ -1501,6 +1514,13 @@ struct Watching {
 #[derive(Default)]
 struct MemoryTimeline(Vec<(&'static str, Option<u64>)>);
 
+/// How long the event loop waits after a frame that drew nothing, rather
+/// than asking for the next at once: a hidden Mac window skips every frame
+/// straight away, which spun a core at thousands of frames a second (see
+/// `Renderer::skip`). A 60th of a second keeps the match (and an online
+/// game's turns) going at the same pace.
+const SKIPPED_FRAME_PAUSE: Duration = Duration::from_millis(16);
+
 impl MemoryTimeline {
     fn mark(&mut self, stage: &'static str) {
         self.0
@@ -1946,6 +1966,8 @@ impl App {
                 game_data.units.len()
             ),
             memory_timeline: std::mem::take(&mut self.memory_timeline),
+            hidden_since: None,
+            resume_at: None,
             seed: opts.seed,
             capacities,
             menu,
@@ -2462,11 +2484,18 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
                 let limit = self.opts.as_ref().and_then(|o| o.frames);
+                let hidden = self.opts.as_ref().and_then(|o| o.hidden_frames);
+                if let (Some(limit), Some(n)) = (limit, hidden)
+                    && r.stats.frames == limit.saturating_sub(n)
+                {
+                    r.hide_window_for_check();
+                }
                 if limit.is_some_and(|n| r.stats.frames >= n) {
                     // Log what the driver said about the last frame too: the
                     // smoke run fails on any GPU error in the log.
                     r.check_devices();
                     r.memory_timeline.mark("exit");
+                    r.print_hidden_window_check();
                     println!("{}", r.stats_line());
                     r.memory_timeline.print();
                     print_memory(&r.renderer);
@@ -2485,12 +2514,48 @@ impl ApplicationHandler for App {
             if r.quit {
                 event_loop.exit();
             }
-            r.window.request_redraw();
+            match r.resume_at {
+                Some(at) if Instant::now() < at => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+                }
+                _ => {
+                    r.resume_at = None;
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    r.window.request_redraw();
+                }
+            }
         }
     }
 }
 
 impl Running {
+    /// `--hidden-frames`: draw nothing from now to the last frame, as for a
+    /// hidden window. [`Running::print_hidden_window_check`] then tells
+    /// `scripts/smoke-run.py` how much the process grew meanwhile (it fails
+    /// on growth) and how long it took (it fails if the frames didn't pause).
+    fn hide_window_for_check(&mut self) {
+        self.renderer.pretend_hidden(true);
+        self.memory_timeline.mark("window hidden");
+        let memory = gc_platform::memory::process_memory().current;
+        self.hidden_since = Some((Instant::now(), self.stats.frames, memory));
+    }
+
+    fn print_hidden_window_check(&self) {
+        let Some((since, from, Some(before))) = self.hidden_since else {
+            return;
+        };
+        let Some(after) = gc_platform::memory::process_memory().current else {
+            return;
+        };
+        println!(
+            "hidden window: {} frames in {:.1} s, process {:.1} MB before, {:.1} MB after",
+            self.stats.frames - from,
+            since.elapsed().as_secs_f32(),
+            mb(before as usize),
+            mb(after as usize)
+        );
+    }
+
     fn mouse_button(&mut self, state: ElementState, button: MouseButton) {
         match (button, state) {
             (MouseButton::Middle, ElementState::Pressed) => {
@@ -4979,7 +5044,7 @@ impl Running {
             camera_pos: eye,
             time_seconds: self.started.elapsed().as_secs_f32(),
         };
-        {
+        let outcome = {
             profile::zone!("render");
             tagged_alloc::scope(Tag::Render, || {
                 let (soldiers, batches) = match &self.art {
@@ -4988,7 +5053,10 @@ impl Running {
                 };
                 self.renderer
                     .render(&frame, &self.instances, soldiers, batches)
-            });
+            })
+        };
+        if outcome == gc_render::FrameOutcome::Skipped {
+            self.resume_at = Some(Instant::now() + SKIPPED_FRAME_PAUSE);
         }
         profile::frame_mark();
         // The panel names the selection's formation, which orders, routs and
@@ -9389,6 +9457,10 @@ fn print_memory(renderer: &Renderer) {
     eprintln!("  {:<8} {:>8.2}", "gpu", mb(renderer.gpu_bytes() as usize));
     if let Some(c) = mem.current {
         eprintln!("  process  {:>8.2}", mb(c as usize));
+    }
+    // On stdout, for scripts/smoke-run.py: the budget is for the peak.
+    if let Some(p) = mem.peak {
+        println!("peak process memory: {:.1} MB", mb(p as usize));
     }
 }
 
