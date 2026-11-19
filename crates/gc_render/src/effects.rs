@@ -573,6 +573,22 @@ impl Effects {
         });
     }
 
+    /// A fire's light from `pos`, `radius` tiles round, at `strength` (0 to
+    /// about 1.5), shining only in the dark: for a fire with no flames of
+    /// its own big enough to light the ground round it, such as a burning
+    /// building's.
+    pub fn fire_light(&mut self, pos: Vec3, radius: f32, strength: f32) {
+        self.glow(Glow {
+            pos,
+            color: [255, 140, 50],
+            radius,
+            strength,
+            needs_dark: true,
+            seed: None,
+            placed: false,
+        });
+    }
+
     /// Sparks of ash and ember that float up and away from a fire at `pos`,
     /// glowing orange and going out.
     pub fn embers(&mut self, pos: Vec3, spread: f32, amount: f32) {

@@ -130,8 +130,8 @@ Computer players plan for the shorter range and slower march (stage 3a, below).
 
 ### Later stages
 
-- **Firelight.** Burning woods light the ground round them (stage 4a, [Woods that burn](#woods-that-burn-idea-2)); burning buildings don't yet: a damaged building's flames are only drawn.
-- Snow on the Highland's changing weather comes with the lands' own skies.
+- **Firelight.** Burning woods light the ground round them (stage 4a, [Woods that burn](#woods-that-burn-idea-2)). *Built 2026-11-20 (drawing only):* a burning building (below 35% of its hit points) throws one warm, flickering light from high in it over the ground round it, reaching 5 tiles past its walls and further as it burns down (`Effects::fire_light`, called from `Siege::emit_damage`); its roof flames' small lights join it. Like every fire light it shows at dusk and night only, and not in the fog.
+- Snow on the Highland's changing weather comes with the lands' own skies. *Built 2026-11-20 (drawing only): the Highland's peaks keep lying snow whatever the weather.* Each Highland tile above the middle of the Highland's heights (and above the map's 60th percentile) keeps snow on it, more the higher it climbs, from patches to most of a blanket at the top 3% (`ground_look::snow_caps`, packed in the high four bits of the ground look's alpha; the shader's `snow_lying` and `dusting`). It lies on the ground, the rock's ledges, the tops of the trees, rocks and scrub there, and on the roofs and shoulders of what stands there; the weather's snow and winter's frost add to it. Nothing in the simulation changes: snow still slows marching only when it falls.
 - **Lightning (built 2026-10-31, [41](41-finish-living-land.md#step-6-as-built-lightning)).** A storm (rain 192+) throws a bolt about every ten seconds, likeliest on woods; `Event::Lightning { x, y, caught }` flashes the sky and thunders, and the bolt sets the tile alight while the ground is still dry.
 
 ## Woods that burn (idea 2)

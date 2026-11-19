@@ -167,7 +167,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Weather and fire news:** the news line says when rain (strength 80+), a storm (rain 192+, where lightning starts; rain again under 152), snow or fog comes in, and when it clears (under 40), once each way. Woods or scrub burning within 10 tiles of your buildings or regiments: "Fire! It is spreading near your base" (or "troops"), each once as it comes near, then not again for 45 s; "Lightning! It set the woods alight near ..." when a bolt lit a tile near the same place in the last 2 s. Not told while catching up online. The weather a match starts in isn't announced. Code: `gc_game/src/sky_news.rs`.
 - **Night:** an unlit regiment in the open is spotted only within 6 tiles (12 when marching). Torches (`X`) light 10 tiles and make a regiment visible.
 - **Seasons** (Conquest only; lobby Off, Short = 8 min a season (default), Long = 15 min; starts in spring): spring showers; summer dry (fire spreads 1.5x, ground dries 2x); autumn harvest (Grub gathered 1.25x); winter (Grub 0.75x, fire half, shallows freeze and can be crossed). The land shows it: straw-coloured grass in summer, gold, orange and red broadleaf woods in autumn, a thin snow and ice on the frozen water in winter (`--season NAME` previews one).
-- **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled (flames only).
+- **Fire** (`E` Burn): scrub burns 10 s, woods 25 s, thicket 40 s; then open ground. Spreads with the wind; wet ground and rain stop it. Burns 4 HP a second per tile touched. Burning buildings are not modelled as a rule (flames only), but a building below about a third of its hit points burns and its fire lights the ground round it at dusk and night.
 - **Mud and floods:** long rain soaks ground into mud (slow, no charges). Long heavy rain swells rivers and shuts the fords; troops caught on a shut ford lose 12 HP a second and are moved to the bank.
 - **Rivers carry their own water [docs/39]:** each river is cut into 16-tile stretches. Rain on a river fills them and runs on downstream, so a long river's lower fords flood most and drain last.
 - **Reading the rivers [docs/39]:** on grown maps every river has a name ("the Brackwater"). The top bar shows the worst river you can see: up (wading in it is a quarter slower), in flood (its fords shut) or bursting its banks, and whether it is rising or falling. When you see a river rising in flood upstream, the river watch tells you when its crest reaches a ford ("The Brackwater is rising upriver: its crest reaches a ford in about 40 s"). The river's water is drawn as high as it stands.
@@ -190,7 +190,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
   - Size Small, Medium (the default) or Large, set in the lobby header; the side grows with the player count.
   - Points budget 2,000, 4,000 (default) or 8,000. A regiment costs 3 points a Grub and 6 a Marrow of its roster price, times its faction's Field share: Clans 100%, Brood 128%, Choir 78%, Concord 110% (Yari Ashigaru 360). Build your army in the lobby (Pick for me is available). 90 s deployment, then Ready. The first side left holding the field (fighting regiments, no enemy fighting regiments in its sight) for 10 seconds wins (`gc_sim/src/verdict.rs`); there is no time limit or victory points yet. Champions before battle is on by default.
 - **Sandbox:** main menu Sandbox or `--sandbox`. Place any troops and buildings for any side (section 1).
-- **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type an address or join code. Version mismatches are shown in the lobby.
+- **Online:** Host a game (map, mode, Tempo, victory), add AI in any slot, then Start. Join lists games on your network, or type (or paste, Cmd+V or Ctrl+V) an address or join code; the host's lobby has a **Copy** button for the code to send friends. Version mismatches are shown in the lobby.
 - **Replays:** main menu. **Unit viewer:** main menu or `--viewer`. **Guide:** `U` or main-menu button (Quick Start, Buildings, Troops tabs).
 
 ## 8. Built vs not yet built
@@ -217,7 +217,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - Tutorial "First Harvest", faction primers, Codex, contextual hints.
 - Ping wheel, text chat, key rebinding, alternate grid layouts.
 - Settings saved but not acted on: V-sync, frame cap, effects, unit voices, interface volumes, colour-blind palette, high-contrast banners, hints, most of the graphics preset.
-- World: burning buildings, computer players planning for seasons, snow on the Highland.
+- World: fire spreading to buildings, computer players planning for seasons, the Highland's own snowy weather (its peaks already show lying snow, as a look only).
 - Commander: a command to move the general to another regiment.
 
 **Conflicts in the sources** (the code is the authority)

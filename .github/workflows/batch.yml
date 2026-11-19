@@ -117,7 +117,9 @@ jobs:
     name: Real-match screenshots
     needs: changed
     if: needs.changed.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # Pinned with the CI smoke run: Mesa 26's lavapipe on ubuntu-latest
+    # (26.04) draws about 12 times slower.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

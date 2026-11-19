@@ -87,24 +87,41 @@ fn is_tailscale(ip: Ipv4Addr) -> bool {
 /// Tailscale doesn't route apart from everything else (no Tailscale on a
 /// carrier-grade NAT network, or all traffic through Tailscale) is one
 /// plain join code.
-pub fn invite(port: u16, tailscale: Option<Ipv4Addr>, local: Option<Ipv4Addr>) -> Option<String> {
-    let line = |label: &str, ip: Ipv4Addr| {
-        let code = encode(ip, port)?;
-        Some(if port == DEFAULT_PORT {
-            format!("{label} {code} ({ip})")
-        } else {
-            format!("{label} {code} ({ip}:{port})")
-        })
-    };
-    let lines: Vec<String> = match (tailscale, local) {
-        (Some(t), Some(l)) if t != l => [line("Tailscale code", t), line("Wi-Fi code", l)]
-            .into_iter()
-            .flatten()
-            .collect(),
-        (Some(ip), _) | (None, Some(ip)) => line("Join code", ip).into_iter().collect(),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invite {
+    /// Every code with its address, for the lobby to show.
+    pub text: String,
+    /// The first code `text` shows (the Tailscale one when there is one,
+    /// as friends on this Wi-Fi find the game without a code), for the
+    /// lobby's Copy button.
+    pub code: String,
+}
+
+pub fn invite(port: u16, tailscale: Option<Ipv4Addr>, local: Option<Ipv4Addr>) -> Option<Invite> {
+    let ips: Vec<(&str, Ipv4Addr)> = match (tailscale, local) {
+        (Some(t), Some(l)) if t != l => vec![("Tailscale code", t), ("Wi-Fi code", l)],
+        (Some(ip), _) | (None, Some(ip)) => vec![("Join code", ip)],
         (None, None) => Vec::new(),
     };
-    (!lines.is_empty()).then(|| lines.join(" - "))
+    let coded: Vec<(&str, Ipv4Addr, String)> = ips
+        .into_iter()
+        .filter_map(|(label, ip)| Some((label, ip, encode(ip, port)?)))
+        .collect();
+    let lines: Vec<String> = coded
+        .iter()
+        .map(|(label, ip, code)| {
+            if port == DEFAULT_PORT {
+                format!("{label} {code} ({ip})")
+            } else {
+                format!("{label} {code} ({ip}:{port})")
+            }
+        })
+        .collect();
+    let code = coded.first()?.2.clone();
+    Some(Invite {
+        text: lines.join(" - "),
+        code,
+    })
 }
 
 /// The address this machine would send from to reach `target`.
@@ -126,22 +143,24 @@ mod tests {
         let ts = Ipv4Addr::new(100, 101, 7, 3);
         let wifi = Ipv4Addr::new(192, 168, 1, 20);
         let both = invite(DEFAULT_PORT, Some(ts), Some(wifi)).unwrap();
-        let (net, home) = both.split_once(" - ").unwrap();
+        let (net, home) = both.text.split_once(" - ").unwrap();
         assert!(net.starts_with("Tailscale code ") && net.ends_with("(100.101.7.3)"));
         assert!(home.starts_with("Wi-Fi code ") && home.ends_with("(192.168.1.20)"));
-        assert!(both.is_ascii(), "the UI font is ASCII: {both}");
+        assert!(both.text.is_ascii(), "the UI font is ASCII: {}", both.text);
+        // The Copy button copies the first code shown: the Tailscale one.
+        assert_eq!(Some(both.code), encode(ts, DEFAULT_PORT));
         // The same address twice (CGNAT without Tailscale, or everything
         // through Tailscale) is one code.
         let one = invite(DEFAULT_PORT + 1, Some(ts), Some(ts)).unwrap();
         assert!(
-            one.starts_with("Join code ")
-                && one.ends_with(&format!("(100.101.7.3:{})", DEFAULT_PORT + 1))
+            one.text.starts_with("Join code ")
+                && one
+                    .text
+                    .ends_with(&format!("(100.101.7.3:{})", DEFAULT_PORT + 1))
         );
-        assert!(
-            invite(DEFAULT_PORT, None, Some(wifi))
-                .unwrap()
-                .starts_with("Join code ")
-        );
+        let home = invite(DEFAULT_PORT, None, Some(wifi)).unwrap();
+        assert!(home.text.starts_with("Join code "));
+        assert_eq!(Some(home.code), encode(wifi, DEFAULT_PORT));
         assert_eq!(invite(DEFAULT_PORT, None, None), None);
     }
 
