@@ -176,7 +176,10 @@ jobs:
     # virtual screen, drawing a battle; nothing else in CI ever creates a
     # GPU device. See scripts/smoke-run.py for what fails it.
     name: Smoke run (Linux, software GPU)
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-latest's move to 26.04 (November 2026) its Mesa 26
+    # lavapipe drew a battle frame in about 12 s instead of 1, so the run
+    # timed out. Move on when a newer image draws as fast again.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust

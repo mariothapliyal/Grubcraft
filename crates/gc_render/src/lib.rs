@@ -23,6 +23,7 @@ mod scenery;
 mod shadows;
 mod soldiers;
 mod surface;
+mod upload;
 
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -432,6 +433,9 @@ pub struct Renderer {
     last_frame_time: Option<f32>,
     /// Menu and lobby screens, drawn under the dev overlay.
     ui: OverlayGpu,
+    /// Skip every frame as a hidden window does (see
+    /// [`Renderer::pretend_hidden`]).
+    hidden: bool,
 }
 
 /// How many driver messages are kept between two looks at them, and how
@@ -1090,6 +1094,7 @@ impl Renderer {
             cinema: Cinema::default(),
             last_frame_time: None,
             ui,
+            hidden: false,
         })
     }
 
@@ -1724,6 +1729,39 @@ impl Renderer {
         terrain.rivered = values.is_some();
     }
 
+    /// A frame left undrawn still hands the GPU the uploads queued since the
+    /// last one (particles, instances, lights, the fog and land maps): wgpu
+    /// keeps each in its own staging buffer until a submit. A Mac skips
+    /// every frame while the window is hidden (covered, minimised or in
+    /// another Space), and the game asks for frames as fast as it can, so
+    /// without this the uploads piled up by hundreds of MB a second (7 to
+    /// 9 GB seen in November 2026).
+    fn skip(&self) -> FrameOutcome {
+        self.queue.submit([]);
+        FrameOutcome::Skipped
+    }
+
+    /// Wait (up to a minute) for the GPU to finish everything submitted so
+    /// far, so a memory reading counts what is kept rather than work still
+    /// queued: Windows' software GPU in CI runs well behind the game.
+    pub fn wait_idle(&self) {
+        let index = self.queue.submit([]);
+        let wait = wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: Some(std::time::Duration::from_secs(60)),
+        };
+        if let Err(e) = self.device.poll(wait) {
+            gc_platform::logln!("waiting for the GPU: {e}");
+        }
+    }
+
+    /// Skip every frame as a hidden window does, until called with false:
+    /// lets a test on any platform check that a hidden window's frames do
+    /// not pile up memory (`--hidden-frames`, run by `scripts/smoke-run.py`).
+    pub fn pretend_hidden(&mut self, hidden: bool) {
+        self.hidden = hidden;
+    }
+
     /// Draw a frame: the terrain, `soldiers` drawn by `batches` (each names
     /// a model and a run of `soldiers`), and `boxes`.
     pub fn render(
@@ -1744,8 +1782,8 @@ impl Renderer {
         self.fx_time += dt * self.fx_speed;
         self.particles.flush(&self.queue, self.fx_time);
 
-        let Some(terrain) = &self.terrain else {
-            return FrameOutcome::Skipped;
+        let Some(terrain) = self.terrain.as_ref().filter(|_| !self.hidden) else {
+            return self.skip();
         };
         let mut reconfigure = false;
         let surface_texture = match self.surface.get_current_texture() {
@@ -1758,11 +1796,11 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return FrameOutcome::Skipped;
+                return self.skip();
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Skipped,
+            | wgpu::CurrentSurfaceTexture::Validation => return self.skip(),
         };
 
         let look = self.look;
