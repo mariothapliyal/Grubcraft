@@ -220,6 +220,7 @@ fn info(file: &Path) -> bool {
             Win::Annihilation => format!("party {} was the last standing", v.holder),
             Win::Heart => format!("party {} held the Titan's Heart", v.holder),
             Win::Draw => "nobody was left standing".to_string(),
+            Win::Surrender => format!("party {}'s enemies surrendered", v.holder),
         };
         println!("  {how}, decided {} into the match", clock(v.tick));
     }

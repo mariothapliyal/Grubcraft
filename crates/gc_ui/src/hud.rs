@@ -18,6 +18,7 @@ use crate::conquest::{self, Block, NodeDot, StructurePanel, TipsCard, TopBar};
 use crate::draw::{CELL_W, Color, DrawList, Rect, fit, mix, text_height, text_width, wrap};
 use crate::hero::{self, HeroPanel};
 use crate::icons::{self, Icon};
+use crate::match_kit::{self, KitData};
 use crate::orders::{self, Order, Orders, Wait};
 use crate::placer::{self, PlacePicker};
 use crate::powers::{self, PowerButton};
@@ -368,6 +369,8 @@ pub const HELP_GROUPS: [(&str, &[HelpKey]); 3] = [
             ("H or F1", "This scroll"),
             ("U", "Guide"),
             ("F1", "Idle worker"),
+            ("Enter", "Chat to team; Shift: all"),
+            ("Alt+L-drag", "Ping, wheel; click: look"),
         ],
     ),
     (
@@ -430,6 +433,9 @@ pub struct HudData<'a> {
     /// The Hand over button (Field Battle and Conquest with allies); `None`
     /// hides it.
     pub handover: Option<HandOverButton<'a>>,
+    /// The online match kit: chat, pings, the surrender vote and the pause
+    /// banner. Default draws nothing.
+    pub kit: KitData<'a>,
 }
 
 /// The top bar's Hand over button: who your army answers to now.
@@ -468,6 +474,8 @@ pub(crate) const WIDGET_PLACE_SIDE: u32 = 12 << 24;
 const WIDGET_SHAPE: u32 = 13 << 24;
 pub(crate) const WIDGET_TIPS: u32 = 14 << 24;
 const WIDGET_HANDOVER: u32 = 15 << 24;
+/// The match kit's buttons (the surrender vote's Yes and No).
+pub(crate) const WIDGET_KIT: u32 = 16 << 24;
 
 /// What the mouse did since the last frame, in UI pixels.
 #[derive(Clone, Copy, Debug, Default)]
@@ -534,6 +542,8 @@ pub enum HudEvent {
     /// The Hand over button was clicked: pass your army to the next ally, or
     /// take it back after the last.
     HandOver,
+    /// The surrender vote banner's Yes (`true`) or No was clicked.
+    SurrenderVote(bool),
 }
 
 #[derive(Default)]
@@ -750,6 +760,26 @@ impl Hud {
             &mut self.over,
             events,
         );
+        let kit_tip = match_kit::draw(
+            draw,
+            layout.field,
+            layout.minimap,
+            input,
+            &mut self.press,
+            &data.kit,
+            &mut self.over,
+            events,
+        );
+        if let Some(t) = kit_tip {
+            self.tip = Some(Tip {
+                id: t.id,
+                anchor: t.anchor,
+                name: t.name,
+                key: t.key,
+                text: t.text,
+                note: String::new(),
+            });
+        }
         let place_tip = (data.picker.as_ref()).and_then(|picker| {
             placer::draw(
                 draw,
@@ -811,7 +841,11 @@ impl Hud {
         } else {
             wrap(&tip.text, WRAP)
         };
-        let head = format!("{}  [{}]", tip.name, tip.key);
+        let head = if tip.key.is_empty() {
+            tip.name.clone()
+        } else {
+            format!("{}  [{}]", tip.name, tip.key)
+        };
         let chars = body
             .iter()
             .map(|l| l.chars().count())
@@ -832,14 +866,16 @@ impl Hud {
         tip_frame(draw, r);
         let mut ty = r.y + PAD - 1;
         draw.text_bold(r.x + PAD, ty, 1, theme::MADDER, &tip.name);
-        let key = format!("[{}]", tip.key);
-        draw.text(
-            r.right() - PAD - text_width(&key, 1),
-            ty,
-            1,
-            theme::WOAD,
-            &key,
-        );
+        if !tip.key.is_empty() {
+            let key = format!("[{}]", tip.key);
+            draw.text(
+                r.right() - PAD - text_width(&key, 1),
+                ty,
+                1,
+                theme::WOAD,
+                &key,
+            );
+        }
         for line in &body {
             ty += TIP_ROW;
             draw.text(r.x + PAD, ty, 1, theme::INK, line);
@@ -2045,6 +2081,7 @@ fn line(draw: &mut DrawList, clip: Rect, a: (i32, i32), b: (i32, i32), color: Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::alerts::{Alert, AlertKind};
     use crate::conquest::{GRUB_NODE, QUEUE_SLOT_MAX_W, QueueItem, STRUCT_CARD_W};
     use crate::draw::SOLID;
 
@@ -2078,6 +2115,8 @@ mod tests {
         tips: Option<TipsCard<'a>>,
         handover: Option<HandOverButton<'a>>,
         selection: Option<Selection<'a>>,
+        kit: KitData<'a>,
+        alerts: &'a [Alert],
     }
 
     fn run(
@@ -2123,7 +2162,11 @@ mod tests {
             cards,
             tray_title: "Selected",
             deployment: None,
-            alerts: AlertData::default(),
+            alerts: AlertData {
+                alerts: extras.alerts,
+                idle_workers: None,
+            },
+            kit: extras.kit,
             hero: None,
             top: extras.top,
             structure: extras.structure,
@@ -2136,6 +2179,111 @@ mod tests {
         let mut events = Vec::new();
         hud.frame(&mut draw, SCREEN, input, &data, &mut events);
         (events, draw)
+    }
+
+    fn vote_extras() -> Extras<'static> {
+        Extras {
+            kit: KitData {
+                vote: Some(crate::match_kit::VoteBanner {
+                    by: "Ana",
+                    yes: 1,
+                    needed: 2,
+                    secs: 23,
+                    voted: false,
+                }),
+                ..KitData::default()
+            },
+            ..Extras::default()
+        }
+    }
+
+    #[test]
+    fn the_surrender_vote_buttons_send_their_answers_and_keep_the_click() {
+        let field = HudLayout::new(SCREEN).field;
+        let (panel, yes, no) = crate::match_kit::vote_rects(field);
+        for (button, answer) in [(yes, true), (no, false)] {
+            let mut hud = Hud::default();
+            let at = (button.x + 5, button.y + 5);
+            let press = HudInput {
+                mouse: at,
+                left_pressed: true,
+                ..HudInput::default()
+            };
+            run_with(&mut hud, press, &[], &[], vote_extras());
+            let release = HudInput {
+                mouse: at,
+                left_released: true,
+                ..HudInput::default()
+            };
+            let (events, _) = run_with(&mut hud, release, &[], &[], vote_extras());
+            assert_eq!(events, vec![HudEvent::SurrenderVote(answer)]);
+        }
+        // The banner takes the mouse from the battlefield; elsewhere it is the world's.
+        let mut hud = Hud::default();
+        run_with(&mut hud, HudInput::default(), &[], &[], vote_extras());
+        assert!(hud.wants(SCREEN, (panel.x + 4, panel.y + 4)));
+        assert!(!hud.wants(SCREEN, (panel.x + 4, panel.bottom() + 100)));
+    }
+
+    #[test]
+    fn the_vote_buttons_have_tooltips_after_the_delay_and_no_empty_key_brackets() {
+        let field = HudLayout::new(SCREEN).field;
+        let (_, yes, _) = crate::match_kit::vote_rects(field);
+        let mut hud = Hud::default();
+        let at = HudInput {
+            mouse: (yes.x + 5, yes.y + 5),
+            ..HudInput::default()
+        };
+        run_with(&mut hud, at, &[], &[], vote_extras());
+        assert!(hud.tooltip_rect().is_none(), "not at once");
+        let later = HudInput {
+            now_ms: TOOLTIP_DELAY_MS + 10,
+            ..at
+        };
+        let (_, d) = run_with(&mut hud, later, &[], &[], vote_extras());
+        let tip = hud.tooltip_rect().expect("shown after the delay");
+        assert!(tip.right() <= SCREEN.0 && tip.bottom() <= SCREEN.1);
+        // The card's title row has the name and no "[]".
+        let title: Vec<u8> = d
+            .quads
+            .iter()
+            .filter(|q| {
+                q.glyph != crate::draw::SOLID
+                    && i32::from(q.pos[1]) < tip.y + TIP_PAD + 4
+                    && tip.contains(i32::from(q.pos[0]), i32::from(q.pos[1]))
+            })
+            .map(|q| q.glyph as u8 + 32)
+            .collect();
+        // (The bold name is drawn twice.)
+        assert_eq!(String::from_utf8(title).unwrap(), "VoteyesVoteyes");
+    }
+
+    #[test]
+    fn a_ping_off_screen_gets_an_edge_badge_that_reports_its_id() {
+        let l = HudLayout::new(SCREEN);
+        let alerts = [Alert {
+            id: 1 << 20,
+            kind: AlertKind::Ping,
+            at: [-600.0, l.field.y as f32 + 200.0],
+            fresh: true,
+        }];
+        let extras = || Extras {
+            alerts: &alerts,
+            ..Extras::default()
+        };
+        let (_, d) = run_with(&mut Hud::default(), HudInput::default(), &[], &[], extras());
+        let badge = d.quads.iter().find(|q| q.glyph == u32::from(b'P' - 32));
+        let badge = badge.expect("a P badge on the left edge");
+        assert!(i32::from(badge.pos[0]) < 40);
+        let mid = (i32::from(badge.pos[0]) + 3, i32::from(badge.pos[1]) + 3);
+        let click = HudInput {
+            mouse: mid,
+            left_pressed: true,
+            left_released: true,
+            ..HudInput::default()
+        };
+        let (events, _) = run_with(&mut Hud::default(), click, &[], &[], extras());
+        assert_eq!(events, vec![HudEvent::Alert(1 << 20)]);
     }
 
     #[test]
@@ -2243,6 +2391,7 @@ mod tests {
                     ready,
                 }),
                 alerts: AlertData::default(),
+                kit: KitData::default(),
                 hero: None,
                 top: None,
                 structure: None,
@@ -2294,6 +2443,7 @@ mod tests {
                     ready: false,
                 }),
                 alerts: AlertData::default(),
+                kit: KitData::default(),
                 hero: None,
                 top: None,
                 structure: None,
@@ -2376,6 +2526,7 @@ mod tests {
             tray_title: "",
             deployment: None,
             alerts: AlertData::default(),
+            kit: KitData::default(),
             top: None,
             structure: None,
             powers: &[],
@@ -2820,6 +2971,7 @@ mod tests {
                     tray_title: "",
                     deployment: None,
                     alerts: AlertData::default(),
+                    kit: KitData::default(),
                     top: None,
                     structure: None,
                     powers: &[],
@@ -2881,6 +3033,7 @@ mod tests {
                 tray_title: "",
                 deployment: None,
                 alerts: AlertData::default(),
+                kit: KitData::default(),
                 top: None,
                 structure: None,
                 powers: &[],
@@ -2941,6 +3094,7 @@ mod tests {
             tray_title: "",
             deployment: None,
             alerts: AlertData::default(),
+            kit: KitData::default(),
             top: None,
             structure: None,
             powers: &[],
@@ -3002,6 +3156,7 @@ mod tests {
             tray_title: "Selected",
             deployment: None,
             alerts: AlertData::default(),
+            kit: KitData::default(),
             top: None,
             structure: None,
             powers: &[],
