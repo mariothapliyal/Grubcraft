@@ -1743,7 +1743,7 @@ impl Lan {
         };
         if !g.kit.players[usize::from(from)]
             .chat
-            .allow(now, CHAT_BURST, CHAT_WINDOW)
+            .allow(now, CHAT_BURST + slack(from), CHAT_WINDOW)
         {
             return;
         }
@@ -1772,7 +1772,7 @@ impl Lan {
         let Some(team) = g.kit.team(from) else { return };
         if !g.kit.players[usize::from(from)]
             .pings
-            .allow(now, PING_BURST, PING_WINDOW)
+            .allow(now, PING_BURST + slack(from), PING_WINDOW)
         {
             return;
         }
@@ -1837,22 +1837,26 @@ impl Lan {
                 return;
             }
         }
-        self.settle_votes(now);
+        self.settle_votes(now, Some(team));
     }
 
     /// Host: count each open vote again (players may have left): pass the
-    /// ones every connected human on the team has said yes to, and tell
-    /// the teams how the rest stand.
-    fn settle_votes(&mut self, now: Instant) {
+    /// ones every human still in the match on the team has said yes to, end
+    /// the ones with nobody left to vote, and tell the teams how the rest stand
+    /// (`touched`, whose vote just changed, always).
+    fn settle_votes(&mut self, now: Instant, touched: Option<u8>) {
         let Some((g, peers, events)) = self.host_parts() else {
             return;
         };
-        // The host is player 0, always here; joiners while connected.
-        let here = (peers.iter().filter(|p| p.active()))
+        // The host is player 0, always here; joiners until they leave for
+        // good. A joiner who lost connection still counts, so nobody's
+        // yes is taken for granted while they're reconnecting.
+        let here = (peers.iter().filter(|p| !p.gone))
             .filter_map(|p| p.player)
             .fold(1u8, |m, p| m | 1 << p);
         let mut passed = Vec::new();
         let mut changed = Vec::new();
+        let mut empty = Vec::new();
         for (team, vote) in &mut g.kit.votes {
             let humans = (g.kit.players.iter().enumerate())
                 .filter(|(p, k)| k.team == *team && k.human && here & (1 << p) != 0)
@@ -1860,14 +1864,21 @@ impl Lan {
             let before = (vote.yes, vote.needed);
             vote.yes &= humans;
             vote.needed = humans.count_ones() as u8;
-            if vote.yes == humans {
+            if humans == 0 {
+                // Everyone on the team has left the match.
+                empty.push(*team);
+            } else if vote.yes == humans {
                 passed.push(*team);
-            } else if (vote.yes, vote.needed) != before {
+            } else if (vote.yes, vote.needed) != before || touched == Some(*team) {
                 changed.push(*team);
             }
         }
         for team in changed {
             g.kit.send_votes(peers, team, now);
+        }
+        for team in empty {
+            let why = "The surrender vote ended: nobody on the team is left to answer it.";
+            g.kit.end_vote(peers, events, team, why, now);
         }
         for team in passed {
             g.kit.votes.retain(|(t, _)| *t != team);
@@ -1946,7 +1957,7 @@ impl Lan {
             g.kit
                 .end_vote(peers, events, team, "The surrender vote ran out.", now);
         }
-        self.settle_votes(now);
+        self.settle_votes(now, None);
     }
 }
 
@@ -2034,6 +2045,13 @@ impl HostKit {
             }
         }
     }
+}
+
+/// One more than a joiner's own limit lets through, on the host: a
+/// joiner's lines can arrive bunched up, and the joiner has already shown
+/// them as said. The host's own player gets no slack.
+fn slack(from: PlayerId) -> usize {
+    usize::from(from != 0)
 }
 
 /// Send `msg` to every connected player `to` picks.

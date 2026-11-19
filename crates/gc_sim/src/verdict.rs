@@ -417,9 +417,11 @@ impl Judge {
     /// Party `party` surrenders (see the module docs). Refused once the
     /// match is decided, for a party that already has, or one that is out.
     pub(crate) fn concede(&mut self, party: PlayerId) -> bool {
+        if usize::from(party) >= MAX_PARTIES {
+            return false;
+        }
         let bit = 1u8 << party;
         if self.decided.is_some()
-            || usize::from(party) >= MAX_PARTIES
             || self.conceded & bit != 0
             || self.throne.as_ref().is_some_and(|t| t.is_out(party))
         {
@@ -431,7 +433,8 @@ impl Judge {
 
     /// Whether `party` has surrendered.
     pub(crate) fn has_conceded(&self, party: PlayerId) -> bool {
-        self.conceded & (1 << party) != 0
+        1u8.checked_shl(party.into())
+            .is_some_and(|bit| self.conceded & bit != 0)
     }
 
     /// After a surrender, look at who is left, after tick `now`: the

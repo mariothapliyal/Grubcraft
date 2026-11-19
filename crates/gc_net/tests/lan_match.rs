@@ -1083,7 +1083,10 @@ fn pings_reach_allies_only() {
             .collect()
     };
     let attack = ("Alex".to_string(), PingKind::Attack, [40.5, 100.25]);
-    assert_eq!(pings(m.lans[0].match_events()), std::slice::from_ref(&attack));
+    assert_eq!(
+        pings(m.lans[0].match_events()),
+        std::slice::from_ref(&attack)
+    );
     assert_eq!(pings(m.lans[1].match_events()), [attack]);
     assert_eq!(pings(m.lans[2].match_events()), []);
 }
@@ -1210,4 +1213,63 @@ fn a_team_surrenders_when_every_human_on_it_says_yes() {
     );
     assert!(m.same_worlds());
     assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn every_yes_reaches_the_whole_team() {
+    // Mario, Alex and Sam against Kit: a vote needs three yeses.
+    let mut m = Match::teamed(
+        &MemoryNet::new(SEED),
+        &["Alex", "Sam", "Kit"],
+        &[],
+        OnDrop::Wait,
+        &[0, 0, 0, 1],
+    );
+    m.run(&[], 50, Match::turns(50));
+    m.lans[1].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(300));
+    m.lans[2].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(300));
+    for i in 0..3 {
+        let vote = m.lans[i].surrender_vote().unwrap();
+        assert_eq!((vote.yes, vote.needed), (2, 3), "player {i}");
+        assert_eq!(vote.voted, i != 0, "player {i}");
+    }
+    assert!(m.worlds.iter().all(|w| !w.has_conceded(1)));
+}
+
+#[test]
+fn a_dropped_player_still_has_a_say_in_the_vote() {
+    // Alex and Sam are a team of joiners; Mario is on the other side.
+    let mut m = Match::teamed(
+        &MemoryNet::new(SEED),
+        &["Alex", "Sam"],
+        &[],
+        OnDrop::Wait,
+        &[1, 0, 0],
+    );
+    m.run(&[], 50, Match::turns(50));
+    m.lans[1].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(300));
+    assert!(m.lans[2].surrender_vote().is_some());
+    // Both drop while Sam hasn't answered: Sam's yes isn't taken for
+    // granted, whoever drops first.
+    let quiet = gc_net::PLAYER_TIMEOUT + Duration::from_millis(500);
+    m.run(&[1, 2], u32::MAX, quiet);
+    m.run(&[], u32::MAX, Duration::from_secs(2));
+    let target = m.ticks()[0] + 20;
+    m.run(&[], target, Match::turns(20));
+    m.settle();
+    assert!(
+        m.worlds
+            .iter()
+            .all(|w| !w.has_conceded(1) && !w.has_conceded(2))
+    );
+    // The vote is still open, waiting on Sam.
+    let vote = m.lans[2].surrender_vote().unwrap();
+    assert_eq!((vote.yes, vote.needed, vote.voted), (1, 2, false));
+    assert!(!notice(
+        &m.lans[0].match_events(),
+        "Alex and Sam surrendered."
+    ));
 }

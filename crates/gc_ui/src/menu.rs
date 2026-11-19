@@ -367,8 +367,12 @@ impl<N: Network> Menu<N> {
     /// whenever the menu opens: it also forgets a click waiting to be
     /// confirmed.
     pub fn set_surrender(&mut self, item: SurrenderItem) {
-        self.surrender = item;
-        self.surrender_sure = false;
+        // Kept as it is (with a first click waiting for the second) while
+        // nothing changes; set every frame the menu is open.
+        if self.surrender != item {
+            self.surrender = item;
+            self.surrender_sure = false;
+        }
     }
 
     /// Who this player is, from the settings.
@@ -2233,8 +2237,13 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(h.last, MenuAction::Resume));
-        // Reopening the menu forgets a waiting question too.
+        // Setting the same item each frame keeps the question waiting...
         h.click("Surrender");
+        h.menu.set_surrender(SurrenderItem::Ready);
+        h.frame(UiInput::default());
+        assert!(h.has("Click again"));
+        // ...and reopening the menu (hidden, then offered) forgets it.
+        h.menu.set_surrender(SurrenderItem::Hidden);
         h.menu.set_surrender(SurrenderItem::Ready);
         h.frame(UiInput::default());
         assert!(!h.has("Click again"));

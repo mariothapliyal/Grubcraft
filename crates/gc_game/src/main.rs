@@ -1598,6 +1598,9 @@ struct Input {
     turn: [bool; 2],
     /// Where a left-drag (box select) started.
     left_down: Option<PhysicalPosition<f64>>,
+    /// The left button went down with Alt: its release is the ping's
+    /// (or nothing's), never a click on the field.
+    alt_left: bool,
     /// The ground where a left-drag after the Clear button started.
     clear_from: Option<Vec2>,
     /// Where a right-drag (line order) started: the cursor and the ground under it.
@@ -2652,12 +2655,16 @@ impl Running {
             // Alt+left pings (a drag opens the wheel); it starts no
             // selection or order.
             (MouseButton::Left, ElementState::Pressed) if self.input.alt && self.match_started => {
+                self.input.alt_left = true;
                 self.begin_ping();
             }
-            (MouseButton::Left, ElementState::Released) if self.ping_pending() => {
+            (MouseButton::Left, ElementState::Released) if self.input.alt_left => {
+                self.input.alt_left = false;
                 self.finish_ping();
             }
             (MouseButton::Left, ElementState::Pressed) => {
+                // A release missed (focus lost mid-press) is not waited for.
+                self.input.alt_left = false;
                 self.input.left_down = self.input.cursor;
                 // The wall tool: a drag from here draws a curve.
                 self.begin_wall_drag();
@@ -4590,6 +4597,9 @@ impl Running {
             self.run_guide();
         } else if self.menu_open {
             self.hud.hover_own = None;
+            // A network battle goes on behind the menu.
+            let offer = self.surrender_offer();
+            self.menu.set_surrender(offer);
             self.run_menu();
         } else if self.match_started && self.showroom.is_none() {
             self.run_hud();
@@ -5449,6 +5459,7 @@ impl Running {
         self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);
+        self.menu.set_surrender(gc_ui::SurrenderItem::Hidden);
         let offer = self.surrender_offer();
         self.menu.set_surrender(offer);
         if let Some(o) = &mut self.online {

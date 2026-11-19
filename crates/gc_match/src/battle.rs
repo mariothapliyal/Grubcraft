@@ -505,7 +505,9 @@ impl Battle {
             (_, Win::Draw) if world.has_conceded(p) => "OVER  everyone surrendered".into(),
             (_, Win::Draw) => "OVER  nobody is left standing".into(),
             (None, _) => format!("OVER  {name} {how}"),
-            (Some(false), Win::Surrender) => "DEFEAT  your side surrendered".into(),
+            (Some(false), Win::Surrender) if self.me.is_some_and(|me| world.has_conceded(me)) => {
+                "DEFEAT  your side surrendered".into()
+            }
             (Some(false), _) => format!("DEFEAT  {name} {how}"),
             (Some(true), Win::Field) => "VICTORY  the field is yours".into(),
             (Some(true), Win::Annihilation) => "VICTORY  every enemy is out".into(),

@@ -143,9 +143,9 @@ fn fire_setting(world: &World, out: &mut Vec<PlayerCommand>) {
 /// Four armies that only charge. A minute in, side 2 hands its army to its
 /// ally, side 0, who charges with it from then on; side 2's own order a
 /// tick later is refused, and so is side 3 handing its army to an enemy.
-/// At 1:15 side 3 surrenders, which decides nothing while its ally
-/// stands, and a tick later side 1 does too: sides 0 and 2 win by
-/// surrender. At two minutes side 2 takes its army back.
+/// At 1:10 side 2 takes its army back. At 1:15 side 3 surrenders, which
+/// decides nothing while its ally stands, and a tick later side 1 does
+/// too: sides 0 and 2 win by surrender.
 fn handing_over(world: &World, out: &mut Vec<PlayerCommand>) {
     let hand = |player, to| PlayerCommand {
         player,
@@ -160,7 +160,7 @@ fn handing_over(world: &World, out: &mut Vec<PlayerCommand>) {
                 command: Command::FallBack { regiment: r.handle },
             }));
         }
-        2400 => out.push(hand(2, 2)),
+        1400 => out.push(hand(2, 2)),
         1500 | 1501 => out.push(PlayerCommand {
             player: if world.tick_count() == 1500 { 3 } else { 1 },
             command: Command::Concede,
@@ -960,10 +960,12 @@ fn record(golden: &Golden) -> gc_replay::Replay {
         .collect();
     let ending = match world.verdict() {
         Some(v) => {
-            format!(
-                "team {} holds the field",
-                golden.sides[v.holder as usize].team
-            )
+            let team = golden.sides[v.holder as usize].team;
+            match v.by {
+                gc_sim::Win::Surrender => format!("team {team}'s enemies surrendered"),
+                gc_sim::Win::Draw => "a draw".into(),
+                _ => format!("team {team} holds the field"),
+            }
         }
         _ => "cut at the time limit".into(),
     };

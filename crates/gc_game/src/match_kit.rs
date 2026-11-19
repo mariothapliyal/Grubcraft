@@ -94,11 +94,6 @@ impl Running {
         }
     }
 
-    /// Whether an Alt+left press is waiting to become a ping.
-    pub fn ping_pending(&self) -> bool {
-        self.online.as_ref().is_some_and(|o| o.ping_press.is_some())
-    }
-
     /// The left button came up after [`Running::begin_ping`]: send the ping
     /// the drag picked (a plain click is "Look here").
     pub fn finish_ping(&mut self) {
