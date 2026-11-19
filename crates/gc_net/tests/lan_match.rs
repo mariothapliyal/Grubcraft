@@ -11,9 +11,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_net::net::{MemoryNet, Net};
 use gc_net::proto::{HEADER_LEN, Kind, header};
 use gc_net::wire::Writer;
-use gc_net::{
-    HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, PingKind, TURN, kit,
-};
+use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, PingKind, TURN, kit};
 use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
@@ -1049,7 +1047,11 @@ fn chat_goes_to_the_team_or_to_everyone() {
     let alex = chats(&m.lans[1].match_events());
     assert_eq!(alex.len(), 3, "{alex:?}");
     let sam = chats(&m.lans[2].match_events());
-    assert_eq!(sam, [line("Sam", false, "gg")], "team lines stay in the team");
+    assert_eq!(
+        sam,
+        [line("Sam", false, "gg")],
+        "team lines stay in the team"
+    );
 
     // A flood is cut to a few lines; empty lines go nowhere.
     m.run(&[], u32::MAX, kit::CHAT_WINDOW);
@@ -1096,7 +1098,12 @@ fn a_pause_stops_everyone_and_each_player_has_three() {
     let held = m.ticks();
     let sam = m.lans[2].hold().unwrap();
     assert_eq!((sam.who.as_str(), sam.can_resume), ("Alex", false));
-    assert!(m.lans[0].waiting().unwrap().starts_with("Match paused by Alex"));
+    assert!(
+        m.lans[0]
+            .waiting()
+            .unwrap()
+            .starts_with("Match paused by Alex")
+    );
     assert_eq!(m.lans[1].pauses_left(), Some(2));
     // Sam can't carry on yet; Alex can.
     m.lans[2].toggle_pause();
@@ -1110,7 +1117,11 @@ fn a_pause_stops_everyone_and_each_player_has_three() {
 
     // After a while anyone may carry on.
     m.lans[1].toggle_pause();
-    m.run(&[], u32::MAX, kit::RESUME_AFTER + Duration::from_millis(500));
+    m.run(
+        &[],
+        u32::MAX,
+        kit::RESUME_AFTER + Duration::from_millis(500),
+    );
     assert!(m.lans[2].hold().unwrap().can_resume);
     m.lans[2].toggle_pause();
     m.run(&[], u32::MAX, Duration::from_millis(500));
@@ -1178,7 +1189,11 @@ fn a_team_surrenders_when_every_human_on_it_says_yes() {
     m.run(&[], target, Match::turns(50));
     m.settle();
     assert!(m.worlds.iter().all(|w| w.has_conceded(2)));
-    assert!(m.worlds.iter().all(|w| !w.has_conceded(0) && !w.has_conceded(1)));
+    assert!(
+        m.worlds
+            .iter()
+            .all(|w| !w.has_conceded(0) && !w.has_conceded(1))
+    );
     assert!(m.same_worlds());
     assert!(notice(&m.lans[1].match_events(), "Sam surrendered."));
     // Once surrendered, a team calls no more votes.
@@ -1193,7 +1208,11 @@ fn a_team_surrenders_when_every_human_on_it_says_yes() {
     let target = m.ticks()[0] + 50;
     m.run(&[], target, Match::turns(50));
     m.settle();
-    assert!(m.worlds.iter().all(|w| w.has_conceded(0) && w.has_conceded(1)));
+    assert!(
+        m.worlds
+            .iter()
+            .all(|w| w.has_conceded(0) && w.has_conceded(1))
+    );
     assert!(m.same_worlds());
     assert_eq!(m.desyncs(), []);
 }

@@ -437,7 +437,10 @@ fn in_a_free_for_all_the_last_who_hasnt_surrendered_wins() {
     run(&mut w, 2);
     assert_eq!(w.verdict(), None);
     order(&mut w, 1, Command::Concede);
-    assert_eq!(w.verdict().map(|v| (v.holder, v.by)), Some((2, Win::Surrender)));
+    assert_eq!(
+        w.verdict().map(|v| (v.holder, v.by)),
+        Some((2, Win::Surrender))
+    );
 }
 
 #[test]
@@ -445,7 +448,10 @@ fn a_conquest_side_surrenders_with_its_buildings_standing() {
     let (mut w, _) = two_sides(Victories::BOTH);
     run(&mut w, TICKS_PER_SECOND);
     order(&mut w, 1, Command::Concede);
-    assert_eq!(w.verdict().map(|v| (v.holder, v.by)), Some((0, Win::Surrender)));
+    assert_eq!(
+        w.verdict().map(|v| (v.holder, v.by)),
+        Some((0, Win::Surrender))
+    );
 }
 
 #[test]

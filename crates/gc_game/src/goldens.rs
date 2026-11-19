@@ -143,7 +143,9 @@ fn fire_setting(world: &World, out: &mut Vec<PlayerCommand>) {
 /// Four armies that only charge. A minute in, side 2 hands its army to its
 /// ally, side 0, who charges with it from then on; side 2's own order a
 /// tick later is refused, and so is side 3 handing its army to an enemy.
-/// At two minutes side 2 takes its army back.
+/// At 1:15 side 3 surrenders, which decides nothing while its ally
+/// stands, and a tick later side 1 does too: sides 0 and 2 win by
+/// surrender. At two minutes side 2 takes its army back.
 fn handing_over(world: &World, out: &mut Vec<PlayerCommand>) {
     let hand = |player, to| PlayerCommand {
         player,
@@ -159,6 +161,10 @@ fn handing_over(world: &World, out: &mut Vec<PlayerCommand>) {
             }));
         }
         2400 => out.push(hand(2, 2)),
+        1500 | 1501 => out.push(PlayerCommand {
+            player: if world.tick_count() == 1500 { 3 } else { 1 },
+            command: Command::Concede,
+        }),
         _ => {}
     }
     charge(world, out);

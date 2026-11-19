@@ -72,8 +72,8 @@ impl Win {
             Win::Draw,
             Win::Surrender,
         ]
-            .get(usize::from(v))
-            .copied()
+        .get(usize::from(v))
+        .copied()
     }
 }
 
@@ -445,10 +445,7 @@ impl Judge {
         let armies = (0..regs.alive.len())
             .filter(|&i| regs.alive[i] && regs.models[i] > 0)
             .fold(0u8, |m, i| m | 1 << regs.owner[i]);
-        let (mains, out) = self
-            .throne
-            .as_ref()
-            .map_or((0, 0), |t| (t.had_main, t.out));
+        let (mains, out) = self.throne.as_ref().map_or((0, 0), |t| (t.had_main, t.out));
         let present = (armies | mains) & !out;
         let left = present & !self.conceded;
         self.decided = match one_side(left, stances) {

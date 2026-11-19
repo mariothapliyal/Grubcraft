@@ -502,7 +502,11 @@ impl Msg {
                 w.u8(21);
                 w.bool(*on);
             }
-            Msg::Hold { who, seconds, yours } => {
+            Msg::Hold {
+                who,
+                seconds,
+                yours,
+            } => {
                 w.u8(22);
                 w.u8(*who);
                 w.var(u64::from(*seconds));

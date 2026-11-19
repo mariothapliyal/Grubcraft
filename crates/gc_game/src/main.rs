@@ -185,6 +185,7 @@ mod guide_data;
 mod hud;
 mod lens;
 mod map_preview;
+mod match_kit;
 mod models;
 mod moves;
 mod online;
@@ -2152,6 +2153,9 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(f) => {
                 r.input.focused = f;
                 r.input.turn = [false; 2];
+                if let Some(o) = &mut r.online {
+                    o.ping_press = None;
+                }
                 // A button let go outside the window never reports it.
                 r.hud.reset();
             }
@@ -2211,6 +2215,12 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => r.mouse_button(state, button),
             WindowEvent::KeyboardInput { event, .. } => {
+                // The chat box takes every key while it is open, Esc
+                // included (which closes it, not the menu).
+                if r.chat_is_open() {
+                    r.chat_key(&event);
+                    return;
+                }
                 let down = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
                     // The light tuning panel keeps its keys while it is open,
@@ -2244,9 +2254,7 @@ impl ApplicationHandler for App {
                     // also change what a replay plays.
                     let clock_or_side = matches!(
                         code,
-                        KeyCode::KeyP
-                            | KeyCode::Pause
-                            | KeyCode::Minus
+                        KeyCode::Minus
                             | KeyCode::NumpadSubtract
                             | KeyCode::Equal
                             | KeyCode::NumpadAdd
@@ -2270,6 +2278,14 @@ impl ApplicationHandler for App {
                         && r.menu.network().paused_for_player()
                     {
                         r.menu.net().carry_on();
+                        return;
+                    }
+                    // Otherwise P pauses a network battle for everyone (and
+                    // carries on), by the host's rules.
+                    if matches!(code, KeyCode::KeyP | KeyCode::Pause) && r.online.is_some() {
+                        if down && !event.repeat {
+                            r.pause_key();
+                        }
                         return;
                     }
                     let off = if r.online.is_some() && (clock_or_side || edit_tool) {
@@ -2487,6 +2503,17 @@ impl ApplicationHandler for App {
                             r.sandbox.dirty = true;
                         }
                         KeyCode::Escape if down && !event.repeat => r.open_menu(),
+                        // Enter talks to the team, Shift+Enter to everyone (the
+                        // wall tool had Enter first, above).
+                        KeyCode::Enter | KeyCode::NumpadEnter
+                            if down
+                                && !event.repeat
+                                && !r.input.command
+                                && !r.input.alt
+                                && r.online.is_some() =>
+                        {
+                            r.open_chat(!r.input.shift);
+                        }
                         _ if down && !event.repeat && digit(code).is_some() => {
                             r.control_group(digit(code).unwrap());
                         }
@@ -2621,6 +2648,14 @@ impl Running {
             }
             (MouseButton::Right, ElementState::Released) if self.hud.right_captured() => {
                 self.hud.release_right();
+            }
+            // Alt+left pings (a drag opens the wheel); it starts no
+            // selection or order.
+            (MouseButton::Left, ElementState::Pressed) if self.input.alt && self.match_started => {
+                self.begin_ping();
+            }
+            (MouseButton::Left, ElementState::Released) if self.ping_pending() => {
+                self.finish_ping();
             }
             (MouseButton::Left, ElementState::Pressed) => {
                 self.input.left_down = self.input.cursor;
@@ -5283,12 +5318,29 @@ impl Running {
         lan.pump(now);
         let events = lan.match_events();
         let in_match = lan.in_match();
+        let now_ms = self.now_ms();
         let Some(o) = &mut self.online else {
             return 0;
         };
         let mut new_desync = None;
+        let tint = |player| {
+            let [r, g, b] = color_of(&self.parties, player);
+            [r, g, b, 255]
+        };
         for e in events {
             match e {
+                gc_net::MatchEvent::Chat {
+                    player,
+                    from,
+                    team,
+                    text,
+                } => o.hear(from, tint(player), team, text, now_ms),
+                gc_net::MatchEvent::Ping {
+                    player,
+                    from,
+                    kind,
+                    at,
+                } => o.ping(from, tint(player), kind, at, now_ms),
                 gc_net::MatchEvent::Notice(text) => o.note(text),
                 gc_net::MatchEvent::Desync { tick } => {
                     if o.desync.is_none() {
@@ -5397,6 +5449,12 @@ impl Running {
         self.sandbox.dirty = true;
         self.menu.show(Screen::Main);
         self.menu.set_in_match(self.match_started);
+        let offer = self.surrender_offer();
+        self.menu.set_surrender(offer);
+        if let Some(o) = &mut self.online {
+            o.chat_box.close();
+            o.ping_press = None;
+        }
         self.ui.reset();
         self.ui_input = UiInput::default();
         // Drop any half-made drag so it doesn't fire when the menu closes.
@@ -5486,6 +5544,7 @@ impl Running {
                 }
             }
             MenuAction::Resume => self.close_menu(),
+            MenuAction::Surrender => self.surrender_now(),
             MenuAction::Quit => self.quit = true,
             MenuAction::StartSandbox => self.start_match(MatchKind::Sandbox { roster: false }),
             MenuAction::OpenViewer => self.open_viewer("start"),

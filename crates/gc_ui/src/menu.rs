@@ -48,6 +48,9 @@ pub enum MenuAction {
     None,
     /// Close the menu and carry on with the current match.
     Resume,
+    /// The Surrender item was confirmed: the game calls the surrender vote
+    /// (a network battle) or concedes at once (offline).
+    Surrender,
     /// Start (or restart) the solo sandbox.
     StartSandbox,
     /// The host pressed Start in a lobby.
@@ -67,6 +70,19 @@ pub enum MenuAction {
     /// then tell the menu whether that worked ([`Menu::copied`]).
     Copy(String),
     Quit,
+}
+
+/// The in-match menu's Surrender item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SurrenderItem {
+    /// Not offered: no battle, a replay, or the sandbox.
+    #[default]
+    Hidden,
+    /// Offered, and can be used now.
+    Ready,
+    /// Offered but greyed, with the reason, as the armies still deploy or
+    /// the battle is decided.
+    Off(&'static str),
 }
 
 /// Which map picture a screen wants (see [`Menu::wanted_map_preview`]):
@@ -141,6 +157,11 @@ pub struct Menu<N: Network = LocalNetwork> {
     /// the game has tried ([`Menu::copied`]).
     copied: Option<bool>,
     in_match: bool,
+    /// The Esc menu's Surrender item: hidden, or shown and either usable
+    /// or greyed.
+    surrender: SurrenderItem,
+    /// The item was clicked once and waits for the second click.
+    surrender_sure: bool,
     /// The regiment types the army builder offers.
     roster: Vec<RosterUnit>,
     /// The Army screen's copy of your army while it is open.
@@ -211,6 +232,8 @@ impl<N: Network> Menu<N> {
             message: None,
             copied: None,
             in_match: false,
+            surrender: SurrenderItem::Hidden,
+            surrender_sure: false,
             roster: Vec::new(),
             army_draft: None,
             replays: Vec::new(),
@@ -340,6 +363,14 @@ impl<N: Network> Menu<N> {
         self.in_match = in_match;
     }
 
+    /// The Esc menu's Surrender item for the match behind the menu. Call it
+    /// whenever the menu opens: it also forgets a click waiting to be
+    /// confirmed.
+    pub fn set_surrender(&mut self, item: SurrenderItem) {
+        self.surrender = item;
+        self.surrender_sure = false;
+    }
+
     /// Who this player is, from the settings.
     pub fn profile(&self) -> Profile {
         Profile {
@@ -458,7 +489,8 @@ impl<N: Network> Menu<N> {
 
     fn main_screen(&mut self, ui: &mut Ui, escape: bool) -> MenuAction {
         let (w, h) = ui.screen;
-        let count = if self.in_match { 8 } else { 7 };
+        let surrender = self.in_match && self.surrender != SurrenderItem::Hidden;
+        let count = 7 + i32::from(self.in_match) + i32::from(surrender);
         // Up to 66 pixels for each button and its gap, less in a short window.
         let step = ((h - 104 - 12 - 48) / count).clamp(40, 66);
         let (button_h, gap) = (step - step / 5, step / 5);
@@ -501,6 +533,9 @@ impl<N: Network> Menu<N> {
         if ui.button(stack.next(button_h), sandbox, ButtonStyle::Normal, true) {
             action = MenuAction::StartSandbox;
         }
+        if surrender {
+            action = self.surrender_item(ui, stack.next(button_h), action);
+        }
         if ui.button(stack.next(button_h), "Replays", ButtonStyle::Normal, true) {
             self.go(ui, Screen::Replays);
             action = MenuAction::ListReplays;
@@ -537,7 +572,55 @@ impl<N: Network> Menu<N> {
         let hint = "Esc closes menus";
         ui.label_right(w - 12, h - 24, 1, theme::MUTED, hint);
         if escape && self.in_match {
-            action = MenuAction::Resume;
+            if self.surrender_sure {
+                // Esc first takes the question back.
+                self.surrender_sure = false;
+            } else {
+                action = MenuAction::Resume;
+            }
+        }
+        action
+    }
+
+    /// The Surrender button: the first click asks "Sure? Click again",
+    /// the second gives up. Greyed (with the reason beside it) while the
+    /// armies deploy or the battle is decided. Any other click, or Esc,
+    /// takes the question back.
+    fn surrender_item(&mut self, ui: &mut Ui, r: Rect, action: MenuAction) -> MenuAction {
+        let usable = self.surrender == SurrenderItem::Ready;
+        let label = if self.surrender_sure {
+            "Sure? Click again"
+        } else {
+            "Surrender"
+        };
+        // Never the primary button: Enter must not give up the match.
+        let clicked = ui.button(r, label, ButtonStyle::Normal, usable);
+        if let SurrenderItem::Off(why) = self.surrender {
+            let (mx, my) = ui.input.mouse;
+            if r.contains(mx, my) {
+                ui.label_centered(
+                    Rect::new(0, ui.screen.1 - 48, ui.screen.0, 16),
+                    1,
+                    theme::MUTED,
+                    why,
+                );
+            }
+        } else if self.surrender_sure {
+            ui.label_centered(
+                Rect::new(0, ui.screen.1 - 48, ui.screen.0, 16),
+                1,
+                theme::MUTED,
+                "Your team gives up and the battle is lost. Esc to cancel.",
+            );
+        }
+        if clicked && usable {
+            if self.surrender_sure {
+                self.surrender_sure = false;
+                return MenuAction::Surrender;
+            }
+            self.surrender_sure = true;
+        } else if ui.input.pressed && !r.contains(ui.input.mouse.0, ui.input.mouse.1) {
+            self.surrender_sure = false;
         }
         action
     }
@@ -2075,6 +2158,108 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(h.last, MenuAction::Resume));
+    }
+
+    fn in_match_with(item: SurrenderItem) -> Harness {
+        let mut h = Harness::new();
+        h.menu.set_in_match(true);
+        h.menu.set_surrender(item);
+        h.frame(UiInput::default());
+        h
+    }
+
+    #[test]
+    fn surrender_is_offered_only_when_the_game_says_so() {
+        assert!(!in_match_with(SurrenderItem::Hidden).has("Surrender"));
+        assert!(in_match_with(SurrenderItem::Ready).has("Surrender"));
+        let mut h = Harness::new();
+        h.menu.set_surrender(SurrenderItem::Ready);
+        h.frame(UiInput::default());
+        assert!(!h.has("Surrender"), "not outside a match");
+    }
+
+    /// Click `t` and say whether that very click's frame asked to surrender.
+    fn surrenders_on_click(h: &mut Harness, t: &str) -> bool {
+        let (x, y) = h.text_pos(t);
+        let surrendered = matches!(
+            h.frame(UiInput {
+                mouse: (x, y),
+                pressed: true,
+                released: true,
+                ..Default::default()
+            }),
+            MenuAction::Surrender
+        );
+        h.frame(UiInput {
+            mouse: (x, y),
+            ..Default::default()
+        });
+        surrendered
+    }
+
+    #[test]
+    fn surrender_takes_a_second_click_to_confirm() {
+        let mut h = in_match_with(SurrenderItem::Ready);
+        assert!(!surrenders_on_click(&mut h, "Surrender"));
+        assert!(h.has("Sure? Click again"));
+        assert!(surrenders_on_click(&mut h, "Sure? Click again"));
+        // Asked again from the start next time.
+        assert!(!h.has("Click again"));
+    }
+
+    #[test]
+    fn a_click_elsewhere_or_escape_takes_the_question_back() {
+        let mut h = in_match_with(SurrenderItem::Ready);
+        h.click("Surrender");
+        h.frame(UiInput {
+            mouse: (5, 5),
+            pressed: true,
+            released: true,
+            ..Default::default()
+        });
+        h.frame(UiInput::default());
+        assert!(!h.has("Click again"));
+        h.click("Surrender");
+        assert!(h.has("Click again"));
+        h.frame(UiInput {
+            escape: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::None), "Esc only cancels");
+        h.frame(UiInput::default());
+        assert!(!h.has("Click again"));
+        h.frame(UiInput {
+            escape: true,
+            ..Default::default()
+        });
+        assert!(matches!(h.last, MenuAction::Resume));
+        // Reopening the menu forgets a waiting question too.
+        h.click("Surrender");
+        h.menu.set_surrender(SurrenderItem::Ready);
+        h.frame(UiInput::default());
+        assert!(!h.has("Click again"));
+    }
+
+    #[test]
+    fn enter_never_surrenders() {
+        let mut h = in_match_with(SurrenderItem::Ready);
+        h.click("Surrender");
+        h.key(|i| i.enter = true);
+        assert!(!matches!(h.last, MenuAction::Surrender));
+    }
+
+    #[test]
+    fn surrender_is_greyed_while_off_and_says_why_on_hover() {
+        let mut h = in_match_with(SurrenderItem::Off("Not while the armies deploy."));
+        h.click("Surrender");
+        assert!(matches!(h.last, MenuAction::None));
+        assert!(!h.has("Click again"), "a greyed item asks nothing");
+        let (x, y) = h.text_pos("Surrender");
+        h.frame(UiInput {
+            mouse: (x, y),
+            ..Default::default()
+        });
+        assert!(h.has("Not while the armies deploy."));
     }
 
     #[test]

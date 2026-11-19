@@ -502,6 +502,7 @@ impl Battle {
         let won = self.me.map(|me| v.by != Win::Draw && !world.hostile(me, p));
         self.won = won;
         let said = match (won, v.by) {
+            (_, Win::Draw) if world.has_conceded(p) => "OVER  everyone surrendered".into(),
             (_, Win::Draw) => "OVER  nobody is left standing".into(),
             (None, _) => format!("OVER  {name} {how}"),
             (Some(false), Win::Surrender) => "DEFEAT  your side surrendered".into(),

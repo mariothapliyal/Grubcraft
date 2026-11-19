@@ -113,6 +113,17 @@ Determinism is engineered and tested ([10 · Architecture](10-architecture.md#te
 3. Divergent clients receive a **snapshot** (300 KB to 1 MB, compressed) plus the commands since, load it, and continue. Players see a brief "Resyncing…" banner rather than a lost game.
 4. Everyone writes a **desync report**: the last snapshot before divergence plus the input log. `gc_replay` can rerun that on both platforms and, in debug builds, compare per-system hashes tick by tick to find exactly which system diverged.
 
+## The match kit: chat, pings, surrender and pauses
+
+*Built 2026-11-20 (`gc_net::kit`, protocol 45, sim version 87).* Four things players need in an online match, all from the in-battle screen:
+
+- **Chat.** `Enter` opens a line to your team, `Shift+Enter` to everyone; `Tab` switches while typing, `Enter` sends, `Esc` closes. Lines are cut to 120 characters and a player can send five in any five seconds (more are dropped by the host). Team lines go only to the players on your lobby team. The host relays every line; your own line shows at once.
+- **Pings.** `Alt`+left-click pings Look here; `Alt`+left-drag opens a wheel (up Attack, right On my way, down Defend, left Danger). A marker on the map for your allies only: Look here, Attack here, Defend here, Danger, On my way, with the pinger's name, a dot on the minimap and a badge at the screen edge when it is out of view. Four pings in any three seconds.
+- **Surrender.** From the battle menu. It calls your team's vote: everyone on your team who is still connected has 30 seconds to say yes; AI allies don't vote, and one no ends it (whoever called it waits a minute to call another). On a team of one it passes at once. When it passes, the host puts a `Command::Concede` for every player on the team, AI allies too, into the next turn, so every machine and the replay agree. The simulation then rules: once everyone left in the match who hasn't conceded is on one side, that side wins (`Win::Surrender`, "VICTORY  the enemy surrendered"). Not while the armies deploy, and not once the battle is decided. In an offline battle Surrender concedes at once for your side. Surrender sits in the battle menu (`Esc`), with a second click to confirm; the vote shows at the top right, under the top bar, with Yes and No buttons.
+- **Pause limit.** `P` pauses a network match for everyone. Each player has three pauses a match; a pause lasts at most 60 seconds and then carries on by itself. The player who paused can carry on at once, anyone else after 10 seconds. The host stops closing turns while paused (as it does while waiting for a player who dropped) and carries on from then without rushing. The banner says who paused, how long is left and how many pauses you have.
+
+**Real use.** Chat and pings ride beside the turns as their own messages (`Chat`/`Said`, `Ping`/`Pinged`), so they never change the simulation, never desync and are not in replays. Surrender is the only part that reaches the sim, and it does so as an ordinary command in a turn bundle, which is why it is recorded and checked by the golden `field-handover-2v2`. A joiner can't send `Concede` itself (it isn't a player order); only the host gives it, after the vote. A player who drops mid-vote stops counting, so the vote is settled by those still here. A rejoiner is told about a pause under way.
+
 ## Disconnects and rejoining
 
 - A client silent for 3 s is marked disconnected. Lobby option **On drop**: **Wait** (default, up to 90 s) or **Play on**.

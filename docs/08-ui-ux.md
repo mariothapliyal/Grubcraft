@@ -188,10 +188,19 @@ A place to look at every unit and hero of the four factions as a 3D model, from 
 
 ## Communication
 
-- **Ping wheel** (`G` + mouse direction): "Attack here", "Defend here", "Danger", "On my way", "Need help", "Good game". Pings show on the minimap and play a sound. *Not built yet; `G` shows the ground no regiment can cross today, so the wheel will need another key.*
-- Text chat (`Enter`), team or all. *Not built yet.*
+- **Ping wheel** (`Alt`+drag; see the note below): "Attack here", "On my way", "Defend here", "Danger", with "Look here" on `Alt`+click. Pings show on the minimap. *Sound and the "Need help" and "Good game" entries are not built yet.*
+- **Text chat** (`Enter` for your team, `Shift+Enter` for everyone), network battles only. See the note below.
 - No in-game voice: friends already use Discord or FaceTime.
 - **AI allies use the same channels:** they treat your pings as requests, ping their own plans ("Attacking here", "Danger"), and send short chat lines in their personality's voice ([18 · AI](18-ai.md#ai-allies)).
+
+## Network battles: chat, pings, surrender, pause
+
+Built with the match kit (`gc_ui::match_kit`, `gc_game/src/match_kit.rs`). Chat, pings, pause and surrender work in network battles only; the keys are also listed in the [quick reference](quick-reference.md).
+
+- **Chat.** `Enter` talks to your team, `Shift+Enter` to everyone. While typing, `Tab` switches team and all, `Enter` sends, `Esc` cancels and `Backspace` deletes; no hotkey fires while the box is open. Lines are cut at 120 characters. The last six lines show at the lower left for 10 s. Up to five lines per 5 s.
+- **Pings** (allies only). `Alt`+left-click pings "Look here". `Alt`+left-drag opens a wheel: up Attack here, right On my way, down Defend here, left Danger. Each shows for 6 s as a ring and flag with the sender's name, a mark on the minimap, and a "P" badge at the screen edge when it is off screen (click the badge to jump there). Up to four pings per 3 s.
+- **Pause.** `P` pauses for everyone. Each player has three pauses per match, each at most 60 s, then the battle carries on by itself. The player who paused carries on at once with `P`; anyone else can after 10 s.
+- **Surrender.** `Esc` menu, Surrender, then click again to confirm. Online this calls a team vote: everyone on your team still connected has 30 s to answer Yes (buttons at the top right, under the top bar). AI allies do not vote. One No ends the vote, and the caller waits 60 s before calling another; a team of one surrenders at once. A passed vote is a defeat for your side ("DEFEAT  your side surrendered"; the enemy sees "VICTORY  the enemy surrendered"). Offline it concedes at once. Not possible while armies deploy or once the battle is decided.
 
 ## Settings
 
@@ -203,7 +212,7 @@ A place to look at every unit and hero of the four factions as a 3D model, from 
 
 ## Pause, speed, and fairness
 
-- Multiplayer pause: any player can pause up to 3 times per match; unpausing has a 3-second countdown.
+- Multiplayer pause: any player can pause up to 3 times per match, at most 60 s each; the player who paused resumes at once, anyone else after 10 s. See [network battles](#network-battles-chat-pings-surrender-pause).
 - Game speed is fixed in multiplayer (lobby choice of Normal or Fast). Solo modes allow slow-motion and fast-forward.
 - **Built so far (M1 step 7):** `P` pauses, `-` and `=` step through 0.1×, 0.25×, 0.5×, 1×, 2× and 4×. The sandbox panel in the top-left corner shows the speed, the side you command, the type you are placing and the keys; `T` opens a stats panel for that type (Up and Down pick a stat, Left and Right change it, `Shift` for ten steps) and `H` hides the panel. It is drawn with the dev overlay's text for now and moves to the `gc_ui` widgets once the menus land.
 
@@ -235,7 +244,7 @@ Dealing with hamlets, mercenary companies and, later, other peoples on the map u
 - **Layout.** A full-window panel. Top row: the **Quick Start**, **Buildings** and **Troops** tabs, then a button for each faction (Ember Clans, Brood, Shard Choir, Carrion Concord). Left: a scrollable list of the faction's entries, each with its tier (`T2`, `hero`, `summon`). Right: the entry's card.
 - **The card** has two sub-tabs. **Overview** has a short summary (what it does, when to use it, what beats it; at most 350 characters), then the real numbers (cost, build time, hit points, models, melee and ranged stats, morale, traits) and links (what a building trains and unlocks, what a troop is trained at, evolves into, is strong and weak against). **Upgrades** has a button for each upgrade and shows the chosen one's cost, what it does for you and its numbers: for a main building its tier upgrade and what that unlocks; for a production building the units it trains; for the Brood's Chrysalis Chamber the evolutions; for a troop its evolutions and abilities (a hero's ranked abilities and its level-6 ultimate); for a hero building the heroes it hires. Research (Granary, Forge, Harmonics Lab) is shown as "not designed yet" because it is not (see [21 · Buildings](21-buildings.md)).
 - **Keys and mouse.** Up and Down walk the list, Left and Right change faction, the wheel scrolls the list or the card under the mouse, Escape closes. Each tab and faction remembers its own selected row.
-- **Quick Start.** The first tab, and the one the Guide opens on: five short illustrated steps (Gather, Build, Train, Command, Win), each a picture drawn from rectangles and the HUD's pixel icons (`gc_ui::quick_start`) and one or two lines of text. It has no list or card, so the faction buttons and the arrow keys sit idle on it.
+- **Quick Start.** The first tab, and the one the Guide opens on: six short illustrated steps (Gather, Build, Train, Command, Win, Team up), each a picture drawn from rectangles and the HUD's pixel icons (`gc_ui::quick_start`) and one or two lines of text. It has no list or card, so the faction buttons and the arrow keys sit idle on it.
 - **Building tips.** Each building has two or three succinct tips (a pixel icon and one sentence of at most 100 characters), written in `data/guide/<faction>.ron` ([format](17-unit-rosters.md#guide-data)). They show in three places: on a **tips card** over the field beside the tray the whole time a building is armed to be placed (so the tips are in front of you when you choose where it goes); behind the **info button** (a small **i**) on the card of a selected building of yours, which toggles the same card with a close box and stays on for the next building you select; and under **Tips** on the building's Overview card in the Guide. Conquest only for now; the Sandbox's troop picker has no buildings.
 - **Honesty.** Every number comes from the faction rosters (`data/rosters/*.ron`); only the prose is written by hand, in `data/guide/<faction>.ron` ([format](17-unit-rosters.md#guide-data)). The class counters are the design table of [17 · Unit Rosters](17-unit-rosters.md#classes-and-counters), which battles do not all apply yet.
 - **Built so far:** the screen (`gc_ui::guide`, headless and unit tested like the other screens) and its data (`gc_game::guide_data`, with tests that every roster building and unit has an entry, that text fits and is plain ASCII, and that numbers match the rosters). **Wiring:** the main-menu Guide button and the `U` hotkey open it (`Guide::new(guide_data::load())`, `Guide::frame` while open, `GuideEvent::Close` to leave, `Guide::show` to jump to a selected building or regiment, `Guide::wheel` and `guide::over_panel` for the mouse).

@@ -18,6 +18,7 @@ use gc_ui::hud::{
     HelpScroll, HoverCard, Hud, HudData, HudEvent, HudInput, MinimapData, MinimapTerrain,
     Selection, ShapeChip, SlotState, StatusStrip,
 };
+use gc_ui::match_kit::{KitData, PauseBanner, PingMark, VoteBanner, Wheel};
 use gc_ui::orders::{self, Order as UiOrder, Orders, Wait};
 use gc_ui::placer::{PlaceLater, PlacePicker, PlaceRow, PlaceSide};
 use gc_ui::powers::{POWER_KEYS, PowerButton};
@@ -149,6 +150,11 @@ const NOTE_FRESH: u32 = 2 * gc_sim::TICKS_PER_SECOND;
 /// Events of one kind this close (in tiles) are one alert.
 const NOTE_MERGE_TILES: f32 = 20.0;
 const MAX_NOTES: usize = 8;
+/// Ping alerts' ids start here, clear of the ordinary alerts' (a click on a
+/// ping's edge badge looks at the ping).
+const PING_ALERT_BASE: u32 = 1 << 20;
+/// A ping's edge badge is drawn filled for this long (ms).
+const PING_FRESH_MS: u64 = 2_000;
 
 /// Something that happened to your side, remembered for a few seconds so an
 /// arrow can point at it and Space can jump to it.
@@ -790,6 +796,61 @@ impl Running {
             Vec::new()
         };
         let handover = self.handover_text(side);
+        // The online match kit: the pause and the team's surrender vote as
+        // the host tells them, the live pings and where they are on screen.
+        let in_net_match = self.online.as_ref().is_some_and(|o| o.ended.is_none());
+        let (hold, vote, pauses_left) = if in_net_match {
+            let lan = self.menu.network();
+            (lan.hold(), lan.surrender_vote(), lan.pauses_left())
+        } else {
+            (None, None, None)
+        };
+        if let Some(o) = &mut self.online {
+            o.tidy_pings(now_ms);
+        }
+        let ping_ground = |p: &crate::online::LivePing| {
+            Vec3::new(p.at[0], self.heightmap.height_at(p.at[0], p.at[1]), p.at[1])
+        };
+        let ping_marks: Vec<PingMark> = (self.online.iter())
+            .flat_map(|o| o.pings.iter())
+            .map(|p| PingMark {
+                id: p.id,
+                from: &p.from,
+                color: p.color,
+                choice: p.choice,
+                at_tiles: p.at,
+                at_screen: project_ahead(view_proj, ping_ground(p), screen),
+                age_ms: now_ms.saturating_sub(p.born_ms),
+            })
+            .collect();
+        let ping_alerts: Vec<Alert> = (self.online.iter())
+            .flat_map(|o| o.pings.iter())
+            .map(|p| Alert {
+                id: PING_ALERT_BASE + p.id,
+                kind: AlertKind::Ping,
+                at: project(view_proj, ping_ground(p), screen),
+                fresh: now_ms.saturating_sub(p.born_ms) <= PING_FRESH_MS,
+            })
+            .collect();
+        let vote_banner = vote.as_ref().map(|v| VoteBanner {
+            by: &v.by,
+            yes: v.yes,
+            needed: v.needed,
+            secs: v.left.as_secs_f32().ceil() as u32,
+            voted: v.voted,
+        });
+        let pause_banner = hold.as_ref().map(|h| PauseBanner {
+            who: &h.who,
+            secs: h.left.as_secs_f32().ceil() as u32,
+            can_resume: h.can_resume,
+            pauses_left,
+        });
+        let wheel = (self.online.as_ref())
+            .and_then(|o| o.ping_press)
+            .map(|p| Wheel {
+                centre: p.screen,
+                mouse: cursor,
+            });
         let help_notes = if self.hud.help {
             self.help_notes()
         } else {
@@ -1098,6 +1159,7 @@ impl Running {
                 fresh: tick.saturating_sub(n.born) <= NOTE_FRESH,
             }));
         }
+        hud.alerts.extend_from_slice(&ping_alerts);
 
         // Conquest's own: the stores, the idle workers and the selected building.
         let mut queue = [QueueItem {
@@ -1273,6 +1335,17 @@ impl Running {
                 alerts: &hud.alerts,
                 idle_workers: hud.readout.and_then(|r| r.idle_workers),
             },
+            kit: KitData {
+                map_tiles: map,
+                chat: self.online.as_ref().map_or(&[], |o| &o.lines),
+                chat_box: (self.online.as_ref())
+                    .map(|o| &o.chat_box)
+                    .filter(|b| b.is_open()),
+                pings: &ping_marks,
+                vote: vote_banner,
+                pause: pause_banner,
+                wheel,
+            },
         };
         hud.hud
             .frame(&mut hud.draw, screen, input, &data, &mut hud.events);
@@ -1333,6 +1406,18 @@ impl Running {
             }
             HudEvent::Command(slot) => self.grid_press(slot),
             HudEvent::Power(slot) => self.power_press(slot),
+            HudEvent::Alert(id) if id >= PING_ALERT_BASE => {
+                let ping = self.online.as_ref().and_then(|o| {
+                    o.pings
+                        .iter()
+                        .find(|p| PING_ALERT_BASE + p.id == id)
+                        .map(|p| p.at)
+                });
+                if let Some([x, z]) = ping {
+                    self.look_at(Vec2::new(x, z));
+                }
+            }
+            HudEvent::SurrenderVote(yes) => self.menu.net().surrender(yes),
             HudEvent::Alert(id) => {
                 if let Some(n) = self.hud.notes.iter().find(|n| n.id == id) {
                     self.look_at(n.at);

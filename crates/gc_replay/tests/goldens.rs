@@ -168,7 +168,7 @@ const PINNED: (u32, &[(&str, u64)]) = (
         ("field-deploy-1v1", 0x1939c10f227bdc14),
         ("field-fire-1v1", 0x29f8f6c5e3956ad3),
         ("field-flood-1v1", 0x8db9a11252fd9dab),
-        ("field-handover-2v2", 0xfd1c54d928d311d1),
+        ("field-handover-2v2", 0xbc37c51c34315cef),
         ("field-night-rain-1v1", 0xad7df71b402b74b9),
         ("field-orders-1v1", 0xc941561514c08244),
         ("field-river-storm-1v1", 0x482efc9b000ccad6),

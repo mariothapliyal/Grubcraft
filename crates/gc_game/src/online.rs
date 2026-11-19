@@ -9,7 +9,9 @@
 
 use std::time::{Duration, Instant};
 
+use gc_net::PingKind;
 use gc_platform::logln;
+use gc_ui::match_kit::{self, ChatBox, ChatLine, LineKind, PING_LIFE_MS, PingChoice};
 
 /// How long a notice ("Alex lost connection") stays on screen.
 const NOTICE_TIME: Duration = Duration::from_secs(8);
@@ -27,6 +29,53 @@ pub fn version() -> String {
     )
 }
 
+/// Most pings on the ground at once; a new one pushes out the oldest.
+const MAX_PINGS: usize = 8;
+
+/// A ping from you or an ally, still on the ground.
+#[derive(Clone, Debug)]
+pub struct LivePing {
+    pub id: u32,
+    pub from: String,
+    /// The pinger's colour.
+    pub color: [u8; 4],
+    pub choice: PingChoice,
+    /// Where, in map tiles.
+    pub at: [f32; 2],
+    /// When it came, on the HUD's clock (`Running::now_ms`).
+    pub born_ms: u64,
+}
+
+/// The Alt+left press that may become a ping: where on the screen (UI
+/// pixels, the wheel's middle) and on the map (tiles).
+#[derive(Clone, Copy, Debug)]
+pub struct PingPress {
+    pub screen: (i32, i32),
+    pub at: [f32; 2],
+}
+
+/// The UI's ping choice for the network's ping kind.
+pub fn choice_of(kind: PingKind) -> PingChoice {
+    match kind {
+        PingKind::Look => PingChoice::Look,
+        PingKind::Attack => PingChoice::Attack,
+        PingKind::Defend => PingChoice::Defend,
+        PingKind::Danger => PingChoice::Danger,
+        PingKind::OnMyWay => PingChoice::OnMyWay,
+    }
+}
+
+/// The network's ping kind for the UI's choice.
+pub fn kind_of(choice: PingChoice) -> PingKind {
+    match choice {
+        PingChoice::Look => PingKind::Look,
+        PingChoice::Attack => PingKind::Attack,
+        PingChoice::Defend => PingKind::Defend,
+        PingChoice::Danger => PingKind::Danger,
+        PingChoice::OnMyWay => PingKind::OnMyWay,
+    }
+}
+
 /// A networked match under way.
 pub struct Online {
     /// This machine is the host (it runs the computer players).
@@ -41,6 +90,13 @@ pub struct Online {
     pub ended: Option<String>,
     /// When the last turn was simulated, for smooth movement in between.
     pub last_turn: Instant,
+    /// The chat box (Enter, Shift+Enter) and the chat and ping lines so far.
+    pub chat_box: ChatBox,
+    pub lines: Vec<ChatLine>,
+    pub pings: Vec<LivePing>,
+    next_ping: u32,
+    /// An Alt+left press waiting to become a ping.
+    pub ping_press: Option<PingPress>,
 }
 
 impl Online {
@@ -52,7 +108,64 @@ impl Online {
             report: None,
             ended: None,
             last_turn: Instant::now(),
+            chat_box: ChatBox::default(),
+            lines: Vec::new(),
+            pings: Vec::new(),
+            next_ping: 0,
+            ping_press: None,
         }
+    }
+
+    /// A chat line arrived (or this player's own came back).
+    pub fn hear(&mut self, from: String, color: [u8; 4], team: bool, text: String, now_ms: u64) {
+        let kind = if team { LineKind::Team } else { LineKind::All };
+        let line = ChatLine {
+            kind,
+            from,
+            color,
+            text,
+            born_ms: now_ms,
+        };
+        match_kit::push_line(&mut self.lines, line);
+    }
+
+    /// A ping arrived: a marker on the ground for a few seconds, and a
+    /// line in the log ("Ana: Attack here").
+    pub fn ping(
+        &mut self,
+        from: String,
+        color: [u8; 4],
+        kind: PingKind,
+        at: [f32; 2],
+        now_ms: u64,
+    ) {
+        let choice = choice_of(kind);
+        self.next_ping += 1;
+        self.pings.push(LivePing {
+            id: self.next_ping,
+            from: from.clone(),
+            color,
+            choice,
+            at,
+            born_ms: now_ms,
+        });
+        if self.pings.len() > MAX_PINGS {
+            self.pings.remove(0);
+        }
+        let line = ChatLine {
+            kind: LineKind::Ping,
+            from,
+            color,
+            text: choice.label().to_string(),
+            born_ms: now_ms,
+        };
+        match_kit::push_line(&mut self.lines, line);
+    }
+
+    /// Forget pings that have run their course.
+    pub fn tidy_pings(&mut self, now_ms: u64) {
+        self.pings
+            .retain(|p| now_ms.saturating_sub(p.born_ms) < PING_LIFE_MS);
     }
 
     pub fn note(&mut self, text: String) {
@@ -141,6 +254,40 @@ mod tests {
             map_hash(&a, &covered(&wood)),
             map_hash(&a, &covered(&grass))
         );
+    }
+
+    #[test]
+    fn ping_kinds_and_choices_match_both_ways() {
+        for k in PingKind::ALL {
+            assert_eq!(kind_of(choice_of(k)), k);
+            assert_eq!(choice_of(k).label(), k.label());
+        }
+    }
+
+    #[test]
+    fn pings_land_in_the_log_and_run_out() {
+        let mut o = Online::new(false);
+        o.ping(
+            "Ana".into(),
+            [1, 2, 3, 255],
+            PingKind::Attack,
+            [10.0, 20.0],
+            1_000,
+        );
+        o.hear("Bo".into(), [4, 5, 6, 255], true, "hi".into(), 1_500);
+        assert_eq!(o.lines.len(), 2);
+        assert_eq!(o.lines[0].text, "Attack here");
+        assert_eq!(o.lines[0].kind, LineKind::Ping);
+        assert_eq!(o.lines[1].kind, LineKind::Team);
+        o.tidy_pings(1_000 + PING_LIFE_MS - 1);
+        assert_eq!(o.pings.len(), 1);
+        o.tidy_pings(1_000 + PING_LIFE_MS);
+        assert!(o.pings.is_empty());
+        for i in 0..20 {
+            o.ping("Ana".into(), [0; 4], PingKind::Look, [0.0; 2], i);
+        }
+        assert_eq!(o.pings.len(), MAX_PINGS);
+        assert_eq!(o.pings.last().unwrap().id, 21);
     }
 
     #[test]
