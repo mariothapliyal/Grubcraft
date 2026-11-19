@@ -6,6 +6,8 @@
 use gc_assets::detail::{BLOCK_SIDE, DETAIL_MIPS, DETAIL_SIZE, Detail, LAYERS};
 use gc_assets::model::Block;
 
+use crate::upload::Uploader;
+
 /// The detail array and the sampler that reads it.
 pub(crate) struct DetailGpu {
     pub view: wgpu::TextureView,
@@ -17,7 +19,8 @@ impl DetailGpu {
     /// Upload `detail`, when the GPU takes BC7 and enough array layers;
     /// otherwise (or with none) a texture of the same shape whose every
     /// texel leaves a surface as it is, since the binding must exist.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, detail: Option<&Detail<'_>>) -> Self {
+    pub fn new(up: &mut Uploader<'_>, detail: Option<&Detail<'_>>) -> Self {
+        let (device, queue) = (up.device, up.queue);
         let real = detail.filter(|_| {
             device
                 .features()
@@ -45,7 +48,7 @@ impl DetailGpu {
         });
         match real {
             Some(detail) => {
-                upload_bc7_layers(queue, &texture, detail.textures, DETAIL_SIZE, DETAIL_MIPS);
+                upload_bc7_layers(up, &texture, detail.textures, DETAIL_SIZE, DETAIL_MIPS);
             }
             None => {
                 // Layer by layer: albedo neutral (0.5, cavity open), relief
@@ -112,7 +115,7 @@ impl DetailGpu {
 /// Upload BC7 `blocks`, as many blocks as one layer takes to each layer of `texture` (every
 /// layer `side` texels square with `mips` mip levels, mip by mip).
 pub(crate) fn upload_bc7_layers(
-    queue: &wgpu::Queue,
+    up: &mut Uploader<'_>,
     texture: &wgpu::Texture,
     blocks: &[Block],
     side: u32,
@@ -128,7 +131,7 @@ pub(crate) fn upload_bc7_layers(
             let side = side >> mip;
             let across = side / BLOCK_SIDE;
             let count = (across * across) as usize;
-            queue.write_texture(
+            up.texture(
                 wgpu::TexelCopyTextureInfo {
                     texture,
                     mip_level: mip,

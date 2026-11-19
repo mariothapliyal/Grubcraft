@@ -206,19 +206,6 @@ impl SceneryGpu {
         queue: &wgpu::Queue,
         scenery: &Scenery<'_>,
     ) -> Result<(), String> {
-        let buffer = |label, bytes: &[u8], usage| {
-            let b = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                // Buffers must be a multiple of 4 bytes.
-                size: (bytes.len() as u64).next_multiple_of(4).max(4),
-                usage: usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut padded = bytes.to_vec();
-            padded.resize(b.size() as usize, 0);
-            queue.write_buffer(&b, 0, &padded);
-            b
-        };
         let limit = device.limits().max_buffer_size;
         for (what, bytes) in [
             ("vertices", size_of_val(scenery.vertices) as u64),
@@ -230,13 +217,14 @@ impl SceneryGpu {
                 ));
             }
         }
+        let mut up = crate::upload::Uploader::new(device, queue);
         self.models = Some(ModelsGpu {
-            vertices: buffer(
+            vertices: up.buffer(
                 "scenery vertices",
                 bytemuck::cast_slice(scenery.vertices),
                 wgpu::BufferUsages::VERTEX,
             ),
-            indices: buffer(
+            indices: up.buffer(
                 "scenery indices",
                 bytemuck::cast_slice(scenery.indices),
                 wgpu::BufferUsages::INDEX,

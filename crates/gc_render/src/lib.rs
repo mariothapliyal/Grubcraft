@@ -23,6 +23,7 @@ mod scenery;
 mod shadows;
 mod soldiers;
 mod surface;
+mod upload;
 
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};

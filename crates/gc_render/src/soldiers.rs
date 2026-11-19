@@ -10,6 +10,7 @@
 use std::mem::offset_of;
 
 use crate::detail::{DetailGpu, upload_bc7_layers};
+use crate::upload::Uploader;
 use bytemuck::{Pod, Zeroable};
 use gc_assets::anim::{JointRecord, Role};
 use gc_assets::model::{
@@ -1122,19 +1123,7 @@ pub(crate) fn upload(
     m: &Models<'_>,
     detail: Option<&gc_assets::detail::Detail<'_>>,
 ) -> Result<ModelGpu, String> {
-    let buffer = |label, bytes: &[u8], usage| {
-        let b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            // Buffers must be a multiple of 4 bytes.
-            size: (bytes.len() as u64).next_multiple_of(4).max(4),
-            usage: usage | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut padded = bytes.to_vec();
-        padded.resize(b.size() as usize, 0);
-        queue.write_buffer(&b, 0, &padded);
-        b
-    };
+    let mut up = Uploader::new(device, queue);
     let empty = |label, size: usize, usage| {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
@@ -1158,12 +1147,12 @@ pub(crate) fn upload(
         ));
     }
     let split = split as u32;
-    let vertices = buffer(
+    let vertices = up.buffer(
         "model vertices",
         bytemuck::cast_slice(&levels.vertices),
         wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
     );
-    let indices = buffer(
+    let indices = up.buffer(
         "model indices",
         bytemuck::cast_slice(&levels.indices),
         wgpu::BufferUsages::INDEX,
@@ -1219,7 +1208,7 @@ pub(crate) fn upload(
         .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
         && m.materials() > 0
         && m.materials() * LAYERS_PER_MATERIAL <= device.limits().max_texture_array_layers as usize;
-    let materials = upload_materials(device, queue, m, textures);
+    let materials = upload_materials(&mut up, m, textures);
     let array_view = |format: wgpu::TextureFormat| {
         materials.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format),
@@ -1238,7 +1227,7 @@ pub(crate) fn upload(
         anisotropy_clamp: 4,
         ..Default::default()
     });
-    let detail = DetailGpu::new(device, queue, detail);
+    let detail = DetailGpu::new(&mut up, detail);
     let (anim_head, fits) = anim_gpu(m);
     let levels_of = levels
         .models
@@ -1446,12 +1435,7 @@ fn rig_of(joints: &[JointRecord]) -> ([u32; 4], Vec<u8>) {
 
 /// The material texture array, every layer with its mips (BC7); a single
 /// blank texel without `textures`, since the binding must exist.
-fn upload_materials(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    m: &Models<'_>,
-    textures: bool,
-) -> wgpu::Texture {
+fn upload_materials(up: &mut Uploader<'_>, m: &Models<'_>, textures: bool) -> wgpu::Texture {
     let (format, side, mips, layers) = if textures {
         let layers = (m.materials() * LAYERS_PER_MATERIAL) as u32;
         let format = wgpu::TextureFormat::Bc7RgbaUnorm;
@@ -1459,7 +1443,7 @@ fn upload_materials(
     } else {
         (wgpu::TextureFormat::Rgba8Unorm, 1, 1, 1)
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = up.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("soldier materials"),
         size: wgpu::Extent3d {
             width: side,
@@ -1476,7 +1460,7 @@ fn upload_materials(
     if !textures {
         return texture;
     }
-    upload_bc7_layers(queue, &texture, m.textures, TEXTURE_SIZE, TEXTURE_MIPS);
+    upload_bc7_layers(up, &texture, m.textures, TEXTURE_SIZE, TEXTURE_MIPS);
     texture
 }
 
