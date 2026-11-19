@@ -81,8 +81,8 @@ const DEMO_AHEAD: f32 = 14.0;
 pub(super) struct Route {
     pub(super) from: Vec2,
     pub(super) to: Vec2,
-    /// The sizes of the hamlets at the ends.
-    pub(super) sizes: (Size, Size),
+    /// The chance a caravan on it is a cart, not porters.
+    pub(super) cart_odds: f32,
 }
 
 impl Route {
@@ -118,7 +118,7 @@ pub(super) struct Train {
     pub(super) along: f32,
     pub(super) forward: bool,
     /// Seconds still to wait at the end, and still to wait for calm.
-    unload: f32,
+    pub(super) unload: f32,
     hold: f32,
     /// Seconds spent looking at the army that is near.
     looked: f32,
@@ -289,15 +289,23 @@ fn route_between(map: &Map, hamlets: &Hamlets, i: usize, j: usize) -> Option<Rou
     {
         return None;
     }
-    route_clear(map, from, to).then_some(Route {
+    // Carts mostly on the routes that serve a town or the bazaar, and now
+    // and then between villages; the rest are walked by porters.
+    let trade = |s: Size| matches!(s, Size::Town | Size::Bazaar);
+    let cart_odds = if trade(hamlets.size(i)) || trade(hamlets.size(j)) {
+        0.8
+    } else {
+        0.25
+    };
+    route_clear(map, from, to, |_| true).then_some(Route {
         from,
         to,
-        sizes: (hamlets.size(i), hamlets.size(j)),
+        cart_odds,
     })
 }
 
 /// How far `p` is from the segment `a`-`b`.
-fn near_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+pub(super) fn near_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let t = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
     p.distance(a + ab * t)
@@ -364,37 +372,12 @@ pub fn dust_of(
 }
 
 impl Train {
-    /// An ox cart on `route`, one of a town's supply carts (`town.rs`):
-    /// somewhere along it, going either way, from a `seed`.
-    pub(super) fn supply(seed: u32, route: &Route) -> Train {
-        let mut rng = Rng::seeded(seed.wrapping_mul(7919).wrapping_add(route.len() as u32));
-        let forward = rng.unit() < 0.5;
-        Train {
-            route: 0,
-            load: Load::Cart,
-            along: route.len() * rng.unit(),
-            forward,
-            unload: 0.0,
-            hold: 0.0,
-            looked: 0.0,
-            still: false,
-            facing: route.heading(forward),
-            phase: rng.unit() * 4.0,
-            rng,
-        }
-    }
-
-    fn new(index: usize, route: &Route) -> Train {
+    /// A caravan on `route`, somewhere along it, going either way, from a
+    /// `index` that seeds it (a route's own number; a town's supply cart,
+    /// whose route has `cart_odds` of 1, takes its store's).
+    pub(super) fn new(index: usize, route: &Route) -> Train {
         let mut rng = Rng::seeded(index as u32 * 7919 + route.len() as u32);
-        // Carts mostly on the routes that serve a town or the bazaar, and now
-        // and then between villages; the rest are walked by porters.
-        let trade = |s: Size| matches!(s, Size::Town | Size::Bazaar);
-        let cart = if trade(route.sizes.0) || trade(route.sizes.1) {
-            0.8
-        } else {
-            0.25
-        };
-        let load = if rng.unit() < cart {
+        let load = if rng.unit() < route.cart_odds {
             Load::Cart
         } else {
             Load::Porters(if rng.unit() < 0.5 { 1 } else { 2 })

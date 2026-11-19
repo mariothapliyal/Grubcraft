@@ -16,9 +16,9 @@ use glam::{Vec2, Vec3};
 use crate::effects::Field;
 use crate::siege::{Look, SMOKES_BELOW, Style};
 
-use super::bases::{LAMPS_FAR, LAMPS_NEAR, RESONANCE, WINDOW};
-use super::caravans::{Piece, Route, Seen, Train};
-use super::hamlets::{Size, route_clear};
+use super::bases::{MOST_DT, RESONANCE, WINDOW, hash, hash_of, lamp_fade};
+use super::caravans::{Piece, Route, Seen, Train, near_segment};
+use super::hamlets::route_clear;
 use super::villagers::Eyes;
 
 /// What a building is for in the life of a town, as the game reads it from
@@ -53,38 +53,9 @@ const FORGE_LAMP: f32 = 0.6;
 const LAMP_SIZE: f32 = 0.15;
 /// How far outside its door the forge's mouth is, in tiles.
 const MOUTH_OUT: f32 = 0.25;
-/// The most effects time one frame makes light for, in seconds.
-const MOST_DT: f32 = 0.25;
 /// How far outside its posts a lantern hangs, in tiles.
 const HANG: f32 = 0.12;
 const LANTERN_SIZE: f32 = 0.13;
-
-/// A number from 0 to 1 that stays with `id` and a `salt`.
-pub(super) fn hash_of(id: u64, salt: u32) -> f32 {
-    let mut x = (id as u32)
-        .wrapping_mul(0x9e37_79b1)
-        .wrapping_add(((id >> 32) as u32).wrapping_mul(0x85eb_ca6b))
-        .wrapping_add(salt.wrapping_mul(0xc2b2_ae35));
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2c1b_3c6d);
-    x ^= x >> 12;
-    (x >> 8) as f32 / (1 << 24) as f32
-}
-
-/// A number that stays with a building and a `salt`, from 0 to 1.
-fn hash(look: &Look, salt: u32) -> f32 {
-    hash_of(id_of(look.handle), salt)
-}
-
-/// The number a building's handle makes.
-pub fn id_of(handle: gc_sim::StructureHandle) -> u64 {
-    u64::from(handle.index) | u64::from(handle.generation) << 32
-}
-
-/// How much of full the camera at `distance` still sees of a small light.
-fn fade(distance: f32) -> f32 {
-    1.0 - ((distance - LAMPS_NEAR) / (LAMPS_FAR - LAMPS_NEAR)).clamp(0.0, 1.0)
-}
 
 /// How far from its middle a building's wall is along unit `dir`.
 fn reach_along(half: Vec2, dir: Vec2) -> f32 {
@@ -109,8 +80,9 @@ fn mouth(look: &Look) -> (Vec3, Vec2) {
     (Vec3::new(at.x, look.base + look.top * 0.22, at.y), facing)
 }
 
-/// Make this frame's touches of town life for the finished building `look`,
-/// which the viewer can see: forge sparks and glow, and, in a `walled` town,
+/// Make this frame's touches of town life for the building `look`, which
+/// the viewer can see: forge sparks and glow, and, with `walled` (the
+/// viewer's own town is walled: an enemy's ring is not for them to know),
 /// lanterns on its gates and towers at dusk. `dt` is the effects time since
 /// the last frame, `dusk` how dark the light is (0 by day to 1) and
 /// `distance` how far the camera is.
@@ -121,8 +93,7 @@ pub fn emit(look: &Look, walled: bool, dt: f32, dusk: f32, distance: f32, fx: &m
     let dt = dt.min(MOST_DT);
     match look.part {
         Part::Forge => forge(look, dt, dusk, distance, fx),
-        Part::Gate if walled => lanterns(look, dt, dusk, distance, fx),
-        Part::Tower if walled => lanterns(look, dt, dusk, distance, fx),
+        Part::Gate | Part::Tower if walled => lanterns(look, dt, dusk, distance, fx),
         _ => {}
     }
 }
@@ -134,39 +105,44 @@ fn forge(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
         return;
     }
     let (at, facing) = mouth(look);
-    let near = fade(distance);
-    if look.stuff.style == Style::Crystal {
-        let rate = BURSTS_DAY + BURSTS_DUSK * dusk;
+    let rate = BURSTS_DAY + BURSTS_DUSK * dusk;
+    let colour = if look.stuff.style == Style::Crystal {
         fx.drift(at, RESONANCE, rate * 2.0 * dt);
-        if dusk * near > 0.0 {
-            fx.lamp(at, RESONANCE, LAMP_SIZE, FORGE_LAMP * dusk * near, dt);
-        }
-        return;
-    }
-    let throw = Vec3::new(facing.x, 0.9, facing.y);
-    fx.forge(at, throw, BURSTS_DAY + BURSTS_DUSK * dusk, BURST_SPARKS, dt);
-    if dusk * near > 0.0 {
-        fx.lamp(at, FORGE_GLOW, LAMP_SIZE, FORGE_LAMP * dusk * near, dt);
+        RESONANCE
+    } else {
+        fx.forge(
+            at,
+            Vec3::new(facing.x, 0.9, facing.y),
+            rate,
+            BURST_SPARKS,
+            dt,
+        );
+        FORGE_GLOW
+    };
+    let level = FORGE_LAMP * dusk * lamp_fade(distance);
+    if level > 0.0 {
+        fx.lamp(at, colour, LAMP_SIZE, level, dt);
     }
 }
 
 /// Lanterns on a gate or a tower at dusk: one on each jamb of a gate's
 /// passage, one on a tower.
 fn lanterns(look: &Look, dt: f32, dusk: f32, distance: f32, fx: &mut Field) {
-    let level = dusk * fade(distance);
+    let level = dusk * lamp_fade(distance);
     if level <= 0.0 {
         return;
     }
-    for at in lantern_spots(look) {
+    let (spots, n) = lantern_spots(look);
+    for &at in &spots[..n] {
         fx.lamp(at, WINDOW, LANTERN_SIZE, level, dt);
     }
 }
 
-/// Where the lanterns of a gate or tower hang: for a gate, either side of
-/// the passage, which runs across its shorter side, hung on the posts at the
-/// ends of the longer; for a tower, one on a side of its wall picked from
-/// its handle. Just outside the walls.
-pub fn lantern_spots(look: &Look) -> Vec<Vec3> {
+/// Where the lanterns of a gate or tower hang, and how many: for a gate,
+/// either side of the passage, which runs across its shorter side, hung on
+/// the posts at the ends of the longer; for a tower, one on a side of its
+/// wall picked from its handle. Just outside the walls.
+pub fn lantern_spots(look: &Look) -> ([Vec3; 2], usize) {
     let size = look.max - look.min;
     let centre = look.centre();
     let y = look.base + look.top * 0.7;
@@ -179,35 +155,37 @@ pub fn lantern_spots(look: &Look) -> Vec<Vec3> {
             // The face the lanterns look out of is the same for both.
             let face = if hash(look, 50) < 0.5 { 1.0 } else { -1.0 };
             let front = reach_along(size / 2.0, across) + HANG;
-            [-1.0f32, 1.0]
-                .into_iter()
-                .map(|s| {
-                    let p = centre + along * (s * (end - 2.0 * HANG)) + across * (face * front);
-                    Vec3::new(p.x, y, p.y)
-                })
-                .collect()
+            let at = |s: f32| {
+                let p = centre + along * (s * (end - 2.0 * HANG)) + across * (face * front);
+                Vec3::new(p.x, y, p.y)
+            };
+            ([at(-1.0), at(1.0)], 2)
         }
         Part::Tower => {
             let a = (hash(look, 51) * std::f32::consts::TAU).sin_cos();
             let dir = Vec2::new(a.1, a.0);
             let out = reach_along(size / 2.0, dir) + HANG;
             let p = centre + dir * out;
-            vec![Vec3::new(p.x, look.base + look.top * 0.8, p.y)]
+            let at = Vec3::new(p.x, look.base + look.top * 0.8, p.y);
+            ([at, at], 1)
         }
-        _ => Vec::new(),
+        _ => ([Vec3::ZERO; 2], 0),
     }
 }
 
 /// A building as the town's carts see it: where it stands and what it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Site {
-    /// A number that stays with the building (see [`id_of`]).
+    /// A number that stays with the building (see [`super::id_of`]).
     pub id: u64,
     pub owner: u8,
     pub role: Role,
     pub part: Part,
     /// Whether it is done (an unfinished building is only in the way).
     pub finished: bool,
+    /// Whether the viewer sees its ground now (not only that they have seen
+    /// it once): carts are laid out for, and shown at, what they see.
+    pub visible: bool,
     pub min: Vec2,
     pub max: Vec2,
 }
@@ -221,10 +199,9 @@ impl Site {
         (self.max - self.min) / 2.0
     }
 
-    /// A building a cart stands beside or goes to: a store, or a hall that
-    /// takes what workers bring.
+    /// A building a cart stands beside or goes to: a store the viewer sees.
     fn is_store(&self) -> bool {
-        self.finished && self.part == Part::Store
+        self.finished && self.visible && self.part == Part::Store
     }
 
     /// Whether `p` is within `margin` tiles of its walls.
@@ -245,6 +222,10 @@ const CART_NOSE: f32 = 2.9;
 const CART_HALF: f32 = 0.85;
 /// How far a cart keeps clear of any building, in tiles.
 const CART_CLEAR: f32 = 0.3;
+/// How far a parked cart keeps from the supply cart's way, and how far
+/// past each of its stops that way is taken to reach (the ox's nose).
+const KEEP_FROM_ROUTE: f32 = 2.2;
+const ROUTE_ENDS: f32 = 3.0;
 /// Places tried for a parked cart, round the store.
 const PARK_TRIES: u32 = 8;
 /// A parked cart is laid out for stores this close to the camera's focus,
@@ -274,19 +255,39 @@ fn body(pos: Vec2, facing: Vec2) -> [Vec2; 7] {
     ]
 }
 
+/// The strip a supply cart on `route` takes up: its line, reaching past
+/// both stops, for a parked cart to keep off.
+fn route_strip(route: &Route) -> (Vec2, Vec2) {
+    let way = (route.to - route.from).normalize_or(Vec2::X);
+    (route.from - way * ROUTE_ENDS, route.to + way * ROUTE_ENDS)
+}
+
 /// Whether a cart at `pos` facing `facing` stands on free ground clear of
-/// every building of `sites`.
-fn fits(pos: Vec2, facing: Vec2, sites: &[Site], free: &impl Fn(Vec2) -> bool) -> bool {
-    body(pos, facing)
-        .iter()
-        .all(|&p| free(p) && !sites.iter().any(|s| s.near(p, CART_CLEAR)))
+/// every building of `sites` and of the supply cart's way `strip`.
+fn fits(
+    pos: Vec2,
+    facing: Vec2,
+    sites: &[Site],
+    free: &impl Fn(Vec2) -> bool,
+    strip: Option<(Vec2, Vec2)>,
+) -> bool {
+    body(pos, facing).iter().all(|&p| {
+        free(p)
+            && !sites.iter().any(|s| s.near(p, CART_CLEAR))
+            && strip.is_none_or(|(a, b)| near_segment(p, a, b) >= KEEP_FROM_ROUTE)
+    })
 }
 
 /// Where a cart stands beside the store `store`, hashed from its handle:
 /// outside its footprint, along one of its sides with its ox's nose along
-/// the wall, on `free` ground and clear of every other building of `sites`.
-/// `None` when nowhere round it fits.
-pub fn parking(store: &Site, sites: &[Site], free: &impl Fn(Vec2) -> bool) -> Option<Parked> {
+/// the wall, on `free` ground, clear of every other building of `sites`
+/// and of the supply cart's way `strip`. `None` when nowhere round it fits.
+pub fn parking(
+    store: &Site,
+    sites: &[Site],
+    free: &impl Fn(Vec2) -> bool,
+    strip: Option<(Vec2, Vec2)>,
+) -> Option<Parked> {
     let (centre, half) = (store.centre(), store.half());
     let first = (hash_of(store.id, 60) * 4.0) as u32 % 4;
     for k in 0..PARK_TRIES {
@@ -302,7 +303,7 @@ pub fn parking(store: &Site, sites: &[Site], free: &impl Fn(Vec2) -> bool) -> Op
         };
         let facing = way * turn;
         let pos = centre + dir * (reach_along(half, dir) + PARK_OUT) + way * slide;
-        if fits(pos, facing, sites, free) {
+        if fits(pos, facing, sites, free, strip) {
             return Some(Parked { pos, facing });
         }
     }
@@ -320,17 +321,21 @@ fn stops(main: &Site, store: &Site) -> (Vec2, Vec2) {
 /// How far a supply cart's stop is from the wall, in tiles: the cart's
 /// middle, so its ox's nose stays outside.
 const STOP_OUT: f32 = 3.2;
+/// A cart's look-ahead for a building across its way reaches this far past
+/// a stop, and is not heeded there: a building's own margin of ground
+/// (`Scenery::occupied_at`) would else turn it back short of the stop.
+const STOP_LOOK: f32 = 4.5;
 /// Stores nearer than this to their hall, centre to centre, get no cart;
 /// farther than `FAR_STORE` is too long a way for one.
 pub const NEAR_STORE: f32 = 12.0;
 const FAR_STORE: f32 = 60.0;
-/// How far a route keeps clear of buildings, in tiles, and how far apart
-/// its ground is looked at.
+/// How far a route keeps clear of buildings, in tiles.
 const ROUTE_CLEAR: f32 = 1.4;
-const ROUTE_STEP: f32 = 0.75;
 /// Supply carts run for stores this close to the camera's focus, in tiles.
 pub const RUN_REACH: f32 = 70.0;
-/// Seconds before a store that had no clear route is tried again.
+/// Seconds between looks at whether a store's hall, route and parked cart
+/// are as they were, and before a store with no route is tried again.
+const RECHECK: f32 = 2.0;
 const RETRY: f32 = 20.0;
 
 /// The route for a supply cart between `main` and `store`, if they stand
@@ -350,38 +355,98 @@ pub(super) fn supply_route(
         return None;
     }
     let (from, to) = stops(main, store);
-    let way = to - from;
     // The stops must not have crossed over on a short way.
-    if way.dot(store.centre() - main.centre()) <= 0.0 {
+    if (to - from).dot(store.centre() - main.centre()) <= 0.0 {
         return None;
     }
-    let steps = (way.length() / ROUTE_STEP).ceil().max(1.0) as usize;
-    let clear = (0..=steps).all(|i| {
-        let p = from.lerp(to, i as f32 / steps as f32);
+    route_clear(map, from, to, |p| {
         free(p) && !sites.iter().any(|s| s.near(p, ROUTE_CLEAR))
-    });
-    (clear && route_clear(map, from, to)).then_some(Route {
+    })
+    .then_some(Route {
         from,
         to,
-        sizes: (Size::Village, Size::Village),
+        cart_odds: 1.0,
     })
 }
 
-/// A supply cart on its way.
-struct Run {
-    route: Route,
-    train: Train,
+/// The nearest finished hall of `store`'s owner that the viewer sees.
+fn hall_of<'a>(store: &Site, sites: &'a [Site]) -> Option<&'a Site> {
+    sites
+        .iter()
+        .filter(|s| s.finished && s.visible && s.role == Role::Main && s.owner == store.owner)
+        .min_by(|a, b| {
+            let d = |s: &Site| s.centre().distance(store.centre());
+            d(a).total_cmp(&d(b))
+        })
+}
+
+/// What the town keeps for one store.
+#[derive(Default)]
+struct Store {
+    /// The hall its cart goes to, the way, and the cart on it.
+    hall: Option<u64>,
+    route: Option<Route>,
+    train: Option<Train>,
+    /// The cart standing beside it.
+    parked: Option<Parked>,
+    /// Seconds until the hall, the route and the parked cart are looked at
+    /// again, and until a store with no route is tried again.
+    recheck: f32,
+    retry: f32,
+}
+
+impl Store {
+    /// Look again at the store's hall (its nearest may have gone, or a
+    /// nearer one been finished), its route, and its parked cart (a building
+    /// may have been raised where it stands, or on the way).
+    fn look_again(
+        &mut self,
+        store: &Site,
+        near: bool,
+        sites: &[Site],
+        map: &Map,
+        free: &impl Fn(Vec2) -> bool,
+    ) {
+        self.recheck = RECHECK;
+        self.retry -= RECHECK;
+        let hall = hall_of(store, sites);
+        if hall.map(|h| h.id) != self.hall {
+            self.hall = hall.map(|h| h.id);
+            self.route = None;
+            self.train = None;
+            self.retry = 0.0;
+        }
+        if let (None, Some(hall), true) = (&self.route, hall, self.retry <= 0.0) {
+            self.route = supply_route(map, hall, store, sites, free);
+            match &self.route {
+                Some(route) => {
+                    let seed = (hash_of(store.id, 90) * 65_535.0) as usize;
+                    self.train = Some(Train::new(seed, route));
+                }
+                None => self.retry = RETRY,
+            }
+        }
+        self.parked = if near {
+            let strip = self.route.as_ref().map(route_strip);
+            (self.parked)
+                .filter(|p| fits(p.pos, p.facing, sites, free, strip))
+                .or_else(|| parking(store, sites, free, strip))
+        } else {
+            None
+        };
+    }
 }
 
 /// The town's carts: those parked by stores, and those going between a
 /// store and its hall.
 #[derive(Default)]
 pub struct Town {
-    parked: HashMap<u64, Parked>,
-    runs: HashMap<u64, Run>,
-    /// Stores with no route, and the seconds until they are tried again.
-    retry: HashMap<u64, f32>,
+    stores: HashMap<u64, Store>,
+    /// The stores laid out this frame, to forget the rest.
+    live: Vec<u64>,
     seen: Vec<Seen>,
+    /// Room for the game's list of buildings, kept between frames.
+    pub sites: Vec<Site>,
 }
 
 impl Town {
@@ -417,33 +482,20 @@ impl Town {
         occupied: impl Fn((i32, i32)) -> bool,
     ) {
         self.seen.clear();
-        let stores: Vec<&Site> = sites
-            .iter()
-            .filter(|s| s.is_store() && s.centre().distance(focus) <= RUN_REACH)
-            .collect();
-        // A store that is gone leaves nothing behind.
-        self.parked
-            .retain(|id, _| stores.iter().any(|s| s.id == *id));
-        self.runs.retain(|id, _| stores.iter().any(|s| s.id == *id));
-        self.retry
-            .retain(|id, _| stores.iter().any(|s| s.id == *id));
-        for store in stores {
-            // A cart by the store, put again if a building has been raised
-            // where it stands.
-            if store.centre().distance(focus) <= PARK_REACH {
-                let kept = self
-                    .parked
-                    .get(&store.id)
-                    .copied()
-                    .filter(|p| fits(p.pos, p.facing, sites, &free));
-                match kept.or_else(|| parking(store, sites, &free)) {
-                    Some(p) => self.parked.insert(store.id, p),
-                    None => self.parked.remove(&store.id),
-                };
-            } else {
-                self.parked.remove(&store.id);
+        self.live.clear();
+        for site in sites.iter().filter(|s| s.is_store()) {
+            let far = site.centre().distance(focus);
+            if far > RUN_REACH {
+                continue;
             }
-            if let Some(p) = self.parked.get(&store.id) {
+            self.live.push(site.id);
+            let near = far <= PARK_REACH;
+            let store = self.stores.entry(site.id).or_default();
+            store.recheck -= dt;
+            if store.recheck <= 0.0 {
+                store.look_again(site, near, sites, map, &free);
+            }
+            if let Some(p) = store.parked.filter(|_| near) {
                 self.seen.push(Seen {
                     piece: Piece::Cart,
                     pos: p.pos,
@@ -451,62 +503,24 @@ impl Town {
                     moving: false,
                     rolling: false,
                     rate: 1.0,
-                    phase: hash_of(store.id, 80) * 4.0,
+                    phase: hash_of(site.id, 80) * 4.0,
                 });
             }
-            self.supply(dt, store, sites, map, eyes, &free, &occupied);
-        }
-    }
-
-    /// The cart between `store` and its hall, if it has one.
-    #[allow(clippy::too_many_arguments)]
-    fn supply(
-        &mut self,
-        dt: f32,
-        store: &Site,
-        sites: &[Site],
-        map: &Map,
-        eyes: Eyes,
-        free: &impl Fn(Vec2) -> bool,
-        occupied: &impl Fn((i32, i32)) -> bool,
-    ) {
-        if !self.runs.contains_key(&store.id) {
-            if let Some(wait) = self.retry.get_mut(&store.id) {
-                *wait -= dt;
-                if *wait > 0.0 {
-                    return;
-                }
-            }
-            // The nearest finished hall of its owner.
-            let main = sites
-                .iter()
-                .filter(|s| s.finished && s.role == Role::Main && s.owner == store.owner)
-                .min_by(|a, b| {
-                    let d = |s: &Site| s.centre().distance(store.centre());
-                    d(a).total_cmp(&d(b))
-                });
-            let route = main.and_then(|m| supply_route(map, m, store, sites, free));
-            match route {
-                Some(route) => {
-                    self.retry.remove(&store.id);
-                    self.runs.insert(
-                        store.id,
-                        Run {
-                            train: Train::supply(store.id as u32 ^ (store.id >> 32) as u32, &route),
-                            route,
-                        },
-                    );
-                }
-                None => {
-                    self.retry.insert(store.id, RETRY);
-                    return;
-                }
+            if let (Some(route), Some(train)) = (&store.route, &mut store.train) {
+                // The look-ahead for a building across the way is not heeded
+                // by the stops, where the buildings it would see are the
+                // route's own two ends.
+                let ends = [route.from, route.to];
+                let across = |t: (i32, i32)| {
+                    let c = Vec2::new(t.0 as f32 + 0.5, t.1 as f32 + 0.5);
+                    ends.iter().all(|e| c.distance(*e) > STOP_LOOK) && occupied(t)
+                };
+                train.step(dt.min(MOST_DT), route, eyes, &across);
+                train.show(route, &mut self.seen);
             }
         }
-        if let Some(run) = self.runs.get_mut(&store.id) {
-            run.train.step(dt.min(MOST_DT), &run.route, eyes, occupied);
-            run.train.show(&run.route, &mut self.seen);
-        }
+        let live = &self.live;
+        self.stores.retain(|id, _| live.contains(id));
     }
 }
 
@@ -522,6 +536,15 @@ mod tests {
         armies: &[],
         fights: &[],
     };
+
+    /// A building's footprint and a tile's margin round it, as
+    /// `Scenery::occupied_at` marks it.
+    fn occupied_by(sites: &[Site]) -> impl Fn((i32, i32)) -> bool + '_ {
+        move |t| {
+            let c = Vec2::new(t.0 as f32 + 0.5, t.1 as f32 + 0.5);
+            sites.iter().any(|s| s.near(c, 1.0))
+        }
+    }
 
     fn open(_: Vec2) -> bool {
         true
@@ -652,8 +675,8 @@ mod tests {
     #[test]
     fn a_gate_has_a_lantern_each_side_of_its_passage_and_a_tower_one() {
         let g = gate();
-        let spots = lantern_spots(&g);
-        assert_eq!(spots.len(), 2);
+        let (spots, n) = lantern_spots(&g);
+        assert_eq!(n, 2);
         // The passage runs across the gate (along y here), so the two sit at
         // either end of its length, on one face and outside the walls.
         assert!(
@@ -663,8 +686,8 @@ mod tests {
         assert_eq!(spots[0].z, spots[1].z);
         assert!(spots.iter().all(|p| p.z < g.min.y || p.z > g.max.y));
         let t = tower();
-        let one = lantern_spots(&t);
-        assert_eq!(one.len(), 1);
+        let (one, n) = lantern_spots(&t);
+        assert_eq!(n, 1);
         let p = one[0];
         let inside = p.x > t.min.x && p.x < t.max.x && p.z > t.min.y && p.z < t.max.y;
         assert!(!inside, "{p:?}");
@@ -683,13 +706,13 @@ mod tests {
             assert!(glows(true, 1.0, 20.0) > 0);
             assert_eq!(glows(false, 1.0, 20.0), 0, "an open town");
             assert_eq!(glows(true, 0.0, 20.0), 0, "by day");
-            assert_eq!(glows(true, 1.0, LAMPS_FAR), 0, "far off");
+            assert_eq!(glows(true, 1.0, 200.0), 0, "far off");
             let strongest = |distance| {
                 let mut fx = Field::new(None);
                 emit(&l, true, 1.0 / 30.0, 1.0, distance, &mut fx);
                 (fx.take_glows().iter()).fold(0.0f32, |m, g| m.max(g.strength))
             };
-            assert!(strongest(20.0) > strongest(LAMPS_FAR - 5.0));
+            assert!(strongest(20.0) > strongest(65.0));
             let mut unfinished = l;
             unfinished.finished = false;
             assert_eq!(made(&unfinished, true, 1.0, 20.0, 5.0).len(), 0);
@@ -703,6 +726,7 @@ mod tests {
             role,
             part,
             finished: true,
+            visible: true,
             min: Vec2::new(min.0, min.1),
             max: Vec2::new(min.0 + size.0, min.1 + size.1),
         }
@@ -720,8 +744,8 @@ mod tests {
     fn a_parked_cart_stands_outside_the_store_and_is_the_same_each_time() {
         for id in 2..40 {
             let s = store(id, (50.0, 50.0));
-            let p = parking(&s, &[s], &open).expect("room on every side");
-            assert_eq!(parking(&s, &[s], &open), Some(p));
+            let p = parking(&s, &[s], &open, None).expect("room on every side");
+            assert_eq!(parking(&s, &[s], &open, None), Some(p));
             for q in body(p.pos, p.facing) {
                 assert!(!s.near(q, 0.0), "{id}: {q:?} is on the store");
             }
@@ -732,7 +756,7 @@ mod tests {
         let spots: Vec<_> = (2..12)
             .map(|id| {
                 let s = store(id, (50.0, 50.0));
-                parking(&s, &[s], &open).unwrap().pos
+                parking(&s, &[s], &open, None).unwrap().pos
             })
             .collect();
         assert!(spots.iter().any(|&p| p != spots[0]));
@@ -741,7 +765,7 @@ mod tests {
     #[test]
     fn a_parked_cart_keeps_off_other_buildings_and_out_of_water() {
         let s = store(2, (50.0, 50.0));
-        let first = parking(&s, &[s], &open).unwrap();
+        let first = parking(&s, &[s], &open, None).unwrap();
         // A building where it would stand: it goes elsewhere.
         let block = site(
             3,
@@ -752,9 +776,9 @@ mod tests {
             (2.0, 2.0),
         );
         let sites = [s, block];
-        let second = parking(&s, &sites, &open).unwrap();
+        let second = parking(&s, &sites, &open, None).unwrap();
         assert_ne!(second, first);
-        assert!(fits(second.pos, second.facing, &sites, &open));
+        assert!(fits(second.pos, second.facing, &sites, &open, None));
         // Ringed by buildings on every side: none.
         let ring: Vec<Site> = std::iter::once(s)
             .chain((0..4).map(|i| {
@@ -769,12 +793,39 @@ mod tests {
                 )
             }))
             .collect();
-        assert_eq!(parking(&s, &ring, &open), None);
+        assert_eq!(parking(&s, &ring, &open, None), None);
         // Water everywhere: none; water on one side only: the other.
-        assert_eq!(parking(&s, &[s], &|_| false), None);
+        assert_eq!(parking(&s, &[s], &|_| false, None), None);
         let wet = |p: Vec2| p.y < 50.0;
-        let dry = parking(&s, &[s], &wet).unwrap();
+        let dry = parking(&s, &[s], &wet, None).unwrap();
         assert!(body(dry.pos, dry.facing).iter().all(|&p| wet(p)));
+    }
+
+    #[test]
+    fn a_parked_cart_keeps_off_the_supply_carts_way() {
+        let (map, _) = flat();
+        let main = hall((20.0, 48.0));
+        for id in 2..40 {
+            let far = store(id, (50.0, 50.0));
+            let sites = [main, far];
+            let route = supply_route(&map, &main, &far, &sites, &open).expect("clear");
+            let strip = route_strip(&route);
+            let p = parking(&far, &sites, &open, Some(strip)).expect("room on another side");
+            for q in body(p.pos, p.facing) {
+                assert!(near_segment(q, strip.0, strip.1) >= KEEP_FROM_ROUTE, "{id}");
+            }
+        }
+        // Without the strip, some handle would park right on the way.
+        let on_the_way = (2..40).any(|id| {
+            let far = store(id, (50.0, 50.0));
+            let route = supply_route(&map, &main, &far, &[main, far], &open).unwrap();
+            let strip = route_strip(&route);
+            let p = parking(&far, &[main, far], &open, None).unwrap();
+            body(p.pos, p.facing)
+                .iter()
+                .any(|&q| near_segment(q, strip.0, strip.1) < KEEP_FROM_ROUTE)
+        });
+        assert!(on_the_way);
     }
 
     #[test]
@@ -827,70 +878,94 @@ mod tests {
     }
 
     fn step(t: &mut Town, map: &Map, sites: &[Site], seconds: f32, eyes: Eyes) {
-        for _ in 0..(seconds * 10.0) as usize {
-            t.advance(0.1, Vec2::new(55.0, 41.0), eyes, map, sites, open, |_| {
-                false
-            });
+        let occupied = occupied_by(sites);
+        for _ in 0..(seconds * 10.0).round() as usize {
+            t.advance(
+                0.1,
+                Vec2::new(55.0, 41.0),
+                eyes,
+                map,
+                sites,
+                open,
+                &occupied,
+            );
         }
     }
 
     fn carts(t: &Town) -> Vec<Seen> {
-        t.seen()
-            .iter()
-            .copied()
+        (t.seen().iter().copied())
             .filter(|s| s.piece == Piece::Cart)
             .collect()
     }
 
     #[test]
-    fn a_store_gets_a_parked_cart_and_a_far_one_a_cart_that_goes() {
+    fn a_store_gets_a_parked_cart_and_a_far_one_a_cart_that_reaches_both_stops_and_unloads() {
         let (mut t, map, sites) = town_with_cart();
         step(&mut t, &map, &sites, 1.0, QUIET);
         // Parked and running: two carts, one standing and one on the road
         // or waiting at a stop.
         assert_eq!(carts(&t).len(), 2);
         assert!(carts(&t).iter().any(|c| !c.moving && !c.rolling));
-        // The runner goes the whole way between the stops and waits there.
-        let run = t.runs[&2].route;
+        // With buildings that mark a margin of ground round them, as the
+        // game's do, the runner still goes the whole way between the stops
+        // and unloads there (a long wait, not the short pause for a
+        // building across the way).
+        let run = t.stores[&2].route.unwrap();
         let (mut far, mut near) = (0.0f32, f32::MAX);
+        let (mut unloaded_far, mut unloaded_near) = (false, false);
         for _ in 0..(run.len() / super::super::caravans::CART_PACE * 4.0 + 60.0) as usize * 10 {
-            t.advance(
-                0.1,
-                Vec2::new(55.0, 41.0),
-                QUIET,
-                &map,
-                &sites,
-                open,
-                |_| false,
-            );
-            let along = t.runs[&2].train.along;
+            step(&mut t, &map, &sites, 0.1, QUIET);
+            let train = t.stores[&2].train.as_ref().unwrap();
+            let (along, wait) = (train.along, train.unload);
             far = far.max(along);
             near = near.min(along);
+            unloaded_far |= along > run.len() - 0.5 && wait > 7.0;
+            unloaded_near |= along < 0.5 && wait > 7.0;
         }
-        assert!(
-            far > run.len() - 0.5 && near < 0.5,
-            "{near} {far} of {}",
-            run.len()
-        );
+        assert!(far > run.len() - 0.5 && near < 0.5, "{near} {far}");
+        assert!(unloaded_far && unloaded_near);
     }
 
     #[test]
     fn a_fight_near_stops_the_supply_cart() {
         let (mut t, map, sites) = town_with_cart();
         step(&mut t, &map, &sites, 1.0, QUIET);
-        let at = t.runs[&2].route.at(t.runs[&2].train.along);
-        let fight = [at + Vec2::new(10.0, 0.0)];
+        // Put it on the road, not waiting at an end.
+        let s = t.stores.get_mut(&2).unwrap();
+        let train = s.train.as_mut().unwrap();
+        (train.along, train.unload) = (s.route.unwrap().len() / 2.0, 0.0);
+        let at = |t: &Town| {
+            let s = &t.stores[&2];
+            s.route.unwrap().at(s.train.as_ref().unwrap().along)
+        };
+        let fight = [at(&t) + Vec2::new(10.0, 0.0)];
         let eyes = Eyes {
             armies: &[],
             fights: &fight,
         };
-        let before = t.runs[&2].train.along;
+        let along = |t: &Town| t.stores[&2].train.as_ref().unwrap().along;
+        let before = along(&t);
         step(&mut t, &map, &sites, 10.0, eyes);
-        assert_eq!(t.runs[&2].train.along, before);
-        assert!(t.runs[&2].train.still);
+        assert_eq!(along(&t), before);
         // Quiet again: it goes on.
         step(&mut t, &map, &sites, 15.0, QUIET);
-        assert_ne!(t.runs[&2].train.along, before);
+        assert_ne!(along(&t), before);
+    }
+
+    #[test]
+    fn the_supply_cart_does_not_drive_through_the_parked_one() {
+        let (map, _) = flat();
+        for id in 2..30 {
+            let sites = vec![hall((20.0, 48.0)), store(id, (50.0, 50.0))];
+            let mut t = Town::default();
+            step(&mut t, &map, &sites, 2.5, QUIET);
+            let s = &t.stores[&id];
+            let (route, parked) = (s.route.unwrap(), s.parked.expect("a place"));
+            let strip = route_strip(&route);
+            for q in body(parked.pos, parked.facing) {
+                assert!(near_segment(q, strip.0, strip.1) >= KEEP_FROM_ROUTE);
+            }
+        }
     }
 
     #[test]
@@ -905,17 +980,51 @@ mod tests {
             open,
             |_| false,
         );
-        assert!(t.seen().is_empty() && t.runs.is_empty() && t.parked.is_empty());
+        assert!(t.seen().is_empty() && t.stores.is_empty());
         step(&mut t, &map, &sites, 1.0, QUIET);
         assert!(!t.seen().is_empty());
         sites.pop();
         step(&mut t, &map, &sites, 0.2, QUIET);
-        assert!(t.seen().is_empty() && t.runs.is_empty() && t.parked.is_empty());
+        assert!(t.seen().is_empty() && t.stores.is_empty());
         // An unfinished store has none yet.
         let mut sites = town_with_cart().2;
         sites[1].finished = false;
         step(&mut t, &map, &sites, 1.0, QUIET);
         assert!(t.seen().is_empty());
+    }
+
+    #[test]
+    fn a_store_the_viewer_does_not_see_now_gets_no_cart() {
+        let (mut t, map, mut sites) = town_with_cart();
+        sites[1].visible = false;
+        step(&mut t, &map, &sites, 3.0, QUIET);
+        assert!(t.seen().is_empty() && t.stores.is_empty());
+        // A hall out of sight is no hall to go to: the parked cart only.
+        let (mut t, map, mut sites) = town_with_cart();
+        sites[0].visible = false;
+        step(&mut t, &map, &sites, 3.0, QUIET);
+        assert_eq!(carts(&t).len(), 1);
+        assert!(t.stores[&2].route.is_none());
+    }
+
+    #[test]
+    fn the_cart_follows_its_hall_gone_or_a_nearer_one_finished() {
+        let (mut t, map, mut sites) = town_with_cart();
+        step(&mut t, &map, &sites, 3.0, QUIET);
+        assert_eq!(t.stores[&2].hall, Some(1));
+        // A nearer hall: the route is made again, to it.
+        let mut nearer = hall((50.0, 56.0));
+        nearer.id = 5;
+        sites.push(nearer);
+        step(&mut t, &map, &sites, 3.0, QUIET);
+        assert_eq!(t.stores[&2].hall, Some(5));
+        let route = t.stores[&2].route.expect("a way to the nearer hall");
+        assert!(route.from.y > 50.0, "{route:?}");
+        // No hall: no cart on the road.
+        sites.retain(|s| s.role != Role::Main);
+        step(&mut t, &map, &sites, 3.0, QUIET);
+        assert!(t.stores[&2].route.is_none() && t.stores[&2].train.is_none());
+        assert_eq!(carts(&t).len(), 1);
     }
 
     #[test]
@@ -925,7 +1034,7 @@ mod tests {
         let mut t = Town::default();
         step(&mut t, &map, &sites, 1.0, QUIET);
         assert_eq!(carts(&t).len(), 1);
-        assert!(t.runs.is_empty());
+        assert!(t.stores[&2].route.is_none());
     }
 
     #[test]
@@ -944,7 +1053,8 @@ mod tests {
             (was.x - 1.0, was.y - 1.0),
             (2.0, 2.0),
         ));
-        step(&mut t, &map, &sites, 0.5, QUIET);
+        // It is looked at again every couple of seconds.
+        step(&mut t, &map, &sites, RECHECK + 0.5, QUIET);
         let now = carts(&t)[0].pos;
         assert_ne!(now, was);
         assert!(!sites[2].near(now, 0.0));

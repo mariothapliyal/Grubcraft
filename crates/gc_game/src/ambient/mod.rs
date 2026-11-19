@@ -19,6 +19,11 @@ pub mod wildlife;
 
 use glam::Vec2;
 
+/// The number a building's handle makes: what ambient things key on.
+pub fn id_of(handle: gc_sim::StructureHandle) -> u64 {
+    u64::from(handle.index) | u64::from(handle.generation) << 32
+}
+
 pub use birds::Birds;
 pub use caravans::Caravans;
 pub use felling::{Felling, Style};

@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
+use crate::scenery::Scenery;
+
 /// How far from the camera's focus walkers are kept, in tiles, how far past
 /// a wall their door stands, and how far above the water the ground must
 /// be for them to walk on it.
@@ -34,6 +36,18 @@ pub const MOST: usize = 160;
 /// steepest climb over one such step a walker will take.
 const STEP: f32 = 0.4;
 const STEEPEST: f32 = 0.3;
+
+/// Whether the ground at a point is dry and bare of trees: where walkers and
+/// town carts may go.
+pub fn open_ground<'a>(map: &'a gc_map::Map, scenery: &'a Scenery) -> impl Fn(Vec2) -> bool + 'a {
+    let dry = map.water_level() + SHORE;
+    move |p| {
+        map.height_at(p.x, p.y) > dry
+            && !scenery
+                .standing((p.x.floor() as i32, p.y.floor() as i32))
+                .any(|s| s.tree)
+    }
+}
 
 /// A building a walker can start from or go to, as the game shows it.
 #[derive(Clone, Copy, Debug, PartialEq)]

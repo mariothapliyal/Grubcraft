@@ -4778,10 +4778,14 @@ impl Running {
                         view_distance,
                         &mut self.effects,
                     );
-                    // Forge sparks, and lanterns on a walled town's gates and towers.
+                    // Forge sparks, and lanterns on the gates and towers of the
+                    // viewer's own walled town (an enemy's ring is not for
+                    // them to see closed).
+                    let walled = (reveal || look.owner == self.sandbox.side)
+                        && self.world.walled_town(look.owner);
                     ambient::town::emit(
                         look,
-                        self.world.walled_town(look.owner),
+                        walled,
                         dt.as_secs_f32() * fx_speed,
                         dusk,
                         view_distance,
@@ -4802,16 +4806,10 @@ impl Running {
                 Vec::new()
             };
             let (hm, scenery) = (&self.heightmap, &self.scenery);
-            let dry = hm.water_level() + ambient::walkers::SHORE;
             self.ambient.walkers.advance(
                 dt.as_secs_f32() * fx_speed,
                 &homes,
-                |p| {
-                    hm.height_at(p.x, p.y) > dry
-                        && !scenery
-                            .standing((p.x.floor() as i32, p.y.floor() as i32))
-                            .any(|s| s.tree)
-                },
+                ambient::walkers::open_ground(hm, scenery),
                 |a, b| (hm.height_at(b.x, b.y) - hm.height_at(a.x, a.y)).abs(),
             );
         }
@@ -4900,23 +4898,20 @@ impl Running {
                         scenery.occupied_at(t)
                     });
                 // Carts by the stores, and between a far store and its hall.
-                let sites = self.town_sites(view_focus);
-                let dry = heightmap.water_level() + ambient::walkers::SHORE;
+                // (Buildings are the sites' business: `occupied_at` also
+                // covers a margin round each, where the carts stand.)
+                let mut sites = std::mem::take(&mut self.ambient.town.sites);
+                self.town_sites(view_focus, &mut sites);
                 self.ambient.town.advance(
                     step,
                     view_focus,
                     eyes,
                     heightmap,
                     &sites,
-                    |p| {
-                        let tile = (p.x.floor() as i32, p.y.floor() as i32);
-                        // Buildings are `sites`' business (`occupied_at` also
-                        // covers a margin round each, where the carts stand).
-                        heightmap.height_at(p.x, p.y) > dry
-                            && !scenery.standing(tile).any(|s| s.tree)
-                    },
+                    ambient::walkers::open_ground(heightmap, scenery),
                     |t| scenery.occupied_at(t),
                 );
+                self.ambient.town.sites = sites;
             } else {
                 self.ambient.wildlife.hush();
                 self.ambient.birds.hush();
@@ -8881,25 +8876,30 @@ impl Running {
 
     /// The buildings the viewer sees near `focus`, as the town's carts see
     /// them: what stores they park beside and go to, and what is in the way.
-    fn town_sites(&self, focus: Vec2) -> Vec<ambient::town::Site> {
-        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, self.reveal_all);
+    fn town_sites(&self, focus: Vec2, out: &mut Vec<ambient::town::Site>) {
+        let (reveal, fog) = (self.reveal_all, &self.fog);
+        let shown = buildings::shown_to(&self.buildings, self.sandbox.side, reveal);
         let reach = ambient::town::RUN_REACH + 16.0;
-        (self.world.structures().into_iter())
-            .flat_map(gc_sim::Structures::iter)
-            .filter(|s| shown(s))
-            .filter_map(|s| {
-                let look = self.siege.look(s.handle)?;
-                (look.centre().distance(focus) <= reach).then_some(ambient::town::Site {
-                    id: ambient::town::id_of(s.handle),
-                    owner: look.owner,
-                    role: look.role,
-                    part: look.part,
-                    finished: look.finished,
-                    min: look.min,
-                    max: look.max,
-                })
-            })
-            .collect()
+        out.clear();
+        out.extend(
+            (self.world.structures().into_iter())
+                .flat_map(gc_sim::Structures::iter)
+                .filter(|s| shown(s))
+                .filter_map(|s| {
+                    let look = self.siege.look(s.handle)?;
+                    let c = look.centre();
+                    (c.distance(focus) <= reach).then_some(ambient::town::Site {
+                        id: ambient::id_of(s.handle),
+                        owner: look.owner,
+                        role: look.role,
+                        part: look.part,
+                        finished: look.finished,
+                        visible: reveal || fog.sees_tile((c.x.floor() as i32, c.y.floor() as i32)),
+                        min: look.min,
+                        max: look.max,
+                    })
+                }),
+        );
     }
 
     /// The buildings walkers start from, go to and walk round: those the
@@ -8934,7 +8934,7 @@ impl Running {
             let done = s.finished() && on_screen;
             let worker = art.looks.worker_of(s.building);
             homes.push(ambient::walkers::Home {
-                id: u64::from(s.handle.index) | u64::from(s.handle.generation) << 32,
+                id: ambient::id_of(s.handle),
                 owner: s.owner,
                 lives: done
                     && matches!(
