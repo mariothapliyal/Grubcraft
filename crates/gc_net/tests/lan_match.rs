@@ -11,7 +11,9 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use gc_net::net::{MemoryNet, Net};
 use gc_net::proto::{HEADER_LEN, Kind, header};
 use gc_net::wire::Writer;
-use gc_net::{HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, TURN};
+use gc_net::{
+    HASH_EVERY, INPUT_DELAY, Identity, Lan, MIN_DELAY, MatchEvent, PingKind, TURN, kit,
+};
 use gc_replay::{Recorder, Replay};
 use gc_sim::scenario::{DRILL_UNITS, Drill};
 use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, World};
@@ -144,6 +146,17 @@ impl Match {
     /// Host a lobby on `net`, let `names` join and get ready, fill `ai`
     /// slots with computer players, and start.
     fn on(net: &MemoryNet, names: &[&str], ai: &[usize], on_drop: OnDrop) -> Match {
+        Match::teamed(net, names, ai, on_drop, &[])
+    }
+
+    /// As [`Match::on`], with slot `i` on team `teams[i]`.
+    fn teamed(
+        net: &MemoryNet,
+        names: &[&str],
+        ai: &[usize],
+        on_drop: OnDrop,
+        teams: &[u8],
+    ) -> Match {
         let mut host = lan(net);
         host.host(
             &profile("Mario"),
@@ -162,6 +175,13 @@ impl Match {
         }
         for &slot in ai {
             lans[0].edit_slot(slot, SlotEdit::Kind(SlotKind::Ai));
+        }
+        // Each human picks their own team; the host picks the AI's.
+        for (slot, &team) in teams.iter().enumerate() {
+            let editor = if slot <= names.len() { slot } else { 0 };
+            let mine = lans[editor].lobby().unwrap().local_slot;
+            let slot = if editor == 0 { slot } else { mine };
+            lans[editor].edit_slot(slot, SlotEdit::Team(team));
         }
         for l in &mut lans[1..] {
             let me = l.lobby().unwrap().local_slot;
@@ -986,3 +1006,194 @@ fn nothing_readable_crosses_the_network() {
 
 // Desync reports reach back as far as the host compares hashes.
 const _: () = assert!(gc_replay::SYSTEM_TRAIL >= gc_net::HASHES_KEPT);
+
+/// The match kit's tests: Mario (host) and Alex on team 0, Sam on team 1.
+fn kit_match() -> Match {
+    Match::teamed(
+        &MemoryNet::new(SEED),
+        &["Alex", "Sam"],
+        &[],
+        OnDrop::Wait,
+        &[0, 0, 1],
+    )
+}
+
+fn chats(events: &[MatchEvent]) -> Vec<(String, bool, String)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            MatchEvent::Chat {
+                from, team, text, ..
+            } => Some((from.clone(), *team, text.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn chat_goes_to_the_team_or_to_everyone() {
+    let mut m = kit_match();
+    m.run(&[], 20, Match::turns(20));
+    for l in &mut m.lans {
+        l.match_events();
+    }
+    m.lans[1].chat(true, "  flank left\n");
+    m.lans[2].chat(false, "gg");
+    m.lans[0].chat(true, "on it");
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    let line = |from: &str, team, text: &str| (from.to_string(), team, text.to_string());
+    let host = chats(&m.lans[0].match_events());
+    assert!(host.contains(&line("Alex", true, "flank left")), "{host:?}");
+    assert!(host.contains(&line("Sam", false, "gg")), "{host:?}");
+    assert!(host.contains(&line("Mario", true, "on it")), "{host:?}");
+    let alex = chats(&m.lans[1].match_events());
+    assert_eq!(alex.len(), 3, "{alex:?}");
+    let sam = chats(&m.lans[2].match_events());
+    assert_eq!(sam, [line("Sam", false, "gg")], "team lines stay in the team");
+
+    // A flood is cut to a few lines; empty lines go nowhere.
+    m.run(&[], u32::MAX, kit::CHAT_WINDOW);
+    for i in 0..9 {
+        m.lans[2].chat(false, &format!("spam {i}"));
+    }
+    m.lans[2].chat(false, "   ");
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    let host = chats(&m.lans[0].match_events());
+    assert_eq!(host.len(), gc_net::kit::CHAT_BURST, "{host:?}");
+}
+
+#[test]
+fn pings_reach_allies_only() {
+    let mut m = kit_match();
+    m.run(&[], 20, Match::turns(20));
+    for l in &mut m.lans {
+        l.match_events();
+    }
+    m.lans[1].ping(PingKind::Attack, [40.5, 100.25]);
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    let pings = |events: Vec<MatchEvent>| -> Vec<(String, PingKind, [f32; 2])> {
+        events
+            .into_iter()
+            .filter_map(|e| match e {
+                MatchEvent::Ping { from, kind, at, .. } => Some((from, kind, at)),
+                _ => None,
+            })
+            .collect()
+    };
+    let attack = ("Alex".to_string(), PingKind::Attack, [40.5, 100.25]);
+    assert_eq!(pings(m.lans[0].match_events()), [attack.clone()]);
+    assert_eq!(pings(m.lans[1].match_events()), [attack]);
+    assert_eq!(pings(m.lans[2].match_events()), []);
+}
+
+#[test]
+fn a_pause_stops_everyone_and_each_player_has_three() {
+    let mut m = kit_match();
+    m.run(&[], 100, Match::turns(100));
+    assert_eq!(m.ticks(), [100; 3]);
+    m.lans[1].toggle_pause();
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    let held = m.ticks();
+    let sam = m.lans[2].hold().unwrap();
+    assert_eq!((sam.who.as_str(), sam.can_resume), ("Alex", false));
+    assert!(m.lans[0].waiting().unwrap().starts_with("Match paused by Alex"));
+    assert_eq!(m.lans[1].pauses_left(), Some(2));
+    // Sam can't carry on yet; Alex can.
+    m.lans[2].toggle_pause();
+    m.run(&[], u32::MAX, Duration::from_secs(2));
+    assert_eq!(m.ticks(), held, "the match stood still");
+    m.lans[1].toggle_pause();
+    let target = held[0] + 100;
+    m.run(&[], target, Match::turns(100));
+    assert_eq!(m.ticks(), [target; 3]);
+    assert_eq!(m.lans[2].hold(), None);
+
+    // After a while anyone may carry on.
+    m.lans[1].toggle_pause();
+    m.run(&[], u32::MAX, kit::RESUME_AFTER + Duration::from_millis(500));
+    assert!(m.lans[2].hold().unwrap().can_resume);
+    m.lans[2].toggle_pause();
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    assert_eq!(m.lans[0].hold(), None);
+
+    // A pause runs out by itself.
+    m.lans[1].toggle_pause();
+    m.run(&[], u32::MAX, kit::PAUSE_LONGEST + Duration::from_secs(1));
+    assert_eq!(m.lans[1].hold(), None);
+    assert_eq!(m.lans[1].pauses_left(), Some(0));
+    assert!(notice(
+        &m.lans[2].match_events(),
+        "The pause ran out: carrying on."
+    ));
+
+    // A fourth is refused.
+    m.lans[1].toggle_pause();
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    assert_eq!(m.lans[0].hold(), None);
+    assert!(notice(
+        &m.lans[1].match_events(),
+        "You have no pauses left in this match."
+    ));
+    let target = m.ticks()[0] + 50;
+    m.run(&[], target, Match::turns(50));
+    m.settle();
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+}
+
+#[test]
+fn a_team_surrenders_when_every_human_on_it_says_yes() {
+    let mut m = kit_match();
+    m.run(&[], 50, Match::turns(50));
+    // Alex calls a vote; Mario says no.
+    m.lans[1].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    let vote = m.lans[0].surrender_vote().unwrap();
+    assert_eq!((vote.by.as_str(), vote.yes, vote.needed), ("Alex", 1, 2));
+    assert!(!vote.voted);
+    assert!(m.lans[1].surrender_vote().unwrap().voted);
+    assert_eq!(m.lans[2].surrender_vote(), None, "the enemy doesn't see it");
+    m.lans[0].surrender(false);
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    assert_eq!(m.lans[1].surrender_vote(), None);
+    assert!(notice(
+        &m.lans[1].match_events(),
+        "Mario voted not to surrender."
+    ));
+    // Alex must wait to call another.
+    m.lans[1].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(500));
+    assert_eq!(m.lans[0].surrender_vote(), None);
+    assert!(
+        m.lans[1]
+            .match_events()
+            .iter()
+            .any(|e| matches!(e, MatchEvent::Notice(t) if t.starts_with("You can call another")))
+    );
+
+    // Sam is a team of one: their vote passes at once, and every world
+    // has Sam concede on the same turn.
+    m.lans[2].surrender(true);
+    let target = m.ticks()[0] + 50;
+    m.run(&[], target, Match::turns(50));
+    m.settle();
+    assert!(m.worlds.iter().all(|w| w.has_conceded(2)));
+    assert!(m.worlds.iter().all(|w| !w.has_conceded(0) && !w.has_conceded(1)));
+    assert!(m.same_worlds());
+    assert!(notice(&m.lans[1].match_events(), "Sam surrendered."));
+    // Once surrendered, a team calls no more votes.
+    m.lans[2].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(300));
+    assert_eq!(m.lans[2].surrender_vote(), None);
+
+    // Mario calls, Alex agrees: both concede.
+    m.lans[0].surrender(true);
+    m.run(&[], u32::MAX, Duration::from_millis(300));
+    m.lans[1].surrender(true);
+    let target = m.ticks()[0] + 50;
+    m.run(&[], target, Match::turns(50));
+    m.settle();
+    assert!(m.worlds.iter().all(|w| w.has_conceded(0) && w.has_conceded(1)));
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+}

@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
-use gc_sim::{PlayerCommand, PlayerId};
+use gc_sim::{Command, PlayerCommand, PlayerId};
 use gc_ui::lobby::{
     COLORS, DEFAULT_AI_LEVEL, DiscoveredGame, LobbySettings, LobbyState, MAX_ARMY, MAX_PLAYERS,
     MatchStart, NetError, NetEvent, Network, OnDrop, Profile, Slot, SlotEdit, SlotKind, apply_edit,
@@ -15,10 +15,14 @@ use gc_ui::lobby::{
 
 use crate::crypt::{Cipher, KeyPair};
 use crate::joincode;
+use crate::kit::{
+    self, Burst, CHAT_BURST, CHAT_WINDOW, Hold, HoldView, PAUSE_LONGEST, PAUSES_EACH, PING_BURST,
+    PING_WINDOW, PingKind, VOTE_AGAIN_AFTER, VOTE_TIME, Vote, VoteView, clean_chat, name_of,
+};
 use crate::link::Link;
 use crate::net::{Net, Socket, Udp};
 use crate::proto::{
-    Beacon, Kind, LobbyWire, MAX_PACKET, Msg, PROTOCOL, header, read_header, short_name,
+    Beacon, Kind, LobbyWire, MAX_PACKET, Msg, NOBODY, PROTOCOL, header, read_header, short_name,
 };
 use crate::wire::{Reader, Writer, command_size};
 
@@ -113,8 +117,24 @@ pub struct Identity {
 }
 
 /// Things that happen during a match, for the game to show.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MatchEvent {
+    /// A chat line from `player` (this machine's own lines too), for their
+    /// team or for everyone.
+    Chat {
+        player: PlayerId,
+        from: String,
+        team: bool,
+        text: String,
+    },
+    /// An ally (or this machine's player) pinged a point on the map, in
+    /// tiles.
+    Ping {
+        player: PlayerId,
+        from: String,
+        kind: PingKind,
+        at: [f32; 2],
+    },
     /// A line to show the players ("Alex lost connection").
     Notice(String),
     /// A player's world no longer matches the host's from `tick`; time to
@@ -196,6 +216,54 @@ struct HostGame {
     /// Players' hashes not yet compared: (player, tick, hash).
     theirs: Vec<(PlayerId, u32, u64)>,
     desynced: Vec<PlayerId>,
+    kit: HostKit,
+}
+
+/// The host's side of the match kit ([`crate::kit`]), by player.
+struct HostKit {
+    names: Vec<String>,
+    teams: Vec<u8>,
+    humans: Vec<bool>,
+    chat: Vec<Burst>,
+    pings: Vec<Burst>,
+    /// The pause under way, if any.
+    hold: Option<Hold>,
+    pauses_used: Vec<u8>,
+    /// Open surrender votes, by team.
+    votes: Vec<(u8, Vote)>,
+    /// When each player may call another surrender vote.
+    vote_again: Vec<Option<Instant>>,
+    /// Teams that have surrendered.
+    surrendered: Vec<u8>,
+}
+
+impl HostKit {
+    fn new(start: &MatchStart) -> HostKit {
+        let n = start.players.len();
+        HostKit {
+            names: start.players.iter().map(|s| s.name.clone()).collect(),
+            teams: start.players.iter().map(|s| s.team).collect(),
+            humans: (start.players.iter())
+                .map(|s| s.kind == SlotKind::Human)
+                .collect(),
+            chat: vec![Burst::default(); n],
+            pings: vec![Burst::default(); n],
+            hold: None,
+            pauses_used: vec![0; n],
+            votes: Vec::new(),
+            vote_again: vec![None; n],
+            surrendered: Vec::new(),
+        }
+    }
+
+    fn team(&self, player: PlayerId) -> Option<u8> {
+        self.teams.get(usize::from(player)).copied()
+    }
+
+    fn pauses_left(&self, player: PlayerId) -> u8 {
+        let used = self.pauses_used.get(usize::from(player)).copied();
+        PAUSES_EACH.saturating_sub(used.unwrap_or(PAUSES_EACH))
+    }
 }
 
 struct Host {
@@ -218,6 +286,14 @@ struct ClientGame {
     on_drop: OnDrop,
     /// Paused by the host while someone reconnects: who, and until when.
     wait: Option<(String, Instant)>,
+    /// The match kit as the host tells it: names by player, a
+    /// player's pause, this player's pauses left and its team's vote.
+    names: Vec<String>,
+    hold: Option<Hold>,
+    pauses_left: u8,
+    vote: Option<Vote>,
+    chat: Burst,
+    pings: Burst,
     /// Turn bundles received and not yet simulated, in turn order.
     ready: VecDeque<Vec<PlayerCommand>>,
     next_turn: u32,
@@ -355,6 +431,9 @@ impl Lan {
                         left.as_secs()
                     ));
                 }
+                if let Some(hold) = &g.kit.hold {
+                    return Some(paused_line(&g.kit.names, hold, now));
+                }
                 if g.go_at.is_some() {
                     return None;
                 }
@@ -386,6 +465,9 @@ impl Lan {
                         "Paused: waiting for {who} to reconnect ({} s)",
                         left.as_secs()
                     ));
+                }
+                if let Some(hold) = &g.hold {
+                    return Some(paused_line(&g.names, hold, now));
                 }
                 (g.next_turn == 0 && g.ready.is_empty())
                     .then(|| "Waiting for the other players...".to_string())
@@ -955,6 +1037,27 @@ impl Lan {
                 let text = format!("{} left.", h.peers[index].name);
                 self.peer_gone(index, text, now);
             }
+            Msg::Chat { team, text } => {
+                if let Some(player) = h.peers[index].player {
+                    self.kit_chat(player, team, &text, now);
+                }
+            }
+            Msg::Ping { kind, x, y } => {
+                if let (Some(player), Some(kind)) = (h.peers[index].player, PingKind::from_u8(kind))
+                {
+                    self.kit_ping(player, kind, kit::from_wire(x, y), now);
+                }
+            }
+            Msg::Surrender { yes } => {
+                if let Some(player) = h.peers[index].player {
+                    self.kit_surrender(player, yes, now);
+                }
+            }
+            Msg::Pause { on } => {
+                if let Some(player) = h.peers[index].player {
+                    self.kit_pause(player, on, now);
+                }
+            }
             // Only the host sends the rest.
             _ => {}
         }
@@ -996,6 +1099,12 @@ impl Lan {
                     delay: u32::from(input_delay),
                     on_drop: settings.on_drop,
                     wait: None,
+                    names: players.iter().map(|s| s.name.clone()).collect(),
+                    hold: None,
+                    pauses_left: PAUSES_EACH,
+                    vote: None,
+                    chat: Burst::default(),
+                    pings: Burst::default(),
                     ready: VecDeque::new(),
                     next_turn: 0,
                     due: None,
@@ -1040,6 +1149,56 @@ impl Lan {
             }
             Msg::Desync { tick } if c.game.is_some() => {
                 self.match_events.push(MatchEvent::Desync { tick });
+            }
+            Msg::Said { from, team, text } => {
+                if let (Some(g), Some(text)) = (&c.game, clean_chat(&text)) {
+                    self.match_events.push(MatchEvent::Chat {
+                        player: from,
+                        from: name_of(&g.names, from),
+                        team,
+                        text,
+                    });
+                }
+            }
+            Msg::Pinged { from, kind, x, y } => {
+                if let (Some(g), Some(kind)) = (&c.game, PingKind::from_u8(kind)) {
+                    self.match_events.push(MatchEvent::Ping {
+                        player: from,
+                        from: name_of(&g.names, from),
+                        kind,
+                        at: kit::from_wire(x, y),
+                    });
+                }
+            }
+            Msg::Vote {
+                by,
+                yes,
+                needed,
+                seconds,
+            } => {
+                let now = self.net.now();
+                if let Some(g) = &mut c.game {
+                    g.vote = (by != NOBODY).then(|| Vote {
+                        by,
+                        yes,
+                        needed,
+                        until: now + Duration::from_secs(u64::from(seconds)),
+                    });
+                }
+            }
+            Msg::Hold {
+                who,
+                seconds,
+                yours,
+            } => {
+                let now = self.net.now();
+                if let Some(g) = &mut c.game {
+                    g.pauses_left = yours;
+                    g.hold = (who != NOBODY).then(|| Hold {
+                        player: who,
+                        until: now + Duration::from_secs(u64::from(seconds)),
+                    });
+                }
             }
             _ => {}
         }
@@ -1114,6 +1273,7 @@ impl Lan {
         }
         let name = peer.name.clone();
         self.tell_everyone(format!("{name} rejoined and is catching up."));
+        self.send_hold(now);
         self.update_wait(now);
         // Still waiting for someone else: say so, as the others were told.
         if let Role::Host(h) = &mut self.role
@@ -1253,6 +1413,7 @@ impl Lan {
                     self.peer_gone(i, text, now);
                 }
                 self.update_wait(now);
+                self.kit_tick(now);
                 self.sync_lobby();
                 if let Role::Host(h) = &mut self.role {
                     start_turns(h, now);
@@ -1414,6 +1575,484 @@ impl Lan {
     }
 }
 
+/// The match kit ([`crate::kit`]): chat, pings, surrender votes and
+/// pauses, for the game to offer during a match. Each does nothing outside
+/// a match.
+impl Lan {
+    /// Say `text` to this player's team (`team`) or to everyone. The line
+    /// comes back at once as a [`MatchEvent::Chat`], as the others get it.
+    pub fn chat(&mut self, team: bool, text: &str) {
+        let now = self.net.now();
+        match &mut self.role {
+            Role::Host(_) => self.kit_chat(0, team, text, now),
+            Role::Client(c) => {
+                let Some(g) = &mut c.game else { return };
+                let Some(text) = clean_chat(text) else { return };
+                if !g.chat.allow(now, CHAT_BURST, CHAT_WINDOW) {
+                    return;
+                }
+                c.link.send(&Msg::Chat {
+                    team,
+                    text: text.clone(),
+                });
+                self.match_events.push(MatchEvent::Chat {
+                    player: g.me,
+                    from: name_of(&g.names, g.me),
+                    team,
+                    text,
+                });
+            }
+            Role::Idle => {}
+        }
+        self.flush(now, false);
+    }
+
+    /// Ping a point on the map (in tiles) for this player's allies. It
+    /// comes back at once as a [`MatchEvent::Ping`].
+    pub fn ping(&mut self, kind: PingKind, at: [f32; 2]) {
+        let now = self.net.now();
+        match &mut self.role {
+            Role::Host(_) => self.kit_ping(0, kind, at, now),
+            Role::Client(c) => {
+                let Some(g) = &mut c.game else { return };
+                if !g.pings.allow(now, PING_BURST, PING_WINDOW) {
+                    return;
+                }
+                let (x, y) = kit::to_wire(at);
+                c.link.send(&Msg::Ping {
+                    kind: kind as u8,
+                    x,
+                    y,
+                });
+                self.match_events.push(MatchEvent::Ping {
+                    player: g.me,
+                    from: name_of(&g.names, g.me),
+                    kind,
+                    at: kit::from_wire(x, y),
+                });
+            }
+            Role::Idle => {}
+        }
+        self.flush(now, false);
+    }
+
+    /// Call this player's team's surrender vote, or vote in it (`yes`
+    /// false votes it down). The team surrenders when every human player
+    /// on it still connected has said yes.
+    pub fn surrender(&mut self, yes: bool) {
+        let now = self.net.now();
+        match &mut self.role {
+            Role::Host(_) => self.kit_surrender(0, yes, now),
+            Role::Client(c) if c.game.is_some() => c.link.send(&Msg::Surrender { yes }),
+            _ => {}
+        }
+        self.flush(now, false);
+    }
+
+    /// Pause the match, or carry on when it is paused (the player who
+    /// paused can at once, anyone else after [`kit::RESUME_AFTER`]). Each
+    /// player has [`PAUSES_EACH`] pauses, of up to [`PAUSE_LONGEST`] each.
+    pub fn toggle_pause(&mut self) {
+        let now = self.net.now();
+        match &mut self.role {
+            Role::Host(h) => {
+                let on = h.game.as_ref().is_some_and(|g| g.kit.hold.is_none());
+                self.kit_pause(0, on, now);
+            }
+            Role::Client(c) => {
+                if let Some(g) = &c.game {
+                    let on = g.hold.is_none();
+                    c.link.send(&Msg::Pause { on });
+                }
+            }
+            Role::Idle => {}
+        }
+        self.flush(now, false);
+    }
+
+    /// The pause under way, if a player paused the match.
+    pub fn hold(&self) -> Option<HoldView> {
+        let now = self.net.now();
+        let (hold, names, me) = match &self.role {
+            Role::Host(h) => {
+                let g = h.game.as_ref()?;
+                (g.kit.hold?, &g.kit.names, 0)
+            }
+            Role::Client(c) => {
+                let g = c.game.as_ref()?;
+                (g.hold?, &g.names, g.me)
+            }
+            Role::Idle => return None,
+        };
+        Some(HoldView {
+            who: name_of(names, hold.player),
+            player: hold.player,
+            left: hold.until.saturating_duration_since(now),
+            can_resume: hold.can_resume(me, now),
+        })
+    }
+
+    /// How many pauses this machine's player has left, during a match.
+    pub fn pauses_left(&self) -> Option<u8> {
+        match &self.role {
+            Role::Host(h) => h.game.as_ref().map(|g| g.kit.pauses_left(0)),
+            Role::Client(c) => c.game.as_ref().map(|g| g.pauses_left),
+            Role::Idle => None,
+        }
+    }
+
+    /// This machine's team's surrender vote, while one is open.
+    pub fn surrender_vote(&self) -> Option<VoteView> {
+        let now = self.net.now();
+        match &self.role {
+            Role::Host(h) => {
+                let g = h.game.as_ref()?;
+                let team = g.kit.team(0)?;
+                let (_, v) = g.kit.votes.iter().find(|(t, _)| *t == team)?;
+                Some(v.view(&g.kit.names, 0, now))
+            }
+            Role::Client(c) => {
+                let g = c.game.as_ref()?;
+                Some(g.vote?.view(&g.names, g.me, now))
+            }
+            Role::Idle => None,
+        }
+    }
+
+    /// Host: send player `from`'s chat line to whoever it is for.
+    fn kit_chat(&mut self, from: PlayerId, team: bool, text: &str, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        let Some(their_team) = g.kit.team(from) else {
+            return;
+        };
+        let Some(text) = clean_chat(text) else { return };
+        if !g.kit.chat[usize::from(from)].allow(now, CHAT_BURST, CHAT_WINDOW) {
+            return;
+        }
+        let teams = &g.kit.teams;
+        let hears = |p: PlayerId| !team || teams.get(usize::from(p)) == Some(&their_team);
+        for peer in h.peers.iter_mut().filter(|p| !p.gone) {
+            if let Some(p) = peer.player
+                && p != from
+                && hears(p)
+            {
+                peer.link.send(&Msg::Said {
+                    from,
+                    team,
+                    text: text.clone(),
+                });
+            }
+        }
+        if hears(0) {
+            self.match_events.push(MatchEvent::Chat {
+                player: from,
+                from: name_of(&g.kit.names, from),
+                team,
+                text,
+            });
+        }
+    }
+
+    /// Host: show player `from`'s ping to its allies.
+    fn kit_ping(&mut self, from: PlayerId, kind: PingKind, at: [f32; 2], now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        let Some(team) = g.kit.team(from) else { return };
+        if !g.kit.pings[usize::from(from)].allow(now, PING_BURST, PING_WINDOW) {
+            return;
+        }
+        let (x, y) = kit::to_wire(at);
+        let teams = &g.kit.teams;
+        for peer in h.peers.iter_mut().filter(|p| !p.gone) {
+            if let Some(p) = peer.player
+                && p != from
+                && teams.get(usize::from(p)) == Some(&team)
+            {
+                peer.link.send(&Msg::Pinged {
+                    from,
+                    kind: kind as u8,
+                    x,
+                    y,
+                });
+            }
+        }
+        if g.kit.team(0) == Some(team) {
+            self.match_events.push(MatchEvent::Ping {
+                player: from,
+                from: name_of(&g.kit.names, from),
+                kind,
+                at: kit::from_wire(x, y),
+            });
+        }
+    }
+
+    /// Host: player `from` calls its team's surrender vote or votes in it.
+    fn kit_surrender(&mut self, from: PlayerId, yes: bool, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        let Some(team) = g.kit.team(from) else { return };
+        if g.go_at.is_none() || g.kit.surrendered.contains(&team) {
+            return;
+        }
+        let open = g.kit.votes.iter().position(|(t, _)| *t == team);
+        match (open, yes) {
+            (None, false) => return,
+            (None, true) => {
+                if let Some(at) = g.kit.vote_again[usize::from(from)]
+                    && now < at
+                {
+                    let text = format!(
+                        "You can call another surrender vote in {} s.",
+                        at.saturating_duration_since(now).as_secs() + 1
+                    );
+                    self.tell_player(from, text);
+                    return;
+                }
+                let vote = Vote {
+                    by: from,
+                    yes: 1 << from,
+                    needed: 0,
+                    until: now + VOTE_TIME,
+                };
+                g.kit.votes.push((team, vote));
+                let name = name_of(&g.kit.names, from);
+                self.tell_team(team, format!("{name} asks to surrender."));
+            }
+            (Some(i), true) => g.kit.votes[i].1.yes |= 1 << from,
+            (Some(_), false) => {
+                let name = name_of(&g.kit.names, from);
+                self.end_vote(team, format!("{name} voted not to surrender."), now);
+                return;
+            }
+        }
+        self.settle_votes(now);
+    }
+
+    /// Host: count each open vote again (players may have left): pass the
+    /// ones every connected human on the team has said yes to, and tell
+    /// the teams how the rest stand.
+    fn settle_votes(&mut self, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        let mut passed = Vec::new();
+        let mut changed = Vec::new();
+        for (team, vote) in &mut g.kit.votes {
+            // The host is player 0, always here; joiners while connected.
+            let here = std::iter::once(0).chain(
+                (h.peers.iter())
+                    .filter(|p| p.active())
+                    .filter_map(|p| p.player),
+            );
+            let humans: u8 = here
+                .filter(|&p| {
+                    g.kit.teams.get(usize::from(p)) == Some(team)
+                        && g.kit.humans.get(usize::from(p)) == Some(&true)
+                })
+                .fold(0, |m, p| m | 1 << p);
+            let before = (vote.yes, vote.needed);
+            vote.yes &= humans;
+            vote.needed = humans.count_ones() as u8;
+            if vote.yes == humans {
+                passed.push(*team);
+            } else if (vote.yes, vote.needed) != before {
+                changed.push(*team);
+            }
+        }
+        for team in passed {
+            self.pass_vote(team, now);
+        }
+        for team in changed {
+            self.send_votes(team, now);
+        }
+    }
+
+    /// Host: a team's vote passed: everyone on it concedes, in the next
+    /// turn the host closes.
+    fn pass_vote(&mut self, team: u8, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        g.kit.votes.retain(|(t, _)| *t != team);
+        g.kit.surrendered.push(team);
+        let players: Vec<PlayerId> = (0..g.kit.teams.len() as PlayerId)
+            .filter(|&p| g.kit.team(p) == Some(team))
+            .collect();
+        g.inbox.extend(players.iter().map(|&player| PlayerCommand {
+            player,
+            command: Command::Concede,
+        }));
+        let names: Vec<String> = (players.iter())
+            .map(|&p| name_of(&g.kit.names, p))
+            .collect();
+        self.send_votes(team, now);
+        self.tell_everyone(format!("{} surrendered.", names.join(" and ")));
+    }
+
+    /// Host: a team's vote fails; its caller waits to call another.
+    fn end_vote(&mut self, team: u8, why: String, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        let Some(i) = g.kit.votes.iter().position(|(t, _)| *t == team) else {
+            return;
+        };
+        let (_, vote) = g.kit.votes.remove(i);
+        g.kit.vote_again[usize::from(vote.by)] = Some(now + VOTE_AGAIN_AFTER);
+        self.send_votes(team, now);
+        self.tell_team(team, why);
+    }
+
+    /// Host: tell a team's joiners how its vote stands.
+    fn send_votes(&mut self, team: u8, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &h.game else { return };
+        let msg = match g.kit.votes.iter().find(|(t, _)| *t == team) {
+            Some((_, v)) => Msg::Vote {
+                by: v.by,
+                yes: v.yes,
+                needed: v.needed,
+                seconds: v.until.saturating_duration_since(now).as_secs() as u16,
+            },
+            None => Msg::Vote {
+                by: NOBODY,
+                yes: 0,
+                needed: 0,
+                seconds: 0,
+            },
+        };
+        for peer in h.peers.iter_mut().filter(|p| !p.gone) {
+            if peer.player.and_then(|p| g.kit.team(p)) == Some(team) {
+                peer.link.send(&msg);
+            }
+        }
+    }
+
+    /// Host: player `from` pauses the match (`on`) or carries on.
+    fn kit_pause(&mut self, from: PlayerId, on: bool, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        if usize::from(from) >= g.kit.teams.len() {
+            return;
+        }
+        let name = name_of(&g.kit.names, from);
+        if !on {
+            if g.kit.hold.is_some_and(|hold| hold.can_resume(from, now)) {
+                self.release_hold(format!("{name} carried on."), now);
+            }
+            return;
+        }
+        if g.go_at.is_none() || g.kit.hold.is_some() || !g.waiting_for.is_empty() {
+            return;
+        }
+        if g.kit.pauses_left(from) == 0 {
+            self.tell_player(from, "You have no pauses left in this match.".into());
+            return;
+        }
+        g.kit.pauses_used[usize::from(from)] += 1;
+        g.kit.hold = Some(Hold {
+            player: from,
+            until: now + PAUSE_LONGEST,
+        });
+        let left = g.kit.pauses_left(from);
+        self.send_hold(now);
+        self.tell_everyone(format!(
+            "{name} paused the match ({left} pause{} left).",
+            if left == 1 { "" } else { "s" }
+        ));
+    }
+
+    /// Host: end the pause and carry on from now, without rushing.
+    fn release_hold(&mut self, why: String, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &mut h.game else { return };
+        if g.kit.hold.take().is_none() {
+            return;
+        }
+        if g.waiting_for.is_empty() && g.go_at.is_some() {
+            g.go_at = now.checked_sub(TURN * g.handed);
+        }
+        self.send_hold(now);
+        self.tell_everyone(why);
+    }
+
+    /// Host: tell every joiner the pause as it stands, and their pauses.
+    fn send_hold(&mut self, now: Instant) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &h.game else { return };
+        let (who, seconds) = g.kit.hold.map_or((NOBODY, 0), |hold| {
+            let left = hold.until.saturating_duration_since(now);
+            (hold.player, left.as_secs() as u16)
+        });
+        for peer in h.peers.iter_mut().filter(|p| !p.gone) {
+            if let Some(p) = peer.player {
+                peer.link.send(&Msg::Hold {
+                    who,
+                    seconds,
+                    yours: g.kit.pauses_left(p),
+                });
+            }
+        }
+    }
+
+    /// Host, every pump: pauses and votes that ran out.
+    fn kit_tick(&mut self, now: Instant) {
+        let Role::Host(h) = &self.role else { return };
+        let Some(g) = &h.game else { return };
+        if g.kit.hold.is_some_and(|hold| now >= hold.until) {
+            self.release_hold("The pause ran out: carrying on.".into(), now);
+        }
+        let Role::Host(h) = &self.role else { return };
+        let Some(g) = &h.game else { return };
+        let late: Vec<u8> = (g.kit.votes.iter())
+            .filter(|(_, v)| now >= v.until)
+            .map(|(t, _)| *t)
+            .collect();
+        let open = !g.kit.votes.is_empty();
+        for team in late {
+            self.end_vote(team, "The surrender vote ran out.".into(), now);
+        }
+        if open {
+            self.settle_votes(now);
+        }
+    }
+
+    /// Host: a notice for one player.
+    fn tell_player(&mut self, player: PlayerId, text: String) {
+        let Role::Host(h) = &mut self.role else { return };
+        if player == 0 {
+            self.match_events.push(MatchEvent::Notice(text));
+            return;
+        }
+        for p in h.peers.iter_mut().filter(|p| !p.gone) {
+            if p.player == Some(player) {
+                p.link.send(&Msg::Notice { text: text.clone() });
+            }
+        }
+    }
+
+    /// Host: a notice for every player on `team`.
+    fn tell_team(&mut self, team: u8, text: String) {
+        let Role::Host(h) = &mut self.role else { return };
+        let Some(g) = &h.game else { return };
+        for p in h.peers.iter_mut().filter(|p| !p.gone) {
+            if p.player.and_then(|p| g.kit.team(p)) == Some(team) {
+                p.link.send(&Msg::Notice { text: text.clone() });
+            }
+        }
+        if g.kit.team(0) == Some(team) {
+            self.match_events.push(MatchEvent::Notice(text));
+        }
+    }
+}
+
+/// "Match paused by Alex (47 s)" for the battle panel.
+fn paused_line(names: &[String], hold: &Hold, now: Instant) -> String {
+    format!(
+        "Match paused by {} ({} s)",
+        name_of(names, hold.player),
+        hold.until.saturating_duration_since(now).as_secs()
+    )
+}
+
 /// A Hi or KeyReply packet: the header and a public key.
 fn key_packet(kind: Kind, key: &[u8; 32]) -> Vec<u8> {
     let mut w = Writer::new();
@@ -1567,7 +2206,7 @@ fn reconnect_left(peers: &[Peer], now: Instant) -> Duration {
 
 fn host_turn(h: &mut Host, now: Instant, length: Duration) -> Option<Vec<PlayerCommand>> {
     let g = h.game.as_mut()?;
-    if !g.waiting_for.is_empty() {
+    if !g.waiting_for.is_empty() || g.kit.hold.is_some() {
         return None;
     }
     let go = g.go_at?;
@@ -1867,6 +2506,7 @@ impl Network for Lan {
             hashes: VecDeque::new(),
             theirs: Vec::new(),
             desynced: Vec::new(),
+            kit: HostKit::new(&start),
         };
         for p in h.peers.iter_mut().filter(|p| !p.gone) {
             let Some(slot) = p.slot else { continue };

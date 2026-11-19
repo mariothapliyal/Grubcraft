@@ -497,16 +497,19 @@ impl Battle {
             Win::Annihilation => "is the last standing",
             Win::Heart => "holds the Titan's Heart",
             Win::Draw => "",
+            Win::Surrender => "wins: the other side surrendered",
         };
         let won = self.me.map(|me| v.by != Win::Draw && !world.hostile(me, p));
         self.won = won;
         let said = match (won, v.by) {
             (_, Win::Draw) => "OVER  nobody is left standing".into(),
             (None, _) => format!("OVER  {name} {how}"),
+            (Some(false), Win::Surrender) => "DEFEAT  your side surrendered".into(),
             (Some(false), _) => format!("DEFEAT  {name} {how}"),
             (Some(true), Win::Field) => "VICTORY  the field is yours".into(),
             (Some(true), Win::Annihilation) => "VICTORY  every enemy is out".into(),
             (Some(true), Win::Heart) => "VICTORY  the Titan's Heart is yours".into(),
+            (Some(true), Win::Surrender) => "VICTORY  the enemy surrendered".into(),
         };
         self.outcome = Some(format!("{said} after {time}. Esc: menu"));
         true

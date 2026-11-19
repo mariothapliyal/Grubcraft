@@ -1,6 +1,6 @@
 //! Conquest's victories (docs/06-game-modes.md, "Victory conditions"):
 //! Annihilation, with its countdown for a player who has lost every main
-//! building, and holding the Titan's Heart.
+//! building, holding the Titan's Heart, and surrender (any mode).
 
 use gc_fixed::FxVec2;
 use gc_sim::nav::CELLS_PER_TILE;
@@ -380,4 +380,86 @@ fn the_sandbox_still_ends_by_holding_the_field() {
     order(&mut w, 1, Command::RemoveRegiment { regiment: theirs });
     run(&mut w, HOLD_TICKS + 2 * TICKS_PER_SECOND);
     assert_eq!(w.verdict().map(|v| (v.holder, v.by)), Some((0, Win::Field)));
+}
+
+/// A field of four regiments far apart, one each, on `teams` (no Conquest).
+fn field(teams: &[u8]) -> World {
+    let mut w = World::new(&MatchSetup {
+        seed: 9,
+        capacities: Capacities { regiments: 32 },
+        units: &[DRILL_UNITS[0]],
+        map_tiles: 64,
+        nav: &[],
+        teams,
+        ground: gc_sim::Ground::FLAT,
+        champions: false,
+        sky: gc_sim::Sky::STILL,
+        generals: true,
+    });
+    for (p, (x, y)) in [(4, 4), (60, 4), (4, 60), (60, 60)].into_iter().enumerate() {
+        spawn(&mut w, p as u8, x, y);
+    }
+    w
+}
+
+#[test]
+fn a_side_that_surrenders_loses_once_all_of_it_has() {
+    let mut w = field(&[0, 0, 1, 1]);
+    order(&mut w, 2, Command::Concede);
+    run(&mut w, 2);
+    assert_eq!(w.verdict(), None, "its ally still stands");
+    assert!(w.has_conceded(2) && !w.has_conceded(3));
+    // Twice is refused.
+    let again = w.tick(&[PlayerCommand {
+        player: 2,
+        command: Command::Concede,
+    }]);
+    assert_eq!(again.commands_applied, 0);
+    order(&mut w, 3, Command::Concede);
+    let v = w.verdict().unwrap();
+    assert_eq!((v.holder, v.by), (0, Win::Surrender));
+    assert!(!w.hostile(0, 1) && w.hostile(0, 2));
+    // Nothing more to concede once it is decided.
+    let late = w.tick(&[PlayerCommand {
+        player: 0,
+        command: Command::Concede,
+    }]);
+    assert_eq!(late.commands_applied, 0);
+    assert_eq!(w.verdict().unwrap().by, Win::Surrender);
+}
+
+#[test]
+fn in_a_free_for_all_the_last_who_hasnt_surrendered_wins() {
+    let mut w = field(&[]);
+    for p in [3, 0] {
+        order(&mut w, p, Command::Concede);
+    }
+    run(&mut w, 2);
+    assert_eq!(w.verdict(), None);
+    order(&mut w, 1, Command::Concede);
+    assert_eq!(w.verdict().map(|v| (v.holder, v.by)), Some((2, Win::Surrender)));
+}
+
+#[test]
+fn a_conquest_side_surrenders_with_its_buildings_standing() {
+    let (mut w, _) = two_sides(Victories::BOTH);
+    run(&mut w, TICKS_PER_SECOND);
+    order(&mut w, 1, Command::Concede);
+    assert_eq!(w.verdict().map(|v| (v.holder, v.by)), Some((0, Win::Surrender)));
+}
+
+#[test]
+fn nobody_surrenders_while_the_armies_deploy() {
+    let mut w = field(&[]);
+    let zone = Command::DeployZone {
+        center: FxVec2::from_ints(32, 32),
+        radius: gc_fixed::Fx::from_int(8),
+    };
+    order(&mut w, 0, zone);
+    assert!(w.deploying());
+    let refused = w.tick(&[PlayerCommand {
+        player: 1,
+        command: Command::Concede,
+    }]);
+    assert_eq!(refused.commands_applied, 0);
 }
