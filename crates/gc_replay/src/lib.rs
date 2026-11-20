@@ -111,7 +111,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 52;
+pub const FORMAT: u16 = 53;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.
