@@ -1203,10 +1203,11 @@ pub(crate) mod tests {
         assert!(wins >= 2, "the computer won {wins} of 3");
     }
 
-    /// Two Generals, Ember Clans against Carrion Concord (both with bows
-    /// and horse), give the new orders (docs/05-combat.md, "Hold, Skirmish
-    /// and Run") in battle: their bows skirmish, their horse forms a wedge,
-    /// and at least one regiment stands fast or runs.
+    /// Two Generals, Ember Clans against Carrion Concord, give the new
+    /// orders (docs/05-combat.md, "Hold, Skirmish and Run") in a Field
+    /// Battle: their bows skirmish and at least one regiment stands fast or
+    /// runs. (Field Battle armies have no horse, so no wedge: the stress
+    /// scenario `new-orders` checks that in Conquest.)
     #[test]
     fn computer_generals_give_the_new_orders() {
         use gc_sim::Formation;
@@ -1249,7 +1250,6 @@ pub(crate) mod tests {
             m.world.tick_count() / gc_sim::TICKS_PER_SECOND
         );
         assert!(skirmish > 0, "no bows skirmished");
-        assert!(wedge > 0, "no horse formed a wedge");
         assert!(hold + run > 0, "nobody stood fast or ran");
     }
 

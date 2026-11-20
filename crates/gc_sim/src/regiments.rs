@@ -1273,7 +1273,12 @@ impl Regiments {
     /// Set regiment `h` to keep away from melee, or stop (`on` false); see
     /// [`crate::combat::Combat::skirmish`]. Only regiments that shoot.
     /// Returns whether that changed anything.
-    pub(crate) fn set_skirmish(&mut self, h: RegimentHandle, on: bool, units: &[UnitStats]) -> bool {
+    pub(crate) fn set_skirmish(
+        &mut self,
+        h: RegimentHandle,
+        on: bool,
+        units: &[UnitStats],
+    ) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
         };

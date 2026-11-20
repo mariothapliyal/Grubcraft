@@ -19,7 +19,8 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - A move onto a mountain's steep face stops on the nearest ground that isn't steep and is in plain sight (the top or the foot of the slope), where the whole block fits if there is such ground near.
 - Blocks marching through a gate, bridge or narrow street trail the one ahead instead of stopping, and narrow into a column on the way up to it, the column growing forward rather than back into the block behind (less jostling at gates and bridges). In or stepping into a ford, and in a column going in to attack, they still wait their turn.
 - A regiment sent back the way it faces (more than 135° round) turns about where it stands, the rear rank becoming the front, and marches off a third of a second later; told to face back the way it came at the end, it turns about again. Up to 90° off it wheels as it marches; between 90° and 135° it turns on the spot first.
-- `R` cycles formation: Line, Tight, Loose, Shield wall (shields only). `F` does the same while no hero owns `F`.
+- `R` cycles formation: Line, Tight, Loose, Shield wall (shields only), Column, and Wedge (only regiments that can wedge). `F` does the same while no hero owns `F`.
+- Orders on the grid: `S` Hold (halt and fight only what reaches you; `S` again lifts it), `D` or double right-click Run (150% pace for 8 s, then winded for 10 s), `Z` Skirmish for bows (shooters step back from approaching melee; `Z` toggles it, and it is off by default for your regiments). `Z` still brings the spears' Brace.
 - `Z` Brace (spears and pikes; again lifts). `V` Fall back (8 tiles at half pace). `E` Burn (set nearby woods alight). `X` Torches (night only). `C` Plant stakes (Conquest).
 - `O` cycles army shape for group moves: Line, Deep, Hammer, Square, Plain, then saved Mine 1 to 3. `Shift+O` saves the selection's shape.
 - Control groups: `Ctrl`+`1` to `0` set; `1` to `0` recall; `Shift`+number adds; double-tap centres.
@@ -76,7 +77,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - `Alt`+left-click pings "Look here" for your allies; `Alt`+left-drag opens the wheel (up Attack, right On my way, down Defend, left Danger; let go near the middle for Look). Pings show on the ground, the minimap and as an edge badge for 6 s. Offline: "Pings are for network battles."
 - `P` pauses and carries on for everyone (3 pauses each, 60 s longest; others can carry on after 10 s). `Esc` menu, Surrender: click twice; your team votes (Yes/No at the top right), and a passed vote is a defeat. Offline it concedes at once. Greyed while armies deploy and once the battle is decided.
 
-**Not in the game:** key rebinding, Hold (`E` is Burn), Run, Column and Wedge formations, `Tab` sub-groups.
+**Not in the game:** key rebinding, `Tab` sub-groups.
 
 ## 2. Economy [docs/04-economy.md, docs/03-factions.md, docs/21-buildings.md]
 
@@ -135,7 +136,7 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 - **Frontage:** only soldiers touching the enemy strike: the front rank (spears also the second, at half), rank ends on a flank, half the front from the rear. Each side of a block has room for as many strikers as its length, shared by every attacker, so a swarm can't pile six regiments onto one front. Gates and bridges hold: only the front can be reached. Attackers who can't reach go round to a side with fewer on it, if their block fits there (not in a gate or on a bridge).
 - **Routing:** a regiment can't waver or rout until it is down to its breaking point: about 45% strength for levies (morale under 55), 40% for line troops, 35% for elite (morale 70+), give or take 5, and 5 lower with its general near. Workers (Hands, Gnawers, Ledger Clerks, Tuners) never rout: they keep working when attacked, fight where they stand and die there (Mario, 2026-11-02). Caravans can break at any strength. Charges and flank attacks break regiments by killing men faster. The tick on a regiment card's health bar marks it.
 - **Veteran ranks:** a regiment earns ranks by killing enemy soldiers, weighed by their hit points against its own: rank 1 at its own worth killed, rank 2 at twice, rank 3 at four times; volley kills count half. Each rank: +10% damage, breaking point 5 lower. Ranks never go. Gold chevrons over the banner, on the card and on the selection banner ("Veteran rank 2").
-- **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Falling back, Running), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
+- **Orders and why:** the selection panel says what each regiment is doing (Holding, Marching, Forced march, Attacking, Advancing on an attack-move, Fighting, Braced, Standing fast, Skirmishing back, Falling back, Running, At the run), how many orders are queued behind it, with a note when it is held up (pinned, driven back, re-forming ranks, filing through, trapped, winded). Mixed selections say "Mixed orders". A wavering or routing regiment adds a "Why:" line with up to two reasons, most serious first. Hover any regiment for a card with its order, morale and why (your own also shows its route).
 - Charges need about a second of marching (about 3 tiles for infantry). A charge into braced spears' front fails.
 - Brace (`Z`): stops the regiment; spears and pikes only. Fall back (`V`): each locked enemy gets one parting blow; routing regiments cannot fall back.
 - Woods and tall grass hide regiments. Your hidden regiments show a moss-green flag.
@@ -210,9 +211,9 @@ Terms: **Grub** (common, from seeps), **Marrow** (rare, from veins). **Regiment*
 
 **Not built yet** (design only, or no code found)
 - Heroes in every mode (Shrine, Queen's Chamber, Sanctum, Vault exist as buildings; no hero data). Hero items, creep camps.
-- Orders: Hold, Skirmish, Run, Column and Wedge; double-click select by type; `Tab` sub-groups.
+- Orders: double-click select by type; `Tab` sub-groups.
 - Concord Tithe meter and its contracts (Raise the Bound, Indenture, Foreclose, Hire Militia), and undead crumbling away from Reliquaries; Choir Silence the Chord and Refraction.
-- Brood evolutions (cocoons); reinforcement (regiments regaining soldiers); the Skirmish order; unit abilities such as High Watch, Repossess and the Rocket Cart's minimum range that are roster designs only.
+- Brood evolutions (cocoons); reinforcement (regiments regaining soldiers); unit abilities such as High Watch, Repossess and the Rocket Cart's minimum range that are roster designs only.
 - Research at Granary, Forge and Harmonics Lab (costs not designed yet).
 - Tuners' repair (10 HP/s).
 - Titan Events (Tremor, Marrow Bloom, Heartbeat, Gut Fog): no code found for Heartbeat, Marrow Bloom or Gut Fog; no lobby toggle found.

@@ -395,7 +395,10 @@ impl Captain {
     /// What regiment `h` is doing in this battle, if it is one of the
     /// Captain's: its role, the enemy it was sent at, and, for a hammer,
     /// whether it has committed to its strike.
-    pub(crate) fn part_of(&self, h: RegimentHandle) -> Option<(Role, Option<RegimentHandle>, bool)> {
+    pub(crate) fn part_of(
+        &self,
+        h: RegimentHandle,
+    ) -> Option<(Role, Option<RegimentHandle>, bool)> {
         self.members
             .iter()
             .find(|m| m.handle == h && !m.lost)

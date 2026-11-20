@@ -1616,10 +1616,9 @@ impl Combat {
                             regs.position[i],
                             regs.position[j],
                         );
-                        regs.charge_bonus[i] = (u64::from(bonus)
-                            * regs.formation[i].charge_percent()
-                            / 100)
-                            .min(u64::from(u8::MAX)) as u8;
+                        regs.charge_bonus[i] =
+                            (u64::from(bonus) * regs.formation[i].charge_percent() / 100)
+                                .min(u64::from(u8::MAX)) as u8;
                         // Heavy enough, it ploughs into the ranks: they are
                         // driven back from it, and the charger strikes the
                         // men it knocks aside at once. (Routers are only
@@ -1815,14 +1814,16 @@ impl Combat {
                 continue;
             };
             let away = Angle::of_vec(me - regs.position[j]);
-            let ways = core::iter::once(away).chain(
-                SKIRMISH_TURNS
-                    .iter()
-                    .flat_map(|&t| [away.wrapping_add(Angle(t)), away.wrapping_add(Angle(t.wrapping_neg()))]),
-            );
-            let Some(to) = ways.map(|a| me + a.to_vec() * SKIRMISH_STEP).find(|&to| {
-                nav.standable(owner, to) && nav.clear_line(owner, me, to)
-            }) else {
+            let ways = core::iter::once(away).chain(SKIRMISH_TURNS.iter().flat_map(|&t| {
+                [
+                    away.wrapping_add(Angle(t)),
+                    away.wrapping_add(Angle(t.wrapping_neg())),
+                ]
+            }));
+            let Some(to) = ways
+                .map(|a| me + a.to_vec() * SKIRMISH_STEP)
+                .find(|&to| nav.standable(owner, to) && nav.clear_line(owner, me, to))
+            else {
                 continue;
             };
             regs.target[i] = Some(to);

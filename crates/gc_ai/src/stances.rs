@@ -7,8 +7,9 @@
 //! would:
 //! - **Column** for a regiment marching outside any battle (in Conquest,
 //!   between fights) with no enemy within [`COLUMN_FAR`] tiles; back to its
-//!   battle formation once one comes within [`COLUMN_NEAR`], it stops, or
-//!   a battle's Captain takes it.
+//!   battle formation once one comes within [`COLUMN_NEAR`] or a battle's
+//!   Captain takes it (not when it stops, so a march made of many short
+//!   moves isn't an order at every halt).
 //! - **Wedge** for cavalry that can form one, out of a fight: its charges
 //!   hit harder, and the Captain uses it as a hammer.
 //! - **Run** for a hammer that has committed to its strike, a hunter after
@@ -68,13 +69,15 @@ pub fn wanted(
         regiment,
         formation,
     };
-    // Into column on a long march outside any battle (the Captain forms its
-    // own line), out of it as the enemy comes near or a battle takes it.
+    // Into column on a march outside any battle (the Captain forms its own
+    // line), out of it as the enemy comes near or a battle takes it.
     match r.formation {
-        Formation::Line | Formation::Wedge if part.is_none() && r.moving && nearest > COLUMN_FAR => {
+        Formation::Line | Formation::Wedge
+            if part.is_none() && r.moving && nearest > COLUMN_FAR =>
+        {
             return Some(formation(Formation::Column));
         }
-        Formation::Column if part.is_some() || !r.moving || nearest < COLUMN_NEAR => {
+        Formation::Column if part.is_some() || nearest < COLUMN_NEAR => {
             return Some(formation(battle));
         }
         Formation::Line if battle == Formation::Wedge && role != Some(Role::Recover) => {
@@ -84,8 +87,9 @@ pub fn wanted(
     }
     // At the run, where it pays to be there first.
     let gap_to = |t: Option<RegimentHandle>| {
-        t.and_then(|t| view.get(t))
-            .map_or(f32::INFINITY, |t| t.pos.distance(r.pos) - t.radius() - r.radius())
+        t.and_then(|t| view.get(t)).map_or(f32::INFINITY, |t| {
+            t.pos.distance(r.pos) - t.radius() - r.radius()
+        })
     };
     let may_run = r.moving
         && !r.running
@@ -109,10 +113,7 @@ pub fn wanted(
         && !r.hold
         && nearest < HOLD_WITHIN
     {
-        return Some(Command::Hold {
-            regiment,
-            on: true,
-        });
+        return Some(Command::Hold { regiment, on: true });
     }
     // Shooters keep away from melee.
     if unit.class == Class::Ranged
@@ -120,10 +121,7 @@ pub fn wanted(
         && unit.speed >= SKIRMISH_SPEED
         && !r.skirmish
     {
-        return Some(Command::Skirmish {
-            regiment,
-            on: true,
-        });
+        return Some(Command::Skirmish { regiment, on: true });
     }
     None
 }

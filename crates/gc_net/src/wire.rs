@@ -1113,9 +1113,7 @@ mod tests {
                 regiment: h(7, 0),
                 on: true,
             },
-            Command::Run {
-                regiment: h(7, 1),
-            },
+            Command::Run { regiment: h(7, 1) },
             Command::HandOver { to: 2 },
             Command::SetGate {
                 structure: StructureHandle {

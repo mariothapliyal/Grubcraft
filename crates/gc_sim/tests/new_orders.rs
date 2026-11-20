@@ -10,7 +10,6 @@ use gc_sim::{
 
 const SOUTH: Angle = Angle::QUARTER;
 const EAST: Angle = Angle::ZERO;
-const WEST: Angle = Angle::HALF;
 /// Drill units: 0 infantry (24 in 8 files, 3 tiles a second), 2 archers
 /// (range 25); here 1 is the drill's heavy infantry (2.5 tiles a second).
 const FOOT: u16 = 0;
@@ -52,7 +51,9 @@ fn world(units: &[UnitStats]) -> World {
 }
 
 fn order(w: &mut World, player: u8, command: Command) -> bool {
-    w.tick(&[PlayerCommand { player, command }]).commands_applied == 1
+    w.tick(&[PlayerCommand { player, command }])
+        .commands_applied
+        == 1
 }
 
 fn spawn(w: &mut World, player: u8, unit: u16, x: i32, y: i32, facing: Angle) -> RegimentHandle {
@@ -136,22 +137,60 @@ fn hold_halts_a_regiment_and_any_order_lifts_it() {
     let r = spawn(&mut w, 0, FOOT, 100, 100, NORTH);
     assert!(march(&mut w, 0, r, 100, 60));
     run(&mut w, 20);
-    assert!(order(&mut w, 0, Command::Hold { regiment: r, on: true }));
+    assert!(order(
+        &mut w,
+        0,
+        Command::Hold {
+            regiment: r,
+            on: true
+        }
+    ));
     let at = view(&w, r).position;
     run(&mut w, 60);
     assert!(view(&w, r).hold);
-    assert!(tiles(view(&w, r).position, at) < 0.5, "a held regiment stands");
+    assert!(
+        tiles(view(&w, r).position, at) < 0.5,
+        "a held regiment stands"
+    );
     assert_eq!(
         w.regiments.feedback(r).unwrap().doing,
         gc_sim::Doing::StandingFast
     );
     // Not for someone else's regiment.
-    assert!(!order(&mut w, 1, Command::Hold { regiment: r, on: false }));
+    assert!(!order(
+        &mut w,
+        1,
+        Command::Hold {
+            regiment: r,
+            on: false
+        }
+    ));
     assert!(march(&mut w, 0, r, 100, 80));
     assert!(!view(&w, r).hold, "a move lifts it");
-    assert!(order(&mut w, 0, Command::Hold { regiment: r, on: true }));
-    assert!(order(&mut w, 0, Command::Hold { regiment: r, on: false }));
-    assert!(!order(&mut w, 0, Command::Hold { regiment: r, on: false }));
+    assert!(order(
+        &mut w,
+        0,
+        Command::Hold {
+            regiment: r,
+            on: true
+        }
+    ));
+    assert!(order(
+        &mut w,
+        0,
+        Command::Hold {
+            regiment: r,
+            on: false
+        }
+    ));
+    assert!(!order(
+        &mut w,
+        0,
+        Command::Hold {
+            regiment: r,
+            on: false
+        }
+    ));
 }
 
 /// A light, weak line held by a heavy one: how far it is driven back in
@@ -174,7 +213,14 @@ fn driven_back(held: bool) -> f32 {
     let line = spawn(&mut w, 0, FOOT, 100, 100, NORTH);
     let foe = spawn(&mut w, 1, 1, 100, 92, SOUTH);
     if held {
-        assert!(order(&mut w, 0, Command::Hold { regiment: line, on: true }));
+        assert!(order(
+            &mut w,
+            0,
+            Command::Hold {
+                regiment: line,
+                on: true
+            }
+        ));
     }
     assert!(attack(&mut w, 1, foe, line));
     let at = view(&w, line).position;
@@ -200,7 +246,14 @@ fn archers_charged(unit: u16, skirmish: bool) -> (Option<u32>, f32, u32) {
     let archers = spawn(&mut w, 0, ARCHERS, 100, 100, NORTH);
     let foot = spawn(&mut w, 1, unit, 100, 80, SOUTH);
     if skirmish {
-        assert!(order(&mut w, 0, Command::Skirmish { regiment: archers, on: true }));
+        assert!(order(
+            &mut w,
+            0,
+            Command::Skirmish {
+                regiment: archers,
+                on: true
+            }
+        ));
         assert!(view(&w, archers).skirmish);
     }
     let full = hp(&w, foot);
@@ -231,7 +284,10 @@ fn skirmishers_step_back_from_melee_and_shoot_again() {
     let (standing, _, _) = archers_charged(FOOT, false);
     let (skirmishing, _, _) = archers_charged(FOOT, true);
     let late = skirmishing.unwrap_or(u32::MAX);
-    assert!(late > standing.unwrap() + 5 * 20, "caught at {late}, standing at {standing:?}");
+    assert!(
+        late > standing.unwrap() + 5 * 20,
+        "caught at {late}, standing at {standing:?}"
+    );
 }
 
 #[test]
@@ -239,7 +295,14 @@ fn only_regiments_that_shoot_skirmish() {
     let units = units();
     let mut w = world(&units);
     let foot = spawn(&mut w, 0, FOOT, 100, 100, NORTH);
-    assert!(!order(&mut w, 0, Command::Skirmish { regiment: foot, on: true }));
+    assert!(!order(
+        &mut w,
+        0,
+        Command::Skirmish {
+            regiment: foot,
+            on: true
+        }
+    ));
 }
 
 #[test]
@@ -248,8 +311,22 @@ fn a_held_skirmisher_stands() {
     let mut w = world(&units);
     let archers = spawn(&mut w, 0, ARCHERS, 100, 100, NORTH);
     let foot = spawn(&mut w, 1, FOOT, 100, 84, SOUTH);
-    assert!(order(&mut w, 0, Command::Skirmish { regiment: archers, on: true }));
-    assert!(order(&mut w, 0, Command::Hold { regiment: archers, on: true }));
+    assert!(order(
+        &mut w,
+        0,
+        Command::Skirmish {
+            regiment: archers,
+            on: true
+        }
+    ));
+    assert!(order(
+        &mut w,
+        0,
+        Command::Hold {
+            regiment: archers,
+            on: true
+        }
+    ));
     assert!(attack(&mut w, 1, foot, archers));
     run(&mut w, 10 * 20);
     assert!(view(&w, archers).engaged, "held, it stands and fights");
@@ -265,7 +342,10 @@ fn a_run_goes_half_again_as_fast_then_winds_the_regiment() {
     assert!(!order(&mut w, 0, Command::Run { regiment: r }));
     assert!(march(&mut w, 0, r, 200, 100));
     assert!(order(&mut w, 0, Command::Run { regiment: r }));
-    assert!(!order(&mut w, 0, Command::Run { regiment: r }), "running already");
+    assert!(
+        !order(&mut w, 0, Command::Run { regiment: r }),
+        "running already"
+    );
     let start = view(&w, r).position;
     run(&mut w, 5 * 20);
     let ran = tiles(view(&w, r).position, start);
@@ -401,32 +481,4 @@ fn a_wedge_charges_home_harder() {
     let (line, wedge) = (charge(false), charge(true));
     assert!(line > 0);
     assert!(wedge > line, "wedge {wedge}, line {line}");
-    let _ = WEST;
-}
-
-#[test]
-#[ignore]
-fn trace_skirmish() {
-    let units = units();
-    let mut w = world(&units);
-    let archers = spawn(&mut w, 0, ARCHERS, 100, 100, NORTH);
-    let foot = spawn(&mut w, 1, FOOT, 100, 80, SOUTH);
-    assert!(order(&mut w, 0, Command::Skirmish { regiment: archers, on: true }));
-    assert!(attack(&mut w, 1, foot, archers));
-    for t in 0..15 * 20 {
-        w.tick(&[]);
-        if t % 5 == 0 {
-            let (a, f) = (view(&w, archers), view(&w, foot));
-            eprintln!(
-                "{t:3} a {:6.2} f {:6.2} gap {:5.2} {:?} {:?} face {:5} hp {}",
-                a.position.y.raw() as f32 / 65536.0,
-                f.position.y.raw() as f32 / 65536.0,
-                tiles(a.position, f.position),
-                w.regiments.feedback(archers).unwrap().doing,
-                a.moving,
-                a.facing.0,
-                hp(&w, foot)
-            );
-        }
-    }
 }

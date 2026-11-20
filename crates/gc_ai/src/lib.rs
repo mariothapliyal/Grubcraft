@@ -483,6 +483,7 @@ impl Mind {
         };
         let wanted: Vec<_> = (view.regiments.iter())
             .filter(|r| r.owner == self.party)
+            .filter(|r| self.realm.as_ref().is_none_or(|realm| realm.fights(r.unit)))
             .filter_map(|r| Some((r.handle, stances::wanted(view, self.party, r, captain)?)))
             .collect();
         for (handle, command) in wanted {

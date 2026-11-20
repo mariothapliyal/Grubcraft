@@ -232,9 +232,10 @@ use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::structures::{Breaker, TowerShot};
 use gc_sim::{
-    BuildingId, BuildingStats, COLUMN_DEFENCE, COLUMN_FILES, Capacities, Formation, Growth, LOOSE_DEFENCE, MatchSetup,
-    MoraleState, PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView,
-    TIGHT_DEFENCE, UnitId, UnitStats, WEDGE_DEFENCE, WEDGE_RANKS, World,
+    BuildingId, BuildingStats, COLUMN_DEFENCE, COLUMN_FILES, Capacities, Formation, Growth,
+    LOOSE_DEFENCE, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle,
+    StructureHandle, StructureView, TIGHT_DEFENCE, UnitId, UnitStats, WEDGE_DEFENCE, WEDGE_RANKS,
+    World,
 };
 use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::menu::MapPreviewKey;
@@ -3598,7 +3599,10 @@ impl Running {
         let skirmished = self.toggle_skirmish();
         if spears.is_empty() {
             if !skirmished {
-                self.say("Only spears and pikes can brace, and only regiments that shoot skirmish".into());
+                self.say(
+                    "Only spears and pikes can brace, and only regiments that shoot skirmish"
+                        .into(),
+                );
             }
             return;
         }
