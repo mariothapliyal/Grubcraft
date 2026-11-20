@@ -158,9 +158,9 @@ Three orders for the fight, built 2026-11-20 and all in the simulation, so they 
 
 **Hold** (`S`, the grid slot labelled "Hold"):
 
-- Halts the regiment where it stands. It fights only what reaches it, turning to face it. It never presses after a foe, never steps aside for friends, and doesn't press back in after a foe pushed out of reach.
+- Halts the regiment where it stands. It fights only what reaches it, turning to face it. It never presses after a foe, never steps aside for friends, never goes round a crowded fight to another side, and doesn't press back in after a foe pushed out of reach.
 - A foe that outfights it drives it back at half the usual pace.
-- Any move, attack, fall back or run lifts it, and `S` again lifts it. It can be set while deploying. It is refused on a wall and when the regiment is routing or falling back. Routing regiments don't listen to it.
+- Any move, attack, fall back or run lifts it, and `S` again lifts it. It can be set while deploying. It is refused on a wall and when the regiment is routing or falling back. A regiment that routs loses its Hold (and a column or wedge that routs rallies in Line at its own width).
 - Stress (real data): Yari Ashigaru attacked by Oni-Bound gave 4.9 tiles before breaking when free, and 2.0 when held.
 
 **Skirmish** (`Z`, only for regiments that shoot):
@@ -174,7 +174,7 @@ Three orders for the fight, built 2026-11-20 and all in the simulation, so they 
 
 - Marches at 150% pace for up to 8 seconds, then is **winded** for 10 seconds: 70% pace, and 85% melee blow damage while winded.
 - The run ends early, and winding starts, when the regiment arrives, meets a foe or routs.
-- Refused when the regiment has nowhere to go, or is fighting, falling back, routing, winded, already running, in a shield wall, or on a wall. A run lifts Hold.
+- Refused when the regiment has nowhere to go, or is fighting, falling back, routing, winded, already running, in a shield wall or a column (already at its quick march, so the two never stack), or on a wall. A run lifts Hold.
 - Stress (real data): a Yari regiment walked 18.1 tiles in 6 seconds, and ran 27.2 tiles in the same time.
 
 **Real use:**

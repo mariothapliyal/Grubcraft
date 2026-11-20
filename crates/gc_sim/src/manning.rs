@@ -541,6 +541,8 @@ impl Conquest {
         hold.at[0] = foot_print;
         regs.formation[r] = Formation::Line;
         regs.braced[r] = false;
+        regs.hold[r] = false;
+        regs.end_run(r);
         regs.leave_fight(r);
         let head = centre + out.to_vec();
         regs.place(
@@ -680,6 +682,8 @@ impl Conquest {
         hold.at = at;
         regs.formation[r] = Formation::Line;
         regs.braced[r] = false;
+        regs.hold[r] = false;
+        regs.end_run(r);
         regs.leave_fight(r);
         regs.place(regs.handle(r), middle, Angle::of_vec(out), room as u16);
         regs.on_wall[r] = true;

@@ -991,9 +991,9 @@ struct Running {
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
     last_group_key: Option<(usize, Instant)>,
-    /// When the last right-click order was given: a second one soon after
-    /// runs (see [`Self::run`]).
-    last_right: Option<Instant>,
+    /// When the last right-click order was given, and to whom: a second
+    /// one to the same selection soon after runs (see [`Self::run`]).
+    last_right: Option<(Instant, Vec<RegimentHandle>)>,
     /// The enemy regiment last ordered attacked, marked on the ground briefly.
     attack_mark: Option<(RegimentHandle, Instant)>,
     /// Orders just given, drawn as fading ghost plates from the click on.
@@ -2810,13 +2810,14 @@ impl Running {
                     ordered = true;
                 }
                 // A second right-click soon after the first: they run there.
-                if ordered && !queue {
+                if ordered && !queue && !self.world.deploying() {
                     let now = Instant::now();
-                    if self.last_right.is_some_and(|t| now - t < DOUBLE_TAP) {
-                        self.last_right = None;
+                    let again = (self.last_right.take())
+                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && who == self.selected);
+                    if again {
                         self.run();
                     } else {
-                        self.last_right = Some(now);
+                        self.last_right = Some((now, self.selected.clone()));
                     }
                 }
                 self.input.right_down = None;
@@ -3712,12 +3713,12 @@ impl Running {
                     && !r.engaged
                     && !r.running
                     && !r.winded
-                    && r.formation != Formation::ShieldWall
+                    && !matches!(r.formation, Formation::ShieldWall | Formation::Column)
             })
             .map(|r| r.handle)
             .collect();
         if ready.is_empty() {
-            self.say("Winded, fighting or in a shield wall: no running".into());
+            self.say("Winded, fighting, in a shield wall or a column: no running".into());
             return;
         }
         for regiment in ready {

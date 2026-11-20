@@ -40,7 +40,7 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::combat::{BATTLE_PACE_PERCENT, Combat, Whose, placement};
 use crate::regiments::Regiments;
 use crate::vision::Vision;
-use crate::{Formation, Stances, TICKS_PER_SECOND, UnitStats, generals, veterancy};
+use crate::{Stances, TICKS_PER_SECOND, UnitStats, generals, veterancy};
 
 /// Morale is kept in tenths of a point.
 pub const SCALE: i16 = 10;
@@ -354,7 +354,16 @@ fn check(
                 MoraleState::Steady
             };
     } else {
-        rout(regs, combat, stances, vision, i, tick, map_tiles);
+        rout(
+            regs,
+            combat,
+            stances,
+            vision,
+            i,
+            tick,
+            map_tiles,
+            stats.files,
+        );
     }
 }
 
@@ -469,6 +478,7 @@ fn rout(
     i: usize,
     tick: u32,
     map_tiles: u32,
+    files: u16,
 ) {
     let again = regs.last_rout[i] != 0
         && tick + 1 - regs.last_rout[i] <= SHATTER_SECONDS * TICKS_PER_SECOND;
@@ -484,8 +494,11 @@ fn rout(
     regs.attack_target[i] = None;
     regs.target_facing[i] = None;
     regs.charge[i] = 0;
-    // Running men keep no ranks.
-    regs.formation[i] = Formation::Line;
+    // Running men keep no ranks, stand fast for nobody and step back for
+    // nobody; on rallying they form up as wide as when raised.
+    regs.break_formation(i, files);
+    regs.hold[i] = false;
+    regs.backing[i] = 0;
     regs.pace[i] = Fx::from_raw(regs.speed[i].raw() * ROUT_PACE_PERCENT / 100);
     // A march is for regiments that take orders.
     regs.march_left[i] = 0;

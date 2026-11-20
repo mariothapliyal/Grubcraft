@@ -420,6 +420,10 @@ fn a_column_is_narrow_and_marches_faster() {
     );
     assert!(col > line * 1.15, "column {col}, line {line}");
     assert!(!Formation::Column.can_charge());
+    // A column is at its quick march already: it doesn't run as well.
+    assert!(set(&mut w, Formation::Column));
+    assert!(view(&w, r).moving);
+    assert!(!order(&mut w, 0, Command::Run { regiment: r }));
 }
 
 #[test]

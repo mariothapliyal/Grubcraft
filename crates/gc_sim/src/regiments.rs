@@ -546,7 +546,7 @@ impl Regiments {
             };
             // Shields taken away: the wall comes apart.
             if !stats.can_form(self.formation[i]) {
-                self.formation[i] = Formation::Line;
+                self.break_formation(i, stats.files);
             }
             // Long weapons taken away: nothing left to brace.
             if !stats.reach {
@@ -589,6 +589,16 @@ impl Regiments {
             self.set_frontage(i, units[self.unit[i] as usize].files);
         }
         true
+    }
+
+    /// Slot `i` drops into Line without an order (routing, retuned, up a
+    /// wall): out of a column or a wedge it takes back the frontage it was
+    /// raised with, `files`.
+    pub(crate) fn break_formation(&mut self, i: usize, files: u16) {
+        let was = core::mem::replace(&mut self.formation[i], Formation::Line);
+        if matches!(was, Formation::Column | Formation::Wedge) {
+            self.set_frontage(i, files);
+        }
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -1293,8 +1303,8 @@ impl Regiments {
 
     /// Regiment `h` runs where it is going (see [`RUN_PERCENT`]), for up
     /// to [`RUN_TICKS`]. Refused with nowhere to go, in a fight, falling
-    /// back, routing, winded, running already or in a shield wall (which
-    /// can't run).
+    /// back, routing, winded, running already, in a shield wall (which
+    /// can't run) or in a column (already at its quick march).
     pub(crate) fn run(&mut self, h: RegimentHandle) -> bool {
         let Some(i) = self.resolve(h) else {
             return false;
@@ -1305,7 +1315,7 @@ impl Regiments {
             || self.morale_state[i].broken()
             || self.winded_left[i] > 0
             || self.run_left[i] > 0
-            || self.formation[i] == Formation::ShieldWall
+            || matches!(self.formation[i], Formation::ShieldWall | Formation::Column)
         {
             return false;
         }

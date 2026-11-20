@@ -1493,6 +1493,8 @@ impl Combat {
                 regs.engaged[i] = None;
                 regs.falling_back[i] = 0;
                 regs.braced[i] = false;
+                regs.hold[i] = false;
+                regs.backing[i] = 0;
                 continue;
             }
             // Going round a crowded fight (see `open_side`): it takes no
@@ -3122,6 +3124,7 @@ fn crowded_out(regs: &mut Regiments, nav: &Nav, i: usize, j: usize, me: &Block, 
     regs.crowded[i] = regs.crowded[i].saturating_add(1);
     if regs.crowded[i] < CROWDED_TURNS
         || regs.braced[i]
+        || regs.hold[i]
         || regs.on_wall[i]
         || regs.falling_back[i] > 0
     {
