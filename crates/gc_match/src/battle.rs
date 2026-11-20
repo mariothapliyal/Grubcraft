@@ -1206,7 +1206,7 @@ pub(crate) mod tests {
     /// Two Generals, Ember Clans against Carrion Concord, give the new
     /// orders (docs/05-combat.md, "Hold, Skirmish and Run") in a Field
     /// Battle: their bows skirmish and at least one regiment stands fast or
-    /// runs. (Field Battle armies have no horse, so no wedge: the stress
+    /// runs. (The test unit table these armies use has no horse, so no wedge: the stress
     /// scenario `new-orders` checks that in Conquest.)
     #[test]
     fn computer_generals_give_the_new_orders() {
