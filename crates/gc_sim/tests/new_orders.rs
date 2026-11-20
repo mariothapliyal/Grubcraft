@@ -408,8 +408,9 @@ fn a_column_is_narrow_and_marches_faster() {
         }
     ));
     assert_eq!(view(&w, r).frontage, COLUMN_FILES);
+    // Out of column it stands as wide as it was last asked to.
     assert!(set(&mut w, Formation::Line));
-    assert_eq!(view(&w, r).frontage, units[FOOT as usize].files);
+    assert_eq!(view(&w, r).frontage, 12);
     let column = Command::SetFormation {
         regiment: r,
         formation: Formation::Column,

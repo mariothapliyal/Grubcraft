@@ -10,8 +10,10 @@
 //!   battle formation once one comes within [`COLUMN_NEAR`] or a battle's
 //!   Captain takes it (not when it stops, so a march made of many short
 //!   moves isn't an order at every halt).
-//! - **Wedge** for cavalry that can form one, out of a fight: its charges
-//!   hit harder, and the Captain uses it as a hammer.
+//! - **Wedge** for cavalry that can form one, out of a fight, while it
+//!   strikes (a hammer, ambusher or hunter, or outside any battle): its
+//!   charges hit harder. Given any other part (screen, reserve,
+//!   recovering) it stands in line, which defends better.
 //! - **Run** for a hammer that has committed to its strike, a hunter after
 //!   routers, both with [`RUN_FROM`] to [`RUN_UPTO`] tiles still to go, and
 //!   a wavering regiment pulling back with an enemy within [`RUN_FROM`].
@@ -60,7 +62,13 @@ pub fn wanted(
         .fold(f32::INFINITY, f32::min);
     let part = captain.and_then(|c| c.part_of(regiment));
     let role = part.map(|(role, ..)| role);
-    let battle = if unit.stats.can_wedge() {
+    // Horse that strikes rides in a wedge; horse that screens, recovers or
+    // waits stands in line, which defends better.
+    let strikes = matches!(
+        role,
+        None | Some(Role::Hammer | Role::Ambusher | Role::Hunter)
+    );
+    let battle = if unit.stats.can_wedge() && strikes {
         Formation::Wedge
     } else {
         Formation::Line
@@ -80,8 +88,11 @@ pub fn wanted(
         Formation::Column if part.is_some() || nearest < COLUMN_NEAR => {
             return Some(formation(battle));
         }
-        Formation::Line if battle == Formation::Wedge && role != Some(Role::Recover) => {
+        Formation::Line if battle == Formation::Wedge => {
             return Some(formation(Formation::Wedge));
+        }
+        Formation::Wedge if battle == Formation::Line => {
+            return Some(formation(Formation::Line));
         }
         _ => {}
     }

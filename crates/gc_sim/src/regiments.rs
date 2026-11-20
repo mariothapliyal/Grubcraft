@@ -419,6 +419,11 @@ regiment_fields! {
     /// after one.
     run_left: u8 = 0,
     winded_left: u8 = 0,
+    /// In a column or a wedge, the frontage it was asked for (the width it
+    /// stood at going in, or a line drawn for it since): it forms up that
+    /// wide again on leaving. 0 for none, when the width it was raised
+    /// with is used.
+    width_kept: u16 = 0,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
     /// Ticks left of pulling out of a fight in good order (see
@@ -586,19 +591,26 @@ impl Regiments {
         if was != formation && own(formation) {
             self.set_frontage(i, self.frontage[i]);
         } else if was != formation && own(was) {
-            self.set_frontage(i, units[self.unit[i] as usize].files);
+            self.leave_own(i, units[self.unit[i] as usize].files);
         }
         true
     }
 
-    /// Slot `i` drops into Line without an order (routing, retuned, up a
-    /// wall): out of a column or a wedge it takes back the frontage it was
-    /// raised with, `files`.
+    /// Slot `i` drops into Line without an order (routing, retuned):
+    /// out of a column or a wedge it takes back the frontage it kept, or
+    /// the one it was raised with, `files`.
     pub(crate) fn break_formation(&mut self, i: usize, files: u16) {
         let was = core::mem::replace(&mut self.formation[i], Formation::Line);
         if matches!(was, Formation::Column | Formation::Wedge) {
-            self.set_frontage(i, files);
+            self.leave_own(i, files);
         }
+    }
+
+    /// Slot `i`, just out of a column or a wedge, forms up as wide as it
+    /// kept (see `width_kept`), or else `files`.
+    fn leave_own(&mut self, i: usize, files: u16) {
+        let kept = core::mem::take(&mut self.width_kept[i]);
+        self.set_frontage(i, if kept > 0 { kept } else { files });
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -893,6 +905,9 @@ impl Regiments {
     /// Slot `i` forms up `files` soldiers wide (it narrows again at once
     /// if the ground is too tight for that).
     pub(crate) fn set_frontage(&mut self, i: usize, files: u16) {
+        if matches!(self.formation[i], Formation::Column | Formation::Wedge) {
+            self.width_kept[i] = files;
+        }
         let files = self.formation[i].files(files, self.models[i]);
         self.files[i] = files;
         self.frontage[i] = files;
@@ -1356,6 +1371,11 @@ impl Regiments {
                 self.backing[i] -= 1;
                 if self.target[i].is_none() || self.engaged[i].is_some() {
                     self.backing[i] = 0;
+                } else if self.backing[i] == 0 {
+                    // Out of time short of the spot: it stops there, free
+                    // to step back again.
+                    self.target[i] = None;
+                    self.target_facing[i] = None;
                 }
             }
         }
@@ -1519,6 +1539,11 @@ impl Regiments {
 
     /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
     fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
+        // A wedge stays a wedge, three deep, as its riders fall.
+        if self.formation[i] == Formation::Wedge {
+            let files = Formation::Wedge.files(0, self.models[i]);
+            (self.files[i], self.frontage[i]) = (files, files);
+        }
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);

@@ -187,7 +187,7 @@ Three orders for the fight, built 2026-11-20 and all in the simulation, so they 
 **Computer players** (`gc_ai/src/stances.rs`; Veteran, General and Warlord, never Recruit) give these orders once a second. Each costs one order of the AI's attention, like a person's:
 
 - **Column** for a fighting regiment marching outside any battle (in Conquest, between fights) with no enemy within 50 tiles. It returns to its battle formation (Wedge for wedgers, otherwise Line) once an enemy comes within 35 tiles or a battle's Captain takes it. Workers and caravans never.
-- **Wedge** for cavalry that can form one, out of a fight unless it is pulling back to recover.
+- **Wedge** for cavalry that can form one, out of a fight, while it strikes (a hammer, ambusher or hunter, or marching outside any battle). Given another part (screen, reserve, recovering) it stands in line, which defends better.
 - **Run** for a hammer or ambusher committed to its strike, or a hunter after routers, with 8 to 40 tiles still to go. It also runs for a wavering regiment pulling back with an enemy near.
 - **Hold** for the line (anchor and wings) standing to receive the enemy, once an enemy is within 30 tiles. The Captain's next move or attack lifts it.
 - **Skirmish** on for every regiment that shoots and marches at least 2.5 tiles a second (not slow engines). The AI's own archer step-back is left to the simulation, and it doesn't re-send orders to a regiment that is stepping back.

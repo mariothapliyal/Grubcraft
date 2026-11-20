@@ -1822,10 +1822,14 @@ impl Combat {
                     away.wrapping_add(Angle(t.wrapping_neg())),
                 ]
             }));
-            let Some(to) = ways
-                .map(|a| me + a.to_vec() * SKIRMISH_STEP)
-                .find(|&to| nav.standable(owner, to) && nav.clear_line(owner, me, to))
-            else {
+            // Where the whole block fits, if it fits where it stands.
+            let berth = regs.berth(units, i);
+            let roomy = nav.fits(owner, me, berth);
+            let Some(to) = ways.map(|a| me + a.to_vec() * SKIRMISH_STEP).find(|&to| {
+                nav.standable(owner, to)
+                    && (!roomy || nav.fits(owner, to, berth))
+                    && nav.clear_line(owner, me, to)
+            }) else {
                 continue;
             };
             regs.target[i] = Some(to);
@@ -3096,12 +3100,15 @@ fn strikers(
         taken += width;
         strikers += 1;
         out.push(k, 100);
-        if my_side == Side::Front && attacker.reach && k + mine.files < models {
+        // A wedge's charge drives the riders behind the point home too, a
+        // file each behind every man at the point (docs/05, "Wedge"); the
+        // second rank then strikes in full, not at a spear's half.
+        let driving =
+            my_side == Side::Front && regs.formation[i] == Formation::Wedge && regs.charge[i] > 0;
+        if my_side == Side::Front && attacker.reach && !driving && k + mine.files < models {
             out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
         }
-        // A wedge's charge drives the riders behind the point home too, a
-        // file each behind every man at the point (docs/05, "Wedge").
-        if my_side == Side::Front && regs.formation[i] == Formation::Wedge && regs.charge[i] > 0 {
+        if driving {
             let mut behind = k + mine.files;
             while behind < models && out.count < out.slots.len() {
                 out.push(behind, 100);

@@ -3626,11 +3626,16 @@ impl Running {
             });
         }
         self.ui_sound(sounds::UiSound::Move);
-        self.say(if on {
-            "Braced: a charge into their front runs onto the points; they stand until ordered"
-                .into()
+        // Z gives the bows in the selection their own order too: say so.
+        let bows = if skirmished {
+            "; the bows' skirmish changed too"
         } else {
-            "Spears lifted".into()
+            ""
+        };
+        self.say(if on {
+            format!("Braced: a charge into their front runs onto the points; they stand until ordered{bows}")
+        } else {
+            format!("Spears lifted{bows}")
         });
     }
 
