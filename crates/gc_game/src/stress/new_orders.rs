@@ -17,6 +17,7 @@ use crate::headless::Headless;
 use gc_ai::Difficulty;
 use gc_data::Faction;
 use gc_sim::Victories;
+use gc_sim::scenario::NORTH;
 use gc_ui::lobby::Tempo;
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -32,8 +33,6 @@ const GATE_X: i32 = 30;
 /// Who drives which line back.
 const DRIVER: &str = "Oni-Bound";
 const LINE: &str = "Yari Ashigaru";
-/// North is up the map.
-const NORTH: gc_fixed::Angle = gc_fixed::Angle(0xC000);
 
 fn order(player: u8, command: Command) -> PlayerCommand {
     PlayerCommand { player, command }

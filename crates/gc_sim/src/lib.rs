@@ -366,6 +366,12 @@ impl Formation {
         .clamp(1, models.max(1))
     }
 
+    /// Whether this formation has a frontage of its own (a column's width,
+    /// a wedge's depth) rather than the one the regiment is given.
+    pub fn own_frontage(self) -> bool {
+        matches!(self, Formation::Column | Formation::Wedge)
+    }
+
     /// Percent of its charge bonus (and of its weight ploughing in) a
     /// regiment's charge carries in this formation.
     pub fn charge_percent(self) -> u64 {

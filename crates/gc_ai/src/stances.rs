@@ -27,7 +27,7 @@
 use gc_sim::{Command, Formation, PlayerId, RegimentHandle};
 
 use crate::captain::{Captain, Posture, Role};
-use crate::perception::{Class, Perception, Seen};
+use crate::perception::{Perception, Seen};
 
 /// No enemy this near (tiles, centre to centre): march in column.
 pub const COLUMN_FAR: f32 = 50.0;
@@ -88,11 +88,8 @@ pub fn wanted(
         Formation::Column if part.is_some() || nearest < COLUMN_NEAR => {
             return Some(formation(battle));
         }
-        Formation::Line if battle == Formation::Wedge => {
-            return Some(formation(Formation::Wedge));
-        }
-        Formation::Wedge if battle == Formation::Line => {
-            return Some(formation(Formation::Line));
+        f @ (Formation::Line | Formation::Wedge) if f != battle => {
+            return Some(formation(battle));
         }
         _ => {}
     }
@@ -127,11 +124,7 @@ pub fn wanted(
         return Some(Command::Hold { regiment, on: true });
     }
     // Shooters keep away from melee.
-    if unit.class == Class::Ranged
-        && unit.stats.can_skirmish()
-        && unit.speed >= SKIRMISH_SPEED
-        && !r.skirmish
-    {
+    if unit.stats.can_skirmish() && unit.speed >= SKIRMISH_SPEED && !r.skirmish {
         return Some(Command::Skirmish { regiment, on: true });
     }
     None

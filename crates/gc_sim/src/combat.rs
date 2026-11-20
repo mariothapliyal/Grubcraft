@@ -1776,8 +1776,8 @@ impl Combat {
         tick: u32,
     ) {
         for i in 0..regs.alive.len() {
-            if !regs.alive[i]
-                || !regs.skirmish[i]
+            if !regs.skirmish[i]
+                || !regs.alive[i]
                 || !(tick + i as u32).is_multiple_of(SKIRMISH_EVERY)
                 || regs.hold[i]
                 || regs.backing[i] > 0
@@ -3022,6 +3022,12 @@ fn strikers(
 ) -> Strikers {
     let models = regs.models[i];
     let attacker = &units[regs.unit[i] as usize];
+    // A wedge's charge drives the riders behind the point home too, a file
+    // each behind every man at the point (docs/05, "Wedge"); the second
+    // rank then strikes in full, not at a spear's half.
+    let driving =
+        my_side == Side::Front && regs.formation[i] == Formation::Wedge && regs.charge[i] > 0;
+    let second_rank = my_side == Side::Front && attacker.reach && !driving;
     let theirs_last_file = last_file_nearer(regs, units, j, regs.position[i]);
     let mut out = Strikers {
         slots: [(0, 0); 2 * formation::MAX_MODELS as usize],
@@ -3100,12 +3106,7 @@ fn strikers(
         taken += width;
         strikers += 1;
         out.push(k, 100);
-        // A wedge's charge drives the riders behind the point home too, a
-        // file each behind every man at the point (docs/05, "Wedge"); the
-        // second rank then strikes in full, not at a spear's half.
-        let driving =
-            my_side == Side::Front && regs.formation[i] == Formation::Wedge && regs.charge[i] > 0;
-        if my_side == Side::Front && attacker.reach && !driving && k + mine.files < models {
+        if second_rank && k + mine.files < models {
             out.push(k + mine.files, crate::SECOND_RANK_PERCENT as u8);
         }
         if driving {

@@ -587,10 +587,9 @@ impl Regiments {
         let was = core::mem::replace(&mut self.formation[i], formation);
         // A column or a wedge has a frontage of its own; leaving one, the
         // regiment forms up as wide as when raised.
-        let own = |f: Formation| matches!(f, Formation::Column | Formation::Wedge);
-        if was != formation && own(formation) {
+        if was != formation && formation.own_frontage() {
             self.set_frontage(i, self.frontage[i]);
-        } else if was != formation && own(was) {
+        } else if was != formation && was.own_frontage() {
             self.leave_own(i, units[self.unit[i] as usize].files);
         }
         true
@@ -601,7 +600,7 @@ impl Regiments {
     /// the one it was raised with, `files`.
     pub(crate) fn break_formation(&mut self, i: usize, files: u16) {
         let was = core::mem::replace(&mut self.formation[i], Formation::Line);
-        if matches!(was, Formation::Column | Formation::Wedge) {
+        if was.own_frontage() {
             self.leave_own(i, files);
         }
     }
@@ -905,7 +904,7 @@ impl Regiments {
     /// Slot `i` forms up `files` soldiers wide (it narrows again at once
     /// if the ground is too tight for that).
     pub(crate) fn set_frontage(&mut self, i: usize, files: u16) {
-        if matches!(self.formation[i], Formation::Column | Formation::Wedge) {
+        if self.formation[i].own_frontage() {
             self.width_kept[i] = files;
         }
         let files = self.formation[i].files(files, self.models[i]);
