@@ -197,16 +197,18 @@ struct Skirmish {
     lost: u32,
 }
 
-/// Yumi at (32, 50) facing north, `foe` 20 tiles off attacking them.
+/// Yumi at (64, 40) on a 128-tile field facing north, `foe` 20 tiles off
+/// attacking them. (Room behind them to step back into: a block doesn't
+/// step back where it doesn't fit, so not over the map's edge.)
 fn skirmish(real: &Real, report: &mut Report, foe: &str, on: bool) -> Skirmish {
-    let mut world = Arena::new(TILES).world(real, 12, 0);
+    let mut world = Arena::new(2 * TILES).world(real, 12, 0);
     let yumi = spawn(
         &mut world,
         0,
-        &[(real.ember_line()[2], centre(32, 50))],
+        &[(real.ember_line()[2], centre(64, 40))],
         NORTH,
     )[0];
-    let pikes = spawn(&mut world, 1, &[(real.unit(foe), centre(32, 30))], SOUTH)[0];
+    let pikes = spawn(&mut world, 1, &[(real.unit(foe), centre(64, 20))], SOUTH)[0];
     let (full, ours) = (hp(&world, pikes), hp(&world, yumi));
     let mut orders = vec![order(
         1,

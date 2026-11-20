@@ -165,10 +165,10 @@ Three orders for the fight, built 2026-11-20 and all in the simulation, so they 
 
 **Skirmish** (`Z`, only for regiments that shoot):
 
-- When an enemy melee regiment that the shooters can see comes within 6 tiles of their block, and that regiment is not engaged, not falling back and not broken, the block steps back 8 tiles straight away from it. If water, cliffs or buildings block the way, it tries 30 and 60 degrees either side. It keeps facing the foe and stops for at most 5 seconds per step. The check runs every 5 ticks.
-- While stepping back it doesn't shoot. It can't outrun foot as fast as itself, so it delays contact rather than avoiding it.
+- When an enemy melee regiment that the shooters can see comes within 6 tiles of their block, and that regiment is not engaged, not falling back and not broken, the block steps back 8 tiles straight away from it. If water, cliffs or buildings block the way, or the whole block wouldn't fit there, it tries 30 and 60 degrees either side. A step that hasn't arrived after 5 seconds stops where it got to. It keeps facing the foe. The check runs every 5 ticks.
+- While stepping back it doesn't shoot. Each step back is followed by a halt where it shoots again, so slower foot rarely catches it on open ground; foot as fast as itself catches it in the end.
 - A held skirmisher stands (Hold wins). Retuning a unit so it no longer shoots turns Skirmish off.
-- Stress (real data): Yumi Ashigaru attacked by Bone Pikes (2.75 tiles/s) were caught after 6.4 s standing and 11.1 s skirmishing. Hit points lost in the first 20 s were 123 standing against 46 skirmishing, and they shot off 45 against 38 in 40 s. Against Gravewardens (2.5 tiles/s) they were caught at 7.0 s against 12.0 s, lost 128 against 40, and shot 31 against 27. Skirmishing trades a little shooting for a lot less melee.
+- Stress (real data, on open ground with room behind them): Yumi Ashigaru attacked by Bone Pikes (2.75 tiles/s) were caught after 6.4 s standing and 26.8 s skirmishing. They lost 90 hit points in the first 20 s standing and none skirmishing, and shot off 45 against 75 in 40 s. Against Gravewardens (2.5 tiles/s) they were caught at 7.0 s against 39.0 s, lost 120 against none, and shot 31 against 76. With their backs to the map's edge, a wall or a wood they have nowhere to step to and are caught much sooner.
 
 **Run** (`D`, or two right-clicks within 350 ms):
 
