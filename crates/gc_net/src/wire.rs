@@ -483,6 +483,20 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             w.handle(regiment);
             w.bool(on);
         }
+        Command::Hold { regiment, on } => {
+            w.u8(47);
+            w.handle(regiment);
+            w.bool(on);
+        }
+        Command::Skirmish { regiment, on } => {
+            w.u8(48);
+            w.handle(regiment);
+            w.bool(on);
+        }
+        Command::Run { regiment } => {
+            w.u8(49);
+            w.handle(regiment);
+        }
         Command::HandOver { to } => {
             w.u8(21);
             w.u8(to);
@@ -761,6 +775,17 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             on: r.bool()?,
         },
         21 => Command::HandOver { to: r.u8()? },
+        47 => Command::Hold {
+            regiment: r.handle()?,
+            on: r.bool()?,
+        },
+        48 => Command::Skirmish {
+            regiment: r.handle()?,
+            on: r.bool()?,
+        },
+        49 => Command::Run {
+            regiment: r.handle()?,
+        },
         tag @ (27 | 28) => Command::BuildWall {
             regiment: if tag == 27 { Some(r.handle()?) } else { None },
             building: r.var_as()?,
@@ -1080,6 +1105,15 @@ mod tests {
                 regiment: h(6, 1),
                 on: false,
             },
+            Command::Hold {
+                regiment: h(6, 2),
+                on: true,
+            },
+            Command::Skirmish {
+                regiment: h(7, 0),
+                on: true,
+            },
+            Command::Run { regiment: h(7, 1) },
             Command::HandOver { to: 2 },
             Command::SetGate {
                 structure: StructureHandle {

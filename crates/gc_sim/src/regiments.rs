@@ -118,6 +118,18 @@ const WIDEN_SPARE: Fx = Fx::from_ratio(1, 2);
 /// How far beyond its front rank a marching block looks for narrowing
 /// ground, in tiles.
 const SQUEEZE_LOOK: Fx = Fx::from_int(2);
+/// Percent of the pace a held regiment gives ground at (see
+/// [`Regiments::hold`]); a charge that ploughs in still drives it at full.
+pub const HOLD_DRIVEN_PERCENT: u8 = 50;
+/// A run: percent of its pace, and longest, in ticks (8 seconds).
+pub const RUN_PERCENT: i64 = 150;
+pub const RUN_TICKS: u8 = 8 * TICKS_PER_SECOND as u8;
+/// Winded after a run: ticks (10 seconds), and percent of its pace and of
+/// its melee blows.
+pub const WINDED_TICKS: u8 = 10 * TICKS_PER_SECOND as u8;
+pub const WINDED_PACE_PERCENT: i64 = 70;
+pub const WINDED_BLOW_PERCENT: u64 = 85;
+
 /// How near (tiles, along each axis) the next waypoint of a block's route
 /// is looked at for a narrows to narrow to fit beforehand (see `squeeze`).
 const NARROWS_AHEAD: Fx = Fx::from_int(8);
@@ -395,6 +407,23 @@ regiment_fields! {
     /// Spears or pikes set against a charge (see [`Regiments::brace`]):
     /// standing until given another order.
     braced: bool = false,
+    /// Standing fast (see [`Regiments::hold`]) until given another order.
+    hold: bool = false,
+    /// Keeping away from melee (see [`Regiments::set_skirmish`]), until
+    /// lifted.
+    skirmish: bool = false,
+    /// Ticks left of a skirmisher's step back (see
+    /// [`crate::combat::Combat::skirmish`]); 0 when not stepping back.
+    backing: u8 = 0,
+    /// Ticks left of a run (see [`Regiments::run`]), and of being winded
+    /// after one.
+    run_left: u8 = 0,
+    winded_left: u8 = 0,
+    /// In a column or a wedge, the frontage it was asked for (the width it
+    /// stood at going in, or a line drawn for it since): it forms up that
+    /// wide again on leaving. 0 for none, when the width it was raised
+    /// with is used.
+    width_kept: u16 = 0,
     /// Torches lit (see [`Regiments::light`]): they burn only in the dark.
     torches: bool = false,
     /// Ticks left of pulling out of a fight in good order (see
@@ -522,11 +551,16 @@ impl Regiments {
             };
             // Shields taken away: the wall comes apart.
             if !stats.can_form(self.formation[i]) {
-                self.formation[i] = Formation::Line;
+                self.break_formation(i, stats.files);
             }
             // Long weapons taken away: nothing left to brace.
             if !stats.reach {
                 self.braced[i] = false;
+            }
+            // Bows taken away: nothing left to skirmish with.
+            if !stats.can_skirmish() {
+                self.skirmish[i] = false;
+                self.backing[i] = 0;
             }
         }
     }
@@ -550,8 +584,32 @@ impl Regiments {
         {
             return false;
         }
-        self.formation[i] = formation;
+        let was = core::mem::replace(&mut self.formation[i], formation);
+        // A column or a wedge has a frontage of its own; leaving one, the
+        // regiment forms up as wide as when raised.
+        if was != formation && formation.own_frontage() {
+            self.set_frontage(i, self.frontage[i]);
+        } else if was != formation && was.own_frontage() {
+            self.leave_own(i, units[self.unit[i] as usize].files);
+        }
         true
+    }
+
+    /// Slot `i` drops into Line without an order (routing, retuned):
+    /// out of a column or a wedge it takes back the frontage it kept, or
+    /// the one it was raised with, `files`.
+    pub(crate) fn break_formation(&mut self, i: usize, files: u16) {
+        let was = core::mem::replace(&mut self.formation[i], Formation::Line);
+        if was.own_frontage() {
+            self.leave_own(i, files);
+        }
+    }
+
+    /// Slot `i`, just out of a column or a wedge, forms up as wide as it
+    /// kept (see `width_kept`), or else `files`.
+    fn leave_own(&mut self, i: usize, files: u16) {
+        let kept = core::mem::take(&mut self.width_kept[i]);
+        self.set_frontage(i, if kept > 0 { kept } else { files });
     }
 
     pub(crate) fn despawn(&mut self, h: RegimentHandle) -> bool {
@@ -746,6 +804,8 @@ impl Regiments {
         self.set_seeks_place(i, false);
         self.attack_target[i] = None;
         self.braced[i] = false;
+        self.hold[i] = false;
+        self.backing[i] = 0;
         self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
@@ -844,7 +904,10 @@ impl Regiments {
     /// Slot `i` forms up `files` soldiers wide (it narrows again at once
     /// if the ground is too tight for that).
     pub(crate) fn set_frontage(&mut self, i: usize, files: u16) {
-        let files = files.clamp(1, self.models[i].max(1));
+        if self.formation[i].own_frontage() {
+            self.width_kept[i] = files;
+        }
+        let files = self.formation[i].files(files, self.models[i]);
         self.files[i] = files;
         self.frontage[i] = files;
         self.reform[i] = 0;
@@ -1084,6 +1147,9 @@ impl Regiments {
     pub(crate) fn driven_pace(&self, i: usize) -> u8 {
         if self.plougher(i).is_some() {
             100
+        } else if self.hold[i] {
+            // Standing fast, it gives ground grudgingly.
+            (u16::from(self.giving[i]) * u16::from(HOLD_DRIVEN_PERCENT) / 100) as u8
         } else {
             self.giving[i]
         }
@@ -1119,6 +1185,8 @@ impl Regiments {
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
         self.braced[i] = false;
+        self.hold[i] = false;
+        self.backing[i] = 0;
         self.falling_back[i] = 0;
         self.held[i] = 0;
         self.clear[i] = 0;
@@ -1151,6 +1219,9 @@ impl Regiments {
         self.target_facing[i] = Some(self.facing[i]);
         self.attack_target[i] = None;
         self.braced[i] = false;
+        self.hold[i] = false;
+        self.backing[i] = 0;
+        self.end_run(i);
         self.falling_back[i] = crate::combat::FALL_BACK_TICKS;
         self.held[i] = 0;
         self.clear[i] = 0;
@@ -1194,6 +1265,119 @@ impl Regiments {
         self.attack_target[i] = None;
         self.held[i] = 0;
         true
+    }
+
+    /// Set regiment `h` to stand fast, or stop (`on` false): it halts
+    /// where it stands, fights only what reaches it (turning to face it),
+    /// never presses after a foe or steps aside for friends, and a foe that
+    /// outfights it drives it back at [`HOLD_DRIVEN_PERCENT`] of the pace
+    /// (see [`Regiments::driven_pace`]). Routing regiments don't listen.
+    /// Any move, attack, fall back or run lifts it. Returns whether that
+    /// changed anything.
+    pub(crate) fn hold(&mut self, h: RegimentHandle, on: bool) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if !on {
+            return core::mem::take(&mut self.hold[i]);
+        }
+        if self.morale_state[i].broken() || self.falling_back[i] > 0 {
+            return false;
+        }
+        self.hold[i] = true;
+        self.target[i] = None;
+        self.target_facing[i] = None;
+        self.attack_target[i] = None;
+        self.backing[i] = 0;
+        self.held[i] = 0;
+        self.end_run(i);
+        true
+    }
+
+    /// Set regiment `h` to keep away from melee, or stop (`on` false); see
+    /// [`crate::combat::Combat::skirmish`]. Only regiments that shoot.
+    /// Returns whether that changed anything.
+    pub(crate) fn set_skirmish(
+        &mut self,
+        h: RegimentHandle,
+        on: bool,
+        units: &[UnitStats],
+    ) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if on && !units[self.unit[i] as usize].can_skirmish() {
+            return false;
+        }
+        if !on {
+            self.backing[i] = 0;
+        }
+        core::mem::replace(&mut self.skirmish[i], on) != on
+    }
+
+    /// Regiment `h` runs where it is going (see [`RUN_PERCENT`]), for up
+    /// to [`RUN_TICKS`]. Refused with nowhere to go, in a fight, falling
+    /// back, routing, winded, running already, in a shield wall (which
+    /// can't run) or in a column (already at its quick march).
+    pub(crate) fn run(&mut self, h: RegimentHandle) -> bool {
+        let Some(i) = self.resolve(h) else {
+            return false;
+        };
+        if self.idle(i)
+            || self.engaged[i].is_some()
+            || self.falling_back[i] > 0
+            || self.morale_state[i].broken()
+            || self.winded_left[i] > 0
+            || self.run_left[i] > 0
+            || matches!(self.formation[i], Formation::ShieldWall | Formation::Column)
+        {
+            return false;
+        }
+        self.run_left[i] = RUN_TICKS;
+        self.hold[i] = false;
+        true
+    }
+
+    /// Slot `i`'s run ends, if it is running: it is winded from now.
+    pub(crate) fn end_run(&mut self, i: usize) {
+        if self.run_left[i] > 0 {
+            self.run_left[i] = 0;
+            self.winded_left[i] = WINDED_TICKS;
+        }
+    }
+
+    /// A tick of every run, winding and skirmisher's step back goes by: a
+    /// run ends once the regiment arrives, meets a foe, is routing or runs
+    /// out of breath; a step back once it arrives.
+    pub(crate) fn wear_orders(&mut self) {
+        for i in 0..self.alive.len() {
+            if !self.alive[i] {
+                continue;
+            }
+            self.winded_left[i] = self.winded_left[i].saturating_sub(1);
+            if self.run_left[i] > 0 {
+                if self.run_left[i] == 1
+                    || self.idle(i)
+                    || self.engaged[i].is_some()
+                    || self.morale_state[i].broken()
+                {
+                    self.end_run(i);
+                } else {
+                    self.run_left[i] -= 1;
+                }
+            }
+            if self.backing[i] > 0 {
+                self.backing[i] -= 1;
+                if self.target[i].is_none() || self.engaged[i].is_some() {
+                    self.backing[i] = 0;
+                } else if self.backing[i] == 0 {
+                    // Out of time short of the spot: it stops there, free
+                    // to step back again.
+                    self.target[i] = None;
+                    self.target_facing[i] = None;
+                }
+            }
+        }
     }
 
     /// Take `amount` hit points off the regiment, from the back ranks forward:
@@ -1354,6 +1538,11 @@ impl Regiments {
 
     /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
     fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
+        // A wedge stays a wedge, three deep, as its riders fall.
+        if self.formation[i] == Formation::Wedge {
+            let files = Formation::Wedge.files(0, self.models[i]);
+            (self.files[i], self.frontage[i]) = (files, files);
+        }
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);
@@ -1393,6 +1582,11 @@ impl Regiments {
             ploughed_by: self.plougher(i).map(|k| self.handle(k)),
             general: self.general[i],
             braced: self.braced[i],
+            hold: self.hold[i],
+            skirmish: self.skirmish[i],
+            stepping_back: self.backing[i] > 0,
+            running: self.run_left[i] > 0,
+            winded: self.winded_left[i] > 0,
             torches: self.torches[i],
             falling_back: self.falling_back[i] > 0,
             on_wall: self.on_wall[i],
@@ -1425,14 +1619,20 @@ impl Regiments {
             Doing::Running
         } else if self.falling_back[i] > 0 {
             Doing::FallingBack
+        } else if self.backing[i] > 0 {
+            Doing::Skirmishing
         } else if self.engaged[i].is_some() {
             Doing::Fighting
+        } else if !self.idle(i) && self.run_left[i] > 0 {
+            Doing::AtTheRun
         } else if self.attack_target[i].is_some() {
             Doing::Attacking
         } else if self.plan(i).hunt.is_some() {
             Doing::Advancing
         } else if self.braced[i] {
             Doing::Braced
+        } else if self.hold[i] {
+            Doing::StandingFast
         } else if self.target[i].is_some() && self.march_left[i] > 0 {
             Doing::ForcedMarch
         } else if self.target[i].is_some() {
@@ -1456,6 +1656,8 @@ impl Regiments {
             Some(Waiting::Reforming)
         } else if self.target[i].is_some() && self.narrowed(i) {
             Some(Waiting::FilingThrough)
+        } else if self.winded_left[i] > 0 {
+            Some(Waiting::Winded)
         } else {
             None
         }
@@ -1562,7 +1764,14 @@ impl Regiments {
                 // On a march (see [`crate::powers`]), further.
                 let pace = self.marched(i, pace);
                 // Falling back, it backs away all the way, facing its foe.
-                let shuffle = ((last && dist <= SHUFFLE_DISTANCE) || self.falling_back[i] > 0)
+                // A skirmisher stepping back marches all the way and faces
+                // about only on the spot.
+                let near = if self.backing[i] > 0 {
+                    Fx::HALF
+                } else {
+                    SHUFFLE_DISTANCE
+                };
+                let shuffle = ((last && dist <= near) || self.falling_back[i] > 0)
                     && self.target_facing[i].is_some();
                 let mut wheeling = false;
                 let step = if shuffle {
@@ -1898,6 +2107,15 @@ pub struct RegimentView {
     pub giving_ground: bool,
     /// Spears or pikes set against a charge (see [`Regiments::brace`]).
     pub braced: bool,
+    /// Standing fast on a Hold order (see [`Regiments::hold`]).
+    pub hold: bool,
+    /// Keeping away from melee (see [`Regiments::set_skirmish`]), and
+    /// stepping back from it just now.
+    pub skirmish: bool,
+    pub stepping_back: bool,
+    /// Running (see [`Regiments::run`]), or winded after a run.
+    pub running: bool,
+    pub winded: bool,
     /// Torches lit (see [`Command::Torches`](crate::Command::Torches)):
     /// they burn only in the dark.
     pub torches: bool,
@@ -1968,6 +2186,12 @@ pub enum Doing {
     FallingBack,
     /// Routing or shattered: not taking orders.
     Running,
+    /// Standing fast on a Hold order.
+    StandingFast,
+    /// A skirmisher stepping back from melee.
+    Skirmishing,
+    /// Marching or going for an enemy at the run.
+    AtTheRun,
 }
 
 /// What is holding a regiment up, as the screen shows it.
@@ -1984,6 +2208,8 @@ pub enum Waiting {
     FilingThrough,
     /// Held fast by a trap.
     Trapped,
+    /// Out of breath after a run: slower, with weaker blows.
+    Winded,
 }
 
 impl RegimentView {

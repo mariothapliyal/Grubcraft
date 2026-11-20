@@ -29,17 +29,17 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 | Move | right-click / `Q` | Move in current formation, keep facing toward travel |
 | Move and face | right-drag | Drag a line: sets position, frontage width and facing (Total War's signature control) |
 | Attack | right-click enemy / `W` | Engage target, or attack-move to a point |
-| Hold | `E` | Hold position and facing, only fight what reaches you (later; `E` is Burn for now) |
+| Hold | `S` | Halt where you stand and face; fight only what reaches you. **Built:** [Hold, Skirmish and Run](#hold-skirmish-and-run) |
 | Burn | `E` | Set the woods or scrub beside the selection alight: the fire spreads with the wind, burns anyone in it (4 hit points a second for each burning tile touched, and morale) and dies in the rain ([32](32-changing-land.md#woods-that-burn-idea-2)) |
 | Torches | `X` | At night: light or put out the selection's torches (seen from afar, see further, can't be ambushed; [32](32-changing-land.md)). Charges need no key: closing at speed charges |
-| Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). Skirmish, where ranged units keep distance from approaching melee, comes later |
-| Formation | `R` (cycle) | Line / Tight / Loose / Shield wall (shields only); Column and Wedge (cavalry) later. See [Weapons and formations](#weapons-and-formations) |
-| Run | double right-click / `C` | Faster move, then **Winded** for 10 s. *Not built yet; `C` plants stakes in Conquest* |
+| Skirmish / Brace | `Z` (toggle) | **Brace is built:** spears and pikes set against a charge ([below](#brace-and-fall-back)). **Skirmish is built:** shooters step back from approaching melee ([below](#hold-skirmish-and-run)) |
+| Formation | `R` (or `F`, cycle) | Line / Tight / Loose / Shield wall (shields only) / Column / Wedge (only regiments that can wedge), then Line again. See [Weapons and formations](#weapons-and-formations) |
+| Run | `D` or double right-click | 150% pace for up to 8 s, then **Winded** for 10 s (70% pace, 85% melee blows). **Built:** [Hold, Skirmish and Run](#hold-skirmish-and-run). `C` still plants stakes in Conquest |
 | Fall back | `V` | Pull out of the fight in good order: back 8 tiles at half pace, still facing the foe ([below](#brace-and-fall-back)). Retreat toward the nearest friendly structure comes with Conquest |
 
 Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [08 · UI and UX](08-ui-ux.md#screen-layout-1080p-reference)).
 
-**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation; ranged regiments fire at will (and will Skirmish by default once that order exists); units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
+**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation; ranged regiments fire at will (Skirmish is off by default for people's regiments, since on by default would change every battle; `Z` turns it on, and computer players turn it on for their bows); units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
 
 ## Facing, flanks and charges
 
@@ -68,6 +68,8 @@ A regiment's weapons decide which formation suits it, so the Formation order is 
 - **Swing room:** big swings need space. Cramped in Tight order or a shield wall they lose a fifth of their damage; in Loose order they keep their defence, because the gaps are what they fight in.
 - **Shield wall:** the strongest answer to archers (arrows from the front do 30% damage, and the front holds better in melee), but the regiment marches at half pace, can't charge, and is no better than a Line when hit in the flank or rear. Only regiments with shields can form one.
 - **Formation discipline** (the Ember Clans' signature, a unit trait like the three flags above): a regiment with it gets 15% of its own melee defence more (rounded down, at least 1) while it stands still in Tight order or a shield wall, on top of the +10 (and on a shield wall's front only). "Still" means it has no march to carry out (turning on the spot, or standing in a fight, is still; the screen's and the computer players' readouts use the same rule, `RegimentView::still`); it is lost when the regiment is ordered to move, even locked in melee. It changes nothing in Line or Loose order. The Clans' Yari Ashigaru and Yumi Ashigaru have it in Field Battles.
+- **Column** (`R` cycle, built 2026-11-20): 4 files wide (fewer if the regiment is smaller), takes the same room as Line. It marches at 125% pace but can't charge, and has 10 less melee defence. Leaving column restores the regiment's own frontage.
+- **Wedge** (`R` cycle, built 2026-11-20): only regiments that can wedge may form one: speed at least 5 tiles a second, charge bonus at least 40, no ranged attack, and at least 3 models. In practice that means charging cavalry such as Mounted Samurai and Debt Collectors. It is 3 ranks deep (files = models / 3, rounded up), its charge bonus and plough weight are both x150%, and it has 10 less melee defence. While its charge lasts, every rider behind a front striker strikes too, so the point drives in.
 - Ranks re-form only out of the fight: a regiment locked in melee keeps its formation, and a routing one drops back to Line and takes no formation orders until it rallies. A group order with a shield wall in it marches at the wall's pace.
 - Each unit also has a **mass** (light, medium or heavy: swarms and flyers light, cavalry and monsters heavy), which decides how hard it shoves in a locked melee ([Lines that push](#lines-that-push)).
 
@@ -130,7 +132,7 @@ A regiment is a mass of bodies, not a wall (idea 11, physical formations, in the
 
 Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-decisions-needed.md#battle-feel-from-mount--blade-decided-2026-10-15)).
 
-**Brace** (`Z`, the grid slot labelled "Brace"; Skirmish shares that slot when it arrives):
+**Brace** (`Z`, the grid slot labelled "Brace"; Skirmish shares that slot, see [Hold, Skirmish and Run](#hold-skirmish-and-run)):
 
 - Only regiments with long weapons, the `reach` flag (spears and pikes, such as Yari Ashigaru and Bone Pikes), can brace. A regiment must not be locked in melee, falling back or routing to brace.
 - Bracing halts the regiment where it stands. It stays braced until it gets a move or attack order, falls back or routs. `Z` again lifts the spears. It can be set during deployment too.
@@ -149,6 +151,48 @@ Two orders for the fight itself (adapted from Mount & Blade, [decision 28](14-de
 - Routing regiments can't fall back. Falling back lifts a brace.
 
 **Built so far (2026-10-16):** Brace and Fall back work as described. Computer players don't use either order yet. The sandbox's `Shift`+`V` now reveals every hidden regiment (it was `V`). Retreat toward the nearest friendly structure still comes with Conquest. The golden replay `replays/field-brace-1v1.gcr` plays a braced Ember Clans line against a Brood army that only charges, with two of side 0's regiments falling back out of the fight once the lines meet.
+
+## Hold, Skirmish and Run
+
+Three orders for the fight, built 2026-11-20 and all in the simulation, so they play out the same way every time. Hold is on `S`, Run on `D` (or double right-click), and Skirmish on `Z`, which shares the Brace slot. Column and Wedge are formations on the `R` cycle ([Weapons and formations](#weapons-and-formations)).
+
+**Hold** (`S`, the grid slot labelled "Hold"):
+
+- Halts the regiment where it stands. It fights only what reaches it, turning to face it. It never presses after a foe, never steps aside for friends, never goes round a crowded fight to another side, and doesn't press back in after a foe pushed out of reach.
+- A foe that outfights it drives it back at half the usual pace.
+- Any move, attack, fall back or run lifts it, and `S` again lifts it. It can be set while deploying. It is refused on a wall and when the regiment is routing or falling back. A regiment that routs loses its Hold (and a column or wedge that routs rallies in Line at its own width).
+- Stress (real data): Yari Ashigaru attacked by Oni-Bound gave 4.9 tiles before breaking when free, and 2.0 when held.
+
+**Skirmish** (`Z`, only for regiments that shoot):
+
+- When an enemy melee regiment that the shooters can see comes within 6 tiles of their block, and that regiment is not engaged, not falling back and not broken, the block steps back 8 tiles straight away from it. If water, cliffs or buildings block the way, or the whole block wouldn't fit there, it tries 30 and 60 degrees either side. A step that hasn't arrived after 5 seconds stops where it got to. It keeps facing the foe. The check runs every 5 ticks.
+- While stepping back it doesn't shoot. Each step back is followed by a halt where it shoots again, so slower foot rarely catches it on open ground; foot as fast as itself catches it in the end.
+- A held skirmisher stands (Hold wins). Retuning a unit so it no longer shoots turns Skirmish off.
+- Stress (real data, on open ground with room behind them): Yumi Ashigaru attacked by Bone Pikes (2.75 tiles/s) were caught after 6.4 s standing and 26.8 s skirmishing. They lost 90 hit points in the first 20 s standing and none skirmishing, and shot off 45 against 75 in 40 s. Against Gravewardens (2.5 tiles/s) they were caught at 7.0 s against 39.0 s, lost 120 against none, and shot 31 against 76. With their backs to the map's edge, a wall or a wood they have nowhere to step to and are caught much sooner.
+
+**Run** (`D`, or two right-clicks within 350 ms):
+
+- Marches at 150% pace for up to 8 seconds, then is **winded** for 10 seconds: 70% pace, and 85% melee blow damage while winded.
+- The run ends early, and winding starts, when the regiment arrives, meets a foe or routs.
+- Refused when the regiment has nowhere to go, or is fighting, falling back, routing, winded, already running, in a shield wall or a column (already at its quick march, so the two never stack), or on a wall. A run lifts Hold.
+- Stress (real data): a Yari regiment walked 18.1 tiles in 6 seconds, and ran 27.2 tiles in the same time.
+
+**Real use:**
+
+- **Small skirmish, 10-regiment battle and grand battle:** Hold a regiment still to meet a charge, Skirmish the shooters so that charges reach them late and weak, and Run a regiment to reach a flank or bring up a reserve before the fight is decided. A held line with its wings and anchor is the backbone of a larger battle, and skirmishing shooters stand behind it.
+- **Through gates:** Column narrows a block to 4 files, so it files through a gate faster. In the gate scenario, 200 soldiers (10 regiments) went through one Gate in a Palisade in 20.6 s in line and 18.2 s in column, and no soldier was lost either way.
+- **Over bridges:** Column also files a block onto a bridge faster. A held line at a gate or bridge end holds the crossing.
+- **Skirmishers on a bridge** step back only onto ground they can stand on, so on a bridge they step back along it or not at all. **Running across a bridge** usually leaves the regiment winded on the far side, since a run lasts 8 s. (These two follow from the rules; the stress scenario doesn't measure them.)
+
+**Computer players** (`gc_ai/src/stances.rs`; Veteran, General and Warlord, never Recruit) give these orders once a second. Each costs one order of the AI's attention, like a person's:
+
+- **Column** for a fighting regiment marching outside any battle (in Conquest, between fights) with no enemy within 50 tiles. It returns to its battle formation (Wedge for wedgers, otherwise Line) once an enemy comes within 35 tiles or a battle's Captain takes it. Workers and caravans never.
+- **Wedge** for cavalry that can form one, out of a fight, while it strikes (a hammer, ambusher or hunter, or marching outside any battle). Given another part (screen, reserve, recovering) it stands in line, which defends better.
+- **Run** for a hammer or ambusher committed to its strike, or a hunter after routers, with 8 to 40 tiles still to go. It also runs for a wavering regiment pulling back with an enemy near.
+- **Hold** for the line (anchor and wings) standing to receive the enemy, once an enemy is within 30 tiles. The Captain's next move or attack lifts it.
+- **Skirmish** on for every regiment that shoots and marches at least 2.5 tiles a second (not slow engines). The AI's own archer step-back is left to the simulation, and it doesn't re-send orders to a regiment that is stepping back.
+
+Checked: in a Conquest match on Four Teeth, two Generals (Ember Clans against Carrion Concord) gave skirmish, wedge, column and hold orders (stress scenario `new-orders`; it plays up to three matches until it has seen every kind, with hold or run counting as one). In a Field Battle, two Generals skirmish and hold or run (`gc_match` test `computer_generals_give_the_new_orders`).
 
 ## Morale
 
@@ -279,7 +323,7 @@ The simulation models each regiment as a formation (position, facing, width, dep
 - **Charges that plough in (2026-10-24):** as in [Charges that plough in](#charges-that-plough-in).
 - **The commander on the field (2026-10-24):** in a Field Battle each player's general rides with their best fighting regiment, steadies the regiments near him, speaks before the lines meet, and when he falls his side panics, as in [35 · The commander on the field](37-commander.md). Until heroes reach Field Battles he stands in for them.
 - **Morale:** Steady, Wavering, Routing and Shattered work as described above, driven by casualties, flank and rear hits, being outnumbered nearby, being pinned, and nearby routs. Winning a fight lifts morale. Routers are slower than their pursuers and rally after 10 s with no enemy within 20 tiles. A second rout within 2 minutes shatters a regiment: it runs, then stands for good in a Field Battle; in Conquest it leaves the field after 10 s with no enemy within 20 tiles, freeing its supply (2026-11-01: shattered regiments that stood on the map for the rest of a match filled whole armies' supply, so long AI games stalled with both sides "full" and tiny armies). Concord undead (the Bone Pikes) never rout. A battered regiment never recovers its full morale.
-- **Not yet:** heroes and terror as morale sources (veterancy came on 2026-10-31, see [Veterancy](#veterancy)), the other faction exceptions, and Conquest's gentler rules. The Hold, Charge, Skirmish and Run orders, the full Retreat toward a structure (with Conquest), the Column and Wedge formations, terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes and counters also come later.
+- **Not yet:** heroes and terror as morale sources (veterancy came on 2026-10-31, see [Veterancy](#veterancy)), the other faction exceptions, and Conquest's gentler rules. The Charge order, the full Retreat toward a structure (with Conquest), terrain beyond high ground and fords (see [Terrain](#terrain)), air, heroes and counters also come later.
 
 <a id="battle-pace"></a>**Built so far (battle pace, 2026-10-18):** battles were over too fast, so two constants in `gc_sim::combat` slow the killing. `BATTLE_PACE_PERCENT = 70` scales melee blows to 70% of their damage; `VOLLEY_PACE_PERCENT = 85` (the average of 70 and 100) scales volleys to 85%. Volleys are slowed half as much because the approach, where most arrows fly, does not get longer: slowing them as much as melee dropped the Clans to about 28% wins, and not slowing them pushed the Clans to 60-75%. Melee is at 70 and not 50 because at 50 holding a ford stopped paying off (defenders killed foes trickling out of a ford too slowly; the `holding_the_ford_pays_off` drill in `gc_ai` failed). The steady per-second morale drains (flank and rear shock, pinned, half strength, outnumbered) follow the melee pace (`BATTLE_PACE_PERCENT` in `morale::check`), so a regiment does not break before it has been hurt; casualty losses and recovery are unscaled. Fights (first contact to the end) now last about 105 to 140 s instead of 95 to 120 s, and whole battles about 170 to 200 s instead of 175 s. `SIM_VERSION` is 22; the goldens were re-blessed (the scripted Conquest golden marches at 145 s, not 150 s, since slower fights kept side 0 from reaching the enemy main building in 6 minutes).
 

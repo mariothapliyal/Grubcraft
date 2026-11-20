@@ -232,9 +232,10 @@ use gc_sim::formation::{GroupMember, GroupOrder};
 use gc_sim::scenario::Drill;
 use gc_sim::structures::{Breaker, TowerShot};
 use gc_sim::{
-    BuildingId, BuildingStats, Capacities, Formation, Growth, LOOSE_DEFENCE, MatchSetup,
-    MoraleState, PlayerCommand, PlayerId, RegimentHandle, StructureHandle, StructureView,
-    TIGHT_DEFENCE, UnitId, UnitStats, World,
+    BuildingId, BuildingStats, COLUMN_DEFENCE, COLUMN_FILES, Capacities, Formation, Growth,
+    LOOSE_DEFENCE, MatchSetup, MoraleState, PlayerCommand, PlayerId, RegimentHandle,
+    StructureHandle, StructureView, TIGHT_DEFENCE, UnitId, UnitStats, WEDGE_DEFENCE, WEDGE_RANKS,
+    World,
 };
 use gc_ui::lobby::{GameMode, MatchStart};
 use gc_ui::menu::MapPreviewKey;
@@ -990,6 +991,9 @@ struct Running {
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
     last_group_key: Option<(usize, Instant)>,
+    /// When the last right-click order was given, and to whom: a second
+    /// one to the same selection soon after runs (see [`Self::run`]).
+    last_right: Option<(Instant, Vec<RegimentHandle>)>,
     /// The enemy regiment last ordered attacked, marked on the ground briefly.
     attack_mark: Option<(RegimentHandle, Instant)>,
     /// Orders just given, drawn as fading ghost plates from the click on.
@@ -1336,6 +1340,12 @@ fn formation_hint(f: Formation) -> String {
             "arrows from the front mostly glance off; half pace, no charging, no help on the flanks"
                 .into()
         }
+        Formation::Column => format!(
+            "{COLUMN_FILES} wide, a quarter faster on the march and through gates; no charging, {COLUMN_DEFENCE} less defence if caught"
+        ),
+        Formation::Wedge => format!(
+            "{WEDGE_RANKS} deep: charges hit half again as hard and plough deeper; {WEDGE_DEFENCE} less defence in a standing fight"
+        ),
     }
 }
 
@@ -1948,6 +1958,7 @@ impl App {
             boxed: Vec::with_capacity(64),
             control_groups: Default::default(),
             last_group_key: None,
+            last_right: None,
             attack_mark: None,
             order_marks: Vec::new(),
             sim_clock: Duration::ZERO,
@@ -2412,6 +2423,8 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::KeyZ if grid_key => r.battle_press(hud::SLOT_BRACE),
+                        KeyCode::KeyS if grid_key => r.battle_press(hud::SLOT_HOLD),
+                        KeyCode::KeyD if grid_key => r.battle_press(hud::SLOT_RUN),
                         KeyCode::KeyX if grid_key => r.battle_press(hud::SLOT_TORCHES),
                         KeyCode::KeyE if grid_key => r.battle_press(hud::SLOT_BURN),
                         KeyCode::KeyV if grid_key => r.battle_press(hud::SLOT_FALL_BACK),
@@ -2782,8 +2795,10 @@ impl Running {
                 let target = body.or_else(|| plain.and_then(|p| self.enemy_at(p)));
                 // Shift queues a move or an attack after the current orders.
                 let queue = self.input.shift;
+                let mut ordered = false;
                 if let Some(target) = target {
                     self.issue_attack(target, queue);
+                    ordered = true;
                 } else if let Some(building) = drag
                     .is_none()
                     .then(|| self.enemy_building_under_cursor())
@@ -2792,6 +2807,18 @@ impl Running {
                     self.issue_siege(building);
                 } else if let Some(order) = drag.or_else(|| plain.map(hud::move_order)) {
                     self.issue_march(order, false, queue);
+                    ordered = true;
+                }
+                // A second right-click soon after the first: they run there.
+                if ordered && !queue && !self.world.deploying() {
+                    let now = Instant::now();
+                    let again = (self.last_right.take())
+                        .is_some_and(|(t, who)| now - t < DOUBLE_TAP && who == self.selected);
+                    if again {
+                        self.run();
+                    } else {
+                        self.last_right = Some((now, self.selected.clone()));
+                    }
                 }
                 self.input.right_down = None;
             }
@@ -3463,17 +3490,23 @@ impl Running {
             Some((selection, f, at)) if *selection == self.selected && tick < at + 40 => *f,
             _ => ready().find(shielded).unwrap_or(first).formation,
         };
+        let wedges = |r: &gc_sim::RegimentView| units[r.unit as usize].can_wedge();
         let next = match current {
             Formation::Line => Formation::Tight,
             Formation::Tight => Formation::Loose,
             Formation::Loose if ready().any(|r| shielded(&r)) => Formation::ShieldWall,
-            Formation::Loose | Formation::ShieldWall => Formation::Line,
+            Formation::Loose | Formation::ShieldWall => Formation::Column,
+            Formation::Column if ready().any(|r| wedges(&r)) => Formation::Wedge,
+            Formation::Column | Formation::Wedge => Formation::Line,
         };
         let mut closed_up = false;
         for r in ready() {
-            // Regiments without shields close up instead.
+            // Regiments without shields close up instead, and those that
+            // can't form a wedge stay in column.
             let formation = if units[r.unit as usize].can_form(next) {
                 next
+            } else if next == Formation::Wedge {
+                Formation::Column
             } else {
                 closed_up = true;
                 Formation::Tight
@@ -3554,7 +3587,8 @@ impl Running {
 
     /// Z: set the selection's spears and pikes against a charge, or, if
     /// they all stand braced already, lift them. Only regiments with long
-    /// weapons out of the fight can brace.
+    /// weapons out of the fight can brace. The selection's regiments that
+    /// shoot skirmish instead (see [`Self::toggle_skirmish`]).
     fn toggle_brace(&mut self) {
         let units = self.world.units();
         let spears: Vec<_> = self
@@ -3563,8 +3597,14 @@ impl Running {
             .filter_map(|&h| self.world.regiments.get(h))
             .filter(|r| units[r.unit as usize].reach && !r.morale.broken())
             .collect();
+        let skirmished = self.toggle_skirmish();
         if spears.is_empty() {
-            self.say("Only spears and pikes can brace".into());
+            if !skirmished {
+                self.say(
+                    "Only spears and pikes can brace, and only regiments that shoot skirmish"
+                        .into(),
+                );
+            }
             return;
         }
         // Set any that can be set; once none can, lift those that are.
@@ -3586,12 +3626,114 @@ impl Running {
             });
         }
         self.ui_sound(sounds::UiSound::Move);
+        // Z gives the bows in the selection their own order too: say so.
+        let bows = if skirmished {
+            "; the bows' skirmish changed too"
+        } else {
+            ""
+        };
         self.say(if on {
-            "Braced: a charge into their front runs onto the points; they stand until ordered"
+            format!("Braced: a charge into their front runs onto the points; they stand until ordered{bows}")
+        } else {
+            format!("Spears lifted{bows}")
+        });
+    }
+
+    /// Z for the selection's regiments that shoot: keep away from melee
+    /// (they step back and shoot again), or, if they all do already, stop.
+    /// Returns whether there were any.
+    fn toggle_skirmish(&mut self) -> bool {
+        let units = self.world.units();
+        let bows: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| units[r.unit as usize].can_skirmish() && !r.morale.broken())
+            .collect();
+        if bows.is_empty() {
+            return false;
+        }
+        let on = bows.iter().any(|r| !r.skirmish);
+        for r in bows.iter().filter(|r| r.skirmish != on) {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Skirmish {
+                    regiment: r.handle,
+                    on,
+                },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(if on {
+            "Skirmishing: they step back from melee that comes near, then turn and shoot again"
                 .into()
         } else {
-            "Spears lifted".into()
+            "Skirmish off: they stand their ground".into()
         });
+        true
+    }
+
+    /// S: the selection stands fast, or, if it all does already, stands
+    /// down.
+    fn toggle_hold(&mut self) {
+        let mine: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| !r.morale.broken() && !r.falling_back)
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        let on = mine.iter().any(|r| !r.hold);
+        for r in mine.iter().filter(|r| r.hold != on) {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Hold {
+                    regiment: r.handle,
+                    on,
+                },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say(if on {
+            "Standing fast: they fight only what reaches them and give ground grudgingly; any order lifts it".into()
+        } else {
+            "Standing down".into()
+        });
+    }
+
+    /// D (or a double right-click): the selection runs where it is going.
+    fn run(&mut self) {
+        if self.world.deploying() {
+            self.say("No running until the battle begins".into());
+            return;
+        }
+        let ready: Vec<_> = self
+            .selected
+            .iter()
+            .filter_map(|&h| self.world.regiments.get(h))
+            .filter(|r| {
+                !r.morale.broken()
+                    && !r.engaged
+                    && !r.running
+                    && !r.winded
+                    && !matches!(r.formation, Formation::ShieldWall | Formation::Column)
+            })
+            .map(|r| r.handle)
+            .collect();
+        if ready.is_empty() {
+            self.say("Winded, fighting, in a shield wall or a column: no running".into());
+            return;
+        }
+        for regiment in ready {
+            self.human_orders.push(PlayerCommand {
+                player: self.sandbox.side,
+                command: gc_sim::Command::Run { regiment },
+            });
+        }
+        self.ui_sound(sounds::UiSound::Move);
+        self.say("At the run: half again as fast for up to 8 s, then winded for 10 s".into());
     }
 
     /// E: set the woods beside each selected regiment alight (the sim

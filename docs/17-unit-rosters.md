@@ -114,7 +114,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
   - **Ride Down** · passive — +50% damage to routing regiments. [ModifyStat]
   - **Wedge** · toggle — Wedge formation: +30 charge bonus, −10 melee defence. [ModifyStat]
 - **Yabusame Riders** (new)
-  - **Parthian Shot** · passive — Can loose volleys while moving, at 75% accuracy; skirmishes by default (the Skirmish order is not built yet). [ModifyStat]
+  - **Parthian Shot** · passive — Can loose volleys while moving, at 75% accuracy; skirmishes by default (the Skirmish order is built since 2026-11-20; this ability, shooting on the move, is not yet). [ModifyStat]
 - **Ember Rocket Cart**
   - **Rocket Salvo** · passive — Each volley bursts over a 3-tile radius and can hit friends. [Damage, AreaPulse]
   - **Screaming Fire** · passive — Regiments hit lose 4 extra morale per salvo. [ModifyMorale]

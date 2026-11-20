@@ -64,6 +64,7 @@ impl Difficulty {
                 slip_percent: 35,
                 slip_gap_ticks: 10 * TICKS_PER_SECOND,
                 rehearse: false,
+                stances: false,
             },
             Difficulty::Veteran => Knobs {
                 reaction_ticks: 16,
@@ -88,6 +89,7 @@ impl Difficulty {
                 slip_percent: 10,
                 slip_gap_ticks: 30 * TICKS_PER_SECOND,
                 rehearse: false,
+                stances: true,
             },
             Difficulty::General => Knobs {
                 reaction_ticks: 12,
@@ -117,6 +119,7 @@ impl Difficulty {
                 slip_percent: 2,
                 slip_gap_ticks: 90 * TICKS_PER_SECOND,
                 rehearse: false,
+                stances: true,
             },
             Difficulty::Warlord => Knobs {
                 reaction_ticks: 5,
@@ -136,6 +139,7 @@ impl Difficulty {
                 slip_percent: 0,
                 slip_gap_ticks: 90 * TICKS_PER_SECOND,
                 rehearse: true,
+                stances: true,
             },
         }
     }
@@ -193,6 +197,11 @@ pub struct Knobs {
     /// Rehearses its plan in a scratch copy of the battle before committing
     /// to it (see [`crate::rehearsal`]).
     pub rehearse: bool,
+    /// Gives the orders of docs/05-combat.md, "Hold, Skirmish and Run":
+    /// its archers skirmish, its line stands fast to receive a charge, its
+    /// hammer and hunters run in, its cavalry charges in a wedge, and it
+    /// marches far from the enemy in column (see [`crate::stances`]).
+    pub stances: bool,
 }
 
 impl Knobs {

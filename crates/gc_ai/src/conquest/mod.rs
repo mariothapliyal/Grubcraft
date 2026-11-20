@@ -130,6 +130,11 @@ pub struct Realm {
 const READ_TICKS: u32 = 2 * gc_sim::TICKS_PER_SECOND;
 
 impl Realm {
+    /// Whether regiments of `unit` fight (not workers or traders).
+    pub fn fights(&self, unit: gc_sim::UnitId) -> bool {
+        (self.kit.unit(unit)).is_none_or(|u| !u.unit.worker && !u.unit.trades())
+    }
+
     pub fn new(
         kit: Arc<Kit>,
         party: PlayerId,

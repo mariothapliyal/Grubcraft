@@ -201,6 +201,29 @@ fn braced(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
+/// On top of both computer players' own Hold, Skirmish and Run orders
+/// (docs/05-combat.md, "Hold, Skirmish and Run"): side 0's first regiment
+/// is put in column at the start (its General forms its line again within
+/// a second, as its Captain wants), and its second runs at 0:10.
+fn new_orders(world: &World, out: &mut Vec<PlayerCommand>) {
+    let Some(first) = world.regiments.iter().find(|r| r.owner == 0) else {
+        return;
+    };
+    let second = world.regiments.iter().filter(|r| r.owner == 0).nth(1);
+    let order = |command| PlayerCommand { player: 0, command };
+    let formation = |formation| {
+        order(Command::SetFormation {
+            regiment: first.handle,
+            formation,
+        })
+    };
+    match world.tick_count() {
+        2 => out.push(formation(gc_sim::Formation::Column)),
+        200 => out.extend(second.map(|r| order(Command::Run { regiment: r.handle }))),
+        _ => {}
+    }
+}
+
 /// Side 1 only ever charges; side 0 advances on an attack-move to the far
 /// side of side 1's army, with a Shift-queued waypoint beyond it and,
 /// for its first regiment, a queued attack on the nearest enemy. A minute
@@ -627,6 +650,26 @@ const GOLDENS: &[Golden] = &[
         minutes: 3,
         minds: false,
         extra: ordering,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky::STILL,
+    },
+    // The new orders: two Generals hold, skirmish and run, and a regiment
+    // is put in column (see [`new_orders`]).
+    Golden {
+        name: "field-new-orders-1v1",
+        seed: 0x0e5d,
+        map_tiles: 256,
+        map: 0,
+        sides: &[
+            side(EmberClans, General, 0),
+            side(CarrionConcord, General, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 4,
+        minds: true,
+        extra: new_orders,
         champions: false,
         deployment: false,
         sky: gc_sim::Sky::STILL,

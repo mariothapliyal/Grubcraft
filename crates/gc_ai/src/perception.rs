@@ -126,6 +126,14 @@ pub struct Seen {
     pub hidden: bool,
     /// Torches lit (they burn only in the dark).
     pub torches: bool,
+    /// Standing fast, skirmishing (and stepping back from melee just now),
+    /// running or winded after a run (docs/05-combat.md, "Hold, Skirmish
+    /// and Run").
+    pub hold: bool,
+    pub skirmish: bool,
+    pub stepping_back: bool,
+    pub running: bool,
+    pub winded: bool,
     /// Touching burning woods (see [`gc_sim::fire`]): it burns.
     pub in_fire: bool,
 }
@@ -323,6 +331,11 @@ impl Perception {
                 rank: r.rank,
                 hidden: world.hidden(r.handle),
                 torches: r.torches,
+                hold: r.hold,
+                skirmish: r.skirmish,
+                stepping_back: r.stepping_back,
+                running: r.running,
+                winded: r.winded,
                 in_fire: world.in_fire(r.handle),
             });
             self.heard[slot] = in_dark.then(|| (*self.regiments.last().expect("just pushed"), now));

@@ -201,7 +201,9 @@ impl Orders {
         }
         // On an attack-move the sim turns it aside to fight and back onto
         // its march: going the other way meanwhile is the order at work.
-        if r.diverted {
+        // So is a skirmisher stepping back from melee (docs/05-combat.md,
+        // "Skirmish"): it takes its order up again on the spot.
+        if r.diverted || r.stepping_back {
             return false;
         }
         let i = r.handle.index as usize;

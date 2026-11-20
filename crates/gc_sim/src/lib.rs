@@ -131,7 +131,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 87;
+pub const SIM_VERSION: u32 = 88;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -235,7 +235,30 @@ pub enum Formation {
     /// where arrows mostly glance off too, but no help on the flanks; it
     /// marches at half pace and can't charge.
     ShieldWall = 3,
+    /// A marching column, at most [`COLUMN_FILES`] wide: it marches
+    /// [`COLUMN_PACE_PERCENT`] of its pace and fits gates and bridges
+    /// without narrowing, but can't charge and, strung out, loses
+    /// [`COLUMN_DEFENCE`] melee defence.
+    Column = 4,
+    /// Cavalry's wedge ([`UnitStats::can_wedge`]), [`WEDGE_RANKS`] deep: a
+    /// narrow point whose charge carries [`WEDGE_CHARGE_PERCENT`] of its
+    /// bonus and ploughs in as much harder, but which loses
+    /// [`WEDGE_DEFENCE`] melee defence in a standing fight.
+    Wedge = 5,
 }
+
+/// Widest a column stands, in soldiers.
+pub const COLUMN_FILES: u16 = 4;
+/// Marching pace of a column, percent of the regiment's pace.
+pub const COLUMN_PACE_PERCENT: i64 = 125;
+/// Melee defence a regiment caught in column loses.
+pub const COLUMN_DEFENCE: i32 = 10;
+/// Ranks of a wedge: its frontage is its riders shared among them.
+pub const WEDGE_RANKS: u16 = 3;
+/// Charge bonus, and weight ploughing in, of a wedge, percent.
+pub const WEDGE_CHARGE_PERCENT: u64 = 150;
+/// Melee defence a wedge loses.
+pub const WEDGE_DEFENCE: i32 = 10;
 
 /// Melee defence a regiment gains in Tight order or a shield wall.
 pub const TIGHT_DEFENCE: i32 = 10;
@@ -258,11 +281,13 @@ pub const SHIELD_WALL_PACE_PERCENT: i32 = 50;
 pub const SECOND_RANK_PERCENT: u64 = 50;
 
 impl Formation {
-    pub const ALL: [Formation; 4] = [
+    pub const ALL: [Formation; 6] = [
         Formation::Line,
         Formation::Tight,
         Formation::Loose,
         Formation::ShieldWall,
+        Formation::Column,
+        Formation::Wedge,
     ];
 
     pub fn from_u8(v: u8) -> Option<Formation> {
@@ -275,6 +300,8 @@ impl Formation {
             Formation::Tight => "Tight",
             Formation::Loose => "Loose",
             Formation::ShieldWall => "Shield wall",
+            Formation::Column => "Column",
+            Formation::Wedge => "Wedge",
         }
     }
 
@@ -285,6 +312,7 @@ impl Formation {
             Formation::Tight => 80,
             Formation::Loose => 150,
             Formation::ShieldWall => 70,
+            Formation::Column | Formation::Wedge => 100,
         };
         Fx::from_raw((i64::from(spacing.raw()) * percent / 100).max(1) as i32)
     }
@@ -323,7 +351,35 @@ impl Formation {
 
     /// Whether a regiment in this formation can charge.
     pub fn can_charge(self) -> bool {
-        self != Formation::ShieldWall
+        !matches!(self, Formation::ShieldWall | Formation::Column)
+    }
+
+    /// The frontage a regiment of `models` soldiers given `files` stands
+    /// at in this formation: a column at most [`COLUMN_FILES`] wide, a
+    /// wedge [`WEDGE_RANKS`] deep, any other as given.
+    pub fn files(self, files: u16, models: u16) -> u16 {
+        match self {
+            Formation::Column => files.min(COLUMN_FILES),
+            Formation::Wedge => models.div_ceil(WEDGE_RANKS),
+            _ => files,
+        }
+        .clamp(1, models.max(1))
+    }
+
+    /// Whether this formation has a frontage of its own (a column's width,
+    /// a wedge's depth) rather than the one the regiment is given.
+    pub fn own_frontage(self) -> bool {
+        matches!(self, Formation::Column | Formation::Wedge)
+    }
+
+    /// Percent of its charge bonus (and of its weight ploughing in) a
+    /// regiment's charge carries in this formation.
+    pub fn charge_percent(self) -> u64 {
+        if self == Formation::Wedge {
+            WEDGE_CHARGE_PERCENT
+        } else {
+            100
+        }
     }
 
     /// Damage, percent, a volley does to a regiment in this formation,
@@ -483,7 +539,28 @@ impl UnitStats {
 
     /// Whether this regiment may stand in `formation`.
     pub fn can_form(&self, formation: Formation) -> bool {
-        formation != Formation::ShieldWall || self.shield
+        match formation {
+            Formation::ShieldWall => self.shield,
+            Formation::Wedge => self.can_wedge(),
+            _ => true,
+        }
+    }
+
+    /// Whether this is charging cavalry, which can form a wedge: fast
+    /// (5 tiles a second or more, as [`arrange::Role::guess`]'s
+    /// flankers), with a real charge (a bonus of 40 or more), no bows,
+    /// and at least [`WEDGE_RANKS`] riders.
+    pub fn can_wedge(&self) -> bool {
+        self.speed >= Fx::from_int(5)
+            && self.charge_bonus >= 40
+            && self.range.raw() == 0
+            && self.models >= WEDGE_RANKS
+    }
+
+    /// Whether this regiment can skirmish ([`Command::Skirmish`]): it
+    /// shoots.
+    pub fn can_skirmish(&self) -> bool {
+        self.range.raw() > 0
     }
 
     /// Soldiers who strike at a foe ahead, in percent of a soldier: the
@@ -522,6 +599,8 @@ impl UnitStats {
                 f if f.close_on(front) => TIGHT_DEFENCE + self.discipline_bonus(still),
                 Formation::ShieldWall => 0,
                 Formation::Loose if !self.swing_room => -LOOSE_DEFENCE,
+                Formation::Column => -COLUMN_DEFENCE,
+                Formation::Wedge => -WEDGE_DEFENCE,
                 _ => 0,
             }
     }
@@ -641,6 +720,25 @@ pub enum Command {
     /// points (docs/05-combat.md). Only regiments with long weapons, out of
     /// melee, can brace; any move or attack order lifts it.
     Brace { regiment: RegimentHandle, on: bool },
+    /// Stand fast, or stop (`on` false): a held regiment halts where it
+    /// stands, fights only what reaches it, never presses after a foe or
+    /// steps aside for friends, and gives ground at
+    /// [`regiments::HOLD_DRIVEN_PERCENT`] of the pace (docs/05-combat.md,
+    /// "Hold"). Any regiment not routing, in a fight too; any move,
+    /// attack, fall back or run lifts it.
+    Hold { regiment: RegimentHandle, on: bool },
+    /// Keep away from melee, or stop (`on` false): a skirmishing regiment
+    /// that shoots steps back [`combat::SKIRMISH_STEP`] whenever an enemy
+    /// melee regiment comes within [`combat::SKIRMISH_GAP`], and turns to
+    /// shoot again. Only regiments that shoot; it lasts until lifted.
+    Skirmish { regiment: RegimentHandle, on: bool },
+    /// Run: the regiment's march or attack goes at
+    /// [`regiments::RUN_PERCENT`] of its pace for up to
+    /// [`regiments::RUN_TICKS`], until it arrives or meets a foe; then it
+    /// is winded for [`regiments::WINDED_TICKS`] (slower, weaker blows, no
+    /// second run). Refused for a regiment with nowhere to go, fighting,
+    /// falling back, routing, winded or in a shield wall.
+    Run { regiment: RegimentHandle },
     /// Light a regiment's torches, or put them out (`lit` false). They burn
     /// only in the dark ([`Air::dark`]): a lit regiment is never hidden,
     /// and lights the ground round it, so it sees further and is seen and
@@ -933,6 +1031,9 @@ impl Command {
             | Command::Ready
             | Command::FallBack { .. }
             | Command::Brace { .. }
+            | Command::Hold { .. }
+            | Command::Skirmish { .. }
+            | Command::Run { .. }
             | Command::Torches { .. }
             | Command::Burn { .. }
             | Command::AttackStructure { .. }
@@ -1969,6 +2070,7 @@ impl World {
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.
         self.regiments.wear_powers();
+        self.regiments.wear_orders();
         if let Some(generals) = &mut self.generals {
             generals.update(
                 &mut self.regiments,
@@ -2071,6 +2173,8 @@ impl World {
                     | Command::AttackMove { .. }
                     | Command::SetFormation { .. }
                     | Command::Brace { .. }
+                    | Command::Hold { .. }
+                    | Command::Skirmish { .. }
                     | Command::Torches { .. }
                     | Command::Ready
                     | Command::HandOver { .. }
@@ -2220,6 +2324,25 @@ impl World {
                 }
                 _ => false,
             },
+            Command::Hold { regiment, on } => {
+                // The wall holds a regiment on it already.
+                let done = !self.on_wall(regiment)
+                    && self.commands(pc.player, regiment)
+                    && self.regiments.hold(regiment, on);
+                if done && on {
+                    self.regiments.fresh(regiment, None);
+                }
+                done
+            }
+            Command::Skirmish { regiment, on } => {
+                self.commands(pc.player, regiment)
+                    && self.regiments.set_skirmish(regiment, on, &self.units)
+            }
+            Command::Run { regiment } => {
+                !self.on_wall(regiment)
+                    && self.commands(pc.player, regiment)
+                    && self.regiments.run(regiment)
+            }
             Command::Torches { regiment, lit } => match self.regiments.owner(regiment) {
                 Some(owner) if self.stances.can_command(pc.player, owner) => {
                     self.regiments.light(regiment, lit)

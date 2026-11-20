@@ -76,34 +76,33 @@ pub const SLOT_ATTACK: usize = 1;
 /// Advance (A): attack-move. Shares its slot with a hero's first ability,
 /// which wins while a hero is shown.
 pub const SLOT_ADVANCE: usize = 4;
-/// Burn (E): set the woods beside each selected regiment alight, in the
-/// slot Hold keeps for itself until that order arrives.
+/// Burn (E): set the woods beside each selected regiment alight.
 pub const SLOT_BURN: usize = 2;
+/// Hold (S): stand fast; and Run (D). Both share their slots with a
+/// hero's second and third abilities, which win while a hero is shown.
+pub const SLOT_HOLD: usize = 5;
+pub const SLOT_RUN: usize = 6;
 pub const SLOT_FORMATION: usize = 3;
-/// Brace (Z), sharing its slot with Skirmish when that order arrives, and
-/// Fall back (V).
+/// Brace (Z) for spears, Skirmish for regiments that shoot, sharing the
+/// slot; and Fall back (V).
 pub const SLOT_BRACE: usize = 8;
 /// Torches (X): light the selection's torches or put them out.
 pub const SLOT_TORCHES: usize = 9;
-/// Plant stakes (C), in Conquest: the slot Run keeps for itself until that
-/// order arrives.
+/// Plant stakes (C), in Conquest.
 pub const SLOT_PLANT: usize = 10;
 pub const SLOT_FALL_BACK: usize = 11;
-/// The first of the four slots (A, S, D, F) a hero's abilities use.
-// Run (C) shares its key with the sandbox's credits tool, which moves when
-// the order arrives.
 const LABELS: [&str; GRID_SLOTS] = [
     "Move",
     "Attack",
     "Burn",
     "Formation",
     "Advance",
-    "Skill 2",
-    "Skill 3",
+    "Hold",
+    "Run",
     "Ultimate",
     "Brace",
     "Torches",
-    "Run",
+    "Stakes",
     "Fall back",
 ];
 
@@ -114,12 +113,12 @@ const ICONS: [Icon; GRID_SLOTS] = [
     Icon::Fire,
     Icon::Formation,
     Icon::Attack,
-    Icon::Ring,
-    Icon::Ring,
+    Icon::Hold,
+    Icon::Run,
     Icon::Ultimate,
     Icon::Brace,
     Icon::Torch,
-    Icon::Run,
+    Icon::Hammer,
     Icon::FallBack,
 ];
 
@@ -128,14 +127,14 @@ const TIPS: [&str; GRID_SLOTS] = [
     "March the selected regiments to a spot. Then click the ground. Shift queues it after their other orders.",
     "Send the selection against an enemy. Then click the enemy (or open ground, to advance there). Shift queues it.",
     "Set the woods or scrub beside the selection alight. The fire spreads with the wind and burns anyone in it; rain puts it out. Debris jammed against a bridge burns too, if it is nearer: a mass point burns off every 3 s, but the timber deck above burns with it.",
-    "Change the formation: Line, Tight, Loose, Shield wall.",
+    "Change the formation: Line, Tight, Loose, Shield wall (shields), Column, Wedge (cavalry).",
     "March to a spot, but stop and fight any enemy met on the way, then march on. Then click the ground. Shift queues it.",
-    "A hero ability. Needs a hero.",
-    "A hero ability. Needs a hero.",
+    "Stand fast: halt and fight only what reaches you, giving ground at half the pace; no chasing. Any order lifts it; press again to stand down.",
+    "Run where they are going: half again as fast for up to 8 s, then winded for 10 s (slower, weaker blows). Double right-click runs too.",
     "A hero's ultimate. Needs a hero.",
-    "Spears and pikes brace against a charge. Press again to stand.",
+    "Spears and pikes brace against a charge; archers and other shooters skirmish, stepping back from melee to shoot again. Press again to stop.",
     "Light torches at night: seen from afar, but they see further and can't be ambushed out of the dark. Press again to put them out.",
-    "Run at full pace, tiring as you go. Not in the game yet.",
+    "In Conquest, spearmen and archers plant a line of stakes in front of them.",
     "Back out of the fight in good order, taking one parting blow.",
 ];
 
@@ -1048,7 +1047,19 @@ impl Running {
                 .get(h)
                 .is_some_and(|r| self.units.stats[r.unit as usize].reach)
         });
-        grid[SLOT_BRACE].state = ready(has_orders && has_spears);
+        let has_bows = self.selected.iter().any(|&h| {
+            self.world
+                .regiments
+                .get(h)
+                .is_some_and(|r| self.units.stats[r.unit as usize].can_skirmish())
+        });
+        grid[SLOT_BRACE].state = ready(has_orders && (has_spears || has_bows));
+        if has_bows && !has_spears {
+            grid[SLOT_BRACE].label = "Skirmish";
+            grid[SLOT_BRACE].icon = Icon::Bow;
+        }
+        grid[SLOT_HOLD].state = ready(has_orders);
+        grid[SLOT_RUN].state = ready(has_orders && !self.world.deploying());
         grid[SLOT_FALL_BACK].state = ready(has_orders);
         grid[SLOT_TORCHES].state = ready(has_orders);
         if conquest {
@@ -1538,8 +1549,8 @@ impl Running {
         if self.watching.is_some() || self.sandbox.placing || self.selected.is_empty() {
             return;
         }
-        // A hero shown owns this slot for its first ability.
-        if slot == SLOT_ADVANCE && self.hud.hero_shown() {
+        // A hero shown owns these slots for its abilities.
+        if matches!(slot, SLOT_ADVANCE | SLOT_HOLD | SLOT_RUN) && self.hud.hero_shown() {
             return;
         }
         match slot {
@@ -1554,6 +1565,8 @@ impl Running {
             }
             SLOT_FORMATION => self.cycle_formation(),
             SLOT_BRACE => self.toggle_brace(),
+            SLOT_HOLD => self.toggle_hold(),
+            SLOT_RUN => self.run(),
             SLOT_TORCHES => self.toggle_torches(),
             SLOT_BURN => self.burn_woods(),
             SLOT_PLANT => self.plant_stakes(),
@@ -2085,6 +2098,9 @@ fn order_of(d: gc_sim::Doing) -> UiOrder {
         Doing::Braced => UiOrder::Braced,
         Doing::FallingBack => UiOrder::FallingBack,
         Doing::Running => UiOrder::Running,
+        Doing::StandingFast => UiOrder::StandingFast,
+        Doing::Skirmishing => UiOrder::Skirmishing,
+        Doing::AtTheRun => UiOrder::AtTheRun,
     }
 }
 
@@ -2106,6 +2122,7 @@ fn wait_of(w: gc_sim::Waiting) -> Wait {
         Waiting::Reforming => Wait::Reforming,
         Waiting::FilingThrough => Wait::FilingThrough,
         Waiting::Trapped => Wait::Trapped,
+        Waiting::Winded => Wait::Winded,
     }
 }
 
