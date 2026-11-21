@@ -40,9 +40,15 @@ fn both_tables_read_back() {
         // Factions in `Faction` order, each one's entries together; the
         // heroes after every other unit, in the same order.
         assert!(data.buildings.is_sorted_by_key(|b| b.faction));
-        let first_hero = data.conquest_units.iter().position(|u| u.hero()).unwrap();
+        let first_hero = data
+            .conquest_units
+            .iter()
+            .position(gc_data::ConquestUnitRecord::hero)
+            .unwrap();
         let (units, heroes) = data.conquest_units.split_at(first_hero);
-        assert!(units.iter().all(|u| !u.hero()) && heroes.iter().all(|u| u.hero()));
+        assert!(
+            units.iter().all(|u| !u.hero()) && heroes.iter().all(gc_data::ConquestUnitRecord::hero)
+        );
         assert!(units.is_sorted_by_key(|u| u.stats.faction));
         assert!(heroes.is_sorted_by_key(|u| u.stats.faction));
         assert_eq!(heroes.len(), 12);
