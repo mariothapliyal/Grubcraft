@@ -76,9 +76,32 @@ fn wheeling_pace(pace: Fx, off: i32) -> Option<Fx> {
     Some(Fx::from_raw(pace.raw() - cut as i32).max(Fx::from_raw(1)))
 }
 /// An order with an explicit facing that ends within this distance is done as
-/// a shuffle: the block turns toward its final facing and steps there at half
-/// pace instead of wheeling round to face the way it walks.
+/// a shuffle: the block turns toward its final facing and steps there
+/// instead of wheeling round to face the way it walks (see
+/// [`drilled_pace`]). An order with no facing given to a block standing
+/// this near keeps the facing it has (see [`Regiments::order`]).
 const SHUFFLE_DISTANCE: Fx = Fx::from_int(4);
+
+/// How fast a block steps without turning toward the way it goes, out of
+/// `pace`, for the step `delta` (`dist` long) while it faces `facing`: at
+/// full pace ahead (within 45 degrees of its front), three quarters
+/// sidestepping and half backing (within 45 degrees of its rear).
+fn drilled_pace(pace: Fx, facing: Angle, delta: FxVec2, dist: Fx) -> Fx {
+    if dist.raw() <= 0 {
+        return Fx::from_raw(pace.raw() / 2);
+    }
+    // Cosine of 45 degrees, times the step's length.
+    let diagonal = dist * Fx::from_ratio(181, 256);
+    let ahead = facing.to_vec().dot(delta);
+    let percent = if ahead >= diagonal {
+        100
+    } else if ahead <= Fx::ZERO - diagonal {
+        50
+    } else {
+        75
+    };
+    Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32)
+}
 /// A waypoint short of the end of a route counts as reached within this
 /// many tiles.
 const WAYPOINT_NEAR: Fx = Fx::ONE;
@@ -857,8 +880,16 @@ impl Regiments {
         if self.morale_state[i].broken() {
             return false;
         }
+        // A block standing a few tiles from where it is sent, with no
+        // facing given, steps there as drilled men do: facing the way it
+        // faces, sidestepping or backing, not turning round to walk and
+        // turning back (see `SHUFFLE_DISTANCE`).
+        let short = self.target[i].is_none()
+            && self.attack_target[i].is_none()
+            && (order.target - self.position[i]).length_sq_raw()
+                <= (SHUFFLE_DISTANCE.raw() as u64).pow(2);
         self.target[i] = Some(order.target);
-        self.target_facing[i] = order.facing;
+        self.target_facing[i] = order.facing.or(short.then_some(self.facing[i]));
         self.set_seeks_place(i, false);
         self.attack_target[i] = None;
         self.braced[i] = false;
@@ -1925,7 +1956,7 @@ impl Regiments {
                         continue;
                     }
                     self.facing[i] = self.facing[i].turn_toward(want, turn);
-                    Fx::from_raw(pace.raw() / 2).max(Fx::from_raw(1))
+                    drilled_pace(pace, self.facing[i], delta, dist).max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
                     // Its way lies behind it: it faces about (in good order;
