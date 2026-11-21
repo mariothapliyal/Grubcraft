@@ -71,7 +71,11 @@ pub(super) fn pick_evolution(
 impl Steward {
     /// The Chrysalis Chamber to grow, if it is time: tier 2, none yet,
     /// two regiments that could evolve and Grub to spare.
-    pub(super) fn chamber<'k>(&self, s: &Sense<'k>, look: &Look) -> Option<(&'k KitBuilding, Vec2)> {
+    pub(super) fn chamber<'k>(
+        &self,
+        s: &Sense<'k>,
+        look: &Look,
+    ) -> Option<(&'k KitBuilding, Vec2)> {
         let b = s.kit.chamber()?;
         if look.tier < 2 || look.mine.iter().any(|m| m.view.building == b.id) {
             return None;
@@ -98,10 +102,17 @@ impl Steward {
         let home = self.home?;
         let reliquaries: Vec<Vec2> = (look.mine.iter())
             .filter(|m| m.view.building == b.id)
-            .map(|m| m.at())
+            .map(super::Mine::at)
             .collect();
-        let bare = |at: Vec2| reliquaries.iter().all(|r| r.distance(at) > RELIQUARY_SPACING);
-        let producing = look.mine.iter().any(|m| super::trains_fighters(s, m.view.building));
+        let bare = |at: Vec2| {
+            reliquaries
+                .iter()
+                .all(|r| r.distance(at) > RELIQUARY_SPACING)
+        };
+        let producing = look
+            .mine
+            .iter()
+            .any(|m| super::trains_fighters(s, m.view.building));
         if !producing {
             return None;
         }
@@ -119,7 +130,13 @@ impl Steward {
 
     /// Cocoon every regiment that can evolve, out of danger near home or
     /// the rally point, into the form its army is shortest of.
-    pub(super) fn evolve(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look, rally: Option<Vec2>) {
+    pub(super) fn evolve(
+        &mut self,
+        s: &Sense,
+        clicks: &mut Clicks,
+        look: &Look,
+        rally: Option<Vec2>,
+    ) {
         if s.kit.chamber().is_none() || look.tier < 2 {
             return;
         }
@@ -156,7 +173,13 @@ impl Steward {
             let Some(into) = pick_evolution(&options, heavy, mix, by_class) else {
                 continue;
             };
-            if !clicks.give(s.now, Command::Evolve { regiment: r.handle, into }) {
+            if !clicks.give(
+                s.now,
+                Command::Evolve {
+                    regiment: r.handle,
+                    into,
+                },
+            ) {
                 return;
             }
             if let Some(info) = s.view.units.get(usize::from(into)) {
@@ -176,18 +199,27 @@ impl Steward {
         }
         let powers = s.world.powers();
         let ready = |p: usize| {
-            powers.get(p).is_some_and(|stats| stats.meter == Meter::Tithe)
+            powers
+                .get(p)
+                .is_some_and(|stats| stats.meter == Meter::Tithe)
                 && s.world.can_use_power(s.party, p as u8).is_ok()
         };
         let find = |want: fn(&PowerEffect, u32) -> bool| {
-            (0..powers.len()).find(|&p| want(&powers[p].effect, powers[p].duration_ticks) && ready(p))
+            (0..powers.len())
+                .find(|&p| want(&powers[p].effect, powers[p].duration_ticks) && ready(p))
         };
         let raise_bound = find(|e, d| matches!(e, PowerEffect::Raise { .. }) && d > 0);
         let indenture = find(|e, d| matches!(e, PowerEffect::Raise { .. }) && d == 0);
         let hire = find(|e, _| matches!(e, PowerEffect::Hire { .. }));
         let cast = |clicks: &mut Clicks, power: usize, at: Vec2| {
             let target = PowerTarget::Point(to_fx_vec(at));
-            clicks.give(s.now, Command::UsePower { power: power as u8, target })
+            clicks.give(
+                s.now,
+                Command::UsePower {
+                    power: power as u8,
+                    target,
+                },
+            )
         };
         let tiles = |p: usize| match powers[p].effect {
             PowerEffect::Raise { tiles, .. } | PowerEffect::Hire { tiles, .. } => tiles,
@@ -206,7 +238,10 @@ impl Steward {
         };
         let foes: Vec<Vec2> = spymaster::enemy_army(s).map(|r| r.pos).collect();
         if let Some(p) = raise_bound {
-            let fighting: Vec<Vec2> = (look.army.iter()).filter(|r| r.engaged).map(|r| r.pos).collect();
+            let fighting: Vec<Vec2> = (look.army.iter())
+                .filter(|r| r.engaged)
+                .map(|r| r.pos)
+                .collect();
             let by_fight = |at: Vec2| fighting.iter().any(|f| f.distance(at) <= FIGHT_NEAR);
             if let Some(at) = fullest(p, &by_fight, RAISE_FROM)
                 && cast(clicks, p, at)
@@ -216,7 +251,8 @@ impl Steward {
         }
         if let Some(p) = indenture {
             let kept = |at: Vec2| {
-                s.world.keeps_at(s.party, to_fx_vec(at)) && foes.iter().all(|f| f.distance(at) > SAFE)
+                s.world.keeps_at(s.party, to_fx_vec(at))
+                    && foes.iter().all(|f| f.distance(at) > SAFE)
             };
             if let Some(at) = fullest(p, &kept, INDENTURE_FROM)
                 && cast(clicks, p, at)
@@ -243,11 +279,23 @@ mod tests {
     #[test]
     fn it_evolves_into_long_weapons_against_riders_else_what_it_lacks() {
         let options = [(5, 0, true), (6, 2, false)];
-        assert_eq!(pick_evolution(&options, true, [0.5, 0.25, 0.25], [9, 0, 0]), Some(5));
+        assert_eq!(
+            pick_evolution(&options, true, [0.5, 0.25, 0.25], [9, 0, 0]),
+            Some(5)
+        );
         // Short of archers: the ranged form.
-        assert_eq!(pick_evolution(&options, false, [0.5, 0.25, 0.25], [9, 0, 0]), Some(6));
+        assert_eq!(
+            pick_evolution(&options, false, [0.5, 0.25, 0.25], [9, 0, 0]),
+            Some(6)
+        );
         // Short of line: the line form.
-        assert_eq!(pick_evolution(&options, false, [0.5, 0.25, 0.25], [0, 0, 9]), Some(5));
-        assert_eq!(pick_evolution(&[], false, [0.5, 0.25, 0.25], [0, 0, 0]), None);
+        assert_eq!(
+            pick_evolution(&options, false, [0.5, 0.25, 0.25], [0, 0, 9]),
+            Some(5)
+        );
+        assert_eq!(
+            pick_evolution(&[], false, [0.5, 0.25, 0.25], [0, 0, 0]),
+            None
+        );
     }
 }

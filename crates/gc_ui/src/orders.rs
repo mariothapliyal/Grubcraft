@@ -9,6 +9,8 @@
 //! game checks that they stay so.
 //! Docs: docs/08-ui-ux.md#visual-style.
 
+use std::borrow::Cow;
+
 use crate::draw::{DrawList, Rect};
 use crate::hud::linen_light;
 use crate::icons::{self, Icon};
@@ -82,8 +84,8 @@ pub enum Wait {
     Reforming,
     FilingThrough,
     Trapped,
-    /// In a cocoon, becoming its evolved form.
-    Cocooned,
+    /// In a cocoon, becoming its evolved form, with whole seconds left.
+    Cocooned(u16),
     Winded,
     /// Taking on new soldiers near its side's reinforcement points.
     Reinforcing,
@@ -93,18 +95,21 @@ pub enum Wait {
 
 impl Wait {
     /// A few words to follow the order's.
-    pub fn note(self) -> &'static str {
-        match self {
+    pub fn note(self) -> Cow<'static, str> {
+        if let Wait::Cocooned(secs) = self {
+            return Cow::Owned(format!("in its cocoon, {secs} s left"));
+        }
+        Cow::Borrowed(match self {
             Wait::Pinned => "pinned",
             Wait::DrivenBack => "driven back",
             Wait::Reforming => "re-forming ranks",
             Wait::FilingThrough => "filing through",
             Wait::Trapped => "trapped",
-            Wait::Cocooned => "in its cocoon",
+            Wait::Cocooned(_) => "in its cocoon",
             Wait::Winded => "winded",
             Wait::Reinforcing => "reinforcing",
             Wait::ShortToReinforce => "can't pay to reinforce",
-        }
+        })
     }
 }
 
@@ -282,6 +287,14 @@ mod tests {
         assert_eq!(Wait::DrivenBack.note(), "driven back");
         assert_eq!(Wait::FilingThrough.note(), "filing through");
         assert_eq!(Wait::Trapped.note(), "trapped");
+    }
+
+    #[test]
+    fn a_cocoon_says_how_long_is_left() {
+        assert_eq!(
+            order_text(Order::Holding, Some(Wait::Cocooned(12)), 0),
+            "Holding (in its cocoon, 12 s left)"
+        );
     }
 
     #[test]

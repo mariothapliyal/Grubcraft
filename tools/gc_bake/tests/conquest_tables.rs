@@ -376,7 +376,7 @@ fn contracts_reliquaries_and_evolutions_bake() {
         assert_eq!(hire.duration_ticks, 2400);
         let tithed: Vec<&str> = (data.buildings.iter())
             .filter(|b| b.flags & BUILDING_TITHE != 0)
-            .map(|b| b.name())
+            .map(gc_data::BuildingRecord::name)
             .collect();
         assert_eq!(tithed, ["Reliquary"]);
         let chamber = building("Chrysalis Chamber");

@@ -2,7 +2,8 @@
 //! grid offers for a selected building, for workers and in their build
 //! menu, and carrying it out. The orders themselves are the simulation's
 //! (`Command::Build`, `Train`, `Upgrade`, `CallOff`, `Untrain`, `Rally`,
-//! `Gather`, `Construct`, `Trade` and `Clear`).
+//! `Gather`, `Construct`, `Trade` and `Clear`), and for a selection of Brood
+//! regiments that can cocoon, the `Evolve` buttons.
 
 use std::fmt::Write;
 
@@ -35,6 +36,9 @@ const SLOT_FELL: usize = 8;
 const SLOT_DUMP: usize = 10;
 /// A building's last slot (V): its tier upgrade, or calling it off.
 const SLOT_LAST: usize = GRID_SLOTS - 1;
+/// The battle grid's free slots, where a regiment's evolutions go: F (the
+/// Ultimate slot, no hero shown) and C (Stakes, which Brood soldiers lack).
+const EVOLVE_SLOTS: [usize; 2] = [SLOT_BUILD, 10];
 /// A right-click this close to a seep or vein (in tiles) sends workers there.
 const NODE_REACH: f32 = 1.5;
 /// A right-click this close to a neutral trade post (in tiles) sends
@@ -70,6 +74,9 @@ pub enum Action {
     CallOff,
     /// Set the selected gate to this mode.
     SetGate(GateMode),
+    /// Cocoon the selected regiments of the form this unit evolves from,
+    /// to come out as this unit.
+    Evolve(UnitId),
 }
 
 /// The grid as Conquest fills it: an action per slot. With `whole`, the card
@@ -100,7 +107,9 @@ impl Running {
             );
             return Some(Card { slots, whole: true });
         }
-        let worker = self.selected_workers().next()?;
+        let Some(worker) = self.selected_workers().next() else {
+            return self.evolve_card();
+        };
         let faction = self.world.regiments.get(worker).and_then(|r| {
             self.data
                 .conquest_units
@@ -127,6 +136,82 @@ impl Running {
         }
         let slots = menu_page(self.buildings.buildable(faction), self.hud.build_page);
         Some(Card { slots, whole: true })
+    }
+
+    /// The card for a selection of Brood regiments that can evolve: one
+    /// button per evolution of the first such regiment's unit (the grid has
+    /// room for two), going over the battle grid. A hero shown owns F.
+    fn evolve_card(&self) -> Option<Card> {
+        if self.hud.hero_shown() {
+            return None;
+        }
+        let side = self.sandbox.side;
+        let units = &self.data.conquest_units;
+        let from = (self.selected.iter())
+            .filter_map(|&h| self.world.regiments.get(h).filter(|r| r.owner == side))
+            .map(|r| r.unit)
+            .find(|&u| evolutions_of(units, u).next().is_some())?;
+        Some(Card {
+            slots: evolve_slots(evolutions_of(units, from)),
+            whole: false,
+        })
+    }
+
+    /// The selected regiments of yours that `into` evolves from.
+    fn evolvers(&self, into: UnitId) -> impl Iterator<Item = RegimentHandle> + '_ {
+        let side = self.sandbox.side;
+        let from = (self.data.conquest_units.get(usize::from(into))).map(|u| u.evolves_from);
+        (self.selected.iter().copied()).filter(move |&h| {
+            self.world
+                .regiments
+                .get(h)
+                .is_some_and(|r| r.owner == side && Some(r.unit) == from)
+        })
+    }
+
+    /// Why none of the selected regiments can evolve into `into` now, if
+    /// none can: the first refusal.
+    fn evolve_refusal(&self, into: UnitId) -> Option<Refusal> {
+        let side = self.sandbox.side;
+        let mut first = None;
+        for h in self.evolvers(into) {
+            match self.world.can_evolve(side, h, into) {
+                Ok(()) => return None,
+                Err(e) => first = first.or(Some(e)),
+            }
+        }
+        first
+    }
+
+    /// The tooltip of the button that evolves into `into`: what it is, what
+    /// a full regiment pays and how long the cocoon lasts.
+    fn evolve_tip(&self, into: UnitId) -> String {
+        let (Some(u), Some(name)) = (
+            self.data.conquest_units.get(usize::from(into)),
+            self.units.names.get(usize::from(into)),
+        ) else {
+            return String::new();
+        };
+        let mut cost = format!("{} Grub", u.cost_grub);
+        if u.cost_marrow > 0 {
+            let _ = write!(cost, ", {} Marrow", u.cost_marrow);
+        }
+        let secs = u32::from(u.train_ticks).div_ceil(gc_sim::TICKS_PER_SECOND);
+        format!(
+            "Cocoon the selected regiments to come out as {name}: {cost} for a full regiment (less for a weaker one), {secs} s in the cocoon, helpless meanwhile. Needs a Chrysalis Chamber."
+        )
+    }
+
+    /// Cocoon every selected regiment of the form `into` evolves from that
+    /// can; the simulation takes each one's price as it goes.
+    fn evolve(&mut self, into: UnitId) {
+        let side = self.sandbox.side;
+        let commands: Vec<Command> = self
+            .evolvers(into)
+            .filter(|&h| self.world.can_evolve(side, h, into).is_ok())
+            .map(|regiment| Command::Evolve { regiment, into })
+            .collect();
+        self.orders(commands);
     }
 
     /// What a building of type `building` trains: what the simulation lets
@@ -249,6 +334,7 @@ impl Running {
                 Some(Ok(w)) if !w.afford => Some(Refusal::Price),
                 _ => None,
             },
+            Action::Evolve(u) => self.evolve_refusal(u),
             Action::Dump => self
                 .world
                 .bank(side)
@@ -272,6 +358,7 @@ impl Running {
         card: &Card,
         labels: &mut [String; GRID_SLOTS],
         details: &mut [String; GRID_SLOTS],
+        tips: &mut [String; GRID_SLOTS],
     ) -> [SlotState; GRID_SLOTS] {
         let mut states = [SlotState::Off; GRID_SLOTS];
         let raise = (card.slots.iter().flatten()).find_map(|&a| self.wall_raise(a));
@@ -280,6 +367,7 @@ impl Running {
             let (label, detail) = (&mut labels[i], &mut details[i]);
             label.clear();
             detail.clear();
+            tips[i].clear();
             let Some(action) = *action else {
                 continue;
             };
@@ -353,6 +441,18 @@ impl Running {
                             .get(usize::from(u))
                             .map_or("", String::as_str),
                     ));
+                }
+                Action::Evolve(u) => {
+                    if let Some(r) = self.data.conquest_units.get(usize::from(u)) {
+                        price(detail, r.cost_grub, r.cost_marrow);
+                    }
+                    label.push_str(short(
+                        self.units
+                            .names
+                            .get(usize::from(u))
+                            .map_or("", String::as_str),
+                    ));
+                    tips[i] = self.evolve_tip(u);
                 }
                 Action::CallOff => {
                     label.push_str("Cancel");
@@ -464,6 +564,10 @@ impl Running {
                 if let Some(structure) = self.picked_structure() {
                     self.raise_wall(structure);
                 }
+                return true;
+            }
+            Action::Evolve(into) => {
+                self.evolve(into);
                 return true;
             }
             Action::Train(_) | Action::Upgrade(_) | Action::CallOff | Action::SetGate(_) => {}
@@ -984,6 +1088,23 @@ pub fn gate_line(mode: GateMode) -> &'static str {
     }
 }
 
+/// The units that evolve from `from`, in table order.
+fn evolutions_of(units: &[ConquestUnitRecord], from: UnitId) -> impl Iterator<Item = UnitId> + '_ {
+    (units.iter().enumerate())
+        .filter(move |(_, u)| u.evolves_from == from)
+        .map(|(i, _)| i as UnitId)
+}
+
+/// The card's slots for a regiment's evolutions: one each, as many as
+/// there is room for.
+fn evolve_slots(evolutions: impl Iterator<Item = UnitId>) -> [Option<Action>; GRID_SLOTS] {
+    let mut slots = [None; GRID_SLOTS];
+    for (slot, into) in EVOLVE_SLOTS.into_iter().zip(evolutions) {
+        slots[slot] = Some(Action::Evolve(into));
+    }
+    slots
+}
+
 /// A grid slot's price: Grub, and Marrow after a slash if it costs any.
 fn price(detail: &mut String, grub: impl Into<u32>, marrow: impl Into<u32>) {
     let (grub, marrow) = (grub.into(), marrow.into());
@@ -1216,5 +1337,38 @@ mod tests {
         let unfinished = building_slots(false, false, (false, false), Some(3), [4].into_iter());
         assert_eq!(unfinished[SLOT_LAST], Some(Action::CallOff));
         assert_eq!(unfinished[0], None);
+    }
+
+    #[test]
+    fn a_brood_regiment_is_offered_each_of_its_evolutions_over_the_battle_grid() {
+        let data = crate::data::load();
+        let units = &data.conquest_units;
+        let evolving: Vec<UnitId> = (0..units.len() as UnitId)
+            .filter(|&u| evolutions_of(units, u).next().is_some())
+            .collect();
+        // Skitterlings and Chitin Guard, two forms each.
+        assert_eq!(evolving.len(), 2);
+        for from in evolving {
+            let forms: Vec<UnitId> = evolutions_of(units, from).collect();
+            assert_eq!(forms.len(), 2);
+            assert!(
+                forms
+                    .iter()
+                    .all(|&u| units[usize::from(u)].evolves_from == from)
+            );
+            let slots = evolve_slots(evolutions_of(units, from));
+            assert_eq!(slots[EVOLVE_SLOTS[0]], Some(Action::Evolve(forms[0])));
+            assert_eq!(slots[EVOLVE_SLOTS[1]], Some(Action::Evolve(forms[1])));
+            assert_eq!(slots.iter().flatten().count(), 2);
+        }
+        // A unit nothing evolves from has none, and a third form has no room.
+        assert!(evolve_slots(std::iter::empty()).iter().all(Option::is_none));
+        let crowded = evolve_slots([1, 2, 3].into_iter());
+        assert_eq!(crowded.iter().flatten().count(), EVOLVE_SLOTS.len());
+        assert!(
+            EVOLVE_SLOTS
+                .iter()
+                .all(|&s| s < GRID_SLOTS && s != SLOT_LAST)
+        );
     }
 }

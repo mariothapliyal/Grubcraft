@@ -28,6 +28,7 @@ mod bridge;
 mod bridge_flood;
 mod bridge_flood_armies;
 mod crossing;
+mod evolve_tithe;
 mod forest;
 mod forest_pass;
 mod gate;
@@ -83,6 +84,7 @@ const SCENARIOS: &[Scenario] = &[
     gated_towns::SCENARIO,
     new_orders::SCENARIO,
     reinforce::SCENARIO,
+    evolve_tithe::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

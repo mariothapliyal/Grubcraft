@@ -134,8 +134,8 @@ pub const BUILDING_GROWN: u16 = 16384;
 /// Concord: collects Tithe from the dead near it, and the undead it keeps
 /// near don't crumble (a Reliquary; schema 15).
 pub const BUILDING_TITHE: u16 = 32768;
-/// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = u16::MAX;
+// Every bit of a building's flags is now a flag, so none is unknown;
+// the next flag needs a wider field.
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;
@@ -590,7 +590,7 @@ pub fn validate_building(b: &BuildingRecord, count: usize) -> Result<(), &'stati
     if b.width == 0 || b.depth == 0 || b.width > MAX_FOOTPRINT || b.depth > MAX_FOOTPRINT {
         return Err("footprint sides are 1 to 5 tiles");
     }
-    if b.flags & !BUILDING_FLAGS != 0 || b.pad2 != 0 {
+    if b.pad2 != 0 {
         return Err("unknown building flags");
     }
     if b.twist > TWIST_THORNS {

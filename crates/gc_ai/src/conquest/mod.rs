@@ -237,7 +237,9 @@ impl Realm {
             marshal::Goal::Attack(at) => Some(at),
             _ => None,
         };
-        if let Some(note) = (self.steward).think(&sense, &mut self.clicks, self.marshal.rally, front) {
+        if let Some(note) =
+            (self.steward).think(&sense, &mut self.clicks, self.marshal.rally, front)
+        {
             captain.journal.note(sense.now, note);
         }
         self.clicks.release(sense.now, out);

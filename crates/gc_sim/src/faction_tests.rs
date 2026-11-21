@@ -429,12 +429,12 @@ fn an_indentured_regiment_stays_and_crumbles_away_from_its_keepers() {
     assert_eq!((models(&w, h), w.regiments.summoned_left(h)), (16, 0));
     assert_eq!(w.bank(0).unwrap().supply_used, 0, "no supply");
     // By its Reliquary it keeps; 42 tiles from the Reliquary and the hall
-    // it crumbles a soldier every 20 s.
+    // it crumbles a soldier a minute.
     seconds(&mut w, 30);
     assert_eq!(models(&w, h), 16);
     let i = w.regiments.resolve(h).unwrap();
     w.regiments.position[i] = FxVec2::from_ints(110, 110);
-    seconds(&mut w, 41);
+    seconds(&mut w, 121);
     assert_eq!(models(&w, h), 14);
 }
 

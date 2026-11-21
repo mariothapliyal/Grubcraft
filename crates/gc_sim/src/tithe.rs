@@ -57,7 +57,7 @@ pub const TITHE_TILES: i32 = 12;
 /// don't crumble, in tiles.
 pub const KEEP_TILES: i32 = 30;
 /// Seconds out of reach for each soldier an undead regiment crumbles.
-pub const CRUMBLE_SECONDS: u8 = 20;
+pub const CRUMBLE_SECONDS: u8 = 60;
 /// The most graves on the field.
 pub const MAX_GRAVES: usize = 48;
 /// How near a grave a soldier falls to lie in it, in tiles.

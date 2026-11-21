@@ -209,6 +209,7 @@ pub struct HudState {
     /// The Conquest card's slot names and prices, kept for their room.
     card_labels: [String; GRID_SLOTS],
     card_details: [String; GRID_SLOTS],
+    card_tips: [String; GRID_SLOTS],
     /// The faction power buttons' names and second lines, likewise.
     power_names: [String; POWER_KEYS.len()],
     power_details: [String; POWER_KEYS.len()],
@@ -511,6 +512,8 @@ pub(crate) fn tuning_of(
 const _: () = assert!(gc_ui::conquest::RESONANCE_FULL == gc_sim::chords::MAX_RESONANCE);
 // So does its Honor meter.
 const _: () = assert!(gc_ui::conquest::HONOR_FULL == gc_sim::honor::MAX_HONOR);
+// And its Tithe meter.
+const _: () = assert!(gc_ui::conquest::TITHE_FULL == gc_sim::tithe::MAX_TITHE);
 
 impl Running {
     /// The mode, for the top bar's status strip.
@@ -583,7 +586,10 @@ impl Running {
                 same_icon &= icon == this;
             }
             if let Some(f) = self.world.regiments.feedback(h) {
-                orders = orders.with(Orders::One(order_of(f.doing), f.waiting.map(wait_of)));
+                orders = orders.with(Orders::One(
+                    order_of(f.doing),
+                    f.waiting.map(|w| wait_of(&self.world.regiments, h, w)),
+                ));
                 // The reasons of those who waver, together.
                 if r.morale != MoraleState::Steady {
                     why |= f.why;
@@ -749,10 +755,11 @@ impl Running {
         }
         let mut card_labels = std::mem::take(&mut self.hud.card_labels);
         let mut card_details = std::mem::take(&mut self.hud.card_details);
+        let mut card_tips = std::mem::take(&mut self.hud.card_tips);
         let card = (self.conquest_card()).map(|c| {
             (
                 c,
-                self.describe_card(&c, &mut card_labels, &mut card_details),
+                self.describe_card(&c, &mut card_labels, &mut card_details, &mut card_tips),
             )
         });
         let mut power_names = std::mem::take(&mut self.hud.power_names);
@@ -1116,6 +1123,9 @@ impl Running {
                         _ => None,
                     };
                     let mut tip = blurb.map_or(look, String::as_str);
+                    if matches!(card.slots[i], Some(Action::Evolve(_))) {
+                        tip = &card_tips[i];
+                    }
                     if let Some(Action::Lay(b)) = card.slots[i]
                         && self.buildings.is_wall(b)
                     {
@@ -1289,7 +1299,7 @@ impl Running {
                 models: r.models,
                 max_models: stats.models,
                 order: order_of(f.doing),
-                waiting: f.waiting.map(wait_of),
+                waiting: f.waiting.map(|w| wait_of(&self.world.regiments, h, w)),
                 queued: r.queued,
                 state: card_state(r.morale),
                 why: f.why,
@@ -1364,6 +1374,7 @@ impl Running {
             .hover_card(&mut hud.draw, screen, cursor, now_ms, hover_card.as_ref());
         self.hud.card_labels = card_labels;
         self.hud.card_details = card_details;
+        self.hud.card_tips = card_tips;
         self.hud.power_names = power_names;
         self.hud.power_details = power_details;
         // What to click for a power being aimed, else the ride's way out.
@@ -1640,6 +1651,7 @@ impl Running {
             resonance: b.resonance,
             chords: b.chords,
             honor: (self.world.meter(self.sandbox.side) == gc_sim::Meter::Honor).then_some(b.honor),
+            tithe: (self.world.meter(self.sandbox.side) == gc_sim::Meter::Tithe).then_some(b.tithe),
             walled: self.world.walled_town(self.sandbox.side),
             clock_secs: self.world.tick_count() / gc_sim::TICKS_PER_SECOND,
         })
@@ -2113,16 +2125,23 @@ fn card_state(m: MoraleState) -> CardState {
     }
 }
 
-/// What the simulation says holds a regiment up, as the UI's wait.
-fn wait_of(w: gc_sim::Waiting) -> Wait {
+/// Whole seconds in `ticks`, rounded up.
+fn secs_left(ticks: u16) -> u16 {
+    u16::try_from(u32::from(ticks).div_ceil(gc_sim::TICKS_PER_SECOND)).unwrap_or(u16::MAX)
+}
+
+/// What the simulation says holds regiment `h` up, as the UI's wait (a
+/// cocoon with its seconds left).
+fn wait_of(regiments: &gc_sim::Regiments, h: gc_sim::RegimentHandle, w: gc_sim::Waiting) -> Wait {
     use gc_sim::Waiting;
+    let cocoon_ticks = regiments.cocoon_of(h).map_or(0, |(ticks, _)| ticks);
     match w {
         Waiting::Pinned => Wait::Pinned,
         Waiting::DrivenBack => Wait::DrivenBack,
         Waiting::Reforming => Wait::Reforming,
         Waiting::FilingThrough => Wait::FilingThrough,
         Waiting::Trapped => Wait::Trapped,
-        Waiting::Cocooned => Wait::Cocooned,
+        Waiting::Cocooned => Wait::Cocooned(secs_left(cocoon_ticks)),
         Waiting::Winded => Wait::Winded,
         Waiting::Reinforcing => Wait::Reinforcing,
         Waiting::ShortToReinforce => Wait::ShortToReinforce,
@@ -2331,6 +2350,8 @@ fn card_look(action: Option<Action>) -> (Icon, &'static str) {
             },
             crate::conquest_card::gate_line(mode),
         ),
+        // Its own line is the card's tip (see the card's loop above).
+        Some(Action::Evolve(_)) => (Icon::Ultimate, ""),
         Some(Action::CallOff) => (
             Icon::FallBack,
             "Call it off and get a part of the cost back.",

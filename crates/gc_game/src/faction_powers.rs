@@ -186,6 +186,18 @@ pub fn prompt(name: &str, aim: Aim, to: &str) -> String {
     }
 }
 
+/// How many corpses lie in reach of a raising, and whether that is enough.
+pub fn corpse_note(corpses: u32) -> String {
+    let mut note = match corpses {
+        1 => "1 corpse in reach".to_string(),
+        n => format!("{n} corpses in reach"),
+    };
+    if corpses < u32::from(gc_sim::tithe::MIN_RAISED) {
+        let _ = write!(note, ", needs {}", gc_sim::tithe::MIN_RAISED);
+    }
+    note
+}
+
 /// What a click on a building and/or a regiment of yours hastes: the
 /// regiment if there is one, else the building.
 pub fn haste_target(
@@ -354,12 +366,20 @@ impl Running {
         Some(prompt(name, aim, to))
     }
 
-    /// The prompt for the power being aimed, if one is, for the screen.
+    /// The prompt for the power being aimed, if one is, for the screen; a
+    /// contract that raises the dead also says how many corpses lie in its
+    /// reach of the cursor.
     pub fn power_hint(&self) -> Option<String> {
         let Some(Armed::Power(power)) = self.hud.armed else {
             return None;
         };
-        let text = self.power_prompt(power)?;
+        let mut text = self.power_prompt(power)?;
+        if let Some(PowerEffect::Raise { tiles, .. }) = self.power_effect(power)
+            && let Some(at) = self.ground_under_cursor()
+        {
+            let corpses = self.world.corpses_near(fx_vec(at), tiles);
+            text += &format!(" ({})", corpse_note(corpses));
+        }
         Some(format!("{text} - Esc or right-click to cancel"))
     }
 
@@ -481,6 +501,14 @@ impl Running {
             return None;
         };
         Some((self.ground_under_cursor()?, f32::from(tiles)))
+    }
+
+    /// Whether the power being aimed raises the dead.
+    pub fn aiming_raise(&self) -> bool {
+        let Some(Armed::Power(power)) = self.hud.armed else {
+            return false;
+        };
+        matches!(self.power_effect(power), Some(PowerEffect::Raise { .. }))
     }
 
     /// Ring the ground a power being aimed would cover.
@@ -823,5 +851,14 @@ mod tests {
         assert!(*glows.iter().max().unwrap() >= GLOW_MAX - 2);
         assert_eq!(haste_glow(37), haste_glow(37 + 5 * GLOW_PERIOD_MS));
         assert!(haste_glow(GLOW_PERIOD_MS / 2) > haste_glow(GLOW_PERIOD_MS / 8));
+    }
+
+    #[test]
+    fn a_raising_says_how_many_corpses_lie_in_reach_and_when_that_is_too_few() {
+        assert_eq!(corpse_note(0), "0 corpses in reach, needs 4");
+        assert_eq!(corpse_note(1), "1 corpse in reach, needs 4");
+        assert_eq!(corpse_note(3), "3 corpses in reach, needs 4");
+        assert_eq!(corpse_note(4), "4 corpses in reach");
+        assert_eq!(corpse_note(31), "31 corpses in reach");
     }
 }

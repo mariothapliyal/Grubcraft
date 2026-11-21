@@ -151,6 +151,7 @@ mod camera;
 mod cinema;
 mod clearance;
 mod clearing;
+mod cocoon;
 mod conquest;
 mod conquest_ai;
 mod conquest_card;
@@ -399,6 +400,8 @@ const TORCH_LIGHT_STRENGTH: f32 = 0.8;
 const TORCH_LIGHT_SPACING: f32 = 9.0;
 const TORCH_HEIGHT: f32 = 0.8;
 const TORCH_FIRE: [u8; 3] = [255, 160, 70];
+/// How bright a Reliquary's reach rings are.
+const RELIQUARY_RING_GLOW: u8 = 110;
 /// The Brood's glow at night (their Grub lime, `docs/24`): a faint, small
 /// light over each Brood regiment that is not burning torches.
 const GRUB_LIME: [u8; 3] = [150, 235, 70];
@@ -4408,7 +4411,10 @@ impl Running {
                     lift: BANNER_LIFT + up,
                 });
             }
-            let model = self.units.models.get(r.unit as usize).copied().flatten();
+            // A cocooned regiment is drawn as sacs, not its model.
+            let cocooned = self.world.regiments.cocoon_of(r.handle).is_some();
+            let model =
+                (self.units.models.get(r.unit as usize).copied().flatten()).filter(|_| !cocooned);
             if let (Some(model), Some(art)) = (model, self.art.as_mut()) {
                 let (view, height) = (art.view, art.heights[model]);
                 let buckets = &mut art.buckets;
@@ -4659,6 +4665,8 @@ impl Running {
             ];
             let color = [cr, cg, cb, if selected { 70 } else { 0 }];
             let instances = &mut self.instances;
+            let time = self.puppets.time();
+            let sac_size = ((file_spacing * 0.7).clamp(0.3, 0.6), SOLDIER_HEIGHT * 0.75);
             self.puppets.update_on(
                 &block,
                 r.owner,
@@ -4666,6 +4674,18 @@ impl Running {
                 firm(r.owner, block.centre),
                 deck,
                 |s| {
+                    if cocooned {
+                        instances.extend(cocoon::sac(
+                            (s.pos, s.facing),
+                            s.lift,
+                            s.phase,
+                            time,
+                            sac_size,
+                            [cr, cg, cb],
+                            color[3],
+                        ));
+                        return;
+                    }
                     instances.push(BoxInstance {
                         pos: s.pos.to_array(),
                         facing: s.facing.to_array(),
@@ -7834,6 +7854,48 @@ impl Running {
         );
     }
 
+    /// A Reliquary of yours selected, or about to be laid: its two reaches
+    /// as rings on the ground (12 tiles collects Tithe and refills the
+    /// undead; 30 tiles is where they don't crumble).
+    fn push_reliquary_reach(&mut self) {
+        let side = self.sandbox.side;
+        let reliquary = |id: BuildingId| {
+            (self.buildings.stats.get(usize::from(id)))
+                .is_some_and(|s| s.flags & gc_sim::structures::TITHE != 0)
+        };
+        let selected = (self.picked_structure())
+            .and_then(|h| self.world.structures()?.get(h))
+            .filter(|s| s.owner == side && reliquary(s.building))
+            .map(|s| [s.tile.0, s.tile.1, i32::from(s.width), i32::from(s.depth)]);
+        let laid = self.laying().filter(|&id| reliquary(id)).and_then(|id| {
+            let (stats, tile, _) = self.building_placement(id)?;
+            let (width, depth) = stats.size(self.sandbox.building_turn);
+            Some([tile.0, tile.1, i32::from(width), i32::from(depth)])
+        });
+        for foot in selected.into_iter().chain(laid) {
+            buildings::push_reliquary_rings(foot, RELIQUARY_RING_GLOW, &mut self.instances);
+        }
+    }
+
+    /// The Concord's view of the field's graves, faint crossed bones sized
+    /// by the corpses lying there, brighter while a contract that raises
+    /// the dead is aimed. Only those in sight, and only for a side whose
+    /// meter is Tithe in its own match (not a replay).
+    fn push_graves(&mut self) {
+        let side = self.sandbox.side;
+        if self.watching.is_some() || self.world.meter(side) != gc_sim::Meter::Tithe {
+            return;
+        }
+        let aiming = self.aiming_raise();
+        let (fog, reveal) = (&self.fog, self.reveal_all);
+        buildings::push_graves(
+            &self.world,
+            |at| reveal || fog.sees_tile((at.x.floor() as i32, at.y.floor() as i32)),
+            aiming,
+            &mut self.instances,
+        );
+    }
+
     /// The building being placed as its finished model would stand there,
     /// and its ghost's colour, for a building drawn as a model.
     fn building_ghost_view(&self) -> Option<(StructureView, [u8; 4])> {
@@ -7982,6 +8044,8 @@ impl Running {
             &mut self.instances,
         );
         buildings::push_heart(&self.world, parties, &mut self.instances);
+        self.push_reliquary_reach();
+        self.push_graves();
     }
 
     /// Hand the renderer the scenery near the camera, minus what stands
