@@ -23,9 +23,9 @@ const LIMIT: u32 = 120;
 /// How long the army at ease is given, once the march is in, to stand
 /// where it stood again, in seconds.
 const SETTLE: u32 = 15;
-/// Regiment-seconds the army at ease may spend in disorder: about 26
-/// making way, 77 when it stood its ground and was pushed through.
-const DISORDER: u32 = 40;
+/// Regiment-seconds the army at ease may spend in disorder: none making
+/// way, 77 when it stood its ground and was pushed through.
+const DISORDER: u32 = 10;
 
 fn run(real: &Real, report: &mut Report) {
     let mut world = Arena::new(TILES).world(real, 44, 0);

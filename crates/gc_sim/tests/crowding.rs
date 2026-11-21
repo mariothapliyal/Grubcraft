@@ -263,6 +263,30 @@ fn a_friend_at_ease_makes_way_and_steps_back() {
 }
 
 #[test]
+fn one_making_way_never_steps_into_a_friend_holding_its_ground() {
+    let mut w = world(&nav(false));
+    let held = spawn(&mut w, 0, 25, 30, NORTH);
+    order(
+        &mut w,
+        Command::Hold {
+            regiment: held,
+            on: true,
+        },
+    );
+    let standing = spawn(&mut w, 0, 32, 30, NORTH);
+    // Through the right half of the one at ease, whose way out is left,
+    // toward the one holding.
+    let b = spawn(&mut w, 0, 34, 45, NORTH);
+    order(&mut w, move_to(b, 34, 10));
+    for _ in 0..30 * 20 {
+        w.tick(&[]);
+        let h = w.regiments.get(held).unwrap();
+        assert_eq!(h.disorder, 0, "stepped into");
+        assert_eq!(h.position, FxVec2::from_ints(25, 30));
+    }
+}
+
+#[test]
 fn friends_pushing_through_each_other_fall_out_of_order_and_re_form() {
     let mut w = world(&nav(false));
     let standing = spawn(&mut w, 0, 32, 30, NORTH);

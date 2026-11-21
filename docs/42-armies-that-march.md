@@ -668,9 +668,13 @@ pace and on the route.
   no enemy within 20 tiles, `WAY_FOE`) looks each crowd pass for a friend
   marching right through it and on past (a friend coming to stand beside
   it or where it stands is placed by `own_place` instead). Within six
-  tiles of that friend (`WAY_AHEAD`) it steps out of the friend's lane,
-  to the near side, at three quarters of its pace (`way_pace`), facing
-  as it faced, and remembers where it stood (`Regiments::home`). When
+  tiles of that friend (`WAY_AHEAD`) it steps out of the friend's lane
+  (the way the friend walks now: its route's next leg, or the point its
+  brigade steers it at, as far as the end of its march), to the near
+  side, at three quarters of its pace (`way_pace`), facing as it faced,
+  and remembers where it stood (`Regiments::home`). It never steps into
+  a friend that won't give way (holding its ground, fighting, marching
+  by); then it is pushed through as one standing its ground is. When
   no lane is within a step of it, it steps back: straight back, or
   squared along its front or flank when a friend is in the way of that,
   and only when the step makes no overlap deeper than now
@@ -705,23 +709,27 @@ disorder):
 
 | | stage 6 | stage 2 |
 |---|---|---|
-| Six regiments, apart | 49.7 s / 14.7 s / 10% | 47.7 s / 12.0 s / 10% |
-| Six, as a brigade | 49.5 s / 10.9 s / 7% | 47.4 s / 7.7 s / 5% |
-| Twelve, apart | 62.1 s / 26.9 s / 24% | 59.7 s / 23.9 s / 21% |
-| Twelve, as a brigade | 59.7 s / 19.6 s / 16% | 57.0 s / 15.9 s / 14% |
+| Six regiments, apart | 49.7 s / 14.7 s / 10% | 47.9 s / 14.5 s / 10% |
+| Six, as a brigade | 49.5 s / 10.9 s / 7% | 47.6 s / 10.7 s / 6% |
+| Twelve, apart | 62.1 s / 26.9 s / 24% | 58.7 s / 25.1 s / 22% |
+| Twelve, as a brigade | 59.7 s / 19.6 s / 16% | 56.8 s / 18.3 s / 15% |
 
-Regiments that arrive first and stand at ease no longer hold up those
-still coming in past them. A column of three marching through a line
+Armies arrive 2 to 3.5 s sooner, with about the same spread: regiments
+that arrive first and stand at ease no longer hold up those still coming
+in past them. (A measuring slip on the way showed spreads 2 to 3 s
+tighter: regiments stepping aside after they had arrived were counted as
+not arrived yet. These are the honest numbers.) A column of three marching through a line
 of six at ease (`crates/gc_sim/tests/make_way.rs`) spent about 700
 regiment-ticks in disorder before and none now; the line stands where
 it stood within a twentieth of a tile.
 
 The stress scenario `make-way` marches eight regiments ordered as one
-group through twelve at ease in two lines. The last arrives in 29.2 s
-(34 s with nobody making way); the marchers spend 26 regiment-seconds
-in disorder (71) and the army at ease 26 (77). The army at ease steps
-up to 6.3 tiles aside, one shoving the next, and stands where it stood
-again by the time the last marcher arrives.
+group through twelve at ease in two lines. The last arrives in 28.3 s
+(34 s with nobody making way), and neither the marchers nor the army
+at ease spend any time in disorder (71 and 77 regiment-seconds with
+nobody making way). The army at ease steps up to 6.6 tiles aside, one
+shoving the next, and stands where it stood again by the time the last
+marcher arrives.
 
 ### What make way does not do yet
 
@@ -771,7 +779,8 @@ search catches up; both cost little.
 
 `crates/gc_sim/tests/make_way.rs` (a column through a line at ease, four
 offsets), `crowding.rs` (a friend at ease makes way and steps back; one
-told to Hold is pushed through as before), `formations.rs` (a short
+told to Hold is pushed through as before; one making way never steps
+into a friend holding its ground), `formations.rs` (a short
 move sidesteps or backs into place; a longer one still turns and
 walks), the stress scenario `make-way`, and
 `crates/gc_game/src/footprints.rs`.
