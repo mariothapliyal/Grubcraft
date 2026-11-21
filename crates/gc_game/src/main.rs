@@ -5655,11 +5655,12 @@ impl Running {
     fn cover_dropped(&mut self) {
         let away = self.menu.net().uncommanded();
         let Some(o) = &mut self.online else { return };
-        let Some(start) = &o.start else { return };
         if away == o.cover.covering() {
             return;
         }
+        let start = &o.start;
         let conquest = start.settings.mode == GameMode::Conquest;
+        let sides = conquest_ai::sides(start);
         // The new minds' small choices, different for each match and moment.
         let roll = self.seed ^ (self.matches << 8) ^ (u64::from(self.world.tick_count()) << 32);
         let (data, table, map) = (&self.data, &self.buildings, &self.heightmap);
@@ -5671,7 +5672,6 @@ impl Running {
                 &mut self.pending,
                 |p| {
                     if conquest {
-                        let sides = conquest_ai::sides(start);
                         conquest_ai::cover_mind(data, table, map, &sides, p, roll)
                     } else {
                         gc_match::cover::field_mind(start, p, roll)
@@ -5680,8 +5680,7 @@ impl Running {
             )
         });
         for change in changes {
-            let (gc_match::cover::Change::Took(p) | gc_match::cover::Change::Gave(p)) = change;
-            let text = gc_match::cover::notice(change, &party_name(&self.parties, p));
+            let text = gc_match::cover::notice(change, &party_name(&self.parties, change.player()));
             self.menu.net().announce(text);
         }
     }
@@ -6179,10 +6178,13 @@ impl Running {
         if let MatchKind::Replay(r) = &kind {
             stats_before = std::mem::replace(&mut self.units.stats, r.units.clone());
         }
-        self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
-        if let (Some(o), MatchKind::Battle(start)) = (&mut self.online, &kind) {
-            o.start = Some(start.clone());
-        }
+        self.online = match &kind {
+            MatchKind::Battle(start) if networked => Some(online::Online::new(
+                self.menu.net().is_host(),
+                start.clone(),
+            )),
+            _ => None,
+        };
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);

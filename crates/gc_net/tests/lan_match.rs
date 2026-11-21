@@ -287,6 +287,26 @@ impl Match {
         }
     }
 
+    /// Machine `i`'s game closes without a word and starts again: a fresh
+    /// `Lan` joins the host as `name`, loads, and plays on from a fresh
+    /// world (it catches up from the first turn). What the new `Lan` heard
+    /// on joining.
+    fn restart(&mut self, i: usize, name: &str) -> Vec<NetEvent> {
+        let net = self.net.clone();
+        let mut again = lan(&net);
+        join(&net, &mut again, name, &mut self.lans[0]).unwrap();
+        let heard = again.poll();
+        again.loaded(Ok(()));
+        let old = std::mem::replace(&mut self.lans[i], again);
+        net.cut(old.port().unwrap(), true);
+        std::mem::forget(old);
+        let (mut worlds, mut recorders) = machines(1);
+        self.worlds[i] = worlds.pop().unwrap();
+        self.recorders[i] = recorders.pop().unwrap();
+        self.drills[i] = drill(4);
+        heard
+    }
+
     /// Long enough to play `turns` turns with time to spare.
     fn turns(turns: u32) -> Duration {
         TURN * turns * 2 + Duration::from_secs(2)
@@ -620,21 +640,10 @@ fn a_player_whose_game_restarts_rejoins_and_catches_up() {
 
     // Alex starts the game again and joins: they get the match's start and
     // every turn so far, and the match carries on.
-    let mut again = lan(&net);
-    join(&net, &mut again, "Alex", &mut m.lans[0]).unwrap();
-    match again.poll().as_slice() {
+    match m.restart(1, "Alex").as_slice() {
         [NetEvent::Started(s)] => assert_eq!(s.local_player, 1),
         other => panic!("{other:?}"),
     }
-    again.loaded(Ok(()));
-    // The old game is gone without a word.
-    let old = std::mem::replace(&mut m.lans[1], again);
-    net.cut(old.port().unwrap(), true);
-    std::mem::forget(old);
-    let (mut worlds, mut recorders) = machines(1);
-    m.worlds[1] = worlds.pop().unwrap();
-    m.recorders[1] = recorders.pop().unwrap();
-    m.drills[1] = drill(4);
     assert!(!m.lans[0].paused_for_player());
 
     let target = m.ticks()[0] + 200;
@@ -1298,18 +1307,7 @@ fn the_host_knows_which_sides_nobody_commands() {
     // Alex's game restarts and they join again: still nobody's until their
     // machine has replayed the match up to where it stood when they came
     // back.
-    let net = m.net.clone();
-    let mut again = lan(&net);
-    join(&net, &mut again, "Alex", &mut m.lans[0]).unwrap();
-    again.poll();
-    again.loaded(Ok(()));
-    let old = std::mem::replace(&mut m.lans[1], again);
-    net.cut(old.port().unwrap(), true);
-    std::mem::forget(old);
-    let (mut worlds, mut recorders) = machines(1);
-    m.worlds[1] = worlds.pop().unwrap();
-    m.recorders[1] = recorders.pop().unwrap();
-    m.drills[1] = drill(4);
+    m.restart(1, "Alex");
     assert_eq!(m.lans[0].uncommanded(), [1]);
     let back = m.ticks()[0];
     // Halfway through the replay, still catching up.

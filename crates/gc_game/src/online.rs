@@ -78,13 +78,13 @@ pub struct Online {
     pub ping_press: Option<PingPress>,
     /// The match as the lobby started it (the host makes the minds that
     /// stand in for dropped players from it).
-    pub start: Option<MatchStart>,
+    pub start: MatchStart,
     /// The sides the host's computer plays for people who dropped out.
     pub cover: Cover,
 }
 
 impl Online {
-    pub fn new(host: bool) -> Online {
+    pub fn new(host: bool, start: MatchStart) -> Online {
         Online {
             host,
             notice: None,
@@ -97,7 +97,7 @@ impl Online {
             pings: Vec::new(),
             next_ping: 0,
             ping_press: None,
-            start: None,
+            start,
             cover: Cover::default(),
         }
     }
@@ -243,7 +243,13 @@ mod tests {
 
     #[test]
     fn pings_land_in_the_log_and_run_out() {
-        let mut o = Online::new(false);
+        let start = MatchStart {
+            settings: gc_ui::lobby::LobbySettings::default(),
+            players: Vec::new(),
+            local_player: 0,
+            seed: Some(1),
+        };
+        let mut o = Online::new(false, start);
         o.ping(
             "Ana".into(),
             [1, 2, 3, 255],

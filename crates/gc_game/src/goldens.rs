@@ -19,7 +19,7 @@
 //! that keeps the recorded commands.
 
 use gc_ai::army::{self, Placement};
-use gc_ai::{Difficulty, Faction, Mind, MindConfig, Minds};
+use gc_ai::{Difficulty, Faction, Minds};
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::Recorder;
 use gc_sim::champions::Outcome;
@@ -943,16 +943,7 @@ fn record(golden: &Golden) -> gc_replay::Replay {
     let (mut zones, mut ready) = (Vec::new(), Vec::new());
     for (i, s) in golden.sides.iter().enumerate() {
         let party = i as PlayerId;
-        let roll = golden.seed ^ i as u64;
-        let mind = Mind::new(MindConfig {
-            party,
-            difficulty: s.level,
-            personality: gc_ai::personality::pick(
-                s.faction,
-                gc_fixed::Pcg32::new(golden.seed, i as u64).next_u32(),
-            ),
-            seed: roll,
-        });
+        let mind = gc_match::battle::field_mind(party, s.faction, s.level, golden.seed);
         let preset = if golden.minds {
             mind.personality().army
         } else {

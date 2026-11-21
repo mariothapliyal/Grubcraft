@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use gc_ai::Difficulty;
+use gc_ai::{Difficulty, Minds};
 use gc_data::Faction;
 use gc_match::cover::{Change, Cover};
 use gc_sim::{PlayerId, TICKS_PER_SECOND, Victories, World};
@@ -17,7 +17,7 @@ use gc_sim::{PlayerId, TICKS_PER_SECOND, Victories, World};
 use super::arena::Real;
 use super::{Report, Scenario};
 use crate::conquest;
-use crate::conquest_ai::{cover_mind, temper};
+use crate::conquest_ai::temper;
 use crate::headless::Headless;
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -53,29 +53,21 @@ fn run(real: &Real, report: &mut Report) {
     for i in 0..FACTIONS.len() {
         minds.add(game.mind(i, Difficulty::General, temper(SEED, i), None));
     }
-    let sides: Vec<(Faction, u8)> = FACTIONS.iter().copied().zip(0..).collect();
     let mut cover = Cover::default();
     let mut changes = Vec::new();
     let mut cmds = Vec::new();
-    // The away side's orders, and the slowest think of the tick the cover
-    // mind first looked (seating it and reading the town it takes over).
-    let mut away_orders = 0usize;
+    // The slowest think of the tick the cover mind first looked (seating
+    // it and reading the town it takes over).
     let mut first_look_ms = 0.0f64;
-    let mut play = |world: &mut World,
-                    minds: &mut gc_ai::Minds,
-                    cover: &mut Cover,
-                    changes: &mut Vec<Change>,
-                    away: &[PlayerId],
-                    seconds: u32,
-                    report: &mut Report| {
+    // Play `seconds` with the places in `away` uncommanded; the away side's
+    // orders.
+    let mut play = |world: &mut World, minds: &mut Minds, away: &[PlayerId], seconds: u32| {
         let mut orders = 0;
         for _ in 0..seconds * TICKS_PER_SECOND {
             cmds.clear();
             let began = Instant::now();
             let roll = SEED ^ u64::from(world.tick_count());
-            let new = cover.follow(away, world, minds, &mut cmds, |p| {
-                cover_mind(&real.data, &real.table, &game.map, &sides, p, roll)
-            });
+            let new = cover.follow(away, world, minds, &mut cmds, |p| game.cover_mind(p, roll));
             let seated = new.iter().any(|c| matches!(c, Change::Took(_)));
             changes.extend(new);
             minds.tick(world, &mut cmds);
@@ -91,51 +83,19 @@ fn run(real: &Real, report: &mut Report) {
         orders
     };
 
-    play(
-        &mut world,
-        &mut minds,
-        &mut cover,
-        &mut changes,
-        &[],
-        6 * 60,
-        report,
-    );
+    play(&mut world, &mut minds, &[], 6 * 60);
     // The player drops: their own mind (standing in for them) stops, and
     // for half a minute nobody commands the side.
     minds.remove(AWAY);
-    let idle = play(
-        &mut world,
-        &mut minds,
-        &mut cover,
-        &mut changes,
-        &[],
-        30,
-        report,
-    );
+    let idle = play(&mut world, &mut minds, &[], 30);
     let before = standing(&world, AWAY);
-    away_orders += play(
-        &mut world,
-        &mut minds,
-        &mut cover,
-        &mut changes,
-        &[AWAY],
-        6 * 60,
-        report,
-    );
+    let away_orders = play(&mut world, &mut minds, &[AWAY], 6 * 60);
     let after = standing(&world, AWAY);
     let clicks = (minds.get(AWAY))
         .and_then(|m| m.realm())
         .map_or(0, |r| r.clicks().count);
     // Back: the side is theirs again.
-    let back = play(
-        &mut world,
-        &mut minds,
-        &mut cover,
-        &mut changes,
-        &[],
-        10,
-        report,
-    );
+    let back = play(&mut world, &mut minds, &[], 10);
 
     report.metric(
         "side 1 at takeover (buildings, regiments, soldiers)",

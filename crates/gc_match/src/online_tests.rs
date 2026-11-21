@@ -5,7 +5,6 @@
 //! and every world ending identical. `gc_net`'s own tests check the lockstep on a scripted drill;
 //! this one plays the real game data, the real minds and a generated map.
 
-use std::cell::Cell;
 use std::time::Duration;
 
 use gc_map::{FieldMap, Map};
@@ -78,6 +77,18 @@ fn pump(net: &MemoryNet, lans: &mut [Lan], time: Duration) {
     }
 }
 
+/// A new machine joins `host` as `name`, the host answering meanwhile.
+fn join(net: &MemoryNet, host: &mut Lan, name: &str) -> Lan {
+    let mut l = lan(net);
+    let target = format!("127.0.0.1:{}", host.port().unwrap());
+    l.start_join(&profile(name), &target, "").unwrap();
+    while l.joining().is_none() {
+        net.advance(STEP);
+        host.pump(net.now());
+    }
+    l
+}
+
 /// Mario hosts, Alex and Sam join, and three computer players fill the
 /// other slots, two teams of three; then the host starts. Each machine's
 /// view of the started match, host first.
@@ -92,13 +103,7 @@ fn lobby(net: &MemoryNet) -> (Vec<Lan>, Vec<MatchStart>) {
     let mut lans = vec![lan(net)];
     lans[0].host(&profile("Mario"), settings, "").unwrap();
     for name in ["Alex", "Sam"] {
-        let mut l = lan(net);
-        let target = format!("127.0.0.1:{}", lans[0].port().unwrap());
-        l.start_join(&profile(name), &target, "").unwrap();
-        while l.joining().is_none() {
-            net.advance(STEP);
-            lans[0].pump(net.now());
-        }
+        let l = join(net, &mut lans[0], name);
         lans.push(l);
     }
     pump(net, &mut lans, Duration::from_millis(300));
@@ -273,17 +278,7 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
     };
     let mut lans = vec![lan(&net)];
     lans[0].host(&profile("Mario"), settings, "").unwrap();
-    let target = format!("127.0.0.1:{}", lans[0].port().unwrap());
-    let join = |net: &MemoryNet, host: &mut Lan| {
-        let mut l = lan(net);
-        l.start_join(&profile("Alex"), &target, "").unwrap();
-        while l.joining().is_none() {
-            net.advance(STEP);
-            host.pump(net.now());
-        }
-        l
-    };
-    let alex = join(&net, &mut lans[0]);
+    let alex = join(&net, &mut lans[0], "Alex");
     lans.push(alex);
     pump(&net, &mut lans, Duration::from_millis(300));
     for slot in 2..4 {
@@ -328,9 +323,6 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
 
     let mut cover = Cover::default();
     let mut changes = Vec::new();
-    // Orders for Alex's side in the turns the host played, while the
-    // computer covered for them and in all.
-    let (covered_orders, alex_orders) = (Cell::new(0), Cell::new(0));
     let mut out = Vec::new();
     let mut play = |lans: &mut Vec<Lan>,
                     matches: &mut Vec<Match>,
@@ -338,6 +330,9 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
                     until: u32,
                     cover: &mut Cover,
                     changes: &mut Vec<Change>| {
+        // Orders for Alex's side in the turns the host played, in all and
+        // while the computer covered for them.
+        let (mut alex_orders, mut covered_orders) = (0, 0);
         for (i, l) in lans.iter().enumerate() {
             net.cut(l.port().unwrap(), away.contains(&i));
         }
@@ -369,9 +364,9 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
                                     && c.command != Command::Ready
                             })
                             .count();
-                        alex_orders.set(alex_orders.get() + theirs);
+                        alex_orders += theirs;
                         if cover.covers(alex) {
-                            covered_orders.set(covered_orders.get() + theirs);
+                            covered_orders += theirs;
                         }
                         out.clear();
                         let away = l.uncommanded();
@@ -392,19 +387,20 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
         for l in lans.iter() {
             net.cut(l.port().unwrap(), false);
         }
+        (alex_orders, covered_orders)
     };
 
     // The battle begins and Alex fights it themselves (giving no orders,
     // here): nobody else commands their side.
-    play(&mut lans, &mut matches, &[], 200, &mut cover, &mut changes);
+    let (alex_orders, _) = play(&mut lans, &mut matches, &[], 200, &mut cover, &mut changes);
     assert!(!matches[0].world.deploying());
     assert!(changes.is_empty(), "{changes:?}");
-    assert_eq!(alex_orders.get(), 0);
+    assert_eq!(alex_orders, 0);
 
     // Alex's game dies. With Play on, the host carries on and the computer
     // takes their side once they are gone.
     let dropped = matches[0].world.tick_count();
-    play(
+    let (_, covered_orders) = play(
         &mut lans,
         &mut matches,
         &[1],
@@ -416,7 +412,7 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
     assert!(cover.covers(alex));
     assert_eq!(matches[0].minds.iter().count(), 3);
     assert!(
-        covered_orders.get() > 0,
+        covered_orders > 0,
         "the computer gave Alex's side no orders"
     );
     let events = lans[0].match_events();
@@ -429,7 +425,7 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
 
     // Alex starts the game again and rejoins: the computer keeps their
     // side while their machine replays the match, then gives it back.
-    let fresh = join(&net, &mut lans[0]);
+    let fresh = join(&net, &mut lans[0], "Alex");
     let old = std::mem::replace(&mut lans[1], fresh);
     net.cut(old.port().unwrap(), true);
     std::mem::forget(old);

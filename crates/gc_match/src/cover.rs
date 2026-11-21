@@ -7,7 +7,7 @@
 //! player's do, so nothing here can make two machines' worlds differ, and
 //! a replay records the orders like a person's.
 
-use gc_ai::{Difficulty, Mind, MindConfig, Minds};
+use gc_ai::{Difficulty, Mind, Minds};
 use gc_sim::{Command, PlayerCommand, PlayerId, World};
 use gc_ui::lobby::MatchStart;
 
@@ -22,6 +22,15 @@ pub enum Change {
     Took(PlayerId),
     /// The computer gave this player's side back.
     Gave(PlayerId),
+}
+
+impl Change {
+    /// The player whose side changed hands.
+    pub fn player(self) -> PlayerId {
+        match self {
+            Change::Took(p) | Change::Gave(p) => p,
+        }
+    }
 }
 
 /// The sides the computer is playing for people who are away.
@@ -85,19 +94,10 @@ impl Cover {
 }
 
 /// The Field Battle mind that plays `player`'s side of `setup` for them, of
-/// their faction, its temper and choices seeded from `seed`.
-pub fn field_mind(setup: &MatchStart, player: PlayerId, seed: u64) -> Mind {
-    let faction = setup
-        .players
-        .get(usize::from(player))
-        .map_or(gc_ai::Faction::EmberClans, |s| s.faction);
-    let pick = gc_fixed::Pcg32::new(seed, u64::from(player)).next_u32();
-    Mind::new(MindConfig {
-        party: player,
-        difficulty: COVER_LEVEL,
-        personality: gc_ai::personality::pick(faction, pick),
-        seed: seed ^ u64::from(player),
-    })
+/// their faction, its temper and choices seeded from `roll`.
+pub fn field_mind(setup: &MatchStart, player: PlayerId, roll: u64) -> Mind {
+    let faction = setup.players[usize::from(player)].faction;
+    crate::battle::field_mind(player, faction, COVER_LEVEL, roll)
 }
 
 /// The notice for everyone when the computer takes over or gives back
