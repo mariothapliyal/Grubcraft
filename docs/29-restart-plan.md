@@ -17,7 +17,7 @@
 | 2. Frontage | Only the touching soldiers strike, and a side's room is shared by every attacker #335 | Nothing |
 | 3. Balance tournament | `conquest_balance` #337; `roster_field_table` on the lobby's full rosters #378 | The report of timings and deciding units, and running it as a gate on balance PRs |
 | 4. Even early game | Clans start with 250 Grub, Concord 350 #340 | The Brood's first army was ready at about 6:15 after the swarm cut, against 3:50 to 4:30 for the others; not measured again since |
-| 5. Charges by weight and speed | Not started: held by Mario (2026-10-30) until frontage and morale landed, which they now have | All of it |
+| 5. Charges by weight and speed | Built 2026-11-22 ([05](05-combat.md#charges-by-weight)): momentum sets the charge bonus and plough, braced points stop head-on charges, flank and rear plough deeper, cycle charging, ground cuts the charge; the AI braces and charges again; `charges` stress scenario | Nothing |
 | 6. Responsive orders | Wheeling #330; Shift-queued orders and attack-move #339; Alt-drag deep lines and about-face #341 | LAN timing in the batched playtest |
 | 7. Clear orders and feedback | Order line, held-up notes, why a regiment wavers, hover cards #344 | Nothing |
 | 8. Smarter computer generals | Not started: held by Mario (2026-10-30) like charges | All of it; inputs gathered so far are in [Faction rebalance](#faction-rebalance-in-brief), PR 3 |
@@ -295,6 +295,8 @@ Every faction fields its first proper army at about the same time, so no faction
 - **Real use.** A Brood rush at minute 3 meets a Clans or Choir army that exists, standing in a gate or behind a palisade (items 2 and the fortifications), not workers. Rushing stays possible but costs economy, so it is a choice, not the default.
 
 ### 5. Charges from weight and speed, with braced spears
+
+**Built 2026-11-22**, as in [05 · Charges by weight](05-combat.md#charges-by-weight).
 
 A charge's punch comes from how heavy the unit is and how fast it is going when it hits. Spears braced and facing the charge stop it dead; a hit to the flank or rear wrecks a unit. With the new morale rule, charges break units by killing men.
 - **What exists.** Ploughing by heft (#212), a fading charge bonus, braced spears that turn a frontal charge, and flank and rear multipliers.

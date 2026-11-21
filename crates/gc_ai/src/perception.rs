@@ -132,6 +132,13 @@ pub struct Seen {
     pub hold: bool,
     pub skirmish: bool,
     pub stepping_back: bool,
+    /// Spears or pikes set against a charge (docs/05-combat.md, "Brace").
+    pub braced: bool,
+    /// Pulling out of a fight in good order (docs/05-combat.md, "Fall
+    /// back"), and still carrying the weight of a charge that hit home in
+    /// the last few seconds.
+    pub falling_back: bool,
+    pub charging: bool,
     pub running: bool,
     pub winded: bool,
     /// Touching burning woods (see [`gc_sim::fire`]): it burns.
@@ -334,6 +341,9 @@ impl Perception {
                 hold: r.hold,
                 skirmish: r.skirmish,
                 stepping_back: r.stepping_back,
+                braced: r.braced,
+                falling_back: r.falling_back,
+                charging: r.charge > 0,
                 running: r.running,
                 winded: r.winded,
                 in_fire: world.in_fire(r.handle),

@@ -264,6 +264,18 @@ const BATTERY_DANGER: f32 = 8.0;
 const SCREEN_DANGER: f32 = 14.0;
 /// Where a hammer swings round to: beside the target and behind its front.
 const STAGE_OUT: f32 = 6.0;
+/// Horse pulls out of a fight to charge again only while its foe has more
+/// than this share of its men, and at most this often (ticks, 12 s: a fall
+/// back, a run-up and the charge's three seconds).
+const CYCLE_FOE_ABOVE: f32 = 0.45;
+const CYCLE_GAP: u32 = 12 * gc_sim::TICKS_PER_SECOND;
+/// Horse going round free spears that come at it within this many tiles
+/// (between the blocks) rides off from their points first.
+const EVADE_TILES: f32 = 12.0;
+/// It gives up riding off after this long (ticks, 10 s) and charges them:
+/// spears that keep after it would otherwise lead it round the field for
+/// good.
+const EVADE_FOR: u32 = 10 * gc_sim::TICKS_PER_SECOND;
 const STAGE_BACK: f32 = 5.0;
 /// A line regiment doesn't chase further than this from its place.
 const LINE_LEASH: f32 = 18.0;
@@ -376,6 +388,15 @@ pub struct Member {
     retreat_to: Option<Vec2>,
     /// Shattered: will never take orders again.
     lost: bool,
+    /// When horse last pulled out of a fight to charge again (see
+    /// `Captain::cycles`).
+    pulled_out: Option<u32>,
+    /// Pulled out, and riding back to its staging point before it
+    /// charges again (so it hits home at speed).
+    restaging: bool,
+    /// When it began riding off from free spears coming at it, until it
+    /// next fights (see [`EVADE_FOR`]).
+    evading: Option<u32>,
 }
 
 /// What a mind hands its Captain each look.
@@ -811,6 +832,9 @@ impl Captain {
                 striking: false,
                 fell_back: false,
                 retreat_to: None,
+                pulled_out: None,
+                restaging: false,
+                evading: None,
                 lost: false,
             });
             self.relayout = true;
