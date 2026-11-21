@@ -2,7 +2,9 @@
 
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_sim::scenario::{DRILL_UNITS, NORTH};
-use gc_sim::{Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, World};
+use gc_sim::{
+    Capacities, Command, MatchSetup, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World,
+};
 
 fn world() -> World {
     World::new(&MatchSetup {
@@ -79,32 +81,6 @@ fn crossing(offset: i32) -> Crossing {
         w.tick(&[]);
         let all: Vec<_> = w.regiments.iter().collect();
         for r in &all {
-            if std::env::var("WAY_DEBUG").is_ok() && r.disorder == gc_sim::combat::DISORDER_TICKS {
-                let f = |x: Fx| x.raw() as f64 / 65536.0;
-                let others: Vec<String> = all
-                    .iter()
-                    .filter(|o| {
-                        o.handle != r.handle
-                            && (o.position - r.position).length() < Fx::from_int(10)
-                    })
-                    .map(|o| {
-                        format!(
-                            "({:.1},{:.1}{})",
-                            f(o.position.x),
-                            f(o.position.y),
-                            if o.moving { " m" } else { "" }
-                        )
-                    })
-                    .collect();
-                println!(
-                    "t{t} {:?} at ({:.1},{:.1}) moving {} near {}",
-                    r.handle,
-                    f(r.position.x),
-                    f(r.position.y),
-                    r.moving,
-                    others.join(" ")
-                );
-            }
             if r.disorder > 0 {
                 disordered += 1;
                 if line.contains(&r.handle) {
@@ -127,6 +103,31 @@ fn crossing(offset: i32) -> Crossing {
         disordered,
         standers_disordered,
         displaced,
+    }
+}
+
+#[test]
+fn a_column_marches_through_a_line_at_ease_without_pushing_through() {
+    for offset in 0..4 {
+        let c = crossing(offset);
+        // Before standing friends made way: about 700 regiment-ticks in
+        // disorder (400 the line's), and 20 s before all stood again.
+        assert!(
+            c.disordered <= 60,
+            "offset {offset}: {} in disorder",
+            c.disordered
+        );
+        assert!(
+            c.ticks <= 19 * TICKS_PER_SECOND,
+            "offset {offset}: {} ticks",
+            c.ticks
+        );
+        // Every block of the line is back where it stood.
+        assert!(
+            c.displaced <= Fx::from_ratio(1, 8),
+            "offset {offset}: off by {:?}",
+            c.displaced
+        );
     }
 }
 

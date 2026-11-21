@@ -2206,13 +2206,17 @@ impl Combat {
                 let to_me = me.centre - them.centre;
                 let along = to_me.dot(them.forward);
                 let my_length = me.extent_along(them.forward);
-                // How far on it marches before it halts (where it is sent, or
-                // the look ahead if that is further).
-                let on = regs.target[j]
-                    .map_or(WAY_AHEAD, |t| {
-                        (t - them.centre).dot(them.forward).min(WAY_AHEAD)
-                    })
-                    .max(Fx::ZERO);
+                // One sent to stand where it stands finds a place of its
+                // own (see `Combat::own_place`).
+                let target = regs.target[j].unwrap_or(them.centre);
+                if (target - me.centre).length_sq_raw() < (me.radius().raw() as u64).pow(2) {
+                    return;
+                }
+                // How far on it marches before it halts: to where it is
+                // sent, or the look ahead if that is nearer.
+                let on = (target - them.centre)
+                    .dot(them.forward)
+                    .clamp(Fx::ZERO, WAY_AHEAD);
                 if along + my_length <= Fx::ZERO - them.half_depth
                     || along - my_length >= them.half_depth + on
                 {
