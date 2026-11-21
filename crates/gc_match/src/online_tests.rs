@@ -450,7 +450,7 @@ fn the_computer_plays_a_dropped_players_side_until_they_rejoin() {
     assert_eq!(matches[0].minds.iter().count(), 2);
     assert_eq!(
         cover::notice(Change::Took(alex), "Alex"),
-        "The computer (General) is playing Alex's side until they rejoin."
+        "The computer (General) is playing Alex's side until they are back."
     );
 
     net.set_loss(0);

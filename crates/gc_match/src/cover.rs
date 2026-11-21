@@ -74,8 +74,10 @@ impl Cover {
             !back
         });
         for &p in away {
-            // A side a computer player already holds (the lobby's) is left be.
-            if self.covers(p) || minds.get(p).is_some() {
+            // A side a computer player already holds (the lobby's) is left
+            // be, and so is one that is beaten or has surrendered.
+            if self.covers(p) || minds.get(p).is_some() || world.is_out(p) || world.has_conceded(p)
+            {
                 continue;
             }
             minds.add(seat(p));
@@ -105,7 +107,7 @@ pub fn field_mind(setup: &MatchStart, player: PlayerId, roll: u64) -> Mind {
 pub fn notice(change: Change, name: &str) -> String {
     match change {
         Change::Took(_) => format!(
-            "The computer ({}) is playing {name}'s side until they rejoin.",
+            "The computer ({}) is playing {name}'s side until they are back.",
             COVER_LEVEL.name()
         ),
         Change::Gave(_) => format!("{name} has caught up and commands their side again."),
