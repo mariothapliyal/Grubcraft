@@ -17,6 +17,7 @@ use gc_data::conquest::Class;
 use gc_data::{Faction, GameData};
 use gc_fixed::Pcg32;
 use gc_map::Map;
+use gc_sim::PlayerId;
 use gc_ui::lobby::{MatchStart, SlotKind};
 use glam::Vec2;
 
@@ -109,7 +110,7 @@ pub fn seat(
     roll: u64,
     minds: &mut Minds,
 ) {
-    let sides: Vec<(Faction, u8)> = setup.players.iter().map(|s| (s.faction, s.team)).collect();
+    let sides = sides(setup);
     for (i, slot) in setup.players.iter().enumerate() {
         if slot.kind != SlotKind::Ai {
             continue;
@@ -120,6 +121,37 @@ pub fn seat(
             data, table, map, i, &sides, level, temper, roll, None,
         ));
     }
+}
+
+/// Each player's faction and team in `setup`.
+pub fn sides(setup: &MatchStart) -> Vec<(Faction, u8)> {
+    setup.players.iter().map(|s| (s.faction, s.team)).collect()
+}
+
+/// The Conquest mind that plays player `i`'s side of `sides` for them
+/// while they are away from a network match (`gc_match::cover`), at the
+/// cover level, seeded from `roll`. It takes over the economy and army
+/// where they stand, reading them from the world as any Conquest mind does.
+pub fn cover_mind(
+    data: &GameData,
+    table: &Table,
+    map: &Map,
+    sides: &[(Faction, u8)],
+    i: PlayerId,
+    roll: u64,
+) -> Mind {
+    let i = usize::from(i);
+    mind_for(
+        data,
+        table,
+        map,
+        i,
+        sides,
+        gc_match::cover::COVER_LEVEL,
+        temper(roll, i),
+        roll,
+        None,
+    )
 }
 
 /// The Conquest mind for player `i` of `sides` (each player's faction and

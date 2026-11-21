@@ -114,7 +114,7 @@ Conquest is the primary mode, but Field Battle is built first because it is the 
 - Performance pass against every budget; stretch targets attempted.
 - Art pass: custom models for faction-defining units and heroes, moving toward high-fidelity soldiers (smooth skinning, 63-bone skeletons, textured materials, shadows and glow, four levels of detail and BC7 texture compression are built ahead of time; more final-quality models follow); soldier fighting stage 3, matched kills for heroes, charges and cavalry (now part of the Every Soldier Fights plan, [28](28-soldier-combat.md), which starts earlier, when the project resumes).
 - Simple self-update check (host's version offered to joining friends).
-- Lobby option: an AI runs a disconnected player's army until they rejoin.
+- An AI runs a disconnected player's army until they rejoin. *Built 2026-11-22 (always on, General level).*
 - **Exit:** 1.0 tagged; a month of game nights with no crash or desync.
 
 ## The AI track

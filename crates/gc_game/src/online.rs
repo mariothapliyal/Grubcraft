@@ -9,7 +9,9 @@
 
 use std::time::{Duration, Instant};
 
+use gc_match::cover::Cover;
 use gc_platform::logln;
+use gc_ui::lobby::MatchStart;
 use gc_ui::match_kit::{self, ChatBox, ChatLine, LineKind, PING_LIFE_MS, PingKind};
 
 /// How long a notice ("Alex lost connection") stays on screen.
@@ -74,10 +76,15 @@ pub struct Online {
     next_ping: u32,
     /// An Alt+left press waiting to become a ping.
     pub ping_press: Option<PingPress>,
+    /// The match as the lobby started it (the host makes the minds that
+    /// stand in for dropped players from it).
+    pub start: MatchStart,
+    /// The sides the host's computer plays for people who dropped out.
+    pub cover: Cover,
 }
 
 impl Online {
-    pub fn new(host: bool) -> Online {
+    pub fn new(host: bool, start: MatchStart) -> Online {
         Online {
             host,
             notice: None,
@@ -90,6 +97,8 @@ impl Online {
             pings: Vec::new(),
             next_ping: 0,
             ping_press: None,
+            start,
+            cover: Cover::default(),
         }
     }
 
@@ -234,7 +243,13 @@ mod tests {
 
     #[test]
     fn pings_land_in_the_log_and_run_out() {
-        let mut o = Online::new(false);
+        let start = MatchStart {
+            settings: gc_ui::lobby::LobbySettings::default(),
+            players: Vec::new(),
+            local_player: 0,
+            seed: Some(1),
+        };
+        let mut o = Online::new(false, start);
         o.ping(
             "Ana".into(),
             [1, 2, 3, 255],
