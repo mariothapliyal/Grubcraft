@@ -21,7 +21,9 @@ use gc_data::Faction;
 use gc_fixed::FxVec2;
 use gc_sim::{Command, PlayerCommand, PowerTarget, RegimentHandle, TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, EAST, Real, WEST, attack_nearest, centre, move_to, put_up, spawn};
+use super::arena::{
+    Arena, EAST, Real, WEST, attack_nearest, centre, move_to, order, put_up, spawn,
+};
 use super::{Report, Scenario};
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -54,10 +56,6 @@ fn handles(world: &World) -> Vec<RegimentHandle> {
 
 fn models(world: &World, h: RegimentHandle) -> u16 {
     world.regiments.get(h).map_or(0, |r| r.models)
-}
-
-fn order(player: u8, command: Command) -> PlayerCommand {
-    PlayerCommand { player, command }
 }
 
 /// The Brood part: player 0 the Brood, player 1 the Ember Clans.

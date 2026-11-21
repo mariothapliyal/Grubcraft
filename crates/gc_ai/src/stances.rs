@@ -135,12 +135,17 @@ pub fn wanted(
     if unit.stats.reach {
         let riding_at_us = |within: f32| {
             view.regiments.iter().any(|f| {
-                let to_us = (r.pos - f.pos).normalize_or_zero();
-                view.hostile(party, f.owner)
-                    && !f.broken()
-                    && !f.engaged
-                    && view.unit(f).stats.can_wedge()
-                    && f.pos.distance(r.pos) - f.radius() - r.radius() < within
+                if !view.hostile(party, f.owner)
+                    || f.broken()
+                    || f.engaged
+                    || !view.unit(f).stats.can_wedge()
+                {
+                    return false;
+                }
+                let off = r.pos - f.pos;
+                let gap = off.length();
+                let to_us = if gap > 0.0 { off / gap } else { off };
+                gap - f.radius() - r.radius() < within
                     && r.facing.dot(-to_us) > BRACE_ARC_COS
                     && f.facing.dot(to_us) > BRACE_ARC_COS
             })

@@ -7,9 +7,9 @@
 //! and pulling their horse out to charge again in a Conquest match.
 
 use gc_fixed::{Angle, FxVec2};
-use gc_sim::{Command, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World};
+use gc_sim::{Command, TICKS_PER_SECOND};
 
-use super::arena::{Arena, Real, SOUTH, WEST, centre, spawn};
+use super::arena::{Arena, Real, SOUTH, WEST, centre, hp, order, spawn};
 use super::{Report, Scenario};
 use crate::conquest;
 use crate::headless::Headless;
@@ -31,15 +31,6 @@ const TILES: u32 = 64;
 const HORSE: &str = "Mounted Samurai";
 const PIKES: &str = "Bone Pikes";
 const KATANA: &str = "Katana Samurai";
-
-fn order(player: u8, command: Command) -> PlayerCommand {
-    PlayerCommand { player, command }
-}
-
-/// Hit points regiment `h` has left.
-fn hp(world: &World, h: RegimentHandle) -> u32 {
-    (world.regiments.model_hp(h)).map_or(0, |hp| hp.iter().map(|&x| u32::from(x)).sum())
-}
 
 /// What one charge did, over the 4 s after the horse met its target.
 #[derive(Clone, Copy)]
@@ -79,8 +70,9 @@ struct Field {
     target: (&'static str, Angle),
     /// Whether the target braces before the horse sets off.
     braced: bool,
-    /// Where the horse starts and which way it faces.
-    from: (FxVec2, Angle),
+    /// Where the horse starts and which way it faces: 30 tiles north of
+    /// the target, facing south, unless given.
+    from: Option<(FxVec2, Angle)>,
     /// Ground: a hill under the target, woods on the way.
     hill: bool,
     woods: bool,
@@ -91,14 +83,13 @@ struct Field {
 const FRONT: Field = Field {
     target: (KATANA, NORTH),
     braced: false,
-    from: (FxVec2::ZERO, SOUTH),
+    from: None,
     hill: false,
     woods: false,
     locked: false,
 };
 
-/// The target at (32, 40); the horse from 30 tiles off, north of it
-/// unless `field.from` says otherwise.
+/// The target at (32, 40), the horse from `field.from`.
 fn charge(real: &Real, report: &mut Report, field: Field) -> Hit {
     let mut arena = Arena::new(TILES);
     if field.hill {
@@ -117,11 +108,7 @@ fn charge(real: &Real, report: &mut Report, field: Field) -> Hit {
         &[(real.unit(field.target.0), centre(32, 40))],
         field.target.1,
     )[0];
-    let from = if field.from.0 == FxVec2::ZERO {
-        (centre(32, 10), field.from.1)
-    } else {
-        field.from
-    };
+    let from = field.from.unwrap_or((centre(32, 10), SOUTH));
     let horse = spawn(&mut world, 0, &[(real.unit(HORSE), from.0)], from.1)[0];
     let mut orders = Vec::new();
     if field.braced {
@@ -215,7 +202,7 @@ fn run(real: &Real, report: &mut Report) {
         real,
         report,
         Field {
-            from: (centre(62, 40), WEST),
+            from: Some((centre(62, 40), WEST)),
             ..FRONT
         },
     );
@@ -223,7 +210,7 @@ fn run(real: &Real, report: &mut Report) {
         real,
         report,
         Field {
-            from: (centre(32, 62), NORTH),
+            from: Some((centre(32, 62), NORTH)),
             ..FRONT
         },
     );
@@ -240,7 +227,7 @@ fn run(real: &Real, report: &mut Report) {
         report,
         Field {
             target: (PIKES, NORTH),
-            from: (centre(62, 40), WEST),
+            from: Some((centre(62, 40), WEST)),
             locked: true,
             ..FRONT
         },

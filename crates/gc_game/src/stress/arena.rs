@@ -449,6 +449,16 @@ pub(crate) fn put_up(
 }
 
 /// March `regiment` of `player`'s to `to`.
+/// Player `player` gives `command`.
+pub(crate) fn order(player: PlayerId, command: Command) -> PlayerCommand {
+    PlayerCommand { player, command }
+}
+
+/// Hit points regiment `h` has left.
+pub(crate) fn hp(world: &World, h: RegimentHandle) -> u32 {
+    (world.regiments.model_hp(h)).map_or(0, |hp| hp.iter().map(|&x| u32::from(x)).sum())
+}
+
 pub(crate) fn move_to(player: PlayerId, regiment: RegimentHandle, to: FxVec2) -> PlayerCommand {
     move_with(player, regiment, to, 0)
 }

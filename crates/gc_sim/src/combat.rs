@@ -237,7 +237,7 @@ fn driven(regs: &Regiments, i: usize) -> u8 {
 fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: bool) -> u8 {
     // In hundredths of a heft, rounding no fast charge down to nothing.
     let weight = units[regs.unit[i] as usize].mass.heft()
-        * u64::from(regs.momentum(i))
+        * u64::from(regs.momentum[i])
         * regs.formation[i].charge_percent()
         / PLOUGH_AT;
     let depth = if front {
@@ -266,15 +266,11 @@ const BRACED_ARC: u16 = 0x2000;
 /// or a climb softer, one at the run or downhill harder, up to
 /// [`IMPACT_MAX_PERCENT`].
 pub(crate) fn impact_percent(regs: &Regiments, i: usize) -> u64 {
-    // Marching speed is in tiles a tick: as hundredths of a tile a second.
-    let speed =
-        (u64::try_from(regs.speed[i].raw()).unwrap_or(0) * u64::from(TICKS_PER_SECOND) * 100
-            + (1 << 15))
-            >> 16;
+    let speed = u64::from(crate::regiments::hundredths_per_second(regs.speed[i]));
     if speed == 0 {
         return 0;
     }
-    (u64::from(regs.momentum(i)) * 100 / speed).min(IMPACT_MAX_PERCENT)
+    (u64::from(regs.momentum[i]) * 100 / speed).min(IMPACT_MAX_PERCENT)
 }
 
 /// `bonus` scaled by `percent`, as a stored charge bonus.
@@ -285,10 +281,9 @@ fn scaled(bonus: u8, percent: u64) -> u8 {
 /// Whether regiment `i`, facing as it does, comes at `j` head on: within
 /// [`BRACED_ARC`] of straight into `j`'s facing.
 fn head_on(regs: &Regiments, i: usize, j: usize) -> bool {
-    let off = regs.facing[i]
-        .0
-        .wrapping_sub(regs.facing[j].0)
-        .wrapping_sub(Angle::HALF.0) as i16;
+    let off = regs.facing[j]
+        .wrapping_add(Angle::HALF)
+        .delta_to(regs.facing[i]);
     off.unsigned_abs() <= BRACED_ARC
 }
 
@@ -1675,7 +1670,7 @@ impl Combat {
                         regs.charge_bonus[j] = scaled(mine, impact).max(theirs);
                         regs.disorder_for(i, impact);
                         regs.strike[i] = Strike::Rest;
-                        regs.spend_momentum(i);
+                        regs.momentum[i] = 0;
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
                         // A wedge drives its point home harder, and speed
@@ -1701,7 +1696,7 @@ impl Combat {
                         };
                         // The charge is spent: to charge again at full
                         // weight it must pull out and run up again.
-                        regs.spend_momentum(i);
+                        regs.momentum[i] = 0;
                         if ploughed > 0 {
                             regs.ploughed[j] = ploughed;
                             regs.ploughed_by[j] = Some(regs.handle(i));

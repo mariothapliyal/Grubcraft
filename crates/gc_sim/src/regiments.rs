@@ -846,7 +846,7 @@ impl Regiments {
     /// usual time and at most twice it.
     pub(crate) fn disorder_for(&mut self, i: usize, percent: u64) {
         let full = u64::from(crate::combat::DISORDER_TICKS);
-        self.disorder[i] = (full * percent / 100).clamp(full, 2 * full).min(255) as u8;
+        self.disorder[i] = (full * percent / 100).clamp(full, 2 * full) as u8;
     }
 
     /// Give a move order. Routing regiments don't listen.
@@ -2170,19 +2170,6 @@ impl Regiments {
         }
     }
 
-    /// Slot `i`'s real forward speed over about the last second, in
-    /// hundredths of a tile a second (see [`Regiments::step_movement`]).
-    pub(crate) fn momentum(&self, i: usize) -> u16 {
-        self.momentum[i]
-    }
-
-    /// Slot `i`'s speed is spent: it has hit home (see
-    /// `Combat::before_move`), and must pull out and run up again to charge
-    /// at full weight.
-    pub(crate) fn spend_momentum(&mut self, i: usize) {
-        self.momentum[i] = 0;
-    }
-
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         // No party past MAX_PARTIES ever gets a bonus.
         for bonus in &self.party_morale[..crate::MAX_PARTIES] {
@@ -2217,7 +2204,7 @@ fn ease_momentum(was: u16, now: u32) -> u16 {
 }
 
 /// A step of `stepped` tiles in one tick, as hundredths of a tile a second.
-fn hundredths_per_second(stepped: Fx) -> u32 {
+pub(crate) fn hundredths_per_second(stepped: Fx) -> u32 {
     let raw = u64::try_from(stepped.raw()).unwrap_or(0);
     // Rounded to the nearest, as a speed in whole tiles a tick isn't
     // quite whole in fixed point.
