@@ -45,7 +45,7 @@ Optional:
 
 ### Surrender and leaving
 - Surrender is a vote in team games, instant in FFA (not built yet). A surrendered player's structures crumble over 30 s (the Concord can still collect tithes from the collapse, of course).
-- A disconnected player's units hold position and defend themselves; their ally can take shared control, or (a later lobby option) an AI runs their army until they rejoin. See [11 · Networking](11-networking.md#disconnects-and-rejoining) for rejoining.
+- A disconnected player's side is played by the host's computer (General level) until they rejoin and catch up; before that, while the match waits for them, their units hold position and defend themselves. A player can also hand their army to an ally with **Hand over**. See [11 · Networking](11-networking.md#disconnects-and-rejoining) for rejoining.
 
 ## Field Battle
 

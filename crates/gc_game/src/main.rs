@@ -5630,6 +5630,7 @@ impl Running {
             // reach everyone through the turns like a human's.
             if host {
                 self.pending.clear();
+                self.cover_dropped();
                 let t_ai = Instant::now();
                 tagged_alloc::scope(Tag::Ai, || self.minds.tick(&self.world, &mut self.pending));
                 self.stats.ai_time += t_ai.elapsed();
@@ -5643,6 +5644,45 @@ impl Running {
             o.last_turn = now;
         }
         turns
+    }
+
+    /// On the host of a network match: let the computer play the side of
+    /// anyone who dropped out (lost the connection for good, left, or
+    /// rejoined and is still catching up), and give it back once they are
+    /// here again (`gc_match::cover`). Everyone is told either way. Any
+    /// Ready for a side taken over while deploying goes in `pending`, the
+    /// orders for the next turn.
+    fn cover_dropped(&mut self) {
+        let away = self.menu.net().uncommanded();
+        let Some(o) = &mut self.online else { return };
+        if away == o.cover.covering() {
+            return;
+        }
+        let start = &o.start;
+        let conquest = start.settings.mode == GameMode::Conquest;
+        let sides = conquest_ai::sides(start);
+        // The new minds' small choices, different for each match and moment.
+        let roll = self.seed ^ (self.matches << 8) ^ (u64::from(self.world.tick_count()) << 32);
+        let (data, table, map) = (&self.data, &self.buildings, &self.heightmap);
+        let changes = tagged_alloc::scope(Tag::Ai, || {
+            o.cover.follow(
+                &away,
+                &self.world,
+                &mut self.minds,
+                &mut self.pending,
+                |p| {
+                    if conquest {
+                        conquest_ai::cover_mind(data, table, map, &sides, p, roll)
+                    } else {
+                        gc_match::cover::field_mind(start, p, roll)
+                    }
+                },
+            )
+        });
+        for change in changes {
+            let text = gc_match::cover::notice(change, &party_name(&self.parties, change.player()));
+            self.menu.net().announce(text);
+        }
     }
 
     /// Note which regiments loosed a volley lately, so their soldiers play
@@ -6138,7 +6178,13 @@ impl Running {
         if let MatchKind::Replay(r) = &kind {
             stats_before = std::mem::replace(&mut self.units.stats, r.units.clone());
         }
-        self.online = networked.then(|| online::Online::new(self.menu.net().is_host()));
+        self.online = match &kind {
+            MatchKind::Battle(start) if networked => Some(online::Online::new(
+                self.menu.net().is_host(),
+                start.clone(),
+            )),
+            _ => None,
+        };
         let nav = tagged_alloc::scope(Tag::Map, || self.heightmap.sim_nav_costs());
         if let MatchKind::Replay(r) = &kind {
             let (shown, stored) = (self.heightmap.ground(), r.setup().ground);

@@ -126,6 +126,20 @@ pub struct SetOut {
     pub my_forward: Vec2,
 }
 
+/// The Field Battle mind for `party` of `faction` at `level` in a match
+/// rolled `roll`: its temper picked and its choices seeded from the roll
+/// and the party, the same way for the lobby's computer players and for
+/// one standing in for a dropped player (`crate::cover`).
+pub fn field_mind(party: PlayerId, faction: Faction, level: Difficulty, roll: u64) -> Mind {
+    let pick = gc_fixed::Pcg32::new(roll, u64::from(party)).next_u32();
+    Mind::new(MindConfig {
+        party,
+        difficulty: level,
+        personality: gc_ai::personality::pick(faction, pick),
+        seed: roll ^ u64::from(party),
+    })
+}
+
 /// Raise and deploy every side's army for `setup`, appending the commands
 /// that put them on the field to `out`, and add a mind for each AI slot to
 /// `minds`. Each army is what its player built in the army builder, held to
@@ -178,13 +192,12 @@ pub fn set_out(
         let faction = slot.faction;
         set.parties.push(party_of(slot));
         let mind = (deploy && slot.kind == SlotKind::Ai).then(|| {
-            let pick = gc_fixed::Pcg32::new(roll, i as u64).next_u32();
-            Mind::new(MindConfig {
+            field_mind(
                 party,
-                difficulty: Difficulty::from_index(slot.ai_level as usize),
-                personality: gc_ai::personality::pick(faction, pick),
-                seed: roll ^ i as u64,
-            })
+                faction,
+                Difficulty::from_index(slot.ai_level as usize),
+                roll,
+            )
         });
         let preset = mind
             .as_ref()
