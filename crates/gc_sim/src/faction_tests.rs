@@ -274,6 +274,7 @@ fn a_regiment_cocoons_then_comes_out_as_its_evolution() {
         target: FxVec2::from_ints(90, 60),
         facing: None,
         files: 0,
+        brigade: 0,
         pace: Fx::ZERO,
     };
     order(&mut w, 0, go);
