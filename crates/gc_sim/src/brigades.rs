@@ -706,6 +706,17 @@ impl Brigades {
                 }
                 regs.target[i] = Some(self.set[i]);
             }
+            // The anchor in and each making for its own place from the
+            // end of the track, it may stop short of the point it was
+            // given beside one already standing there: it goes to its
+            // own place from where it is.
+            if regs.target[i].is_none()
+                && self.mode[i] != Mode::Plain
+                && self.pool[usize::from(self.of[i]) - 1].arrived()
+            {
+                self.release(regs, i);
+                continue;
+            }
             if regs.target[i] != Some(self.set[i]) || regs.on_wall[i] {
                 // The pace was the brigade's unless whoever gave the new
                 // order set one.

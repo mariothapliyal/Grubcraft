@@ -95,6 +95,19 @@ impl Arena {
         self.water(xs, ys, FORD_BED);
     }
 
+    /// A ford an army can march across: its banks shelve down to it over
+    /// `edge` tiles, as a made map's do (the banks of [`Arena::ford`] are
+    /// as sheer as the river's it is painted over).
+    pub fn shelving_ford(&mut self, xs: Range<i32>, ys: Range<i32>, edge: i32) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().terrain.push(TerrainOp {
+            shape,
+            mode: Mode::Set,
+            height: FORD_BED,
+            edge,
+        });
+    }
+
     /// Water over a bed at `bed`.
     fn water(&mut self, xs: Range<i32>, ys: Range<i32>, bed: i32) {
         let shape = Arena::rect(xs, ys);
@@ -152,7 +165,7 @@ impl Arena {
     }
 
     /// The map as painted.
-    fn map(&self) -> &Map {
+    pub(super) fn map(&self) -> &Map {
         self.map.get_or_init(|| {
             let mut map = Map::from_def(&self.def);
             if let Some(way) = self.flowing {

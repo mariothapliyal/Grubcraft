@@ -27,6 +27,7 @@ mod big_army;
 mod bridge;
 mod bridge_flood;
 mod bridge_flood_armies;
+mod brigade;
 mod crossing;
 mod forest;
 mod forest_pass;
@@ -81,6 +82,9 @@ const SCENARIOS: &[Scenario] = &[
     rally::SCENARIO,
     gated_towns::SCENARIO,
     new_orders::SCENARIO,
+    brigade::FORD,
+    brigade::CORNER,
+    brigade::GATE,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
