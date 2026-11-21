@@ -369,8 +369,11 @@ fn bonus_charged_from(tiles: i32) -> u8 {
 fn a_charge_from_a_standstill_hits_soft() {
     // A short run-up against a long one: the charge hits home with the
     // speed it has, not its full speed.
-    let (near, far) = (bonus_charged_from(10), bonus_charged_from(40));
-    let full = units()[CHARGERS as usize].charge_bonus;
+    let (near, far) = (
+        u32::from(bonus_charged_from(10)),
+        u32::from(bonus_charged_from(40)),
+    );
+    let full = u32::from(units()[CHARGERS as usize].charge_bonus);
     assert!(
         near * 3 < full * 2,
         "a short run-up hit home with {near} of {full}"
