@@ -528,16 +528,64 @@ impl Captain {
         // meet it rather than ride into their points.
         let spears_ahead = (ctx.view.unit(t).stats.reach && !t.engaged && !flank)
             || !spears_clear(ctx.view, fighting, r.pos, t.pos, t.handle);
-        // Once in melee it stays in; it never pulls out to re-stage.
-        let charge = (!timed && (r.engaged || !spears_ahead))
-            || (flank
-                && level
-                && (r.pos.distance(t.pos) < 16.0 || (r.pos - t.pos).dot(t.facing) < 0.0))
-            || r.pos.distance(stage) < 4.0;
+        // Horse whose charge is spent pulls out to run in again at full
+        // weight (cycle charging), and is left to pull out.
+        if self.cycles(ctx, m, r, t) {
+            m.pulled_out = Some(ctx.view.tick);
+            m.restaging = true;
+            wants.push(Want {
+                regiment: m.handle,
+                act: Act::FallBack,
+                priority: 3,
+                group: 0,
+            });
+            return;
+        }
+        if r.falling_back {
+            return;
+        }
+        // Back at its staging point after pulling out, it charges again;
+        // until then it rides there, not straight back in from a
+        // standstill.
+        let staged = r.pos.distance(stage) < 4.0;
+        let long_out = m
+            .pulled_out
+            .is_some_and(|at| ctx.view.tick >= at + CYCLE_GAP);
+        if staged || r.engaged || long_out {
+            m.restaging = false;
+        }
+        let charge = staged
+            || (!m.restaging
+                && ((!timed && (r.engaged || !spears_ahead))
+                    || (flank
+                        && level
+                        && (r.pos.distance(t.pos) < 16.0 || (r.pos - t.pos).dot(t.facing) < 0.0))));
         if charge {
             wants.push(attack(m.handle, t.handle, 3));
         } else {
-            let to = ctx.terrain.clamp(stage, 3.0);
+            // Still ahead of the target and not clear of its frontage, it
+            // first rides out wide to the side it goes round, rather than
+            // across the target's front on the way (where a foe coming on
+            // meets it head on).
+            let off = r.pos - t.pos;
+            let (ahead, aside) = (off.dot(t.facing), off.dot(across) * side);
+            let clear = t.width * 0.5 + r.width * 0.5 + STAGE_OUT;
+            // Free spears coming at it close: it rides off from their
+            // points first, going round once clear.
+            let to_r = (r.pos - t.pos).normalize_or(-t.facing);
+            let pressed = ctx.view.unit(t).stats.reach
+                && !t.engaged
+                && t.moving
+                && t.facing.dot(to_r) > 0.7
+                && gap_between(r, t) < EVADE_TILES;
+            let way = if pressed {
+                r.pos + to_r * EVADE_TILES + across * side * clear
+            } else if ahead > 0.0 && aside < clear - 1.0 {
+                t.pos + t.facing * ahead + across * side * clear
+            } else {
+                stage
+            };
+            let to = ctx.terrain.clamp(way, 3.0);
             wants.push(Want {
                 regiment: m.handle,
                 act: Act::Move {
@@ -550,6 +598,32 @@ impl Captain {
                 group: 0,
             });
         }
+    }
+
+    /// Whether horse `r`, striking `t`, should pull out of the fight to
+    /// charge again (docs/05-combat.md, "Charges by weight and speed"): a
+    /// charge hits home with the speed it has, so once its charge is spent
+    /// a locked rider is only a heavy footman. It pulls out while still
+    /// fit to (half its riders or more) and while the foe still stands
+    /// well (more than [`CYCLE_FOE_ABOVE`] of its men: one about to break
+    /// is finished off where it is), at most every [`CYCLE_GAP`] ticks;
+    /// only off a foe that another of its regiments holds in melee (a foe
+    /// left free turns to meet the next charge) and that has no long
+    /// weapons to meet it with. Veteran minds and up (the orders of
+    /// [`crate::stances`]).
+    fn cycles(&self, ctx: &Ctx, m: &Member, r: &Seen, t: &Seen) -> bool {
+        ctx.knobs.stances
+            && r.engaged
+            && !r.charging
+            && !r.falling_back
+            && ctx.view.unit(r).stats.can_wedge()
+            && r.strength() >= 0.5
+            && !t.broken()
+            && t.strength() > CYCLE_FOE_ABOVE
+            && !ctx.view.unit(t).stats.reach
+            && pinned_by_another(ctx, r, t)
+            && m.pulled_out
+                .is_none_or(|at| ctx.view.tick >= at + CYCLE_GAP)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -850,4 +924,13 @@ impl Captain {
             (Some(_), None) => keep,
         }
     }
+}
+
+/// Whether another regiment of `r`'s side is locked in melee with `t`
+/// beside `r`, so `t` stays held while `r` pulls out.
+fn pinned_by_another(ctx: &Ctx, r: &Seen, t: &Seen) -> bool {
+    ctx.view
+        .regiments
+        .iter()
+        .any(|f| f.handle != r.handle && f.owner == r.owner && f.engaged && gap_between(f, t) < 1.5)
 }

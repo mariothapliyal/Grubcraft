@@ -20,6 +20,10 @@
 //! - **Hold** for the line (anchor and wings) standing to receive the
 //!   enemy once it comes within [`HOLD_WITHIN`]: it gives ground slowly and
 //!   doesn't chase. The Captain's next move or attack lifts it.
+//! - **Brace** for spears or pikes standing with charging cavalry riding
+//!   at their front within [`BRACE_WITHIN`] tiles (inside about 45
+//!   degrees of straight on, the arc braced points stop a charge in); the
+//!   points come up again once none is within [`BRACE_LIFT`].
 //! - **Skirmish** for every regiment that shoots and marches at least
 //!   [`SKIRMISH_SPEED`] (not slow engines): it steps back from melee on
 //!   its own, quicker than the Captain could tell it to.
@@ -40,6 +44,15 @@ pub const RUN_UPTO: f32 = 40.0;
 pub const HOLD_WITHIN: f32 = 30.0;
 /// Shooters slower than this (tiles a second) don't skirmish.
 pub const SKIRMISH_SPEED: f32 = 2.5;
+/// Spears brace once charging cavalry comes at their front this near
+/// (tiles between the blocks), and lift their points again once none is
+/// within [`BRACE_LIFT`].
+pub const BRACE_WITHIN: f32 = 30.0;
+pub const BRACE_LIFT: f32 = 45.0;
+/// How squarely a foe must be ahead of the spears, and coming at them, to
+/// be met braced: the cosine of the angle off straight on (about 45
+/// degrees, the arc braced points stop a charge in).
+const BRACE_ARC_COS: f32 = 0.7;
 
 /// The order `r` should be given now, if any. `part` is what the battle's
 /// Captain has it doing (see [`Captain::part_of`]).
@@ -113,6 +126,31 @@ pub fn wanted(
     };
     if may_run && runs {
         return Some(Command::Run { regiment });
+    }
+    // Spears set their points against cavalry coming at their front, and
+    // lift them once it has gone.
+    if unit.stats.reach {
+        let riding_at_us = |within: f32| {
+            view.regiments.iter().any(|f| {
+                let to_us = (r.pos - f.pos).normalize_or_zero();
+                view.hostile(party, f.owner)
+                    && !f.broken()
+                    && !f.engaged
+                    && view.unit(f).stats.can_wedge()
+                    && f.pos.distance(r.pos) - f.radius() - r.radius() < within
+                    && r.facing.dot(-to_us) > BRACE_ARC_COS
+                    && f.facing.dot(to_us) > BRACE_ARC_COS
+            })
+        };
+        if !r.braced && !r.moving && riding_at_us(BRACE_WITHIN) {
+            return Some(Command::Brace { regiment, on: true });
+        }
+        if r.braced && !riding_at_us(BRACE_LIFT) {
+            return Some(Command::Brace {
+                regiment,
+                on: false,
+            });
+        }
     }
     // The line stands fast to receive the enemy.
     if matches!(role, Some(Role::Anchor | Role::Wing))
