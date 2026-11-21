@@ -53,6 +53,8 @@ pub struct TopBar {
     /// Clans: the Honor meter (0 to 100), shown whenever there is one: a
     /// side whose meter is Honor shows it even at 0.
     pub honor: Option<u32>,
+    /// Concord: the Tithe meter (0 to 250), shown the same way.
+    pub tithe: Option<u32>,
     /// Its walls close round its main building: a walled town (see
     /// `gc_sim::towns`).
     pub walled: bool,
@@ -185,6 +187,8 @@ impl Tuning {
 pub const RESONANCE_FULL: u32 = 100;
 /// The Honor meter's top (the simulation's `MAX_HONOR`).
 pub const HONOR_FULL: u32 = 100;
+/// The Tithe meter's top (the simulation's `MAX_TITHE`).
+pub const TITHE_FULL: u32 = 250;
 
 /// A building that needs power, with none.
 const UNPOWERED: &str = "Unpowered: stopped until a field of power reaches it";
@@ -306,6 +310,17 @@ pub(crate) fn draw_resources(draw: &mut DrawList, area: Rect, t: &TopBar) {
         let value = format!("{honor}/{HONOR_FULL}");
         items.push(Box::new(move |d, x| {
             top_item(d, x, y, limit, "Honor", &value, color)
+        }));
+    }
+    if let Some(tithe) = t.tithe {
+        let color = if tithe >= TITHE_FULL {
+            theme::WODE
+        } else {
+            ink
+        };
+        let value = format!("{tithe}/{TITHE_FULL}");
+        items.push(Box::new(move |d, x| {
+            top_item(d, x, y, limit, "Tithe", &value, color)
         }));
     }
     if t.walled {

@@ -29,6 +29,7 @@ mod bridge_flood;
 mod bridge_flood_armies;
 mod brigade;
 mod crossing;
+mod evolve_tithe;
 mod forest;
 mod forest_pass;
 mod gate;
@@ -89,6 +90,7 @@ const SCENARIOS: &[Scenario] = &[
     brigade::GATE,
     brigade::COLUMN_GATE,
     brigade::BIG_GATE,
+    evolve_tithe::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.

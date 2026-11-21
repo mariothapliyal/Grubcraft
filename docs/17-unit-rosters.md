@@ -173,7 +173,7 @@ Disciplined spear lines, elite samurai, shock cavalry, fire from above. **Format
 
 ## 2 · The Brood
 
-A swarm that changes shape mid-battle and feeds on the dead. *Metamorphosis is not built yet (checked 2026-10-31): Field Battles can buy the evolved forms, Conquest cannot raise them.* **Metamorphosis** (signature): a tier-1 regiment cocoons for 15 s on the battlefield (it cannot move or fight, and takes +25% damage) and emerges as one of its two tier-2 forms, paying the evolution cost below. Survivors carry over in proportion (a half-strength Skitterlings regiment becomes a half-strength Spitters regiment), and veterancy is kept. Evolving needs a Chrysalis Chamber. **Swarm instinct**: Brood regiments lose 30% less morale from casualties but 50% more when a nearby hero dies.
+A swarm that changes shape mid-battle and feeds on the dead. **Metamorphosis** (signature, built 2026-11-21): a tier-1 regiment cocoons where it stands for the evolved unit's train time, tempo scaled. In the cocoon it cannot move, strike, shoot, rout or be reinforced, but it can be attacked. It emerges as one of its two tier-2 forms, paying the evolution cost below. Survivors carry over in proportion (a half-strength Skitterlings regiment becomes a half-strength Spitters regiment), and veterancy is kept. Evolving needs a Chrysalis Chamber. **Swarm instinct**: Brood regiments lose 30% less morale from casualties but 50% more when a nearby hero dies.
 
 ### Regiments
 
@@ -354,7 +354,7 @@ The Choir has no summoned units.
 
 ## 4 · The Carrion Concord
 
-Merchant-necromancers: cheap undead that never break, beside living specialists that do (all but the Ledger Clerks: no faction's workers rout). **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Built: undead never rout, and Grub never refills them. Not built yet: crumbling, and Tithe, so for now a dead regiment is never refilled.*
+Merchant-necromancers: cheap undead that never break, beside living specialists that do (all but the Ledger Clerks: no faction's workers rout). **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 30 tiles from every Reliquary and main building, one that was not summoned loses one model every 60 s, and they can only be reinforced with Tithe, never Grub. *Built: undead never rout, and Grub never refills them; crumbling and the Tithe refill came in 2026-11-21.*
 
 ### Regiments
 
@@ -422,14 +422,14 @@ Grubfolk Militia are neutral hirelings; until the data has a neutral faction the
 
 ### Tithe contracts (meter 0 to 250)
 
-*Not built yet (checked 2026-10-31).*
+*Built (2026-11-21), except Foreclose, which waits on neutral creep camps.*
 
 | Contract | Tithe | T | Cooldown | Effect |
 |---|---|---|---|---|
-| Hire Militia | 30 | 1 | 30 s | Hire a Grubfolk Militia regiment from a friendly hamlet for 120 s. [Summon] |
-| Raise the Bound | 40 | 1 | 30 s | Turn corpses within 8 tiles of a point into a Bound Dead regiment for 90 s. [RaiseCorpses, Summon] |
+| Hire Militia | 30 | 1 | 30 s | Hire a Grubfolk Militia regiment from a hamlet within 8 tiles of the point, for 120 s; refused while an enemy regiment is within 10 tiles of that hamlet. [Summon] |
+| Raise the Bound | 40 | 1 | 30 s | Turn corpses within 8 tiles of a point into a Bound Dead regiment of up to 16 (at least 4) for 90 s. [RaiseCorpses, Summon] |
 | Foreclose | 60 | 2 | 120 s | Take control of a neutral creep camp. [Control] |
-| Indenture | 100 | 2 | 60 s | Raise a permanent Bound Dead regiment from corpses; it uses no supply but crumbles away from Reliquaries. [RaiseCorpses, Summon] |
+| Indenture | 100 | 2 | 60 s | Raise a permanent Bound Dead regiment from corpses; it uses no supply and crumbles away from every Reliquary and main building. [RaiseCorpses, Summon] |
 
 ### Heroes
 
@@ -601,7 +601,7 @@ What the engine thread would need to add for these rosters to work in the game. 
 4. **Ranged additions**: `min_range` (artillery), `splash_radius` (rockets, sacs), `direct_fire` (line of sight), and a structure-damage multiplier.
 5. **Heroes**: a hero table (base stats as a unit record, per-level hp and damage growth, four ability ids, ultimate flag) and the leadership rule above.
 6. **Ability table**: one record per ability with kind, cooldown, range, radius, duration and a short list of effect primitives with parameters. The primitives this roster uses beyond those named in 10 · Architecture are **ModifyStat**, **Reveal**, **Stun**, **Knockback**, **Control**, **Economy**, **Construct**, **Gather** and **Burrow**.
-7. **Metamorphosis**: a `Transform` that keeps the regiment's handle, veterancy and its proportion of surviving models, with a 15 s cocoon state.
+7. **Metamorphosis**: a `Transform` that keeps the regiment's handle, veterancy and its proportion of surviving models, with a cocoon state (built 2026-11-21, lasting the evolved unit's train time).
 8. **Summons**: units marked summoned use no supply and carry a lifetime.
 9. **Neutral faction**: a fifth `Faction` value for Grubfolk and creeps, so Grubfolk Militia can leave the Concord roster.
 10. **Monsters with one model** already work with today's combat (one blow a second, damage spills across models). They may want a "sweep" rule later (one blow hitting several soldiers) if one-blow-a-second reads too slow on screen.

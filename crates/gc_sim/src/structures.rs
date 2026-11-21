@@ -274,6 +274,17 @@ pub enum Refusal {
     /// A bridge drawn at a slant: it must run straight across (see
     /// [`crate::bridges`]).
     Crooked,
+    /// Its owner has no supply room for it.
+    Supply,
+    /// An evolution, and its owner has no finished building that unlocks
+    /// it (see [`crate::evolve`]).
+    NoChamber,
+    /// A raising with too few corpses where it was cast (see
+    /// [`crate::tithe`]).
+    NoCorpses,
+    /// A hiring with no hamlet near where it was cast that no enemy holds
+    /// (see [`crate::tithe`]).
+    NoHamlet,
 }
 
 /// Bits of [`BuildingStats::flags`].
@@ -310,6 +321,9 @@ pub const PASS: u16 = 8192;
 /// Brood: a drawn wall grown along its owner's root-veins with no worker,
 /// that withers off them (see [`crate::walls`]).
 pub const GROWN: u16 = 16384;
+/// Concord: collects Tithe from the dead near it and keeps its owner's
+/// undead from crumbling (see [`crate::tithe`]).
+pub const TITHE: u16 = 32768;
 /// The furthest a field or tuning reaches, in tiles.
 pub const MAX_REACH: u8 = 30;
 

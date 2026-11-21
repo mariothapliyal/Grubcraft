@@ -63,13 +63,13 @@
         ),
         (
             name: "Reliquary",
-            blurb: "The Concord's Tithe shrine. Its Tithe and the contracts it pays for are not in the game yet.",
-            summary: "Planned: every model that dies within 12 tiles, on any side, pays you 1 Tithe, spent on contracts such as Raise the Bound and Hire Militia. The Tithe meter is not in the game yet, so today the Reliquary is only a cheap building that stands where you put it.",
+            blurb: "The Concord's Tithe shrine: each death nearby pays you Tithe, which buys contracts and refills your undead.",
+            summary: "Every model that dies within 12 tiles, on any side, pays you 1 Tithe. Tithe buys contracts: Hire Militia (30), Raise the Bound (40) and, at tier 2, Indenture (100). Hurt undead within 12 tiles are refilled from it. Undead more than 30 tiles from every Reliquary and main building crumble, losing a soldier a minute. Foreclose is not built yet.",
             notes: [],
             tips: [
-                (icon: Flag, text: "Not worth building yet: the Tithe it will collect is still to come."),
-                (icon: Alarm, text: "Build it on a flank, and keep your undead out of its range, since they crumble nearby."),
-                (icon: Grub, text: "Spend your Grub on caravans and fighters until the Tithe arrives."),
+                (icon: Flag, text: "Build one by the field you expect a battle on: every death there pays you, on either side."),
+                (icon: Alarm, text: "Keep your undead within 30 tiles of a Reliquary or your main building, or they crumble."),
+                (icon: Grub, text: "Raise the Bound at 40 Tithe turns the corpses near a point into a 90-second Bound Dead regiment."),
             ],
         ),
         (
@@ -334,7 +334,7 @@
         (
             name: "Bone Pikes",
             tagline: "Undead spear line: never routs, no Marrow.",
-            summary: "Cheap undead pikemen who never rout and need no Marrow. Reach and Pike Wall stop cavalry cold. They crumble away from Reliquaries and lose to heavy infantry and archers, so support them with Crossbow Auditors. Your general drives those near him to strike harder; if he falls they falter. Your opening line.",
+            summary: "Cheap undead pikemen who never rout and need no Marrow. Reach and Pike Wall stop cavalry cold. They crumble far from every Reliquary and main building, and lose to heavy infantry and archers, so support them with Crossbow Auditors. Your general drives those near him to strike harder; if he falls they falter. Your opening line.",
         ),
         (
             name: "Crossbow Auditors",
@@ -344,7 +344,7 @@
         (
             name: "Gravewardens",
             tagline: "Undead heavy infantry: shielded, never routs.",
-            summary: "Shielded undead heavies. Unfeeling reduces the damage of flank and rear hits, and they never rout. They beat light infantry and spears but fear archers and monsters, and they crumble near Reliquaries. A tier-2 anchor.",
+            summary: "Shielded undead heavies. Unfeeling reduces the damage of flank and rear hits, and they never rout. They beat light infantry and spears but fear archers and monsters, and they crumble if they stray over 30 tiles from every Reliquary and main building. A tier-2 anchor.",
         ),
         (
             name: "Debt Collectors",
@@ -354,7 +354,7 @@
         (
             name: "Lantern Wraiths",
             tagline: "Undead flyers: Dread Light drains enemy morale.",
-            summary: "Fast undead flyers that never rout. Their Dread Light aura drains 1.5 morale a second from nearby enemies, so a few Wraiths over a fight can break a line. Archers and other flyers answer them; they crumble near Reliquaries.",
+            summary: "Fast undead flyers that never rout. Their Dread Light aura drains 1.5 morale a second from nearby enemies, so a few Wraiths over a fight can break a line. Archers and other flyers answer them; they crumble if they stray over 30 tiles from every Reliquary and main building.",
         ),
         (
             name: "Mausoleum Engine",
@@ -369,7 +369,7 @@
         (
             name: "Bound Dead",
             tagline: "Summoned undead: raised from corpses, never rout.",
-            summary: "Raised by Raise the Bound, Indenture, Raise Dead, Interment and Mass Grave. Light undead who never rout and cost no supply. Temporary ones fade in 30 to 90 seconds; Indentured ones crumble instead. Cannot be trained.",
+            summary: "Raised by Raise the Bound, Indenture, Raise Dead, Interment and Mass Grave. Light undead who never rout and cost no supply. Temporary ones fade in 30 to 90 seconds; Indentured ones last for good but crumble when far from every Reliquary and main building. Cannot be trained.",
         ),
         (
             name: "Grubfolk Militia",

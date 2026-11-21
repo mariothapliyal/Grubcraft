@@ -218,6 +218,33 @@ impl Arena {
         sky: gc_sim::Sky,
         players: usize,
     ) -> World {
+        self.world_with(real, seed, stores, sky, &vec![None; players], &[])
+    }
+
+    /// A Conquest world on this map with each player's faction meter, from
+    /// `factions` (`None` earns none), the factions' powers and the
+    /// neutral trade posts (hamlets) `posts`, in tiles, under a still sky.
+    pub fn world_for(
+        &self,
+        real: &Real,
+        seed: u64,
+        stores: u32,
+        factions: &[Option<gc_data::Faction>],
+        posts: &[FxVec2],
+    ) -> World {
+        self.world_with(real, seed, stores, gc_sim::Sky::STILL, factions, posts)
+    }
+
+    fn world_with(
+        &self,
+        real: &Real,
+        seed: u64,
+        stores: u32,
+        sky: gc_sim::Sky,
+        factions: &[Option<gc_data::Faction>],
+        posts: &[FxVec2],
+    ) -> World {
+        let players = factions.len();
         let teams: Vec<u8> = (0..players as u8).collect();
         let map = self.map();
         let nav = map.sim_nav_costs();
@@ -234,14 +261,27 @@ impl Arena {
             generals: false,
         });
         let mut start = [(0, 0); gc_sim::MAX_PARTIES];
-        for s in &mut start[..players] {
-            *s = (stores, stores);
+        let mut meters = [gc_sim::Meter::NotBuilt; gc_sim::MAX_PARTIES];
+        for (p, f) in factions.iter().enumerate() {
+            start[p] = (stores, stores);
+            if let Some(f) = *f {
+                meters[p] = crate::conquest::faction_meter(&real.data, f);
+            }
         }
+        // Without a meter nobody can use a power: leave them out, as the
+        // worlds of the scenarios before these were made.
+        let powers: Vec<_> = (real.data.powers.iter())
+            .filter(|_| factions.iter().any(Option::is_some))
+            .map(crate::conquest::power_of)
+            .collect();
         assert!(world.conquest(&ConquestSetup {
             buildings: &real.table.stats,
             units: &real.conquest_units,
             structures: 1024,
             start,
+            posts,
+            powers: &powers,
+            meters,
             ..ConquestSetup::default()
         }));
         world

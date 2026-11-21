@@ -2493,6 +2493,83 @@ pub fn push_aim_ring(at: Vec2, tiles: f32, glow: u8, out: &mut Vec<BoxInstance>)
     push_ring([at.x, at.y, 0.0, 0.0], tiles, look, AURA_LIFT, out);
 }
 
+/// The two rings of a Reliquary (Conquest), flat on the ground: the near
+/// one is how far a death pays it Tithe and its undead are refilled, the far
+/// one how far its owner's undead don't crumble.
+const TITHE_RING_COLOR: [u8; 3] = [225, 215, 175];
+const KEEP_RING_COLOR: [u8; 3] = [160, 140, 190];
+const KEEP_RING_WIDTH: f32 = 0.16;
+
+/// Ring a Reliquary standing (or about to) on `foot` (`[x, y, width,
+/// depth]`) with its two reaches, both measured from its edge.
+pub fn push_reliquary_rings(foot: [i32; 4], glow: u8, out: &mut Vec<BoxInstance>) {
+    let foot = foot.map(|v| v as f32);
+    let near = (RING_LIT_WIDTH, TITHE_RING_COLOR, glow);
+    let far = (KEEP_RING_WIDTH, KEEP_RING_COLOR, glow / 2);
+    push_ring(
+        foot,
+        gc_sim::tithe::TITHE_TILES as f32,
+        near,
+        AURA_LIFT,
+        out,
+    );
+    push_ring(foot, gc_sim::tithe::KEEP_TILES as f32, far, AURA_LIFT, out);
+}
+
+/// Bone white, for a grave's crossed bones; brighter while a contract that
+/// raises the dead is aimed.
+const GRAVE_BONE_COLOR: [u8; 3] = [205, 198, 176];
+const GRAVE_BONE_LIT_COLOR: [u8; 3] = [250, 245, 225];
+/// The bones' thickness and height, and their length for one corpse and
+/// the most a grave's bones grow to.
+const GRAVE_BONE_THICK: f32 = 0.1;
+const GRAVE_BONE_HEIGHT: f32 = 0.05;
+const GRAVE_BONE_MIN_LEN: f32 = 0.5;
+const GRAVE_BONE_MAX_LEN: f32 = 2.0;
+
+/// A grave of `dead` corpses at `at` as two crossed bones on the ground,
+/// longer the more corpses lie there.
+pub fn grave_marks(at: Vec2, dead: u16, lit: bool) -> [BoxInstance; 2] {
+    let len =
+        (GRAVE_BONE_MIN_LEN + 0.15 * f32::from(dead.saturating_sub(1))).min(GRAVE_BONE_MAX_LEN);
+    let [r, g, b] = if lit {
+        GRAVE_BONE_LIT_COLOR
+    } else {
+        GRAVE_BONE_COLOR
+    };
+    let bone = |turn: f32| BoxInstance {
+        pos: at.to_array(),
+        facing: Vec2::from_angle(turn).to_array(),
+        size: [len, GRAVE_BONE_HEIGHT, GRAVE_BONE_THICK],
+        color: [r, g, b, 0],
+        lift: 0.02,
+    };
+    [
+        bone(std::f32::consts::FRAC_PI_4),
+        bone(-std::f32::consts::FRAC_PI_4),
+    ]
+}
+
+/// Draw the field's graves (Conquest, for a side whose meter is Tithe),
+/// those `seen` allows, as crossed bones; `lit` while a contract that raises
+/// the dead is being aimed.
+pub fn push_graves(
+    world: &World,
+    seen: impl Fn(Vec2) -> bool,
+    lit: bool,
+    out: &mut Vec<BoxInstance>,
+) {
+    for (at, dead) in world.graves() {
+        let at = crate::from_fx_vec(at);
+        if out.len() + 2 > MAX_BOX_INSTANCES {
+            return;
+        }
+        if seen(at) {
+            out.extend(grave_marks(at, dead, lit));
+        }
+    }
+}
+
 /// The corners of a regiment's block round `centre`, `half` its width
 /// across its `facing` and its depth along it: in order round the block,
 /// front left first.
@@ -3084,6 +3161,10 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Crooked => {
             "Too sharp a bend: drawn walls and bridges bend gently, with no corners."
         }
+        Refusal::Supply => "You need more supply for that.",
+        Refusal::NoChamber => "Evolutions need a finished Chrysalis Chamber.",
+        Refusal::NoCorpses => "Too few corpses lie there to raise.",
+        Refusal::NoHamlet => "No hamlet near there will hire out: none, or an enemy holds it.",
     }
 }
 
@@ -4394,5 +4475,54 @@ mod tests {
         let b = DrawnPath::new(&back, |_| false).unwrap();
         assert!(a.closed() && b.closed());
         assert_ne!(inside_left(&a, hall), inside_left(&b, hall));
+    }
+
+    #[test]
+    fn a_reliquary_shows_its_two_reaches_as_rings_round_its_edge() {
+        let mut out = Vec::new();
+        push_reliquary_rings([40, 50, 3, 3], 100, &mut out);
+        assert!(!out.is_empty());
+        // Every piece lies flat on the ground, just outside one of the two
+        // reaches from the footprint's edge (12 and 30 tiles).
+        let edge_gap = |p: [f32; 2]| {
+            let (x, y) = (p[0].clamp(40.0, 43.0), p[1].clamp(50.0, 53.0));
+            (Vec2::from(p) - Vec2::new(x, y)).length()
+        };
+        let (near, far) = (12.0, 30.0);
+        let (mut on_near, mut on_far) = (0, 0);
+        for b in &out {
+            assert!(b.lift < 0.2 && b.size[1] < 0.2);
+            let gap = edge_gap(b.pos);
+            if (gap - near).abs() < 1.0 {
+                on_near += 1;
+            } else if (gap - far).abs() < 1.0 {
+                on_far += 1;
+            } else {
+                panic!("a ring piece {gap} tiles out");
+            }
+        }
+        assert!(on_near > 8 && on_far > on_near, "{on_near} {on_far}");
+    }
+
+    #[test]
+    fn a_grave_is_two_crossed_bones_longer_for_more_corpses() {
+        let at = Vec2::new(10.0, 20.0);
+        let few = grave_marks(at, 1, false);
+        let many = grave_marks(at, 12, false);
+        let huge = grave_marks(at, u16::MAX, false);
+        assert!(few.iter().all(|b| b.pos == at.to_array()));
+        // Crossed: the two lie along different lines.
+        assert!(
+            Vec2::from(few[0].facing)
+                .dot(Vec2::from(few[1].facing))
+                .abs()
+                < 0.01
+        );
+        assert!(many[0].size[0] > few[0].size[0]);
+        assert_eq!(huge[0].size[0], GRAVE_BONE_MAX_LEN);
+        assert!(few.iter().all(|b| b.size[1] < 0.1 && b.lift < 0.1));
+        // Brighter while a raising is aimed.
+        let lit = grave_marks(at, 1, true);
+        assert!(lit[0].color[0] > few[0].color[0]);
     }
 }

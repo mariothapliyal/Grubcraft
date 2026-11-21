@@ -127,6 +127,7 @@
             hp: 1100,
             armour: Living,
             footprint: (3, 3),
+            flags: [Evolutions],
             effect: "Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field.",
         ),
         (

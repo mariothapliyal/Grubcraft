@@ -375,6 +375,11 @@ pub fn write_command(w: &mut Writer, c: &Command) {
         }
         Command::Ready => w.u8(7),
         Command::Concede => w.u8(46),
+        Command::Evolve { regiment, into } => {
+            w.u8(52);
+            w.handle(regiment);
+            w.var(u64::from(into));
+        }
         Command::SpawnStructure {
             building,
             tile,
@@ -720,6 +725,10 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
         },
         7 => Command::Ready,
         46 => Command::Concede,
+        52 => Command::Evolve {
+            regiment: r.handle()?,
+            into: r.var_as()?,
+        },
         8 => Command::SpawnStructure {
             building: r.var_as()?,
             tile: (r.var_as::<u16>()? as i16, r.var_as::<u16>()? as i16),
@@ -1026,6 +1035,10 @@ mod tests {
             },
             Command::Ready,
             Command::Concede,
+            Command::Evolve {
+                regiment: h(5, 1),
+                into: 3,
+            },
             Command::SpawnStructure {
                 building: 40,
                 tile: (-1, 4000),

@@ -80,15 +80,22 @@ pub enum Meter {
     Resonance,
     /// The Clans', earned by fighting well and by Shrines.
     Honor,
+    /// The Concord's, collected from the dead near Reliquaries.
+    Tithe,
 }
 
 impl Meter {
     /// The meter numbered `n` (as `self as u8` numbers them, the baked
     /// tables' `METER_*` too), if there is one.
     pub fn from_u8(n: u8) -> Option<Meter> {
-        [Meter::NotBuilt, Meter::Resonance, Meter::Honor]
-            .get(usize::from(n))
-            .copied()
+        [
+            Meter::NotBuilt,
+            Meter::Resonance,
+            Meter::Honor,
+            Meter::Tithe,
+        ]
+        .get(usize::from(n))
+        .copied()
     }
 
     pub(crate) fn hash_into(self, h: &mut StateHasher) {
@@ -116,9 +123,25 @@ pub enum PowerEffect {
     /// A regiment of this unit type takes the field beside one of the
     /// caster's finished buildings that earns Honor (a Shrine).
     Summon { unit: UnitId },
+    /// A regiment of this unit type rises from the corpses within this
+    /// many tiles of the chosen point (see [`crate::tithe`]), for the
+    /// power's duration, or for good if it has none.
+    Raise { unit: UnitId, tiles: u8 },
+    /// A regiment of this unit type is hired from the map's hamlet within
+    /// this many tiles of the chosen point (see [`crate::tithe`]).
+    Hire { unit: UnitId, tiles: u8 },
 }
 
 impl PowerEffect {
+    /// How far round its point it reaches, in tiles, for an effect aimed
+    /// at the ground by reach (a raising, a hiring).
+    pub fn reach(self) -> Option<u8> {
+        match self {
+            PowerEffect::Raise { tiles, .. } | PowerEffect::Hire { tiles, .. } => Some(tiles),
+            _ => None,
+        }
+    }
+
     /// Whether it lasts a while (its power's duration).
     pub fn lasts(self) -> bool {
         matches!(
@@ -127,6 +150,7 @@ impl PowerEffect {
                 | PowerEffect::March { .. }
                 | PowerEffect::Steadfast { .. }
                 | PowerEffect::Summon { .. }
+                | PowerEffect::Hire { .. }
         )
     }
 }
@@ -166,6 +190,9 @@ impl PowerStats {
         };
         let duration = if effect.lasts() {
             self.duration_ticks.clamp(1, MAX_POWER_TICKS)
+        } else if let PowerEffect::Raise { .. } = effect {
+            // None: what it raises stays.
+            self.duration_ticks.min(MAX_POWER_TICKS)
         } else {
             0
         };
@@ -208,6 +235,16 @@ impl PowerStats {
             PowerEffect::Summon { unit } => {
                 h.u8(6);
                 h.u16(unit);
+            }
+            PowerEffect::Raise { unit, tiles } => {
+                h.u8(7);
+                h.u16(unit);
+                h.u8(tiles);
+            }
+            PowerEffect::Hire { unit, tiles } => {
+                h.u8(8);
+                h.u16(unit);
+                h.u8(tiles);
             }
         }
     }
@@ -366,6 +403,7 @@ impl Conquest {
             Meter::NotBuilt => 0,
             Meter::Resonance => self.structures.resonance(player),
             Meter::Honor => self.honor.points(player),
+            Meter::Tithe => self.tithe.points(player),
         };
         (meter, points)
     }
@@ -423,6 +461,7 @@ impl Conquest {
         regs: &mut Regiments,
         nav: &Nav,
         units: &[UnitStats],
+        stances: &crate::stances::Stances,
         player: PlayerId,
         power: u8,
         target: PowerTarget,
@@ -495,6 +534,16 @@ impl Conquest {
                 raised = summon(&self.structures, regs, nav, units, player, unit, h, lasts);
                 raised.is_some()
             }
+            (PowerEffect::Raise { unit, tiles }, PowerTarget::Point(at)) => {
+                raised =
+                    (self.raise(regs, nav, units, stances, player, unit, tiles, at, lasts)).ok();
+                raised.is_some()
+            }
+            (PowerEffect::Hire { unit, tiles }, PowerTarget::Point(at)) => {
+                raised =
+                    (self.hire(regs, nav, units, stances, player, unit, tiles, at, lasts)).ok();
+                raised.is_some()
+            }
             _ => false,
         };
         if !done {
@@ -509,6 +558,7 @@ impl Conquest {
             match stats.meter {
                 Meter::Resonance => self.structures.spend_resonance(player, cost),
                 Meter::Honor => self.honor.spend(player, cost),
+                Meter::Tithe => self.tithe.spend(player, cost),
                 Meter::NotBuilt => {}
             }
             if let Some(slot) = self.powers.slot(player, power) {
@@ -562,9 +612,14 @@ fn shift(
 /// The spots round building slot `s`, nearest ring first, eight to a ring.
 fn spots_round(structures: &Structures, s: usize) -> impl Iterator<Item = FxVec2> + use<> {
     let foot = structures.footprint(s);
-    let centre = structures.centre(s);
+    rings_round(structures.centre(s), foot[2].max(foot[3]) / 2)
+}
+
+/// Spots round `centre`, eight to a ring, nearest ring first: the first
+/// ring [`SHIFT_OUT`] tiles past `inner`, each next [`SHIFT_RING`] further.
+pub(crate) fn rings_round(centre: FxVec2, inner: i32) -> impl Iterator<Item = FxVec2> + use<> {
     (0..SHIFT_RINGS).flat_map(move |ring| {
-        let out = foot[2].max(foot[3]) / 2 + SHIFT_OUT + ring * SHIFT_RING;
+        let out = inner + SHIFT_OUT + ring * SHIFT_RING;
         [
             (0, 1),
             (1, 1),
@@ -603,8 +658,8 @@ fn summon_spot(
 }
 
 /// Where and facing which way a regiment of `stats` of `player`'s would
-/// stand beside building slot `s` (see [`summon_spot`]): `None` if there
-/// is no room or the regiment pool is full.
+/// stand beside building slot `s` (see [`summon_spot`]), facing away from
+/// it: `None` if there is no room or the regiment pool is full.
 fn spot_beside(
     structures: &Structures,
     regs: &Regiments,
@@ -613,6 +668,23 @@ fn spot_beside(
     player: PlayerId,
     s: usize,
 ) -> Option<(FxVec2, Angle)> {
+    let centre = structures.centre(s);
+    let at = spot_among(regs, nav, stats, player, spots_round(structures, s))?;
+    Some((at, Angle::of_vec(at - centre)))
+}
+
+/// The first of `spots` where open ground holds a regiment of `stats` of
+/// `player`'s whole block (a spot too near blocked ground is settled to
+/// ground that does, and one that can't be is out) with no other regiment
+/// within [`SUMMON_CLEAR`] tiles, else the first that holds it. `None` if
+/// none does or the regiment pool is full.
+pub(crate) fn spot_among(
+    regs: &Regiments,
+    nav: &Nav,
+    stats: &UnitStats,
+    player: PlayerId,
+    spots: impl Iterator<Item = FxVec2>,
+) -> Option<FxVec2> {
     if regs.free.is_empty() {
         return None;
     }
@@ -622,16 +694,46 @@ fn spot_beside(
         (0..regs.alive.len())
             .any(|r| regs.alive[r] && (regs.position[r] - at).length_sq_raw() <= near * near)
     };
-    let mut room = spots_round(structures, s)
+    let mut room = spots
         .filter(|&at| nav.walkable(player, at))
         .map(|at| nav.settle(player, at, berth))
         .filter(|&at| nav.fits(player, at, berth));
     let first = room.next()?;
-    let at = core::iter::once(first)
-        .chain(room)
-        .find(|&at| !crowded(at))
-        .unwrap_or(first);
-    Some((at, Angle::of_vec(at - structures.centre(s))))
+    Some(
+        core::iter::once(first)
+            .chain(room)
+            .find(|&at| !crowded(at))
+            .unwrap_or(first),
+    )
+}
+
+/// A regiment of `unit` of `player`'s, `models` strong at most (none:
+/// full), put down at `spot` for `lasts` ticks (0: for good). `None` if
+/// the unit is unknown or the regiment pool is full.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn put_down(
+    regs: &mut Regiments,
+    units: &[UnitStats],
+    player: PlayerId,
+    unit: UnitId,
+    (at, facing): (FxVec2, Angle),
+    models: Option<u16>,
+    lasts: u16,
+) -> Option<RegimentHandle> {
+    let stats = sized(units, unit, models)?;
+    let h = regs.spawn(player, unit, at, facing, &stats)?;
+    regs.summoned_left[h.index as usize] = lasts;
+    Some(h)
+}
+
+/// The stats of a regiment of `unit`, `models` strong at most (none: full).
+pub(crate) fn sized(units: &[UnitStats], unit: UnitId, models: Option<u16>) -> Option<UnitStats> {
+    let mut stats = *units.get(usize::from(unit))?;
+    if let Some(m) = models {
+        stats.models = stats.models.min(m);
+        stats.files = stats.files.min(stats.models);
+    }
+    Some(stats)
 }
 
 /// Put a regiment of `unit` down beside `player`'s finished Shrine `shrine`
@@ -649,10 +751,8 @@ fn summon(
     lasts: u16,
 ) -> Option<RegimentHandle> {
     let stats = units.get(usize::from(unit))?;
-    let (at, facing) = summon_spot(structures, regs, nav, stats, player, shrine)?;
-    let h = regs.spawn(player, unit, at, facing, stats)?;
-    regs.summoned_left[h.index as usize] = lasts;
-    Some(h)
+    let spot = summon_spot(structures, regs, nav, stats, player, shrine)?;
+    put_down(regs, units, player, unit, spot, None, lasts)
 }
 
 /// Put a regiment of `unit` of `player`'s down beside building slot `s`
@@ -671,15 +771,9 @@ pub(crate) fn raise_beside(
     lasts: u16,
     models: Option<u16>,
 ) -> Option<RegimentHandle> {
-    let mut stats = *units.get(usize::from(unit))?;
-    if let Some(m) = models {
-        stats.models = stats.models.min(m);
-        stats.files = stats.files.min(stats.models);
-    }
-    let (at, facing) = spot_beside(structures, regs, nav, &stats, player, s)?;
-    let h = regs.spawn(player, unit, at, facing, &stats)?;
-    regs.summoned_left[h.index as usize] = lasts;
-    Some(h)
+    let stats = sized(units, unit, models)?;
+    let spot = spot_beside(structures, regs, nav, &stats, player, s)?;
+    put_down(regs, units, player, unit, spot, models, lasts)
 }
 
 /// A lasting effect's ticks, as a building's or regiment's count of them.

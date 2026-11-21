@@ -2,9 +2,10 @@
 //! real game data. Four armies, one of each faction, fight in pairs well
 //! away from any building, then march home to their own side's main
 //! building and are refilled there, paying Grub: never while fighting, never
-//! the undead, every hurt regiment that can be refilled back to full
-//! strength. Then two Generals play a Conquest match and each is seen to
-//! reinforce its regiments.
+//! the undead (refilled only by a Reliquary, and none stands here), every
+//! hurt regiment that can be refilled back to full strength. Then two
+//! Generals play a Conquest match and each is seen to reinforce its
+//! regiments.
 
 use std::collections::HashMap;
 
@@ -202,6 +203,9 @@ fn refill(real: &Real, report: &mut Report) {
                     v.models < full(world, h)
                         && !matches!(v.morale, MoraleState::Routing | MoraleState::Shattered)
                 }) && world.can_reinforce(h)
+                    // Somewhere to be refilled: not the undead, with no
+                    // Reliquary here.
+                    && world.refill_spot(h).is_some()
             })
             .collect()
     };

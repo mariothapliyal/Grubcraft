@@ -744,7 +744,8 @@ impl Marshal {
                     && !r.engaged
                     && r.morale == MoraleState::Steady
                     && self.out.contains(&r.handle)
-                    && s.world.can_reinforce(r.handle);
+                    && s.world.can_reinforce(r.handle)
+                    && s.world.refill_spot(r.handle).is_some();
                 if spent {
                     self.out.retain(|h| *h != r.handle);
                     self.set_out_with = self.set_out_with.saturating_sub(u32::from(r.full));
@@ -755,7 +756,10 @@ impl Marshal {
             army.iter()
                 .filter(|r| !self.out.contains(&r.handle))
                 .filter(|r| was.contains(&r.handle) || r.strength() < MEND_BELOW)
+                // Somewhere this one can refill: the undead only by a
+                // finished Reliquary.
                 .filter(|r| s.world.can_reinforce(r.handle))
+                .filter(|r| s.world.refill_spot(r.handle).is_some())
                 .map(|r| r.handle),
         );
     }
@@ -764,10 +768,11 @@ impl Marshal {
     /// point yet marches to the nearest one.
     fn send_to_reinforce(&mut self, s: &Sense, army: &[&Seen]) {
         for r in army.iter().filter(|r| self.mending.contains(&r.handle)) {
-            if s.world.reinforces_at(s.party, to_fx_vec(r.pos)) {
+            // The undead refill by a Reliquary (see `gc_sim::tithe`).
+            if s.world.refills_here(r.handle) {
                 continue;
             }
-            let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
+            let Some(spot) = s.world.refill_spot(r.handle) else {
                 continue;
             };
             self.wants.push(Want {

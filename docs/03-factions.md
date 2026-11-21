@@ -139,7 +139,7 @@ The namesake faction. Insects that grew fat and clever eating the Titan from the
 - *Built (2026-10-17, faction depth stage 2): the root-veins are simulated. The Hive (every tier) spreads them 15 tiles from its edge, enough to reach its base's two seeps and Marrow vein on every map, and a Pustule 8 tiles from its edge. A Pustule links to the network when it stands within reach of linked veins, so Pustules chain outwards, and killing one cuts off everything linked only through it. A Gnawer sent to gather burrows in at its seep or vein and stays there: each load takes 6 s longer and then flows home through the veins, so five Gnawers on a seep bring in about 200 Grub a minute, as the other factions' walking workers do. A load waits at a node that is off the network until a Pustule links it again. The Hive no longer takes loads from walking workers. Living buildings on their owner's linked veins regrow 2 hit points a second. Burrowed Gnawers can still be seen and hurt; hiding them is a later stage.* *Built (2026-10-23, idea 19): the veins are the ground itself, a living skin of dark flesh crossed by glowing veins that pulse towards the Hive, spreading when a building links and withdrawing when one is lost (docs/33).*
 
 ### Signature rule: **Metamorphosis in the field**
-Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons for 15 s (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at. *Not built yet (checked 2026-10-31): the simulation has no cocoon or evolve order, so the evolved forms can be bought in Field Battles but not raised in Conquest.*
+Every tier-1 Brood regiment can evolve, *on the battlefield*, into one of two tier-2 forms. It cocoons where it stands for the evolved unit's train time (vulnerable, cannot move), then emerges as the new form with its veterancy intact. You adapt your army to the fight you are in, not the one you guessed at.
 
 ```
 Skitterlings ─┬─▶ Spitters  (ranged acid, armour-melting)
@@ -147,6 +147,20 @@ Skitterlings ─┬─▶ Spitters  (ranged acid, armour-melting)
 Chitin Guard ─┬─▶ Mantid Reapers (anti-cavalry, high damage)
               └─▶ Shellbacks     (near-immobile bastion, anti-air spines)
 ```
+
+*Built (2026-11-21).* The player selects the regiments and presses one of the two Evolve buttons on the card (grid slots F and C). The button's tooltip gives the price and the cocoon time. A regiment can evolve only when:
+
+- its owner is at tier 2 and has a finished **Chrysalis Chamber** (the building flagged Evolutions);
+- it is not fighting, not broken, not on a wall, not summoned and not already in a cocoon; and
+- its owner has supply room for the new form.
+
+The **price** is the evolved unit's full cost, scaled by the share of soldiers that come out, so a half-strength regiment pays about half. The new form's **supply** counts from the moment it cocoons. The cocoon lasts the evolved unit's train time, scaled by tempo. In the cocoon the regiment cannot move, strike, shoot, rout or be reinforced, and it is neither pushed back nor stepped forward in a fight. It can still be attacked. Its seconds left show on its order line ("in its cocoon, N s left"), and cocoons are drawn as pale sacs. It comes out as the new form at the same share of its strength, rounded up, with soldiers at full hit points and its experience kept.
+
+An evolved regiment reinforces like its parent: where the parent's training building refills, paying the parent's and its own cost together.
+
+### Real use: evolutions
+
+The stress scenario `evolve_tithe` ([40](40-real-play-checks.md#2-stress-scenarios)) plays a Skitterling regiment hurt in a skirmish (13 of 32 left): it cocoons and comes out as 7 Spitters, its share of their 16. A Chitin Guard cocoon is attacked by Ember spearmen, stands put, loses 4 soldiers, kills none and comes out as Shellbacks, while a third regiment marches close past the hurt cocoon in 6.6 s. In the AI, a 40-minute test game (General Brood against General Concord, seed 9) had the General Brood reach tier 2 and evolve 23 regiments. A Veteran Brood seldom reaches tier 2 in 40 minutes, since it goes up a tier at 12 workers and often holds fewer, so it rarely evolves.
 
 ### Structures
 | Structure | Role |
@@ -275,20 +289,32 @@ A guild of merchant-necromancers who run the Reach's trade roads, buy the dead a
 
 ### Faction meter: **Tithe** (0 to 250)
 
-*Not built yet (checked 2026-10-31): the Reliquary can be built, but there is no Tithe meter, no contracts and no crumbling undead in the simulation. The Concord's undead do never rout.*
+*Built (2026-11-21).* Every model that dies, *on any side*, within 12 tiles of a Concord **Reliquary** pays its owner 1 Tithe, once per death even with several Reliquaries in reach. The meter shows in the top bar as "Tithe v/250". Reliquaries are cheap (75 Grub) and can be built anywhere you have vision, including next to other players' fights.
 
-- Every model that dies, *on any side*, within 12 tiles of a Concord **Reliquary** pays 1 Tithe. Reliquaries are cheap and can be built anywhere you have vision, including next to other players' fights.
-- Tithe buys:
+The dead lie in **graves**: up to 48 on the field, a grave every 3 tiles, and each grave rots after 3 minutes. The Concord player sees graves as crossed bones while their meter is Tithe, and sees the corpse count in reach while aiming a raising.
 
-| Contract | Tithe | Effect |
-|---|---|---|
-| Raise the Bound | 40 | Turn corpses in an area into a temporary Bound Dead regiment (90 s) |
-| Indenture | 100 | Raise a *permanent* Bound Dead regiment from corpses; uses no supply but decays away from Reliquaries |
-| Foreclose | 60 | Take control of a neutral creep camp |
-| Hire Militia | 30 | Hire a Grubfolk militia regiment from a friendly hamlet |
+Tithe buys contracts (faction powers):
+
+| Contract | Tithe | Tier | Cooldown | Effect |
+|---|---|---|---|---|
+| Hire Militia | 30 | 1 | 30 s | Hire a Grubfolk Militia regiment from a hamlet (a neutral trade post) within 8 tiles of the point. Refused if any enemy regiment stands within 10 tiles of that hamlet. Gone after 120 s. |
+| Raise the Bound | 40 | 1 | 30 s | Corpses within 8 tiles of the point become a Bound Dead regiment of up to 16 (as many as lie there, and at least 4). Gone after 90 s. |
+| Indenture | 100 | 2 | 60 s | The same raising, but permanent, using no supply. |
+| Foreclose | 60 | 2 | 120 s | Take control of a neutral creep camp. *Not built yet: there are no neutral creep camps.* |
 
 ### Signature rule: **The dead don't rout**
-Concord undead regiments ignore morale entirely. Instead they are meant to **crumble**: they slowly lose models when far from a Reliquary (crumbling is not built yet). They can never be reinforced with Grub; only Tithe will refill them, and Tithe is not built yet, so for now a dead regiment is not reinforced at all. Their living units (crossbowmen, cavalry riders) do rout, and reinforce like any other regiment. Mixing reliable dead with fragile living is the faction's puzzle.
+Concord undead regiments ignore morale entirely: they never rout, and Grub never refills them. Instead they have two rules of their own, both built (2026-11-21):
+
+- **Crumbling.** An undead regiment that is not summoned (so Indentured and trained undead, not the timed Bound Dead or militia) more than 30 tiles from every one of its owner's finished Reliquaries and main buildings loses a soldier every 60 seconds, and goes when none are left. A crumbled soldier turns to dust: it leaves no corpse and pays no Tithe. Main buildings count, so an early Concord does not crumble at home.
+- **Refill with Tithe.** A hurt undead regiment standing quiet within 12 tiles of its own Reliquary is refilled one soldier at a time, paying Tithe per soldier: one eighth of its hit points, and at least 1.
+
+Their living units (crossbowmen, cavalry riders) do rout, and reinforce with Grub like any other regiment. Mixing reliable dead with fragile living is the faction's puzzle.
+
+### Real use: Tithe and crumbling
+
+In the stress scenario `evolve_tithe` ([40](40-real-play-checks.md#2-stress-scenarios)), a Concord and an Ember regiment fight beside a Reliquary, with fresh regiments of both sides coming up as it thins. The Concord raises the Bound 11 seconds in, giving 16 Bound Dead from a grave of 26. It earns 200 Tithe in about 3 minutes, then Indentures at the fullest grave left and marches that regiment 60 tiles off, where it crumbles. It is refused militia from a hamlet an Ember regiment stands by, and hires it from a free one (gone after 120 s). Its hurt undead by the Reliquary are refilled, paying Tithe.
+
+In AI games, with crumbling at 60 seconds the Concord won 13 of 24 games, the same as before the change. At 20 seconds it fell to about a third.
 
 ### Structures
 | Structure | Role |

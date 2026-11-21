@@ -1801,7 +1801,7 @@ impl Combat {
                 || regs.morale_state[i].broken()
                 || regs.falling_back[i] > 0
                 || regs.on_wall[i]
-                || regs.trapped_left[i] > 0
+                || regs.held_fast(i)
                 // Marching on its own orders: it goes where it was sent.
                 || (regs.target[i].is_some() && regs.attack_target[i].is_none())
                 || conquest.is_some_and(|c| c.has_job(regs, i))
@@ -2097,7 +2097,7 @@ impl Combat {
             && !regs.morale_state[i].broken()
             && !regs.braced[i]
             && !regs.hold[i]
-            && regs.trapped_left[i] == 0
+            && !regs.held_fast(i)
             && !regs.re_forming(i)
             && !self.civil(regs, i)
             && conquest.is_none_or(|c| !c.has_job(regs, i))
@@ -2261,7 +2261,9 @@ impl Combat {
             return;
         }
         for i in 0..regs.alive.len() {
-            if !regs.alive[i] {
+            // One held fast (a trap, a cocoon) isn't driven, drawn along or
+            // closed up: it stays where it is.
+            if !regs.alive[i] || regs.held_fast(i) {
                 self.steps[i] = None;
                 continue;
             }
@@ -2446,7 +2448,8 @@ impl Combat {
                 Strike::Early => true,
                 Strike::Rest => false,
             };
-            if !strikes || regs.models[i] == 0 {
+            // A cocoon takes blows and strikes none.
+            if !strikes || regs.models[i] == 0 || regs.cocooned(i) {
                 continue;
             }
             if !on_turn {
@@ -2596,6 +2599,7 @@ impl Combat {
                 || regs.target[i].is_some()
                 || regs.models[i] == 0
                 || regs.morale_state[i].broken()
+                || regs.cocooned(i)
             {
                 continue;
             }
@@ -3481,13 +3485,15 @@ fn duel(
 
 /// A regiment that has lost whole ranks (it had `ranks_before`) steps
 /// forward, so its front stays where it was (in melee, in contact). A
-/// broken one, cut down as it runs, has no line to hold and stays put.
+/// broken one, cut down as it runs, has no line to hold and stays put, and
+/// so does one held fast (a trap, a cocoon).
 fn step_up(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, j: usize, ranks_before: u16) {
     let ranks_after = formation::ranks(regs.files[j], regs.models[j]);
     if regs.models[j] > 0
         && ranks_after < ranks_before
         && !regs.morale_state[j].broken()
         && !regs.on_wall[j]
+        && !regs.held_fast(j)
     {
         let (_, spacing) = units[regs.unit[j] as usize].spacing(regs.formation[j]);
         let step = Fx::from_raw(spacing.raw() * i32::from(ranks_before - ranks_after) / 2);

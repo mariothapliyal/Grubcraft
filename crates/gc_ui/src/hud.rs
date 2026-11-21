@@ -2742,6 +2742,7 @@ mod tests {
             resonance: 0,
             chords: 0,
             honor: None,
+            tithe: None,
             walled: false,
             clock_secs: 14 * 60 + 32,
         }
@@ -2900,6 +2901,36 @@ mod tests {
         });
         assert_eq!(in_top_bar(&full, theme::WODE), bold("100/100"));
         assert_eq!(in_top_bar(&clans, theme::WODE), 0);
+    }
+
+    #[test]
+    fn tithe_shows_in_the_top_bar_for_a_side_with_the_meter_even_at_zero() {
+        let mut hud = Hud::default();
+        let mut bar = |top| run_with(&mut hud, HudInput::default(), &[], &[], with_top(top)).1;
+        let plain = bar(top_bar());
+        let concord = bar(TopBar {
+            tithe: Some(40),
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&concord),
+            text_quads(&plain) + "Tithe".len() + bold("40/250")
+        );
+        let empty = bar(TopBar {
+            tithe: Some(0),
+            ..top_bar()
+        });
+        assert_eq!(
+            text_quads(&empty),
+            text_quads(&plain) + "Tithe".len() + bold("0/250")
+        );
+        // A full meter turns green.
+        let full = bar(TopBar {
+            tithe: Some(250),
+            ..top_bar()
+        });
+        assert_eq!(in_top_bar(&full, theme::WODE), bold("250/250"));
+        assert_eq!(in_top_bar(&concord, theme::WODE), 0);
     }
 
     /// A frame with the mouse at `mouse` and the clock at `now_ms`.

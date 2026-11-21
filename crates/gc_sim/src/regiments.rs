@@ -505,6 +505,13 @@ regiment_fields! {
     /// Soldiers it lost since the Concord's Mausoleum Walls last counted
     /// the dead (see [`crate::twists`]); cleared every tick.
     deaths: u16 = 0,
+    /// Ticks left in a Brood cocoon (see [`crate::evolve`]), 0 for none,
+    /// and the unit type it comes out as.
+    cocoon_left: u16 = 0,
+    cocoon_into: UnitId = 0,
+    /// Seconds an undead regiment has stood out of reach of its keepers
+    /// since it last crumbled (see [`crate::tithe`]).
+    crumble: u8 = 0,
 }
 
 impl Regiments {
@@ -562,9 +569,16 @@ impl Regiments {
     /// (the rest of its stats are read from the unit table as needed).
     pub(crate) fn retune(&mut self, unit: UnitId, stats: &UnitStats) {
         for i in 0..self.alive.len() {
-            if !self.alive[i] || self.unit[i] != unit {
-                continue;
+            if self.alive[i] && self.unit[i] == unit {
+                self.retune_slot(i, stats);
             }
+        }
+    }
+
+    /// Give slot `i` the speed, turn rate and kit of `stats` (see
+    /// [`Regiments::retune`]).
+    pub(crate) fn retune_slot(&mut self, i: usize, stats: &UnitStats) {
+        {
             let old_speed = self.speed[i];
             self.speed[i] = Fx::from_raw(stats.speed.raw() / TICKS_PER_SECOND as i32);
             self.turn[i] =
@@ -976,13 +990,25 @@ impl Regiments {
     /// Whether slot `i` is standing, not marching (it may be fighting).
     /// What the formation discipline bonus and its readouts go by.
     pub(crate) fn still(&self, i: usize) -> bool {
-        self.target[i].is_none() || self.trapped_left[i] > 0
+        self.target[i].is_none() || self.held_fast(i)
     }
 
-    /// Whether slot `i` can't rout: steadfast, or a summoned regiment (see
-    /// [`crate::powers`]).
+    /// Whether slot `i` can't move from where it stands: held by a trap
+    /// (see [`crate::traps`]) or in a cocoon (see [`crate::evolve`]).
+    pub(crate) fn held_fast(&self, i: usize) -> bool {
+        self.trapped_left[i] > 0 || self.cocoon_left[i] > 0
+    }
+
+    /// Whether slot `i` is in a cocoon (see [`crate::evolve`]): it can't
+    /// move, strike, shoot or rout.
+    pub(crate) fn cocooned(&self, i: usize) -> bool {
+        self.cocoon_left[i] > 0
+    }
+
+    /// Whether slot `i` can't rout: steadfast, a summoned regiment (see
+    /// [`crate::powers`]) or in a cocoon.
     pub(crate) fn cant_rout(&self, i: usize) -> bool {
-        self.steadfast_left[i] > 0 || self.summoned_left[i] > 0
+        self.steadfast_left[i] > 0 || self.summoned_left[i] > 0 || self.cocoon_left[i] > 0
     }
 
     /// Slot `i` narrows into a deeper column where the ground beside it
@@ -1731,6 +1757,8 @@ impl Regiments {
     fn waiting(&self, i: usize) -> Option<Waiting> {
         if self.morale_state[i].broken() {
             None
+        } else if self.cocoon_left[i] > 0 {
+            Some(Waiting::Cocooned(self.cocoon_left[i]))
         } else if self.trapped_left[i] > 0 {
             Some(Waiting::Trapped)
         } else if self.engaged[i].is_some() && self.why[i] & morale::WHY_PINNED != 0 {
@@ -1809,7 +1837,11 @@ impl Regiments {
                 continue;
             }
             // Held fast by a trap: it may turn where it stands, and goes
-            // on where it was going after.
+            // on where it was going after. A cocoon sits as it is.
+            if self.cocoon_left[i] > 0 {
+                self.run_up[i] = 0;
+                continue;
+            }
             if self.trapped_left[i] > 0 {
                 self.run_up[i] = 0;
                 if let Some(want) = self.target_facing[i] {
@@ -2297,6 +2329,9 @@ pub enum Waiting {
     FilingThrough,
     /// Held fast by a trap.
     Trapped,
+    /// In a cocoon, becoming its evolved form (see [`crate::evolve`]),
+    /// with these ticks left.
+    Cocooned(u16),
     /// Out of breath after a run: slower, with weaker blows.
     Winded,
     /// Taking on new soldiers near its side's reinforcement points (see

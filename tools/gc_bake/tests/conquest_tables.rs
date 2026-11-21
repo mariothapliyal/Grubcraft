@@ -296,16 +296,23 @@ fn formation_discipline_bakes_as_a_unit_trait() {
     });
 }
 
-/// Every other meter ability but the Clans' Edicts is listed as not built
-/// yet.
+/// Every other meter ability but the Clans' Edicts, the Choir's Overclock
+/// and Phase Shift and the Concord's contracts (Foreclose aside) is listed
+/// as not built yet.
 #[test]
 fn every_other_faction_meter_ability_is_not_built_yet() {
     with_real_data(|data| {
         let mut others = 0;
         for p in data.powers {
             if p.faction() == Faction::EmberClans
-                || p.name() == "Overclock"
-                || p.name() == "Phase Shift"
+                || [
+                    "Overclock",
+                    "Phase Shift",
+                    "Raise the Bound",
+                    "Indenture",
+                    "Hire Militia",
+                ]
+                .contains(&p.name())
             {
                 continue;
             }
@@ -321,6 +328,77 @@ fn every_other_faction_meter_ability_is_not_built_yet() {
             .expect("no Silence the Chord");
         assert_eq!(silence.faction(), Faction::Choir);
         assert_eq!(silence.effect, POWER_NOT_BUILT);
+    });
+}
+
+/// The Concord's contracts bake as Tithe powers: Raise the Bound and
+/// Indenture raise Bound Dead from the corpses within 8 tiles (for 90 s,
+/// and for good), Hire Militia hires Grubfolk Militia from a hamlet within
+/// 8 tiles for 120 s. The Reliquary collects Tithe, the Chrysalis Chamber
+/// unlocks the Brood's four evolutions, and the Concord's dead are undead.
+#[test]
+fn contracts_reliquaries_and_evolutions_bake() {
+    use gc_data::conquest::{
+        BUILDING_TITHE, METER_TITHE, NONE, POWER_HIRE, POWER_RAISE, UNIT_UNDEAD,
+    };
+    with_real_data(|data| {
+        let unit = |name: &str| {
+            (data.conquest_units.iter())
+                .position(|u| u.name() == name)
+                .unwrap_or_else(|| panic!("no {name}")) as u16
+        };
+        let building = |name: &str| {
+            (data.buildings.iter())
+                .position(|b| b.name() == name)
+                .unwrap_or_else(|| panic!("no {name}")) as u16
+        };
+        let power = |name: &str| *data.powers.iter().find(|p| p.name() == name).unwrap();
+        let bound = power("Raise the Bound");
+        assert_eq!(
+            (bound.effect, bound.meter, bound.cost),
+            (POWER_RAISE, METER_TITHE, 40)
+        );
+        assert_eq!(
+            (bound.arg, bound.tiles, bound.duration_ticks),
+            (unit("Bound Dead"), 8, 1800)
+        );
+        let indenture = power("Indenture");
+        assert_eq!(
+            (indenture.effect, indenture.arg, indenture.tiles),
+            (POWER_RAISE, unit("Bound Dead"), 8)
+        );
+        assert_eq!((indenture.duration_ticks, indenture.tier), (0, 2));
+        let hire = power("Hire Militia");
+        assert_eq!(
+            (hire.effect, hire.arg, hire.tiles),
+            (POWER_HIRE, unit("Grubfolk Militia"), 8)
+        );
+        assert_eq!(hire.duration_ticks, 2400);
+        let tithed: Vec<&str> = (data.buildings.iter())
+            .filter(|b| b.flags & BUILDING_TITHE != 0)
+            .map(gc_data::BuildingRecord::name)
+            .collect();
+        assert_eq!(tithed, ["Reliquary"]);
+        let chamber = building("Chrysalis Chamber");
+        for u in data.conquest_units {
+            let evolved = u.evolves_from != NONE;
+            assert_eq!(
+                u.unlocked_at,
+                if evolved { chamber } else { NONE },
+                "{}",
+                u.name()
+            );
+        }
+        assert_eq!(
+            data.conquest_units[usize::from(unit("Spitters"))].evolves_from,
+            unit("Skitterlings")
+        );
+        for name in ["Bone Pikes", "Gravewardens", "Bound Dead"] {
+            assert!(
+                data.conquest_units[usize::from(unit(name))].flags & UNIT_UNDEAD != 0,
+                "{name}"
+            );
+        }
     });
 }
 
