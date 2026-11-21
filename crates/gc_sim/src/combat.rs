@@ -142,6 +142,10 @@ const ROOM_STEP: Fx = Fx::from_ratio(1, 4);
 const WAY_AHEAD: Fx = Fx::from_int(6);
 /// With an enemy this near, in tiles, a regiment doesn't make way.
 const WAY_FOE: Fx = Fx::from_int(20);
+/// A regiment still not back where it stood after making way, this many
+/// looks (see [`CROWD_EVERY`]; 12 s) after the last friend marched by,
+/// stands where it is: two that were shoved past each other can wedge.
+const WAY_PATIENCE: u8 = 60;
 /// With nothing blocked within this many tiles a marching regiment still
 /// keeps its spacing and goes round friends standing in its way (see
 /// [`Combat::keep_apart`]), though it is in a base or near a wall; nearer
@@ -2196,6 +2200,8 @@ impl Combat {
         // whether it stands within a step of a lane's edge, where a step
         // back would take it into the lane again.
         let (mut deepest, mut out, mut edge) = (Fx::ZERO, FxVec2::ZERO, false);
+        // Whether any friend near is marching.
+        let mut passing = false;
         let pace = Self::way_pace(regs, i);
         self.each_filed_once(
             me.centre,
@@ -2212,6 +2218,7 @@ impl Combat {
                 {
                     return;
                 }
+                passing = true;
                 let them = &self.blocks[j];
                 // Its lane: from where it is to where it is sent, as wide
                 // as it is across the way. Only one that goes right through
@@ -2267,11 +2274,21 @@ impl Combat {
         };
         let step = if deepest > Fx::ZERO && !(regs.home[i].is_none() && foe_near()) {
             regs.home[i].get_or_insert(from);
+            regs.way_wait[i] = 0;
             out * deepest.min(pace)
         } else if edge {
             // Not back until the march is by.
             return regs.home[i].is_some();
         } else if let Some(home) = regs.home[i] {
+            regs.way_wait[i] = if passing {
+                0
+            } else {
+                regs.way_wait[i].saturating_add(1)
+            };
+            if regs.way_wait[i] >= WAY_PATIENCE {
+                regs.home[i] = None;
+                return false;
+            }
             // A friend that has settled on the ground it stood on since
             // keeps it: it stands where it is now, as one with no ground
             // to step back to.

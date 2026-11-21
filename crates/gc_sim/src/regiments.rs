@@ -416,6 +416,9 @@ regiment_fields! {
     /// marching through (see `Combat::make_way`): it steps back once they
     /// are by. None while it stands where it was put.
     home: Option<FxVec2> = None,
+    /// Looks (see `Combat::make_way`) it has spent stepping back since the
+    /// last friend marched by.
+    way_wait: u8 = 0,
     /// Ticks left until it is back in order (0: in order).
     disorder: u8 = 0,
     /// Ticks it has stepped forward since it last halted or fought, up to

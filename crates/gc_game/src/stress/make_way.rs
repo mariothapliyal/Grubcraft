@@ -23,6 +23,9 @@ const LIMIT: u32 = 120;
 /// How long the army at ease is given, once the march is in, to stand
 /// where it stood again, in seconds.
 const SETTLE: u32 = 15;
+/// Regiment-seconds the army at ease may spend in disorder: about 26
+/// making way, 77 when it stood its ground and was pushed through.
+const DISORDER: u32 = 40;
 
 fn run(real: &Real, report: &mut Report) {
     if let Some(bit) = std::env::var("PRUNE")
@@ -101,4 +104,8 @@ fn run(real: &Real, report: &mut Report) {
         back.is_some(),
     );
     report.check("the army at ease stepped aside", aside > Fx::ONE);
+    report.check(
+        format!("the army at ease is in disorder under {DISORDER} regiment-seconds"),
+        standers_disorder < DISORDER * TICKS_PER_SECOND,
+    );
 }

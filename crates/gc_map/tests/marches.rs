@@ -519,6 +519,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     }
     trace.finish();
     if std::env::var("VERBOSE").is_ok() {
+        for r in w.regiments.iter().filter(|r| r.moving) {
+            println!("   still moving: {:?} at {:?} made_way {:?} files {}", r.handle.index, r.position, r.made_way, r.files);
+        }
         for n in 0..handles.len() {
             println!(
                 "   regiment {n} (unit {}): arrived {:?} ideal {}",
