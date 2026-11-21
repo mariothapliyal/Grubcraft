@@ -485,6 +485,7 @@ impl Captain {
             if let Some(t) = target.and_then(|t| view.get(t)) {
                 m.striking = true;
                 m.target = Some(t.handle);
+                m.evading = None;
                 self.strike(ctx, m, r, t, fighting, wants);
                 return;
             }
@@ -566,14 +567,19 @@ impl Captain {
             && t.moving
             && t.facing.dot(to_r) > 0.7
             && gap_between(r, t) < EVADE_TILES;
-        if !coming_on {
+        // The clock runs until it fights or gets well clear: spears that
+        // halt a moment and come on again don't start it afresh.
+        if gap_between(r, t) > 2.0 * EVADE_TILES {
             m.evading = None;
-        } else if m.evading.is_none() {
+        } else if coming_on && m.evading.is_none() {
             m.evading = Some(ctx.view.tick);
         }
-        let worn_out = coming_on && m.evading.is_some_and(|at| ctx.view.tick >= at + EVADE_FOR);
-        let pressed = coming_on && !worn_out;
-        let charge = worn_out
+        // Spears it has been dodging for long, or down to a remnant, it
+        // just rides down.
+        let ride_down = (coming_on && m.evading.is_some_and(|at| ctx.view.tick >= at + EVADE_FOR))
+            || (ctx.view.unit(t).stats.reach && t.strength() < CYCLE_FOE_ABOVE);
+        let pressed = coming_on && !ride_down;
+        let charge = ride_down
             || staged
             || (!m.restaging
                 && ((!timed && !spears_ahead)
