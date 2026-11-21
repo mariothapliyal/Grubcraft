@@ -194,9 +194,10 @@ pub const GIVE_GROUND: Fx = Fx::from_ratio(1, 50);
 /// Charges by weight and speed (docs/05-combat.md): a charger weighs its
 /// mass's heft once over for every this many hundredths of a tile a second
 /// it hits home at (its momentum, see [`impact_percent`]), so cavalry at
-/// the gallop (6.5 tiles a second) weighs 2.6 times its heft and infantry
-/// at a run of 3 about 1.2...
-pub const PLOUGH_AT: u64 = 250;
+/// the gallop (6.5 tiles a second) weighs 3.25 times its heft, a charger at
+/// 4 twice (as every charge at the run did before speed counted) and
+/// infantry at 3 one and a half times...
+pub const PLOUGH_AT: u64 = 200;
 /// ...against the heft of the ranks it hits: up to this many deep on its
 /// front, one on its flank or rear (nobody braces a side), weighed by how
 /// closely they stand (see [`ploughs`], [`Formation::hold_percent`]).
@@ -267,7 +268,9 @@ const BRACED_ARC: u16 = 0x2000;
 pub(crate) fn impact_percent(regs: &Regiments, i: usize) -> u64 {
     // Marching speed is in tiles a tick: as hundredths of a tile a second.
     let speed =
-        (u64::try_from(regs.speed[i].raw()).unwrap_or(0) * u64::from(TICKS_PER_SECOND) * 100) >> 16;
+        (u64::try_from(regs.speed[i].raw()).unwrap_or(0) * u64::from(TICKS_PER_SECOND) * 100
+            + (1 << 15))
+            >> 16;
     if speed == 0 {
         return 0;
     }

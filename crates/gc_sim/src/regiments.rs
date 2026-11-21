@@ -2219,7 +2219,10 @@ fn ease_momentum(was: u16, now: u32) -> u16 {
 /// A step of `stepped` tiles in one tick, as hundredths of a tile a second.
 fn hundredths_per_second(stepped: Fx) -> u32 {
     let raw = u64::try_from(stepped.raw()).unwrap_or(0);
-    ((raw * u64::from(crate::TICKS_PER_SECOND) * 100) >> 16).min(u64::from(u16::MAX)) as u32
+    // Rounded to the nearest, as a speed in whole tiles a tick isn't
+    // quite whole in fixed point.
+    ((raw * u64::from(crate::TICKS_PER_SECOND) * 100 + (1 << 15)) >> 16).min(u64::from(u16::MAX))
+        as u32
 }
 
 pub(crate) fn hash_handle(h: &mut StateHasher, handle: Option<RegimentHandle>) {
