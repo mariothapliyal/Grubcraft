@@ -150,6 +150,10 @@ const SLANT: Fx = Fx::from_int(2);
 /// (see [`Brigade::lead_in`]).
 const LEAD_IN: Fx = Fx::from_int(30);
 
+/// How long the first member of a brigade waits for a second to join,
+/// in ticks, before it is no brigade.
+const MUSTER: u8 = 60;
+
 const QUARTER: Fx = Fx::from_ratio(1, 4);
 
 /// How a regiment stands in its brigade (see [`crate::World::brigade`]).
@@ -210,6 +214,8 @@ struct Brigade {
     changed: bool,
     /// Standing while a member fights (see [`HUNT_NEAR`]).
     halted: bool,
+    /// Ticks it has had one member only since the last joined.
+    alone: u8,
     /// The middle of where its members were sent when the track was
     /// searched for, and now.
     goal: FxVec2,
@@ -240,6 +246,7 @@ impl Brigade {
         phase: Phase::Gathering,
         changed: false,
         halted: false,
+        alone: 0,
         goal: FxVec2::ZERO,
         centre: FxVec2::ZERO,
         ahead: FxVec2::ZERO,
@@ -614,6 +621,7 @@ impl Brigades {
         }
         b.hunt = hunt;
         b.changed = true;
+        b.alone = 0;
         self.of[i] = tag;
         self.generation[i] = regs.generation[i];
         self.mode[i] = Mode::Plain;
@@ -752,7 +760,15 @@ impl Brigades {
         let owner = (slot / PER_PARTY) as PlayerId;
         self.muster(slot);
         if self.list.len() < 2 {
-            self.disband(regs, slot);
+            // The first of a brigade may be alone for a moment: a
+            // computer player's orders land one by one, not all on one
+            // tick as a player's do. It marches by its own order while
+            // the rest of them come.
+            let b = &mut self.pool[slot];
+            b.alone = b.alone.saturating_add(1);
+            if self.list.is_empty() || b.phase != Phase::Gathering || b.alone > MUSTER {
+                self.disband(regs, slot);
+            }
             return;
         }
         if self.pool[slot].changed {
@@ -910,6 +926,9 @@ impl Brigades {
             }
         }
         self.list.truncate(kept);
+        if kept < 2 {
+            return false;
+        }
         // Nor does one whose place the ground cuts off from the rest of
         // the body's (the far side of a cliff from them, a march of its
         // own to reach): the places in plain sight of the middle of them
@@ -926,6 +945,16 @@ impl Brigades {
                     found += 1;
                 }
             }
+            if found == 0 {
+                // The middle itself is no ground to stand on (a building
+                // the army was sent at): from the place nearest it.
+                let nearest = (0..kept)
+                    .min_by_key(|&k| (self.end[self.list[k] as usize] - centre).length_sq_raw())
+                    .unwrap_or(0);
+                with[nearest] = true;
+                next[0] = nearest as u8;
+                found = 1;
+            }
             while done < found {
                 let from = self.end[self.list[next[done] as usize] as usize];
                 done += 1;
@@ -937,17 +966,22 @@ impl Brigades {
                     }
                 }
             }
-            let mut kept = 0;
-            for k in 0..self.list.len() {
-                let i = self.list[k] as usize;
-                if with[k] {
-                    self.list[kept] = i as u32;
-                    kept += 1;
-                } else {
-                    self.release(regs, i);
+            // (Where most are out of sight of each other the body is
+            // being sent among buildings or broken ground, and nobody is
+            // cut off from a body that is all together anywhere.)
+            if found * 2 > kept {
+                let mut kept = 0;
+                for k in 0..self.list.len() {
+                    let i = self.list[k] as usize;
+                    if with[k] {
+                        self.list[kept] = i as u32;
+                        kept += 1;
+                    } else {
+                        self.release(regs, i);
+                    }
                 }
+                self.list.truncate(kept);
             }
-            self.list.truncate(kept);
         }
         let kept = self.list.len();
         if kept < 2 {
@@ -1677,6 +1711,7 @@ impl Brigades {
             }
             h.u8(u8::from(b.hunt) | u8::from(b.changed) << 1 | u8::from(b.halted) << 2);
             h.u8(b.phase as u8);
+            h.u8(b.alone);
             vec(h, b.goal);
             vec(h, b.centre);
             vec(h, b.ahead);
