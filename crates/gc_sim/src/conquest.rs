@@ -99,6 +99,9 @@ pub struct ConquestUnit {
     /// The Concord's dead: refilled with Tithe, and crumbling away from
     /// their keepers (see [`crate::tithe`]).
     pub undead: bool,
+    /// A hero, and how it grows each level (see [`crate::heroes`]);
+    /// `None` for any other unit.
+    pub hero: Option<crate::heroes::HeroGrowth>,
 }
 
 impl ConquestUnit {
@@ -143,6 +146,12 @@ impl ConquestUnit {
         h.u16(self.gather_percent);
         h.u16(self.evolves_from.unwrap_or(u16::MAX));
         h.u16(self.unlocked_at.unwrap_or(u16::MAX));
+        if let Some(g) = self.hero {
+            h.u8(1);
+            h.u16(g.hp);
+            h.u16(g.melee);
+            h.u16(g.missile);
+        }
     }
 }
 
@@ -242,6 +251,8 @@ pub(crate) struct Conquest {
     /// standing and their reach, room for every slot kept so a tick never
     /// allocates.
     pub(crate) points: Vec<(u32, i32)>,
+    /// Every player's heroes (see [`crate::heroes`]).
+    pub(crate) heroes: crate::heroes::Heroes,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -279,6 +290,7 @@ impl Conquest {
             manning: crate::manning::Manning::new(setup.structures as usize),
             planting: Vec::new(),
             left: Vec::with_capacity(regiments),
+            heroes: crate::heroes::Heroes::new(),
         }
     }
 
@@ -821,13 +833,36 @@ impl Conquest {
         if u.hatches && !self.structures.has_larva(player) {
             return Err(Refusal::Larva);
         }
-        if !self
-            .economy
-            .can_afford(player, u32::from(u.cost_grub), u32::from(u.cost_marrow))
-        {
+        if u.hero.is_some() {
+            let heroes = &self.heroes;
+            let (queued, this) = self.production.heroes_in_training(
+                &self.structures,
+                &self.units,
+                player,
+                unit,
+                |q| heroes.find(player, q).is_none(),
+            );
+            heroes.check_hire(player, unit, self.structures.tier_of(player), queued, this)?;
+        }
+        let (grub, marrow, _) = self.price(player, unit);
+        if !self.economy.can_afford(player, grub, marrow) {
             return Err(Refusal::Price);
         }
         Ok(())
+    }
+
+    /// What `player` pays for a regiment of type `unit` (Grub, Marrow), and
+    /// the ticks it takes at Standard tempo, or 0 for its unit's train
+    /// time: a fallen hero of theirs is revived, for a price and time of
+    /// its level (see [`crate::heroes::revive_price`]).
+    pub(crate) fn price(&self, player: PlayerId, unit: UnitId) -> (u32, u32, u32) {
+        let u = self.unit(unit);
+        match self.heroes.find(player, unit) {
+            Some(hero) if hero.dead() && u.hero.is_some() => {
+                crate::heroes::revive_price(&u, hero.level)
+            }
+            _ => (u32::from(u.cost_grub), u32::from(u.cost_marrow), 0),
+        }
     }
 
     /// `player`'s building `h` queues a regiment of type `unit`, paying
@@ -837,12 +872,12 @@ impl Conquest {
             return false;
         }
         let u = self.unit(unit);
-        self.economy
-            .spend(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+        let (grub, marrow, full) = self.price(player, unit);
+        self.economy.spend(player, grub, marrow);
         if u.hatches {
             self.structures.take_larva(player, h.index as usize);
         }
-        self.production.enqueue(h, unit);
+        self.production.enqueue(h, unit, full);
         true
     }
 
@@ -856,8 +891,9 @@ impl Conquest {
             return false;
         };
         let u = self.unit(unit);
-        self.economy
-            .refund(player, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+        // A fallen hero's revive is still priced by its level.
+        let (grub, marrow, _) = self.price(player, unit);
+        self.economy.refund(player, grub, marrow);
         if u.hatches {
             self.structures.give_back_larva(player);
         }
@@ -1004,5 +1040,6 @@ impl Conquest {
         self.blueprints.hash_into(regs, h);
         self.manning.hash_into(regs, h);
         self.hash_planting(regs, h);
+        self.heroes.hash_into(h);
     }
 }

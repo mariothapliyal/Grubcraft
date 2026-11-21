@@ -40,6 +40,9 @@ pub mod formation;
 pub mod gates;
 pub mod generals;
 mod hash;
+#[cfg(test)]
+mod hero_tests;
+pub mod heroes;
 pub mod honor;
 pub mod larvae;
 pub mod manning;
@@ -2215,6 +2218,7 @@ impl World {
             if let Some(c) = &mut self.conquest {
                 c.tithe
                     .collect(&c.meters, &c.structures, &self.regiments, self.tick);
+                (c.heroes).earn(&mut self.regiments, &self.units, &c.units, &self.stances);
             }
             self.raise_trained();
         }
@@ -2229,6 +2233,16 @@ impl World {
                 &self.units,
                 &self.stances,
                 &self.vision,
+                self.tick,
+            );
+        }
+        if let Some(c) = &mut self.conquest {
+            (c.heroes).update(
+                &mut self.regiments,
+                &self.combat,
+                &self.units,
+                &c.units,
+                &self.stances,
                 self.tick,
             );
         }
@@ -3193,12 +3207,14 @@ impl World {
                 .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, t.facing, stats));
             let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
-                let u = conquest.unit(t.unit);
-                conquest
-                    .economy
-                    .refund(t.owner, u32::from(u.cost_grub), u32::from(u.cost_marrow));
+                let (grub, marrow, _) = conquest.price(t.owner, t.unit);
+                conquest.economy.refund(t.owner, grub, marrow);
                 continue;
             };
+            if let Some(growth) = conquest.unit(t.unit).hero {
+                let stats = &self.units[usize::from(t.unit)];
+                (conquest.heroes).raised(&mut self.regiments, stats, growth, t.owner, t.unit, h);
+            }
             self.vision.start(
                 &self.regiments,
                 &self.units,
@@ -4174,6 +4190,24 @@ impl World {
     /// Conquest.
     pub fn generals(&self) -> impl Iterator<Item = &General> {
         self.generals.iter().flat_map(Generals::iter)
+    }
+
+    /// Every player's hired heroes, standing or fallen (see [`heroes`]):
+    /// none outside Conquest.
+    pub fn heroes(&self) -> impl Iterator<Item = &heroes::Hero> {
+        self.conquest.iter().flat_map(|c| c.heroes.iter())
+    }
+
+    /// The hero regiment `h` is, if it is one.
+    pub fn hero_of(&self, h: RegimentHandle) -> Option<&heroes::Hero> {
+        self.conquest.as_ref()?.heroes.of_regiment(h)
+    }
+
+    /// What `player` would pay now for a regiment of type `unit` (Grub,
+    /// Marrow): a fallen hero's revive is priced by its level.
+    pub fn price_of(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32)> {
+        let (g, m, _) = self.conquest.as_ref()?.price(player, unit);
+        Some((g, m))
     }
 }
 

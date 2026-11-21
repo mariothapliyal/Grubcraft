@@ -86,6 +86,17 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
         unit_at.push(here);
         summoned_at.push(summoned);
     }
+    // The heroes come after every faction's other units, so adding them
+    // moved no unit's place (docs/43-heroes.md).
+    for (file, r) in &loaded {
+        for h in &r.heroes {
+            if !unit_names.insert(h.stats.name.as_str()) {
+                return Err(invalid(file, &h.stats.name, "defined twice"));
+            }
+            index(file, &h.stats.name, conquest_units)?;
+            conquest_units += 1;
+        }
+    }
 
     let mut building_records = Vec::with_capacity(buildings);
     let mut unit_records = Vec::with_capacity(conquest_units);
@@ -145,6 +156,14 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
             cq::validate_power(&record, buildings, &unit_records)
                 .map_err(|why| invalid(file, &a.name, why))?;
             power_records.push(record);
+        }
+    }
+    for (i, (file, r)) in loaded.iter().enumerate() {
+        for h in &r.heroes {
+            let record = hero_record(file, Faction::from(r.faction), h, &building_at[i])?;
+            cq::validate_conquest_unit(&record, buildings, conquest_units)
+                .map_err(|why| invalid(file, &h.stats.name, why))?;
+            unit_records.push(record);
         }
     }
     for (i, b) in building_records.iter().enumerate() {
@@ -223,6 +242,55 @@ fn power_record(
         meter,
         effect,
         tiles,
+    })
+}
+
+/// What a hire costs, how long it takes and the supply a hero takes
+/// (docs/17-unit-rosters.md, Heroes): the same for every hero.
+pub(crate) const HERO_COST: (u16, u16) = (200, 50);
+const HERO_HIRE_SECONDS: f64 = 40.0;
+const HERO_SUPPLY: u8 = 5;
+
+/// A hero as a Conquest unit: one model, hired at its `hired_at` building
+/// (which must be the faction's hero building), at tier 1. Its Field
+/// Battle points are its price by the usual rule, Grub and twice the
+/// Marrow.
+fn hero_record(
+    file: &Path,
+    faction: Faction,
+    h: &rosters::Hero,
+    building_at: &Index,
+) -> Result<ConquestUnitRecord, BakeError> {
+    let name = &h.stats.name;
+    let bad = |why: String| invalid(file, name, why);
+    if Faction::from(h.stats.faction) != faction {
+        return Err(bad("stats.faction differs from the roster's".into()));
+    }
+    let trained_at = *building_at
+        .get(h.hired_at.as_str())
+        .ok_or_else(|| bad(format!("hired at unknown building {}", h.hired_at)))?;
+    let (grub, marrow) = HERO_COST;
+    let stats = unit_record(file, &h.stats, grub + 2 * marrow)?;
+    Ok(ConquestUnitRecord {
+        stats,
+        cost_grub: grub,
+        cost_marrow: marrow,
+        train_ticks: to_ticks(HERO_HIRE_SECONDS).map_err(|why| bad(why.to_string()))?,
+        trained_at,
+        evolves_from: cq::NONE,
+        flags: cq::UNIT_HERO,
+        trade_base: 0,
+        trade_tenths: 0,
+        tier: 1,
+        class: cq::Class::Hero as u8,
+        supply: HERO_SUPPLY,
+        start_count: 0,
+        gather_percent: 100,
+        unlocked_at: cq::NONE,
+        level_hp: h.per_level.hp,
+        level_melee: h.per_level.melee_damage,
+        level_missile: h.per_level.missile_damage,
+        reserved: 0,
     })
 }
 
@@ -449,6 +517,10 @@ impl UnitContext<'_> {
                 self.evolutions_at
                     .ok_or_else(|| bad("an evolution with no building flagged Evolutions".into()))?
             },
+            level_hp: 0,
+            level_melee: 0,
+            level_missile: 0,
+            reserved: 0,
         })
     }
 }

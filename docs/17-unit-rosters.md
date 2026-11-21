@@ -59,7 +59,7 @@ Heroes take and deal ×1.0 against everything. Siege units deal ×3.0 to Fortifi
 ## Shared rules
 
 - **Heroes** never rout. They cost 200 Grub and 50 Marrow, take 40 s to hire at the faction's hero building, and use 5 supply. Each has three basic abilities with three ranks (written 1/2/3 below) and an ultimate at level 6. Hero stats grow every level by the amounts listed.
-- **Hero leadership** (proposed): friendly regiments within 16 tiles of any hero recover 1 extra morale a second and lose 25% less from casualties. A hero dying costs friendly regiments within 16 tiles 15 morale.
+- **Hero leadership** (decided 2026-11-22, [43 · Heroes](43-heroes.md)): a hero leads its player's regiments within 16 tiles as the Field Battle general does (1 morale a second, breaking point 5 lower, undead strike 10% harder); its fall costs those within 16 tiles 10 morale.
 - **Workers** and Support units are not counted as regiments for the "6 to 8 regiment types" rule in 03.
 - Every Brood regiment and worker also costs one larva.
 

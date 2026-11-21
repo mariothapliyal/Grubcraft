@@ -64,6 +64,10 @@ pub struct Production {
     /// Ticks left for each regiment in the queue; 0 until it starts. Only
     /// the front one trains, unless they hatch.
     clock: Vec<[u32; QUEUE]>,
+    /// Ticks each regiment in the queue takes at Standard tempo when that
+    /// isn't its unit's train time (a hero's revive, see
+    /// [`crate::heroes`]); 0 for its unit's.
+    full: Vec<[u32; QUEUE]>,
     rally: Vec<Option<FxVec2>>,
     /// Regiments that finished training in the last tick.
     pub(crate) trained: Vec<Trained>,
@@ -77,6 +81,7 @@ impl Production {
             queue: vec![[0; QUEUE]; structures],
             queued: vec![0; structures],
             clock: vec![[0; QUEUE]; structures],
+            full: vec![[0; QUEUE]; structures],
             rally: vec![None; structures],
             trained: Vec::with_capacity(structures),
         }
@@ -89,6 +94,7 @@ impl Production {
             self.queue_gen[i] = h.generation;
             self.queued[i] = 0;
             self.clock[i] = [0; QUEUE];
+            self.full[i] = [0; QUEUE];
             self.rally[i] = None;
         }
         i
@@ -125,16 +131,20 @@ impl Production {
     /// percent: 0 until it starts.
     pub fn percent(&self, h: StructureHandle, k: usize, units: &[ConquestUnit]) -> Option<u8> {
         let &unit = self.queue_of(h).get(k)?;
-        let full = self.train_ticks(units, unit);
+        let full = self.train_ticks(units, unit, self.full[self.live(h)?][k]);
         let left = self.ticks_left(h, k).unwrap_or(full).min(full);
         Some((100 - left * 100 / full) as u8)
     }
 
-    /// Ticks a regiment of type `unit` takes to train at this tempo.
-    fn train_ticks(&self, units: &[ConquestUnit], unit: UnitId) -> u32 {
-        let ticks = units
-            .get(usize::from(unit))
-            .map_or(1, |u| u32::from(u.train_ticks));
+    /// Ticks a regiment of type `unit` takes to train at this tempo, or
+    /// one that takes `full` at Standard tempo if that isn't 0.
+    fn train_ticks(&self, units: &[ConquestUnit], unit: UnitId, full: u32) -> u32 {
+        let ticks = match full {
+            0 => units
+                .get(usize::from(unit))
+                .map_or(1, |u| u32::from(u.train_ticks)),
+            t => t,
+        };
         crate::conquest::at_tempo(ticks, self.build_percent)
     }
 
@@ -148,12 +158,14 @@ impl Production {
         self.queue_of(h).len() < QUEUE
     }
 
-    /// Add `unit` to building `h`'s queue; the caller has checked it may
-    /// and taken the price.
-    pub(crate) fn enqueue(&mut self, h: StructureHandle, unit: UnitId) {
+    /// Add `unit` to building `h`'s queue, to take `full` ticks at
+    /// Standard tempo (0 for its unit's train time); the caller has checked
+    /// it may and taken the price.
+    pub(crate) fn enqueue(&mut self, h: StructureHandle, unit: UnitId, full: u32) {
         let i = self.slot(h);
         let n = usize::from(self.queued[i]);
         self.queue[i][n] = unit;
+        self.full[i][n] = full;
         self.queued[i] += 1;
     }
 
@@ -166,12 +178,38 @@ impl Production {
         }
         self.queued[i] -= 1;
         self.clock[i][n - 1] = 0;
+        self.full[i][n - 1] = 0;
         Some(self.queue[i][n - 1])
     }
 
     pub(crate) fn set_rally(&mut self, h: StructureHandle, at: FxVec2) {
         let i = self.slot(h);
         self.rally[i] = Some(at);
+    }
+
+    /// How many of `player`'s heroes in training (units with hero growth)
+    /// are `new` ones, and whether one of type `unit` is in training.
+    pub(crate) fn heroes_in_training(
+        &self,
+        structures: &Structures,
+        units: &[ConquestUnit],
+        player: PlayerId,
+        unit: UnitId,
+        new: impl Fn(UnitId) -> bool,
+    ) -> (usize, bool) {
+        let (mut n, mut this) = (0, false);
+        for i in 0..self.queued.len() {
+            if self.queued[i] == 0 || structures.live_slot(i, self.queue_gen[i]) != Some(player) {
+                continue;
+            }
+            for &q in &self.queue[i][..usize::from(self.queued[i])] {
+                if units.get(usize::from(q)).is_some_and(|u| u.hero.is_some()) {
+                    n += usize::from(new(q));
+                    this |= q == unit;
+                }
+            }
+        }
+        (n, this)
     }
 
     /// Add the supply regiments in training take to `used`, by player.
@@ -215,6 +253,7 @@ impl Production {
                 // It fell: the queue goes with it.
                 self.queued[i] = 0;
                 self.clock[i] = [0; QUEUE];
+                self.full[i] = [0; QUEUE];
                 continue;
             };
             if !structures.powered(i) {
@@ -254,7 +293,7 @@ impl Production {
                         break;
                     };
                     *left -= need;
-                    self.clock[i][k] = self.train_ticks(units, unit);
+                    self.clock[i][k] = self.train_ticks(units, unit, self.full[i][k]);
                 }
                 // A hasted building trains faster (see [`crate::powers`]).
                 self.clock[i][k] = self.clock[i][k].saturating_sub(structures.steps(i));
@@ -272,6 +311,8 @@ impl Production {
                 self.queue[i].copy_within(k + 1.., k);
                 self.clock[i].copy_within(k + 1.., k);
                 self.clock[i][QUEUE - 1] = 0;
+                self.full[i].copy_within(k + 1.., k);
+                self.full[i][QUEUE - 1] = 0;
                 self.queued[i] -= 1;
                 if !hatches(units, unit) {
                     // The next starts next tick.
@@ -293,6 +334,9 @@ impl Production {
             for k in 0..usize::from(self.queued[i]) {
                 h.u16(self.queue[i][k]);
                 h.u32(self.clock[i][k]);
+                if self.full[i][k] > 0 {
+                    h.u32(self.full[i][k]);
+                }
             }
             match self.rally[i] {
                 Some(at) => {
