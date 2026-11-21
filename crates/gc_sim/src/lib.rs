@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 pub mod arrange;
 pub mod blueprints;
 pub mod bridges;
+pub mod brigades;
 pub mod champions;
 pub mod chords;
 pub mod clearing;
@@ -132,7 +133,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 89;
+pub const SIM_VERSION: u32 = 90;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -671,6 +672,10 @@ pub enum Command {
         files: u16,
         /// Tiles per second; zero means the regiment's own speed.
         pace: Fx,
+        /// The brigade it marches in (see [`brigades`]): the moves one
+        /// player gives with the same number keep together on the way.
+        /// 0 for none.
+        brigade: u16,
     },
     /// Close with an enemy regiment and fight it (melee), or move into range
     /// and shoot it (ranged). The target must be one the player's side can
@@ -688,6 +693,7 @@ pub enum Command {
         facing: Option<Angle>,
         files: u16,
         pace: Fx,
+        brigade: u16,
     },
     /// A Shift-queued order: carry out `step` once everything the regiment
     /// was ordered before is done, or at once if it has nothing to do.
@@ -973,12 +979,14 @@ impl Command {
                 files,
                 pace,
                 hunt: false,
+                brigade,
             } => Command::MoveTo {
                 regiment,
                 target,
                 facing,
                 files,
                 pace,
+                brigade,
             },
             orders::Step::Move {
                 target,
@@ -986,12 +994,14 @@ impl Command {
                 files,
                 pace,
                 hunt: true,
+                brigade,
             } => Command::AttackMove {
                 regiment,
                 target,
                 facing,
                 files,
                 pace,
+                brigade,
             },
             orders::Step::Attack { target } => Command::Attack { regiment, target },
         }
@@ -1130,6 +1140,8 @@ pub struct World {
     /// The rain's flood has just shut every ford (`Some(true)`) or opened
     /// them, for the walkable grid this tick (see `World::flash`).
     flood_fords: Option<bool>,
+    /// The brigades on the march (see [`brigades`]).
+    brigades: brigades::Brigades,
     pub regiments: Regiments,
 }
 
@@ -1178,6 +1190,7 @@ impl World {
             flood,
             stranded: Vec::new(),
             flood_fords: None,
+            brigades: brigades::Brigades::new(setup.capacities.regiments as usize),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -1343,6 +1356,13 @@ impl World {
         let s = self.structures()?;
         let i = s.resolve(h)?;
         s.regrows(i).then(|| s.rooted(i))
+    }
+
+    /// The brigade regiment `h` marches in and its place in it (see
+    /// [`brigades`]), if it marches in one.
+    pub fn brigade(&self, h: RegimentHandle) -> Option<brigades::BrigadeView> {
+        let i = self.regiments.resolve(h)?;
+        self.brigades.view(&self.regiments, i)
     }
 
     /// Whether regiment `h` is a worker (Conquest only).
@@ -1973,6 +1993,13 @@ impl World {
             &self.nav,
             self.map_tiles,
         );
+        self.brigades.step(
+            &mut self.regiments,
+            &self.units,
+            &mut self.nav,
+            &self.terrain,
+            self.tick,
+        );
         self.nav.plan(&mut self.regiments, &self.units);
         self.combat.mark_holders(&self.regiments, &self.nav);
         self.regiments.step_movement(
@@ -2254,6 +2281,7 @@ impl World {
                 facing,
                 files,
                 pace,
+                brigade,
             }
             | Command::AttackMove {
                 regiment,
@@ -2261,6 +2289,7 @@ impl World {
                 facing,
                 files,
                 pace,
+                brigade,
             } => {
                 if self.deploying() {
                     return self.place(pc.player, regiment, target, facing, files);
@@ -2269,18 +2298,18 @@ impl World {
                 if !self.commands(pc.player, regiment) {
                     return false;
                 }
-                let hunt = matches!(pc.command, Command::AttackMove { .. }).then_some(
-                    orders::Step::Move {
-                        target,
-                        facing,
-                        files,
-                        pace,
-                        hunt: true,
-                    },
-                );
-                let done = self.march(regiment, target, facing, files, pace);
+                let hunt = matches!(pc.command, Command::AttackMove { .. });
+                let step = orders::Step::Move {
+                    target,
+                    facing,
+                    files,
+                    pace,
+                    hunt,
+                    brigade,
+                };
+                let done = self.march(regiment, step);
                 if done {
-                    self.regiments.fresh(regiment, hunt);
+                    self.regiments.fresh(regiment, hunt.then_some(step));
                 }
                 done
             }
@@ -3117,15 +3146,31 @@ impl World {
                 .is_none_or(|c| !c.has_job(&self.regiments, i))
     }
 
-    /// Send regiment `h` marching; the caller has checked who may order it.
-    fn march(
-        &mut self,
-        h: RegimentHandle,
-        target: FxVec2,
-        facing: Option<Angle>,
-        files: u16,
-        pace: Fx,
-    ) -> bool {
+    /// Send regiment `h` on the march `step` (a [`orders::Step::Move`]);
+    /// the caller has checked who may order it.
+    fn march(&mut self, h: RegimentHandle, step: orders::Step) -> bool {
+        let orders::Step::Move {
+            target,
+            facing,
+            files,
+            pace,
+            hunt,
+            brigade,
+        } = step
+        else {
+            return false;
+        };
+        // The same order sent again to a regiment marching in that
+        // brigade changes nothing.
+        if brigade != 0
+            && (self.regiments.resolve(h)).is_some_and(|i| {
+                let regs = &self.regiments;
+                let pace = regs.pace_for(i, pace);
+                (self.brigades).marching_to(regs, i, brigade, target, facing, pace, hunt)
+            })
+        {
+            return true;
+        }
         let order = Order {
             target,
             facing,
@@ -3135,14 +3180,14 @@ impl World {
         if !self.regiments.order(h, order) {
             return false;
         }
-        stand_back(
-            &mut self.regiments,
-            &self.units,
-            &self.nav,
-            &self.combat,
-            h.index as usize,
-        );
+        let i = h.index as usize;
+        stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
         self.leave_off(h);
+        // Not while the armies deploy (nobody marches yet), and not
+        // workers or caravans, who go about their own business.
+        if brigade != 0 && !self.deploying() && !self.is_worker(h) && !self.trades(h) {
+            self.brigades.join(&mut self.regiments, i, brigade, hunt);
+        }
         true
     }
 
@@ -3168,13 +3213,7 @@ impl World {
     fn start_step(&mut self, i: usize, step: orders::Step) -> bool {
         let h = self.regiments.handle(i);
         let done = match step {
-            orders::Step::Move {
-                target,
-                facing,
-                files,
-                pace,
-                ..
-            } => self.march(h, target, facing, files, pace),
+            orders::Step::Move { .. } => self.march(h, step),
             orders::Step::Attack { target } => self.charge_at(h, target),
         };
         if done {
@@ -3200,6 +3239,10 @@ impl World {
                 continue;
             }
             let plan = regs.plan(i);
+            // One a brigade steers has not arrived when it gets to the
+            // point it was given to walk at: its brigade sends it on
+            // (see `Brigades::step`).
+            let led = self.brigades.steers(i);
             if let Some(hunt) = plan.hunt {
                 // A beaten foe is left to run.
                 if let Some(t) = regs.attack_target[i]
@@ -3215,7 +3258,7 @@ impl World {
                     if regs.attack_target[i].is_none() {
                         self.start_step(i, hunt);
                     }
-                } else if regs.idle(i) {
+                } else if regs.idle(i) && !led {
                     // Arrived: the attack-move is done.
                     self.regiments.on_hunt(i, None);
                 } else if regs.target[i].is_some()
@@ -3231,7 +3274,7 @@ impl World {
                     self.regiments.set_plan(i, plan);
                 }
             }
-            while self.free(i) {
+            while !led && self.free(i) {
                 let mut plan = self.regiments.plan(i);
                 let Some(step) = plan.queue.pop() else {
                     break;
@@ -3873,10 +3916,27 @@ impl World {
 
     /// Where a regiment is still headed: the waypoints ahead of it, ending
     /// at its destination. Empty when it is standing, or waiting for a route.
+    /// For one marching in a brigade (see [`brigades`]), the turns of the
+    /// brigade's way ahead of it; [`World::goal`] is where it goes from the
+    /// last of them.
     pub fn route(&self, h: RegimentHandle) -> &[FxVec2] {
         match self.regiments.resolve(h) {
-            Some(i) => self.nav.route_ahead(i, self.regiments.target[i]),
+            Some(i) => match self.brigades.way(i) {
+                Some(way) => way,
+                None => self.nav.route_ahead(i, self.regiments.target[i]),
+            },
             None => &[],
+        }
+    }
+
+    /// Where a regiment's march ends: the place its order sent it (marching
+    /// in a brigade, that is not the point it walks at now). `None` when it
+    /// has nowhere to go.
+    pub fn goal(&self, h: RegimentHandle) -> Option<FxVec2> {
+        let i = self.regiments.resolve(h)?;
+        match self.brigades.of(i) {
+            Some((_, end)) => Some(end),
+            None => self.regiments.target[i],
         }
     }
 
@@ -3930,6 +3990,7 @@ impl World {
             "regiments" => {
                 self.regiments.hash_into(h);
                 self.stances.hash_into(h);
+                self.brigades.hash_into(&self.regiments, h);
             }
             "combat" => self.combat.hash_into(h),
             "pathfinding" => self.nav.hash_into(h),

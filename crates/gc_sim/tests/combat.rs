@@ -125,6 +125,7 @@ fn engaged_regiments_ignore_move_orders() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     run(&mut w, 40);

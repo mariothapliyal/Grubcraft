@@ -70,6 +70,7 @@ fn players_cannot_order_other_players_regiments() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_rejected, 1);

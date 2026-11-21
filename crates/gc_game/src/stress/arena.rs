@@ -95,6 +95,19 @@ impl Arena {
         self.water(xs, ys, FORD_BED);
     }
 
+    /// A ford an army can march across: its banks shelve down to it over
+    /// `edge` tiles, as a made map's do (the banks of [`Arena::ford`] are
+    /// as sheer as the river's it is painted over).
+    pub fn shelving_ford(&mut self, xs: Range<i32>, ys: Range<i32>, edge: i32) {
+        let shape = Arena::rect(xs, ys);
+        self.paint().terrain.push(TerrainOp {
+            shape,
+            mode: Mode::Set,
+            height: FORD_BED,
+            edge,
+        });
+    }
+
     /// Water over a bed at `bed`.
     fn water(&mut self, xs: Range<i32>, ys: Range<i32>, bed: i32) {
         let shape = Arena::rect(xs, ys);
@@ -338,6 +351,28 @@ pub(crate) fn timber_bridge(
     tiles.into_iter().zip(put_up(world, 0, &deck)).collect()
 }
 
+/// Put up player 0's Palisade right across a map of `tiles`, along `row`,
+/// with one Gate in it from `gate_x` east (turned a quarter, so its long
+/// side runs along the wall); the columns the Gate takes.
+pub(crate) fn gated_wall(
+    real: &Real,
+    world: &mut World,
+    tiles: u32,
+    row: i32,
+    gate_x: i32,
+) -> core::ops::Range<i32> {
+    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
+    let stats = &real.table.stats[usize::from(gate)];
+    let span = gate_x..gate_x + i32::from(stats.width.max(stats.depth));
+    let mut wall: Vec<_> = (0..tiles as i32)
+        .filter(|x| !span.contains(x))
+        .map(|x| (palisade, (x, row), 0))
+        .collect();
+    wall.push((gate, (gate_x, row), 1));
+    put_up(world, 0, &wall);
+    span
+}
+
 /// Put up finished buildings of `player`'s, each (building, north-west
 /// tile, turn), all in one tick, and their handles in the same order.
 /// Setting up, so the tick is not timed.
@@ -375,6 +410,17 @@ pub(crate) fn put_up(
 
 /// March `regiment` of `player`'s to `to`.
 pub(crate) fn move_to(player: PlayerId, regiment: RegimentHandle, to: FxVec2) -> PlayerCommand {
+    move_with(player, regiment, to, 0)
+}
+
+/// March `regiment` of `player`'s to `to` in the player's brigade
+/// `brigade` (0: on its own).
+pub(crate) fn move_with(
+    player: PlayerId,
+    regiment: RegimentHandle,
+    to: FxVec2,
+    brigade: u16,
+) -> PlayerCommand {
     PlayerCommand {
         player,
         command: Command::MoveTo {
@@ -383,6 +429,7 @@ pub(crate) fn move_to(player: PlayerId, regiment: RegimentHandle, to: FxVec2) ->
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade,
         },
     }
 }
@@ -439,6 +486,9 @@ pub(crate) struct March {
     /// The tick every regiment still on the field was standing within
     /// [`NEAR`] of its goal, or `None` if the limit came first.
     pub done: Option<u32>,
+    /// With `done`: the tick the first of them came to stand there for
+    /// good.
+    pub first: Option<u32>,
     /// The slowest regiment's straight march over open ground, in ticks:
     /// the best the army could do.
     pub ideal: u32,
@@ -508,6 +558,22 @@ pub(crate) fn march(
     army: &[RegimentHandle],
     goals: &[FxVec2],
     limit: u32,
+    each: impl FnMut(u32, &World),
+) -> March {
+    march_as(real, world, report, army, goals, 0, limit, each)
+}
+
+/// [`march`], the moves ordered as their owner's brigade `brigade` (0: each
+/// on its own).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn march_as(
+    real: &Real,
+    world: &mut World,
+    report: &mut super::Report,
+    army: &[RegimentHandle],
+    goals: &[FxVec2],
+    brigade: u16,
+    limit: u32,
     mut each: impl FnMut(u32, &World),
 ) -> March {
     assert_eq!(army.len(), goals.len());
@@ -524,7 +590,7 @@ pub(crate) fn march(
             real.units[usize::from(v.unit)].speed,
         );
         ideal = ideal.max((f64::from(tiles.raw()) / f64::from(speed.raw().max(1)) * tps) as u32);
-        orders.push(move_to(v.owner, *r, g));
+        orders.push(move_with(v.owner, *r, g, brigade));
     }
     let start = soldiers(world, army);
     report.tick(world, &orders);
@@ -539,6 +605,8 @@ pub(crate) fn march(
         .collect();
     let mut stuck = 0;
     let (mut done, mut disorder) = (None, 0);
+    // Since when each has stood at its goal.
+    let mut stood = vec![None; army.len()];
     for t in 1..=limit * gc_sim::TICKS_PER_SECOND {
         report.tick(world, &[]);
         each(t, world);
@@ -552,6 +620,7 @@ pub(crate) fn march(
             let near = left <= NEAR;
             alive += 1;
             there += usize::from(!v.moving && near);
+            stood[i] = (!v.moving && near).then(|| stood[i].unwrap_or(t));
             let last = &mut headway[i];
             if near || left + HEADWAY < last.0 {
                 *last = (left, t);
@@ -565,6 +634,7 @@ pub(crate) fn march(
     }
     March {
         done,
+        first: done.and(stood.iter().flatten().min().copied()),
         ideal,
         soldiers: (start, soldiers(world, army)),
         stuck,

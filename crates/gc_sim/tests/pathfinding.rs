@@ -66,6 +66,7 @@ fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32) 
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_applied, 1);
@@ -289,6 +290,7 @@ fn many_orders_at_once_are_spread_over_ticks() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
         })
         .collect();

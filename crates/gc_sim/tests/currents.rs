@@ -107,6 +107,7 @@ fn order(w: &mut World, regiment: RegimentHandle, x: i32, y: i32) {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_applied, 1);

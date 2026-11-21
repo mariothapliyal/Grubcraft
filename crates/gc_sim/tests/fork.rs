@@ -152,6 +152,7 @@ fn a_scratch_world_shares_the_map() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     };
     a.tick(&[go(ha)]);

@@ -84,6 +84,7 @@ fn march(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32) ->
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     )
 }
@@ -405,6 +406,7 @@ fn a_column_is_narrow_and_marches_faster() {
             facing: None,
             files: 12,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     assert_eq!(view(&w, r).frontage, COLUMN_FILES);

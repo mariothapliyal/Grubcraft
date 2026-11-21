@@ -549,6 +549,7 @@ impl Steward {
                     facing: None,
                     files: 0,
                     pace: to_fx(0.0),
+                    brigade: 0,
                 }
             };
             if !stuck || clicks.give(s.now, order) {

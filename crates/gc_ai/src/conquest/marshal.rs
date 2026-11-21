@@ -21,7 +21,7 @@ use super::spymaster::{Sighted, enemy_buildings};
 use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
-use crate::orders::{Act, Orders, ROUTINE, Want};
+use crate::orders::{Act, Orders, ROUTINE, Want, brigade_group};
 use crate::perception::{Class, Perception, Seen, right_of, to_fx_vec, v2};
 use crate::personality::Personality;
 
@@ -107,6 +107,12 @@ const SCOUTED: f32 = 14.0;
 const WAITING: f32 = 20.0;
 /// Tiles between regiments marching abreast.
 const ABREAST: f32 = 7.0;
+/// The most regiments in one row of a march: more form further rows
+/// behind (a line of twenty abreast is 140 tiles wide and fits no
+/// valley).
+const ROW_MOST: usize = 6;
+/// Tiles between one row of a march and the next.
+const ROW_BEHIND: f32 = 6.0;
 /// A regiment at home below this share of its soldiers goes to reinforce.
 const MEND_BELOW: f32 = 0.85;
 /// One out on an attack goes back to reinforce below this share.
@@ -1350,15 +1356,17 @@ fn threat_to_home(s: &Sense, army: &[&Seen], home: Option<Vec2>) -> Option<(Vec2
     (!near.is_empty() && serious).then(|| (centroid(&near), at_home))
 }
 
-/// March `regiments` abreast to `to`, facing `face`, at the pace of the
-/// slowest; `hunt`: as an attack-move, fighting what they meet on the way.
+/// March `regiments` to `to` as brigade `brigade` (see
+/// [`gc_sim::brigades`]), to stand there facing `face` in rows of
+/// [`ROW_MOST`] abreast, at the pace of the slowest; `hunt`: as an
+/// attack-move, fighting what they meet on the way.
 fn march(
     s: &Sense,
     regiments: &[&Seen],
     to: Vec2,
     face: Vec2,
     wants: &mut Vec<Want>,
-    group: u32,
+    brigade: u8,
     hunt: bool,
 ) {
     if regiments.is_empty() {
@@ -1369,24 +1377,29 @@ fn march(
         .map(|r| s.view.pace(r))
         .fold(f32::MAX, f32::min);
     let right = right_of(face);
-    let n = regiments.len() as f32;
-    // Keep each regiment's place in the line by how far right it stands.
+    // The foremost fill the first row, and each keeps its place in its
+    // row by how far right it stands: nobody crosses another's way.
     let mut order: Vec<&&Seen> = regiments.iter().collect();
-    order.sort_by(|a, b| a.pos.dot(right).total_cmp(&b.pos.dot(right)));
-    for (i, r) in order.into_iter().enumerate() {
-        let across = (i as f32 - (n - 1.0) / 2.0) * ABREAST;
-        let spot = s.terrain.clamp(to + right * across, 2.0);
-        wants.push(Want {
-            regiment: r.handle,
-            act: Act::Move {
-                to: spot,
-                facing: Some(face),
-                pace,
-                hunt,
-            },
-            priority: ROUTINE,
-            group: u32::MAX - group,
-        });
+    order.sort_by(|a, b| b.pos.dot(face).total_cmp(&a.pos.dot(face)));
+    for (row, line) in order.chunks_mut(ROW_MOST).enumerate() {
+        line.sort_by(|a, b| a.pos.dot(right).total_cmp(&b.pos.dot(right)));
+        let n = line.len() as f32;
+        for (i, r) in line.iter().enumerate() {
+            let across = (i as f32 - (n - 1.0) / 2.0) * ABREAST;
+            let back = row as f32 * ROW_BEHIND;
+            let spot = s.terrain.clamp(to + right * across - face * back, 2.0);
+            wants.push(Want {
+                regiment: r.handle,
+                act: Act::Move {
+                    to: spot,
+                    facing: Some(face),
+                    pace,
+                    hunt,
+                },
+                priority: ROUTINE,
+                group: brigade_group(brigade),
+            });
+        }
     }
 }
 

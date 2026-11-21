@@ -89,6 +89,7 @@ fn march(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32, pa
             facing: None,
             files: 0,
             pace,
+            brigade: 0,
         },
     )
 }

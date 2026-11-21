@@ -125,6 +125,10 @@ pub struct GroupOrder {
     /// frontage is refitted so the line spans about this much; `None` keeps
     /// every regiment's frontage.
     pub width: Option<Fx>,
+    /// The brigade the regiments march in (see [`crate::brigades`]): a
+    /// number of the ordering player's choosing, no other brigade of
+    /// theirs on the march has; 0 sends each on its own.
+    pub brigade: u16,
 }
 
 /// Turn a group order into one `MoveTo` per regiment: the regiments stand side
@@ -207,6 +211,7 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
                 facing: Some(facing),
                 files: if order.width.is_some() { m.files } else { 0 },
                 pace,
+                brigade: order.brigade,
             });
         }
     }
@@ -214,12 +219,18 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
 
 /// The middle of where the members stand now (`members` must not be empty).
 pub(crate) fn centre_of(members: &[GroupMember]) -> FxVec2 {
-    let n = i64::from(members.len().max(1) as u32);
-    let mut sum = (0i64, 0i64);
-    for m in members {
-        sum.0 += i64::from(m.position.x.raw());
-        sum.1 += i64::from(m.position.y.raw());
+    middle_of(members.iter().map(|m| m.position))
+}
+
+/// The middle of `points` (the origin of none).
+pub(crate) fn middle_of(points: impl Iterator<Item = FxVec2>) -> FxVec2 {
+    let (mut n, mut sum) = (0i64, (0i64, 0i64));
+    for p in points {
+        n += 1;
+        sum.0 += i64::from(p.x.raw());
+        sum.1 += i64::from(p.y.raw());
     }
+    let n = n.max(1);
     FxVec2::new(
         Fx::from_raw((sum.0 / n) as i32),
         Fx::from_raw((sum.1 / n) as i32),
@@ -310,6 +321,7 @@ mod tests {
                     facing,
                     files,
                     pace,
+                    ..
                 } => (regiment.index, target, facing, files, pace),
                 _ => unreachable!(),
             })
@@ -325,6 +337,7 @@ mod tests {
             target: FxVec2::from_ints(30, 10),
             facing: None,
             width: None,
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let north = Some(Angle(0xC000));
@@ -349,6 +362,7 @@ mod tests {
             target: FxVec2::from_ints(50, 50),
             facing: Some(Angle::ZERO),
             width: Some(Fx::from_int(25)),
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let got = moves(&out);
@@ -385,6 +399,7 @@ mod tests {
             target: FxVec2::from_ints(100, 20),
             facing: Some(Angle(0xC000)),
             width: None,
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let got = moves(&out);

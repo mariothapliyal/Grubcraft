@@ -188,6 +188,7 @@ fn a_player_hands_their_army_to_an_ally_and_takes_it_back() {
                 facing: None,
                 files: 0,
                 pace: gc_fixed::Fx::ZERO,
+                brigade: 0,
             },
         )
     };

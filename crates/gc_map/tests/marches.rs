@@ -225,7 +225,8 @@ impl Field {
     }
 }
 
-fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> RegimentHandle {
+/// `None` where the ground has no room for it.
+fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> Option<RegimentHandle> {
     let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
     w.tick(&[PlayerCommand {
         player: 0,
@@ -239,7 +240,6 @@ fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> Regim
         .iter()
         .map(|r| r.handle)
         .find(|h| !before.contains(h))
-        .unwrap()
 }
 
 #[derive(Debug, Default, Clone)]
@@ -266,6 +266,11 @@ pub struct March {
     /// Marching regiment-ticks by [full, slowed, stopped] x [in disorder,
     /// narrowed into a column, otherwise].
     pub ticks_by: [[u32; 3]; 3],
+    /// Cohesion (docs/42): ticks from the first regiment's arrival to the
+    /// last's, and regiment-ticks marching in disorder as a percent of all
+    /// regiment-ticks marching.
+    pub spread: u32,
+    pub disorder_share: u32,
 }
 
 /// Pick the `k`th march on a field: a start where the army fits and a goal
@@ -326,7 +331,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             let at = a + side * Fx::from_int((n % 3 - 1) * 9) - dir * Fx::from_int(n / 3 * 8);
             spawn(&mut w, unit, at, facing)
         })
-        .collect();
+        .collect::<Option<_>>()?;
     let mut members: Vec<GroupMember> = handles
         .iter()
         .map(|&h| {
@@ -341,6 +346,10 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             target: b,
             facing: Some(facing),
             width: None,
+            brigade: std::env::var("BRIGADE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         },
         &mut cmds,
     );
@@ -379,21 +388,37 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         .into_iter()
         .map(|command| PlayerCommand { player: 0, command })
         .collect();
+    let goals: Vec<(RegimentHandle, FxVec2)> = orders
+        .iter()
+        .filter_map(|c| match c.command {
+            Command::MoveTo {
+                regiment, target, ..
+            } => Some((regiment, target)),
+            _ => None,
+        })
+        .collect();
     w.tick(&orders);
     let mut out = March::default();
+    let mut trace = Trace::start(&field, &w, &units, &handles, &goals);
     let mut arrived = vec![None; handles.len()];
     let mut last_pos: Vec<FxVec2> = handles
         .iter()
         .map(|&h| w.regiments.get(h).unwrap().position)
         .collect();
     let (mut woods, mut all) = (0u64, 0u64);
+    let mut marching = 0u32;
     for t in 1..=LIMIT {
         w.tick(&[]);
+        trace.frame(&w, &units, &handles);
         let mut moving = 0;
         for (n, &h) in handles.iter().enumerate() {
             let r = w.regiments.get(h).unwrap();
             if r.moving {
+                // (Not yet: it had only halted on the way, as one waiting
+                // its turn at a narrows does.)
+                arrived[n] = None;
                 moving += 1;
+                marching += 1;
                 all += u64::from(r.models);
                 if w.terrain().cover(r.position) == Cover::Wood {
                     woods += u64::from(r.models);
@@ -478,10 +503,11 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             }
         }
         out.ticks = t;
-        if moving == 0 {
+        if moving == 0 && handles.iter().all(|&h| w.goal(h).is_none()) {
             break;
         }
     }
+    trace.finish();
     if std::env::var("VERBOSE").is_ok() {
         for n in 0..handles.len() {
             println!(
@@ -491,6 +517,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         }
     }
     out.stuck = arrived.iter().filter(|a| a.is_none()).count();
+    let first = arrived.iter().flatten().min().copied().unwrap_or(out.ticks);
+    out.spread = out.ticks - first;
+    out.disorder_share = 100 * out.disordered / marching.max(1);
     out.ideal = *ideal.iter().max().unwrap();
     let scores: Vec<u32> = (0..handles.len())
         .map(|n| {
@@ -505,6 +534,111 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     Some(out)
 }
 
+/// A recording of one march for pictures (TRACE_JSON=file): the ground,
+/// each regiment's goal, and every regiment's block each tick.
+struct Trace {
+    out: Option<(String, String)>,
+}
+
+impl Trace {
+    fn start(
+        field: &Field,
+        w: &World,
+        units: &[UnitStats],
+        handles: &[RegimentHandle],
+        goals: &[(RegimentHandle, FxVec2)],
+    ) -> Trace {
+        let Ok(path) = std::env::var("TRACE_JSON") else {
+            return Trace { out: None };
+        };
+        let f = |v: Fx| f64::from(v.raw()) / 65536.0;
+        let mut s = String::new();
+        s.push_str(&format!("{{\"tiles\":{},\"ground\":\"", field.map.tiles));
+        for y in 0..field.map.tiles as i32 {
+            for x in 0..field.map.tiles as i32 {
+                let p = FxVec2::from_ints(x, y) + FxVec2::new(Fx::ONE / 2, Fx::ONE / 2);
+                let c = field.cell(p).unwrap();
+                s.push(if field.sim_nav[c] == BLOCKED {
+                    '#'
+                } else if w.terrain().cover(p) == Cover::Wood {
+                    'w'
+                } else if field.sim_nav[c] > 1 {
+                    '~'
+                } else {
+                    '.'
+                });
+            }
+        }
+        s.push_str("\",\"goals\":[");
+        for (n, h) in handles.iter().enumerate() {
+            let g = goals.iter().find(|g| g.0 == *h).map(|g| g.1).unwrap();
+            let r = w.regiments.get(*h).unwrap();
+            let u = &units[r.unit as usize];
+            s.push_str(&format!(
+                "{}[{:.2},{:.2},{},{:.2}]",
+                if n > 0 { "," } else { "" },
+                f(g.x),
+                f(g.y),
+                r.unit,
+                f(u.speed)
+            ));
+        }
+        s.push_str("],\"frames\":[");
+        Trace {
+            out: Some((path, s)),
+        }
+    }
+
+    fn frame(&mut self, w: &World, units: &[UnitStats], handles: &[RegimentHandle]) {
+        let Some((_, s)) = &mut self.out else { return };
+        let f = |v: Fx| f64::from(v.raw()) / 65536.0;
+        if !s.ends_with('[') {
+            s.push(',');
+        }
+        s.push('[');
+        for (n, &h) in handles.iter().enumerate() {
+            let r = w.regiments.get(h).unwrap();
+            let u = &units[r.unit as usize];
+            let (fs, rs) = u.spacing(r.formation);
+            let (wd, dp) = formation::block_size(r.files, r.models, fs, rs);
+            let v = r.facing.to_vec();
+            // In a brigade: its place in the body, and whether it is in
+            // step there.
+            let place = w.brigade(h).and_then(|b| Some((b.place?, b)));
+            let place = place.map_or(String::new(), |(p, b)| {
+                format!(
+                    ",{:.2},{:.2},{},{:.1},{}",
+                    f(p.x),
+                    f(p.y),
+                    u8::from(b.in_step),
+                    f(b.behind),
+                    b.steering
+                )
+            });
+            s.push_str(&format!(
+                "{}[{:.2},{:.2},{:.3},{:.3},{:.2},{:.2},{},{}{place}]",
+                if n > 0 { "," } else { "" },
+                f(r.position.x),
+                f(r.position.y),
+                f(v.x),
+                f(v.y),
+                f(wd),
+                f(dp),
+                u8::from(r.disorder > 0),
+                u8::from(r.moving)
+            ));
+        }
+        s.push(']');
+    }
+
+    fn finish(self) {
+        if let Some((path, mut s)) = self.out {
+            s.push_str("]}");
+            std::fs::write(path, s).unwrap();
+        }
+    }
+}
+
 #[test]
 #[ignore = "a report: cargo test -p gc_map --release --test marches -- --ignored --nocapture"]
 fn report_marches() {
@@ -512,6 +646,7 @@ fn report_marches() {
     let mut army = 0;
     let mut by = [[0u32; 3]; 3];
     let (mut sum, mut n, mut stuck, mut woods, mut dis, mut held) = (0, 0, 0, 0, 0, 0);
+    let (mut last, mut spread, mut share) = (0, 0, 0);
     let started = std::time::Instant::now();
     for kind in 0..3 {
         for seed in 1..=4u64 {
@@ -525,7 +660,10 @@ fn report_marches() {
                     continue;
                 };
                 println!(
-                    "{id:4}: score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) disordered {:5} held {:5}",
+                    "{id:4}: last {:5.1}s spread {:4.1}s disorder {:2}% | score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) disordered {:5} held {:5}",
+                    f64::from(m.ticks) / 20.0,
+                    f64::from(m.spread) / 20.0,
+                    m.disorder_share,
                     m.score,
                     m.army,
                     m.ticks,
@@ -537,6 +675,9 @@ fn report_marches() {
                     m.held
                 );
                 sum += m.score;
+                last += m.ticks;
+                spread += m.spread;
+                share += m.disorder_share;
                 army += m.army;
                 n += 1;
                 stuck += m.stuck;
@@ -551,6 +692,12 @@ fn report_marches() {
             }
         }
     }
+    println!(
+        "COHESION over {n} marches: last arrival {:.1}s, first to last {:.1}s, in disorder {}% of the march",
+        f64::from(last) / 20.0 / f64::from(n.max(1)),
+        f64::from(spread) / 20.0 / f64::from(n.max(1)),
+        share / n.max(1)
+    );
     println!(
         "MEAN score {}% army {}% over {n} marches, stuck {stuck}, woods {}%, disordered {}, held {} ({:.1}s)",
         sum / n.max(1),
@@ -585,7 +732,7 @@ fn debug_route() {
     let units = units();
     let mut w = field.world(&units);
     let (a, b) = pick(&field, &w, seed * 1000 + k).unwrap();
-    let h = spawn(&mut w, 0, a, gc_fixed::Angle::of_vec(b - a));
+    let h = spawn(&mut w, 0, a, gc_fixed::Angle::of_vec(b - a)).unwrap();
     w.tick(&[PlayerCommand {
         player: 0,
         command: Command::MoveTo {
@@ -594,6 +741,7 @@ fn debug_route() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     for _ in 0..3 {

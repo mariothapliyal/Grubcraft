@@ -385,6 +385,7 @@ fn another_order_stops_the_run() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     assert_eq!(w.trades_at(caravan), None);
@@ -414,6 +415,7 @@ fn a_caravan_that_has_cargo_when_stopped_keeps_it_and_takes_it_home() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     assert_eq!(w.cargo(caravan), Some(76), "it keeps what it carries");
@@ -694,6 +696,7 @@ fn an_ally_that_is_out_of_the_match_when_the_cargo_comes_home_gets_no_share() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     // The ally loses its only main building, and is out ninety seconds on.

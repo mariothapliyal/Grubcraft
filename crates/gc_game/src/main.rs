@@ -987,6 +987,9 @@ struct Running {
     /// Scratch space for building group orders.
     group: Vec<GroupMember>,
     group_commands: Vec<gc_sim::Command>,
+    /// The number the last group order's brigade took (see
+    /// [`gc_sim::brigades`]); the next takes the next.
+    last_brigade: u16,
     /// Regiments inside a box select, live while dragging.
     boxed: Vec<RegimentHandle>,
     control_groups: [Vec<RegimentHandle>; 10],
@@ -1955,6 +1958,7 @@ impl App {
                 }),
             group: Vec::with_capacity(64),
             group_commands: Vec::with_capacity(64),
+            last_brigade: 0,
             boxed: Vec::with_capacity(64),
             control_groups: Default::default(),
             last_group_key: None,
@@ -2912,9 +2916,19 @@ impl Running {
     /// puts it after what each regiment is already doing instead of
     /// replacing it. The order's mark shows at once, before the simulation
     /// has heard of it.
-    pub fn issue_march(&mut self, order: GroupOrder, hunt: bool, queue: bool) {
+    pub fn issue_march(&mut self, mut order: GroupOrder, hunt: bool, queue: bool) {
         // Nothing queues while the armies deploy: an order places.
         let queue = queue && !self.world.deploying();
+        // Two or more sent together march as a brigade
+        // (docs/42-armies-that-march.md), each order a new one.
+        // Each player's numbers are its own, so two players ordering
+        // one owner's regiments (an army handed over) never share one.
+        if self.selected.len() > 1 {
+            const EACH: u16 = gc_sim::brigades::PLAYER_NUMBERS / gc_sim::MAX_PARTIES as u16;
+            self.last_brigade = self.last_brigade % EACH + 1;
+            let side = u16::from(self.sandbox.side) % gc_sim::MAX_PARTIES as u16;
+            order.brigade = side * EACH + self.last_brigade;
+        }
         self.plan_order(order);
         if !self.group_commands.is_empty() {
             self.ui_sound(sounds::UiSound::Move);
@@ -2928,6 +2942,7 @@ impl Running {
                 facing,
                 files,
                 pace,
+                brigade,
             } = command
             else {
                 self.human_orders.push(PlayerCommand {
@@ -2943,6 +2958,7 @@ impl Running {
                 files,
                 pace,
                 hunt,
+                brigade,
             };
             let command = gc_sim::Command::of_step(regiment, step, queue);
             self.human_orders.push(PlayerCommand {
@@ -3117,11 +3133,10 @@ impl Running {
             let color = [r, g, b, (160.0 * fade) as u8];
             // The route that ends at the mark is the sim's answer; until
             // then a straight line stands in for it.
-            let routed = self
-                .world
-                .route(m.regiment)
-                .last()
-                .is_some_and(|&p| from_fx_vec(p).distance(m.target) < ORDER_ROUTED_TILES);
+            let routed = (self.world.brigade(m.regiment).is_some()
+                || !self.world.route(m.regiment).is_empty())
+                && (self.world.goal(m.regiment))
+                    .is_some_and(|p| from_fx_vec(p).distance(m.target) < ORDER_ROUTED_TILES);
             let line = (!m.queued && !routed)
                 .then(|| self.world.regiments.get(m.regiment))
                 .flatten()
@@ -3185,6 +3200,7 @@ impl Running {
             target: fx_vec((start + end) * 0.5),
             facing: Some(gc_fixed::Angle::of_vec(fx_vec(facing))),
             width: Some(to_fx(line.length())),
+            brigade: 0,
         })
     }
 
@@ -6776,7 +6792,12 @@ impl Running {
             let mut from = drawn_position(&self.prev_positions, self.alpha, &r);
             // The legs, each ending in a plate: the sim's route (to a
             // march's end), then every queued march.
+            // (In a brigade the route is the brigade's way, and its own
+            // place lies a last leg on from that.)
             let route = self.world.route(h);
+            let own = (self.world.goal(h))
+                .filter(|&g| self.world.brigade(h).is_some() && route.last() != Some(&g))
+                .map(|g| (from_fx_vec(g), r.hunting, true));
             let queue = self.world.regiments.queued(h).unwrap_or_default();
             let marches = queue.iter().filter_map(|step| match step {
                 gc_sim::orders::Step::Move { target, hunt, .. } => {
@@ -6787,7 +6808,14 @@ impl Running {
             let legs = route
                 .iter()
                 .enumerate()
-                .map(|(k, &p)| (from_fx_vec(p), r.hunting, k + 1 == route.len()))
+                .map(|(k, &p)| {
+                    (
+                        from_fx_vec(p),
+                        r.hunting,
+                        own.is_none() && k + 1 == route.len(),
+                    )
+                })
+                .chain(own)
                 .chain(marches);
             for (to, hunting, end) in legs {
                 let color = if hunting { hunt } else { plain };
@@ -8430,6 +8458,7 @@ impl Running {
                             facing: Some(gc_fixed::Angle::of_vec(fx_vec(Vec2::X))),
                             files: 0,
                             pace: gc_fixed::Fx::ZERO,
+                            brigade: 0,
                         },
                     });
                     self.bridge_scene = None;
@@ -8520,6 +8549,7 @@ impl Running {
                                 facing: Some(north),
                                 files: 0,
                                 pace: gc_fixed::Fx::ZERO,
+                                brigade: 0,
                             },
                         }
                     });

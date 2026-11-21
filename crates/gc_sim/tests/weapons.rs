@@ -112,6 +112,7 @@ fn march(w: &mut World, player: u8, regiment: RegimentHandle, x: i32, y: i32, pa
             facing: None,
             files: 0,
             pace,
+            brigade: 0,
         },
     )
 }
@@ -171,6 +172,7 @@ fn melee_in(
             facing: None,
             files,
             pace: Fx::ONE,
+            brigade: 0,
         },
     ));
     let full = hp(&w, foe);

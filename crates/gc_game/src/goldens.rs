@@ -224,6 +224,22 @@ fn new_orders(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
+/// Side 0's regiments and side 1's, each with the middle of where they
+/// stand, while both sides have any.
+fn two_sides(world: &World) -> Option<[(Vec<gc_sim::RegimentView>, FxVec2); 2]> {
+    let side = |owner| {
+        let rs: Vec<_> = world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == owner)
+            .collect();
+        let n = rs.len() as i32;
+        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
+        (n > 0).then(|| (rs, FxVec2::new(sum.x / n, sum.y / n)))
+    };
+    Some([side(0)?, side(1)?])
+}
+
 /// Side 1 only ever charges; side 0 advances on an attack-move to the far
 /// side of side 1's army, with a Shift-queued waypoint beyond it and,
 /// for its first regiment, a queued attack on the nearest enemy. A minute
@@ -231,17 +247,9 @@ fn new_orders(world: &World, out: &mut Vec<PlayerCommand>) {
 /// drop what they had queued (docs/29, "How battles play", item 6).
 fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
     charge_with(world, out, |p| p == 1);
-    let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
-    let theirs: Vec<_> = world.regiments.iter().filter(|r| r.owner == 1).collect();
-    if mine.is_empty() || theirs.is_empty() {
+    let Some([(mine, ours), (theirs, enemy)]) = two_sides(world) else {
         return;
-    }
-    let middle = |rs: &[gc_sim::RegimentView]| {
-        let n = rs.len() as i32;
-        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
-        FxVec2::new(sum.x / n, sum.y / n)
     };
-    let (ours, enemy) = (middle(&mine), middle(&theirs));
     let order = |command| PlayerCommand { player: 0, command };
     match world.tick_count() {
         2 => {
@@ -253,6 +261,7 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 })
             }));
         }
@@ -267,6 +276,7 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                         files: 0,
                         pace: Fx::ZERO,
                         hunt: true,
+                        brigade: 0,
                     },
                 })
             }));
@@ -289,8 +299,62 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                         facing: None,
                         files: 0,
                         pace: Fx::ZERO,
+                        brigade: 0,
                     })
                 }),
+        ),
+        _ => {}
+    }
+}
+
+/// Side 0 marches as one brigade (docs/42-armies-that-march.md): a group
+/// move a third of the way to side 1's army and off to one side of it,
+/// with a Shift-queued attack-move on to the far side of that army as a
+/// second brigade. Side 1 stands for half a minute, then only ever
+/// charges, so the second leg is fought out on the way.
+fn marching(world: &World, out: &mut Vec<PlayerCommand>) {
+    if world.tick_count() >= 30 * gc_sim::TICKS_PER_SECOND {
+        charge_with(world, out, |p| p == 1);
+    }
+    let Some([(mine, ours), (_, enemy)]) = two_sides(world) else {
+        return;
+    };
+    let order = |command| PlayerCommand { player: 0, command };
+    match world.tick_count() {
+        2 => {
+            let on = (enemy - ours) * Fx::from_ratio(1, 3);
+            let aside = ours + on + FxVec2::new(-on.y, on.x);
+            out.extend(mine.iter().map(|r| {
+                order(Command::MoveTo {
+                    regiment: r.handle,
+                    target: aside + (r.position - ours),
+                    facing: None,
+                    files: 0,
+                    pace: Fx::ZERO,
+                    brigade: 1,
+                })
+            }));
+        }
+        3 => {
+            let beyond = enemy + (enemy - ours) * Fx::from_ratio(1, 4);
+            out.extend(mine.iter().map(|r| {
+                order(Command::Then {
+                    regiment: r.handle,
+                    step: gc_sim::orders::Step::Move {
+                        target: beyond + (r.position - ours),
+                        facing: None,
+                        files: 0,
+                        pace: Fx::ZERO,
+                        hunt: true,
+                        brigade: 2,
+                    },
+                })
+            }));
+        }
+        // The recording is of a brigade or it is of nothing.
+        100 => assert!(
+            mine.iter().all(|r| world.brigade(r.handle).is_some()),
+            "side 0 marches as a brigade"
         ),
         _ => {}
     }
@@ -355,6 +419,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
             facing: None,
             files: 10,
             pace: Fx::from_int(2),
+            brigade: 0,
         }));
         return;
     }
@@ -370,6 +435,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
         facing: None,
         files: 0,
         pace: Fx::ZERO,
+        brigade: 0,
     };
     // What each batch should do is in DEPLOY_ORDERS; `record` checks it.
     match tick {
@@ -382,6 +448,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
                 facing: Some(Angle(0x2000)),
                 files: 6,
                 pace: Fx::ZERO,
+                brigade: 0,
             }),
             order(plain_move(second.handle, outside)),
             order(plain_move(enemy.handle, inside)),
@@ -670,6 +737,25 @@ const GOLDENS: &[Golden] = &[
         minutes: 4,
         minds: true,
         extra: new_orders,
+        champions: false,
+        deployment: false,
+        sky: gc_sim::Sky::STILL,
+    },
+    // A brigade marches, then attacks as a second one (see [`marching`]).
+    Golden {
+        name: "field-brigade-1v1",
+        seed: 0xb419,
+        map_tiles: 256,
+        map: 0,
+        sides: &[
+            side(EmberClans, Veteran, 0),
+            side(CarrionConcord, Veteran, 1),
+        ],
+        soldiers: 0,
+        rows: 1,
+        minutes: 3,
+        minds: false,
+        extra: marching,
         champions: false,
         deployment: false,
         sky: gc_sim::Sky::STILL,

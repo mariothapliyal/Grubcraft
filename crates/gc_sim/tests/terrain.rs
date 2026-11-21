@@ -144,6 +144,7 @@ fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: Fx, y: Fx) {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_applied, 1);

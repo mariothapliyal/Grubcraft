@@ -52,6 +52,7 @@ fn order(
             facing,
             files,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_applied, 1);
@@ -170,6 +171,7 @@ fn pace_caps_speed_but_never_raises_it() {
                 facing: None,
                 files: 0,
                 pace,
+                brigade: 0,
             },
         }])
     };

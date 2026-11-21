@@ -344,6 +344,7 @@ fn calling_a_building_off_before_its_ground_is_cleared_pays_it_all_back() {
             facing: None,
             files: 0,
             pace: Default::default(),
+            brigade: 0,
         }
     ));
     assert_eq!(grub(&w), START_GRUB);
@@ -374,6 +375,7 @@ fn cleared_thicket_opens_a_way_through() {
             facing: None,
             files: 0,
             pace: Default::default(),
+            brigade: 0,
         }
     ));
     until(&mut w, 4000, |w| {

@@ -133,6 +133,7 @@ fn snow_slows_the_march() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
         }]);
         run(&mut w, 40);

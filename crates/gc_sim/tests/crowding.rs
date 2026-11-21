@@ -95,6 +95,7 @@ fn move_to(regiment: RegimentHandle, x: i32, y: i32) -> Command {
         facing: None,
         files: 0,
         pace: Fx::ZERO,
+        brigade: 0,
     }
 }
 

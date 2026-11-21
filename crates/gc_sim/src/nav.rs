@@ -1127,6 +1127,9 @@ pub struct Nav {
     queue: Queue,
     /// ...then those still walking meanwhile ([`Route::Rerouting`]).
     later: Queue,
+    /// Work done this tick before the routes are planned (see
+    /// [`Nav::track`]), taken out of their budget.
+    owed: u32,
 }
 
 /// Regiments waiting for a search, oldest first: a ring buffer with room
@@ -1255,6 +1258,7 @@ impl Nav {
             partial: vec![false; regiments],
             queue: Queue::new(regiments),
             later: Queue::new(regiments),
+            owed: 0,
         }
     }
 
@@ -1365,11 +1369,44 @@ impl Nav {
         reach: Fx,
         wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let Some(g) = self.grid_of(party) else {
-            return reach;
-        };
-        let [right, left] = Nav::room_each_side(g, p, facing, reach, &[Fx::ZERO], false, wet);
+        let [right, left] = self.room_sides(party, p, facing, reach, wet);
         (right + left) / 2
+    }
+
+    /// The room right and left of `centre` across the way `facing`, out
+    /// to `reach` (see [`Nav::room_across`]): how wide the ground is for a
+    /// row marching through there.
+    pub(crate) fn room_sides(
+        &self,
+        party: PlayerId,
+        centre: FxVec2,
+        facing: Angle,
+        reach: Fx,
+        wet: impl Fn(FxVec2) -> bool,
+    ) -> [Fx; 2] {
+        let Some(g) = self.grid_of(party) else {
+            return [reach; 2];
+        };
+        Nav::room_each_side(g, centre, facing, reach, &[Fx::ZERO], false, wet)
+    }
+
+    /// A way from `from` to `to` for a body of `party`'s wanting `berth`,
+    /// searched now (as [`find`]): for a brigade's track (see
+    /// [`crate::brigades`]), once for all its regiments. The work comes
+    /// out of this tick's budget for routes. `None` with no map or no way.
+    pub(crate) fn track(
+        &mut self,
+        party: PlayerId,
+        from: FxVec2,
+        to: FxVec2,
+        berth: u8,
+        out: &mut [FxVec2],
+    ) -> Option<(usize, bool)> {
+        let grid = grid_for(&self.grids, &self.view, party)?;
+        let before = core::mem::take(&mut self.search.work);
+        let found = find(grid, &mut self.search, from, to, berth, out);
+        self.owed += core::mem::replace(&mut self.search.work, before);
+        found
     }
 
     /// [`Nav::room_across`] on the right and on the left, each the least
@@ -1637,7 +1674,7 @@ impl Nav {
         }
         let (grids, view) = (&self.grids, &self.view);
         let grid_of = |owner: PlayerId| grid_for(grids, view, owner).expect("a map");
-        self.search.work = 0;
+        self.search.work = core::mem::take(&mut self.owed);
         for i in 0..regs.alive.len() {
             // A regiment on a wall walks nowhere until it comes down (see
             // [`crate::manning`]), and then plans from where it lands.

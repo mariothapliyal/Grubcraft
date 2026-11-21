@@ -370,7 +370,12 @@ impl Block {
 
     /// Regiment `i`'s block at `centre` at the frontage it was given,
     /// though it marches narrower now (see [`Regiments::narrowed`]).
-    fn drawn_up(regs: &Regiments, units: &[UnitStats], i: usize, centre: FxVec2) -> Block {
+    pub(crate) fn drawn_up(
+        regs: &Regiments,
+        units: &[UnitStats],
+        i: usize,
+        centre: FxVec2,
+    ) -> Block {
         let stats = &units[regs.unit[i] as usize];
         let files = regs.frontage[i].max(regs.files[i]);
         let (w, d) = stats.block_size_in(regs.formation[i], files, regs.models[i]);
@@ -1383,6 +1388,11 @@ impl Combat {
                 if j == i || regs.morale_state[j].broken() || regs.on_wall[j] {
                     return;
                 }
+                // In one brigade: each in step has its place, and one
+                // ahead does not make room for one behind.
+                if regs.leaves_be(i, j) {
+                    return;
+                }
                 // Cheap circle test before the rectangles: how far apart
                 // their circles are, past the room it keeps.
                 let room = near + self.radius[j];
@@ -1429,7 +1439,13 @@ impl Combat {
                     s => -s,
                 };
                 let depth = wide - across.abs();
-                let share = if marching { depth / 2 } else { depth };
+                // (One waiting for its place in a brigade does not step
+                // aside itself: see [`crate::brigades`].)
+                let share = if marching && regs.pace[j] > Fx::ZERO {
+                    depth / 2
+                } else {
+                    depth
+                };
                 push += share * sign;
             },
         );

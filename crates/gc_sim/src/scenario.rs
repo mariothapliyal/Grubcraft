@@ -221,6 +221,7 @@ impl Drill {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 },
             });
 
@@ -237,6 +238,7 @@ impl Drill {
                         facing,
                         files,
                         pace: Fx::ZERO,
+                        brigade: 0,
                     },
                 });
             }
@@ -272,6 +274,7 @@ impl Drill {
                 target,
                 facing: None,
                 width: None,
+                brigade: 0,
             };
             formation::group_move(&mut members[..count], order, &mut self.group_commands);
             out.extend(

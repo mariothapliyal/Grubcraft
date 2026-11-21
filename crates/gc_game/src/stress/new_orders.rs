@@ -10,7 +10,9 @@ use gc_sim::{
     Command, Formation, MoraleState, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World,
 };
 
-use super::arena::{Arena, Real, SOUTH, WEST, centre, grid, move_to, of, put_up, soldiers, spawn};
+use super::arena::{
+    Arena, Real, SOUTH, WEST, centre, gated_wall, grid, move_to, of, soldiers, spawn,
+};
 use super::{Report, Scenario, seconds};
 use crate::conquest;
 use crate::headless::Headless;
@@ -146,15 +148,7 @@ fn run(real: &Real, report: &mut Report) {
 /// is through and standing (within 90 s).
 fn through_gate(real: &Real, report: &mut Report, f: Formation) -> Option<u32> {
     let mut world = Arena::new(TILES).world(real, 11, 0);
-    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
-    let stats = &real.table.stats[usize::from(gate)];
-    let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
-    let mut wall: Vec<_> = (0..TILES as i32)
-        .filter(|x| !span.contains(x))
-        .map(|x| (palisade, (x, WALL_ROW), 0))
-        .collect();
-    wall.push((gate, (GATE_X, WALL_ROW), 1));
-    put_up(&mut world, 0, &wall);
+    gated_wall(real, &mut world, TILES, WALL_ROW, GATE_X);
     let [yari, katana, yumi] = real.ember_line();
     let horse = real.unit("Mounted Samurai");
     let army = [

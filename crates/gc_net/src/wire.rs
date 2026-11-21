@@ -286,13 +286,18 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             facing,
             files,
             pace,
+            brigade,
         } => {
-            w.u8(1);
+            // A move in no brigade is written as it always was.
+            w.u8(if brigade == 0 { 1 } else { 50 });
             w.handle(regiment);
             w.vec(target);
             w.opt_angle(facing);
             w.var(u64::from(files));
             w.fx(pace);
+            if brigade != 0 {
+                w.var(u64::from(brigade));
+            }
         }
         Command::Attack { regiment, target } => {
             w.u8(2);
@@ -305,13 +310,17 @@ pub fn write_command(w: &mut Writer, c: &Command) {
             facing,
             files,
             pace,
+            brigade,
         } => {
-            w.u8(41);
+            w.u8(if brigade == 0 { 41 } else { 51 });
             w.handle(regiment);
             w.vec(target);
             w.opt_angle(facing);
             w.var(u64::from(files));
             w.fx(pace);
+            if brigade != 0 {
+                w.var(u64::from(brigade));
+            }
         }
         Command::Then { regiment, step } => {
             w.u8(42);
@@ -323,12 +332,18 @@ pub fn write_command(w: &mut Writer, c: &Command) {
                     files,
                     pace,
                     hunt,
+                    brigade,
                 } => {
-                    w.u8(u8::from(hunt));
+                    // 0 and 1 for a step in no brigade, as always; 3 and 4
+                    // with its brigade after.
+                    w.u8(u8::from(hunt) + if brigade == 0 { 0 } else { 3 });
                     w.vec(target);
                     w.opt_angle(facing);
                     w.var(u64::from(files));
                     w.fx(pace);
+                    if brigade != 0 {
+                        w.var(u64::from(brigade));
+                    }
                 }
                 Step::Attack { target } => {
                     w.u8(2);
@@ -651,33 +666,36 @@ pub fn read_command(r: &mut Reader) -> Option<Command> {
             position: r.vec()?,
             facing: Angle(r.var_as()?),
         },
-        1 => Command::MoveTo {
+        tag @ (1 | 50) => Command::MoveTo {
             regiment: r.handle()?,
             target: r.vec()?,
             facing: r.opt_angle()?,
             files: r.var_as()?,
             pace: r.fx()?,
+            brigade: if tag == 50 { r.var_as()? } else { 0 },
         },
         2 => Command::Attack {
             regiment: r.handle()?,
             target: r.handle()?,
         },
-        41 => Command::AttackMove {
+        tag @ (41 | 51) => Command::AttackMove {
             regiment: r.handle()?,
             target: r.vec()?,
             facing: r.opt_angle()?,
             files: r.var_as()?,
             pace: r.fx()?,
+            brigade: if tag == 51 { r.var_as()? } else { 0 },
         },
         42 => Command::Then {
             regiment: r.handle()?,
             step: match r.u8()? {
-                hunt @ (0 | 1) => Step::Move {
+                tag @ (0 | 1 | 3 | 4) => Step::Move {
                     target: r.vec()?,
                     facing: r.opt_angle()?,
                     files: r.var_as()?,
                     pace: r.fx()?,
-                    hunt: hunt == 1,
+                    hunt: tag % 3 == 1,
+                    brigade: if tag >= 3 { r.var_as()? } else { 0 },
                 },
                 2 => Step::Attack {
                     target: r.handle()?,
@@ -950,6 +968,7 @@ mod tests {
                 facing: Some(Angle(0)),
                 files: 12,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
             Command::MoveTo {
                 regiment: h(0, 0),
@@ -957,6 +976,7 @@ mod tests {
                 facing: None,
                 files: 0,
                 pace: Fx::from_raw(77),
+                brigade: 0,
             },
             Command::Attack {
                 regiment: h(4, 1),
@@ -968,6 +988,7 @@ mod tests {
                 facing: Some(Angle(65_535)),
                 files: 7,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
             Command::Then {
                 regiment: h(3, 1),
@@ -977,6 +998,7 @@ mod tests {
                     files: 0,
                     pace: Fx::from_raw(5),
                     hunt: true,
+                    brigade: 0,
                 },
             },
             Command::Then {
