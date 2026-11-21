@@ -28,7 +28,7 @@ That is the entire economic HUD. Everything else is visible in the world (seep p
 - Supply costs are listed in [03 · Factions](03-factions.md#faction-design-rules). Each building's supply, with its cost, build time and hit points, is in [21 · Buildings](21-buildings.md).
 
 ### Faction meter
-One per faction (Honor, Larvae, Resonance, Tithe; the Tithe is not built yet). See each faction.
+One per faction (Honor, Larvae, Resonance, Tithe). See each faction.
 
 *Built (2026-10-17, faction depth stage 1): Brood larvae are simulated. Each Hive and Hatchery Pit holds up to 3 larvae and grows one every 12 s while it has room, at the match's tempo. The opening Hive starts full, and a Hive or Pit built from a foundation starts empty, while a tier upgrade keeps its larvae. Every Brood unit, workers included, takes a larva when it is queued, and training is refused while none is ready; calling it off gives the larva back, to whichever Hive or Pit with room holds the most. Brood regiments in one queue hatch together, in queue order: one waiting for supply holds back those behind it, and a Brood building is grown by a Gnawer that is used up at the foundation.*
 
@@ -105,7 +105,7 @@ Regiments that lose soldiers **reinforce** instead of being replaced, which keep
 - Each soldier costs his share of what the regiment cost: its Grub and Marrow cost divided by its full strength, by whole numbers, so refilling a regiment costs exactly what those soldiers were worth of it new. Short of Grub or Marrow, it waits at the point, and its card says "can't pay to reinforce". While it refills, its order line says "(reinforcing)".
 - Reinforcement points, the same rule for every faction: within 8 tiles of the edge of a finished main building, outpost hall or any building that trains soldiers (Clans: Clan Hall and its upgrades, Outpost Hall, Dojo, Stables, Ember Workshop, Kite Loft; Concord: Counting House, Guildhall, Ossuary and the rest); anywhere on the owner's linked root-veins (Brood); anywhere in the owner's fields of power (Choir, Resonators and the like).
 - A regiment does not reinforce while marching, fighting in melee, routing or shattered.
-- Units nothing trains (summoned, raised by a tower, evolved Brood units) do not reinforce. The Concord's undead never rout, and they do not reinforce either: they will be refilled only with Tithe, which is not built yet.
+- Units nothing trains (summoned, raised by a tower) do not reinforce. An evolved Brood regiment reinforces like its parent: where the parent's training building refills, paying the parent's and its own cost together. The Concord's undead never rout, and Grub never refills them. A hurt undead regiment standing quiet within 12 tiles of its own Reliquary is refilled one soldier at a time instead, paying Tithe per soldier (one eighth of its hit points, and at least 1). Living Concord units reinforce with Grub as before.
 - **Veterancy** (3 ranks, earned by kills) survives reinforcement: new soldiers join at the regiment's rank. +10% damage and 5 points off the breaking point per rank (built 2026-10-31, [05](05-combat.md#veterancy)).
 - Computer players send a regiment at home that is below 85% of its soldiers to stand a few tiles out from the nearest reinforcement point until it is full again. A threat at home or an attack setting out takes it along as before.
 

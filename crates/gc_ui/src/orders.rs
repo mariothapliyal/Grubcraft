@@ -96,20 +96,17 @@ pub enum Wait {
 impl Wait {
     /// A few words to follow the order's.
     pub fn note(self) -> Cow<'static, str> {
-        if let Wait::Cocooned(secs) = self {
-            return Cow::Owned(format!("in its cocoon, {secs} s left"));
+        match self {
+            Wait::Pinned => "pinned".into(),
+            Wait::DrivenBack => "driven back".into(),
+            Wait::Reforming => "re-forming ranks".into(),
+            Wait::FilingThrough => "filing through".into(),
+            Wait::Trapped => "trapped".into(),
+            Wait::Cocooned(secs) => format!("in its cocoon, {secs} s left").into(),
+            Wait::Winded => "winded".into(),
+            Wait::Reinforcing => "reinforcing".into(),
+            Wait::ShortToReinforce => "can't pay to reinforce".into(),
         }
-        Cow::Borrowed(match self {
-            Wait::Pinned => "pinned",
-            Wait::DrivenBack => "driven back",
-            Wait::Reforming => "re-forming ranks",
-            Wait::FilingThrough => "filing through",
-            Wait::Trapped => "trapped",
-            Wait::Cocooned(_) => "in its cocoon",
-            Wait::Winded => "winded",
-            Wait::Reinforcing => "reinforcing",
-            Wait::ShortToReinforce => "can't pay to reinforce",
-        })
     }
 }
 

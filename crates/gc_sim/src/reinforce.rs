@@ -199,14 +199,7 @@ impl Conquest {
                     let marrow = share(cost_marrow, models, full);
                     self.economy.spend(owner, grub, marrow)
                 }
-                Pay::Tithe => {
-                    let price = crate::tithe::tithe_per_soldier(stats);
-                    let can = self.tithe.points(owner) >= price;
-                    if can {
-                        self.tithe.spend(owner, price);
-                    }
-                    can
-                }
+                Pay::Tithe => (self.tithe).try_spend(owner, crate::tithe::tithe_per_soldier(stats)),
             };
             if !paid {
                 regs.refill[i] = REFILL_SHORT;

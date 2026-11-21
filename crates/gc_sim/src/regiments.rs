@@ -1704,7 +1704,7 @@ impl Regiments {
         if self.morale_state[i].broken() {
             None
         } else if self.cocoon_left[i] > 0 {
-            Some(Waiting::Cocooned)
+            Some(Waiting::Cocooned(self.cocoon_left[i]))
         } else if self.trapped_left[i] > 0 {
             Some(Waiting::Trapped)
         } else if self.engaged[i].is_some() && self.why[i] & morale::WHY_PINNED != 0 {
@@ -2275,8 +2275,9 @@ pub enum Waiting {
     FilingThrough,
     /// Held fast by a trap.
     Trapped,
-    /// In a cocoon, becoming its evolved form (see [`crate::evolve`]).
-    Cocooned,
+    /// In a cocoon, becoming its evolved form (see [`crate::evolve`]),
+    /// with these ticks left.
+    Cocooned(u16),
     /// Out of breath after a run: slower, with weaker blows.
     Winded,
     /// Taking on new soldiers near its side's reinforcement points (see

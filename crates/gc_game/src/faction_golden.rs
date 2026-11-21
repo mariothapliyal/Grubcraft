@@ -21,13 +21,12 @@ use gc_data::Faction;
 use gc_fixed::{Angle, Fx, FxVec2};
 use gc_replay::{Recorder, Replay};
 use gc_sim::{
-    Command, PlayerCommand, PlayerId, PowerEffect, PowerTarget, RegimentHandle, TICKS_PER_SECOND,
-    UnitId, Victories, World,
+    Command, PlayerCommand, PlayerId, PowerTarget, TICKS_PER_SECOND, UnitId, Victories, World,
 };
 use gc_ui::lobby::Tempo;
 
 use crate::conquest;
-use crate::conquest_golden::nearest;
+use crate::conquest_golden::{nearest, regiments_of};
 use crate::headless::{Headless, Real};
 
 pub const NAME: &str = "conquest-evolve-tithe-1v1";
@@ -65,11 +64,6 @@ struct Ids {
 
 impl Ids {
     fn of(real: &Real) -> Ids {
-        let power = |name: &str| {
-            (real.data.powers.iter())
-                .position(|p| p.name() == name && p.built())
-                .expect("the Concord's power") as u8
-        };
         Ids {
             great_hive: real.building("Great Hive"),
             chamber: real.building("Chrysalis Chamber"),
@@ -79,7 +73,7 @@ impl Ids {
             pikes: real.unit("Bone Pikes"),
             crossbows: real.unit("Crossbow Auditors"),
             forms: [real.unit("Spitters"), real.unit("Burrowers")],
-            raise: power("Raise the Bound"),
+            raise: real.power("Raise the Bound"),
         }
     }
 }
@@ -129,47 +123,26 @@ impl Script {
                 },
             )
         };
-        let own = |p: PlayerId, unit: UnitId| -> Vec<RegimentHandle> {
-            let mut h: Vec<RegimentHandle> = (world.regiments.iter())
-                .filter(|r| r.owner == p && r.unit == unit)
-                .map(|r| r.handle)
-                .collect();
-            h.sort_by_key(|h| h.index);
-            h
-        };
         if t == BUILD_AT {
             let hall = toward(self.starts[0], self.middle, 12);
-            let at = |b: u16, near: (i32, i32)| {
-                nearest(world, near, |x, y| world.can_build(b, (x, y), 0).is_ok())
-                    .expect("room to build")
+            // Each piece on the nearest ground where it can go up.
+            let lay = |p: PlayerId, building: u16, near: (i32, i32)| {
+                let (x, y) = nearest(world, near, |x, y| {
+                    world.can_build(building, (x, y), 0).is_ok()
+                })
+                .expect("room to build");
+                order(
+                    p,
+                    Command::SpawnStructure {
+                        building,
+                        tile: (x as i16, y as i16),
+                        turn: 0,
+                    },
+                )
             };
-            let hive = at(ids.great_hive, hall);
-            out.push(order(
-                0,
-                Command::SpawnStructure {
-                    building: ids.great_hive,
-                    tile: (hive.0 as i16, hive.1 as i16),
-                    turn: 0,
-                },
-            ));
-            let chamber = at(ids.chamber, toward(self.starts[0], self.middle, 4));
-            out.push(order(
-                0,
-                Command::SpawnStructure {
-                    building: ids.chamber,
-                    tile: (chamber.0 as i16, chamber.1 as i16),
-                    turn: 0,
-                },
-            ));
-            let relic = at(ids.reliquary, self.middle);
-            out.push(order(
-                1,
-                Command::SpawnStructure {
-                    building: ids.reliquary,
-                    tile: (relic.0 as i16, relic.1 as i16),
-                    turn: 0,
-                },
-            ));
+            out.push(lay(0, ids.great_hive, hall));
+            out.push(lay(0, ids.chamber, toward(self.starts[0], self.middle, 4)));
+            out.push(lay(1, ids.reliquary, self.middle));
         }
         if t == RAISE_AT {
             let mut taken = Vec::new();
@@ -194,7 +167,10 @@ impl Script {
             put(1, ids.crossbows, behind, out);
         }
         if t == COCOON_AT {
-            for (regiment, into) in own(0, ids.skitterlings).into_iter().zip(ids.forms) {
+            for (regiment, into) in regiments_of(world, 0, ids.skitterlings)
+                .into_iter()
+                .zip(ids.forms)
+            {
                 if world.can_evolve(0, regiment, into).is_ok() {
                     out.push(order(0, Command::Evolve { regiment, into }));
                 }
@@ -239,10 +215,7 @@ impl Script {
         // The Concord raises the Bound, looking once a second, as soon as it
         // can pay and a grave holds enough.
         if t.is_multiple_of(TICKS_PER_SECOND) {
-            let tiles = |p: u8| match world.powers()[usize::from(p)].effect {
-                PowerEffect::Raise { tiles, .. } => tiles,
-                _ => 0,
-            };
+            let tiles = |p: u8| world.powers()[usize::from(p)].effect.reach().unwrap_or(0);
             if !self.raised && world.can_use_power(1, ids.raise).is_ok() {
                 let fullest = (world.graves().map(|(at, _)| at))
                     .map(|at| (at, world.corpses_near(at, tiles(ids.raise))))

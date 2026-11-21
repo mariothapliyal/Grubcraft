@@ -39,14 +39,12 @@ use gc_fixed::{Angle, Fx, FxVec2};
 use crate::conquest::Conquest;
 use crate::hash::StateHasher;
 use crate::nav::Nav;
-use crate::powers::Meter;
+use crate::powers::{Meter, put_down, rings_round, sized, spot_among};
 use crate::regiments::Regiments;
 use crate::stances::Stances;
 use crate::structures::{Refusal, Role, Structures, TITHE};
 use crate::veins::within;
-use crate::{
-    Formation, MAX_PARTIES, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, UnitStats,
-};
+use crate::{MAX_PARTIES, PlayerId, RegimentHandle, TICKS_PER_SECOND, UnitId, UnitStats};
 
 /// The most Tithe a player holds.
 pub const MAX_TITHE: u32 = 250;
@@ -113,6 +111,15 @@ impl Tithe {
         if let Some(p) = self.points.get_mut(usize::from(player)) {
             *p = u32::from(*p).saturating_sub(points) as u8;
         }
+    }
+
+    /// `player` pays `points` if they have them: whether they did.
+    pub(crate) fn try_spend(&mut self, player: PlayerId, points: u32) -> bool {
+        let can = self.points(player) >= points;
+        if can {
+            self.spend(player, points);
+        }
+        can
     }
 
     pub(crate) fn gain(&mut self, player: PlayerId, points: u32) {
@@ -273,12 +280,15 @@ impl Conquest {
     /// counts a second, and crumbles a soldier when its time is up (gone,
     /// with the last).
     pub(crate) fn crumble(&mut self, regs: &mut Regiments) {
+        if !self.units.iter().any(|u| u.undead) {
+            return;
+        }
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
             }
-            let unit = self.unit(regs.unit[i]);
-            if !unit.undead
+            let undead = (self.units.get(usize::from(regs.unit[i]))).is_some_and(|u| u.undead);
+            if !undead
                 || regs.summoned_left[i] > 0
                 || self.keeps_at(regs.owner[i], regs.position[i])
             {
@@ -292,9 +302,8 @@ impl Conquest {
             regs.crumble[i] = 0;
             regs.crumble_one(i);
             if regs.models[i] == 0 {
-                self.stop_work(i);
                 regs.vanish_from_fight(i);
-                regs.despawn(regs.handle(i));
+                self.remove(i, regs);
             }
         }
     }
@@ -310,23 +319,22 @@ impl Conquest {
         units: &[UnitStats],
         stances: &Stances,
         player: PlayerId,
-        (unit, tiles): (UnitId, u8),
+        unit: UnitId,
+        tiles: u8,
         at: FxVec2,
         lasts: u16,
     ) -> Result<RegimentHandle, Refusal> {
-        let mut stats = *units.get(usize::from(unit)).ok_or(Refusal::Unknown)?;
         let corpses = self.tithe.corpses_near(at, tiles);
         if corpses < u32::from(MIN_RAISED) {
             return Err(Refusal::NoCorpses);
         }
-        stats.models = stats.models.min(u16::try_from(corpses).unwrap_or(u16::MAX));
-        stats.files = stats.files.min(stats.models);
-        let (spot, facing) =
-            place(regs, nav, stances, &stats, player, [at].into_iter()).ok_or(Refusal::Crowded)?;
-        let h = regs
-            .spawn(player, unit, spot, facing, &stats)
+        let models = Some(u16::try_from(corpses).unwrap_or(u16::MAX));
+        let stats = sized(units, unit, models).ok_or(Refusal::Unknown)?;
+        let spots = core::iter::once(at).chain(rings_round(at, 0));
+        let spot = spot_among(regs, nav, &stats, player, spots).ok_or(Refusal::Crowded)?;
+        let facing = facing_foe(regs, stances, player, spot);
+        let h = put_down(regs, units, player, unit, (spot, facing), models, lasts)
             .ok_or(Refusal::NoRoom)?;
-        regs.summoned_left[h.index as usize] = lasts;
         self.tithe.dig(at, tiles, stats.models);
         Ok(h)
     }
@@ -367,66 +375,27 @@ impl Conquest {
         units: &[UnitStats],
         stances: &Stances,
         player: PlayerId,
-        (unit, tiles): (UnitId, u8),
+        unit: UnitId,
+        tiles: u8,
         at: FxVec2,
         lasts: u16,
     ) -> Result<RegimentHandle, Refusal> {
         let stats = *units.get(usize::from(unit)).ok_or(Refusal::Unknown)?;
         let post = (self.hamlet_near(regs, stances, player, at, tiles)).ok_or(Refusal::NoHamlet)?;
-        let (spot, facing) =
-            place(regs, nav, stances, &stats, player, rings(post)).ok_or(Refusal::Crowded)?;
-        let h = regs
-            .spawn(player, unit, spot, facing, &stats)
-            .ok_or(Refusal::NoRoom)?;
-        regs.summoned_left[h.index as usize] = lasts;
-        Ok(h)
+        let spot =
+            spot_among(regs, nav, &stats, player, rings_round(post, 0)).ok_or(Refusal::Crowded)?;
+        let facing = facing_foe(regs, stances, player, spot);
+        put_down(regs, units, player, unit, (spot, facing), None, lasts).ok_or(Refusal::NoRoom)
     }
 }
 
-/// Spots round `centre`, eight to a ring, nearest ring first: 3 tiles out,
-/// then every 3 more, to 12.
-fn rings(centre: FxVec2) -> impl Iterator<Item = FxVec2> {
-    (1..=4).flat_map(move |ring| {
-        let out = 3 * ring;
-        [
-            (0, 1),
-            (1, 1),
-            (1, 0),
-            (1, -1),
-            (0, -1),
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
-        ]
-        .map(|(x, y)| centre + FxVec2::new(Fx::from_int(x * out), Fx::from_int(y * out)))
-    })
-}
-
-/// The first of `spots` where open ground holds a regiment of `stats` of
-/// `player`'s whole block (a spot near blocked ground settled to ground
-/// that does), facing the nearest enemy regiment (or north with none).
-/// `None` if none does or the regiment pool is full.
-fn place(
-    regs: &Regiments,
-    nav: &Nav,
-    stances: &Stances,
-    stats: &UnitStats,
-    player: PlayerId,
-    spots: impl Iterator<Item = FxVec2>,
-) -> Option<(FxVec2, Angle)> {
-    if regs.free.is_empty() {
-        return None;
-    }
-    let berth = Regiments::berth_of(stats, Formation::Line, stats.files, stats.models);
-    let at = spots
-        .filter(|&at| nav.walkable(player, at))
-        .map(|at| nav.settle(player, at, berth))
-        .find(|&at| nav.fits(player, at, berth))?;
+/// Which way a regiment of `player`'s put down at `at` faces: towards the
+/// nearest enemy regiment, or north with none.
+fn facing_foe(regs: &Regiments, stances: &Stances, player: PlayerId, at: FxVec2) -> Angle {
     let foe = (0..regs.alive.len())
         .filter(|&r| regs.alive[r] && stances.hostile(player, regs.owner[r]))
         .min_by_key(|&r| ((regs.position[r] - at).length_sq_raw(), r));
-    let facing = foe.map_or(Angle::ZERO, |r| Angle::of_vec(regs.position[r] - at));
-    Some((at, facing))
+    foe.map_or(Angle::ZERO, |r| Angle::of_vec(regs.position[r] - at))
 }
 
 impl Regiments {

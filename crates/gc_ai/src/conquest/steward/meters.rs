@@ -22,7 +22,7 @@ use gc_sim::{Command, Meter, PowerEffect, PowerTarget, UnitId};
 use glam::Vec2;
 
 use super::super::Sense;
-use super::super::kit::{KitBuilding, KitUnit};
+use super::super::kit::KitBuilding;
 use super::super::spymaster;
 use super::{Clicks, Look, Steward, class_slot};
 use crate::perception::{to_fx_vec, v2};
@@ -40,7 +40,7 @@ const INDENTURE_FROM: u32 = 12;
 /// How near its buildings an enemy army makes it hire militia, in tiles.
 const AT_HOME: f32 = 25.0;
 /// How far from home a hamlet it hires from may be, in tiles.
-const HAMLET_REACH: f32 = 40.0;
+const HAMLET_REACH: u8 = 40;
 /// How far back from the building its army marches on the forward
 /// Reliquary goes, in tiles, and how near one already standing makes
 /// another needless.
@@ -137,7 +137,22 @@ impl Steward {
         look: &Look,
         rally: Option<Vec2>,
     ) {
-        if s.kit.chamber().is_none() || look.tier < 2 {
+        let Some(chamber) = s.kit.chamber() else {
+            return;
+        };
+        let grown = (look.mine.iter()).any(|m| m.view.building == chamber.id && m.finished());
+        if look.tier < 2 || !grown {
+            return;
+        }
+        let near_home = |p: Vec2| {
+            self.home.is_some_and(|h| h.distance(p) <= HOME)
+                || rally.is_some_and(|at| at.distance(p) <= HOME)
+        };
+        let mut idle = (look.army.iter())
+            .filter(|r| !r.engaged && !r.moving && near_home(r.pos))
+            .filter(|r| s.kit.evolutions(r.unit).next().is_some())
+            .peekable();
+        if idle.peek().is_none() {
             return;
         }
         let mut by_class = [0usize; 3];
@@ -149,21 +164,13 @@ impl Steward {
         let mix = self.mix(s);
         let heavy = spymaster::heavy_foes(s);
         let foes: Vec<Vec2> = spymaster::enemy_army(s).map(|r| r.pos).collect();
-        let near_home = |p: Vec2| {
-            self.home.is_some_and(|h| h.distance(p) <= HOME)
-                || rally.is_some_and(|at| at.distance(p) <= HOME)
-        };
-        for r in &look.army {
-            let options: Vec<&KitUnit> = s.kit.evolutions(r.unit).collect();
-            if options.is_empty()
-                || r.engaged
-                || r.moving
-                || !near_home(r.pos)
-                || foes.iter().any(|f| f.distance(r.pos) <= SAFE)
-            {
+        for r in idle {
+            if foes.iter().any(|f| f.distance(r.pos) <= SAFE) {
                 continue;
             }
-            let options: Vec<(UnitId, usize, bool)> = (options.iter())
+            let options: Vec<(UnitId, usize, bool)> = s
+                .kit
+                .evolutions(r.unit)
                 .filter(|u| s.world.can_evolve(s.party, r.handle, u.id).is_ok())
                 .filter_map(|u| {
                     let info = s.view.units.get(usize::from(u.id))?;
@@ -211,6 +218,9 @@ impl Steward {
         let raise_bound = find(|e, d| matches!(e, PowerEffect::Raise { .. }) && d > 0);
         let indenture = find(|e, d| matches!(e, PowerEffect::Raise { .. }) && d == 0);
         let hire = find(|e, _| matches!(e, PowerEffect::Hire { .. }));
+        if raise_bound.is_none() && indenture.is_none() && hire.is_none() {
+            return;
+        }
         let cast = |clicks: &mut Clicks, power: usize, at: Vec2| {
             let target = PowerTarget::Point(to_fx_vec(at));
             clicks.give(
@@ -221,11 +231,12 @@ impl Steward {
                 },
             )
         };
-        let tiles = |p: usize| match powers[p].effect {
-            PowerEffect::Raise { tiles, .. } | PowerEffect::Hire { tiles, .. } => tiles,
-            _ => 0,
+        let tiles = |p: usize| powers[p].effect.reach().unwrap_or(0);
+        let graves: Vec<Vec2> = if raise_bound.is_some() || indenture.is_some() {
+            s.world.graves().map(|(at, _)| v2(at)).collect()
+        } else {
+            Vec::new()
         };
-        let graves: Vec<Vec2> = s.world.graves().map(|(at, _)| v2(at)).collect();
         // The grave with the most corpses within reach of it, as a raising
         // there would find them, of those `ok` takes.
         let fullest = |p: usize, ok: &dyn Fn(Vec2) -> bool, least: u32| {
@@ -261,12 +272,12 @@ impl Steward {
             }
         }
         if let (Some(p), Some(home)) = (hire, self.home) {
+            // The nearest hamlet no enemy holds, as the hiring goes by.
             let attacked = foes.iter().any(|f| f.distance(home) <= AT_HOME);
-            let hamlet = (s.world.trade_posts().iter().map(|&h| v2(h)))
-                .filter(|h| h.distance(home) <= HAMLET_REACH)
-                .min_by(|a, b| a.distance(home).total_cmp(&b.distance(home)));
-            if attacked && let Some(at) = hamlet {
-                cast(clicks, p, at);
+            if attacked
+                && let Some(at) = s.world.hamlet_near(s.party, to_fx_vec(home), HAMLET_REACH)
+            {
+                cast(clicks, p, v2(at));
             }
         }
     }

@@ -330,14 +330,11 @@ impl Conquest {
     /// training.
     pub(crate) fn bank(&self, regs: &Regiments, p: PlayerId) -> Bank {
         let (grub, marrow) = self.economy.store(p);
-        let mut used = self.economy.supply_in_use(&self.units, regs);
-        self.production
-            .in_training(&self.structures, &self.units, &mut used);
         let (larvae, larva_room) = self.structures.larvae_ready(p);
         Bank {
             grub,
             marrow,
-            supply_used: used.get(usize::from(p)).copied().unwrap_or(0),
+            supply_used: self.supply_used(regs, p),
             supply_cap: self.structures.supply_cap(p),
             larvae,
             larva_room,
@@ -968,7 +965,7 @@ impl Conquest {
     }
 
     /// Regiment slot `i` leaves the field, its jobs and loads with it.
-    fn remove(&mut self, i: usize, regs: &mut Regiments) {
+    pub(crate) fn remove(&mut self, i: usize, regs: &mut Regiments) {
         self.stop_work(i);
         self.economy.forget(i);
         regs.despawn(regs.handle(i));

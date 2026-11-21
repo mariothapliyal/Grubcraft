@@ -31,10 +31,23 @@ use crate::regiments::Regiments;
 use crate::structures::Refusal;
 use crate::{PlayerId, RegimentHandle, UnitId, UnitStats, morale};
 
+/// What evolving a regiment would take and give: what a player is shown
+/// before they cocoon it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Evolution {
+    /// The soldiers that would come out.
+    pub out: u16,
+    /// Its price.
+    pub grub: u32,
+    pub marrow: u32,
+    /// How long the cocoon would last, in ticks.
+    pub ticks: u16,
+}
+
 impl Conquest {
     /// What `owner`'s evolving their regiment slot `r` into `into` would
-    /// need, and why it can't, if it can't: the soldiers that would come
-    /// out and the Grub and Marrow to pay. Says nothing of the store.
+    /// take and give, and why it can't, if it can't. Says nothing of the
+    /// store.
     fn evolution(
         &self,
         regs: &Regiments,
@@ -42,7 +55,7 @@ impl Conquest {
         owner: PlayerId,
         r: usize,
         into: UnitId,
-    ) -> Result<(u16, u32, u32), Refusal> {
+    ) -> Result<Evolution, Refusal> {
         let to = self.unit(into);
         let (Some(from), Some(at), Some(stats)) = (
             to.evolves_from,
@@ -80,13 +93,17 @@ impl Conquest {
         let (models, full) = (regs.models[r], regs.full_models[r].max(1));
         let out = emerging(models, full, stats.models);
         let n = u32::from(stats.models.max(1));
-        let grub = u32::from(to.cost_grub) * u32::from(out) / n;
-        let marrow = u32::from(to.cost_marrow) * u32::from(out) / n;
-        Ok((out, grub, marrow))
+        let ticks = st.tempo_ticks(u32::from(to.train_ticks)).max(1);
+        Ok(Evolution {
+            out,
+            grub: u32::from(to.cost_grub) * u32::from(out) / n,
+            marrow: u32::from(to.cost_marrow) * u32::from(out) / n,
+            ticks: u16::try_from(ticks).unwrap_or(u16::MAX),
+        })
     }
 
-    /// Whether `owner` could evolve their regiment `h` into `into` now,
-    /// and if not, why (the store included).
+    /// What `owner`'s evolving their regiment `h` into `into` now would
+    /// take and give, or why they can't (the store included).
     pub(crate) fn can_evolve(
         &self,
         regs: &Regiments,
@@ -94,13 +111,13 @@ impl Conquest {
         owner: PlayerId,
         h: RegimentHandle,
         into: UnitId,
-    ) -> Result<(), Refusal> {
+    ) -> Result<Evolution, Refusal> {
         let r = regs.resolve(h).ok_or(Refusal::Unknown)?;
-        let (_, grub, marrow) = self.evolution(regs, units, owner, r, into)?;
-        if !self.economy.can_afford(owner, grub, marrow) {
+        let e = self.evolution(regs, units, owner, r, into)?;
+        if !self.economy.can_afford(owner, e.grub, e.marrow) {
             return Err(Refusal::Price);
         }
-        Ok(())
+        Ok(e)
     }
 
     /// `owner` evolves their regiment `h` into `into`: it pays and goes
@@ -116,22 +133,20 @@ impl Conquest {
         let Some(r) = regs.resolve(h) else {
             return false;
         };
-        let Ok((_, grub, marrow)) = self.evolution(regs, units, owner, r, into) else {
+        let Ok(e) = self.evolution(regs, units, owner, r, into) else {
             return false;
         };
-        if !self.economy.spend(owner, grub, marrow) {
+        if !self.economy.spend(owner, e.grub, e.marrow) {
             return false;
         }
-        let ticks = self
-            .structures
-            .tempo_ticks(u32::from(self.unit(into).train_ticks));
         self.stop_work(r);
-        regs.cocoon(r, into, u16::try_from(ticks.max(1)).unwrap_or(u16::MAX));
+        regs.cocoon(r, into, e.ticks);
         true
     }
 
-    /// `owner`'s supply in use, a cocoon's at its new form's.
-    fn supply_used(&self, regs: &Regiments, owner: PlayerId) -> u32 {
+    /// `owner`'s supply in use, a cocoon's at its new form's and what is
+    /// in training included.
+    pub(crate) fn supply_used(&self, regs: &Regiments, owner: PlayerId) -> u32 {
         let mut used = self.economy.supply_in_use(&self.units, regs);
         self.production
             .in_training(&self.structures, &self.units, &mut used);

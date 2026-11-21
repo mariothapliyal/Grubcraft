@@ -586,10 +586,7 @@ impl Running {
                 same_icon &= icon == this;
             }
             if let Some(f) = self.world.regiments.feedback(h) {
-                orders = orders.with(Orders::One(
-                    order_of(f.doing),
-                    f.waiting.map(|w| wait_of(&self.world.regiments, h, w)),
-                ));
+                orders = orders.with(Orders::One(order_of(f.doing), f.waiting.map(wait_of)));
                 // The reasons of those who waver, together.
                 if r.morale != MoraleState::Steady {
                     why |= f.why;
@@ -1299,7 +1296,7 @@ impl Running {
                 models: r.models,
                 max_models: stats.models,
                 order: order_of(f.doing),
-                waiting: f.waiting.map(|w| wait_of(&self.world.regiments, h, w)),
+                waiting: f.waiting.map(wait_of),
                 queued: r.queued,
                 state: card_state(r.morale),
                 why: f.why,
@@ -2125,23 +2122,19 @@ fn card_state(m: MoraleState) -> CardState {
     }
 }
 
-/// Whole seconds in `ticks`, rounded up.
-fn secs_left(ticks: u16) -> u16 {
-    u16::try_from(u32::from(ticks).div_ceil(gc_sim::TICKS_PER_SECOND)).unwrap_or(u16::MAX)
-}
-
-/// What the simulation says holds regiment `h` up, as the UI's wait (a
-/// cocoon with its seconds left).
-fn wait_of(regiments: &gc_sim::Regiments, h: gc_sim::RegimentHandle, w: gc_sim::Waiting) -> Wait {
+/// What the simulation says holds a regiment up, as the UI's wait (a
+/// cocoon with its whole seconds left).
+fn wait_of(w: gc_sim::Waiting) -> Wait {
     use gc_sim::Waiting;
-    let cocoon_ticks = regiments.cocoon_of(h).map_or(0, |(ticks, _)| ticks);
     match w {
         Waiting::Pinned => Wait::Pinned,
         Waiting::DrivenBack => Wait::DrivenBack,
         Waiting::Reforming => Wait::Reforming,
         Waiting::FilingThrough => Wait::FilingThrough,
         Waiting::Trapped => Wait::Trapped,
-        Waiting::Cocooned => Wait::Cocooned(secs_left(cocoon_ticks)),
+        Waiting::Cocooned(ticks) => {
+            Wait::Cocooned(crate::faction_powers::cooling_secs(u32::from(ticks)) as u16)
+        }
         Waiting::Winded => Wait::Winded,
         Waiting::Reinforcing => Wait::Reinforcing,
         Waiting::ShortToReinforce => Wait::ShortToReinforce,

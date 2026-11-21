@@ -122,7 +122,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Throne Hive (upgrades Great Hive) | 3 | 600 / 250 | 90 s | 4,200 | Living | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Pustule | 1 | 40 / 0 | 20 s | 400 | Living | 2×2 | +8 | Carries the root-veins 8 tiles further; kill it and every seep beyond stops delivering. |
 | Hatchery Pit | 1 | 120 / 0 | 40 s | 900 | Living | 3×3 |  | Holds 3 more larvae and spawns its own every 12 s. |
-| Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments can cocoon into their tier-2 forms anywhere on the field (not built yet). |
+| Chrysalis Chamber | 2 | 150 / 50 | 50 s | 1,100 | Living | 3×3 |  | Unlocks evolutions: tier-1 regiments cocoon where they stand into their tier-2 forms. |
 | Moth Roost | 2 | 150 / 40 | 50 s | 1,000 | Living | 3×3 |  | Lets larvae hatch into Drone-Moths. |
 | Gorge | 2 | 180 / 60 | 60 s | 1,300 | Living | 4×4 |  | Lets larvae hatch into Broodmother Bulks and, at tier 3, the Colossus Maw. |
 | Spine Mound | 1 | 100 / 0 | 35 s | 900 | Living | 2×2 |  | Flings spines at ground and air. Range 30, 1 × 10 damage every 2 s. |
@@ -165,7 +165,7 @@ Towers shoot like a few archers on a roof. Each volley fires the listed number o
 | Grand Bourse (upgrades Exchange) | 3 | 600 / 250 | 90 s | 4,400 | Fortified | 5×5 | +32 | Tier 3: monsters, top upgrades and a third hero. |
 | Waystation | 1 | 200 / 0 | 60 s | 1,200 | Structure | 4×4 |  | Your own trade post for caravan routes (half rate), and a Marrow drop-off for expansions. |
 | Tenement | 1 | 80 / 0 | 25 s | 650 | Structure | 3×3 | +10 | Housing. |
-| Reliquary | 1 | 75 / 0 | 20 s | 400 | Structure | 2×2 |  | Every model that dies within 12 tiles, on any side, pays 1 Tithe (not built yet). Can be built anywhere you have vision. |
+| Reliquary | 1 | 75 / 0 | 20 s | 400 | Structure | 2×2 |  | Every model that dies within 12 tiles, on any side, pays 1 Tithe. Can be built anywhere you have vision. |
 | Ossuary | 1 | 150 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Raises the undead: Bone Pikes, Gravewardens, and at tier 3 the Mausoleum Engine and the Insolvent. |
 | Guildhall | 1 | 160 / 0 | 50 s | 1,400 | Structure | 4×4 |  | Trains living infantry and cavalry. Living regiments reinforce near it. |
 | Lantern Spire | 2 | 160 / 50 | 55 s | 1,000 | Structure | 3×3 |  | Trains Lantern Wraiths. |

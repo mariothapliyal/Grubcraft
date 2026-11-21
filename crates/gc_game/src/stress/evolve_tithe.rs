@@ -295,13 +295,6 @@ fn cocoons(real: &Real, report: &mut Report) {
     }
 }
 
-/// The power of the Concord's called `name`.
-fn power(real: &Real, name: &str) -> u8 {
-    (real.data.powers.iter())
-        .position(|p| p.name() == name)
-        .unwrap_or_else(|| panic!("no power called {name}")) as u8
-}
-
 fn cast(power: u8, at: FxVec2) -> PlayerCommand {
     order(
         0,
@@ -376,7 +369,7 @@ fn tithe(real: &Real, report: &mut Report) {
     // The fight by the Reliquary, until the Concord has Tithe for its
     // other contracts or five minutes have gone. As soon as it can pay,
     // it raises the Bound at the fullest grave, into the fight.
-    let raise = power(real, "Raise the Bound");
+    let raise = real.power("Raise the Bound");
     let mut raised = None;
     let mut tried = false;
     let mut raised_at = 0;
@@ -473,7 +466,7 @@ fn tithe(real: &Real, report: &mut Report) {
         .filter(|&(_, n)| n >= 4)
         .and_then(|(at, _)| {
             let before = handles(&world);
-            let stats = report.tick(&mut world, &[cast(power(real, "Indenture"), at)]);
+            let stats = report.tick(&mut world, &[cast(real.power("Indenture"), at)]);
             (stats.commands_applied == 1)
                 .then(|| new_since(&world, &before).first().copied())
                 .flatten()
@@ -489,7 +482,7 @@ fn tithe(real: &Real, report: &mut Report) {
     // from the one nobody holds.
     let before = handles(&world);
     let guard = spawn(&mut world, 1, &[(yari, centre(100, 30))], WEST)[0];
-    let hire = power(real, "Hire Militia");
+    let hire = real.power("Hire Militia");
     let held = report.tick(&mut world, &[cast(hire, hamlets[1])]);
     report.check(
         "no militia from a hamlet an enemy holds",

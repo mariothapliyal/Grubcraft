@@ -256,7 +256,8 @@ fn a_regiment_cocoons_then_comes_out_as_its_evolution() {
         Err(Refusal::Unknown),
         "not an evolution"
     );
-    assert_eq!(w.can_evolve(0, h, BEETLES), Ok(()));
+    let quote = w.can_evolve(0, h, BEETLES).expect("it can evolve");
+    assert_eq!((quote.out, quote.grub, quote.marrow), (9, 45, 9));
     let paid = w.bank(0).unwrap();
     assert!(evolve(&mut w, h));
     let bank = w.bank(0).unwrap();
@@ -264,7 +265,7 @@ fn a_regiment_cocoons_then_comes_out_as_its_evolution() {
     assert_eq!((paid.grub - bank.grub, paid.marrow - bank.marrow), (45, 9));
     assert_eq!(bank.supply_used, 3, "its new form's supply from the start");
     let feedback = w.regiments.feedback(h).unwrap();
-    assert_eq!(feedback.waiting, Some(Waiting::Cocooned));
+    assert!(matches!(feedback.waiting, Some(Waiting::Cocooned(t)) if t > 0));
     assert!(!evolve(&mut w, h), "already in a cocoon");
     // It can't be marched off.
     let at = w.regiments.get(h).unwrap().position;

@@ -9,6 +9,7 @@ use std::fmt::Write;
 
 use gc_data::ConquestUnitRecord;
 use gc_data::conquest::UNIT_CONSUMED;
+use gc_sim::evolve::Evolution;
 use gc_sim::gates::GateMode;
 use gc_sim::structures::{CANCEL_REFUND_PERCENT, Refusal};
 use gc_sim::{
@@ -169,37 +170,60 @@ impl Running {
         })
     }
 
-    /// Why none of the selected regiments can evolve into `into` now, if
-    /// none can: the first refusal.
-    fn evolve_refusal(&self, into: UnitId) -> Option<Refusal> {
+    /// What evolving the first selected regiment that can into `into` would
+    /// take and give, or why none can: the first refusal. A refusal that is
+    /// the player's (tier, chamber, supply, price) holds for all of them,
+    /// so the rest aren't asked.
+    fn evolve_quote(&self, into: UnitId) -> Result<Evolution, Refusal> {
         let side = self.sandbox.side;
-        let mut first = None;
-        for h in self.evolvers(into) {
+        let mut first = Refusal::Unknown;
+        for (k, h) in self.evolvers(into).enumerate() {
             match self.world.can_evolve(side, h, into) {
-                Ok(()) => return None,
-                Err(e) => first = first.or(Some(e)),
+                Ok(e) => return Ok(e),
+                Err(e @ (Refusal::Busy | Refusal::Unknown)) => {
+                    if k == 0 {
+                        first = e;
+                    }
+                }
+                Err(e) => return Err(e),
             }
         }
-        first
+        Err(first)
     }
 
-    /// The tooltip of the button that evolves into `into`: what it is, what
-    /// a full regiment pays and how long the cocoon lasts.
-    fn evolve_tip(&self, into: UnitId) -> String {
+    /// The tooltip of the button that evolves into `into`, into `tip`: what
+    /// it is, what the first regiment that can would pay and how long its
+    /// cocoon lasts (a full regiment's price if none can).
+    fn evolve_tip(&self, into: UnitId, quote: Result<Evolution, Refusal>, tip: &mut String) {
         let (Some(u), Some(name)) = (
             self.data.conquest_units.get(usize::from(into)),
             self.units.names.get(usize::from(into)),
         ) else {
-            return String::new();
+            return;
         };
-        let mut cost = format!("{} Grub", u.cost_grub);
-        if u.cost_marrow > 0 {
-            let _ = write!(cost, ", {} Marrow", u.cost_marrow);
+        let _ = write!(tip, "Cocoon the selected regiments to come out as {name}: ");
+        let (grub, marrow) = match quote {
+            Ok(e) => {
+                let _ = write!(tip, "{} soldiers for ", e.out);
+                (e.grub, e.marrow)
+            }
+            Err(_) => {
+                let _ = write!(tip, "a full regiment for ");
+                (u32::from(u.cost_grub), u32::from(u.cost_marrow))
+            }
+        };
+        let _ = write!(tip, "{grub} Grub");
+        if marrow > 0 {
+            let _ = write!(tip, ", {marrow} Marrow");
         }
-        let secs = u32::from(u.train_ticks).div_ceil(gc_sim::TICKS_PER_SECOND);
-        format!(
-            "Cocoon the selected regiments to come out as {name}: {cost} for a full regiment (less for a weaker one), {secs} s in the cocoon, helpless meanwhile. Needs a Chrysalis Chamber."
-        )
+        if let Ok(e) = quote {
+            let secs = crate::faction_powers::cooling_secs(u32::from(e.ticks));
+            let _ = write!(tip, ", {secs} s in the cocoon");
+        }
+        let _ = write!(
+            tip,
+            ", helpless meanwhile. Needs tier 2 and a Chrysalis Chamber."
+        );
     }
 
     /// Cocoon every selected regiment of the form `into` evolves from that
@@ -334,7 +358,7 @@ impl Running {
                 Some(Ok(w)) if !w.afford => Some(Refusal::Price),
                 _ => None,
             },
-            Action::Evolve(u) => self.evolve_refusal(u),
+            Action::Evolve(u) => self.evolve_quote(u).err(),
             Action::Dump => self
                 .world
                 .bank(side)
@@ -443,8 +467,11 @@ impl Running {
                     ));
                 }
                 Action::Evolve(u) => {
-                    if let Some(r) = self.data.conquest_units.get(usize::from(u)) {
-                        price(detail, r.cost_grub, r.cost_marrow);
+                    let quote = self.evolve_quote(u);
+                    match (quote, self.data.conquest_units.get(usize::from(u))) {
+                        (Ok(e), _) => price(detail, e.grub, e.marrow),
+                        (Err(_), Some(r)) => price(detail, r.cost_grub, r.cost_marrow),
+                        (Err(_), None) => {}
                     }
                     label.push_str(short(
                         self.units
@@ -452,7 +479,7 @@ impl Running {
                             .get(usize::from(u))
                             .map_or("", String::as_str),
                     ));
-                    tips[i] = self.evolve_tip(u);
+                    self.evolve_tip(u, quote, &mut tips[i]);
                 }
                 Action::CallOff => {
                     label.push_str("Cancel");

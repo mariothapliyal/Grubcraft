@@ -51,6 +51,13 @@ impl Real {
         ["Yari Ashigaru", "Katana Samurai", "Yumi Ashigaru"].map(|n| self.unit(n))
     }
 
+    /// The faction power called `name`, of those the game builds.
+    pub fn power(&self, name: &str) -> u8 {
+        (self.data.powers.iter())
+            .position(|p| p.name() == name && p.built())
+            .unwrap_or_else(|| panic!("no power called {name}")) as u8
+    }
+
     /// The building called `name`.
     pub fn building(&self, name: &str) -> u16 {
         self.table.named(name)

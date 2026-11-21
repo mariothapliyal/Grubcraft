@@ -1342,14 +1342,21 @@ impl World {
             .is_some_and(|c| c.keeps_at(player, point))
     }
 
-    /// Whether `player` could evolve their regiment `h` into unit type
-    /// `into` now (see [`Command::Evolve`]), and if not, why.
+    /// The hamlet nearest `at`, within `tiles` of it, that `player` could
+    /// hire militia from: one no enemy of theirs holds (see [`tithe`]).
+    pub fn hamlet_near(&self, player: PlayerId, at: FxVec2, tiles: u8) -> Option<FxVec2> {
+        (self.conquest.as_ref())?.hamlet_near(&self.regiments, &self.stances, player, at, tiles)
+    }
+
+    /// What `player`'s evolving their regiment `h` into unit type `into`
+    /// now would take and give (see [`Command::Evolve`]), or why they
+    /// can't.
     pub fn can_evolve(
         &self,
         player: PlayerId,
         h: RegimentHandle,
         into: UnitId,
-    ) -> Result<(), Refusal> {
+    ) -> Result<evolve::Evolution, Refusal> {
         let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
         c.can_evolve(&self.regiments, &self.units, player, h, into)
     }
