@@ -47,6 +47,7 @@ pub mod power;
 pub mod powers;
 pub mod production;
 mod regiments;
+pub mod reinforce;
 pub mod rivers;
 pub mod scenario;
 pub mod sky;
@@ -132,7 +133,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 88;
+pub const SIM_VERSION: u32 = 89;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -1280,6 +1281,31 @@ impl World {
         Some(&self.conquest.as_ref()?.structures)
     }
 
+    /// Whether regiment `h` is short of soldiers and of a type that
+    /// reinforces (see [`reinforce`]; Conquest only): something trains it
+    /// and it isn't undead or summoned. Says nothing of where it stands.
+    pub fn can_reinforce(&self, h: RegimentHandle) -> bool {
+        let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
+            return false;
+        };
+        c.short_of_men(&self.regiments, &self.units, i)
+    }
+
+    /// Whether `at` is in reach of one of player `p`'s reinforcement
+    /// points (see [`reinforce`]; Conquest only).
+    pub fn reinforces_at(&self, p: PlayerId, at: FxVec2) -> bool {
+        self.conquest
+            .as_ref()
+            .is_some_and(|c| c.reinforces_at(p, at))
+    }
+
+    /// Where a regiment of player `p`'s at `from` might stand to
+    /// reinforce: a few tiles out from the nearest of `p`'s reinforcement
+    /// points, on the side facing `from` (Conquest only; `None` with none).
+    pub fn reinforce_spot(&self, p: PlayerId, from: FxVec2) -> Option<FxVec2> {
+        self.conquest.as_ref()?.reinforce_spot(p, from)
+    }
+
     /// Grub, Marrow and the nodes (Conquest only).
     pub fn economy(&self) -> Option<&Economy> {
         Some(&self.conquest.as_ref()?.economy)
@@ -2032,6 +2058,7 @@ impl World {
             }
             if self.tick.is_multiple_of(TICKS_PER_SECOND) {
                 towns::mend_in_towns(&conquest.structures.towns, &mut self.regiments, &self.units);
+                conquest.reinforce(&mut self.regiments, &self.units);
                 if self.flood.rivers.floodplain_shut() {
                     (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
                 }

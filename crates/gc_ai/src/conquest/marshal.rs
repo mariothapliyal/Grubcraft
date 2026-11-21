@@ -11,7 +11,7 @@
 
 use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
-use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
+use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::raider::Raider;
@@ -22,7 +22,7 @@ use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
 use crate::orders::{Act, Orders, ROUTINE, Want, brigade_group};
-use crate::perception::{Class, Perception, Seen, right_of, v2};
+use crate::perception::{Class, Perception, Seen, right_of, to_fx_vec, v2};
 use crate::personality::Personality;
 
 /// Ticks between the Marshal's looks.
@@ -113,6 +113,10 @@ const ABREAST: f32 = 7.0;
 const ROW_MOST: usize = 6;
 /// Tiles between one row of a march and the next.
 const ROW_BEHIND: f32 = 6.0;
+/// A regiment at home below this share of its soldiers goes to reinforce.
+const MEND_BELOW: f32 = 0.85;
+/// One out on an attack goes back to reinforce below this share.
+const MEND_OUT_BELOW: f32 = 0.5;
 /// An attack falls back once the army is down to this share of the
 /// soldiers it set out with.
 const FALL_BACK_SHARE: f32 = 0.35;
@@ -184,6 +188,9 @@ pub struct Marshal {
     /// Regiments that did not get up a wall in time: not sent again till
     /// the fight ends.
     off_walls: Vec<RegimentHandle>,
+    /// Regiments at home sent to stand by a reinforcement point until they
+    /// are back to full strength (see [`gc_sim::reinforce`]).
+    mending: Vec<RegimentHandle>,
     /// After falling back, it gathers until this tick before setting out.
     regroup_until: u32,
     /// Since when it has gone for the Heart without holding it.
@@ -230,6 +237,7 @@ impl Marshal {
             manning: Vec::new(),
             climbing: Vec::new(),
             off_walls: Vec::new(),
+            mending: Vec::new(),
             regroup_until: 0,
             contesting_since: None,
             heart_beaten: 0,
@@ -641,12 +649,15 @@ impl Marshal {
             }
             Goal::Defend(_) => {}
         }
+        // Those short of soldiers at home refill first, and neither wait at
+        // the rally point nor join an attack till they are full.
+        self.pick_mending(s, army);
         // Those out march on the goal; the rest wait at the rally point,
         // and join an attack once there are enough of them.
         let waiting: Vec<&Seen> = army
             .iter()
             .copied()
-            .filter(|r| !self.out.contains(&r.handle))
+            .filter(|r| !self.out.contains(&r.handle) && !self.mending.contains(&r.handle))
             .collect();
         if matches!(self.goal, Goal::Attack(_) | Goal::Heart(_))
             && waiting.len() >= REINFORCE
@@ -658,9 +669,10 @@ impl Marshal {
         self.man_walls(s, army, home);
         let (going, staying): (Vec<&Seen>, Vec<&Seen>) = army
             .iter()
-            .filter(|r| !self.mans(r.handle))
+            .filter(|r| !self.mans(r.handle) && !self.mending.contains(&r.handle))
             .partition(|r| self.out.contains(&r.handle));
         let face = home.map_or(Vec2::Y, |h| (rally - h).normalize_or(Vec2::Y));
+        self.send_to_reinforce(s, army);
         march(s, &staying, rally, face, &mut self.wants, 1, false);
         if !matches!(self.goal, Goal::Heart(_)) {
             self.holders.clear();
@@ -710,6 +722,66 @@ impl Marshal {
                     self.knock_down(s, &going, at, s.now < self.raid_until);
                 }
             }
+        }
+    }
+
+    /// The regiments at home (not out) short of soldiers that go to stand
+    /// by a reinforcement point until they are full again: from below
+    /// [`MEND_BELOW`] of their strength, so one soldier short isn't worth
+    /// the walk. A threat at home sends them out with the rest.
+    fn pick_mending(&mut self, s: &Sense, army: &[&Seen]) {
+        let was = core::mem::take(&mut self.mending);
+        // With nowhere to refill, they stay with the army.
+        if (self.rally).is_none_or(|at| s.world.reinforce_spot(s.party, to_fx_vec(at)).is_none()) {
+            return;
+        }
+        // A badly cut-up regiment out on an attack, out of the fight and
+        // steady (rallied, say), leaves it to refill: it would only be lost.
+        // Its men no longer count for the attack, gone or set out with.
+        if !matches!(self.goal, Goal::Defend(_)) {
+            for r in army {
+                let spent = r.strength() < MEND_OUT_BELOW
+                    && !r.engaged
+                    && r.morale == MoraleState::Steady
+                    && self.out.contains(&r.handle)
+                    && s.world.can_reinforce(r.handle);
+                if spent {
+                    self.out.retain(|h| *h != r.handle);
+                    self.set_out_with = self.set_out_with.saturating_sub(u32::from(r.full));
+                }
+            }
+        }
+        self.mending.extend(
+            army.iter()
+                .filter(|r| !self.out.contains(&r.handle))
+                .filter(|r| was.contains(&r.handle) || r.strength() < MEND_BELOW)
+                .filter(|r| s.world.can_reinforce(r.handle))
+                .map(|r| r.handle),
+        );
+    }
+
+    /// Each regiment refilling that isn't in reach of a reinforcement
+    /// point yet marches to the nearest one.
+    fn send_to_reinforce(&mut self, s: &Sense, army: &[&Seen]) {
+        for r in army.iter().filter(|r| self.mending.contains(&r.handle)) {
+            if s.world.reinforces_at(s.party, to_fx_vec(r.pos)) {
+                continue;
+            }
+            let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
+                continue;
+            };
+            self.wants.push(Want {
+                regiment: r.handle,
+                act: Act::Move {
+                    to: s.terrain.clamp(v2(spot), 2.0),
+                    facing: None,
+                    pace: s.view.pace(r),
+                    hunt: false,
+                },
+                priority: ROUTINE,
+                // Each to its own spot: an order of its own.
+                group: 0,
+            });
         }
     }
 

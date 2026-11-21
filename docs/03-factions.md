@@ -288,7 +288,7 @@ A guild of merchant-necromancers who run the Reach's trade roads, buy the dead a
 | Hire Militia | 30 | Hire a Grubfolk militia regiment from a friendly hamlet |
 
 ### Signature rule: **The dead don't rout**
-Concord undead regiments ignore morale entirely. Instead they **crumble**: they cannot be reinforced with Grub, only with Tithe, and they slowly lose models when far from a Reliquary. Their living units (crossbowmen, cavalry riders) do rout. Mixing reliable dead with fragile living is the faction's puzzle.
+Concord undead regiments ignore morale entirely. Instead they are meant to **crumble**: they slowly lose models when far from a Reliquary (crumbling is not built yet). They can never be reinforced with Grub; only Tithe will refill them, and Tithe is not built yet, so for now a dead regiment is not reinforced at all. Their living units (crossbowmen, cavalry riders) do rout, and reinforce like any other regiment. Mixing reliable dead with fragile living is the faction's puzzle.
 
 ### Structures
 | Structure | Role |

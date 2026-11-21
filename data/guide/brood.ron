@@ -42,7 +42,7 @@
         (
             name: "Pustule",
             blurb: "Housing that carries root-veins 8 tiles further, so far seeps keep delivering Grub. Build a line of them to expand.",
-            summary: "Housing that also carries the root-veins 8 tiles further, so far seeps keep delivering Grub. Kill one and every seep beyond it stops delivering, so guard the chain. Build a line of them to expand, and a few extra for supply.",
+            summary: "Housing that also carries the root-veins 8 tiles further, so far seeps keep delivering Grub. Kill one and every seep beyond it stops delivering, so guard the chain. Build a line of them to expand, and a few extra for supply. Damaged regiments refill anywhere on your veins.",
             notes: [],
             tips: [
                 (icon: Grub, text: "Chain Pustules out toward far seeps, since their root-veins bring that Grub home."),

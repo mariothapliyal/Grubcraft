@@ -220,6 +220,13 @@ pub(crate) struct Conquest {
     /// Shattered regiments that left the field this tick (see
     /// [`Conquest::see_off_shattered`]).
     pub(crate) left: Vec<crate::RegimentHandle>,
+    /// Which building types are reinforcement points, by building id (see
+    /// [`crate::reinforce`]).
+    pub(crate) reinforcing: Vec<bool>,
+    /// Scratch for [`Conquest::reinforce`]: the reinforcement points
+    /// standing and their reach, room for every slot kept so a tick never
+    /// allocates.
+    pub(crate) points: Vec<(u32, i32)>,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -235,14 +242,17 @@ pub(crate) fn overgrown(terrain: &Terrain, [x, y, w, d]: [i32; 4]) -> bool {
 
 impl Conquest {
     pub(crate) fn new(setup: &ConquestSetup, regiments: usize) -> Conquest {
+        let structures = Structures::new(
+            setup.buildings,
+            setup.structures,
+            regiments,
+            setup.build_percent,
+        );
         Conquest {
             units: setup.units.to_vec(),
-            structures: Structures::new(
-                setup.buildings,
-                setup.structures,
-                regiments,
-                setup.build_percent,
-            ),
+            reinforcing: crate::reinforce::reinforcing_types(&structures, setup.units),
+            points: Vec::with_capacity(setup.structures as usize),
+            structures,
             economy: Economy::new(setup, regiments),
             production: Production::new(setup.structures as usize, setup.build_percent),
             powers: Powers::new(setup.powers),

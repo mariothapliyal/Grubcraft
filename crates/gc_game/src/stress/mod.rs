@@ -37,6 +37,7 @@ mod mountain;
 mod new_orders;
 mod orders;
 mod rally;
+mod reinforce;
 mod town;
 mod wall_line;
 mod walls;
@@ -82,6 +83,7 @@ const SCENARIOS: &[Scenario] = &[
     rally::SCENARIO,
     gated_towns::SCENARIO,
     new_orders::SCENARIO,
+    reinforce::SCENARIO,
     brigade::FORD,
     brigade::CORNER,
     brigade::GATE,

@@ -475,6 +475,11 @@ regiment_fields! {
     /// Standing in its own side's walled town, as of the last survey
     /// (see [`crate::towns`]).
     in_town: bool = false,
+    /// Reinforcing (see [`crate::reinforce`]): the seconds it has stood
+    /// quiet within reach of its side's reinforcement points since its
+    /// last new soldier, or [`crate::reinforce::REFILL_SHORT`] while its
+    /// owner can't pay for the next one; 0 when it isn't reinforcing.
+    refill: u8 = 0,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
@@ -1471,6 +1476,32 @@ impl Regiments {
         }
     }
 
+    /// A new soldier of `hp` hit points joins slot `i` at the back, up to
+    /// its full strength (see [`crate::reinforce`]). A rank that was short
+    /// only for want of men widens back towards its frontage, and a wedge
+    /// stays three deep.
+    pub(crate) fn add_soldier(&mut self, i: usize, hp: u16) {
+        let k = self.models[i];
+        debug_assert!(k < self.full_models[i].min(MAX_MODELS), "a full regiment");
+        if k >= self.full_models[i].min(MAX_MODELS) {
+            return;
+        }
+        self.hp[i * MAX_MODELS as usize + usize::from(k)] = hp;
+        self.models[i] = k + 1;
+        if self.files[i] == k && self.files[i] < self.frontage[i] {
+            self.files[i] = k + 1;
+        }
+        self.keep_wedge(i);
+    }
+
+    /// A wedge stays a wedge, three deep, as its riders fall or join.
+    fn keep_wedge(&mut self, i: usize) {
+        if self.formation[i] == Formation::Wedge {
+            let files = Formation::Wedge.files(0, self.models[i]);
+            (self.files[i], self.frontage[i]) = (files, files);
+        }
+    }
+
     /// The last `count` soldiers of slot `i` lose `amount` hit points
     /// each, none of them below one: hurt, not killed (a fall, say).
     pub(crate) fn wound_last(&mut self, i: usize, count: usize, amount: u32) {
@@ -1580,14 +1611,14 @@ impl Regiments {
 
     /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
     fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
-        // A wedge stays a wedge, three deep, as its riders fall.
-        if self.formation[i] == Formation::Wedge {
-            let files = Formation::Wedge.files(0, self.models[i]);
-            (self.files[i], self.frontage[i]) = (files, files);
-        }
+        self.keep_wedge(i);
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);
+        // Hurt: no new soldiers until it has stood quiet again.
+        if bled > 0 || lost > 0 {
+            self.refill[i] = 0;
+        }
         self.deaths[i] = self.deaths[i].saturating_add(lost);
     }
 
@@ -1700,6 +1731,10 @@ impl Regiments {
             Some(Waiting::FilingThrough)
         } else if self.winded_left[i] > 0 {
             Some(Waiting::Winded)
+        } else if self.refill[i] == crate::reinforce::REFILL_SHORT {
+            Some(Waiting::ShortToReinforce)
+        } else if self.refill[i] > 0 {
+            Some(Waiting::Reinforcing)
         } else {
             None
         }
@@ -2252,6 +2287,11 @@ pub enum Waiting {
     Trapped,
     /// Out of breath after a run: slower, with weaker blows.
     Winded,
+    /// Taking on new soldiers near its side's reinforcement points (see
+    /// [`crate::reinforce`]).
+    Reinforcing,
+    /// Near them, but its owner can't pay for the next soldier.
+    ShortToReinforce,
 }
 
 impl RegimentView {
