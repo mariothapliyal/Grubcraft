@@ -118,9 +118,19 @@ const EXTEND: Fx = Fx::from_int(30);
 /// many tiles before its place comes level.
 const FUNNEL: Fx = Fx::from_int(6);
 
-/// Members of a row within this of each other along the track, in tiles,
-/// are level when the row files.
-const TURN: Fx = Fx::from_int(3);
+/// A member comes no nearer behind the block of the member before it in
+/// its way than half the room their places leave, or half this, in
+/// tiles, slowing over the last of it (by this much pace, in tiles a
+/// tick, for each tile of room left).
+const FOLLOW: Fx = Fx::ONE;
+const FOLLOW_GAIN: Fx = Fx::from_ratio(1, 4);
+
+/// In [`Regiments::step_with`]: at its place, in step.
+pub(crate) const IN_STEP: u8 = 0x80;
+
+/// When a row files, a member this much further along the track than
+/// the one before it in the file, in tiles, takes its turn.
+const OVERTAKE: Fx = Fx::from_int(2);
 
 const QUARTER: Fx = Fx::from_ratio(1, 4);
 
@@ -393,6 +403,9 @@ pub(crate) struct Brigades {
     side: Vec<Fx>,
     want_station: Vec<Fx>,
     want_side: Vec<Fx>,
+    /// The fewest files it narrows to (see [`Regiments::files_floor`]):
+    /// as many as the ground about the track has room for.
+    floor: Vec<u16>,
     /// Room to work in, kept between ticks; not part of the state.
     list: Vec<u32>,
     room: Vec<[Fx; 2]>,
@@ -409,10 +422,13 @@ struct Placing {
     back: Fx,
     half_width: Fx,
     half_depth: Fx,
-    /// Its turn when its row files: those furthest along the track go
-    /// first (in steps of a few tiles), and of those level, the nearest
-    /// the track.
-    turn: (i32, i32),
+    /// How far along the track it is, and the place it had: when its row
+    /// files, each holds its turn unless one behind it in the file is
+    /// clearly further along.
+    arc: Fx,
+    was: Fx,
+    /// The width of ground it has when that is less than its block.
+    tight: Option<Fx>,
     side: Fx,
     station: Fx,
 }
@@ -437,6 +453,7 @@ impl Brigades {
             side: vec![Fx::ZERO; regiments],
             want_station: vec![Fx::ZERO; regiments],
             want_side: vec![Fx::ZERO; regiments],
+            floor: vec![0; regiments],
             list: Vec::with_capacity(MAX_MEMBERS),
             room: vec![[Fx::ZERO; 2]; PROFILE],
             leg: vec![FxVec2::ZERO; nav::MAX_WAYPOINTS],
@@ -459,7 +476,7 @@ impl Brigades {
             number,
             goal,
             place: marching.then(|| b.lane(b.arc - self.station[i], self.side[i])),
-            in_step: regs.step_with[i] != 0,
+            in_step: regs.step_with[i] & IN_STEP != 0,
             behind: b.arc - self.station[i] - self.arc[i],
             steering: self.mode[i] as u8,
         })
@@ -538,6 +555,7 @@ impl Brigades {
     fn leave(&mut self, regs: &mut Regiments, i: usize) {
         self.of[i] = 0;
         regs.step_with[i] = 0;
+        regs.files_floor[i] = 0;
     }
 
     /// Regiment slot `i` leaves its brigade and marches on alone to where
@@ -734,7 +752,7 @@ impl Brigades {
             self.disband(regs, slot);
             return;
         }
-        self.steer(slot, owner, regs, nav, tick);
+        self.steer(slot, owner, regs, units, nav, tick);
     }
 
     /// Find the brigade in `slot` its track, from the member nearest the
@@ -919,7 +937,9 @@ impl Brigades {
             back: Fx::ZERO,
             half_width: Fx::ZERO,
             half_depth: Fx::ZERO,
-            turn: (0, 0),
+            arc: Fx::ZERO,
+            was: Fx::ZERO,
+            tight: None,
             side: Fx::ZERO,
             station: Fx::ZERO,
         }; MAX_MEMBERS];
@@ -933,7 +953,9 @@ impl Brigades {
             m[k] = Placing {
                 slot: i as u32,
                 lat,
-                turn: (-(self.arc[i].raw() / TURN.raw()), lat.raw().abs()),
+                arc: self.arc[i],
+                was: self.want_station[i],
+                tight: None,
                 back: -rel.dot(b.ahead),
                 half_width: full.half_width,
                 half_depth: now.half_depth.max(full.half_depth),
@@ -977,16 +999,18 @@ impl Brigades {
             (margin(r), margin(l))
         };
         // How far behind the anchor the front of `m[first..last]` must be
-        // to be clear of those placed before them in their way (`placed`
-        // of them), at least `row_back`.
-        let clear_of = |m: &[Placing], placed: usize, first: usize, last: usize, row_back: Fx| {
+        // to be clear of those placed before them (`m[..first]`) in their
+        // way, at least `row_back`; `staggered`: each stands as far behind
+        // that front as it will on arriving, else all level.
+        let clear_of = |m: &[Placing], first: usize, last: usize, row_back: Fx, staggered: bool| {
             let mut clear = row_back;
             for p in &m[first..last] {
-                for q in &m[..placed] {
+                let own = if staggered { p.back - row_back } else { Fx::ZERO };
+                for q in &m[..first] {
                     let beside = p.half_width + q.half_width + GROUP_GAP - QUARTER / 2;
                     if (p.side - q.side).abs() < beside {
                         let behind = q.station + q.half_depth + p.half_depth + GROUP_GAP;
-                        clear = clear.max(behind - (p.back - row_back));
+                        clear = clear.max(behind - own);
                     }
                 }
             }
@@ -1024,7 +1048,7 @@ impl Brigades {
                 for p in &mut m[row..end] {
                     p.side = p.lat + shift;
                 }
-                let clear = clear_of(m, row, row, end, row_back);
+                let clear = clear_of(m, row, end, row_back, true);
                 if clear == station {
                     break;
                 }
@@ -1037,14 +1061,48 @@ impl Brigades {
                 row = end;
                 continue;
             }
-            // Filing: those furthest along first, as many as fit side by
-            // side, and the rest fold in behind them.
+            // Filing: this row and each behind it that cannot march
+            // abreast either go through as one file, those furthest
+            // along first, as many as fit side by side.
+            let mut deep = m[row..end].iter().map(|p| p.half_depth).max().unwrap_or(Fx::ZERO);
+            while end < n {
+                let mut next = end + 1;
+                while next < n && m[next].back - m[end].back <= ROW {
+                    next += 1;
+                }
+                let (mut lo, mut hi, mut depth) = (Fx::MAX, Fx::MIN, Fx::ZERO);
+                for p in &m[end..next] {
+                    lo = lo.min(p.lat - p.half_width);
+                    hi = hi.max(p.lat + p.half_width);
+                    depth = depth.max(p.half_depth);
+                }
+                let (r, l) = room_at(m[end].back, depth);
+                if hi - lo <= r + l {
+                    break;
+                }
+                deep = deep.max(depth);
+                end = next;
+            }
+            // In the order they had, but one clearly further along than
+            // the one before it goes before it.
+            m[row..end].sort_unstable_by_key(|p| (p.was.raw(), p.lat.raw().abs(), p.slot));
+            for _ in row..end {
+                let mut swapped = false;
+                for k in row..end - 1 {
+                    if m[k + 1].arc > m[k].arc + OVERTAKE {
+                        m.swap(k, k + 1);
+                        swapped = true;
+                    }
+                }
+                if !swapped {
+                    break;
+                }
+            }
             let mut first = row;
             while first < end {
                 let mut station = row_back;
                 let mut last = first + 1;
                 for _ in 0..2 {
-                    m[first..end].sort_unstable_by_key(|p| (p.turn, p.slot));
                     let (r, l) = room_at(station, deep);
                     let wide = r + l;
                     let mut across = m[first].half_width * 2;
@@ -1059,24 +1117,31 @@ impl Brigades {
                     }
                     // Closed up about the track, or in the middle of a
                     // gap too narrow for one.
-                    m[first..last].sort_unstable_by_key(|p| (p.lat.raw(), p.slot));
+                    let mut abreast = [m[0]; MAX_MEMBERS];
+                    let abreast = &mut abreast[..last - first];
+                    abreast.copy_from_slice(&m[first..last]);
+                    abreast.sort_unstable_by_key(|p| (p.lat.raw(), p.slot));
                     let mut x = if across > wide {
                         (r - l) / 2 - across / 2
                     } else {
                         (-across / 2).clamp(-l, r - across)
                     };
-                    for p in &mut m[first..last] {
+                    for a in abreast.iter() {
+                        let p = (m[first..last].iter_mut())
+                            .find(|p| p.slot == a.slot)
+                            .expect("one of these");
+                        p.tight = (across > wide).then_some(wide);
                         p.side = x + p.half_width;
                         x += p.half_width * 2 + GROUP_GAP;
                     }
-                    let clear = clear_of(m, first, first, last, row_back);
+                    let clear = clear_of(m, first, last, row_back, false);
                     if clear == station {
                         break;
                     }
                     station = clear;
                 }
                 for p in &mut m[first..last] {
-                    p.station = station + (p.back - row_back);
+                    p.station = station;
                 }
                 first = last;
             }
@@ -1086,6 +1151,13 @@ impl Brigades {
             let i = p.slot as usize;
             self.want_station[i] = p.station;
             self.want_side[i] = p.side;
+            // It keeps its frontage where the ground about the track has
+            // room for it, whatever lies beside where it happens to be
+            // (a block waiting its turn by a cliff is not in a narrows).
+            self.floor[i] = p.tight.map_or(u16::MAX, |wide| {
+                let files = units[regs.unit[i] as usize].spacing(regs.formation[i]).0;
+                (wide.raw() / files.raw().max(1)).clamp(1, i32::from(u16::MAX)) as u16
+            });
             if self.mode[i] == Mode::Plain {
                 self.station[i] = p.station;
                 self.side[i] = p.side;
@@ -1136,7 +1208,8 @@ impl Brigades {
             let in_step = self.mode[i] == Mode::Lane
                 && behind.abs() < IN_STEP_ALONG
                 && across.abs() < IN_STEP_ACROSS;
-            regs.step_with[i] = if in_step { tag } else { 0 };
+            regs.step_with[i] = if in_step { tag | IN_STEP } else { tag };
+            regs.files_floor[i] = self.floor[i];
             if self.kept_up(regs, i, behind) {
                 lag = lag.max(behind);
                 tail = tail.min(self.arc[i]);
@@ -1160,8 +1233,25 @@ impl Brigades {
 
     /// Give each member of the brigade in `slot` the point it walks at
     /// this tick and its pace.
-    fn steer(&mut self, slot: usize, owner: PlayerId, regs: &mut Regiments, nav: &mut Nav, tick: u32) {
+    fn steer(
+        &mut self,
+        slot: usize,
+        owner: PlayerId,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+        tick: u32,
+    ) {
         let b = self.pool[slot];
+        // Where each stands across the track, and its block.
+        let mut stand = [(Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
+        for (k, &i) in self.list.iter().enumerate() {
+            let i = i as usize;
+            let (at, dir) = b.at(self.arc[i]);
+            let across = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x));
+            let block = Block::of(regs, units, i);
+            stand[k] = (across, block.half_width, block.half_depth);
+        }
         for k in 0..self.list.len() {
             let i = self.list[k] as usize;
             let here = regs.position[i];
@@ -1178,8 +1268,7 @@ impl Brigades {
             // it is across the track and waits, and folds in to its lane
             // as its place comes level: not all into the lane at once,
             // on top of each other.
-            let (at, dir) = b.at(self.arc[i]);
-            let across = (here - at).dot(FxVec2::new(-dir.y, dir.x));
+            let (across, half_width, half_depth) = stand[k];
             let ahead = (self.arc[i] - place).clamp(Fx::ZERO, FUNNEL);
             let side = self.side[i] + (across - self.side[i]) * (ahead / FUNNEL);
             let lane = b.lane(full, side);
@@ -1231,6 +1320,24 @@ impl Brigades {
             } else {
                 regs.speed[i]
             };
+            // It follows the member before it in its way, however far
+            // ahead its own place has got: a file held up at a ford
+            // closes up no tighter than it marches.
+            let mut pace = pace;
+            for (n, &j) in self.list.iter().enumerate() {
+                let j = j as usize;
+                let (theirs, their_width, their_depth) = stand[n];
+                if self.arc[j] > self.arc[i]
+                    && self.station[j] < self.station[i]
+                    && (across - theirs).abs() < half_width + their_width
+                {
+                    let depths = half_depth + their_depth;
+                    let gap = self.arc[j] - self.arc[i] - depths;
+                    // No nearer than half the room their places leave.
+                    let least = (self.station[i] - self.station[j] - depths).clamp(Fx::ZERO, FOLLOW) / 2;
+                    pace = pace.min(((gap - least) * FOLLOW_GAIN).max(Fx::ZERO));
+                }
+            }
             regs.target[i] = Some(target);
             regs.pace[i] = pace;
             self.set[i] = target;
@@ -1262,6 +1369,7 @@ impl Brigades {
             self.side[i] = from.side[i];
             self.want_station[i] = from.want_station[i];
             self.want_side[i] = from.want_side[i];
+            self.floor[i] = from.floor[i];
         }
     }
 
@@ -1318,6 +1426,7 @@ impl Brigades {
             ] {
                 h.i32(v.raw());
             }
+            h.u16(self.floor[i]);
         }
     }
 }

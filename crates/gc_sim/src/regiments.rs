@@ -168,10 +168,15 @@ macro_rules! regiment_fields {
             /// hash and snapshots (a loaded game shows no reasons until the
             /// next knock or check).
             pub(crate) why: Vec<u16>,
-            /// The brigade it is marching in step with: at its place in
-            /// it (see [`crate::brigades`]), as a tag, or 0. Worked out
-            /// afresh each tick it marches, so not part of the state.
+            /// The brigade steering it (see [`crate::brigades`]), as a
+            /// tag, or 0; with [`crate::brigades::IN_STEP`] set while it
+            /// is at its place in it. Worked out afresh each tick it
+            /// marches, so not part of the state.
             pub(crate) step_with: Vec<u8>,
+            /// The fewest files a brigade lets it narrow to in tight
+            /// ground (see [`Regiments::squeeze`]), or 0 for no say; set
+            /// each tick like `step_with`.
+            pub(crate) files_floor: Vec<u16>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -190,6 +195,7 @@ macro_rules! regiment_fields {
                     plans: Plans::with_capacity(n),
                     why: vec![0; n],
                     step_with: vec![0; n],
+                    files_floor: vec![0; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -201,6 +207,7 @@ macro_rules! regiment_fields {
                 self.plans.release(&mut self.plan[i]);
                 self.why[i] = 0;
                 self.step_with[i] = 0;
+                self.files_floor[i] = 0;
                 $(self.$name[i] = $free;)*
             }
 
@@ -1004,7 +1011,10 @@ impl Regiments {
             // bridge's deck): it narrows to fit on the way up to it, so it
             // files in as a column instead of jamming the mouth broadside.
             // (Open all round there, it is no narrows.)
+            // (Not a regiment a brigade steers: what it walks at is a
+            // point just ahead of it, not a turn of its route.)
             let ahead = (self.target[i])
+                .filter(|_| self.step_with[i] == 0)
                 .and_then(|t| nav.steer(i, t))
                 .and_then(|(w, _)| {
                     let d = w - at;
@@ -1022,7 +1032,8 @@ impl Regiments {
         let fit = (1..=frontage)
             .rev()
             .find(|&f| fits(f, Fx::ZERO))
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(self.files_floor[i].min(frontage));
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
             let narrower = files - (files - fit).div_ceil(2);
@@ -1074,7 +1085,7 @@ impl Regiments {
     /// Whether slots `i` and `j` are marching in step in the same
     /// brigade, each at its place: they leave each other be.
     pub(crate) fn in_step(&self, i: usize, j: usize) -> bool {
-        self.step_with[i] != 0 && self.step_with[i] == self.step_with[j]
+        self.step_with[i] & crate::brigades::IN_STEP != 0 && self.step_with[i] == self.step_with[j]
     }
 
     pub(crate) fn seeks_place(&self, j: usize) -> bool {
