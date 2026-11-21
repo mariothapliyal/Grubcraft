@@ -119,6 +119,7 @@ impl World {
             flood: self.flood.clone(),
             stranded: Vec::new(),
             flood_fords: None,
+            brigades: crate::brigades::Brigades::new(n as usize),
             regiments: Regiments::with_capacity(n),
         }
         .with_air()
@@ -217,6 +218,8 @@ impl World {
         }
         w.nav
             .copy_queue(&self.nav, |i| copied.get(i).copied().unwrap_or(false));
+        w.brigades
+            .copy_from(&self.brigades, |i| copied.get(i).copied().unwrap_or(false));
         w.generals = self
             .generals
             .as_ref()

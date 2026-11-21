@@ -168,6 +168,10 @@ macro_rules! regiment_fields {
             /// hash and snapshots (a loaded game shows no reasons until the
             /// next knock or check).
             pub(crate) why: Vec<u16>,
+            /// The brigade it is marching in step with: at its place in
+            /// it (see [`crate::brigades`]), as a tag, or 0. Worked out
+            /// afresh each tick it marches, so not part of the state.
+            pub(crate) step_with: Vec<u8>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -185,6 +189,7 @@ macro_rules! regiment_fields {
                     plan: vec![NO_PLAN; n],
                     plans: Plans::with_capacity(n),
                     why: vec![0; n],
+                    step_with: vec![0; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -195,6 +200,7 @@ macro_rules! regiment_fields {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
                 self.plans.release(&mut self.plan[i]);
                 self.why[i] = 0;
+                self.step_with[i] = 0;
                 $(self.$name[i] = $free;)*
             }
 
@@ -1065,6 +1071,12 @@ impl Regiments {
 
     /// Whether regiment `j` marches to a spot it was sent to stand at
     /// (see [`KEEP_PLACE`]).
+    /// Whether slots `i` and `j` are marching in step in the same
+    /// brigade, each at its place: they leave each other be.
+    pub(crate) fn in_step(&self, i: usize, j: usize) -> bool {
+        self.step_with[i] != 0 && self.step_with[i] == self.step_with[j]
+    }
+
     pub(crate) fn seeks_place(&self, j: usize) -> bool {
         self.keep[j] & KEEP_PLACE != 0
     }

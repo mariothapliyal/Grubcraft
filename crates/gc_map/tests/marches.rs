@@ -341,7 +341,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             target: b,
             facing: Some(facing),
             width: None,
-            brigade: 0,
+            brigade: std::env::var("BRIGADE").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         },
         &mut cmds,
     );
@@ -586,8 +586,21 @@ impl Trace {
             let (fs, rs) = u.spacing(r.formation);
             let (wd, dp) = formation::block_size(r.files, r.models, fs, rs);
             let v = r.facing.to_vec();
+            // In a brigade: its place in the body, and whether it is in
+            // step there.
+            let place = w.brigade(h).and_then(|b| Some((b.place?, b)));
+            let place = place.map_or(String::new(), |(p, b)| {
+                format!(
+                    ",{:.2},{:.2},{},{:.1},{}",
+                    f(p.x),
+                    f(p.y),
+                    u8::from(b.in_step),
+                    f(b.behind),
+                    b.steering
+                )
+            });
             s.push_str(&format!(
-                "{}[{:.2},{:.2},{:.3},{:.3},{:.2},{:.2},{},{}]",
+                "{}[{:.2},{:.2},{:.3},{:.3},{:.2},{:.2},{},{}{place}]",
                 if n > 0 { "," } else { "" },
                 f(r.position.x),
                 f(r.position.y),

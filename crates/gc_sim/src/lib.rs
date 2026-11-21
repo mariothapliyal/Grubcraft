@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 
 pub mod arrange;
 pub mod blueprints;
+pub mod brigades;
 pub mod bridges;
 pub mod champions;
 pub mod chords;
@@ -1138,6 +1139,8 @@ pub struct World {
     /// The rain's flood has just shut every ford (`Some(true)`) or opened
     /// them, for the walkable grid this tick (see `World::flash`).
     flood_fords: Option<bool>,
+    /// The brigades on the march (see [`brigades`]).
+    brigades: brigades::Brigades,
     pub regiments: Regiments,
 }
 
@@ -1186,6 +1189,7 @@ impl World {
             flood,
             stranded: Vec::new(),
             flood_fords: None,
+            brigades: brigades::Brigades::new(setup.capacities.regiments as usize),
             regiments: Regiments::with_capacity(setup.capacities.regiments),
         }
         .with_air()
@@ -1326,6 +1330,13 @@ impl World {
         let s = self.structures()?;
         let i = s.resolve(h)?;
         s.regrows(i).then(|| s.rooted(i))
+    }
+
+    /// The brigade regiment `h` marches in and its place in it (see
+    /// [`brigades`]), if it marches in one.
+    pub fn brigade(&self, h: RegimentHandle) -> Option<brigades::BrigadeView> {
+        let i = self.regiments.resolve(h)?;
+        self.brigades.view(&self.regiments, i)
     }
 
     /// Whether regiment `h` is a worker (Conquest only).
@@ -1955,6 +1966,13 @@ impl World {
             &self.units,
             &self.nav,
             self.map_tiles,
+        );
+        self.brigades.step(
+            &mut self.regiments,
+            &self.units,
+            &mut self.nav,
+            &self.terrain,
+            self.tick,
         );
         self.nav.plan(&mut self.regiments, &self.units);
         self.combat.mark_holders(&self.regiments, &self.nav);
@@ -3109,12 +3127,20 @@ impl World {
             facing,
             files,
             pace,
+            hunt,
             brigade,
-            ..
         } = step
         else {
             return false;
         };
+        // The same order sent again to a regiment marching in that
+        // brigade changes nothing.
+        if brigade != 0
+            && (self.regiments.resolve(h))
+                .is_some_and(|i| self.brigades.marching_to(i, brigade, target, facing))
+        {
+            return true;
+        }
         let order = Order {
             target,
             facing,
@@ -3127,7 +3153,11 @@ impl World {
         let i = h.index as usize;
         stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
         self.leave_off(h);
-        let _ = brigade;
+        // Not while the armies deploy (nobody marches yet), and not
+        // workers, who go about their own business.
+        if brigade != 0 && !self.deploying() && !self.is_worker(h) {
+            self.brigades.join(&mut self.regiments, i, brigade, hunt);
+        }
         true
     }
 
@@ -3909,6 +3939,7 @@ impl World {
             "regiments" => {
                 self.regiments.hash_into(h);
                 self.stances.hash_into(h);
+                self.brigades.hash_into(h);
             }
             "combat" => self.combat.hash_into(h),
             "pathfinding" => self.nav.hash_into(h),
