@@ -11,7 +11,7 @@
 
 use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
-use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
+use gc_sim::{MoraleState, PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::raider::Raider;
@@ -109,6 +109,8 @@ const WAITING: f32 = 20.0;
 const ABREAST: f32 = 7.0;
 /// A regiment at home below this share of its soldiers goes to reinforce.
 const MEND_BELOW: f32 = 0.85;
+/// One out on an attack goes back to reinforce below this share.
+const MEND_OUT_BELOW: f32 = 0.5;
 /// An attack falls back once the army is down to this share of the
 /// soldiers it set out with.
 const FALL_BACK_SHARE: f32 = 0.35;
@@ -726,6 +728,22 @@ impl Marshal {
         // With nowhere to refill, they stay with the army.
         if (self.rally).is_none_or(|at| s.world.reinforce_spot(s.party, to_fx_vec(at)).is_none()) {
             return;
+        }
+        // A badly cut-up regiment out on an attack, out of the fight and
+        // steady (rallied, say), leaves it to refill: it would only be lost.
+        // Its men no longer count for the attack, gone or set out with.
+        if !matches!(self.goal, Goal::Defend(_)) {
+            for r in army {
+                let spent = r.strength() < MEND_OUT_BELOW
+                    && !r.engaged
+                    && r.morale == MoraleState::Steady
+                    && self.out.contains(&r.handle)
+                    && s.world.can_reinforce(r.handle);
+                if spent {
+                    self.out.retain(|h| *h != r.handle);
+                    self.set_out_with = self.set_out_with.saturating_sub(u32::from(r.full));
+                }
+            }
         }
         self.mending.extend(
             army.iter()

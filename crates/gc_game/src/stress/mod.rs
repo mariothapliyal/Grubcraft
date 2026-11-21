@@ -36,6 +36,7 @@ mod mountain;
 mod new_orders;
 mod orders;
 mod rally;
+mod reinforce;
 mod town;
 mod wall_line;
 mod walls;
@@ -81,6 +82,7 @@ const SCENARIOS: &[Scenario] = &[
     rally::SCENARIO,
     gated_towns::SCENARIO,
     new_orders::SCENARIO,
+    reinforce::SCENARIO,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
