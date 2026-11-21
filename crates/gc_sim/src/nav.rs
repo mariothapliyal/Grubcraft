@@ -51,6 +51,10 @@ use crate::regiments::Regiments;
 use crate::structures::Refusal;
 use crate::{MAX_PARTIES, PlayerId, StateHasher, UnitStats};
 
+#[cfg(test)]
+#[path = "nav_link_tests.rs"]
+mod link_tests;
+
 /// Grid cells along one tile.
 pub const CELLS_PER_TILE: i32 = 2;
 /// Sector edge, in cells (16 tiles).
@@ -645,6 +649,8 @@ struct Search {
     /// its stamp), and the weights it reads.
     want: Vec<u32>,
     weights: Vec<u32>,
+    /// Legal steps in DIRS order over the weighed sector.
+    steps: Vec<u8>,
     stamp: u32,
     heap: BinaryHeap<Reverse<(u32, u32)>>,
     /// Search over the portal graph (two extra nodes: start and goal).
@@ -731,6 +737,7 @@ impl Search {
             seen: vec![0; cells],
             want: vec![0; cells],
             weights: vec![0; cells],
+            steps: vec![0; cells],
             stamp: 0,
             heap: BinaryHeap::with_capacity(cells * 8 + 8),
             node_g: vec![0; 2],
@@ -856,6 +863,21 @@ impl Search {
                 self.weights[((y - y0) * SECTOR + (x - x0)) as usize] = w;
             }
         }
+        let (w, h) = (x1 - x0, y1 - y0);
+        let open = |x: i32, y: i32| {
+            x >= 0 && y >= 0 && x < w && y < h && self.weights[(y * SECTOR + x) as usize] > 0
+        };
+        for y in 0..h {
+            for x in 0..w {
+                let mut steps = 0;
+                for (k, &(dx, dy)) in DIRS.iter().enumerate() {
+                    if open(x + dx, y + dy) && (k < 4 || open(x + dx, y) && open(x, y + dy)) {
+                        steps |= 1 << k;
+                    }
+                }
+                self.steps[(y * SECTOR + x) as usize] = steps;
+            }
+        }
     }
 
     /// [`Search::sector`] with no goal over the weights [`Search::weigh`]
@@ -865,8 +887,7 @@ impl Search {
     /// of `wanted` can't be reached.
     fn reach(&mut self, grid: &Grid, sec: u32, from: u32, wanted: &[u32]) {
         self.next_stamp();
-        let (x0, y0, x1, y1) = grid.sector_bounds(sec);
-        let (w, h) = (x1 - x0, y1 - y0);
+        let (x0, y0, _, _) = grid.sector_bounds(sec);
         let local = |c: u32| {
             let (x, y) = grid.xy(c);
             ((y - y0) * SECTOR + (x - x0)) as usize
@@ -884,9 +905,6 @@ impl Search {
         self.seen[l0] = self.stamp;
         self.g[l0] = 0;
         self.heap.push(Reverse((0, l0 as u32)));
-        let open = |weights: &[u32], x: i32, y: i32| {
-            x >= 0 && y >= 0 && x < w && y < h && weights[(y * SECTOR + x) as usize] > 0
-        };
         while let Some(Reverse((g, l))) = self.heap.pop() {
             let l = l as usize;
             if g != self.g[l] {
@@ -899,18 +917,14 @@ impl Search {
                     return;
                 }
             }
-            let (x, y) = (l as i32 % SECTOR, l as i32 / SECTOR);
             let here = self.weights[l];
-            for (k, &(dx, dy)) in DIRS.iter().enumerate() {
-                let (nx, ny) = (x + dx, y + dy);
-                if !open(&self.weights, nx, ny) {
-                    continue;
-                }
+            let mut steps = self.steps[l];
+            while steps != 0 {
+                let k = steps.trailing_zeros() as usize;
+                steps &= steps - 1;
+                let (dx, dy) = DIRS[k];
                 let diagonal = k >= 4;
-                if diagonal && !(open(&self.weights, x + dx, y) && open(&self.weights, x, y + dy)) {
-                    continue;
-                }
-                let nl = (ny * SECTOR + nx) as usize;
+                let nl = (l as i32 + dy * SECTOR + dx) as usize;
                 let ng = g + if diagonal { 7 } else { 5 } * (here + self.weights[nl]);
                 if (self.seen[nl] != self.stamp || ng < self.g[nl])
                     && self.heap.len() < self.heap.capacity()
