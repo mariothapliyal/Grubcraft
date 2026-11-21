@@ -259,6 +259,11 @@ impl Brigade {
         self.cum[self.len as usize - 1]
     }
 
+    /// Whether the anchor has come to the end of the track.
+    fn arrived(&self) -> bool {
+        !self.partial && self.arc >= self.total()
+    }
+
     /// Where the way that was found begins (what is left of it): before
     /// that the track is only its lead-in.
     fn start(&self) -> Fx {
@@ -525,6 +530,14 @@ impl Brigades {
     }
 
     /// How regiment slot `i` stands in its brigade, if it marches in one.
+    pub(crate) fn debug(&self, regs: &Regiments, i: usize) -> [f32; 12] {
+        let f = |x: Fx| x.raw() as f32 / 65536.0;
+        if self.of[i] == 0 { return [0.0; 12]; }
+        let b = &self.pool[usize::from(self.of[i]) - 1];
+        [f(b.arc), f(b.total()), f(self.arc[i]), f(self.station[i]), f(self.want_station[i]), f(self.side[i]), f(self.want_side[i]),
+         f(regs.pace[i]) * 20.0, f32::from(u8::from(self.held[i])), f32::from(self.stall[i]), self.mode[i] as u8 as f32, f(regs.speed[i]) * 20.0]
+    }
+
     pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
         let (number, goal) = self.of(i)?;
         let b = &self.pool[usize::from(self.of[i]) - 1];
@@ -824,10 +837,33 @@ impl Brigades {
         }
         let b = &mut self.pool[slot];
         b.arc += b.speed;
-        // Arrived: each walks the last of the way to its own place.
-        if !b.partial && b.arc + LEAD >= b.total() {
-            self.disband(regs, slot);
-            return;
+        if !b.partial {
+            // The anchor stops at the end of the track, and each member
+            // walks the last of the way to its own place as it comes
+            // near where the body has it there, or near the end of the
+            // track (the way on from there is its own, not a lane of the
+            // track's). Those still filing
+            // through a narrows behind keep their turns until they are
+            // through, and do not all make for their places at once
+            // through each other. (One the body would not wait for goes
+            // on alone once the anchor is in.)
+            b.arc = b.arc.min(b.total());
+            let b = self.pool[slot];
+            let tag = slot as u8 + 1;
+            for k in 0..self.list.len() {
+                let i = self.list[k] as usize;
+                let place = b.total() + (self.end[i] - b.centre).dot(b.ahead).min(Fx::ZERO);
+                let behind = b.arc - self.station[i] - self.arc[i];
+                if self.arc[i] + LEAD >= place || (b.arrived() && !self.kept_up(regs, i, behind)) {
+                    self.release(regs, i);
+                }
+            }
+            let of = &self.of;
+            self.list.retain(|&i| of[i as usize] == tag);
+            if self.list.len() < 2 {
+                self.disband(regs, slot);
+                return;
+            }
         }
         self.steer(slot, owner, regs, units, nav, tick);
     }
@@ -866,6 +902,46 @@ impl Brigades {
             }
         }
         self.list.truncate(kept);
+        // Nor does one whose place the ground cuts off from the rest of
+        // the body's (the far side of a cliff from them, a march of its
+        // own to reach): the places in plain sight of the middle of them
+        // all, and of each other from there, are the body's.
+        if nav.has_map() {
+            let centre = self.pool[slot].centre;
+            let mut with = [false; MAX_MEMBERS];
+            let mut next = [0u8; MAX_MEMBERS];
+            let (mut done, mut found) = (0, 0);
+            for k in 0..kept {
+                if nav.clear_line(owner, centre, self.end[self.list[k] as usize]) {
+                    with[k] = true;
+                    next[found] = k as u8;
+                    found += 1;
+                }
+            }
+            while done < found {
+                let from = self.end[self.list[next[done] as usize] as usize];
+                done += 1;
+                for k in 0..kept {
+                    if !with[k] && nav.clear_line(owner, from, self.end[self.list[k] as usize]) {
+                        with[k] = true;
+                        next[found] = k as u8;
+                        found += 1;
+                    }
+                }
+            }
+            let mut kept = 0;
+            for k in 0..self.list.len() {
+                let i = self.list[k] as usize;
+                if with[k] {
+                    self.list[kept] = i as u32;
+                    kept += 1;
+                } else {
+                    self.release(regs, i);
+                }
+            }
+            self.list.truncate(kept);
+        }
+        let kept = self.list.len();
         if kept < 2 {
             return false;
         }
@@ -1058,9 +1134,12 @@ impl Brigades {
         // The ground's width along the track, from ahead of the front.
         let top = b.arc - front + look;
         for k in 0..PROFILE {
-            // (Behind where the track was searched from, as there: the
-            // lead-in is a line, not a way anyone found.)
-            let (p, dir) = b.at_smooth((top - SAMPLE * k as i32).max(Fx::ZERO));
+            // (Behind where the track was searched from, as there, and
+            // past its end as at its end: the lead-in and the line on
+            // from the end are lines, not ways anyone found.)
+            let arc = (top - SAMPLE * k as i32).max(Fx::ZERO);
+            let arc = if b.partial { arc } else { arc.min(b.total()) };
+            let (p, dir) = b.at_smooth(arc);
             self.room[k] = nav.room_sides(owner, p, Angle::of_vec(dir), reach, |q| terrain.wet(q));
         }
         // The least room right and left of the track between two points
@@ -1277,49 +1356,74 @@ impl Brigades {
         let b = self.pool[slot];
         let tag = slot as u8 + 1;
         let (mut lag, mut tail) = (Fx::ZERO, b.arc);
-        // Each place as it is now, and the room its block takes.
+        // Each place as it is now and the room its block takes; and where
+        // each stands along and across the track, and whether it is
+        // marching with the body.
+        let right = |dir: FxVec2| FxVec2::new(-dir.y, dir.x);
         let mut places = [(Fx::ZERO, Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
+        let mut stands = [(Fx::ZERO, Fx::ZERO, false); MAX_MEMBERS];
         for (k, &i) in self.list.iter().enumerate() {
             let i = i as usize;
-            let block = Block::drawn_up(regs, units, i, regs.position[i]);
-            places[k] = (self.station[i], self.side[i], block.half_width, block.half_depth);
-        }
-        for k in 0..self.list.len() {
-            let i = self.list[k] as usize;
             let here = regs.position[i];
             if self.mode[i] != Mode::Astray {
                 self.arc[i] = b.project(here, self.arc[i] - SAME_PLACE, self.arc[i] + LEAD);
             }
-            // Its place moves gently to where the ground last put it:
-            // up the body as fast as it could itself gain on the anchor.
-            // It comes no nearer behind another's place in its way than
-            // their blocks allow: a rear rank closes up as those before
-            // it move aside, not through them.
-            let to = self.want_station[i];
-            self.station[i] = if to < self.station[i] {
-                let (station, side, half_width, half_depth) = places[k];
+            let (at, dir) = b.at(self.arc[i]);
+            let behind = b.arc - self.station[i] - self.arc[i];
+            let block = Block::drawn_up(regs, units, i, here);
+            places[k] = (self.station[i], self.side[i], block.half_width, block.half_depth);
+            stands[k] = (
+                self.arc[i],
+                (here - at).dot(right(dir)),
+                self.kept_up(regs, i, behind),
+            );
+        }
+        let n = self.list.len();
+        for k in 0..n {
+            let i = self.list[k] as usize;
+            let (station, side, half_width, half_depth) = places[k];
+            let (arc, across, _) = stands[k];
+            // Its place is where the ground last put it, but never ahead
+            // of a member marching in front of where it stands: it
+            // follows that one until its own lane is clear, and does not
+            // push through it to a place beyond.
+            let mut to = self.want_station[i];
+            for (&(theirs, their_across, marching), &(_, _, width, depth)) in stands[..n].iter().zip(&places) {
+                if marching && theirs > arc && (across - their_across).abs() < half_width + width - QUARTER {
+                    to = to.max(b.arc - theirs + depth + half_depth);
+                }
+            }
+            // Its place moves there gently: up the body as fast as it
+            // could itself gain on the anchor. It comes no nearer behind
+            // another's place in its way than their blocks allow: a rear
+            // rank closes up as those before it move aside, not through
+            // them.
+            self.station[i] = if to < station {
                 let mut least = to;
-                for &(theirs, across, width, depth) in &places[..self.list.len()] {
-                    if theirs < station && (side - across).abs() < half_width + width + GROUP_GAP / 2 {
+                for &(theirs, their_side, width, depth) in &places[..n] {
+                    if theirs < station && (side - their_side).abs() < half_width + width + GROUP_GAP / 2 {
                         least = least.max(theirs + depth + half_depth + GROUP_GAP);
                     }
                 }
-                let gain = (regs.speed[i] - b.speed) * 3 / 4;
+                let gain = if b.arrived() {
+                    regs.speed[i]
+                } else {
+                    (regs.speed[i] - b.speed) * 3 / 4
+                };
                 (station - gain.max(SLEW_UP)).max(least).min(station)
             } else {
-                (self.station[i] + SLEW_BACK).min(to)
+                (station + SLEW_BACK).min(to)
             };
             let to = self.want_side[i];
-            let across = (to - self.side[i]).clamp(-SLEW_SIDE, SLEW_SIDE);
-            self.side[i] += across;
+            let shift = (to - self.side[i]).clamp(-SLEW_SIDE, SLEW_SIDE);
+            self.side[i] += shift;
             let behind = b.arc - self.station[i] - self.arc[i];
             self.stall[i] = if behind > Fx::ONE && !regs.stepped(i) {
                 self.stall[i].saturating_add(1)
             } else {
                 0
             };
-            let (at, dir) = b.at(self.arc[i]);
-            let across = (here - at).dot(FxVec2::new(-dir.y, dir.x)) - self.side[i];
+            let across = across - self.side[i];
             // In step: at its place, and its place where the body has it
             // (places still on the move may cross each other's).
             let in_step = self.mode[i] == Mode::Lane
@@ -1340,7 +1444,11 @@ impl Brigades {
         let slow = (Fx::ONE - (lag - LAG_FREE) / LAG_SPAN).clamp(CRAWL, Fx::ONE);
         let b = &mut self.pool[slot];
         b.tail = tail;
-        b.speed = if b.halted { Fx::ZERO } else { b.pace * slow };
+        b.speed = if b.halted || b.arrived() {
+            Fx::ZERO
+        } else {
+            b.pace * slow
+        };
     }
 
     /// Whether the anchor waits for member `i`, `behind` its place: not
@@ -1448,6 +1556,11 @@ impl Brigades {
                 // permitting) and waits beyond.
                 if behind < -Fx::ONE && !nav.open_around(owner, here, OPEN_GROUND) {
                     along = along.max(b.pace);
+                }
+                // The anchor in, it closes up to its place as fast as it
+                // can.
+                if b.arrived() {
+                    along = along.max(behind);
                 }
                 let to = target - here;
                 let (run, far) = (to.dot(b.at(self.arc[i]).1), to.length());

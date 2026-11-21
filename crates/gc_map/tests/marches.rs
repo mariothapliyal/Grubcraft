@@ -411,6 +411,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         for (n, &h) in handles.iter().enumerate() {
             let r = w.regiments.get(h).unwrap();
             if r.moving {
+                // (Not yet: it had only halted on the way, as one waiting
+                // its turn at a narrows does.)
+                arrived[n] = None;
                 moving += 1;
                 marching += 1;
                 all += u64::from(r.models);
@@ -464,6 +467,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                 .iter()
                 .map(|&h| {
                     let r = w.regiments.get(h).unwrap();
+                    if std::env::var("DEBUG_B").is_ok() {
+                        return format!("{:?}", w.brigade_debug(h));
+                    }
                     format!(
                         "({:3},{:3}) d{:2} f{}/{} w{}",
                         r.position.x.floor_int(),
@@ -497,7 +503,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             }
         }
         out.ticks = t;
-        if moving == 0 {
+        if moving == 0 && handles.iter().all(|&h| w.goal(h).is_none()) {
             break;
         }
     }
