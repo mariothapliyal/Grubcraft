@@ -22,7 +22,7 @@ use super::{Sense, spymaster};
 use crate::captain::{Captain, Ctx};
 use crate::difficulty::Knobs;
 use crate::orders::{Act, Orders, ROUTINE, Want};
-use crate::perception::{Class, Perception, Seen, right_of, v2};
+use crate::perception::{Class, Perception, Seen, right_of, to_fx_vec, v2};
 use crate::personality::Personality;
 
 /// Ticks between the Marshal's looks.
@@ -107,6 +107,10 @@ const SCOUTED: f32 = 14.0;
 const WAITING: f32 = 20.0;
 /// Tiles between regiments marching abreast.
 const ABREAST: f32 = 7.0;
+/// A regiment at home below this share of its soldiers goes to reinforce.
+const MEND_BELOW: f32 = 0.85;
+/// Near enough its reinforcement spot, in tiles, to stand where it is.
+const MEND_NEAR: f32 = 3.0;
 /// An attack falls back once the army is down to this share of the
 /// soldiers it set out with.
 const FALL_BACK_SHARE: f32 = 0.35;
@@ -178,6 +182,9 @@ pub struct Marshal {
     /// Regiments that did not get up a wall in time: not sent again till
     /// the fight ends.
     off_walls: Vec<RegimentHandle>,
+    /// Regiments at home sent to stand by a reinforcement point until they
+    /// are back to full strength (see [`gc_sim::reinforce`]).
+    mending: Vec<RegimentHandle>,
     /// After falling back, it gathers until this tick before setting out.
     regroup_until: u32,
     /// Since when it has gone for the Heart without holding it.
@@ -224,6 +231,7 @@ impl Marshal {
             manning: Vec::new(),
             climbing: Vec::new(),
             off_walls: Vec::new(),
+            mending: Vec::new(),
             regroup_until: 0,
             contesting_since: None,
             heart_beaten: 0,
@@ -655,6 +663,7 @@ impl Marshal {
             .filter(|r| !self.mans(r.handle))
             .partition(|r| self.out.contains(&r.handle));
         let face = home.map_or(Vec2::Y, |h| (rally - h).normalize_or(Vec2::Y));
+        let staying = self.send_to_reinforce(s, staying);
         march(s, &staying, rally, face, &mut self.wants, 1, false);
         if !matches!(self.goal, Goal::Heart(_)) {
             self.holders.clear();
@@ -705,6 +714,44 @@ impl Marshal {
                 }
             }
         }
+    }
+
+    /// Of the regiments staying at home, those short of soldiers go to
+    /// stand by the nearest reinforcement point until they are full again
+    /// (from below [`MEND_BELOW`] of their strength, so one soldier short
+    /// isn't worth the walk); the rest are returned, for the rally point.
+    fn send_to_reinforce<'a>(&mut self, s: &Sense, staying: Vec<&'a Seen>) -> Vec<&'a Seen> {
+        let short = |r: &Seen| r.models < r.full && s.world.can_reinforce(r.handle);
+        self.mending
+            .retain(|h| staying.iter().any(|r| r.handle == *h && short(r)));
+        let (mending, staying): (Vec<&Seen>, Vec<&Seen>) = staying.into_iter().partition(|r| {
+            self.mending.contains(&r.handle)
+                || short(r) && (r.models as f32) < MEND_BELOW * r.full as f32
+        });
+        for r in mending {
+            let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
+                continue;
+            };
+            if !self.mending.contains(&r.handle) {
+                self.mending.push(r.handle);
+            }
+            let spot = v2(spot);
+            if r.pos.distance(spot) <= MEND_NEAR {
+                continue;
+            }
+            self.wants.push(Want {
+                regiment: r.handle,
+                act: Act::Move {
+                    to: s.terrain.clamp(spot, 2.0),
+                    facing: None,
+                    pace: s.view.pace(r),
+                    hunt: false,
+                },
+                priority: ROUTINE,
+                group: u32::MAX - 4,
+            });
+        }
+        staying
     }
 
     /// Where to attack: the enemy building it knows of nearest `from`,

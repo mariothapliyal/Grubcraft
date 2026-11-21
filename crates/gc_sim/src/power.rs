@@ -88,6 +88,13 @@ impl Structures {
             .any(|v| foot_reaches(self.footprint(v), foot, self.stats_of(v).field))
     }
 
+    /// Whether `point` lies in one of `owner`'s fields of power.
+    pub(crate) fn power_at(&self, owner: PlayerId, point: FxVec2) -> bool {
+        self.fields()
+            .filter(|&v| self.owner_of(v) == owner)
+            .any(|v| within(self.footprint(v), point, i32::from(self.stats_of(v).field)))
+    }
+
     /// Whether building slot `i` works: it needs no power, or has it.
     pub(crate) fn powered(&self, i: usize) -> bool {
         !self.stands(i)

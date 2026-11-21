@@ -83,6 +83,10 @@ pub enum Wait {
     FilingThrough,
     Trapped,
     Winded,
+    /// Taking on new soldiers near its side's reinforcement points.
+    Reinforcing,
+    /// Near them, but its owner can't pay for the next soldier.
+    ShortToReinforce,
 }
 
 impl Wait {
@@ -95,6 +99,8 @@ impl Wait {
             Wait::FilingThrough => "filing through",
             Wait::Trapped => "trapped",
             Wait::Winded => "winded",
+            Wait::Reinforcing => "reinforcing",
+            Wait::ShortToReinforce => "can't pay to reinforce",
         }
     }
 }

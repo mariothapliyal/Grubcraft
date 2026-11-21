@@ -46,6 +46,7 @@ pub mod power;
 pub mod powers;
 pub mod production;
 mod regiments;
+pub mod reinforce;
 pub mod rivers;
 pub mod scenario;
 pub mod sky;
@@ -1267,6 +1268,24 @@ impl World {
         Some(&self.conquest.as_ref()?.structures)
     }
 
+    /// Whether regiment `h` is short of soldiers and of a type that
+    /// reinforces (see [`reinforce`]; Conquest only): something trains it
+    /// and it isn't undead or summoned. Says nothing of where it stands.
+    pub fn can_reinforce(&self, h: RegimentHandle) -> bool {
+        let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
+            return false;
+        };
+        self.regiments.models[i] < self.regiments.full_models[i]
+            && c.refills(&self.regiments, &self.units, i)
+    }
+
+    /// Where a regiment of player `p`'s at `from` might stand to
+    /// reinforce: a few tiles out from the nearest of `p`'s reinforcement
+    /// points, on the side facing `from` (Conquest only; `None` with none).
+    pub fn reinforce_spot(&self, p: PlayerId, from: FxVec2) -> Option<FxVec2> {
+        self.conquest.as_ref()?.reinforce_spot(p, from)
+    }
+
     /// Grub, Marrow and the nodes (Conquest only).
     pub fn economy(&self) -> Option<&Economy> {
         Some(&self.conquest.as_ref()?.economy)
@@ -2005,6 +2024,7 @@ impl World {
             }
             if self.tick.is_multiple_of(TICKS_PER_SECOND) {
                 towns::mend_in_towns(&conquest.structures.towns, &mut self.regiments, &self.units);
+                conquest.reinforce(&mut self.regiments, &self.units);
                 if self.flood.rivers.floodplain_shut() {
                     (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
                 }

@@ -456,6 +456,11 @@ regiment_fields! {
     /// Standing in its own side's walled town, as of the last survey
     /// (see [`crate::towns`]).
     in_town: bool = false,
+    /// Reinforcing (see [`crate::reinforce`]): the seconds it has stood
+    /// quiet within reach of its side's reinforcement points since its
+    /// last new soldier, and [`crate::reinforce::REFILL_SHORT`] while its
+    /// owner can't pay for the next one; 0 when it isn't reinforcing.
+    refill: u8 = 0,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
     /// walking grid, out of reach of melee from the ground, and moved only
     /// by the wall.
@@ -1429,6 +1434,26 @@ impl Regiments {
         }
     }
 
+    /// A new soldier of `hp` hit points joins slot `i` at the back, up to
+    /// its full strength (see [`crate::reinforce`]). A rank that was short
+    /// only for want of men widens back towards its frontage, and a wedge
+    /// stays three deep.
+    pub(crate) fn add_soldier(&mut self, i: usize, hp: u16) -> bool {
+        let k = self.models[i];
+        if k >= self.full_models[i] || k >= MAX_MODELS {
+            return false;
+        }
+        self.hp[i * MAX_MODELS as usize + usize::from(k)] = hp;
+        self.models[i] = k + 1;
+        if self.formation[i] == Formation::Wedge {
+            let files = Formation::Wedge.files(0, k + 1);
+            (self.files[i], self.frontage[i]) = (files, files);
+        } else if self.files[i] == k && self.files[i] < self.frontage[i] {
+            self.files[i] = k + 1;
+        }
+        true
+    }
+
     /// The last `count` soldiers of slot `i` lose `amount` hit points
     /// each, none of them below one: hurt, not killed (a fall, say).
     pub(crate) fn wound_last(&mut self, i: usize, count: usize, amount: u32) {
@@ -1546,6 +1571,10 @@ impl Regiments {
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);
+        // Hurt: no new soldiers until it has stood quiet again.
+        if bled > 0 || lost > 0 {
+            self.refill[i] = 0;
+        }
         self.deaths[i] = self.deaths[i].saturating_add(lost);
     }
 
@@ -1658,6 +1687,10 @@ impl Regiments {
             Some(Waiting::FilingThrough)
         } else if self.winded_left[i] > 0 {
             Some(Waiting::Winded)
+        } else if self.refill[i] & crate::reinforce::REFILL_SHORT != 0 {
+            Some(Waiting::ShortToReinforce)
+        } else if self.refill[i] > 0 {
+            Some(Waiting::Reinforcing)
         } else {
             None
         }
@@ -2210,6 +2243,11 @@ pub enum Waiting {
     Trapped,
     /// Out of breath after a run: slower, with weaker blows.
     Winded,
+    /// Taking on new soldiers near its side's reinforcement points (see
+    /// [`crate::reinforce`]).
+    Reinforcing,
+    /// Near them, but its owner can't pay for the next soldier.
+    ShortToReinforce,
 }
 
 impl RegimentView {

@@ -2123,6 +2123,8 @@ fn wait_of(w: gc_sim::Waiting) -> Wait {
         Waiting::FilingThrough => Wait::FilingThrough,
         Waiting::Trapped => Wait::Trapped,
         Waiting::Winded => Wait::Winded,
+        Waiting::Reinforcing => Wait::Reinforcing,
+        Waiting::ShortToReinforce => Wait::ShortToReinforce,
     }
 }
 
