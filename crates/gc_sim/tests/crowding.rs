@@ -273,7 +273,7 @@ fn one_making_way_never_steps_into_a_friend_holding_its_ground() {
             on: true,
         },
     );
-    let standing = spawn(&mut w, 0, 32, 30, NORTH);
+    spawn(&mut w, 0, 32, 30, NORTH);
     // Through the right half of the one at ease, whose way out is left,
     // toward the one holding.
     let b = spawn(&mut w, 0, 34, 45, NORTH);
