@@ -190,7 +190,7 @@ pub mod why {
 const REASONS: [(u16, &str); 12] = [
     (why::REAR, "rear attack"),
     (why::FLANK, "flanked"),
-    (why::GENERAL, "general fell"),
+    (why::GENERAL, "leader fell"),
     (why::ALLY_BROKE, "ally broke"),
     (why::OUTNUMBERED, "outnumbered"),
     (why::AMBUSH, "ambushed"),
@@ -332,7 +332,7 @@ mod tests {
                 "heavy losses",
                 "bloodied",
                 "ally broke",
-                "general fell",
+                "leader fell",
                 "ambushed",
                 "burning",
                 "flooded",
@@ -352,7 +352,7 @@ mod tests {
         // Order of the bits does not matter, only their seriousness.
         assert_eq!(
             why_text(why::CHAMPION | why::GENERAL | why::REAR).as_deref(),
-            Some("Why: rear attack, general fell")
+            Some("Why: rear attack, leader fell")
         );
         assert_eq!(
             why_text(why::BLOODIED | why::LOSSES).as_deref(),

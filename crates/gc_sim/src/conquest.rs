@@ -146,11 +146,14 @@ impl ConquestUnit {
         h.u16(self.gather_percent);
         h.u16(self.evolves_from.unwrap_or(u16::MAX));
         h.u16(self.unlocked_at.unwrap_or(u16::MAX));
-        if let Some(g) = self.hero {
-            h.u8(1);
-            h.u16(g.hp);
-            h.u16(g.melee);
-            h.u16(g.missile);
+        match self.hero {
+            Some(g) => {
+                h.u8(1);
+                h.u16(g.hp);
+                h.u16(g.melee);
+                h.u16(g.missile);
+            }
+            None => h.u8(0),
         }
     }
 }

@@ -42,7 +42,12 @@ impl Steward {
             return;
         };
         if let Some((b, _)) = self.hero_hall(s, look) {
-            self.ledger.saving = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
+            // Saving only while short, so a hall with no room to stand
+            // doesn't hold the Grub back for good.
+            let price = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
+            if bank.grub < price.0 || bank.marrow < price.1 {
+                self.ledger.saving = price;
+            }
             return;
         }
         for m in (look.mine.iter()).filter(|m| m.finished() && !self.is_busy(m.view.handle)) {

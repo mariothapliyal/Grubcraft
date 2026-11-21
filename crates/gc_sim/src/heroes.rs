@@ -276,7 +276,9 @@ impl Heroes {
             self.near.clear();
             self.near
                 .extend(self.list.iter().enumerate().filter_map(|(k, h)| {
-                    let near = !h.dead() && stances.hostile(h.owner, victim);
+                    // Not one that fell this tick (seen in `update`, after).
+                    let standing = h.regiment.and_then(|r| regs.resolve(r)).is_some();
+                    let near = standing && stances.hostile(h.owner, victim);
                     (near && generals::near(h.at, at, XP_TILES)).then_some(k)
                 }));
             let Some(share) = worth.checked_div(self.near.len() as u32) else {

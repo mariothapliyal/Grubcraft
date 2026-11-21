@@ -334,9 +334,7 @@ impl Production {
             for k in 0..usize::from(self.queued[i]) {
                 h.u16(self.queue[i][k]);
                 h.u32(self.clock[i][k]);
-                if self.full[i][k] > 0 {
-                    h.u32(self.full[i][k]);
-                }
+                h.u32(self.full[i][k]);
             }
             match self.rally[i] {
                 Some(at) => {

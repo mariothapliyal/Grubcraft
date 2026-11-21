@@ -814,6 +814,11 @@ pub fn validate_conquest_unit(
     if u.hero() && (u.trained_at == NONE || u.stats.models != 1) {
         return Err("a hero is one model, hired at a building");
     }
+    if (u.level_melee > 0 && u.stats.melee_damage == 0)
+        || (u.level_missile > 0 && u.stats.missile_damage == 0)
+    {
+        return Err("a hero grows only the damage it has");
+    }
     if u.reserved != 0 {
         return Err("reserved is 0");
     }
