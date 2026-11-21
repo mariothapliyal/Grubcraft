@@ -42,6 +42,9 @@ pub enum Act {
     Climb(StructureHandle),
     /// Climb onto its own raised wall tile and hold the walkway (Conquest).
     Man(StructureHandle),
+    /// Pull out of its fight in good order (see [`Command::FallBack`]):
+    /// horse whose charge is spent, to run in again at full weight.
+    FallBack,
 }
 
 /// A decision about one regiment.
@@ -216,7 +219,7 @@ impl Orders {
             },
             // Buildings aren't in the look: the Marshal, which can tell, has
             // a stopped siege forgotten so it can be sent again.
-            Act::Siege(_) | Act::Climb(_) | Act::Man(_) => return false,
+            Act::Siege(_) | Act::Climb(_) | Act::Man(_) | Act::FallBack => return false,
         };
         let last = s.last_distance;
         if let Some(sent) = self.sent[i].as_mut() {
@@ -229,7 +232,7 @@ impl Orders {
                 let reach = view.get(t).map_or(0.0, |t| r.radius() + t.radius());
                 !r.moving && distance > range.max(reach) + 2.0
             }
-            Act::Siege(_) | Act::Climb(_) | Act::Man(_) => false,
+            Act::Siege(_) | Act::Climb(_) | Act::Man(_) | Act::FallBack => false,
         };
         let walking_away = last.is_some_and(|d| distance > d + 1.0);
         (stopped_short && s.retries < RETRIES) || walking_away
@@ -389,13 +392,14 @@ fn already_there(r: &crate::perception::Seen, act: &Act) -> bool {
                 && r.pos.distance(to) < ARRIVED
                 && facing.is_none_or(|f| f.dot(r.facing) > FACING_SLACK)
         }
-        Act::Attack(_) | Act::Siege(_) | Act::Climb(_) | Act::Man(_) => false,
+        Act::Attack(_) | Act::Siege(_) | Act::Climb(_) | Act::Man(_) | Act::FallBack => false,
     }
 }
 
 fn same(a: &Act, b: &Act) -> bool {
     match (a, b) {
         (Act::Attack(x), Act::Attack(y)) => x == y,
+        (Act::FallBack, Act::FallBack) => true,
         (Act::Siege(x), Act::Siege(y))
         | (Act::Climb(x), Act::Climb(y))
         | (Act::Man(x), Act::Man(y)) => x == y,
@@ -480,6 +484,7 @@ fn command(regiment: RegimentHandle, act: &Act, brigade: u16) -> Command {
             regiment,
             structure,
         },
+        Act::FallBack => Command::FallBack { regiment },
     }
 }
 

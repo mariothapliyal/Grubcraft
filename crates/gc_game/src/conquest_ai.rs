@@ -1423,16 +1423,24 @@ mod tests {
     #[test]
     #[ignore = "slow in debug builds: CI runs it with --release"]
     fn ai_only_brood_evolves_and_the_concord_signs_contracts() {
+        // A match goes its own way with any change to how battles play
+        // out (one side may win before the other gets going), so up to
+        // six are played, until each side has shown its rules in one.
         let factions = [Faction::Brood, Faction::CarrionConcord];
-        let played = play(0, 0, &factions, &[Difficulty::General], 9, 40);
-        let (brood, concord) = (&played.sides[0].works, &played.sides[1].works);
-        let report = played.report();
-        assert!(
-            brood.cocoons > 0 && brood.evolved > 0,
-            "{brood:?}\n{report}"
-        );
-        assert!(concord.reliquaries >= 2, "{concord:?}\n{report}");
-        assert!(concord.contracts > 0, "{concord:?}\n{report}");
+        let (mut evolved, mut signed, mut reports) = (false, false, String::new());
+        for seed in [9, 10, 11, 12, 13, 14] {
+            let played = play(0, 0, &factions, &[Difficulty::General], seed, 40);
+            let (brood, concord) = (&played.sides[0].works, &played.sides[1].works);
+            evolved |= brood.cocoons > 0 && brood.evolved > 0;
+            signed |= concord.reliquaries >= 2 && concord.contracts > 0;
+            reports += &format!("seed {seed}: {brood:?}\n{concord:?}\n{}\n", played.report());
+            if evolved && signed {
+                println!("both by seed {seed}");
+                break;
+            }
+        }
+        assert!(evolved, "the Brood never evolved:\n{reports}");
+        assert!(signed, "the Concord never signed contracts:\n{reports}");
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

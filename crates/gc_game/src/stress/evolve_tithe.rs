@@ -21,7 +21,9 @@ use gc_data::Faction;
 use gc_fixed::FxVec2;
 use gc_sim::{Command, PlayerCommand, PowerTarget, RegimentHandle, TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, EAST, Real, WEST, attack_nearest, centre, move_to, put_up, spawn};
+use super::arena::{
+    Arena, EAST, Real, WEST, attack_nearest, centre, move_to, order, put_up, spawn,
+};
 use super::{Report, Scenario};
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -33,8 +35,9 @@ pub(super) const SCENARIO: Scenario = Scenario {
 
 const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
-/// How long the Concord's reserve fights before it falls back, in ticks.
-const RESERVE_FIGHTS: u32 = 6 * SECOND;
+/// The longest the Concord's reserve fights before it falls back, in
+/// ticks: it falls back as soon as it is hurt.
+const RESERVE_FIGHTS: u32 = 30 * SECOND;
 
 fn run(real: &Real, report: &mut Report) {
     cocoons(real, report);
@@ -54,10 +57,6 @@ fn handles(world: &World) -> Vec<RegimentHandle> {
 
 fn models(world: &World, h: RegimentHandle) -> u16 {
     world.regiments.get(h).map_or(0, |r| r.models)
-}
-
-fn order(player: u8, command: Command) -> PlayerCommand {
-    PlayerCommand { player, command }
 }
 
 /// The Brood part: player 0 the Brood, player 1 the Ember Clans.
@@ -375,17 +374,37 @@ fn tithe(real: &Real, report: &mut Report) {
     let mut raised_at = 0;
     let mut bound_gone = None;
     let mut fought = 0;
+    let reserve_full = models(&world, reserve);
+    let mut reserve_out = None;
     while fought < 480 * SECOND && (!tried || points(&world) < 200) {
         let mut orders = Vec::new();
         if fought % (2 * SECOND) == 0 {
             orders.extend(attack_nearest(&world, 0, &concord, 1));
-            if fought < RESERVE_FIGHTS {
-                orders.extend(attack_nearest(&world, 0, &[reserve], 1));
+            // Into the front of the Katana: hit on a flank, the foe it
+            // catches doesn't hurt it.
+            if reserve_out.is_none() {
+                let target = ember[3];
+                orders.push(order(
+                    0,
+                    Command::Attack {
+                        regiment: reserve,
+                        target,
+                    },
+                ));
             }
             orders.extend(attack_nearest(&world, 1, &ember, 0));
         }
-        if fought == RESERVE_FIGHTS {
-            orders.push(move_to(0, reserve, centre(12, 110)));
+        // Once hurt (or after a while) it pulls out of its fight, then
+        // goes back to the Reliquary.
+        let hurt = models(&world, reserve) < reserve_full;
+        if reserve_out.is_none() && (hurt || fought >= RESERVE_FIGHTS) {
+            reserve_out = Some(fought);
+            orders.push(order(0, Command::FallBack { regiment: reserve }));
+        }
+        if reserve_out.is_some_and(|at| fought == at + 8 * SECOND)
+            && let Some(spot) = world.refill_spot(reserve)
+        {
+            orders.push(move_to(0, reserve, spot));
         }
         // More of both sides come up while the fight thins out.
         if fought % (30 * SECOND) == 0 && fought > 0 {

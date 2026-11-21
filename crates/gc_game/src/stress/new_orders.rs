@@ -11,7 +11,7 @@ use gc_sim::{
 };
 
 use super::arena::{
-    Arena, Real, SOUTH, WEST, centre, gated_wall, grid, move_to, of, soldiers, spawn,
+    Arena, Real, SOUTH, WEST, centre, gated_wall, grid, hp, move_to, of, order, soldiers, spawn,
 };
 use super::{Report, Scenario, seconds};
 use crate::conquest;
@@ -36,10 +36,6 @@ const GATE_X: i32 = 30;
 const DRIVER: &str = "Oni-Bound";
 const LINE: &str = "Yari Ashigaru";
 
-fn order(player: u8, command: Command) -> PlayerCommand {
-    PlayerCommand { player, command }
-}
-
 fn formation(regiment: RegimentHandle, formation: Formation) -> PlayerCommand {
     order(
         0,
@@ -48,11 +44,6 @@ fn formation(regiment: RegimentHandle, formation: Formation) -> PlayerCommand {
             formation,
         },
     )
-}
-
-/// Hit points regiment `h` has left.
-fn hp(world: &World, h: RegimentHandle) -> u32 {
-    (world.regiments.model_hp(h)).map_or(0, |hp| hp.iter().map(|&x| u32::from(x)).sum())
 }
 
 fn tiles(a: gc_fixed::FxVec2, b: gc_fixed::FxVec2) -> f32 {

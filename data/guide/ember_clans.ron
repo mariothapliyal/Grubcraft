@@ -382,7 +382,7 @@
         (
             name: "Mounted Samurai",
             tagline: "Shock cavalry: huge charge, rides down routers.",
-            summary: "Heavy shock cavalry with the Clans' biggest charge bonus, and Wedge adds more. Ride Down adds 50% damage to routing regiments, so they finish a broken line. Spears and braced lines stop them; hit archers, artillery and flanks instead.",
+            summary: "Heavy shock cavalry with the Clans' biggest charge bonus, and Wedge adds more. Ride Down adds 50% damage to routing regiments, so they finish a broken line. Spears and braced lines stop them; hit archers, artillery and flanks instead, from far enough off to reach a gallop, then Fall back (V) and charge again.",
         ),
         (
             name: "Yabusame Riders",
