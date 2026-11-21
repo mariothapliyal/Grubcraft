@@ -272,6 +272,10 @@ const CYCLE_GAP: u32 = 12 * gc_sim::TICKS_PER_SECOND;
 /// Horse going round free spears that come at it within this many tiles
 /// (between the blocks) rides off from their points first.
 const EVADE_TILES: f32 = 12.0;
+/// It gives up riding off after this long (ticks, 10 s) and charges them:
+/// spears that keep after it would otherwise lead it round the field for
+/// good.
+const EVADE_FOR: u32 = 10 * gc_sim::TICKS_PER_SECOND;
 const STAGE_BACK: f32 = 5.0;
 /// A line regiment doesn't chase further than this from its place.
 const LINE_LEASH: f32 = 18.0;
@@ -390,6 +394,9 @@ pub struct Member {
     /// Pulled out, and riding back to its staging point before it
     /// charges again (so it hits home at speed).
     restaging: bool,
+    /// When it began riding off from free spears coming at it, until it
+    /// next fights (see [`EVADE_FOR`]).
+    evading: Option<u32>,
 }
 
 /// What a mind hands its Captain each look.
@@ -827,6 +834,7 @@ impl Captain {
                 retreat_to: None,
                 pulled_out: None,
                 restaging: false,
+                evading: None,
                 lost: false,
             });
             self.relayout = true;

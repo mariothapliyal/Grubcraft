@@ -21,8 +21,9 @@
 //!   enemy once it comes within [`HOLD_WITHIN`]: it gives ground slowly and
 //!   doesn't chase. The Captain's next move or attack lifts it.
 //! - **Brace** for spears or pikes standing with charging cavalry riding
-//!   at their front within [`BRACE_WITHIN`] tiles (inside about 45
-//!   degrees of straight on, the arc braced points stop a charge in); the
+//!   at their front within [`BRACE_WITHIN`] tiles, or marching with it
+//!   within [`BRACE_HALT`] (inside about 45 degrees of straight on, the arc
+//!   braced points stop a charge in); the
 //!   points come up again once none is within [`BRACE_LIFT`].
 //! - **Skirmish** for every regiment that shoots and marches at least
 //!   [`SKIRMISH_SPEED`] (not slow engines): it steps back from melee on
@@ -49,6 +50,8 @@ pub const SKIRMISH_SPEED: f32 = 2.5;
 /// within [`BRACE_LIFT`].
 pub const BRACE_WITHIN: f32 = 30.0;
 pub const BRACE_LIFT: f32 = 45.0;
+/// Spears on the march stop and brace only for cavalry this near.
+pub const BRACE_HALT: f32 = 12.0;
 /// How squarely a foe must be ahead of the spears, and coming at them, to
 /// be met braced: the cosine of the angle off straight on (about 45
 /// degrees, the arc braced points stop a charge in).
@@ -142,7 +145,8 @@ pub fn wanted(
                     && f.facing.dot(to_us) > BRACE_ARC_COS
             })
         };
-        if !r.braced && !r.moving && riding_at_us(BRACE_WITHIN) {
+        let within = if r.moving { BRACE_HALT } else { BRACE_WITHIN };
+        if !r.braced && riding_at_us(within) {
             return Some(Command::Brace { regiment, on: true });
         }
         if r.braced && !riding_at_us(BRACE_LIFT) {
