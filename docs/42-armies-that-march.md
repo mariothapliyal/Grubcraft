@@ -185,16 +185,20 @@ of through it) and a turn at the passage for each row.
 shared track)
 
 Measured on the 42 recorded marches: regiments spend 36 to 40% of their
-marching time in woods where the quickest route spends about 20%, with
-and without brigades. Two causes are confirmed in the code: a route is
-priced for a point, so it hugs the edge of a wood and half of a wide body
-marches in the trees; and a regiment is slowed only when its centre is in
-the wood, so the search thinks skirting the edge costs nothing. What else
-pushes them in is the first thing stage 6 finds out.
+marching time in woods where the quickest path for a single soldier
+spends about 20%, with and without brigades. Stage 6 found that the
+routes are not the cause, and that the woods themselves were too easy
+on a block at their edge; see [Stage 6 in full](#stage-6-in-full-woods).
+Built (Mario chose it, 2026-11-22):
 
-21. **Route for the body's width.** A brigade's track keeps the whole
-    body clear of woods where there is open ground for it, as it keeps
-    clear of cliffs.
+21. **Woods slow the whole block.** A regiment keeps 85% of its pace in
+    woods (70% heavy) by the share of its block under the trees, not by
+    its middle alone, and its ranks loosen on screen by that share.
+    Routes price the ground under the whole block. Built, `SIM_VERSION`
+    92.
+
+Not built, and not needed on what was measured:
+
 22. **Close up beside a wood.** Rows close up on the side nearest the
     trees instead of marching a flank through them.
 23. **One line through a wood.** Where the way must cross a wood, the
@@ -203,9 +207,9 @@ pushes them in is the first thing stage 6 finds out.
 24. **Priced for the slowest.** The track is priced for the slowest
     troops in the body (heavy troops keep 70% of their pace in woods,
     foot 85%), so a body with horse goes round.
-25. **Held to a number.** Time in woods within a few points of the
-    quickest route's, and no later arrival, as limits in the march
-    report.
+25. **Held to a number.** The march report gives time in woods and the
+    share of soldiers under trees; no limit is set on them, since the
+    quickest single-soldier path is not a reachable mark for a block.
 
 ## Stage 1 in full: marching together
 
@@ -570,3 +574,69 @@ building stage 1, with these changes, all taken:
 - Drill of the horse-and-musket age (order of march, passing a defile,
   forming line from column): the model for rows that close up and open
   out.
+
+## Stage 6 in full: woods
+
+### What was wrong
+
+Watched in a real Field Battle on a wooded map (veteran, seed 7), an
+army ordered into a forest marched in cleanly and disappeared under the
+canopy, its flags marking where it stood. Nothing broke.
+
+On the recorded marches, even regiments that start and end in the open
+have their middle in woods about twice as long as a single soldier's
+quickest path (six regiments 20% against 10%, twelve 28% against 13%).
+Drawn out, the cause is plain: the open strip beside a wood is often
+narrower than a block, and routes keep a block's berth off rocks and
+cliffs (up to four times the cost of open ground) while woods cost 1.2
+times, so the block's middle runs a few steps inside the trees. That is
+about the best a block of that width can do; the single-soldier path
+threads gaps no block fits through.
+
+Six route changes were tried, each over all 42 marches with and without
+brigades, and none moved arrival times or time in woods beyond the noise
+(about 1.5 s and 1 point): portals split where the ground changes,
+links from a regiment to the portals in sight priced by the ground
+rather than by distance, plain-sight walks only over ground no slower
+than their ends, a lower cost near rocks, no route tightening, and a
+cost for trees beside a cell. None was kept.
+
+What was missing was the woods themselves: a block was slowed only when
+its middle stood in a wood, so a flank through the trees cost nothing,
+and the trees never touched its order.
+
+### What was built
+
+- **Slowed by the share under the trees.** `Terrain::block_going`
+  looks at a block's middle and its four corners (three eighths of the
+  way out, where the outermost soldiers stand; `block_points`) and keeps
+  85% of the pace (70% heavy) by the share of them in woods. A block
+  with one flank in a wood keeps about 94%, and one entering a wood
+  slows as its ranks go in. Giving ground in a fight still goes by its
+  middle.
+- **Routes priced for the block.** `Grid::body_cost` prices a cell at
+  the mean pace kept at it and at four cells a berth less one away. Only
+  the going is read round a cell, so burning or clearing woods relinks
+  every sector within `BODY_REACH` of the changed tiles (a test checks
+  the relinked grid against one built afresh).
+- **Ranks loosen under trees.** On screen, a block's ranks open out by
+  up to 15% and each soldier stands up to 0.18 tiles off his slot, by
+  the share of the block in woods (`Block::wooded`).
+
+### What it measured
+
+The 42 recorded marches (last arrival / first to last / time in
+disorder / soldiers under trees):
+
+| | before | after |
+|---|---|---|
+| Six regiments, apart | 50.7 s / 15.6 s / 12% / 35.4% | 49.8 s / 14.8 s / 10% / 35.0% |
+| Six, as a brigade | 50.1 s / 11.4 s / 6% / 34.8% | 49.2 s / 10.5 s / 7% / 35.0% |
+| Twelve, apart | 61.2 s / 25.8 s / 25% / 39.2% | 61.1 s / 25.8 s / 23% / 38.5% |
+| Twelve, as a brigade | 61.5 s / 21.6 s / 17% / 39.4% | 60.8 s / 20.4 s / 16% / 38.5% |
+
+No march order arrives later on average; the gains are small and inside
+the noise, as expected when routes were already about right. The change
+is in the rules: a flank in the trees now costs what it should, in
+pace and on the route.
+

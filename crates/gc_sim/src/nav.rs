@@ -91,6 +91,9 @@ pub const MAX_BERTH: u8 = 16;
 /// The berth the portal graph's links are costed for (a regiment of eight
 /// files, four tiles across, wants about this much).
 const GRAPH_BERTH: u8 = 8;
+/// How far from a cell the going can change what crossing it costs on
+/// the portal graph's links (see [`Grid::body_cost`]): a berth less one.
+const BODY_REACH: i32 = GRAPH_BERTH as i32 - 1;
 /// Most a cell's cost is raised by being close to blocked ground: on the
 /// very edge of open ground a step costs this much more than in the open.
 const WALL_COST: u32 = 4 * OPEN_COST;
@@ -321,8 +324,39 @@ impl Grid {
     fn weight(&self, c: u32, berth: u8) -> u32 {
         let berth = berth.min(MAX_BERTH);
         let short = berth.saturating_sub(self.clear[c as usize]);
-        u32::from(self.cost[c as usize])
-            + u32::from(WALL_PENALTY[usize::from(berth)][usize::from(short)])
+        self.body_cost(c, berth) + u32::from(WALL_PENALTY[usize::from(berth)][usize::from(short)])
+    }
+
+    /// What the ground under a block centred on cell `c` costs, for a
+    /// regiment wanting `berth`: the cell's cost at the block's going, the
+    /// share of its pace kept at `c` and at four cells a berth away less
+    /// one (about where its flanks and its front and rear ranks stand)
+    /// shared out, as the trees slow a block by the share of it under
+    /// them (see [`crate::Terrain::block_going`]). Only the going is read
+    /// round the cell (never whether those cells are blocked), so a cost
+    /// changes only with the going within [`BODY_REACH`] of it.
+    fn body_cost(&self, c: u32, berth: u8) -> u32 {
+        let own = u32::from(self.cost[c as usize]);
+        if self.going.is_empty() || berth <= CLEARANCE + 1 || own == u32::from(BLOCKED) {
+            return own;
+        }
+        let here = u32::from(self.going_at(c as usize)).max(1);
+        let r = i32::from(berth.min(MAX_BERTH)) - 1;
+        let (x, y) = self.xy(c);
+        let mut sum = here;
+        for (dx, dy) in [(r, 0), (-r, 0), (0, r), (0, -r)] {
+            let (sx, sy) = (x + dx, y + dy);
+            sum += if self.inside(sx, sy) {
+                u32::from(self.going_at(self.idx(sx, sy) as usize)).max(1)
+            } else {
+                here
+            };
+        }
+        if sum == 5 * here {
+            return own;
+        }
+        // own x here / (sum / 5), rounded to the nearest whole cost.
+        (own * here * 5 * 2 + sum) / (sum * 2)
     }
 
     fn sector_of(&self, c: u32) -> u32 {

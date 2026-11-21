@@ -643,8 +643,8 @@ impl Grid {
 
     /// Set the going on each of `tiles` (`(x, y, percent)`) and bring the
     /// costs and links up to date, searching in `search`'s room. Returns
-    /// the boxes of cells whose cost changed. No change while the grid has
-    /// no going and every tile keeps its whole pace.
+    /// the boxes of cells of the tiles whose going changed. No change
+    /// while the grid has no going and every tile keeps its whole pace.
     fn regoing(&mut self, tiles: &[(i32, i32, u8)], search: &mut Search) -> Vec<[i32; 4]> {
         let side = self.side / CELLS_PER_TILE;
         let on_map = |&&(x, y, _): &&(i32, i32, u8)| self.cells([x, y, 1, 1]).is_some();
@@ -669,7 +669,15 @@ impl Grid {
                 let cost = self.cell_cost(c as usize);
                 if cost != self.cost[c as usize] {
                     self.cost.set(c as usize, cost);
-                    dirty[self.sector_of(c) as usize] = true;
+                }
+            }
+            // A block's cost reads the going round it (see
+            // `Grid::body_cost`), so the links of every sector within
+            // reach of the tile go stale.
+            let [x0, y0, x1, y1] = self.grow(cells, super::BODY_REACH);
+            for sy in y0 / SECTOR..=(y1 - 1) / SECTOR {
+                for sx in x0 / SECTOR..=(x1 - 1) / SECTOR {
+                    dirty[(sy * self.sectors + sx) as usize] = true;
                 }
             }
             boxes.push(cells);
@@ -1601,6 +1609,43 @@ mod tests {
         same(&g, &fresh);
         g.reprice(false, &mut search);
         same(&g, &Grid::build(&ground, side));
+    }
+
+    #[test]
+    fn woods_burnt_out_leave_the_grid_built_afresh() {
+        // A wood across sector edges, then a patch of it burnt out: every
+        // link a block's cost reads it from comes out as on a grid built
+        // with the new going (see `Grid::body_cost`).
+        let tiles: i32 = 96;
+        let side = tiles * CELLS_PER_TILE;
+        let ground = ribs_map(tiles as u32);
+        let going_with = |burnt: &dyn Fn(i32, i32) -> bool| -> Vec<u8> {
+            (0..tiles * tiles)
+                .map(|t| {
+                    let (x, y) = (t % tiles, t / tiles);
+                    let wood = (10..70).contains(&x) && (20..60).contains(&y);
+                    if wood && !burnt(x, y) { 85 } else { 100 }
+                })
+                .collect()
+        };
+        let mut g = Grid::build_standing(
+            &ground,
+            side,
+            core::iter::empty(),
+            going_with(&|_, _| false),
+        );
+        let mut search = Search::for_grid(&g);
+        // Burnt just south of a sector edge (cell row 64), so cells of the
+        // sectors north of it read the change.
+        let fire = |x: i32, y: i32| (20..60).contains(&x) && (32..35).contains(&y);
+        let tiles_burnt: Vec<(i32, i32, u8)> = (0..tiles * tiles)
+            .map(|t| (t % tiles, t / tiles))
+            .filter(|&(x, y)| fire(x, y))
+            .map(|(x, y)| (x, y, 100))
+            .collect();
+        assert!(!g.regoing(&tiles_burnt, &mut search).is_empty());
+        let fresh = Grid::build_standing(&ground, side, core::iter::empty(), going_with(&fire));
+        same(&g, &fresh);
     }
 
     #[test]

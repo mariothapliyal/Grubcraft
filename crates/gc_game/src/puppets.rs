@@ -221,6 +221,11 @@ const ROUT_JITTER: f32 = 0.45;
 /// this far either way (radians).
 const DISORDER_SPREAD: f32 = 0.25;
 const DISORDER_JITTER: f32 = 0.3;
+/// Under trees the ranks open out by this share and each soldier stands up
+/// to this far (tiles) from his slot, all the block in woods; part of it,
+/// that share. Looser than a block in good order, tighter than disorder.
+const WOODS_SPREAD: f32 = 0.15;
+const WOODS_JITTER: f32 = 0.18;
 const DISORDER_DRIFT: f32 = 0.22;
 const DISORDER_RATE: f32 = 0.7;
 const DISORDER_LOOK: f32 = 0.9;
@@ -263,6 +268,9 @@ pub struct Block {
     /// Out of order from pushing through friends, 0 (in order) to 1 (fully
     /// disordered): the ranks break up, soldiers mill and look about.
     pub disorder: f32,
+    /// How much of the block stands under trees, 0 (none) to 1 (all of
+    /// it): the ranks loosen there, picking their way between the trunks.
+    pub wooded: f32,
     /// Ticks of charge bonus left (`RegimentView::charge`), counting down
     /// from `CHARGE_TICKS` as a charge hits home.
     pub charge: u16,
@@ -2151,9 +2159,10 @@ impl Puppets {
         let (spread, scatter) = if block.routing {
             (1.0 + ROUT_SPREAD, SLOT_JITTER + ROUT_JITTER)
         } else {
+            let trees = block.wooded.clamp(0.0, 1.0);
             (
-                1.0 + DISORDER_SPREAD * mess,
-                SLOT_JITTER + DISORDER_JITTER * mess,
+                1.0 + DISORDER_SPREAD * mess + WOODS_SPREAD * trees,
+                SLOT_JITTER + DISORDER_JITTER * mess + WOODS_JITTER * trees,
             )
         };
         let champion_here = self.champion_of(r);
@@ -3006,6 +3015,7 @@ mod tests {
             engaged: false,
             routing: false,
             disorder: 0.0,
+            wooded: 0.0,
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
@@ -3130,6 +3140,7 @@ mod tests {
             engaged,
             routing: false,
             disorder: 0.0,
+            wooded: 0.0,
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
@@ -3235,6 +3246,7 @@ mod tests {
             engaged: true,
             routing: false,
             disorder: 0.0,
+            wooded: 0.0,
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
@@ -3300,6 +3312,7 @@ mod tests {
             engaged: true,
             routing: false,
             disorder: 0.0,
+            wooded: 0.0,
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,
@@ -3336,6 +3349,7 @@ mod tests {
             engaged: false,
             routing: false,
             disorder: 0.0,
+            wooded: 0.0,
             charge: 0,
             ploughed: 0.0,
             ploughed_by: None,

@@ -214,6 +214,38 @@ fn woods_slow_the_march_and_heavy_troops_most() {
 }
 
 #[test]
+fn a_block_with_a_flank_in_the_trees_is_slowed_for_that_flank() {
+    // Spearmen march north along a wood's edge: the wood fills the
+    // columns west of the block's middle, so its middle is in the open
+    // and its western corners are under the trees.
+    let edge: Vec<u8> = (0..MAP * MAP)
+        .map(|i| if i % MAP < 32 { Cover::Wood as u8 } else { 0 })
+        .collect();
+    let walked = |cover: &[u8]| {
+        let mut w = world_with(1, &fearless(), &[], cover);
+        let r = spawn(&mut w, 0, SPEARS, tile(32), tile(50), NORTH);
+        move_to(&mut w, 0, r, tile(32), tile(30));
+        run(&mut w, 40);
+        let size = {
+            let v = w.regiments.get(r).unwrap();
+            DRILL_UNITS[usize::from(SPEARS)].block_size_in(v.formation, v.files, v.models)
+        };
+        let v = w.regiments.get(r).unwrap();
+        let under = w.terrain().under_trees(v.position, v.facing, size);
+        (tile(50) - v.position.y, under)
+    };
+    let (open, _) = walked(&[]);
+    let (along, under) = walked(&edge);
+    // Two of its five points in the trees: 94% of the pace, where a block
+    // slowed by its middle alone would keep it all.
+    assert_eq!(under, 2, "points under the trees");
+    assert!(
+        along * 100 <= open * 97 && along * 100 >= open * 90,
+        "along the edge {along:?} vs open {open:?}"
+    );
+}
+
+#[test]
 fn trees_catch_arrows_shot_into_and_out_of_woods() {
     // Hit points a spear block loses to archers 20 tiles away in thirty
     // seconds, summed over seeds so the dice even out. A friend of the

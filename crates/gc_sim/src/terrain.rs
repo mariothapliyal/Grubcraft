@@ -72,6 +72,27 @@ pub const WOODS_SPEED_PERCENT: i32 = 85;
 /// Marching pace in woods, percent, for heavy troops (cavalry and
 /// monsters), who have to pick their way between the trunks.
 pub const WOODS_HEAVY_SPEED_PERCENT: i32 = 70;
+
+/// How many points of a block [`Terrain::block_going`] looks at for
+/// trees: its middle and its four corners.
+pub const BLOCK_POINTS: i32 = 5;
+
+/// The points of a block `size` (width, depth) facing `facing` round `p`
+/// that [`Terrain::block_going`] looks at: its middle, then its corners
+/// drawn in to where the outermost soldiers stand (three eighths of the
+/// way out each way, not the block's very edge).
+pub fn block_points(p: FxVec2, facing: Angle, (w, d): (Fx, Fx)) -> [FxVec2; BLOCK_POINTS as usize] {
+    let ahead = facing.to_vec();
+    let right = FxVec2::new(-ahead.y, ahead.x);
+    let (side, back) = (right * (w * 3 / 8), ahead * (d * 3 / 8));
+    [
+        p,
+        p + side + back,
+        p - side + back,
+        p + side - back,
+        p - side - back,
+    ]
+}
 /// Arrows the trees catch, percent, at each end of a volley's flight that
 /// lies in a wood (both ends: about half the volley).
 pub const TREES_CATCH_PERCENT: u64 = 30;
@@ -1122,6 +1143,46 @@ impl Terrain {
     /// `heading` (a unit vector, or zero): water, woods, soft ground and
     /// the climb.
     pub fn going(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass) -> Fx {
+        let under = if self.cover(p) == Cover::Wood {
+            BLOCK_POINTS
+        } else {
+            0
+        };
+        self.going_under(step, p, heading, mass, under)
+    }
+
+    /// [`Terrain::going`] for a block of soldiers `size` (width, depth)
+    /// facing `facing` round `p`: the trees slow it by the share of the
+    /// block under them (its middle and four corners), not by its middle
+    /// alone, so a block marching along a wood's edge with a flank in the
+    /// trees is slowed for that flank, and one entering a wood slows as
+    /// its ranks go in. Everything else is the ground at its middle.
+    pub fn block_going(
+        &self,
+        step: Fx,
+        p: FxVec2,
+        heading: FxVec2,
+        mass: Mass,
+        facing: Angle,
+        size: (Fx, Fx),
+    ) -> Fx {
+        self.going_under(step, p, heading, mass, self.under_trees(p, facing, size))
+    }
+
+    /// How many of [`BLOCK_POINTS`] points of a block `size` (width,
+    /// depth) facing `facing` round `p` stand in woods (see
+    /// [`block_points`]): what slows it there, and how far its ranks
+    /// loosen on screen.
+    pub fn under_trees(&self, p: FxVec2, facing: Angle, size: (Fx, Fx)) -> i32 {
+        block_points(p, facing, size)
+            .iter()
+            .filter(|&&q| self.cover(q) == Cover::Wood)
+            .count() as i32
+    }
+
+    /// [`Terrain::going`] with `under` of a block's [`BLOCK_POINTS`]
+    /// points in woods.
+    fn going_under(&self, step: Fx, p: FxVec2, heading: FxVec2, mass: Mass, under: i32) -> Fx {
         let heavy = mass == Mass::Heavy;
         let water = self.water_at(p);
         let wet = water.is_some();
@@ -1130,11 +1191,14 @@ impl Terrain {
             Some(_) => WADING_SPEED_PERCENT,
             None => 100,
         };
-        let woods = match self.cover(p) {
-            Cover::Wood if heavy => WOODS_HEAVY_SPEED_PERCENT,
-            Cover::Wood => WOODS_SPEED_PERCENT,
-            _ => 100,
+        let in_woods = if heavy {
+            WOODS_HEAVY_SPEED_PERCENT
+        } else {
+            WOODS_SPEED_PERCENT
         };
+        // Rounded to the nearest percent.
+        let woods =
+            (in_woods * under + 100 * (BLOCK_POINTS - under) + BLOCK_POINTS / 2) / BLOCK_POINTS;
         let soft = match self.soft(p) {
             true if heavy => SOFT_HEAVY_SPEED_PERCENT,
             true => SOFT_SPEED_PERCENT,
