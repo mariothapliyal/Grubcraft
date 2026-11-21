@@ -2891,7 +2891,9 @@ impl Combat {
 /// How much worse, in percent, a regiment this far out of order fights:
 /// [`DISORDER_PERCENT`] at full disorder, fading as it re-forms.
 fn disorder_percent(disorder: u8) -> u64 {
-    DISORDER_PERCENT * u64::from(disorder) / u64::from(DISORDER_TICKS)
+    // A longer disorder (a fast charge stopped on braced points) lasts
+    // longer, not harder.
+    DISORDER_PERCENT * u64::from(disorder.min(DISORDER_TICKS)) / u64::from(DISORDER_TICKS)
 }
 
 /// Percent chance a melee blow with `attack` lands on a soldier with

@@ -138,6 +138,7 @@ pub fn wanted(
                 if !view.hostile(party, f.owner)
                     || f.broken()
                     || f.engaged
+                    || !f.moving
                     || !view.unit(f).stats.can_wedge()
                 {
                     return false;
@@ -151,7 +152,7 @@ pub fn wanted(
             })
         };
         let within = if r.moving { BRACE_HALT } else { BRACE_WITHIN };
-        if !r.braced && riding_at_us(within) {
+        if !r.braced && !r.falling_back && riding_at_us(within) {
             return Some(Command::Brace { regiment, on: true });
         }
         if r.braced && !riding_at_us(BRACE_LIFT) {

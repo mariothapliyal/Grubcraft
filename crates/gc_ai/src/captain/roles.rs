@@ -566,10 +566,12 @@ impl Captain {
             && t.moving
             && t.facing.dot(to_r) > 0.7
             && gap_between(r, t) < EVADE_TILES;
-        if coming_on && m.evading.is_none() {
+        if !coming_on {
+            m.evading = None;
+        } else if m.evading.is_none() {
             m.evading = Some(ctx.view.tick);
         }
-        let worn_out = m.evading.is_some_and(|at| ctx.view.tick >= at + EVADE_FOR);
+        let worn_out = coming_on && m.evading.is_some_and(|at| ctx.view.tick >= at + EVADE_FOR);
         let pressed = coming_on && !worn_out;
         let charge = worn_out
             || staged
@@ -631,6 +633,8 @@ impl Captain {
             && r.strength() >= 0.5
             && !t.broken()
             && t.strength() > CYCLE_FOE_ABOVE
+            // Locked with its target, not with some foe met on the way.
+            && gap_between(r, t) < 1.5
             && pinned_by_another(ctx, r, t)
     }
 
@@ -934,11 +938,16 @@ impl Captain {
     }
 }
 
-/// Whether another regiment of `r`'s side is locked in melee with `t`
-/// beside `r`, so `t` stays held while `r` pulls out.
+/// Whether another regiment of `r`'s side, one that stays in (not horse,
+/// which may be pulling out too), is locked in melee against `t`, so `t`
+/// stays held while `r` pulls out.
 fn pinned_by_another(ctx: &Ctx, r: &Seen, t: &Seen) -> bool {
-    ctx.view
-        .regiments
-        .iter()
-        .any(|f| f.handle != r.handle && f.owner == r.owner && f.engaged && gap_between(f, t) < 1.5)
+    ctx.view.regiments.iter().any(|f| {
+        f.handle != r.handle
+            && f.owner == r.owner
+            && f.engaged
+            && !f.falling_back
+            && !ctx.view.unit(f).stats.can_wedge()
+            && gap_between(f, t) < 1.5
+    })
 }
