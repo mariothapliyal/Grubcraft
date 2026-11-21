@@ -758,10 +758,11 @@ impl Marshal {
     /// point yet marches to the nearest one.
     fn send_to_reinforce(&mut self, s: &Sense, army: &[&Seen]) {
         for r in army.iter().filter(|r| self.mending.contains(&r.handle)) {
-            if s.world.reinforces_at(s.party, to_fx_vec(r.pos)) {
+            // The undead refill by a Reliquary (see `gc_sim::tithe`).
+            if s.world.refills_here(r.handle) {
                 continue;
             }
-            let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
+            let Some(spot) = s.world.refill_spot(r.handle) else {
                 continue;
             };
             self.wants.push(Want {

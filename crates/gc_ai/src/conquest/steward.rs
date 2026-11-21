@@ -13,6 +13,7 @@
 
 mod bridgework;
 mod engineer;
+mod meters;
 mod ringwork;
 
 use gc_sim::economy::{GRUB_SLOTS, MARROW_SLOTS, SUPPLY_LIMIT};
@@ -240,7 +241,13 @@ impl Steward {
 
     /// Look and give the economy's orders, sending what it trains to
     /// `rally`. What it decided worth a line in the journal, if anything.
-    pub fn think(&mut self, s: &Sense, clicks: &mut Clicks, rally: Option<Vec2>) -> Option<String> {
+    pub fn think(
+        &mut self,
+        s: &Sense,
+        clicks: &mut Clicks,
+        rally: Option<Vec2>,
+        front: Option<Vec2>,
+    ) -> Option<String> {
         if s.now < self.next_think {
             return None;
         }
@@ -294,7 +301,9 @@ impl Steward {
             self.train_army(s, clicks, &look);
         }
         self.train_workers(s, clicks, &look);
-        self.build(s, clicks, &look);
+        self.build(s, clicks, &look, rally, front);
+        self.evolve(s, clicks, &look, rally);
+        self.contracts(s, clicks, &look);
         self.tier_up(s, clicks, &look);
         self.raise_towers(s, clicks, &look);
         if !soldiers_first {
@@ -902,7 +911,14 @@ impl Steward {
     /// Whatever it most wants to lay next, if anything: housing before
     /// supply runs out, a first production building, an expansion, more
     /// production.
-    fn build(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
+    fn build(
+        &mut self,
+        s: &Sense,
+        clicks: &mut Clicks,
+        look: &Look,
+        rally: Option<Vec2>,
+        front: Option<Vec2>,
+    ) {
         if !self.laying.is_empty() || s.now < self.next_lay {
             return;
         }
@@ -1046,6 +1062,8 @@ impl Steward {
             .or_else(tower)
             .or_else(works)
             .or_else(hatch)
+            .or_else(|| self.chamber(s, look))
+            .or_else(|| self.reliquary(s, look, rally, front))
             .or_else(expand)
             .or_else(more);
         let Some((b, near)) = wanted else { return };

@@ -238,16 +238,30 @@ mod tests {
         pub raised: u32,
         /// 1 once its walls closed round its hall: a walled town.
         pub walled: u32,
+        /// Brood: cocoon orders given (a count over the match), and its
+        /// evolved regiments standing.
+        pub cocoons: u32,
+        pub evolved: u32,
+        /// Concord: contracts cast (orders, over the match), and its
+        /// Reliquaries standing.
+        pub contracts: u32,
+        pub reliquaries: u32,
     }
 
     impl Works {
         /// Side `p`'s works now.
         fn of(world: &World, p: PlayerId) -> Works {
-            use gc_sim::structures::{GATE, Role, TowerShot};
+            use gc_sim::structures::{GATE, Role, TITHE, TowerShot};
             let mut w = Works {
                 walled: u32::from(world.walled_town(p)),
                 ..Works::default()
             };
+            let evolved = |unit: gc_sim::UnitId| {
+                (world.conquest_units().get(usize::from(unit))).is_some_and(|u| u.evolves_from.is_some())
+            };
+            w.evolved = (world.regiments.iter())
+                .filter(|r| r.owner == p && evolved(r.unit))
+                .count() as u32;
             let Some(st) = world.structures() else {
                 return w;
             };
@@ -258,6 +272,9 @@ mod tests {
                 };
                 if b.role == Role::Defence && b.upgrades_from.is_some() {
                     w.raised += 1;
+                }
+                if b.flags & TITHE != 0 {
+                    w.reliquaries += 1;
                 }
                 let n = match b.role {
                     Role::Wall if b.flags & GATE != 0 => &mut w.gates,
@@ -292,6 +309,10 @@ mod tests {
                 blasts: self.blasts.max(o.blasts),
                 raised: self.raised.max(o.raised),
                 walled: self.walled.max(o.walled),
+                cocoons: self.cocoons.max(o.cocoons),
+                evolved: self.evolved.max(o.evolved),
+                contracts: self.contracts.max(o.contracts),
+                reliquaries: self.reliquaries.max(o.reliquaries),
             }
         }
     }
@@ -513,10 +534,19 @@ mod tests {
             cmds.clear();
             minds.tick(&world, &mut cmds);
             for c in &cmds {
-                if let (gc_sim::Command::Clear { .. }, Some(w)) =
-                    (c.command, works.get_mut(usize::from(c.player)))
-                {
-                    w.clears += 1;
+                let Some(w) = works.get_mut(usize::from(c.player)) else {
+                    continue;
+                };
+                match c.command {
+                    gc_sim::Command::Clear { .. } => w.clears += 1,
+                    gc_sim::Command::Evolve { .. } => w.cocoons += 1,
+                    gc_sim::Command::UsePower { power, .. }
+                        if (world.powers().get(usize::from(power)))
+                            .is_some_and(|p| p.meter == gc_sim::Meter::Tithe) =>
+                    {
+                        w.contracts += 1
+                    }
+                    _ => {}
                 }
             }
             world.tick(&cmds);
@@ -1364,6 +1394,22 @@ mod tests {
                 played.report()
             );
         }
+    }
+
+    /// The Brood and the Concord play their faction rules (docs/03): a
+    /// Veteran Brood grows a Chrysalis Chamber and cocoons regiments into
+    /// their evolved forms, and a Veteran Concord puts up Reliquaries and
+    /// signs contracts with the Tithe its fights pay.
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_brood_evolves_and_the_concord_signs_contracts() {
+        let factions = [Faction::Brood, Faction::CarrionConcord];
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 7, 40);
+        let (brood, concord) = (&played.sides[0].works, &played.sides[1].works);
+        let report = played.report();
+        assert!(brood.cocoons > 0 && brood.evolved > 0, "{brood:?}\n{report}");
+        assert!(concord.reliquaries >= 2, "{concord:?}\n{report}");
+        assert!(concord.contracts > 0, "{concord:?}\n{report}");
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

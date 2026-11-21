@@ -1329,6 +1329,19 @@ impl World {
         c.refill_spot(&self.regiments, i)
     }
 
+    /// The Conquest unit table (empty outside a Conquest match).
+    pub fn conquest_units(&self) -> &[ConquestUnit] {
+        self.conquest.as_ref().map_or(&[], |c| &c.units)
+    }
+
+    /// Whether `point` is where `player`'s undead don't crumble: near one
+    /// of their finished Reliquaries or main buildings (see [`tithe`]).
+    pub fn keeps_at(&self, player: PlayerId, point: FxVec2) -> bool {
+        self.conquest
+            .as_ref()
+            .is_some_and(|c| c.keeps_at(player, point))
+    }
+
     /// Whether `player` could evolve their regiment `h` into unit type
     /// `into` now (see [`Command::Evolve`]), and if not, why.
     pub fn can_evolve(

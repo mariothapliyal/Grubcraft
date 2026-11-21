@@ -5,7 +5,7 @@
 //! nothing of factions.
 
 use gc_sim::structures::{
-    BuildingStats, DROP_OFF_GRUB, GATE, LARVAE, LINE, Role, TRADE_POST, TowerShot, VEINS,
+    BuildingStats, DROP_OFF_GRUB, GATE, LARVAE, LINE, Role, TITHE, TRADE_POST, TowerShot, VEINS,
 };
 use gc_sim::{BuildingId, ConquestUnit, Resource, UnitId, World};
 use glam::Vec2;
@@ -254,6 +254,23 @@ impl Kit {
         self.buildings
             .iter()
             .find(|b| b.stats.flags & LARVAE != 0 && b.stats.role != Role::Main)
+    }
+
+    /// The building whose standing unlocks the faction's evolutions: the
+    /// Brood's Chrysalis Chamber.
+    pub fn chamber(&self) -> Option<&KitBuilding> {
+        let at = self.units.iter().find_map(|u| u.unit.unlocked_at)?;
+        self.building(at)
+    }
+
+    /// The forms a regiment of `from` can evolve into.
+    pub fn evolutions(&self, from: UnitId) -> impl Iterator<Item = &KitUnit> + '_ {
+        (self.units.iter()).filter(move |u| u.unit.evolves_from == Some(from))
+    }
+
+    /// The building that collects Tithe: the Concord's Reliquary.
+    pub fn reliquary(&self) -> Option<&KitBuilding> {
+        self.buildings.iter().find(|b| b.stats.flags & TITHE != 0)
     }
 
     /// The units building type `b` (or anything it grew from) trains.
