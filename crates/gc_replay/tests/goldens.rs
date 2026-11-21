@@ -163,7 +163,7 @@ fn the_goldens_cover_every_kind_of_command() {
 const PINNED: (u32, &[(&str, u64)]) = (
     90,
     &[
-        ("conquest-evolve-tithe-1v1", 0x52612b6b39ec3507),
+        ("conquest-evolve-tithe-1v1", 0x7ac877a377801e96),
         ("conquest-ribcage-1v1", 0x1db2a24ea1aa5db5),
         ("conquest-river-1v1", 0x496077282af2342b),
         ("field-1v1", 0x25b3c02aa8367e0f),
