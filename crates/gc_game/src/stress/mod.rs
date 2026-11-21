@@ -184,12 +184,6 @@ fn run(scenario: &Scenario, real: &Real, out: &mut String) -> bool {
 #[test]
 #[ignore = "slow in debug builds: CI runs it with --release"]
 fn stress_suite() {
-    if let Some(bit) = std::env::var("PRUNE")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-    {
-        gc_sim::PRUNE_OFF.store(1 << bit, std::sync::atomic::Ordering::Relaxed);
-    }
     let only = std::env::var("STRESS").ok().filter(|s| !s.is_empty());
     let chosen: Vec<&Scenario> = SCENARIOS
         .iter()

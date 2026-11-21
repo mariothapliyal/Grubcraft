@@ -4196,19 +4196,7 @@ fn stand_back(regs: &mut Regiments, units: &[UnitStats], nav: &Nav, combat: &Com
         let berth = regs.berth(units, i);
         let target = nav.settle(regs.owner[i], target, berth);
         regs.spot[i] = target;
-        if crate::pruned(9) {
-            regs.target[i] = Some(target);
-            return;
-        }
         regs.target[i] = Some(combat.own_place(regs, units, nav, i, target, false));
         regs.set_seeks_place(i, true);
     }
-}
-
-/// PRUNE TRIAL (temporary): rules switched off, by bit.
-#[doc(hidden)]
-pub static PRUNE_OFF: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-#[doc(hidden)]
-pub fn pruned(bit: u32) -> bool {
-    PRUNE_OFF.load(core::sync::atomic::Ordering::Relaxed) & (1 << bit) != 0
 }

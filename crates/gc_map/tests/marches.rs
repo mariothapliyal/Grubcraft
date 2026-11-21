@@ -519,9 +519,6 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     }
     trace.finish();
     if std::env::var("VERBOSE").is_ok() {
-        for r in w.regiments.iter().filter(|r| r.moving) {
-            println!("   still moving: {:?} at {:?} made_way {:?} files {}", r.handle.index, r.position, r.made_way, r.files);
-        }
         for n in 0..handles.len() {
             println!(
                 "   regiment {n} (unit {}): arrived {:?} ideal {}",
@@ -656,9 +653,6 @@ impl Trace {
 #[test]
 #[ignore = "a report: cargo test -p gc_map --release --test marches -- --ignored --nocapture"]
 fn report_marches() {
-    if let Some(bit) = std::env::var("PRUNE").ok().and_then(|s| s.parse::<u32>().ok()) {
-        gc_sim::PRUNE_OFF.store(1 << bit, std::sync::atomic::Ordering::Relaxed);
-    }
     let only: Option<usize> = std::env::var("MARCHES").ok().and_then(|s| s.parse().ok());
     let mut army = 0;
     let mut by = [[0u32; 3]; 3];

@@ -28,12 +28,6 @@ const SETTLE: u32 = 15;
 const DISORDER: u32 = 40;
 
 fn run(real: &Real, report: &mut Report) {
-    if let Some(bit) = std::env::var("PRUNE")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-    {
-        gc_sim::PRUNE_OFF.store(1 << bit, std::sync::atomic::Ordering::Relaxed);
-    }
     let mut world = Arena::new(TILES).world(real, 44, 0);
     let [yari, katana, yumi] = real.ember_line();
     let kinds = [yari, katana, yumi, yari, katana, yari];

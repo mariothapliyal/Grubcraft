@@ -1961,15 +1961,13 @@ impl Combat {
                 });
                 regs.crowd[i] = into.min(SATURATED);
                 regs.set_crowded(i, deepest > PUSHING);
-                let made_way =
-                    !crate::pruned(11) && self.make_way(regs, units, stances, nav, conquest, i);
-                if deepest > CROWDING && !made_way && !crate::pruned(8) {
+                let made_way = self.make_way(regs, units, stances, nav, conquest, i);
+                if deepest > CROWDING && !made_way {
                     self.make_room(regs, units, stances, nav, conquest, i);
                 }
                 // Coming up to where it was sent, it looks whether a
                 // friend has taken the place since.
                 if regs.seeks_place(i)
-                    && !crate::pruned(9)
                     && regs.attack_target[i].is_none()
                     && let Some(target) = regs.target[i].filter(|_| regs.marching(i))
                     && (target - regs.position[i]).length_sq_raw()
