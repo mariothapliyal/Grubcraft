@@ -491,6 +491,38 @@ macro_rules! layers {
     };
 }
 
+/// `boxes` (cells, `[x0, y0, x1, y1]`, end exclusive) with every two that
+/// overlap or touch joined into the box round both, until none do: the
+/// grown boxes round a patch of tiles come out as one, so no cell in it
+/// is visited twice.
+fn merged(mut boxes: Vec<[i32; 4]>) -> Vec<[i32; 4]> {
+    let mut joined = true;
+    while joined {
+        joined = false;
+        let mut k = 0;
+        while k < boxes.len() {
+            let a = boxes[k];
+            let touching = (k + 1..boxes.len()).find(|&j| {
+                let b = boxes[j];
+                a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
+            });
+            if let Some(j) = touching {
+                let b = boxes.swap_remove(j);
+                boxes[k] = [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ];
+                joined = true;
+            } else {
+                k += 1;
+            }
+        }
+    }
+    boxes
+}
+
 impl Grid {
     /// Put up or pull down a building on the tiles `x..x + w` × `y..y + d`
     /// and bring the grid up to date, searching in `search`'s room. Returns
@@ -670,7 +702,8 @@ impl Grid {
         }
         // A cell's cost reads the going within reach of it (see
         // `Grid::block_going_at`), so every cell that near a changed tile
-        // is priced again.
+        // is priced again, once: a burnt-out patch is one box.
+        let boxes = merged(boxes);
         for &cells in &boxes {
             for c in self.cells_in(cells).collect::<Vec<_>>() {
                 let cost = self.cell_cost(c as usize);

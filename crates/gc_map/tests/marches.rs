@@ -441,7 +441,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                 let moved = (r.position - last_pos[n]).length();
                 let u = &units[r.unit as usize];
                 let dir = r.position - last_pos[n];
-                let full = w.terrain().going(
+                let full = w.terrain().block_going(
                     pace_of[n] / 20,
                     last_pos[n],
                     if moved > Fx::ZERO {
@@ -450,6 +450,8 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                         FxVec2::ZERO
                     },
                     u.mass,
+                    r.facing,
+                    u.block_size_in(r.formation, r.files, r.models),
                 );
                 let kind = if moved * 10 >= full * 9 {
                     0

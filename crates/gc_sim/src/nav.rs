@@ -92,9 +92,11 @@ pub const MAX_BERTH: u8 = 16;
 /// files, four tiles across, wants about this much).
 const GRAPH_BERTH: u8 = 8;
 /// How far from a cell, in cells, the going is read for what crossing it
-/// costs a block (see [`Grid::block_going_at`]): the graph's berth less
-/// one, about the half-width of a regiment in line.
-const BODY_REACH: i32 = GRAPH_BERTH as i32 - 1;
+/// costs a block (see [`Grid::block_going_at`]): two tiles, about where
+/// the outer files of a regiment in line stand, as the march looks at a
+/// block's corners three eighths of its width out
+/// ([`crate::Terrain::block_going`]).
+pub(crate) const BODY_REACH: i32 = 2 * CELLS_PER_TILE;
 /// Most a cell's cost is raised by being close to blocked ground: on the
 /// very edge of open ground a step costs this much more than in the open.
 const WALL_COST: u32 = 4 * OPEN_COST;
@@ -290,21 +292,20 @@ impl Grid {
     /// where a block's flanks and its front and rear ranks stand) shared
     /// out, as the march slows a block by the share of it under trees or
     /// on soft ground (see [`crate::Terrain::block_going`]). Off the map
-    /// a point counts as the middle.
+    /// a point counts as open ground, as the march counts it.
     fn block_going_at(&self, c: usize) -> u8 {
         if self.going.is_empty() {
             return 100;
         }
         let (x, y) = self.xy(c as u32);
-        let here = u32::from(self.going_xy(x, y));
         let r = BODY_REACH;
-        let mut sum = here;
+        let mut sum = u32::from(self.going_xy(x, y));
         for (dx, dy) in [(r, 0), (-r, 0), (0, r), (0, -r)] {
             let (sx, sy) = (x + dx, y + dy);
             sum += if self.inside(sx, sy) {
                 u32::from(self.going_xy(sx, sy))
             } else {
-                here
+                100
             };
         }
         // Rounded to the nearest percent.

@@ -4212,7 +4212,10 @@ impl Running {
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
             let size = stats.block_size_in(r.formation, r.files, r.models);
-            let under_trees = terrain.under_trees(r.position, r.facing, size);
+            // Looked at where the block is drawn, so its ranks loosen as
+            // its drawn corners cross into the trees.
+            let under_trees =
+                terrain.under_trees(fx_vec(pos), gc_fixed::Angle::of_vec(fx_vec(facing)), size);
             let (width, depth) = (fx_to_f32(size.0), fx_to_f32(size.1));
             // Marks of a regiment on a wall sit on the wall top.
             let up = self.mark_lift(&r);
