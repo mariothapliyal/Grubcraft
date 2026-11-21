@@ -28,6 +28,9 @@ pub mod deploy;
 pub mod drawn;
 pub mod economy;
 pub mod events;
+pub mod evolve;
+#[cfg(test)]
+mod faction_tests;
 pub mod fieldworks;
 pub mod fire;
 pub mod flood;
@@ -54,6 +57,7 @@ pub mod stances;
 mod state;
 pub mod structures;
 pub mod terrain;
+pub mod tithe;
 pub mod towers;
 pub mod towns;
 pub mod traps;
@@ -132,7 +136,7 @@ pub const SYSTEMS: [&str; 15] = [
 /// replays need blessing (`gc_replay/tests/goldens.rs` checks), with
 /// `scripts/rules-bump.py`, which takes the next number free on main.
 // scripts/rules-bump.py reads and sets this line as written.
-pub const SIM_VERSION: u32 = 89;
+pub const SIM_VERSION: u32 = 90;
 
 /// A tile in a command, widened.
 fn tile(t: (i16, i16)) -> (i32, i32) {
@@ -869,6 +873,15 @@ pub enum Command {
     /// faction meter (see [`powers`]). Refused before their tier allows it,
     /// while it cools down, or when they can't pay.
     UsePower { power: u8, target: PowerTarget },
+    /// Conquest: the issuer's regiment cocoons where it stands and comes
+    /// out as `into`, one of its unit type's evolutions (see [`evolve`]).
+    /// Refused unless they are at its tier, have a finished building that
+    /// unlocks it, supply room and the price, and the regiment is out of
+    /// melee, not routing, off the walls and not in a cocoon already.
+    Evolve {
+        regiment: RegimentHandle,
+        into: UnitId,
+    },
     /// Conquest: one of the issuer's towers shoots enemy regiment `target`
     /// first whenever it is in range, until it falls; `None` lets the tower
     /// choose again (see [`towers`]). The target must be one the issuer's
@@ -1050,6 +1063,7 @@ impl Command {
             | Command::Untrain { .. }
             | Command::Upgrade { .. }
             | Command::UsePower { .. }
+            | Command::Evolve { .. }
             | Command::FocusTower { .. }
             | Command::SetGate { .. }
             | Command::BuildWall { .. }
@@ -1270,7 +1284,9 @@ impl World {
 
     /// Whether regiment `h` is short of soldiers and of a type that
     /// reinforces (see [`reinforce`]; Conquest only): something trains it
-    /// and it isn't undead or summoned. Says nothing of where it stands.
+    /// (or the form it evolved from) and it isn't summoned or in a cocoon,
+    /// or it is undead (refilled with Tithe). Says nothing of where it
+    /// stands.
     pub fn can_reinforce(&self, h: RegimentHandle) -> bool {
         let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
             return false;
@@ -1291,6 +1307,58 @@ impl World {
     /// points, on the side facing `from` (Conquest only; `None` with none).
     pub fn reinforce_spot(&self, p: PlayerId, from: FxVec2) -> Option<FxVec2> {
         self.conquest.as_ref()?.reinforce_spot(p, from)
+    }
+
+    /// Whether regiment `h` stands where it would be refilled: in reach of
+    /// its owner's reinforcement points, or for the Concord's undead of
+    /// one of their Reliquaries (see [`tithe`]; Conquest only).
+    pub fn refills_here(&self, h: RegimentHandle) -> bool {
+        let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
+            return false;
+        };
+        c.refills_here(&self.regiments, i)
+    }
+
+    /// Where regiment `h` might stand to be refilled (see
+    /// [`World::reinforce_spot`]; the undead by a Reliquary). `None` with
+    /// nowhere.
+    pub fn refill_spot(&self, h: RegimentHandle) -> Option<FxVec2> {
+        let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
+            return None;
+        };
+        c.refill_spot(&self.regiments, i)
+    }
+
+    /// Whether `player` could evolve their regiment `h` into unit type
+    /// `into` now (see [`Command::Evolve`]), and if not, why.
+    pub fn can_evolve(
+        &self,
+        player: PlayerId,
+        h: RegimentHandle,
+        into: UnitId,
+    ) -> Result<(), Refusal> {
+        let c = self.conquest.as_ref().ok_or(Refusal::NoBuildings)?;
+        c.can_evolve(&self.regiments, &self.units, player, h, into)
+    }
+
+    /// Regiment `h`'s cocoon (see [`evolve`]): ticks left and the unit type
+    /// it comes out as, if it is in one.
+    pub fn cocoon_of(&self, h: RegimentHandle) -> Option<(u16, UnitId)> {
+        self.regiments.cocoon_of(h)
+    }
+
+    /// The field's graves (see [`tithe`]): where each lies and its
+    /// corpses, oldest first. None outside a Conquest match with a Tithe
+    /// player.
+    pub fn graves(&self) -> impl Iterator<Item = (FxVec2, u16)> + '_ {
+        self.conquest.iter().flat_map(|c| c.tithe.graves())
+    }
+
+    /// The corpses within `tiles` of `at` (see [`tithe`]).
+    pub fn corpses_near(&self, at: FxVec2, tiles: u8) -> u32 {
+        self.conquest
+            .as_ref()
+            .map_or(0, |c| c.tithe.corpses_near(at, tiles))
     }
 
     /// Grub, Marrow and the nodes (Conquest only).
@@ -2029,9 +2097,11 @@ impl World {
                 (conquest.structures).survey_towns(&self.nav, &self.terrain, &mut self.regiments);
                 self.events.towns(&conquest.structures.towns.changed);
             }
+            self.regiments.open_cocoons(&self.units);
             if self.tick.is_multiple_of(TICKS_PER_SECOND) {
                 towns::mend_in_towns(&conquest.structures.towns, &mut self.regiments, &self.units);
                 conquest.reinforce(&mut self.regiments, &self.units);
+                conquest.crumble(&mut self.regiments);
                 if self.flood.rivers.floodplain_shut() {
                     (conquest.structures).drown(&self.flood.rivers, &mut self.nav, &self.regiments);
                 }
@@ -2093,6 +2163,12 @@ impl World {
                 c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
             }
             self.raise_trained();
+        }
+        // The tick's dead lie down and pay their Tithe, before the count
+        // is cleared.
+        if let Some(c) = &mut self.conquest {
+            c.tithe
+                .collect(&c.meters, &c.structures, &self.regiments, self.tick);
         }
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.
@@ -2720,6 +2796,9 @@ impl World {
                 .as_mut()
                 .is_some_and(|c| c.set_rally(pc.player, structure, at)),
             Command::UsePower { power, target } => self.use_power(pc.player, power, target),
+            Command::Evolve { regiment, into } => self.conquest.as_mut().is_some_and(|c| {
+                c.evolve(&mut self.regiments, &self.units, pc.player, regiment, into)
+            }),
             Command::FocusTower { structure, target } => {
                 self.focus_tower(pc.player, structure, target)
             }
@@ -2752,6 +2831,7 @@ impl World {
             &mut self.regiments,
             &self.nav,
             &self.units,
+            &self.stances,
             player,
             power,
             target,

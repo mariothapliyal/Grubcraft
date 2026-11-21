@@ -189,6 +189,17 @@ impl Writer {
                 self.u8(6);
                 self.var(u64::from(unit));
             }
+            // Format 54.
+            PowerEffect::Raise { unit, tiles } => {
+                self.u8(7);
+                self.var(u64::from(unit));
+                self.u8(tiles);
+            }
+            PowerEffect::Hire { unit, tiles } => {
+                self.u8(8);
+                self.var(u64::from(unit));
+                self.u8(tiles);
+            }
         }
     }
 
@@ -222,6 +233,10 @@ impl Writer {
         self.bool(c.burns);
         self.var(u64::from(u.gather_percent));
         self.bool(c.fells);
+        // Format 54: evolutions and the undead.
+        self.var(u.evolves_from.map_or(0, |b| u64::from(b) + 1));
+        self.var(u.unlocked_at.map_or(0, |b| u64::from(b) + 1));
+        self.bool(u.undead);
     }
 
     /// A caravan's trade post (format 24 on).
@@ -337,6 +352,12 @@ impl Writer {
             }
             Command::Ready => self.u8(7),
             Command::Concede => self.u8(48),
+            // Format 54.
+            Command::Evolve { regiment, into } => {
+                self.u8(52);
+                self.handle(regiment);
+                self.var(u64::from(into));
+            }
             Command::SpawnStructure {
                 building,
                 tile,
@@ -878,6 +899,14 @@ impl<'a> Reader<'a> {
                 6 if format >= 23 => PowerEffect::Summon {
                     unit: self.var_as()?,
                 },
+                7 if format >= 54 => PowerEffect::Raise {
+                    unit: self.var_as()?,
+                    tiles: self.u8()?,
+                },
+                8 if format >= 54 => PowerEffect::Hire {
+                    unit: self.var_as()?,
+                    tiles: self.u8()?,
+                },
                 _ => return None,
             },
         })
@@ -931,6 +960,11 @@ impl<'a> Reader<'a> {
         }
         if format >= 51 {
             u.clearing.fells = self.bool()?;
+        }
+        if format >= 54 {
+            u.evolves_from = self.maybe_id()?;
+            u.unlocked_at = self.maybe_id()?;
+            u.undead = self.bool()?;
         }
         Some(u)
     }
@@ -1011,6 +1045,10 @@ impl<'a> Reader<'a> {
             },
             7 => Command::Ready,
             48 => Command::Concede,
+            52 => Command::Evolve {
+                regiment: self.handle()?,
+                into: self.var_as()?,
+            },
             tag @ (8 | 25) => Command::SpawnStructure {
                 building: self.var_as()?,
                 tile: (self.var_as::<u16>()? as i16, self.var_as::<u16>()? as i16),
@@ -1275,6 +1313,10 @@ mod tests {
             },
             Command::Ready,
             Command::Concede,
+            Command::Evolve {
+                regiment: h,
+                into: 3,
+            },
             Command::SpawnStructure {
                 building: 3,
                 tile: (-2, 140),

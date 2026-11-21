@@ -1785,7 +1785,7 @@ impl Combat {
                 || regs.morale_state[i].broken()
                 || regs.falling_back[i] > 0
                 || regs.on_wall[i]
-                || regs.trapped_left[i] > 0
+                || regs.held_fast(i)
                 // Marching on its own orders: it goes where it was sent.
                 || (regs.target[i].is_some() && regs.attack_target[i].is_none())
                 || conquest.is_some_and(|c| c.has_job(regs, i))
@@ -2081,7 +2081,7 @@ impl Combat {
             && !regs.morale_state[i].broken()
             && !regs.braced[i]
             && !regs.hold[i]
-            && regs.trapped_left[i] == 0
+            && !regs.held_fast(i)
             && !regs.re_forming(i)
             && !self.civil(regs, i)
             && conquest.is_none_or(|c| !c.has_job(regs, i))
@@ -2430,7 +2430,8 @@ impl Combat {
                 Strike::Early => true,
                 Strike::Rest => false,
             };
-            if !strikes || regs.models[i] == 0 {
+            // A cocoon takes blows and strikes none.
+            if !strikes || regs.models[i] == 0 || regs.cocooned(i) {
                 continue;
             }
             if !on_turn {
@@ -2580,6 +2581,7 @@ impl Combat {
                 || regs.target[i].is_some()
                 || regs.models[i] == 0
                 || regs.morale_state[i].broken()
+                || regs.cocooned(i)
             {
                 continue;
             }

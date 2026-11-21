@@ -77,6 +77,9 @@ impl Aim {
             PowerEffect::March { .. } => Some(Aim::Selection),
             PowerEffect::Steadfast { tiles } => Some(Aim::Ground(tiles)),
             PowerEffect::Summon { .. } => Some(Aim::Shrine),
+            PowerEffect::Raise { tiles, .. } | PowerEffect::Hire { tiles, .. } => {
+                Some(Aim::Ground(u16::from(tiles)))
+            }
         }
     }
 

@@ -166,6 +166,13 @@ pub enum BuildingFlag {
     Pass,
     /// Brood: a drawn wall grown along root-veins with no worker.
     Grown,
+    /// Concord: collects Tithe from the dead near it, and keeps its
+    /// owner's undead from crumbling (docs/03, "Tithe").
+    Tithe,
+    /// Brood: while it stands, finished, its owner's regiments may cocoon
+    /// into their evolved forms (docs/03, "Metamorphosis in the field").
+    /// Baked onto the evolved units, not the building.
+    Evolutions,
 }
 
 #[derive(Deserialize)]
@@ -320,6 +327,14 @@ pub enum Built {
     /// A regiment of the named summoned unit takes the field beside one of
     /// the caster's Shrines for the duration.
     Summon(String),
+    /// A regiment of the named summoned unit rises from the corpses within
+    /// the ability's radius of the chosen point, for the duration (none:
+    /// for good).
+    Raise(String),
+    /// A regiment of the named summoned unit is hired from the map's
+    /// hamlet within the ability's radius of the chosen point, for the
+    /// duration.
+    Hire(String),
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

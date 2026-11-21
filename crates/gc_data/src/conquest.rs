@@ -18,12 +18,12 @@ pub const CONQUEST_UNITS_PATH: &str = "data/conquest_units";
 /// Pack path of the faction powers table (the faction meters' abilities).
 pub const POWERS_PATH: &str = "data/powers";
 /// Bump whenever [`BuildingRecord`]'s layout or meaning changes.
-pub const BUILDING_SCHEMA: u32 = 14;
+pub const BUILDING_SCHEMA: u32 = 15;
 /// Bump whenever [`ConquestUnitRecord`]'s layout or meaning changes (or
 /// [`crate::UNIT_SCHEMA`], whose record it holds).
-pub const CONQUEST_UNIT_SCHEMA: u32 = 6;
+pub const CONQUEST_UNIT_SCHEMA: u32 = 7;
 /// Bump whenever [`PowerRecord`]'s layout or meaning changes.
-pub const POWER_SCHEMA: u32 = 3;
+pub const POWER_SCHEMA: u32 = 4;
 /// An index field that names nothing.
 pub const NONE: u16 = u16::MAX;
 /// Largest footprint side, in tiles (docs/21: buildings are 2×2 to 5×5,
@@ -131,8 +131,11 @@ pub const BUILDING_PASS: u16 = 8192;
 /// Brood: a drawn wall grown along its owner's root-veins with no worker
 /// (docs/26).
 pub const BUILDING_GROWN: u16 = 16384;
+/// Concord: collects Tithe from the dead near it, and the undead it keeps
+/// near don't crumble (a Reliquary; schema 15).
+pub const BUILDING_TITHE: u16 = 32768;
 /// Every flag there is; a record with any other bit set is refused.
-const BUILDING_FLAGS: u16 = (BUILDING_GROWN << 1) - 1;
+const BUILDING_FLAGS: u16 = u16::MAX;
 
 /// [`BuildingRecord::tunes`]: the nodes a building tunes (schema 4).
 pub const TUNES_NOTHING: u8 = 0;
@@ -377,7 +380,10 @@ pub struct ConquestUnitRecord {
     /// A worker's gathering speed, in percent of the usual (schema 6): a
     /// load fills in `100 / gather_percent` of the time. 100 for others.
     pub gather_percent: u16,
-    pub reserved: u16,
+    /// For a Brood evolution (schema 7): the building that must stand,
+    /// finished, for a regiment to cocoon into it (the Chrysalis Chamber),
+    /// as an index into the building table; [`NONE`] otherwise.
+    pub unlocked_at: u16,
 }
 
 impl ConquestUnitRecord {
@@ -409,7 +415,7 @@ impl ConquestUnitRecord {
 pub fn power_lasts(effect: u8) -> bool {
     matches!(
         effect,
-        POWER_HASTE | POWER_MARCH | POWER_STEADFAST | POWER_SUMMON
+        POWER_HASTE | POWER_MARCH | POWER_STEADFAST | POWER_SUMMON | POWER_HIRE
     )
 }
 
@@ -417,8 +423,9 @@ pub fn power_lasts(effect: u8) -> bool {
 pub const METER_NOT_BUILT: u8 = 0;
 pub const METER_RESONANCE: u8 = 1;
 pub const METER_HONOR: u8 = 2;
+pub const METER_TITHE: u8 = 3;
 /// Each `METER_*`'s name, as the rosters and the screen give it.
-pub const METER_NAMES: [&str; 3] = ["", "Resonance", "Honor"];
+pub const METER_NAMES: [&str; 4] = ["", "Resonance", "Honor", "Tithe"];
 /// [`PowerRecord::effect`]: what a power does, and what its
 /// [`PowerRecord::arg`] is.
 pub const POWER_NOT_BUILT: u8 = 0;
@@ -440,6 +447,13 @@ pub const POWER_STEADFAST: u8 = 5;
 /// takes the field beside one of the caster's finished Shrines for the
 /// duration.
 pub const POWER_SUMMON: u8 = 6;
+/// A regiment of unit type `arg` rises from the corpses within
+/// [`PowerRecord::tiles`] of the chosen point, as strong as there are
+/// corpses there; for the duration, or for good with none (schema 4).
+pub const POWER_RAISE: u8 = 7;
+/// A regiment of unit type `arg` is hired from the map's hamlet within
+/// [`PowerRecord::tiles`] of the chosen point, for the duration (schema 4).
+pub const POWER_HIRE: u8 = 8;
 /// The most percent faster a haste or a march makes anything.
 pub const MAX_POWER_PERCENT: u16 = 100;
 /// The widest a steadfast power reaches, in tiles.
@@ -470,8 +484,9 @@ pub struct PowerRecord {
     pub meter: u8,
     /// A `POWER_*`.
     pub effect: u8,
-    /// Always 0.
-    pub pad: u8,
+    /// How far from the chosen point a raising or a hiring reaches, in
+    /// tiles (schema 4; was padding); 0 for every other power.
+    pub tiles: u8,
 }
 
 impl PowerRecord {
@@ -514,8 +529,12 @@ pub fn validate_power(
     if p.tier == 0 || p.tier > MAX_TIER {
         return Err("tier is 1 to 3");
     }
-    if p.meter > METER_HONOR || p.effect > POWER_SUMMON || p.pad != 0 {
+    if p.meter > METER_TITHE || p.effect > POWER_HIRE {
         return Err("unknown meter or effect");
+    }
+    let reaches = matches!(p.effect, POWER_RAISE | POWER_HIRE);
+    if reaches != (1..=MAX_POWER_TILES).contains(&u16::from(p.tiles)) {
+        return Err("a raising or a hiring reaches 1 to 64 tiles, and nothing else has a reach");
     }
     if p.built() && p.meter == METER_NOT_BUILT {
         return Err("a built power is paid from a built meter");
@@ -523,7 +542,8 @@ pub fn validate_power(
     if p.cooldown_ticks > MAX_POWER_TICKS || p.duration_ticks > MAX_POWER_TICKS {
         return Err("cooldown and duration are at most 10 minutes");
     }
-    if power_lasts(p.effect) != (p.duration_ticks > 0) {
+    // A raising lasts a while, or (with no duration) for good.
+    if p.effect != POWER_RAISE && power_lasts(p.effect) != (p.duration_ticks > 0) {
         return Err(
             "a haste, a march, a steadfast power or a summons lasts a while, and nothing else does",
         );
@@ -533,7 +553,7 @@ pub fn validate_power(
         POWER_HASTE | POWER_MARCH => (1..=MAX_POWER_PERCENT).contains(&p.arg),
         POWER_SHIFT => usize::from(p.arg) < buildings,
         POWER_GRANT => p.arg > 0,
-        POWER_SUMMON => units.get(usize::from(p.arg)).is_some_and(|u| {
+        POWER_SUMMON | POWER_RAISE | POWER_HIRE => units.get(usize::from(p.arg)).is_some_and(|u| {
             u.trained_at == NONE && u.evolves_from == NONE && u.stats.faction == p.faction
         }),
         _ => (1..=MAX_POWER_TILES).contains(&p.arg),
@@ -758,6 +778,11 @@ pub fn validate_conquest_unit(
     }
     if u.evolves_from != NONE && usize::from(u.evolves_from) >= units {
         return Err("evolves_from is past the end of the unit table");
+    }
+    if (u.unlocked_at != NONE)
+        && (u.evolves_from == NONE || usize::from(u.unlocked_at) >= buildings)
+    {
+        return Err("only an evolution is unlocked at a building, one in the building table");
     }
     if u.trained_at != NONE && u.train_ticks == 0 {
         return Err("a trained unit needs a train time");

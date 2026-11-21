@@ -80,15 +80,22 @@ pub enum Meter {
     Resonance,
     /// The Clans', earned by fighting well and by Shrines.
     Honor,
+    /// The Concord's, collected from the dead near Reliquaries.
+    Tithe,
 }
 
 impl Meter {
     /// The meter numbered `n` (as `self as u8` numbers them, the baked
     /// tables' `METER_*` too), if there is one.
     pub fn from_u8(n: u8) -> Option<Meter> {
-        [Meter::NotBuilt, Meter::Resonance, Meter::Honor]
-            .get(usize::from(n))
-            .copied()
+        [
+            Meter::NotBuilt,
+            Meter::Resonance,
+            Meter::Honor,
+            Meter::Tithe,
+        ]
+        .get(usize::from(n))
+        .copied()
     }
 
     pub(crate) fn hash_into(self, h: &mut StateHasher) {
@@ -116,6 +123,13 @@ pub enum PowerEffect {
     /// A regiment of this unit type takes the field beside one of the
     /// caster's finished buildings that earns Honor (a Shrine).
     Summon { unit: UnitId },
+    /// A regiment of this unit type rises from the corpses within this
+    /// many tiles of the chosen point (see [`crate::tithe`]), for the
+    /// power's duration, or for good if it has none.
+    Raise { unit: UnitId, tiles: u8 },
+    /// A regiment of this unit type is hired from the map's hamlet within
+    /// this many tiles of the chosen point (see [`crate::tithe`]).
+    Hire { unit: UnitId, tiles: u8 },
 }
 
 impl PowerEffect {
@@ -127,6 +141,7 @@ impl PowerEffect {
                 | PowerEffect::March { .. }
                 | PowerEffect::Steadfast { .. }
                 | PowerEffect::Summon { .. }
+                | PowerEffect::Hire { .. }
         )
     }
 }
@@ -166,6 +181,9 @@ impl PowerStats {
         };
         let duration = if effect.lasts() {
             self.duration_ticks.clamp(1, MAX_POWER_TICKS)
+        } else if let PowerEffect::Raise { .. } = effect {
+            // None: what it raises stays.
+            self.duration_ticks.min(MAX_POWER_TICKS)
         } else {
             0
         };
@@ -208,6 +226,16 @@ impl PowerStats {
             PowerEffect::Summon { unit } => {
                 h.u8(6);
                 h.u16(unit);
+            }
+            PowerEffect::Raise { unit, tiles } => {
+                h.u8(7);
+                h.u16(unit);
+                h.u8(tiles);
+            }
+            PowerEffect::Hire { unit, tiles } => {
+                h.u8(8);
+                h.u16(unit);
+                h.u8(tiles);
             }
         }
     }
@@ -366,6 +394,7 @@ impl Conquest {
             Meter::NotBuilt => 0,
             Meter::Resonance => self.structures.resonance(player),
             Meter::Honor => self.honor.points(player),
+            Meter::Tithe => self.tithe.points(player),
         };
         (meter, points)
     }
@@ -423,6 +452,7 @@ impl Conquest {
         regs: &mut Regiments,
         nav: &Nav,
         units: &[UnitStats],
+        stances: &crate::stances::Stances,
         player: PlayerId,
         power: u8,
         target: PowerTarget,
@@ -495,6 +525,17 @@ impl Conquest {
                 raised = summon(&self.structures, regs, nav, units, player, unit, h, lasts);
                 raised.is_some()
             }
+            (PowerEffect::Raise { unit, tiles }, PowerTarget::Point(at)) => {
+                let lasts = if stats.duration_ticks == 0 { 0 } else { lasts };
+                let what = (unit, tiles);
+                raised = (self.raise(regs, nav, units, stances, player, what, at, lasts)).ok();
+                raised.is_some()
+            }
+            (PowerEffect::Hire { unit, tiles }, PowerTarget::Point(at)) => {
+                let what = (unit, tiles);
+                raised = (self.hire(regs, nav, units, stances, player, what, at, lasts)).ok();
+                raised.is_some()
+            }
             _ => false,
         };
         if !done {
@@ -509,6 +550,7 @@ impl Conquest {
             match stats.meter {
                 Meter::Resonance => self.structures.spend_resonance(player, cost),
                 Meter::Honor => self.honor.spend(player, cost),
+                Meter::Tithe => self.tithe.spend(player, cost),
                 Meter::NotBuilt => {}
             }
             if let Some(slot) = self.powers.slot(player, power) {

@@ -201,6 +201,9 @@ pub struct Bank {
     /// Clans: Honor, 0 to [`crate::honor::MAX_HONOR`] (0 for a player whose
     /// meter isn't Honor).
     pub honor: u32,
+    /// Concord: Tithe, 0 to [`crate::tithe::MAX_TITHE`] (0 for a player
+    /// whose meter isn't Tithe).
+    pub tithe: u32,
 }
 
 impl Bank {
@@ -379,8 +382,14 @@ impl Economy {
             if regs.alive[r]
                 && let Some(u) = used.get_mut(usize::from(regs.owner[r]))
             {
+                // A cocoon takes its new form's supply.
+                let unit = if regs.cocooned(r) {
+                    regs.cocoon_into[r]
+                } else {
+                    regs.unit[r]
+                };
                 *u += units
-                    .get(usize::from(regs.unit[r]))
+                    .get(usize::from(unit))
                     .map_or(0, |unit| u32::from(unit.supply));
             }
         }

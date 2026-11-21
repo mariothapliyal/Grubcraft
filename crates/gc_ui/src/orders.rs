@@ -82,6 +82,8 @@ pub enum Wait {
     Reforming,
     FilingThrough,
     Trapped,
+    /// In a cocoon, becoming its evolved form.
+    Cocooned,
     Winded,
     /// Taking on new soldiers near its side's reinforcement points.
     Reinforcing,
@@ -98,6 +100,7 @@ impl Wait {
             Wait::Reforming => "re-forming ranks",
             Wait::FilingThrough => "filing through",
             Wait::Trapped => "trapped",
+            Wait::Cocooned => "in its cocoon",
             Wait::Winded => "winded",
             Wait::Reinforcing => "reinforcing",
             Wait::ShortToReinforce => "can't pay to reinforce",

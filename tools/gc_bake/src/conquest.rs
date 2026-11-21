@@ -125,6 +125,9 @@ pub(crate) fn bake_rosters(data_dir: &Path, units: &[UnitRecord]) -> Result<Tabl
                 building_at: &building_at[i],
                 unit_at: &unit_at[i],
                 starting: &r.starting_units,
+                evolutions_at: (r.buildings.iter())
+                    .find(|b| b.flags.contains(&rosters::BuildingFlag::Evolutions))
+                    .and_then(|b| building_at[i].get(b.name.as_str()).copied()),
             }
             .unit_record(u)?;
             cq::validate_conquest_unit(&record, buildings, conquest_units)
@@ -175,6 +178,12 @@ fn power_record(
         }
     };
     use rosters::Built;
+    let summoned = |n: &String| -> Result<u16, BakeError> {
+        summoned_at
+            .get(n.as_str())
+            .copied()
+            .ok_or_else(|| bad(&format!("{n} is not a summoned unit")))
+    };
     let (effect, arg) = match &a.built {
         None => (cq::POWER_NOT_BUILT, 0),
         Some(Built::Haste(p)) => (cq::POWER_HASTE, u16::from(*p)),
@@ -187,19 +196,22 @@ fn power_record(
         Some(Built::Grant(grub)) => (cq::POWER_GRANT, *grub),
         Some(Built::March(p)) => (cq::POWER_MARCH, u16::from(*p)),
         Some(Built::Steadfast) => (cq::POWER_STEADFAST, whole_tiles(a.radius).map_err(bad)?),
-        Some(Built::Summon(n)) => (
-            cq::POWER_SUMMON,
-            *summoned_at
-                .get(n.as_str())
-                .ok_or_else(|| bad(&format!("{n} is not a summoned unit")))?,
-        ),
+        Some(Built::Summon(n)) => (cq::POWER_SUMMON, summoned(n)?),
+        Some(Built::Raise(n)) => (cq::POWER_RAISE, summoned(n)?),
+        Some(Built::Hire(n)) => (cq::POWER_HIRE, summoned(n)?),
+    };
+    let tiles = match effect {
+        cq::POWER_RAISE | cq::POWER_HIRE => u8::try_from(whole_tiles(a.radius).map_err(bad)?)
+            .map_err(|_| bad("reaches more than 255 tiles"))?,
+        _ => 0,
     };
     let meter = match cq::METER_NAMES.iter().position(|&n| n == meter) {
         _ if effect == cq::POWER_NOT_BUILT => cq::METER_NOT_BUILT,
         Some(m) if m > 0 => m as u8,
         _ => return Err(bad("its meter is not built yet")),
     };
-    let lasts = cq::power_lasts(effect);
+    // A raising with a duration lasts it; with none, for good.
+    let lasts = cq::power_lasts(effect) || effect == cq::POWER_RAISE;
     Ok(PowerRecord {
         name: name_bytes(&a.name).map_err(|why| bad(&why))?,
         cooldown_ticks: ticks(a.cooldown)?,
@@ -210,7 +222,7 @@ fn power_record(
         cost: u8::try_from(a.cost).map_err(|_| bad("costs more than 255"))?,
         meter,
         effect,
-        pad: 0,
+        tiles,
     })
 }
 
@@ -362,6 +374,8 @@ struct UnitContext<'a> {
     building_at: &'a Index<'a>,
     unit_at: &'a Index<'a>,
     starting: &'a [(String, u8)],
+    /// The roster's building flagged `Evolutions`, if any.
+    evolutions_at: Option<u16>,
 }
 
 impl UnitContext<'_> {
@@ -429,7 +443,12 @@ impl UnitContext<'_> {
                     )));
                 }
             },
-            reserved: 0,
+            unlocked_at: if evolves_from == cq::NONE {
+                cq::NONE
+            } else {
+                self.evolutions_at
+                    .ok_or_else(|| bad("an evolution with no building flagged Evolutions".into()))?
+            },
         })
     }
 }
@@ -477,6 +496,9 @@ fn building_flag(f: rosters::BuildingFlag) -> u16 {
         rosters::BuildingFlag::Line => cq::BUILDING_LINE,
         rosters::BuildingFlag::Pass => cq::BUILDING_PASS,
         rosters::BuildingFlag::Grown => cq::BUILDING_GROWN,
+        rosters::BuildingFlag::Tithe => cq::BUILDING_TITHE,
+        // Baked onto the evolutions it unlocks.
+        rosters::BuildingFlag::Evolutions => 0,
     }
 }
 

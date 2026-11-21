@@ -89,6 +89,16 @@ pub struct ConquestUnit {
     /// A worker's gathering speed in percent of the usual (the Clans'
     /// Hands are quicker); 0 means 100.
     pub gather_percent: u16,
+    /// A Brood evolution: the unit type that cocoons into it (see
+    /// [`crate::evolve`]); `None` for any other.
+    pub evolves_from: Option<UnitId>,
+    /// The building type that must stand, finished, for a regiment to
+    /// cocoon into it (the Chrysalis Chamber); `None` for one that isn't an
+    /// evolution.
+    pub unlocked_at: Option<BuildingId>,
+    /// The Concord's dead: refilled with Tithe, and crumbling away from
+    /// their keepers (see [`crate::tithe`]).
+    pub undead: bool,
 }
 
 impl ConquestUnit {
@@ -118,7 +128,8 @@ impl ConquestUnit {
             | u8::from(self.consumed) << 1
             | u8::from(self.burrows) << 2
             | u8::from(self.builds_only) << 3
-            | u8::from(self.mans_walls) << 4);
+            | u8::from(self.mans_walls) << 4
+            | u8::from(self.undead) << 5);
         h.u16(self.trade_base);
         h.u16(self.trade_tenths);
         h.u16(self.cannot_bank);
@@ -130,6 +141,8 @@ impl ConquestUnit {
         h.u8(u8::from(c.burns));
         h.u8(u8::from(c.fells));
         h.u16(self.gather_percent);
+        h.u16(self.evolves_from.unwrap_or(u16::MAX));
+        h.u16(self.unlocked_at.unwrap_or(u16::MAX));
     }
 }
 
@@ -209,6 +222,8 @@ pub(crate) struct Conquest {
     pub(crate) powers: Powers,
     pub(crate) meters: [Meter; MAX_PARTIES],
     pub(crate) honor: Honor,
+    /// The Concord's Tithe and the field's graves (see [`crate::tithe`]).
+    pub(crate) tithe: crate::tithe::Tithe,
     /// Workers clearing land (see [`crate::clearing`]).
     pub(crate) clearing: Clearing,
     /// Walls planned ahead (see [`crate::blueprints`]).
@@ -258,6 +273,7 @@ impl Conquest {
             powers: Powers::new(setup.powers),
             meters: setup.meters,
             honor: Honor::default(),
+            tithe: crate::tithe::Tithe::new(setup.structures as usize),
             clearing: Clearing::new(regiments, setup.build_percent),
             blueprints: Blueprints::default(),
             manning: crate::manning::Manning::new(setup.structures as usize),
@@ -328,6 +344,7 @@ impl Conquest {
             resonance: self.structures.resonance(p),
             chords: (self.structures.chord_count.get(usize::from(p))).map_or(0, |&c| u32::from(c)),
             honor: self.honor.points(p),
+            tithe: self.tithe.points(p),
         }
     }
 
@@ -986,6 +1003,7 @@ impl Conquest {
             m.hash_into(h);
         }
         self.honor.hash_into(h);
+        self.tithe.hash_into(h);
         self.blueprints.hash_into(regs, h);
         self.manning.hash_into(regs, h);
         self.hash_planting(regs, h);

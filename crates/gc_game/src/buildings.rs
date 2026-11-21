@@ -3084,6 +3084,10 @@ pub fn why(refusal: Refusal) -> &'static str {
         Refusal::Crooked => {
             "Too sharp a bend: drawn walls and bridges bend gently, with no corners."
         }
+        Refusal::Supply => "You need more supply for that.",
+        Refusal::NoChamber => "Evolutions need a finished Chrysalis Chamber.",
+        Refusal::NoCorpses => "Too few corpses lie there to raise.",
+        Refusal::NoHamlet => "No hamlet near there will hire out: none, or an enemy holds it.",
     }
 }
 

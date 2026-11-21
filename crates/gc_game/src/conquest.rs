@@ -6,7 +6,7 @@
 
 use gc_data::conquest::{
     BUILDING_DROP_OFF_GRUB, BUILDING_DROP_OFF_MARROW, Class, ConquestUnitRecord, NONE,
-    UNIT_BUILDS_ONLY, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES,
+    UNIT_BUILDS_ONLY, UNIT_BURROWS, UNIT_CONSUMED, UNIT_HATCHES, UNIT_UNDEAD,
 };
 use gc_data::{Faction, GameData};
 use gc_fixed::{Angle, Fx, FxVec2};
@@ -119,6 +119,14 @@ pub fn power_of(p: &gc_data::PowerRecord) -> gc_sim::PowerStats {
             cq::POWER_MARCH => PowerEffect::March { percent: small },
             cq::POWER_STEADFAST => PowerEffect::Steadfast { tiles: p.arg },
             cq::POWER_SUMMON => PowerEffect::Summon { unit: p.arg },
+            cq::POWER_RAISE => PowerEffect::Raise {
+                unit: p.arg,
+                tiles: p.tiles,
+            },
+            cq::POWER_HIRE => PowerEffect::Hire {
+                unit: p.arg,
+                tiles: p.tiles,
+            },
             _ => PowerEffect::NotBuilt,
         },
     }
@@ -166,6 +174,9 @@ pub fn unit_of(u: &ConquestUnitRecord) -> ConquestUnit {
             Class::Light | Class::Spear | Class::Heavy | Class::Ranged
         ),
         gather_percent: u.gather_percent,
+        evolves_from: (u.evolves_from != NONE).then_some(u.evolves_from),
+        unlocked_at: (u.unlocked_at != NONE).then_some(u.unlocked_at),
+        undead: u.flags & UNIT_UNDEAD != 0,
     }
 }
 

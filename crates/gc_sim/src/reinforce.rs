@@ -15,8 +15,10 @@
 //! - It doesn't reinforce while fighting, routing or shattered, and a hurt
 //!   regiment (any hit point lost, to a blow, an arrow, fire or a fall)
 //!   starts counting again. Units nothing trains (summoned, raised by a
-//!   tower, evolved) and regiments that never rout (the Concord's undead,
-//!   who will be refilled only with Tithe) don't reinforce.
+//!   tower) and regiments that never rout don't reinforce, save the
+//!   Concord's undead, refilled with Tithe near their Reliquaries instead
+//!   (see [`crate::tithe`]). A Brood evolution reinforces as the form it
+//!   grew from (see [`crate::evolve`]).
 //! - Short of Grub or Marrow, it waits at the point, marked as short, and
 //!   takes the next soldier as soon as its owner can pay. Paying the share
 //!   of each soldier exactly (by whole numbers, the regiment's cost times
@@ -64,6 +66,15 @@ pub(crate) fn reinforcing_types(structures: &Structures, units: &[ConquestUnit])
         .collect()
 }
 
+/// What a regiment pays for its new soldiers with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pay {
+    /// Grub and Marrow, at the reinforcement points.
+    Grub,
+    /// Tithe, near its owner's Reliquaries (the Concord's undead).
+    Tithe,
+}
+
 /// What the soldier after the first `models` of a regiment of `full` costs:
 /// the share of `cost` that brings it to `models + 1`.
 fn share(cost: u16, models: u16, full: u16) -> u32 {
@@ -74,14 +85,26 @@ fn share(cost: u16, models: u16, full: u16) -> u32 {
 
 impl Conquest {
     /// Whether regiment slot `i` is short of soldiers and of a type that
-    /// reinforces: something trains it, it isn't summoned, and it can rout
-    /// (the undead wait for Tithe).
+    /// reinforces, and how it pays (see [`Conquest::refills_by`]).
     pub(crate) fn short_of_men(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> bool {
+        self.refills_by(regs, units, i).is_some()
+    }
+
+    /// How regiment slot `i`, short of soldiers, would pay for new ones:
+    /// with Grub, if something trains it (or the form it evolved from) and
+    /// it can rout; with Tithe, if it is undead. `None` for a full
+    /// regiment, a summoned one, one in a cocoon and any other.
+    fn refills_by(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> Option<Pay> {
         let unit = regs.unit[i];
-        regs.models[i] < regs.full_models[i]
-            && self.unit(unit).trained_at.is_some()
-            && units.get(usize::from(unit)).is_some_and(|s| s.morale > 0)
-            && regs.summoned_left[i] == 0
+        if regs.models[i] >= regs.full_models[i] || regs.summoned_left[i] > 0 || regs.cocooned(i) {
+            return None;
+        }
+        if self.unit(unit).undead {
+            return Some(Pay::Tithe);
+        }
+        let (trained, ..) = self.reinforces_as(unit);
+        (trained.trained_at.is_some() && units.get(usize::from(unit)).is_some_and(|s| s.morale > 0))
+            .then_some(Pay::Grub)
     }
 
     /// How far from its edge building slot `i` reinforces, in tiles, if it
@@ -136,16 +159,23 @@ impl Conquest {
             // Standing: not marching, fighting or running.
             let quiet =
                 regs.still(i) && regs.engaged[i].is_none() && !regs.morale_state[i].broken();
-            if !quiet || !self.short_of_men(regs, units, i) {
+            let pay = self.refills_by(regs, units, i).filter(|_| quiet);
+            let Some(pay) = pay else {
                 regs.refill[i] = 0;
                 continue;
-            }
-            if !listed {
-                self.list_points(&mut points);
-                listed = true;
-            }
+            };
             let owner = regs.owner[i];
-            if !self.in_reach(&points, owner, regs.position[i]) {
+            let reached = match pay {
+                Pay::Grub => {
+                    if !listed {
+                        self.list_points(&mut points);
+                        listed = true;
+                    }
+                    self.in_reach(&points, owner, regs.position[i])
+                }
+                Pay::Tithe => self.tithes_at(owner, regs.position[i]),
+            };
+            if !reached {
                 regs.refill[i] = 0;
                 continue;
             }
@@ -160,15 +190,29 @@ impl Conquest {
                 regs.refill[i] = counted;
                 continue;
             }
-            let u = self.unit(regs.unit[i]);
             let (models, full) = (regs.models[i], regs.full_models[i]);
-            let grub = share(u.cost_grub, models, full);
-            let marrow = share(u.cost_marrow, models, full);
-            if !self.economy.spend(owner, grub, marrow) {
+            let stats = &units[usize::from(regs.unit[i])];
+            let paid = match pay {
+                Pay::Grub => {
+                    let (_, cost_grub, cost_marrow) = self.reinforces_as(regs.unit[i]);
+                    let grub = share(cost_grub, models, full);
+                    let marrow = share(cost_marrow, models, full);
+                    self.economy.spend(owner, grub, marrow)
+                }
+                Pay::Tithe => {
+                    let price = crate::tithe::tithe_per_soldier(stats);
+                    let can = self.tithe.points(owner) >= price;
+                    if can {
+                        self.tithe.spend(owner, price);
+                    }
+                    can
+                }
+            };
+            if !paid {
                 regs.refill[i] = REFILL_SHORT;
                 continue;
             }
-            regs.add_soldier(i, units[usize::from(regs.unit[i])].hp_per_model);
+            regs.add_soldier(i, stats.hp_per_model);
             // Still counting for the next one, so the screen shows it
             // reinforcing throughout.
             regs.refill[i] = u8::from(models + 1 < full);
@@ -191,10 +235,47 @@ impl Conquest {
     /// reinforcement points, on the side facing `from`. `None` when
     /// `owner` has none.
     pub(crate) fn reinforce_spot(&self, owner: PlayerId, from: FxVec2) -> Option<FxVec2> {
+        self.spot_by(owner, from, |i| self.point_reach(i))
+    }
+
+    /// Whether regiment slot `i` stands where it would be refilled: in
+    /// reach of a reinforcement point, or for the undead of a Reliquary.
+    pub(crate) fn refills_here(&self, regs: &Regiments, i: usize) -> bool {
+        let (owner, at) = (regs.owner[i], regs.position[i]);
+        if self.unit(regs.unit[i]).undead {
+            self.tithes_at(owner, at)
+        } else {
+            self.reinforces_at(owner, at)
+        }
+    }
+
+    /// Where regiment slot `i` might stand to be refilled (see
+    /// [`Conquest::reinforce_spot`]): for the undead, by the nearest of
+    /// their owner's Reliquaries.
+    pub(crate) fn refill_spot(&self, regs: &Regiments, i: usize) -> Option<FxVec2> {
+        let (owner, from) = (regs.owner[i], regs.position[i]);
+        if !self.unit(regs.unit[i]).undead {
+            return self.reinforce_spot(owner, from);
+        }
+        let st = &self.structures;
+        self.spot_by(owner, from, |s| {
+            (st.stats_of(s).flags & crate::structures::TITHE != 0)
+                .then_some(crate::tithe::TITHE_TILES)
+        })
+    }
+
+    /// A spot a little way out from the edge of the nearest of `owner`'s
+    /// finished buildings that `reach_of` gives a reach, towards `from`.
+    fn spot_by(
+        &self,
+        owner: PlayerId,
+        from: FxVec2,
+        reach_of: impl Fn(usize) -> Option<i32>,
+    ) -> Option<FxVec2> {
         let st = &self.structures;
         let (i, reach) = st
             .finished_of(owner)
-            .filter_map(|i| Some((i, self.point_reach(i)?)))
+            .filter_map(|i| Some((i, reach_of(i)?)))
             .min_by_key(|&(i, _)| {
                 let foot = st.footprint(i);
                 ((nearest_point(foot, from) - from).length_sq_raw(), i)

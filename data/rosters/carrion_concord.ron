@@ -37,8 +37,12 @@
 // simulation does in `built`: Haste(percent faster for the duration),
 // Shift("building": regiments step to one of the caster's of that name),
 // Grant(Grub gained at once), March(percent faster marching for the
-// duration) or Steadfast (the caster's regiments within the radius of the
-// chosen point can't rout for the duration).
+// duration), Steadfast (the caster's regiments within the radius of the
+// chosen point can't rout for the duration), Summon("unit": beside a
+// Shrine for the duration), Raise("unit": from the corpses within the
+// radius of the chosen point, for the duration, or for good with none) or
+// Hire("unit": from the map's hamlet within the radius of the chosen
+// point, for the duration).
 (
     faction: CarrionConcord,
     meter: (
@@ -51,9 +55,11 @@
                 cost: 30,
                 tier: 1,
                 cooldown: 30.0,
+                radius: 8.0,
                 duration: 120.0,
-                effect: "Hire a Grubfolk Militia regiment from a friendly hamlet for 120 s.",
+                effect: "Hire a Grubfolk Militia regiment from a hamlet no enemy holds, within 8 tiles of the chosen point, for 120 s.",
                 primitives: [Summon],
+                built: Some(Hire("Grubfolk Militia")),
             ),
             (
                 name: "Raise the Bound",
@@ -65,6 +71,7 @@
                 duration: 90.0,
                 effect: "Turn corpses within 8 tiles of a point into a Bound Dead regiment for 90 s.",
                 primitives: [RaiseCorpses, Summon],
+                built: Some(Raise("Bound Dead")),
             ),
             (
                 name: "Foreclose",
@@ -81,8 +88,10 @@
                 cost: 100,
                 tier: 2,
                 cooldown: 60.0,
-                effect: "Raise a permanent Bound Dead regiment from corpses; it uses no supply but crumbles away from Reliquaries.",
+                radius: 8.0,
+                effect: "Raise a permanent Bound Dead regiment from corpses within 8 tiles of a point; it uses no supply but crumbles away from Reliquaries.",
                 primitives: [RaiseCorpses, Summon],
+                built: Some(Raise("Bound Dead")),
             ),
         ],
     ),
@@ -168,7 +177,8 @@
             hp: 400,
             armour: Structure,
             footprint: (2, 2),
-            effect: "Every model that dies within 12 tiles, on any side, pays 1 Tithe. Can be built anywhere you have vision.",
+            flags: [Tithe],
+            effect: "Every soldier that dies within 12 tiles, on any side, pays 1 Tithe. Your undead within 30 tiles don't crumble, and those standing quiet within 12 tiles are refilled with Tithe.",
         ),
         (
             name: "Ossuary",
