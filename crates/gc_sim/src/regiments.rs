@@ -888,13 +888,16 @@ impl Regiments {
         // facing given, steps there as drilled men do: facing the way it
         // faces, sidestepping or backing, not turning round to walk and
         // turning back (see `SHUFFLE_DISTANCE`).
-        let short = self.target[i].is_none()
+        // (A lone body, a worker or a beast, just turns and walks.)
+        let short = self.models[i] > 1
+            && self.target[i].is_none()
             && self.attack_target[i].is_none()
             && (order.target - self.position[i]).length_sq_raw()
                 <= (SHUFFLE_DISTANCE.raw() as u64).pow(2);
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing.or(short.then_some(self.facing[i]));
         self.set_seeks_place(i, false);
+        self.home[i] = None;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -1961,7 +1964,13 @@ impl Regiments {
                         continue;
                     }
                     self.facing[i] = self.facing[i].turn_toward(want, turn);
-                    drilled_pace(pace, self.facing[i], delta, dist).max(Fx::from_raw(1))
+                    // A lone body (a worker, a beast) shuffles at half pace.
+                    let drilled = if self.models[i] > 1 {
+                        drilled_pace(pace, self.facing[i], delta, dist)
+                    } else {
+                        Fx::from_raw(pace.raw() / 2)
+                    };
+                    drilled.max(Fx::from_raw(1))
                 } else {
                     let travel = Angle::of_vec(delta);
                     // Its way lies behind it: it faces about (in good order;
