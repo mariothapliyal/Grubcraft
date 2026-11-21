@@ -267,7 +267,7 @@ fn run(real: &Real, report: &mut Report) {
     // A match goes its own way with any change to how battles play out, so
     // a few are played, until both have been seen.
     let mut seen = [0u32; 2];
-    for seed in [107, 108, 109] {
+    for seed in [107, 108, 109, 110] {
         let more = ai_match(real, report, seed);
         seen = [seen[0] + more[0], seen[1] + more[1]];
         if seen.iter().all(|&n| n > 0) {
@@ -282,13 +282,12 @@ fn run(real: &Real, report: &mut Report) {
     );
 }
 
-/// Two Ember Clans Generals (each with Mounted Samurai, Yari spears and
-/// Katana to hold a foe for the horse) play Conquest match `seed` on Four
-/// Teeth for up
-/// to 40 minutes: how many brace orders and pull-outs (fall backs) they
-/// give, stopping once both have been given.
+/// Two Generals, Ember Clans (Mounted Samurai, Yari spears) against
+/// Carrion Concord (Bone Pikes, Debt Collectors), play Conquest match
+/// `seed` on Four Teeth for up to 40 minutes: how many brace orders and
+/// pull-outs (fall backs) they give, stopping once both have been given.
 fn ai_match(real: &Real, report: &mut Report, seed: u64) -> [u32; 2] {
-    let factions = [Faction::EmberClans; 2];
+    let factions = [Faction::EmberClans, Faction::CarrionConcord];
     let game = Headless::new(real, conquest::make_map(1, 0, seed), &factions, seed);
     let mut world = game.world(&game.plan(Tempo::Standard, Victories::default()));
     game.open(&mut world, |w, orders| report.tick(w, orders));

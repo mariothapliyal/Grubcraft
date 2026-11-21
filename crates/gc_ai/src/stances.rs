@@ -51,7 +51,7 @@ pub const SKIRMISH_SPEED: f32 = 2.5;
 pub const BRACE_WITHIN: f32 = 30.0;
 pub const BRACE_LIFT: f32 = 45.0;
 /// Spears on the march stop and brace only for cavalry this near.
-pub const BRACE_HALT: f32 = 12.0;
+pub const BRACE_HALT: f32 = 20.0;
 /// How squarely a foe must be ahead of the spears, and coming at them, to
 /// be met braced: the cosine of the angle off straight on (about 45
 /// degrees, the arc braced points stop a charge in).
@@ -138,7 +138,7 @@ pub fn wanted(
                 if !view.hostile(party, f.owner)
                     || f.broken()
                     || f.engaged
-                    || !f.moving
+                    || f.still
                     || !view.unit(f).stats.can_wedge()
                 {
                     return false;
