@@ -5057,9 +5057,10 @@ impl Running {
                         || a.cart.is_some()
                 });
             if showing {
-                // Deer, goats, hares and doves stand on ground no building or
-                // tree covers, keep away from buildings, and bolt or fly from the
-                // soldiers the viewer sees (so unseen armies give nothing away).
+                // Deer, goats, hares, herons, boar, jackals and doves stand on
+                // ground no building or tree covers, keep away from buildings,
+                // and bolt or fly from the soldiers the viewer sees (so unseen
+                // armies give nothing away).
                 let (world, viewer, reveal) = (&self.world, self.sandbox.side, self.reveal_all);
                 let threats: Vec<Vec2> = world
                     .regiments
@@ -8821,7 +8822,7 @@ impl Running {
                 if !(reveal || fog.sees_tile(tile)) {
                     continue;
                 }
-                let foot = Vec3::new(d.pos.x, ground(d.pos.x, d.pos.y), d.pos.y);
+                let foot = Vec3::new(d.pos.x, ground(d.pos.x, d.pos.y) + d.lift, d.pos.y);
                 let Some(lod) = art.view.place(art.heights[model] * d.scale, foot) else {
                     continue;
                 };
@@ -8830,6 +8831,8 @@ impl Running {
                     ambient::wildlife::Doing::Stand => (Action::Idle, 1.0),
                     ambient::wildlife::Doing::Walk => (Action::Walk, 1.0),
                     ambient::wildlife::Doing::Bolt => (Action::Run, ambient::wildlife::RUN_RATE),
+                    // A heron's Run clip is its wing beat.
+                    ambient::wildlife::Doing::Fly => (Action::Run, 1.0),
                 };
                 let Some(pose) = art.clips.pose(model, action, (time + d.phase * 4.0) * rate)
                 else {
@@ -8841,7 +8844,7 @@ impl Running {
                     frames: pose.rows,
                     flags: models::pose_flags(pose, 0, false),
                     color: [255, 255, 255, gc_render::TONE_NEUTRAL],
-                    lift: 0.0,
+                    lift: d.lift,
                     scale: d.scale,
                     ..Default::default()
                 });
