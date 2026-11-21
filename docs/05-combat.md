@@ -39,7 +39,7 @@ Kept deliberately small. Every order is on the same hotkey for every regiment.
 
 Keys follow the fixed 4 × 3 command grid; abilities take the middle row (see [08 · UI and UX](08-ui-ux.md#screen-layout-1080p-reference)).
 
-**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation; ranged regiments fire at will (Skirmish is off by default for people's regiments, since on by default would change every battle; `Z` turns it on, and computer players turn it on for their bows); units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
+**Smart defaults so you don't have to micro:** regiments in a group move together at the speed of the slowest and arrive in formation (since 2026-11-21 as one body, a brigade: one shared route, forming up on the way, through narrow ground in turn; [42](42-armies-that-march.md) has how, what it measured, and where a brigade lets go for now, such as a big army in wide rows at a gate); ranged regiments fire at will (Skirmish is off by default for people's regiments, since on by default would change every battle; `Z` turns it on, and computer players turn it on for their bows); units auto-engage enemies that attack them; a regiment ordered to attack a target that is out of reach paths around obstacles as a block.
 
 ## Facing, flanks and charges
 

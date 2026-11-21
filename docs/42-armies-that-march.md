@@ -13,7 +13,9 @@ hangs on, and it is specified in full here, with its real-use section.
 **Status (2026-11-21):** proposal, reviewed by Opus the same day (verdict:
 build stage 1, with changes; they are folded in below and listed under
 "What the review changed"). Stage 0 (the measuring tools) and stage 1 are
-being built in the same thread.
+built. "Stage 1 in full" below describes what was built, "What it
+measured" has the numbers, and "What a brigade does not do yet" the
+places where it lets go and regiments march as they did before.
 
 ## What armies do today
 
@@ -147,6 +149,12 @@ and after.
 15. **Faster route search**, measured after 3 and 14 have cut the number
     of searches (a group of twelve asks once, not twelve times).
 
+Stage 1 left two things here (see "What a brigade does not do yet"): a
+big army in wide rows through a gate, and a route that doubles back
+round a corner. Both need a place that is never laid on ground the block
+cannot stand on (so a flank comes in to the file along the wall instead
+of through it) and a turn at the passage for each row.
+
 **Stage 4. Organisation the player can use** (controls, simulation, AI)
 
 16. **Advance in line.** An attack-move by a brigade goes forward dressed
@@ -204,104 +212,139 @@ pushes them in is the first thing stage 6 finds out.
 ### What the player sees
 
 Select six regiments and right-click across the map. They step off
-together, already in the shape they will stand in (melee in front, bows
-behind, horse on the wings, as the army shapes already arrange them),
-facing the way they are going. On open ground they hold that shape and
-walk straight. Coming to a ford two regiments wide, the rows split in
-good time: the front row goes through two abreast, the rest follow two
-by two, nobody stands in anybody. Beyond the ford the head slows, the
-rows come up and widen again, and the army walks on. At the goal the
-whole army wheels to the facing ordered and stands, all within a few
-seconds.
+together as they stand, nobody pushing past anybody to form up first,
+and over the first stretch grow into the shape they will stand in (melee
+in front, bows behind, horse on the wings, as the army shapes already
+arrange them). On open ground they hold that shape and walk straight, at
+the pace of the slowest. Coming to a ford two regiments wide, the rows
+split in good time: the front row goes through two abreast, the rest
+follow two by two, nobody stands in anybody. Beyond the ford the rows
+come up and widen again, and the army walks on. At the goal each
+regiment walks the last few tiles to its own place, turns to the facing
+ordered and stands, the whole army within a few seconds of each other
+on open ground.
 
 ### How it works
 
-- **A brigade** is a new thing in the simulation (`gc_sim::brigades`): its
-  members, the shape they will stand in at the end, one track, and how
-  far along the track its head has come. Every move order carries one
-  more number, the brigade it belongs to (0 for none), chosen by whoever
-  gives the order. Moves of one player with the same number are one
-  brigade. The arranging (roles, presets, saved shapes, a dragged width)
-  stays where it is, on the ordering player's machine: the simulation
-  reads the shape off the spots the moves name.
+As built (`gc_sim::brigades`; the numbers are its constants).
+
+- **A brigade** is a new thing in the simulation: its members, where each
+  was sent, one track, and how far along the track its middle (the
+  anchor) has come. Every move order carries one more number, the
+  brigade it belongs to (0 for none), chosen by whoever gives the order:
+  a player's group orders count up from 1, a computer player's above
+  32,767, so the two never share one. Moves of one player with the same
+  number are one brigade. The arranging (roles, presets, saved shapes, a
+  dragged width) stays where it is, on the ordering player's machine:
+  the simulation reads the shape off the spots the moves name.
 - **Who is in it.** The regiments standing together when the order is
-  given. One far from the rest (more than 30 tiles from the main body)
-  walks to its spot alone, as today. Workers and caravans never join.
-  Two regiments make a brigade; one is a plain move. A move shorter than
-  the brigade is wide is a plain move too: there is nothing to keep
-  together.
+  given: those within 20 tiles of the middle of them all, those within
+  20 tiles of one of those, and so on, so a big army standing together
+  is one body however wide it stands. One further off walks to its spot
+  alone, as before. So does one whose spot the ground cuts off from the
+  rest of the body's (the far side of a cliff or a wall from them).
+  Workers and caravans never join. Two regiments make a brigade; one is
+  a plain move. A march shorter than 14 tiles is each regiment's own:
+  there is nothing to keep together. Up to 64 regiments, and eight
+  brigades a player at once; more march as before.
 - **The track.** One route, searched once, from the member nearest the
-  middle of the body to a point a short run behind where the shape will
-  stand, then straight in along the shape's own front-to-back line, so
-  the brigade arrives square to its shape. It keeps a wide berth.
+  middle of the body to the middle of where they were sent. It keeps a
+  wide berth. A long way is searched in pieces as the body nears the end
+  of what it has. Behind where it was searched from, the track runs 30
+  tiles straight back, so members standing behind that one are on it
+  too.
 - **The shape, seen along the way in.** Each member's spot in the final
-  shape is read as so far behind the shape's head and so far left or
-  right, looking along the direction of arrival (the ordered facing
-  turned by quarter turns to match it, so a line told to face sideways
-  arrives as a column and turns into line). Members whose spots are level
-  make a row. The order of march is row by row from the head, left to
-  right.
-- **Rows on the track.** Rows are laid from the head. A regiment stands
-  beside the one before it if the ground is wide enough for the widened
-  row all the way from that row's place, and eight tiles beyond, back to
-  where the regiment would walk if it fell in behind instead. Else it
-  falls in behind. On open ground this gives the shape itself, gaps and
-  all. Coming to a narrow place it gives a funnel: single file (or two
-  or three abreast, as fit) nearest the gap and wider rows behind,
-  formed before anyone reaches the mouth. Beyond it each regiment moves
-  up beside the one ahead only when it is itself through. The room is
-  measured across the track each way (`Nav::room_each_side`) afresh at
-  every look, four looks a second, so a gate shutting or a ford flooding
-  is seen at once. A row that has re-formed keeps its new form for at
-  least two seconds.
-- **Each regiment's place** is a lane: so far behind the head along the
-  track, so far left or right of it. As the head moves, the places move
-  with it and bend round corners with the track (the track's direction
-  is smoothed over a few tiles so places sweep round a corner rather
-  than jump). A regiment is steered at a point six tiles ahead of its
-  place, never at the place itself: faster when it is behind, slower
-  when ahead, waiting when well ahead, at most its own speed. It never
-  turns back for its place.
-- **Keeping together.** The head moves at the pace ordered (the slowest
-  member's) over the worst going any member is on, and slower in
-  proportion as the member furthest behind its place falls back, down to
-  a fifth of its pace, never a stop (a stopped head would block the exit
-  of a narrow place).
-- **Left behind.** A member in a melee, in a trap, more than 20 tiles
-  behind its place, or making no headway for five seconds no longer
-  slows the head. It stays in the brigade and takes its place again if
-  it catches up; else it comes on to its final spot alone.
+  shape is read as so far behind the shape's middle and so far left or
+  right, looking along the way the track comes in over its last 8 tiles.
+  Members whose spots are level (within a tile and a half) make a row.
+  The order of march is row by row from the front.
+- **Rows on the track.** A row marches abreast, as it will stand
+  (shifted across to fit, if it must be), where the ground either side
+  of the track is wide enough for it from 8 tiles ahead of it (up to 24
+  for a wide body, whose flanks have further to come in) back to its
+  rear. Where it is not, the row files: as many as fit side by side go
+  first, those furthest along before the others, and the rest fall in
+  behind, as many abreast again. Nobody's place is put closer behind a
+  member in its way than their blocks and the gap between regiments
+  allow, so rows that file string out and close up again beyond the
+  narrow place. The room is measured across the track each way
+  (`Nav::room_sides`) every 2 tiles along it, afresh at every look, four
+  looks a second, so a gate shutting or a ford flooding is seen at once.
+  Where even one block is too wide, it narrows by files inside its
+  place, to as many as the gap has room for.
+- **Each regiment's place** is so far behind the anchor along the track
+  and so far left or right of it. A brigade sets off with every place
+  where its regiment stands, and each place then moves to where the rows
+  put it: up the body no faster than its regiment could gain on the
+  anchor, back and across at a walk. A place never moves up past a
+  member marching in front of where it stands, nor closer behind
+  another's place in its way than their blocks allow: a rear rank closes
+  up as those before it move aside, not through them. As the anchor
+  moves, the places move with it and bend round corners with the track
+  (its direction is smoothed over a few tiles so places sweep round a
+  corner rather than jump). A regiment is steered at a point six tiles
+  ahead of its place, never at the place itself: faster when it is
+  behind, slower when ahead, waiting when well ahead (but never waiting
+  inside a narrow place, which would stop the way for all behind it), at
+  most its own speed. It never turns back for its place. It comes no
+  nearer behind the block of the member before it than they march.
+- **Out of sight of its place.** Five times a second each member looks
+  whether it can see the point it walks at. If it cannot (a cliff or a
+  wall between), it walks at the middle of the track ahead of its place,
+  failing that at the track just ahead of where it is, and after five
+  looks with nothing of the track in sight it finds a route of its own
+  to the body.
+- **Keeping together.** The anchor moves at the pace ordered (the
+  slowest member's), slower as the member furthest behind its place
+  falls back: full pace up to a tile behind, down to three eighths of it
+  by five tiles, never a stop (a stopped body would block the exit of a
+  narrow place). Mud, woods and wading slow it this way too: the member
+  in the worst going falls behind and the body slows for it.
+- **Left behind.** A member in a melee, in a trap, more than 45 tiles
+  behind its place, making no headway for five seconds, or held up by
+  the member in front of it no longer slows the anchor. It stays in the
+  brigade and takes its place again if it catches up.
 - **Between members in step the guessing rules are off.** Two members
-  both near their places don't step aside from each other, queue behind
-  each other or wait out their patience on each other: their places are
-  already clear of one another. While a brigade is still forming up, and
-  toward everyone outside it, the rules work as today. Pushing through a
-  friend still slows and disorders, whoever it is.
-- **Arriving.** When the head reaches the end of the track each member
-  is sent the last few tiles to its place as it then stands (rows that
-  don't fit the ground there have already re-formed to fit), turns to
-  the facing ordered, and the brigade is over.
+  both at their places (within a tile and a half along the track and a
+  tile and a quarter across it) don't step aside from each other, queue
+  behind each other or wait out their patience on each other: their
+  places are already clear of one another. While a brigade is still
+  forming up, and toward everyone outside it, the rules work as before.
+  Pushing through a friend still slows and disorders, whoever it is.
+- **Arriving.** The anchor stops at the end of the track. Each member
+  leaves the brigade for its own spot when it is within six tiles of
+  coming level with it along the track; once the anchor is in, also as
+  soon as it stands on open ground in plain sight of its spot. Those still filing through a narrow place behind keep their
+  turns until they are through. When fewer than two are left the brigade
+  is over.
 - **Leaving a brigade.** Any other order to a regiment takes it out. So
   does routing. The same order given again (the same number, the same
   place within three tiles) changes nothing, so a player clicking twice
   and a computer player repeating itself don't restart anything.
-- **Fighting on the way.** On an attack-move, when a member turns aside
-  to fight, the head halts and the rest stand in their places, ready,
-  each turning on any enemy that comes within its own reach. When the
-  fighting is over the members take their places again and the brigade
-  goes on. On a plain move the brigade keeps marching.
+- **Orders that land one by one.** A computer player's orders for one
+  army land over several ticks, not all at once as a player's do. The
+  first regiment of a brigade marches by its own order for up to three
+  seconds while the rest join.
+- **Fighting on the way.** On an attack-move, while a member has turned
+  aside to fight within 25 tiles of the anchor, the body halts and the
+  rest stand in their places, each turning on any enemy that comes
+  within its own reach. When the fighting is over the members take their
+  places again and the brigade goes on. On a plain move the brigade
+  keeps marching.
+- **Letting go.** Where a brigade would be slower than its regiments
+  each by its own way, it is over on the spot and they march on as they
+  did before there were brigades. See "What a brigade does not do yet".
 
 ### Real use
 
 *Sizes.* One regiment: unchanged, a plain move. Two to six: one or two
 rows, as the shape says. Twelve: two or three rows; through a ford they
-go two or three abreast. Forty-eight sent as one brigade: rows of eight
-on the open ground, single file through a gate in the order of march,
-with the rows behind drawn up and waiting their turn, each a row's
-depth back from the one in front. (In single file with clear gaps 48
-regiments cannot pass a gate as fast as 48 pushing through each other
-do today in 50 s; how much slower is measured, and reported with the
-disorder saved.)
+go two or three abreast. Forty-eight sent as one group march as one
+brigade over open ground, in rows of eight; at a gate they let go and go
+through as they did before (see "What a brigade does not do yet": in
+single file with clear gaps they took 97 s against 50 s pushing through
+each other, and in no less disorder, because rows 88 tiles wide are a
+long time coming in to the file).
 
 *Shapes.* Line, Deep, Hammer, Square, Plain and saved shapes all march as
 themselves, since the order of march and the rows come from the shape.
@@ -312,15 +355,16 @@ that is all columns is a column of columns.
 *Through, over and round.* A gate, a bridge deck and a ford are narrow
 ground to the track like any other: the rows that fit go through abreast
 (two on a two-lane bridge, three on a five-tile deck, one through a
-gate), and a single block still narrows by files inside its place
-(`squeeze`) where even one is too wide; rows are spaced by the depth
-blocks have when narrowed, so a column doesn't grow back into the row
-behind. Round a wood or a lake the whole brigade takes one side, the
-track's, instead of splitting. A lone rock or a copse in a field narrows
-the rows on that side for as long as they pass it (a known roughness:
-stage 3 lets a row pass either side). A gate that shuts, a ford that
-floods or a bridge that falls re-routes the brigade as one; members
-caught on the far side are left behind and find their own way.
+gate), and a single block still narrows by files inside its place where
+even one is too wide; rows are spaced by the depth blocks have when
+narrowed, so a column doesn't grow back into the row behind. Round a
+wood or a lake the whole brigade takes one side, the track's, instead of
+splitting. A lone rock or a copse in a field narrows the rows on that
+side for as long as they pass it (a known roughness: stage 3 lets a row
+pass either side). The track is checked 16 tiles ahead of the anchor
+once a second: a gate that shuts, a ford that floods or a bridge that
+falls re-routes the brigade as one, or ends it where there is no way
+on; members caught on the far side find their own way.
 
 *In traffic.* Two brigades of the same player crossing, or a brigade
 meeting workers and caravans, treat each other as regiments do today
@@ -341,9 +385,11 @@ March power quickens the members it is cast on up to their places; the
 brigade as a whole goes faster only when every member has it.
 
 *With other systems.* Shift-queued legs carry their own brigade number:
-as each member finishes one leg it joins the brigade of the next, which
-waits at a crawl until most are in. Mud, woods and wading slow the head
-with the worst going any member has, so the brigade slows as one.
+as each member finishes one leg it joins the brigade of the next. Since
+a brigade's members finish a leg within a few seconds of each other,
+the first marches on by its own order for up to three seconds while the
+rest join; one later than that marches the leg alone. Mud, woods and
+wading slow the body through its hindmost member, as above.
 Regiments of an ally under a player's command walk their own side's
 ground and don't join that player's brigades. Fog of war, morale,
 generals and walls are untouched. Replays and online play carry the one
@@ -356,36 +402,104 @@ with the regiments it holds.
 most six, so an army of twenty is four rows deep instead of 140 tiles
 wide. Its check that an order is being carried out looks at the brigade,
 not at one regiment waiting its turn at a gate, so it doesn't pull
-members out by ordering them again.
+members out by ordering them again. In a whole Veteran match (Ember
+Clans against Carrion Concord, 30 minutes) one side marched 12
+regiments as one brigade; the check
+`ai_only_armies_march_as_brigades` holds that at six or more.
 
-### What it should measure
+### What it measured
 
-| | Today | After stage 1 |
+The proposal set targets (first to last regiment under 6 s, disorder
+under 5% of marching time, arrival no later). Stage 1 reaches the third,
+and a good part of the first two, not all of it.
+
+Forty-two recorded marches on grown maps (`crates/gc_map/tests/marches.rs`,
+`BRIGADE=1` for brigades, `ARMY=big` for twelve regiments), the mean of
+each number, as separate moves and as one brigade:
+
+| | Apart | As a brigade |
 |---|---|---|
-| First to last regiment arriving (6 and 12 regiments, the five marches above) | 23 to 36 s | under 6 s |
-| Marching time in disorder | 20 to 48% | under 5% |
-| Time for the whole army to arrive | 53 to 75 s | no more than today |
-| 48 regiments through one gate as a brigade: regiment-seconds in disorder | 1,193 (sent one by one) | under 300 |
-| The same: all through | 50 s | measured and reported (single file with gaps is slower than pushing through) |
-| Simulation tick, heap and instruction counts | budgets in docs/12 | inside the same budgets |
+| Six regiments, 24 marches: last regiment arrives | 50.7 s | 50.1 s |
+| ... first to last | 15.6 s | 11.4 s |
+| ... marching time in disorder | 12% | 6% |
+| Twelve regiments, 18 marches: last regiment arrives | 61.2 s | 61.5 s |
+| ... first to last | 25.8 s | 21.6 s |
+| ... marching time in disorder | 25% | 17% |
 
-Holding the army together should not cost the last man much time:
-today's last regiment sets the army's arrival already, and the brigade
-only brings the others in with it. Also counted, so the cure is not
-worse than the illness: times a place jumps, times a regiment faces
-about, how long the head crawls, and members left behind.
+With six, 16 of the 24 marches arrive more than 2 s closer together and
+4 further apart; with twelve, 9 of 18 and 2. Five of the 42 marches
+arrive more than 5 s later than apart, the worst by 21 s (twelve
+regiments 82 s against 61 s, in under half the disorder). Why those
+five are slower is not yet found.
+
+The stress scenarios play each march twice on the same ground:
+
+| Scenario | Apart | As a brigade |
+|---|---|---|
+| `brigade-ford`: 8 regiments wade a ford 8 tiles wide | last 40.6 s, first to last 12.5 s, 129 regiment-seconds in disorder | 42.3 s, 11.6 s, 18 |
+| `brigade-gate`: 8 regiments, four abreast, through one Gate | 38.0 s, 10.4 s, 119 | 42.3 s, 2.2 s, 26 |
+| `brigade-column-gate`: 12 regiments, two abreast, through one Gate | 36.1 s, 13.2 s, 161 | 30.8 s, 5.6 s, 64 |
+| `brigade-corner`: 8 regiments back round the corner of a thicket (the brigade lets go) | 58.4 s, 20.8 s, 78 | 58.0 s, 20.4 s, 82 |
+| `brigade-big-gate`: 24 regiments, eight abreast, through one Gate (the brigade lets go) | 45.3 s, 17.0 s, 469 | 46.4 s, 17.2 s, 510 |
+
+The first three are held to arriving no more than 15% later than apart,
+no further apart and in no more disorder; the two where the brigade lets
+go, to within 10% of the time apart and 25% of the spread and the
+disorder. `army-gate` (48 regiments through one Gate) is unchanged at
+50.0 s whether they are sent as one brigade or not.
+
+### What a brigade does not do yet
+
+A brigade lets go, and its regiments march on each by its own way as
+they did before, where it was measured slower than that:
+
+- **A route that doubles back.** When the track sets out more than a
+  third of a turn from the way it comes in, the body would have to turn
+  its whole order about on the way (those in front at the start stand at
+  the back at the end). Tried as a brigade, eight regiments back round
+  the corner of a thicket took 74 s against 58 s, in nearly twice the
+  disorder. Two cures were tried and set aside: telling off the rows
+  from how the body stands at the start (better round the corner, worse
+  over the 42 marches), and keeping the shape's facing fixed all the way
+  (no better).
+- **Wide rows at a gate.** A file through a gap that squeezes its blocks
+  passes about 12 soldiers a second where regiments pushing through each
+  other pass 40, and rows that reach far to the side are long coming in
+  to the file. A body reaching more than 24 tiles to either side of the
+  track lets go wherever a row must file; one of more than eight
+  regiments reaching more than 10 tiles to either side lets go at a gap
+  that squeezes. (Twelve in rows of four were 37% later through a Gate
+  than apart; 24 in rows of eight 66% later; 48, twice as long. Twelve
+  in rows of two are 15% sooner than apart, in 40% of the disorder, and
+  stay a brigade.)
+- **Drawn up close before a gate.** A body ordered through a gap that
+  squeezes, standing so near it that the ground closes in on a member
+  before it could come in to the file, lets go as it sets off. (Eight
+  regiments four abreast, 12 tiles before a Gate: 29 s against 19 s.)
+
+Over the 42 marches these rules cost the brigades a little (twelve
+regiments would otherwise arrive 19.1 s apart, not 21.6 s, in 12%
+disorder, not 17%): they let go at some natural narrows where filing was
+in fact no slower. Stage 3 (passages) is where a brigade learns to take
+a gate and a corner well, and these rules go.
+
+Not yet measured: brigades of one player crossing each other, and a
+brigade under fire.
 
 ### Checks
 
-New stress scenarios: `brigade-ford` (twelve regiments across a
-two-regiment ford: shape kept before, rows through in order, re-formed
-beyond, spread on arrival), `brigade-corner` (rows round a right-angle
-bend between cliffs), `brigade-gate` (48 regiments through one gate as
-one brigade, beside today's `army-gate`, which keeps sending 48 separate
-moves so the old way stays measured). The cohesion report runs on grown
-maps for armies of 3, 6 and 12. A golden replay with a brigade in it.
-The computer players' walling and battle tables are re-run, since their
-armies now arrive together.
+Stress scenarios `brigade-ford`, `brigade-gate`, `brigade-column-gate`,
+`brigade-corner` and `brigade-big-gate` (above; [40](40-real-play-checks.md)),
+beside `army-gate`, which keeps sending 48 separate moves. Simulation
+tests in `crates/gc_sim/tests/brigades.rs`: a brigade arrives together
+where separate moves straggle, keeps its shape, files through a gap and
+forms again, the same order again changes nothing, a member given
+another order leaves and the rest march on, a short move is each
+regiment's own, an attack-move brigade halts while one of its own
+fights, and a copy made for a computer player's rehearsal marches on
+exactly like the original. The golden replay `field-brigade-1v1` has a
+brigade march and fight. `ai_only_armies_march_as_brigades` plays a
+whole match between computer players.
 
 ### What the review changed
 

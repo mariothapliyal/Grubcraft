@@ -1151,9 +1151,11 @@ impl Brigades {
     /// close up again beyond it.
     ///
     /// Looking [`LOOK`] ahead, a row has filed before it reaches a
-    /// narrows, and since it widens only once the ground has been wide
-    /// that long, ground that pinches and opens does not make it
-    /// flicker.
+    /// narrows, and it widens again once its rear is through.
+    ///
+    /// False where the brigade is to let go instead: filing here it would
+    /// be slower than its regiments each by its own way (see
+    /// [`FILE_MOST`]).
     fn pack(
         &mut self,
         slot: usize,
