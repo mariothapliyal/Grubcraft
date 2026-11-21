@@ -45,6 +45,8 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
+/// - 54: the brigade a move belongs to (moves and attack-moves tagged 52
+///   and 53, queued steps tagged 3 and 4; read as moves in no brigade);
 /// - 53: the hold, skirmish and run orders (commands tagged 49 to 51) and
 ///   the column and wedge formations;
 /// - 51: felling into the river and dumping rafts (the fell and dump
