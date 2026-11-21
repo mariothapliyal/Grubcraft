@@ -763,6 +763,12 @@ impl Terrain {
         self.footing(p) == Footing::Soft
     }
 
+    /// Whether any ground can be soft: the map made some, rain has soaked
+    /// some or rubble lies somewhere.
+    fn may_be_soft(&self) -> bool {
+        self.footing_tiles != 0 || self.soaked > 0 || !self.rubble.is_empty()
+    }
+
     /// Whether a charge can start from `p`, or be made onto a regiment at
     /// `p`: not in water and not in soft ground.
     pub fn bears_charge(&self, p: FxVec2) -> bool {
@@ -1164,15 +1170,25 @@ impl Terrain {
         facing: Angle,
         size: (Fx, Fx),
     ) -> Fx {
-        let points = block_points(p, facing, size);
-        let count = |on: &dyn Fn(FxVec2) -> bool| points.iter().filter(|&&q| on(q)).count() as i32;
-        let woods = if self.has_cover() {
-            count(&|q| self.cover(q) == Cover::Wood)
-        } else {
-            0
-        };
-        let soft = count(&|q| self.soft(q));
-        self.going_under(step, p, heading, mass, woods, soft)
+        let (wooded, soft) = (self.has_cover(), self.may_be_soft());
+        if !wooded && !soft {
+            return self.going_under(step, p, heading, mass, 0, 0);
+        }
+        let mut under = [0; 2];
+        let mut last = None;
+        let mut here = [false; 2];
+        for q in block_points(p, facing, size) {
+            // Points on the same tile as the one before are that tile.
+            let tile = (q.x.floor_int(), q.y.floor_int());
+            if last != Some(tile) {
+                last = Some(tile);
+                here = [wooded && self.cover(q) == Cover::Wood, soft && self.soft(q)];
+            }
+            for k in 0..2 {
+                under[k] += i32::from(here[k]);
+            }
+        }
+        self.going_under(step, p, heading, mass, under[0], under[1])
     }
 
     /// How many of [`BLOCK_POINTS`] points of a block `size` (width,
