@@ -189,7 +189,7 @@ impl Writer {
                 self.u8(6);
                 self.var(u64::from(unit));
             }
-            // Format 54.
+            // Format 55.
             PowerEffect::Raise { unit, tiles } => {
                 self.u8(7);
                 self.var(u64::from(unit));
@@ -233,7 +233,7 @@ impl Writer {
         self.bool(c.burns);
         self.var(u64::from(u.gather_percent));
         self.bool(c.fells);
-        // Format 54: evolutions and the undead.
+        // Format 55: evolutions and the undead.
         self.var(u.evolves_from.map_or(0, |b| u64::from(b) + 1));
         self.var(u.unlocked_at.map_or(0, |b| u64::from(b) + 1));
         self.bool(u.undead);
@@ -914,11 +914,11 @@ impl<'a> Reader<'a> {
                 6 if format >= 23 => PowerEffect::Summon {
                     unit: self.var_as()?,
                 },
-                7 if format >= 54 => PowerEffect::Raise {
+                7 if format >= 55 => PowerEffect::Raise {
                     unit: self.var_as()?,
                     tiles: self.u8()?,
                 },
-                8 if format >= 54 => PowerEffect::Hire {
+                8 if format >= 55 => PowerEffect::Hire {
                     unit: self.var_as()?,
                     tiles: self.u8()?,
                 },
@@ -976,7 +976,7 @@ impl<'a> Reader<'a> {
         if format >= 51 {
             u.clearing.fells = self.bool()?;
         }
-        if format >= 54 {
+        if format >= 55 {
             u.evolves_from = self.maybe_id()?;
             u.unlocked_at = self.maybe_id()?;
             u.undead = self.bool()?;
