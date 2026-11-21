@@ -98,10 +98,14 @@ fn drilled_pace(pace: Fx, facing: Angle, delta: FxVec2, dist: Fx) -> Fx {
     } else if ahead <= Fx::ZERO - diagonal {
         50
     } else {
-        75
+        SIDESTEP_PERCENT
     };
     Fx::from_raw((i64::from(pace.raw()) * percent / 100) as i32)
 }
+
+/// How fast a block sidesteps, out of its pace: into a small move's place
+/// (see [`drilled_pace`]) and out of friends' way (see `Combat::make_way`).
+pub(crate) const SIDESTEP_PERCENT: i64 = 75;
 /// A waypoint short of the end of a route counts as reached within this
 /// many tiles.
 const WAYPOINT_NEAR: Fx = Fx::ONE;
@@ -892,7 +896,7 @@ impl Regiments {
         // faces, sidestepping or backing, not turning round to walk and
         // turning back (see `SHUFFLE_DISTANCE`).
         // (A lone body, a worker or a beast, just turns and walks.)
-        let short = self.models[i] > 1
+        let short = self.is_block(i)
             && self.target[i].is_none()
             && self.attack_target[i].is_none()
             && (order.target - self.position[i]).length_sq_raw()
@@ -1228,6 +1232,19 @@ impl Regiments {
     fn set_apart(&mut self, j: usize, ticks: u8) {
         debug_assert!(ticks <= KEEP_APART);
         self.keep[j] = (self.keep[j] & !KEEP_APART) | ticks.min(KEEP_APART);
+    }
+
+    /// Whether slot `i` is a block of soldiers, which drills (small moves
+    /// without turning, facing about), not a lone body (a hero, a worker,
+    /// a beast).
+    pub(crate) fn is_block(&self, i: usize) -> bool {
+        self.models[i] > 1
+    }
+
+    /// Where slot `j` stands: where it stood before it stepped aside to
+    /// make way (see `Combat::make_way`), else where it is.
+    pub(crate) fn stands(&self, j: usize) -> FxVec2 {
+        self.home[j].unwrap_or(self.position[j])
     }
 
     pub(crate) fn marching(&self, j: usize) -> bool {
@@ -1961,7 +1978,7 @@ impl Regiments {
                     let want = self.target_facing[i].unwrap();
                     // Told to face back the way it came: it faces about.
                     if i32::from(self.facing[i].delta_to(want)).abs() > ABOUT_FACE
-                        && self.models[i] > 1
+                        && self.is_block(i)
                         && self.falling_back[i] == 0
                         && !self.morale_state[i].broken()
                     {
@@ -1970,7 +1987,7 @@ impl Regiments {
                     }
                     self.facing[i] = self.facing[i].turn_toward(want, turn);
                     // A lone body (a worker, a beast) shuffles at half pace.
-                    let drilled = if self.models[i] > 1 {
+                    let drilled = if self.is_block(i) {
                         drilled_pace(pace, self.facing[i], delta, dist)
                     } else {
                         Fx::from_raw(pace.raw() / 2)
@@ -1981,7 +1998,7 @@ impl Regiments {
                     // Its way lies behind it: it faces about (in good order;
                     // a routing block just turns and runs).
                     if i32::from(self.facing[i].delta_to(travel)).abs() > ABOUT_FACE
-                        && self.models[i] > 1
+                        && self.is_block(i)
                         && !self.morale_state[i].broken()
                     {
                         self.face_about(i);

@@ -4,8 +4,9 @@
 //! facing as it faces, and back again once they are by, so neither falls
 //! out of order pushing through the other.
 
-use gc_fixed::{Angle, Fx, FxVec2};
+use gc_fixed::{Fx, FxVec2};
 use gc_sim::TICKS_PER_SECOND;
+use gc_sim::scenario::NORTH;
 
 use super::arena::{Arena, Real, grid, march_as, of, spawn};
 use super::{Report, Scenario, seconds};
@@ -18,7 +19,6 @@ pub(super) const SCENARIO: Scenario = Scenario {
 };
 
 const TILES: u32 = 128;
-const NORTH: Angle = Angle(0xC000);
 const LIMIT: u32 = 120;
 /// How long the army at ease is given, once the march is in, to stand
 /// where it stood again, in seconds.

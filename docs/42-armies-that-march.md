@@ -723,6 +723,20 @@ in disorder (71) and the army at ease 26 (77). The army at ease steps
 up to 6.3 tiles aside, one shoving the next, and stands where it stood
 again by the time the last marcher arrives.
 
+### What make way does not do yet
+
+- **Stepping back is its own small solver.** It tries a straight step,
+  then squared ones, then shoulders friends, and gives up after 12 s.
+  Sending it back as a short move of its own, settled by the rules that
+  settle any arrival, would be one rule fewer; worth doing before stage 3
+  adds more crossings.
+- **Orders given a tick or two apart.** A regiment not yet given its
+  order may make way for a moment for a friend ordered just before it
+  (a computer player's orders for one army land over a few ticks). It
+  steps aside a little and then marches with its own order; the
+  pathfinding test of three blocks filing through a gap gives its orders
+  in one tick for that reason.
+
 ### The guessing rules, each switched off
 
 Each of the eleven rules was switched off on its own, everywhere, over

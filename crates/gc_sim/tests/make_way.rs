@@ -141,7 +141,7 @@ fn report_crossings() {
             c.ticks,
             c.disordered,
             c.standers_disordered,
-            c.displaced.raw() as f64 / 65536.0
+            f64::from(c.displaced.raw()) / 65536.0
         );
     }
 }
