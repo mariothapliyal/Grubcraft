@@ -1499,7 +1499,7 @@ mod tests {
             [Faction::EmberClans, Faction::CarrionConcord],
             [Faction::Brood, Faction::Choir],
         ];
-        let mut top = 0;
+        let (mut top, mut heroes) = (0, 0);
         for (factions, seed) in pairs.iter().zip([7, 8]) {
             let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 30);
             for (side, f) in played.sides.iter().zip(factions) {
@@ -1508,11 +1508,21 @@ mod tests {
                     "{f:?}: {} heroes, {} standing, top level {}",
                     w.heroes, w.heroes_standing, w.top_level
                 );
-                assert!(w.heroes >= 1, "{f:?} hired no hero: {}", played.report());
                 top = top.max(w.top_level);
+                heroes += w.heroes;
             }
+            // The side that wins has had time for a hero (a side overrun
+            // early may never get its hero building up).
+            let winner = played.winner().unwrap_or(0);
+            let w = played.sides[usize::from(winner)].works;
+            assert!(
+                w.heroes >= 1,
+                "the winner hired no hero: {}",
+                played.report()
+            );
         }
         assert!(top >= 2, "no hero gained a level");
+        assert!(heroes >= 3, "{heroes} heroes in two games");
     }
 
     // A game takes seconds in a release build and minutes in a debug one,

@@ -2,7 +2,8 @@
 //! once it has a building that trains soldiers and Grub to spare, it puts
 //! up its faction's hero building by the hall; it hires a hero as soon as
 //! it may (one a tier), in the order the roster lists them, and revives a
-//! fallen one as soon as it can pay. Heroes march with the army like any
+//! fallen one as soon as it can pay, after its buildings and tier have had
+//! their turn to save. Heroes march with the army like any
 //! regiment.
 
 use gc_sim::Command;
@@ -35,15 +36,17 @@ impl Steward {
     }
 
     /// Hire or revive the first hero it may, at a finished hero building
-    /// with room in its queue; short of the price, it saves for it. With
-    /// no hero building yet and one due, it saves for that.
+    /// with room in its queue; short of the price, it saves for it unless
+    /// a building or the tier is saved for. The hero building itself is
+    /// put up with the others ([`Steward::hero_hall`]); due and short, it
+    /// saves for that, as for a hero.
     pub(super) fn hire_heroes(&mut self, s: &Sense, clicks: &mut Clicks, look: &Look) {
         let Some(bank) = s.world.bank(s.party) else {
             return;
         };
         if let Some((b, _)) = self.hero_hall(s, look) {
-            // Saving only while short, so a hall with no room to stand
-            // doesn't hold the Grub back for good.
+            // Short of it, and with nothing else saved for, it saves for
+            // the hero building.
             let price = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
             if bank.grub < price.0 || bank.marrow < price.1 {
                 self.ledger.saving = price;
@@ -57,12 +60,9 @@ impl Steward {
                 }
                 match s.world.can_train(s.party, m.view.handle, hero.id) {
                     Ok(()) => {}
-                    Err(Refusal::Price) => {
-                        if let Some(price) = s.world.price_of(s.party, hero.id) {
-                            self.ledger.saving = price;
-                        }
-                        return;
-                    }
+                    // Short of the price it waits, without holding back the
+                    // buildings and the tier (which save after this).
+                    Err(Refusal::Price) => return,
                     Err(_) => continue,
                 }
                 if bank.supply_used + u32::from(hero.unit.supply) > bank.supply_cap {
