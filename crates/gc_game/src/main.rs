@@ -163,6 +163,7 @@ mod credits;
 mod data;
 mod director;
 mod effects;
+#[cfg(test)]
 mod faction_golden;
 mod faction_powers;
 mod field;

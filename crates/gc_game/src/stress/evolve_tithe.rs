@@ -34,7 +34,7 @@ pub(super) const SCENARIO: Scenario = Scenario {
 const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
 /// How long the Concord's reserve fights before it falls back, in ticks.
-const RESERVE_FIGHTS: u32 = 12 * SECOND;
+const RESERVE_FIGHTS: u32 = 6 * SECOND;
 
 fn run(real: &Real, report: &mut Report) {
     cocoons(real, report);
@@ -375,7 +375,7 @@ fn tithe(real: &Real, report: &mut Report) {
     let mut raised_at = 0;
     let mut bound_gone = None;
     let mut fought = 0;
-    while fought < 300 * SECOND && (!tried || points(&world) < 200) {
+    while fought < 480 * SECOND && (!tried || points(&world) < 200) {
         let mut orders = Vec::new();
         if fought % (2 * SECOND) == 0 {
             orders.extend(attack_nearest(&world, 0, &concord, 1));
@@ -385,7 +385,7 @@ fn tithe(real: &Real, report: &mut Report) {
             orders.extend(attack_nearest(&world, 1, &ember, 0));
         }
         if fought == RESERVE_FIGHTS {
-            orders.push(move_to(0, reserve, centre(30, 20)));
+            orders.push(move_to(0, reserve, centre(12, 110)));
         }
         // More of both sides come up while the fight thins out.
         if fought % (30 * SECOND) == 0 && fought > 0 {
@@ -432,6 +432,7 @@ fn tithe(real: &Real, report: &mut Report) {
     let dead: u32 = graves.iter().map(|&(_, n)| u32::from(n)).sum();
     report.metric("fight by the Reliquary", super::seconds(Some(fought)));
     report.metric("Tithe after the fight", points(&world));
+    report.metric("reserve left after the fight", models(&world, reserve));
     report.metric("graves, corpses", format!("{}, {dead}", graves.len()));
     report.check(
         "the dead paid Tithe for the contracts",
