@@ -170,13 +170,18 @@ macro_rules! regiment_fields {
             pub(crate) why: Vec<u16>,
             /// The brigade steering it (see [`crate::brigades`]), as a
             /// tag, or 0; with [`crate::brigades::IN_STEP`] set while it
-            /// is at its place in it. Worked out afresh each tick it
-            /// marches, so not part of the state.
+            /// is at its place in it. Set by its brigade each tick it
+            /// marches and hashed with it (see `Brigades::hash_into`), not
+            /// with the regiment: a match without brigades hashes as it
+            /// did before there were any.
             pub(crate) step_with: Vec<u8>,
             /// The fewest files a brigade lets it narrow to in tight
             /// ground (see [`Regiments::squeeze`]), or 0 for no say; set
             /// each tick like `step_with`.
             pub(crate) files_floor: Vec<u16>,
+            /// How far along its brigade's way it is, in tiles (see
+            /// [`Regiments::leaves_be`]); set each tick like `step_with`.
+            pub(crate) step_arc: Vec<Fx>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -196,6 +201,7 @@ macro_rules! regiment_fields {
                     why: vec![0; n],
                     step_with: vec![0; n],
                     files_floor: vec![0; n],
+                    step_arc: vec![Fx::ZERO; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -662,6 +668,11 @@ impl Regiments {
         self.free.pop();
         self.alive[i] = true;
         self.copy_slot(from, i);
+        // What its brigade told it last tick, read again before the
+        // brigade next steers (see `Brigades::copy_from`).
+        self.step_with[i] = from.step_with[i];
+        self.files_floor[i] = from.files_floor[i];
+        self.step_arc[i] = from.step_arc[i];
         true
     }
 
@@ -1080,13 +1091,21 @@ impl Regiments {
         self.keep[j] & KEEP_CROWDED != 0
     }
 
+    /// Whether slot `i` keeps no room from slot `j` because they march in
+    /// one brigade and either both are in step, each at its place, or `j`
+    /// is behind `i` on their way: the one behind keeps its distance, and
+    /// the one ahead does not step aside for it (stepping away from a
+    /// friend at its heels, it would never get across to its own lane).
+    pub(crate) fn leaves_be(&self, i: usize, j: usize) -> bool {
+        use crate::brigades::{IN_STEP, STEP_BEHIND};
+        let (a, b) = (self.step_with[i], self.step_with[j]);
+        a != 0
+            && a & !IN_STEP == b & !IN_STEP
+            && (a & b & IN_STEP != 0 || self.step_arc[j] + STEP_BEHIND < self.step_arc[i])
+    }
+
     /// Whether regiment `j` marches to a spot it was sent to stand at
     /// (see [`KEEP_PLACE`]).
-    /// Whether slots `i` and `j` are marching in step in the same
-    /// brigade, each at its place: they leave each other be.
-    pub(crate) fn in_step(&self, i: usize, j: usize) -> bool {
-        self.step_with[i] & crate::brigades::IN_STEP != 0 && self.step_with[i] == self.step_with[j]
-    }
 
     pub(crate) fn seeks_place(&self, j: usize) -> bool {
         self.keep[j] & KEEP_PLACE != 0

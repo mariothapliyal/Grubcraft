@@ -63,7 +63,7 @@ const LAG_FREE: Fx = Fx::ONE;
 const LAG_SPAN: Fx = Fx::from_int(6);
 /// ... down to this share of its pace, never to a stand: the body creeps
 /// on while it forms.
-const CRAWL: Fx = Fx::from_ratio(1, 4);
+const CRAWL: Fx = Fx::from_ratio(3, 8);
 /// A member this far behind its place, in tiles, is left behind: the
 /// anchor no longer waits for it.
 const LEFT_BEHIND: Fx = Fx::from_int(45);
@@ -78,6 +78,9 @@ const PROFILE: usize = 48;
 /// A row narrows this far before a narrows, in tiles, and widens again
 /// only once the ground has been wide for as long.
 const LOOK: Fx = Fx::from_int(8);
+/// ... or as far as the body reaches to either side of the track, up to
+/// this (its flanks have that far to come in).
+const FAR_LOOK: Fx = Fx::from_int(24);
 /// The ground is measured as far either side of the track as the widest
 /// row reaches, between these, in tiles.
 const REACH: Fx = Fx::from_int(8);
@@ -89,7 +92,7 @@ const EDGE: Fx = Fx::from_ratio(1, 2);
 const ROW: Fx = Fx::from_ratio(3, 2);
 /// A member within this of its place along the track and across it, in
 /// tiles, is in step: it and its neighbours in step leave each other be
-/// (see [`Regiments::in_step`]).
+/// (see [`Regiments::leaves_be`]).
 const IN_STEP_ALONG: Fx = Fx::from_ratio(3, 2);
 const IN_STEP_ACROSS: Fx = Fx::from_ratio(5, 4);
 /// How fast a place moves up the body when rows close up, in tiles a tick
@@ -127,10 +130,17 @@ const FOLLOW_GAIN: Fx = Fx::from_ratio(1, 4);
 
 /// In [`Regiments::step_with`]: at its place, in step.
 pub(crate) const IN_STEP: u8 = 0x80;
+/// A member this much further back along the way than another, in tiles,
+/// is behind it (see [`Regiments::leaves_be`]).
+pub(crate) const STEP_BEHIND: Fx = Fx::from_int(2);
 
 /// When a row files, a member this much further along the track than
 /// the one before it in the file, in tiles, takes its turn.
 const OVERTAKE: Fx = Fx::from_int(2);
+
+/// A member coming across to its lane walks at most this many times as
+/// fast as one going straight along the track.
+const SLANT: Fx = Fx::from_int(2);
 
 const QUARTER: Fx = Fx::from_ratio(1, 4);
 
@@ -422,9 +432,9 @@ struct Placing {
     back: Fx,
     half_width: Fx,
     half_depth: Fx,
-    /// How far along the track it is, and the place it had: when its row
-    /// files, each holds its turn unless one behind it in the file is
-    /// clearly further along.
+    /// How far along the track it is (less how far off to the side of
+    /// it), and the place it had: when its row files, each holds its turn
+    /// unless one behind it in the file is clearly further along.
     arc: Fx,
     was: Fx,
     /// The width of ground it has when that is less than its block.
@@ -792,14 +802,13 @@ impl Brigades {
         if kept < 2 {
             return false;
         }
-        let (mut lead, mut least, mut berth) = (0, u64::MAX, nav::CLEARANCE);
+        let (mut lead, mut least) = (0, u64::MAX);
         for &i in &self.list {
             let i = i as usize;
             let d = (regs.position[i] - mid).length_sq_raw();
             if d < least {
                 (lead, least) = (i, d);
             }
-            berth = berth.max(regs.berth(units, i));
         }
         let b = &mut self.pool[slot];
         b.len = 0;
@@ -824,7 +833,6 @@ impl Brigades {
             let b = &self.pool[slot];
             self.arc[i] = b.project(regs.position[i], b.cum[0] - LEFT_BEHIND, b.cum[0] + LEFT_BEHIND);
         }
-        let _ = berth;
         true
     }
 
@@ -950,10 +958,14 @@ impl Brigades {
             let now = Block::of(regs, units, i);
             let full = Block::drawn_up(regs, units, i, regs.position[i]);
             let lat = rel.dot(right);
+            // Off to the side of the track, it has that far to come in
+            // before it can go on: so much the later its turn.
+            let (at, dir) = b.at(self.arc[i]);
+            let off = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x)).abs();
             m[k] = Placing {
                 slot: i as u32,
                 lat,
-                arc: self.arc[i],
+                arc: self.arc[i] - off,
                 was: self.want_station[i],
                 tight: None,
                 back: -rel.dot(b.ahead),
@@ -966,12 +978,15 @@ impl Brigades {
             reach = reach.max(m[k].lat.abs() + m[k].half_width + EDGE + Fx::ONE);
         }
         let reach = reach.min(MAX_REACH);
+        // A wide body looks further ahead: its flanks have further to
+        // come in before a narrows.
+        let look = (reach - EDGE - Fx::ONE).clamp(LOOK, FAR_LOOK);
         let m = &mut m[..n];
         // From the front back, and each row from the left.
         m.sort_unstable_by_key(|p| (p.back.raw(), p.lat.raw(), p.slot));
 
         // The ground's width along the track, from ahead of the front.
-        let top = b.arc - front + LOOK;
+        let top = b.arc - front + look;
         for k in 0..PROFILE {
             let (p, dir) = b.at_smooth(top - SAMPLE * k as i32);
             self.room[k] = nav.room_sides(owner, p, Angle::of_vec(dir), reach, |q| terrain.wet(q));
@@ -994,7 +1009,7 @@ impl Brigades {
         // leaves a margin.
         let room_at = |station: Fx, deep: Fx| {
             let place = b.arc - station;
-            let [r, l] = width(place - deep * 2 - Fx::ONE, place + LOOK);
+            let [r, l] = width(place - deep * 2 - Fx::ONE, place + look);
             let margin = |w: Fx| if w < reach { w - EDGE } else { w };
             (margin(r), margin(l))
         };
@@ -1210,6 +1225,7 @@ impl Brigades {
                 && across.abs() < IN_STEP_ACROSS;
             regs.step_with[i] = if in_step { tag | IN_STEP } else { tag };
             regs.files_floor[i] = self.floor[i];
+            regs.step_arc[i] = self.arc[i];
             if self.kept_up(regs, i, behind) {
                 lag = lag.max(behind);
                 tail = tail.min(self.arc[i]);
@@ -1316,7 +1332,14 @@ impl Brigades {
             };
             let behind = place - self.arc[i];
             let pace = if self.kept_up(regs, i, behind) {
-                (b.speed + GAIN * behind).clamp(Fx::ZERO, regs.speed[i])
+                // So fast along the track: faster over the ground when it
+                // must also come across to its lane, or it would fall
+                // behind doing so and the whole body wait for it.
+                let along = (b.speed + GAIN * behind).max(Fx::ZERO);
+                let to = target - here;
+                let (run, far) = (to.dot(b.at(self.arc[i]).1), to.length());
+                let slant = if run > Fx::ONE { (far / run).min(SLANT) } else { Fx::ONE };
+                (along * slant).min(regs.speed[i])
             } else {
                 regs.speed[i]
             };
@@ -1375,7 +1398,7 @@ impl Brigades {
 
     /// Nothing while no brigade is on the march, so a match without any
     /// hashes as it did before there were brigades.
-    pub(crate) fn hash_into(&self, h: &mut StateHasher) {
+    pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
         if self.live == 0 {
             return;
         }
@@ -1427,6 +1450,8 @@ impl Brigades {
                 h.i32(v.raw());
             }
             h.u16(self.floor[i]);
+            h.u8(regs.step_with[i]);
+            h.u16(regs.files_floor[i]);
         }
     }
 }

@@ -3939,7 +3939,7 @@ impl World {
             "regiments" => {
                 self.regiments.hash_into(h);
                 self.stances.hash_into(h);
-                self.brigades.hash_into(h);
+                self.brigades.hash_into(&self.regiments, h);
             }
             "combat" => self.combat.hash_into(h),
             "pathfinding" => self.nav.hash_into(h),

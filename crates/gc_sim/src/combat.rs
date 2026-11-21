@@ -1388,8 +1388,9 @@ impl Combat {
                 if j == i || regs.morale_state[j].broken() || regs.on_wall[j] {
                     return;
                 }
-                // Marching in step in one brigade, each has its place.
-                if regs.in_step(i, j) {
+                // In one brigade: each in step has its place, and one
+                // ahead does not make room for one behind.
+                if regs.leaves_be(i, j) {
                     return;
                 }
                 // Cheap circle test before the rectangles: how far apart
