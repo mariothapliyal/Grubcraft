@@ -354,7 +354,7 @@ The Choir has no summoned units.
 
 ## 4 · The Carrion Concord
 
-Merchant-necromancers: cheap undead that never break, beside living specialists that do (all but the Ledger Clerks: no faction's workers rout). **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Not built yet: undead never rout, but they don't crumble, and there is no Tithe.*
+Merchant-necromancers: cheap undead that never break, beside living specialists that do (all but the Ledger Clerks: no faction's workers rout). **The dead don't rout** (signature): undead regiments ignore morale. Instead they **crumble**: more than 24 tiles from a Reliquary they lose one model every 10 s, and they can only be reinforced with Tithe, never Grub. *Built: undead never rout, and Grub never refills them. Not built yet: crumbling, and Tithe, so for now a dead regiment is never refilled.*
 
 ### Regiments
 

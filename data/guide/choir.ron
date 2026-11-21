@@ -42,7 +42,7 @@
         (
             name: "Resonator",
             blurb: "Makes Grub from its nearest seep with no workers; powers buildings within 6 tiles. Build in triangles for chords.",
-            summary: "Tunes its nearest free seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps.",
+            summary: "Tunes its nearest free seep within 4 tiles to make Grub with no workers, powers buildings within 6 tiles, and links with Resonators within 14 tiles. Three linked Resonators make a chord that speeds the seeps inside it and charges Resonance. Build them in triangles at your seeps. Damaged regiments refill anywhere in its field.",
             notes: [],
             tips: [
                 (icon: Grub, text: "Place each Resonator within 4 tiles of a free seep, since each Resonator tunes one seep for Grub."),

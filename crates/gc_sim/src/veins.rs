@@ -72,7 +72,7 @@ pub(crate) fn within(foot: [i32; 4], point: FxVec2, tiles: i32) -> bool {
 impl Structures {
     /// How far building slot `i`'s veins reach, if it spreads them: a main
     /// building's further than a relay's.
-    fn vein_reach(&self, i: usize) -> Option<u8> {
+    pub(crate) fn vein_reach(&self, i: usize) -> Option<u8> {
         let b = self.stats_of(i);
         (b.flags & VEINS != 0 && b.field > 0).then_some(b.field)
     }
@@ -126,6 +126,12 @@ impl Structures {
             .iter()
             .map(|&v| v as usize)
             .filter(|&v| self.stands(v))
+    }
+
+    /// Whether building slot `i` is a linked veins building (as of this
+    /// tick's links).
+    pub(crate) fn links_veins(&self, i: usize) -> bool {
+        self.vein_from[i] != UNLINKED
     }
 
     /// The slots of `owner`'s linked veins buildings.
