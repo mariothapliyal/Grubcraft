@@ -808,6 +808,11 @@ fn record_golden_replays() {
         println!("{}", replay.note);
         write(crate::river_golden::NAME, replay);
     }
+    if wanted(crate::faction_golden::NAME) {
+        let replay = crate::faction_golden::record();
+        println!("{}", replay.note);
+        write(crate::faction_golden::NAME, replay);
+    }
     if wanted(crate::conquest_golden::NAME) {
         let replay = crate::conquest_golden::record();
         println!("{}", replay.note);
