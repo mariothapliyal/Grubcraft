@@ -423,6 +423,10 @@ regiment_fields! {
     /// Looks (see `Combat::make_way`) it has spent stepping back since the
     /// last friend marched by.
     way_wait: u8 = 0,
+    /// On a small move (see `SHUFFLE_DISTANCE`): it steps at drilled pace
+    /// (see [`drilled_pace`]), not the half pace of the last steps into
+    /// place at the end of a march.
+    drill: bool = false,
     /// Ticks left until it is back in order (0: in order).
     disorder: u8 = 0,
     /// Ticks it has stepped forward since it last halted or fought, up to
@@ -907,6 +911,7 @@ impl Regiments {
             && near(order.target);
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing.or(short.then_some(self.facing[i]));
+        self.drill[i] = short;
         self.set_seeks_place(i, false);
         self.home[i] = None;
         self.way_wait[i] = 0;
@@ -1274,6 +1279,7 @@ impl Regiments {
         self.target[i] = None;
         self.set_seeks_place(i, false);
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
     }
 
@@ -1342,6 +1348,7 @@ impl Regiments {
         self.set_seeks_place(i, false);
         self.attack_target[i] = Some(target);
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.braced[i] = false;
         self.hold[i] = false;
         self.backing[i] = 0;
@@ -1422,6 +1429,7 @@ impl Regiments {
         self.braced[i] = true;
         self.target[i] = None;
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.held[i] = 0;
         true
@@ -1447,6 +1455,7 @@ impl Regiments {
         self.hold[i] = true;
         self.target[i] = None;
         self.target_facing[i] = None;
+        self.drill[i] = false;
         self.attack_target[i] = None;
         self.backing[i] = 0;
         self.held[i] = 0;
@@ -1535,6 +1544,7 @@ impl Regiments {
                     // to step back again.
                     self.target[i] = None;
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
         }
@@ -1890,6 +1900,7 @@ impl Regiments {
                 if self.falling_back[i] == 0 {
                     self.target[i] = None;
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
             // Halting, fighting or backing away ends a run-up.
@@ -1989,8 +2000,9 @@ impl Regiments {
                         continue;
                     }
                     self.facing[i] = self.facing[i].turn_toward(want, turn);
-                    // A lone body (a worker, a beast) shuffles at half pace.
-                    let drilled = if self.is_block(i) {
+                    // Into place at the end of a march, or a lone body (a
+                    // worker, a beast): at half pace.
+                    let drilled = if self.drill[i] {
                         drilled_pace(pace, self.facing[i], delta, dist)
                     } else {
                         Fx::from_raw(pace.raw() / 2)
@@ -2243,6 +2255,7 @@ impl Regiments {
                 self.facing[i] = self.facing[i].turn_toward(want, turn);
                 if self.facing[i] == want {
                     self.target_facing[i] = None;
+                    self.drill[i] = false;
                 }
             }
         }
