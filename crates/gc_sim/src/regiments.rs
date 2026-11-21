@@ -1817,7 +1817,9 @@ impl Regiments {
             self.set_keep(i, KEEP_STEPPED, false);
             // Its speed eases toward nothing unless it steps forward below.
             let coasting = self.momentum[i];
-            self.momentum[i] = ease_momentum(coasting, 0);
+            if coasting != 0 {
+                self.momentum[i] = ease_momentum(coasting, 0);
+            }
             // Falling back ends when time runs out, wherever it got to.
             if self.falling_back[i] > 0 {
                 self.falling_back[i] -= 1;
