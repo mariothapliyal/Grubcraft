@@ -193,9 +193,9 @@ Built (Mario chose it, 2026-11-22):
 
 21. **Woods slow the whole block.** A regiment keeps 85% of its pace in
     woods (70% heavy) by the share of its block under the trees, not by
-    its middle alone, and its ranks loosen on screen by that share.
-    Routes price the ground under the whole block. Built, `SIM_VERSION`
-    92.
+    its middle alone (soft ground the same way), and its ranks loosen on
+    screen by that share. Routes price the ground under the whole block.
+    Built, `SIM_VERSION` 92.
 
 Not built, and not needed on what was measured:
 
@@ -610,15 +610,17 @@ and the trees never touched its order.
 - **Slowed by the share under the trees.** `Terrain::block_going`
   looks at a block's middle and its four corners (three eighths of the
   way out, where the outermost soldiers stand; `block_points`) and keeps
-  85% of the pace (70% heavy) by the share of them in woods. A block
-  with one flank in a wood keeps about 94%, and one entering a wood
-  slows as its ranks go in. Giving ground in a fight still goes by its
-  middle.
-- **Routes priced for the block.** `Grid::body_cost` prices a cell at
-  the mean pace kept at it and at four cells a berth less one away. Only
-  the going is read round a cell, so burning or clearing woods relinks
-  every sector within `BODY_REACH` of the changed tiles (a test checks
-  the relinked grid against one built afresh).
+  85% of the pace (70% heavy) by the share of them in woods, and 75%
+  (60% heavy) by the share on soft ground. A block with one flank in a
+  wood keeps about 94%, and one entering a wood slows as its ranks go
+  in. Giving ground in a fight still goes by its middle.
+- **Routes priced for the block.** Each cell's stored cost is its cost
+  at the mean pace kept at it and at four cells `BODY_REACH` (the graph
+  berth less one, about a regiment's half-width) away
+  (`Grid::block_going_at`), so every route stage reads the one cost.
+  Only the going is read round a cell, so burning or clearing woods
+  reprices every cell within `BODY_REACH` of the changed tiles (a test
+  checks the result against a grid built afresh).
 - **Ranks loosen under trees.** On screen, a block's ranks open out by
   up to 15% and each soldier stands up to 0.18 tiles off his slot, by
   the share of the block in woods (`Block::wooded`).
@@ -630,13 +632,14 @@ disorder / soldiers under trees):
 
 | | before | after |
 |---|---|---|
-| Six regiments, apart | 50.7 s / 15.6 s / 12% / 35.4% | 49.8 s / 14.8 s / 10% / 35.0% |
-| Six, as a brigade | 50.1 s / 11.4 s / 6% / 34.8% | 49.2 s / 10.5 s / 7% / 35.0% |
-| Twelve, apart | 61.2 s / 25.8 s / 25% / 39.2% | 61.1 s / 25.8 s / 23% / 38.5% |
-| Twelve, as a brigade | 61.5 s / 21.6 s / 17% / 39.4% | 60.8 s / 20.4 s / 16% / 38.5% |
+| Six regiments, apart | 50.7 s / 15.6 s / 12% / 35.4% | 49.6 s / 14.5 s / 10% / 35.2% |
+| Six, as a brigade | 50.1 s / 11.4 s / 6% / 34.8% | 49.3 s / 10.9 s / 7% / 35.1% |
+| Twelve, apart | 61.2 s / 25.8 s / 25% / 39.2% | 60.3 s / 24.9 s / 22% / 38.9% |
+| Twelve, as a brigade | 61.5 s / 21.6 s / 17% / 39.4% | 59.5 s / 20.9 s / 15% / 38.9% |
 
-No march order arrives later on average; the gains are small and inside
-the noise, as expected when routes were already about right. The change
+Every kind of march arrives a little sooner and closer together on
+average (about 1 to 2 s), small gains near the noise, as expected when
+routes were already about right. The change
 is in the rules: a flank in the trees now costs what it should, in
 pace and on the route.
 

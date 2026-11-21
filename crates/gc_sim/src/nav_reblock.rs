@@ -643,8 +643,9 @@ impl Grid {
 
     /// Set the going on each of `tiles` (`(x, y, percent)`) and bring the
     /// costs and links up to date, searching in `search`'s room. Returns
-    /// the boxes of cells of the tiles whose going changed. No change
-    /// while the grid has no going and every tile keeps its whole pace.
+    /// the boxes of cells whose cost may have changed: each changed tile's
+    /// grown by [`super::BODY_REACH`]. No change while the grid has no
+    /// going and every tile keeps its whole pace.
     fn regoing(&mut self, tiles: &[(i32, i32, u8)], search: &mut Search) -> Vec<[i32; 4]> {
         let side = self.side / CELLS_PER_TILE;
         let on_map = |&&(x, y, _): &&(i32, i32, u8)| self.cells([x, y, 1, 1]).is_some();
@@ -665,22 +666,19 @@ impl Grid {
                 continue;
             }
             self.going.set(t, g);
+            boxes.push(self.grow(cells, super::BODY_REACH));
+        }
+        // A cell's cost reads the going within reach of it (see
+        // `Grid::block_going_at`), so every cell that near a changed tile
+        // is priced again.
+        for &cells in &boxes {
             for c in self.cells_in(cells).collect::<Vec<_>>() {
                 let cost = self.cell_cost(c as usize);
                 if cost != self.cost[c as usize] {
                     self.cost.set(c as usize, cost);
+                    dirty[self.sector_of(c) as usize] = true;
                 }
             }
-            // A block's cost reads the going round it (see
-            // `Grid::body_cost`), so the links of every sector within
-            // reach of the tile go stale.
-            let [x0, y0, x1, y1] = self.grow(cells, super::BODY_REACH);
-            for sy in y0 / SECTOR..=(y1 - 1) / SECTOR {
-                for sx in x0 / SECTOR..=(x1 - 1) / SECTOR {
-                    dirty[(sy * self.sectors + sx) as usize] = true;
-                }
-            }
-            boxes.push(cells);
         }
         if !dirty.contains(&true) {
             return Vec::new();
@@ -1615,7 +1613,7 @@ mod tests {
     fn woods_burnt_out_leave_the_grid_built_afresh() {
         // A wood across sector edges, then a patch of it burnt out: every
         // link a block's cost reads it from comes out as on a grid built
-        // with the new going (see `Grid::body_cost`).
+        // with the new going (see `Grid::block_going_at`).
         let tiles: i32 = 96;
         let side = tiles * CELLS_PER_TILE;
         let ground = ribs_map(tiles as u32);

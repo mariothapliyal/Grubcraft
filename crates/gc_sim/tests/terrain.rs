@@ -226,11 +226,8 @@ fn a_block_with_a_flank_in_the_trees_is_slowed_for_that_flank() {
         let r = spawn(&mut w, 0, SPEARS, tile(32), tile(50), NORTH);
         move_to(&mut w, 0, r, tile(32), tile(30));
         run(&mut w, 40);
-        let size = {
-            let v = w.regiments.get(r).unwrap();
-            DRILL_UNITS[usize::from(SPEARS)].block_size_in(v.formation, v.files, v.models)
-        };
         let v = w.regiments.get(r).unwrap();
+        let size = DRILL_UNITS[usize::from(SPEARS)].block_size_in(v.formation, v.files, v.models);
         let under = w.terrain().under_trees(v.position, v.facing, size);
         (tile(50) - v.position.y, under)
     };
