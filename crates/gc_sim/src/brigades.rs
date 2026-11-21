@@ -146,6 +146,10 @@ const OVERTAKE: Fx = Fx::from_int(2);
 /// fast as one going straight along the track.
 const SLANT: Fx = Fx::from_int(2);
 
+/// How far behind where it was searched from a track begins, in tiles
+/// (see [`Brigade::lead_in`]).
+const LEAD_IN: Fx = Fx::from_int(30);
+
 const QUARTER: Fx = Fx::from_ratio(1, 4);
 const SIDESTEP: bool = false;
 const ANY_AHEAD: bool = false;
@@ -255,6 +259,12 @@ impl Brigade {
         self.cum[self.len as usize - 1]
     }
 
+    /// Where the way that was found begins (what is left of it): before
+    /// that the track is only its lead-in.
+    fn start(&self) -> Fx {
+        self.cum[0].max(Fx::ZERO)
+    }
+
     /// Add `p` to the end of the track (not a point on top of the last);
     /// false when there is no room.
     fn push(&mut self, p: FxVec2) -> bool {
@@ -349,7 +359,7 @@ impl Brigade {
         let d = if self.partial {
             self.centre - end
         } else {
-            end - self.at((self.total() - LOOK).max(self.cum[0])).0
+            end - self.at((self.total() - LOOK).max(self.start())).0
         };
         let run = d.normalized();
         self.ahead = if run == FxVec2::ZERO {
@@ -357,6 +367,32 @@ impl Brigade {
         } else {
             run
         };
+    }
+
+    /// Begin the track [`LEAD_IN`] behind where it was searched from, in
+    /// line with the way it sets out over its first few tiles: members
+    /// standing behind that one are on the track too (how far along it
+    /// they are is measured against the way the body is going, not the
+    /// first step of the search, which may be a step aside to clear a
+    /// bank).
+    fn lead_in(&mut self) {
+        let n = self.len as usize;
+        let start = self.track[0];
+        let run = (self.at(self.cum[0] + LOOK).0 - start).normalized();
+        if run == FxVec2::ZERO {
+            return;
+        }
+        if n == TRACK {
+            // No room: the far end is searched for again further on.
+            self.len -= 1;
+            self.partial = true;
+        }
+        let n = self.len as usize;
+        self.track.copy_within(0..n, 1);
+        self.cum.copy_within(0..n, 1);
+        self.track[0] = start - run * LEAD_IN;
+        self.cum[0] = self.cum[1] - LEAD_IN;
+        self.len += 1;
     }
 
     /// Forget the track behind `arc`, keeping a point before it.
@@ -742,7 +778,7 @@ impl Brigades {
         let b = &self.pool[slot];
         let near_end = b.partial && b.arc + EXTEND > b.total();
         let watch = (tick + slot as u32).is_multiple_of(WATCH_EVERY)
-            && b.arc > b.cum[0]
+            && b.arc > b.start()
             && b.arc < b.total()
             && !self.open_ahead(slot, owner, nav);
         if (near_end || watch) && !*searched {
@@ -853,17 +889,20 @@ impl Brigades {
         if b.len < 2 || (!b.partial && b.total() < SHORT) {
             return false;
         }
+        b.lead_in();
         b.phase = Phase::Marching;
         b.speed = Fx::ZERO;
         b.halted = false;
-        // The anchor starts where nobody is ahead of its place: the body
-        // forms as it moves off.
-        b.arc = b.cum[0];
+        // The anchor starts where nobody is ahead of its place (`pack`
+        // puts it there): the body forms as it moves off.
+        let mut front = Fx::MIN;
         for k in 0..self.list.len() {
             let i = self.list[k] as usize;
             let b = &self.pool[slot];
-            self.arc[i] = b.project(regs.position[i], b.cum[0] - LEFT_BEHIND, b.cum[0] + LEFT_BEHIND);
+            self.arc[i] = b.project(regs.position[i], -LEFT_BEHIND, LEFT_BEHIND);
+            front = front.max(self.arc[i]);
         }
+        self.pool[slot].arc = front;
         true
     }
 
@@ -1019,7 +1058,9 @@ impl Brigades {
         // The ground's width along the track, from ahead of the front.
         let top = b.arc - front + look;
         for k in 0..PROFILE {
-            let (p, dir) = b.at_smooth(top - SAMPLE * k as i32);
+            // (Behind where the track was searched from, as there: the
+            // lead-in is a line, not a way anyone found.)
+            let (p, dir) = b.at_smooth((top - SAMPLE * k as i32).max(Fx::ZERO));
             self.room[k] = nav.room_sides(owner, p, Angle::of_vec(dir), reach, |q| terrain.wet(q));
         }
         // The least room right and left of the track between two points
@@ -1207,7 +1248,7 @@ impl Brigades {
         }
         // A brigade setting off: the anchor starts where nobody is ahead
         // of the place the body has for it.
-        if b.speed == Fx::ZERO && b.arc == b.cum[0] && !b.halted {
+        if m.iter().all(|p| self.mode[p.slot as usize] == Mode::Plain) {
             let mut arc = Fx::MIN;
             for p in m.iter() {
                 arc = arc.max(self.arc[p.slot as usize] + p.station);
@@ -1381,7 +1422,7 @@ impl Brigades {
                             // (looked for afresh: its way so far led
                             // somewhere else).
                             self.mode[i] = Mode::Astray;
-                            self.set[i] = b.at(place.clamp(b.cum[0], b.total())).0;
+                            self.set[i] = b.at(place.clamp(b.start(), b.total())).0;
                             nav.lost(i);
                         } else if was == Mode::Lane {
                             self.mode[i] = Mode::Centre;
