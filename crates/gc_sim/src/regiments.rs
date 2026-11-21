@@ -412,6 +412,10 @@ regiment_fields! {
     keep: u8 = 0,
     /// The step aside it last found it needed, kept up between looks.
     aside: i16 = 0,
+    /// Where it stood before it stepped aside to make way for friends
+    /// marching through (see `Combat::make_way`): it steps back once they
+    /// are by. None while it stands where it was put.
+    home: Option<FxVec2> = None,
     /// Ticks left until it is back in order (0: in order).
     disorder: u8 = 0,
     /// Ticks it has stepped forward since it last halted or fought, up to

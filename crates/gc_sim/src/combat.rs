@@ -135,6 +135,11 @@ const CROWD_EVERY: u32 = 4;
 /// looks (see [`CROWD_EVERY`]), out of the friends standing in it (see
 /// [`Combat::make_room`]): a walk of 1.25 tiles a second.
 const ROOM_STEP: Fx = Fx::from_ratio(1, 4);
+/// A regiment standing at ease makes way for a friend marching at it once
+/// the marcher's front is this many tiles off, or nearer (see
+/// [`Combat::make_way`]): about the time it takes to sidestep a block's
+/// width while the marcher walks this far.
+const WAY_AHEAD: Fx = Fx::from_int(6);
 /// With nothing blocked within this many tiles a marching regiment still
 /// keeps its spacing and goes round friends standing in its way (see
 /// [`Combat::keep_apart`]), though it is in a base or near a wall; nearer
@@ -1481,7 +1486,9 @@ impl Combat {
                 let depth = wide - across.abs();
                 // (One waiting for its place in a brigade does not step
                 // aside itself: see [`crate::brigades`].)
-                let share = if marching && regs.pace[j] > Fx::ZERO {
+                // One standing aside to make way for it (see
+                // [`Combat::make_way`]) steps the other half.
+                let share = if (marching && regs.pace[j] > Fx::ZERO) || regs.home[j].is_some() {
                     depth / 2
                 } else {
                     depth
@@ -1948,7 +1955,8 @@ impl Combat {
                 });
                 regs.crowd[i] = into.min(SATURATED);
                 regs.set_crowded(i, deepest > PUSHING);
-                if deepest > CROWDING {
+                let made_way = self.make_way(regs, units, stances, nav, conquest, i);
+                if deepest > CROWDING && !made_way {
                     self.make_room(regs, units, stances, nav, conquest, i);
                 }
                 // Coming up to where it was sent, it looks whether a
@@ -2151,6 +2159,111 @@ impl Combat {
             && conquest.is_none_or(|c| !c.has_job(regs, i))
     }
 
+    /// Regiment `i`, standing at ease with a friend marching at it, makes
+    /// way: it sidesteps, facing as it faces, out of the marcher's lane
+    /// (the side its middle is on), at three quarters of its pace (as
+    /// [`crate::regiments`] sidesteps), never onto ground where its block
+    /// doesn't fit. It looks for friends whose front is up to [`WAY_AHEAD`]
+    /// off and that will still be marching when they get to it, and steps
+    /// out of the lane of the one it is deepest in. Once none is coming it
+    /// steps back to where it stood. So a brigade marches through an army
+    /// at ease without pushing through it (and falling out of order with
+    /// it). Whether it stepped, either way.
+    fn make_way(
+        &self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        stances: &Stances,
+        nav: &Nav,
+        conquest: Option<&Conquest>,
+        i: usize,
+    ) -> bool {
+        if !self.at_ease(regs, conquest, i) {
+            regs.home[i] = None;
+            return false;
+        }
+        let me = self.blocks[i];
+        let owner = regs.owner[i];
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        // The way out of the lane it is deepest in, and how deep.
+        let (mut deepest, mut out) = (Fx::ZERO, FxVec2::ZERO);
+        self.each_filed_once(
+            me.centre,
+            self.radius[i] + WAY_AHEAD,
+            slots,
+            &regs.alive,
+            |j| {
+                if j == i
+                    || !regs.marching(j)
+                    || regs.morale_state[j].broken()
+                    || regs.on_wall[j]
+                    || self.civil(regs, j)
+                    || stances.hostile(owner, regs.owner[j])
+                {
+                    return;
+                }
+                let them = &self.blocks[j];
+                let to_me = me.centre - them.centre;
+                let along = to_me.dot(them.forward);
+                let my_length = me.extent_along(them.forward);
+                // How far on it marches before it halts (where it is sent, or
+                // the look ahead if that is further).
+                let on = regs.target[j]
+                    .map_or(WAY_AHEAD, |t| {
+                        (t - them.centre).dot(them.forward).min(WAY_AHEAD)
+                    })
+                    .max(Fx::ZERO);
+                if along + my_length <= Fx::ZERO - them.half_depth
+                    || along - my_length >= them.half_depth + on
+                {
+                    return;
+                }
+                let across = to_me.dot(them.right);
+                let depth = them.half_width + me.extent_along(them.right) - across.abs();
+                if depth > deepest {
+                    deepest = depth;
+                    out = if across.raw() >= 0 {
+                        them.right
+                    } else {
+                        FxVec2::ZERO - them.right
+                    };
+                }
+            },
+        );
+        let from = regs.position[i];
+        let pace =
+            Fx::from_raw((i64::from(regs.speed[i].raw()) * i64::from(CROWD_EVERY) * 3 / 4) as i32);
+        let step = if deepest > Fx::ZERO {
+            regs.home[i].get_or_insert(from);
+            out * deepest.min(pace)
+        } else if let Some(home) = regs.home[i] {
+            let back = home - from;
+            if back.length() <= pace {
+                regs.home[i] = None;
+                back
+            } else {
+                back.normalized() * pace
+            }
+        } else {
+            return false;
+        };
+        let to = from + step;
+        let berth = regs.berth(units, i);
+        if !nav.blocks(owner, from, to)
+            && nav.standable(owner, to)
+            && !nav.steep(owner, to)
+            && (nav.fits(owner, to, berth) || !nav.fits(owner, from, berth))
+        {
+            regs.position[i] = to;
+            return true;
+        }
+        // Nowhere to step back to: it stands where it is now.
+        if deepest == Fx::ZERO {
+            regs.home[i] = None;
+        }
+        false
+    }
+
     /// Regiment `i`, standing at ease in friends that stand too, makes
     /// room: it steps out of every such friend it is more than
     /// [`CROWDING`] into, straight away from each (half of the way when
@@ -2173,6 +2286,7 @@ impl Combat {
         }
         let me = self.blocks[i];
         let mut push = FxVec2::ZERO;
+        let mut shoved = false;
         self.each_friend_touching(regs, stances, i, |j| {
             // One marching through is soon gone, one still widening out
             // of its column soon takes less room, and one driven back in
@@ -2199,8 +2313,13 @@ impl Combat {
                 return;
             };
             let depth = depth - CROWDING;
+            // One making way for a march (see [`Combat::make_way`]) gives
+            // no ground back: this one steps the whole way, and steps back
+            // with it afterwards.
+            let making_way = regs.home[j].is_some();
+            shoved |= making_way;
             push += away
-                * if self.at_ease(regs, conquest, j) {
+                * if self.at_ease(regs, conquest, j) && !making_way {
                     depth / 2
                 } else {
                     depth
@@ -2225,6 +2344,9 @@ impl Combat {
             && !nav.steep(owner, to)
             && (nav.fits(owner, to, berth) || !nav.fits(owner, from, berth))
         {
+            if shoved {
+                regs.home[i].get_or_insert(from);
+            }
             regs.position[i] = to;
         }
     }
