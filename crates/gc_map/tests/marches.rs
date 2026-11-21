@@ -653,6 +653,9 @@ impl Trace {
 #[test]
 #[ignore = "a report: cargo test -p gc_map --release --test marches -- --ignored --nocapture"]
 fn report_marches() {
+    if let Some(bit) = std::env::var("PRUNE").ok().and_then(|s| s.parse::<u32>().ok()) {
+        gc_sim::PRUNE_OFF.store(1 << bit, std::sync::atomic::Ordering::Relaxed);
+    }
     let only: Option<usize> = std::env::var("MARCHES").ok().and_then(|s| s.parse().ok());
     let mut army = 0;
     let mut by = [[0u32; 3]; 3];

@@ -140,6 +140,8 @@ const ROOM_STEP: Fx = Fx::from_ratio(1, 4);
 /// [`Combat::make_way`]): about the time it takes to sidestep a block's
 /// width while the marcher walks this far.
 const WAY_AHEAD: Fx = Fx::from_int(6);
+/// With an enemy this near, in tiles, a regiment doesn't make way.
+const WAY_FOE: Fx = Fx::from_int(20);
 /// With nothing blocked within this many tiles a marching regiment still
 /// keeps its spacing and goes round friends standing in its way (see
 /// [`Combat::keep_apart`]), though it is in a base or near a wall; nearer
@@ -1955,13 +1957,15 @@ impl Combat {
                 });
                 regs.crowd[i] = into.min(SATURATED);
                 regs.set_crowded(i, deepest > PUSHING);
-                let made_way = self.make_way(regs, units, stances, nav, conquest, i);
-                if deepest > CROWDING && !made_way {
+                let made_way =
+                    !crate::pruned(11) && self.make_way(regs, units, stances, nav, conquest, i);
+                if deepest > CROWDING && !made_way && !crate::pruned(8) {
                     self.make_room(regs, units, stances, nav, conquest, i);
                 }
                 // Coming up to where it was sent, it looks whether a
                 // friend has taken the place since.
                 if regs.seeks_place(i)
+                    && !crate::pruned(9)
                     && regs.attack_target[i].is_none()
                     && let Some(target) = regs.target[i].filter(|_| regs.marching(i))
                     && (target - regs.position[i]).length_sq_raw()
@@ -2188,8 +2192,11 @@ impl Combat {
         let me = self.blocks[i];
         let owner = regs.owner[i];
         let slots = stances.friend_slots(owner, OWNER_SLOTS);
-        // The way out of the lane it is deepest in, and how deep.
-        let (mut deepest, mut out) = (Fx::ZERO, FxVec2::ZERO);
+        // The way out of the lane it is deepest in, and how deep; and
+        // whether it stands within a step of a lane's edge, where a step
+        // back would take it into the lane again.
+        let (mut deepest, mut out, mut edge) = (Fx::ZERO, FxVec2::ZERO, false);
+        let pace = Self::way_pace(regs, i);
         self.each_filed_once(
             me.centre,
             self.radius[i] + WAY_AHEAD,
@@ -2232,6 +2239,7 @@ impl Combat {
                 }
                 let across = to_me.dot(right);
                 let depth = its_width + me.extent_along(right) - across.abs();
+                edge |= depth + pace + CROWDING > Fx::ZERO;
                 if depth > deepest {
                     deepest = depth;
                     out = if across.raw() >= 0 {
@@ -2243,10 +2251,26 @@ impl Combat {
             },
         );
         let from = regs.position[i];
-        let pace = Self::way_pace(regs, i);
-        let step = if deepest > Fx::ZERO {
+        // With a foe near it holds its ground: a line facing the enemy
+        // doesn't open for friends going up, and one stepping aside could
+        // step into the fight.
+        let foe_near = || {
+            let mut near = false;
+            self.each_near(
+                &placement!(regs, stances),
+                from,
+                WAY_FOE,
+                Whose::Enemies(owner),
+                |_| near = true,
+            );
+            near
+        };
+        let step = if deepest > Fx::ZERO && !(regs.home[i].is_none() && foe_near()) {
             regs.home[i].get_or_insert(from);
             out * deepest.min(pace)
+        } else if edge {
+            // Not back until the march is by.
+            return regs.home[i].is_some();
         } else if let Some(home) = regs.home[i] {
             // A friend that has settled on the ground it stood on since
             // keeps it: it stands where it is now, as one with no ground
@@ -2264,6 +2288,11 @@ impl Combat {
                 return false;
             }
             let whole = home - from;
+            // Near enough is there.
+            if whole.length() < ROOM_QUIET {
+                regs.home[i] = None;
+                return false;
+            }
             let back = if whole.length() <= pace {
                 whole
             } else {
@@ -2271,13 +2300,23 @@ impl Combat {
             };
             // Straight back, or where a friend is in the way of that, square
             // along its front or its flank only.
-            let Some(back) = [
+            // Failing that too, shouldering friends at ease aside (who
+            // step back in turn), so a ring of friends that settled round
+            // it since never keeps it out for good.
+            let ways = [
                 back,
                 me.right * back.dot(me.right),
                 me.forward * back.dot(me.forward),
-            ]
-            .into_iter()
-            .find(|&b| b != FxVec2::ZERO && self.clear_to_step(regs, stances, i, &me, b)) else {
+            ];
+            let Some(back) = [false, true]
+                .into_iter()
+                .flat_map(|shoulder| ways.map(|b| (b, shoulder)))
+                .find(|&(b, shoulder)| {
+                    b != FxVec2::ZERO
+                        && self.clear_to_step(regs, stances, conquest, i, &me, b, shoulder)
+                })
+                .map(|(b, _)| b)
+            else {
                 return false;
             };
             if back == whole {
@@ -2306,18 +2345,22 @@ impl Combat {
 
     /// Whether regiment `i` (block `me`), stepping back to where it stood
     /// after making way (see [`Combat::make_way`]), may step `step`: not if
-    /// it would go deeper than [`CROWDING`] into a friend (one going by,
-    /// one standing, or one standing aside itself with the lower slot,
-    /// which goes back first so two never wait on each other), nor deeper
-    /// than half of [`PUSHING`] into one standing aside with the higher
-    /// slot, which that shoves back in turn (see [`Combat::make_room`]).
+    /// it would go deeper than [`CROWDING`] into a friend going by, one
+    /// holding its ground (fighting, braced, told to hold), or one standing
+    /// aside itself with the lower slot (which goes back first, so two
+    /// never wait on each other), nor than half of [`PUSHING`] into one
+    /// standing aside with the higher slot, which that shoves out of its
+    /// way and which steps back in turn (see [`Combat::make_room`]). With
+    /// `shoulder`, any friend at ease is shoved so.
     fn clear_to_step(
         &self,
         regs: &Regiments,
         stances: &Stances,
+        conquest: Option<&Conquest>,
         i: usize,
         me: &Block,
         step: FxVec2,
+        shoulder: bool,
     ) -> bool {
         let owner = regs.owner[i];
         let then = Block {
@@ -2331,14 +2374,14 @@ impl Combat {
             if !clear || stances.hostile(owner, regs.owner[j]) {
                 return;
             }
-            let limit = if regs.home[j].is_some() && j > i {
-                PUSHING / 2
-            } else {
-                CROWDING
-            };
+            let aside = regs.home[j].is_some();
+            let yields =
+                (aside && j > i) || (shoulder && !aside && self.at_ease(regs, conquest, j));
+            let limit = if yields { PUSHING / 2 } else { CROWDING };
+            // (No deeper than it is now is always allowed.)
             clear = then
                 .overlap_over(them, limit)
-                .is_none_or(|deep| me.overlap_over(them, deep).is_some());
+                .is_none_or(|deep| me.overlap(them) >= deep);
         });
         clear
     }

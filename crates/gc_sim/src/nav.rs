@@ -1779,7 +1779,9 @@ impl Nav {
                     self.way_next[i] = 0;
                     self.partial[i] = partial;
                     self.goal[i] = t;
-                    self.lend(i, regs, units);
+                    if !crate::pruned(10) {
+                        self.lend(i, regs, units);
+                    }
                 }
                 None => {
                     self.route[i] = Route::Failed;

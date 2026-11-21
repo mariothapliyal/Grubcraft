@@ -35,9 +35,6 @@ pub(super) const SCENARIO: Scenario = Scenario {
 
 const TILES: u32 = 128;
 const SECOND: u32 = TICKS_PER_SECOND;
-/// The longest the Concord's reserve fights before it falls back, in
-/// ticks: it falls back as soon as it is hurt.
-const RESERVE_FIGHTS: u32 = 30 * SECOND;
 
 fn run(real: &Real, report: &mut Report) {
     cocoons(real, report);
@@ -382,8 +379,15 @@ fn tithe(real: &Real, report: &mut Report) {
             orders.extend(attack_nearest(&world, 0, &concord, 1));
             // Into the front of the Katana: hit on a flank, the foe it
             // catches doesn't hurt it.
-            if reserve_out.is_none() {
-                let target = ember[3];
+            // (Once it is gone, into whichever of the Ember is left: the
+            // reserve keeps fighting until it is hurt, so that there is
+            // a hurt regiment to refill however the fight goes.)
+            let target = (ember.get(3).into_iter().chain(&ember))
+                .copied()
+                .find(|&h| world.regiments.get(h).is_some());
+            if reserve_out.is_none()
+                && let Some(target) = target
+            {
                 orders.push(order(
                     0,
                     Command::Attack {
@@ -394,10 +398,10 @@ fn tithe(real: &Real, report: &mut Report) {
             }
             orders.extend(attack_nearest(&world, 1, &ember, 0));
         }
-        // Once hurt (or after a while) it pulls out of its fight, then
-        // goes back to the Reliquary.
+        // Once hurt it pulls out of its fight, then goes back to the
+        // Reliquary.
         let hurt = models(&world, reserve) < reserve_full;
-        if reserve_out.is_none() && (hurt || fought >= RESERVE_FIGHTS) {
+        if reserve_out.is_none() && hurt {
             reserve_out = Some(fought);
             orders.push(order(0, Command::FallBack { regiment: reserve }));
         }

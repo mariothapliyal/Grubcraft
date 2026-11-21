@@ -1725,7 +1725,9 @@ impl Regiments {
             frontage: self.frontage[i].clamp(1, self.models[i].max(1)),
             formation: self.formation[i],
             models: self.models[i],
-            moving: self.target[i].is_some() || self.target_facing[i].is_some(),
+            moving: self.target[i].is_some()
+                || self.target_facing[i].is_some()
+                || self.home[i].is_some(),
             still: self.still(i),
             engaged: self.engaged[i].is_some(),
             charge: self.charge[i],
@@ -1882,7 +1884,7 @@ impl Regiments {
                 self.set_apart(i, i as u8 % KEEP_EVERY);
                 self.aside[i] = 0;
             }
-            if self.engaged[i].is_none() && !self.braced[i] {
+            if self.engaged[i].is_none() && !self.braced[i] && !crate::pruned(6) {
                 self.squeeze(i, nav, terrain, units);
             }
             let turn = self.turn[i];
@@ -1989,7 +1991,10 @@ impl Regiments {
                     // In tight ground (a ford, a gate, a pass) it squares up
                     // first, so it narrows into a column across its way
                     // rather than going in broadside (see `squeeze`).
-                    if wheeling && !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND) {
+                    if wheeling
+                        && !crate::pruned(7)
+                        && !nav.open_around(self.owner[i], self.position[i], OPEN_GROUND)
+                    {
                         continue;
                     }
                     let Some(pace) = wheeling_pace(pace, off) else {
@@ -2014,7 +2019,7 @@ impl Regiments {
                 ));
                 let ghost = self.stuck[i] >= GHOST;
                 let full = step;
-                let step = if ghost {
+                let step = if ghost || crate::pruned(5) {
                     step
                 } else {
                     crate::combat::pushing(step, self.crowd[i])
@@ -2050,7 +2055,7 @@ impl Regiments {
                             self.position[i],
                             crate::combat::ELBOW_ROOM,
                         ));
-                let aside = if ghost || cramped || self.engaged[i].is_some() {
+                let aside = if ghost || cramped || self.engaged[i].is_some() || crate::pruned(0) {
                     Fx::ZERO
                 } else if self.apart(i) > 0 {
                     self.set_apart(i, self.apart(i) - 1);
@@ -2093,19 +2098,21 @@ impl Regiments {
                     if (1..PATIENCE).contains(&self.held[i]) {
                         continue;
                     }
-                } else if tight {
+                } else if tight && !crate::pruned(1) {
                     let found = combat.friend_in_the_way(self, units, stances, i, next, dir);
                     // Following a friend marching on ahead (its route goes
                     // where this one's does, room beside it or not) uses
                     // up no patience: the queue is moving.
                     let following = |j: usize| {
-                        self.marching(j)
+                        !crate::pruned(2)
+                            && self.marching(j)
                             && !(1..PATIENCE).contains(&self.held[j])
                             && self.stepped(j)
                     };
                     match found {
                         Ok(j)
                             if following(j)
+                                && !crate::pruned(3)
                                 && (self.attack_target[i].is_some()
                                     || [here, next, self.position[j]]
                                         .into_iter()
@@ -2199,7 +2206,8 @@ impl Regiments {
                     // Kept back by friends (not just by the ground): once
                     // for UNSTICK_TICKS, it marches through them for as
                     // long.
-                    self.stuck[i] += 1;
+                    self.stuck[i] =
+                        (self.stuck[i] + 1).min(UNSTICK_TICKS - 1 + u8::from(!crate::pruned(4)));
                     if self.stuck[i] >= UNSTICK_TICKS {
                         self.stuck[i] = GHOST + UNSTICK_TICKS;
                     }
@@ -2294,7 +2302,8 @@ pub struct RegimentView {
     pub formation: Formation,
     /// Soldiers still standing.
     pub models: u16,
-    /// Walking or turning to an ordered facing.
+    /// Walking or turning to an ordered facing, or stepping aside to make
+    /// way and back (see `made_way`).
     pub moving: bool,
     /// Not marching: standing, turning or fighting. Formation discipline
     /// goes by this, not `moving` (see [`Regiments::still`]).
