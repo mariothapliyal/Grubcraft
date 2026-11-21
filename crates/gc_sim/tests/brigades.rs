@@ -165,7 +165,6 @@ fn a_brigade_arrives_together_where_separate_moves_straggle() {
         at
     };
     let (alone, together) = (run(0), run(1));
-    eprintln!("open: {alone:?} {together:?}");
     assert!(
         spread(&alone) >= 8,
         "the stragglers are late on their own: {alone:?}"
@@ -188,8 +187,10 @@ fn a_brigade_keeps_its_shape_on_the_way() {
     let who = spawn(&mut w, 0, &SCATTERED);
     let orders = group(&w, &who, 120, 60, 1);
     w.tick(&orders);
-    // Formed up and on the march: each is at its place in the body.
-    for _ in 0..30 * TICKS_PER_SECOND {
+    // It sets off as it stands and forms on the way (the ones behind
+    // gain on the rest; nobody waits to form up first). Well before it
+    // arrives each is at its place in the body.
+    for _ in 0..42 * TICKS_PER_SECOND {
         w.tick(&[]);
     }
     for &h in &who {
@@ -301,7 +302,6 @@ fn a_brigade_files_through_a_gap_and_forms_again_beyond_it() {
         arrivals(&mut w, &orders, 240)
     };
     let (alone, together) = (run(0), run(1));
-    eprintln!("gap: {alone:?} {together:?}");
     assert!(
         spread(&together) <= 6,
         "through the gap and there as one: {together:?} (alone: {alone:?})"
@@ -397,67 +397,4 @@ fn an_attack_move_brigade_halts_while_one_of_its_own_fights() {
     }
     // The foe dealt with, they all go on and arrive.
     arrivals(&mut w, &orders, 400);
-}
-
-#[test]
-#[ignore]
-fn dump_gap() {
-    let nav = walled();
-    let mut w = world(&nav);
-    let who = spawn(&mut w, 0, &SCATTERED);
-    let orders = group(&w, &who, 128, 60, 1);
-    w.tick(&orders);
-    let mut last: Vec<FxVec2> = who.iter().map(|&h| w.regiments.get(h).unwrap().position).collect();
-    for t in 0..95 * TICKS_PER_SECOND {
-        w.tick(&[]);
-        if t % (2 * TICKS_PER_SECOND) == 0 {
-            let mut line = format!("{:3} ", t / TICKS_PER_SECOND);
-            for (k, &h) in who.iter().enumerate() {
-                let r = w.regiments.get(h).unwrap();
-                let v = ((r.position - last[k]).length().raw() as f32 / 65536.0 / 2.0);
-                last[k] = r.position;
-                let b = w.brigade(h);
-                line += &format!(
-                    "| {:5.1},{:5.1} f{:2} {:5.1}/{}{} v{:3.1} ",
-                    r.position.x.raw() as f32 / 65536.0,
-                    r.position.y.raw() as f32 / 65536.0,
-                    r.files,
-                    b.map_or(0.0, |b| b.behind.raw() as f32 / 65536.0),
-                    b.map_or(0, |b| b.steering),
-                    if b.is_some_and(|b| b.in_step) { 's' } else { ' ' },
-                    v
-                );
-            }
-            eprintln!("{line}");
-        }
-    }
-}
-
-#[test]
-#[ignore]
-fn dump_gap2() {
-    let nav = walled();
-    let mut w = world(&nav);
-    let who = spawn(&mut w, 0, &SCATTERED);
-    let orders = group(&w, &who, 128, 60, 1);
-    w.tick(&orders);
-    let f = |v: Fx| v.raw() as f32 / 65536.0;
-    for t in 0..95 * TICKS_PER_SECOND {
-        w.tick(&[]);
-        if t % (4 * TICKS_PER_SECOND) == 0 && t > 50 * TICKS_PER_SECOND {
-            let mut line = format!("{:3} ", t / TICKS_PER_SECOND);
-            for &h in &who {
-                let r = w.regiments.get(h).unwrap();
-                let b = w.brigade(h);
-                let route = w.route(h).to_vec();
-                let p = b.and_then(|b| b.place).unwrap_or(r.position);
-                let to = route.last().copied().unwrap_or(r.position);
-                line += &format!(
-                    "| at {:5.1},{:5.1} place {:5.1},{:5.1} to {:5.1},{:5.1} n{} fac {:04x} ",
-                    f(r.position.x), f(r.position.y), f(p.x), f(p.y), f(to.x), f(to.y), route.len(), r.facing.0
-                );
-            }
-            eprintln!("{line}");
-        }
-    }
 }

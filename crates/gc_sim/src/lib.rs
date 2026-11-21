@@ -18,8 +18,8 @@ use alloc::vec::Vec;
 
 pub mod arrange;
 pub mod blueprints;
-pub mod brigades;
 pub mod bridges;
+pub mod brigades;
 pub mod champions;
 pub mod chords;
 pub mod clearing;
@@ -1334,10 +1334,6 @@ impl World {
 
     /// The brigade regiment `h` marches in and its place in it (see
     /// [`brigades`]), if it marches in one.
-    pub fn brigade_debug(&self, h: RegimentHandle) -> [f32; 12] {
-        self.brigades.debug(&self.regiments, h.index as usize)
-    }
-
     pub fn brigade(&self, h: RegimentHandle) -> Option<brigades::BrigadeView> {
         let i = self.regiments.resolve(h)?;
         self.brigades.view(&self.regiments, i)

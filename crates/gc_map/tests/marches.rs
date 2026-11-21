@@ -346,7 +346,10 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             target: b,
             facing: Some(facing),
             width: None,
-            brigade: std::env::var("BRIGADE").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
+            brigade: std::env::var("BRIGADE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         },
         &mut cmds,
     );
@@ -467,9 +470,6 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                 .iter()
                 .map(|&h| {
                     let r = w.regiments.get(h).unwrap();
-                    if std::env::var("DEBUG_B").is_ok() {
-                        return format!("{:?}", w.brigade_debug(h));
-                    }
                     format!(
                         "({:3},{:3}) d{:2} f{}/{} w{}",
                         r.position.x.floor_int(),

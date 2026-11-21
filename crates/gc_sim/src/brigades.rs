@@ -151,8 +151,6 @@ const SLANT: Fx = Fx::from_int(2);
 const LEAD_IN: Fx = Fx::from_int(30);
 
 const QUARTER: Fx = Fx::from_ratio(1, 4);
-const SIDESTEP: bool = false;
-const ANY_AHEAD: bool = false;
 
 /// How a regiment stands in its brigade (see [`crate::World::brigade`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -530,14 +528,6 @@ impl Brigades {
     }
 
     /// How regiment slot `i` stands in its brigade, if it marches in one.
-    pub(crate) fn debug(&self, regs: &Regiments, i: usize) -> [f32; 12] {
-        let f = |x: Fx| x.raw() as f32 / 65536.0;
-        if self.of[i] == 0 { return [0.0; 12]; }
-        let b = &self.pool[usize::from(self.of[i]) - 1];
-        [f(b.arc), f(b.total()), f(self.arc[i]), f(self.station[i]), f(self.want_station[i]), f(self.side[i]), f(self.want_side[i]),
-         f(regs.pace[i]) * 20.0, f32::from(u8::from(self.held[i])), f32::from(self.stall[i]), self.mode[i] as u8 as f32, f(regs.speed[i]) * 20.0]
-    }
-
     pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
         let (number, goal) = self.of(i)?;
         let b = &self.pool[usize::from(self.of[i]) - 1];
@@ -1114,7 +1104,9 @@ impl Brigades {
             // Off to the side of the track, it has that far to come in
             // before it can go on: so much the later its turn.
             let (at, dir) = b.at(self.arc[i]);
-            let off = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x)).abs();
+            let off = (regs.position[i] - at)
+                .dot(FxVec2::new(-dir.y, dir.x))
+                .abs();
             m[k] = Placing {
                 slot: i as u32,
                 lat,
@@ -1178,7 +1170,11 @@ impl Brigades {
         let clear_of = |m: &[Placing], first: usize, last: usize, row_back: Fx, staggered: bool| {
             let mut clear = row_back;
             for p in &m[first..last] {
-                let own = if staggered { p.back - row_back } else { Fx::ZERO };
+                let own = if staggered {
+                    p.back - row_back
+                } else {
+                    Fx::ZERO
+                };
                 for q in &m[..first] {
                     let beside = p.half_width + q.half_width + GROUP_GAP - QUARTER / 2;
                     if (p.side - q.side).abs() < beside {
@@ -1237,7 +1233,11 @@ impl Brigades {
             // Filing: this row and each behind it that cannot march
             // abreast either go through as one file, those furthest
             // along first, as many as fit side by side.
-            let mut deep = m[row..end].iter().map(|p| p.half_depth).max().unwrap_or(Fx::ZERO);
+            let mut deep = m[row..end]
+                .iter()
+                .map(|p| p.half_depth)
+                .max()
+                .unwrap_or(Fx::ZERO);
             while end < n {
                 let mut next = end + 1;
                 while next < n && m[next].back - m[end].back <= ROW {
@@ -1368,7 +1368,7 @@ impl Brigades {
         // marching with the body.
         let right = |dir: FxVec2| FxVec2::new(-dir.y, dir.x);
         let mut places = [(Fx::ZERO, Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
-        let mut stands = [(Fx::ZERO, Fx::ZERO, false); MAX_MEMBERS];
+        let mut stands = [(Fx::ZERO, Fx::ZERO, Fx::ZERO, false); MAX_MEMBERS];
         for (k, &i) in self.list.iter().enumerate() {
             let i = i as usize;
             let here = regs.position[i];
@@ -1378,10 +1378,16 @@ impl Brigades {
             let (at, dir) = b.at(self.arc[i]);
             let behind = b.arc - self.station[i] - self.arc[i];
             let block = Block::drawn_up(regs, units, i, here);
-            places[k] = (self.station[i], self.side[i], block.half_width, block.half_depth);
+            places[k] = (
+                self.station[i],
+                self.side[i],
+                block.half_width,
+                block.half_depth,
+            );
             stands[k] = (
                 self.arc[i],
                 (here - at).dot(right(dir)),
+                Block::of(regs, units, i).half_width,
                 self.kept_up(regs, i, behind),
             );
         }
@@ -1389,14 +1395,19 @@ impl Brigades {
         for k in 0..n {
             let i = self.list[k] as usize;
             let (station, side, half_width, half_depth) = places[k];
-            let (arc, across, _) = stands[k];
+            let (arc, across, wide, _) = stands[k];
             // Its place is where the ground last put it, but never ahead
             // of a member marching in front of where it stands: it
             // follows that one until its own lane is clear, and does not
             // push through it to a place beyond.
             let mut to = self.want_station[i];
-            for (&(theirs, their_across, marching), &(_, _, width, depth)) in stands[..n].iter().zip(&places) {
-                if marching && theirs > arc && (across - their_across).abs() < half_width + width - QUARTER {
+            for (&(theirs, their_across, width, marching), &(_, _, _, depth)) in
+                stands[..n].iter().zip(&places)
+            {
+                if marching
+                    && theirs > arc
+                    && (across - their_across).abs() < wide + width - QUARTER
+                {
                     to = to.max(b.arc - theirs + depth + half_depth);
                 }
             }
@@ -1408,7 +1419,8 @@ impl Brigades {
             self.station[i] = if to < station {
                 let mut least = to;
                 for &(theirs, their_side, width, depth) in &places[..n] {
-                    if theirs < station && (side - their_side).abs() < half_width + width + GROUP_GAP / 2 {
+                    if theirs < station && (side - their_side).abs() < half_width + width - QUARTER
+                    {
                         least = least.max(theirs + depth + half_depth + GROUP_GAP);
                     }
                 }
@@ -1571,7 +1583,11 @@ impl Brigades {
                 }
                 let to = target - here;
                 let (run, far) = (to.dot(b.at(self.arc[i]).1), to.length());
-                let slant = if run > Fx::ONE { (far / run).min(SLANT) } else { Fx::ONE };
+                let slant = if run > Fx::ONE {
+                    (far / run).min(SLANT)
+                } else {
+                    Fx::ONE
+                };
                 (along * slant).min(regs.speed[i])
             } else {
                 regs.speed[i]
@@ -1584,29 +1600,19 @@ impl Brigades {
                 let j = j as usize;
                 let (theirs, their_width, their_depth) = stand[n];
                 if self.arc[j] > self.arc[i]
-                    && (ANY_AHEAD || self.station[j] < self.station[i])
+                    && self.station[j] < self.station[i]
                     && (across - theirs).abs() < half_width + their_width
                 {
                     let depths = half_depth + their_depth;
                     let gap = self.arc[j] - self.arc[i] - depths;
                     // No nearer than half the room their places leave.
-                    let least = (self.station[i] - self.station[j] - depths).clamp(Fx::ZERO, FOLLOW) / 2;
+                    let least =
+                        (self.station[i] - self.station[j] - depths).clamp(Fx::ZERO, FOLLOW) / 2;
                     room = room.min(((gap - least) * FOLLOW_GAIN).max(Fx::ZERO));
                 }
             }
-            let (mut target, mut pace) = (target, pace);
             self.held[i] = room < pace;
-            if room < pace {
-                // Held up short of its place with its lane off to one
-                // side: it comes across to its lane where it is, to pass
-                // beside the one in its way, not push through it.
-                let off = (self.side[i] - across).abs();
-                if SIDESTEP && behind > Fx::ZERO && off > Fx::HALF && self.mode[i] == Mode::Lane {
-                    target = b.lane(self.arc[i] + off * room / pace, self.side[i]);
-                } else {
-                    pace = room;
-                }
-            }
+            let pace = pace.min(room);
             regs.target[i] = Some(target);
             regs.pace[i] = pace;
             self.set[i] = target;

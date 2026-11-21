@@ -187,7 +187,8 @@ impl Orders {
                 last_distance: None,
                 retries,
             });
-            self.hands.push(now, command(w.regiment, &w.act, brigade_of(w.group)));
+            self.hands
+                .push(now, command(w.regiment, &w.act, brigade_of(w.group)));
         }
         self.paid_groups = paid_groups;
     }

@@ -6804,7 +6804,13 @@ impl Running {
             let legs = route
                 .iter()
                 .enumerate()
-                .map(|(k, &p)| (from_fx_vec(p), r.hunting, own.is_none() && k + 1 == route.len()))
+                .map(|(k, &p)| {
+                    (
+                        from_fx_vec(p),
+                        r.hunting,
+                        own.is_none() && k + 1 == route.len(),
+                    )
+                })
                 .chain(own)
                 .chain(marches);
             for (to, hunting, end) in legs {
