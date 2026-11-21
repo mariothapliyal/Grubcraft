@@ -29,15 +29,15 @@
 
 use alloc::vec::Vec;
 
-use gc_fixed::{Fx, FxVec2};
+use gc_fixed::FxVec2;
 
-use crate::combat::{Combat, Whose, placement};
+use crate::combat::Combat;
 use crate::conquest::ConquestUnit;
-use crate::morale;
 use crate::regiments::{Regiments, hash_handle};
 use crate::stances::Stances;
 use crate::structures::Refusal;
 use crate::{MAX_PARTIES, PlayerId, RegimentHandle, StateHasher, UnitId, UnitStats};
+use crate::{generals, morale};
 
 /// The most heroes a player has: one for each tier.
 pub const MAX_HEROES: usize = 3;
@@ -85,8 +85,6 @@ pub struct Hero {
     pub points: u8,
     /// Where it stood at the end of the last tick, or where it fell.
     pub at: FxVec2,
-    /// The tick it last fell, if it has.
-    pub fell: Option<u32>,
 }
 
 impl Hero {
@@ -98,6 +96,22 @@ impl Hero {
     /// Experience its next level needs, if it isn't at the top.
     pub fn next_level_xp(&self) -> Option<u32> {
         LEVELS.get(usize::from(self.level.max(1)) - 1).copied()
+    }
+
+    /// Experience its level took (0 at level 1).
+    pub fn level_start_xp(&self) -> u32 {
+        usize::from(self.level.max(1))
+            .checked_sub(2)
+            .map_or(0, |k| LEVELS[k])
+    }
+
+    /// Add `xp` experience; the levels it gains.
+    fn gain(&mut self, xp: u32) -> u8 {
+        self.xp = self.xp.saturating_add(xp);
+        let gained = level_of(self.xp).saturating_sub(self.level);
+        self.level += gained;
+        self.points = self.points.saturating_add(gained);
+        gained
     }
 }
 
@@ -164,10 +178,9 @@ impl Heroes {
         self.list.iter().find(|h| h.regiment == Some(r))
     }
 
-    /// Whether `player` may queue a hero of type `unit` now, with
-    /// `queued` heroes of theirs in training and `this_queued` of them of
-    /// that type, at tier `tier`: `Ok(Some(level))` to revive their fallen
-    /// one, `Ok(None)` to hire it.
+    /// Whether `player` may queue a hero of type `unit` now (to hire it,
+    /// or to revive their fallen one), with `queued` heroes of theirs in
+    /// training and `this_queued` of them of that type, at tier `tier`.
     pub(crate) fn check_hire(
         &self,
         player: PlayerId,
@@ -175,19 +188,19 @@ impl Heroes {
         tier: u8,
         queued: usize,
         this_queued: bool,
-    ) -> Result<Option<u8>, Refusal> {
+    ) -> Result<(), Refusal> {
         if this_queued {
             return Err(Refusal::Busy);
         }
         match self.find(player, unit) {
-            Some(h) if h.dead() => Ok(Some(h.level)),
+            Some(h) if h.dead() => Ok(()),
             Some(_) => Err(Refusal::HeroTaken),
             None => {
                 let have = self.list.iter().filter(|h| h.owner == player).count() + queued;
                 if have >= usize::from(tier).min(MAX_HEROES) {
                     Err(Refusal::HeroLimit)
                 } else {
-                    Ok(None)
+                    Ok(())
                 }
             }
         }
@@ -224,7 +237,6 @@ impl Heroes {
                     xp: 0,
                     points: 1,
                     at,
-                    fell: None,
                 });
                 self.list.len() - 1
             }
@@ -251,56 +263,30 @@ impl Heroes {
         if self.list.iter().all(Hero::dead) {
             return;
         }
-        let r2 = {
-            let r = Fx::from_int(XP_TILES).raw() as u64;
-            r * r
-        };
         for j in 0..regs.deaths.len() {
             let dead = regs.deaths[j];
             if dead == 0 {
                 continue;
             }
-            let worth = u32::from(dead)
-                * u32::from(
-                    stats
-                        .get(usize::from(regs.unit[j]))
-                        .map_or(1, |s| s.hp_per_model),
-                );
+            let hp = stats
+                .get(usize::from(regs.unit[j]))
+                .map_or(1, |s| s.hp_per_model);
+            let worth = u32::from(dead) * u32::from(hp);
             let (at, victim) = (regs.position[j], regs.owner[j]);
             self.near.clear();
-            for (k, h) in self.list.iter().enumerate() {
-                if h.regiment.is_some()
-                    && stances.hostile(h.owner, victim)
-                    && (h.at - at).length_sq_raw() <= r2
-                {
-                    self.near.push(k);
-                }
-            }
-            let n = self.near.len() as u32;
-            if n == 0 {
+            self.near
+                .extend(self.list.iter().enumerate().filter_map(|(k, h)| {
+                    let near = !h.dead() && stances.hostile(h.owner, victim);
+                    (near && generals::near(h.at, at, XP_TILES)).then_some(k)
+                }));
+            let Some(share) = worth.checked_div(self.near.len() as u32) else {
                 continue;
-            }
-            let share = worth / n;
+            };
             for &k in &self.near {
                 let h = &mut self.list[k];
-                h.xp = h.xp.saturating_add(share);
-                let level = level_of(h.xp).min(MAX_LEVEL);
-                if level > h.level {
-                    let gained = level - h.level;
-                    h.level = level;
-                    h.points = h.points.saturating_add(gained);
-                    let grow = grow_by(units, h.unit);
-                    if let Some(i) = h.regiment.and_then(|r| regs.resolve(r))
-                        && let Some(s) = stats.get(usize::from(h.unit))
-                    {
-                        set_level(regs, i, s, grow, level);
-                        // The new hit points come whole.
-                        let more = grow.hp.saturating_mul(u16::from(gained));
-                        for m in 0..regs.models[i] {
-                            let hp = regs.hp_mut(i, m as u8);
-                            *hp = hp.saturating_add(more);
-                        }
-                    }
+                let gained = h.gain(share);
+                if gained > 0 {
+                    level_up(regs, stats, units, h, gained);
                 }
             }
         }
@@ -315,46 +301,26 @@ impl Heroes {
         stats: &[UnitStats],
         units: &[ConquestUnit],
         stances: &Stances,
-        tick: u32,
     ) {
-        if self.list.is_empty() {
-            return;
-        }
+        let mut led = core::mem::take(&mut regs.led);
         for h in &mut self.list {
             let Some(r) = h.regiment else {
                 continue;
             };
-            match regs.resolve(r) {
-                Some(i) => h.at = regs.position[i],
-                None => {
-                    h.regiment = None;
-                    h.fell = Some(tick);
-                    fall(regs, stats, units, h);
-                }
-            }
-        }
-        let mut led = core::mem::take(&mut regs.led);
-        led.fill(false);
-        for h in &self.list {
-            let Some(i) = h.regiment.and_then(|r| regs.resolve(r)) else {
+            let Some(i) = regs.resolve(r) else {
+                h.regiment = None;
+                fall(regs, stats, units, h);
                 continue;
             };
+            h.at = regs.position[i];
             if regs.morale_state[i].broken() || regs.cocoon_left[i] > 0 {
                 continue;
             }
-            let owner = h.owner;
-            let at = placement!(regs, stances);
-            combat.each_near(
-                &at,
-                h.at,
-                Fx::from_int(LEAD_TILES),
-                Whose::Friends(owner),
-                |j| {
-                    if regs.owner[j] == owner && leadable(regs, stats, units, j) {
-                        led[j] = true;
-                    }
-                },
-            );
+            generals::each_led(regs, combat, stances, i, LEAD_TILES, |j| {
+                if leadable(regs, stats, units, j) {
+                    led[j] = true;
+                }
+            });
         }
         regs.led = led;
     }
@@ -370,8 +336,31 @@ impl Heroes {
             h.u8(hero.points);
             h.i32(hero.at.x.raw());
             h.i32(hero.at.y.raw());
-            h.u32(hero.fell.unwrap_or(u32::MAX));
         }
+    }
+}
+
+/// Hero `h`, in regiment slot `i` if it stands, gained `gained` levels:
+/// their hit points come whole, and its blows land harder.
+fn level_up(
+    regs: &mut Regiments,
+    stats: &[UnitStats],
+    units: &[ConquestUnit],
+    h: &Hero,
+    gained: u8,
+) {
+    let grow = grow_by(units, h.unit);
+    let (Some(i), Some(s)) = (
+        h.regiment.and_then(|r| regs.resolve(r)),
+        stats.get(usize::from(h.unit)),
+    ) else {
+        return;
+    };
+    set_level(regs, i, s, grow, h.level);
+    let more = grow.hp.saturating_mul(u16::from(gained));
+    for m in 0..regs.models[i] {
+        let hp = regs.hp_mut(i, m as u8);
+        *hp = hp.saturating_add(more);
     }
 }
 
@@ -393,19 +382,19 @@ fn leadable(regs: &Regiments, stats: &[UnitStats], units: &[ConquestUnit], j: us
 
 /// Hero `h` has fallen where it last stood: its player's regiments near
 /// there lose heart, and its undead there fall into disorder.
+/// Once a hero's life, so a pass over the pool.
 fn fall(regs: &mut Regiments, stats: &[UnitStats], units: &[ConquestUnit], h: &Hero) {
-    let r = Fx::from_int(FALL_TILES).raw() as u64;
     for j in 0..regs.alive.len() {
-        if !regs.alive[j] || regs.owner[j] != h.owner {
+        let near = regs.alive[j] && regs.owner[j] == h.owner;
+        if !near || !generals::near(regs.position[j], h.at, FALL_TILES) {
             continue;
         }
-        if (regs.position[j] - h.at).length_sq_raw() > r * r {
-            continue;
-        }
-        let unit = usize::from(regs.unit[j]);
-        if units.get(unit).is_some_and(|u| u.undead) {
+        if units
+            .get(usize::from(regs.unit[j]))
+            .is_some_and(|u| u.undead)
+        {
             regs.disorder(j);
-        } else if stats.get(unit).is_some_and(|s| s.morale > 0) {
+        } else if leadable(regs, stats, units, j) {
             morale::shake(regs, j, FALL, morale::WHY_GENERAL);
         }
     }

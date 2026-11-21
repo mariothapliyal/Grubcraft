@@ -844,25 +844,33 @@ impl Conquest {
             );
             heroes.check_hire(player, unit, self.structures.tier_of(player), queued, this)?;
         }
-        let (grub, marrow, _) = self.price(player, unit);
+        let (grub, marrow) = self.price(player, unit);
         if !self.economy.can_afford(player, grub, marrow) {
             return Err(Refusal::Price);
         }
         Ok(())
     }
 
-    /// What `player` pays for a regiment of type `unit` (Grub, Marrow), and
-    /// the ticks it takes at Standard tempo, or 0 for its unit's train
-    /// time: a fallen hero of theirs is revived, for a price and time of
-    /// its level (see [`crate::heroes::revive_price`]).
-    pub(crate) fn price(&self, player: PlayerId, unit: UnitId) -> (u32, u32, u32) {
-        let u = self.unit(unit);
-        match self.heroes.find(player, unit) {
-            Some(hero) if hero.dead() && u.hero.is_some() => {
-                crate::heroes::revive_price(&u, hero.level)
+    /// What `player` pays for a regiment of type `unit` (Grub, Marrow): a
+    /// fallen hero of theirs is revived, for a price of its level.
+    pub(crate) fn price(&self, player: PlayerId, unit: UnitId) -> (u32, u32) {
+        match self.revive(player, unit) {
+            Some((grub, marrow, _)) => (grub, marrow),
+            None => {
+                let u = self.unit(unit);
+                (u32::from(u.cost_grub), u32::from(u.cost_marrow))
             }
-            _ => (u32::from(u.cost_grub), u32::from(u.cost_marrow), 0),
         }
+    }
+
+    /// What reviving `player`'s fallen hero of type `unit` costs and the
+    /// ticks it takes at Standard tempo (see
+    /// [`crate::heroes::revive_price`]), if they have one.
+    fn revive(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32, u32)> {
+        let u = self.unit(unit);
+        u.hero?;
+        let hero = self.heroes.find(player, unit).filter(|h| h.dead())?;
+        Some(crate::heroes::revive_price(&u, hero.level))
     }
 
     /// `player`'s building `h` queues a regiment of type `unit`, paying
@@ -872,7 +880,8 @@ impl Conquest {
             return false;
         }
         let u = self.unit(unit);
-        let (grub, marrow, full) = self.price(player, unit);
+        let (grub, marrow) = self.price(player, unit);
+        let full = self.revive(player, unit).map_or(0, |(_, _, ticks)| ticks);
         self.economy.spend(player, grub, marrow);
         if u.hatches {
             self.structures.take_larva(player, h.index as usize);
@@ -892,7 +901,7 @@ impl Conquest {
         };
         let u = self.unit(unit);
         // A fallen hero's revive is still priced by its level.
-        let (grub, marrow, _) = self.price(player, unit);
+        let (grub, marrow) = self.price(player, unit);
         self.economy.refund(player, grub, marrow);
         if u.hatches {
             self.structures.give_back_larva(player);

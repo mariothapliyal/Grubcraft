@@ -2397,13 +2397,9 @@ fn hero_panel<'a>(
 ) -> Option<HeroPanel<'a>> {
     let hero = world.hero_of(h)?;
     let (hp, max_hp) = world.health_of(h)?;
-    let level_xp = |level: u8| match level {
-        0 | 1 => 0,
-        l => gc_sim::heroes::LEVELS[usize::from(l) - 2],
-    };
     let xp = match hero.next_level_xp() {
         Some(next) => {
-            let from = level_xp(hero.level);
+            let from = hero.level_start_xp();
             (hero.xp.saturating_sub(from)) as f32 / (next - from).max(1) as f32
         }
         None => 1.0,

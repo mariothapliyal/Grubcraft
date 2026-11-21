@@ -262,7 +262,7 @@ pub(crate) fn shut_ground(nav: &Nav, terrain: &Terrain, x: i32, y: i32) -> bool 
 
 /// Once a second: each wounded soldier of a regiment resting in its own
 /// walled town (not fighting) gets [`TOWN_MEND_HP`] hit points back, up to
-/// his unit's full.
+/// his unit's full (a hero's, with its level's).
 pub(crate) fn mend_in_towns(towns: &Towns, regs: &mut Regiments, units: &[crate::UnitStats]) {
     if towns.walled.iter().all(Option::is_none) {
         return;
@@ -271,7 +271,10 @@ pub(crate) fn mend_in_towns(towns: &Towns, regs: &mut Regiments, units: &[crate:
         if !regs.alive[i] || !regs.in_town[i] || regs.engaged[i].is_some() {
             continue;
         }
-        let full = units[usize::from(regs.unit[i])].hp_per_model;
+        // A hero's level adds to its full.
+        let full = units[usize::from(regs.unit[i])]
+            .hp_per_model
+            .saturating_add(regs.hp_bonus[i]);
         regs.mend(i, TOWN_MEND_HP, full);
     }
 }

@@ -38,7 +38,7 @@ const HERO_LEVELS: &str = "Levels 1 to 10 from enemies dying within 24 tiles";
 const HERO_LEADS: &str =
     "Your regiments within 16 tiles gain morale and hold longer; its fall shakes them";
 const HERO_REVIVE: &str =
-    "At its building, at its level: half the hire price and time, +15% a level";
+    "At its building, at its level: 65% of the hire price and time at level 1, 15% more a level";
 /// Until stage H2 (docs/43) the abilities are listed but do nothing.
 const HERO_ABILITIES: &str = "Abilities are coming: listed below, they do nothing in play yet";
 
@@ -1315,6 +1315,18 @@ impl Ctx<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hero_facts_give_the_sims_numbers() {
+        use gc_sim::heroes::*;
+        assert!(HERO_LEVELS.contains(&format!("1 to {MAX_LEVEL} ")));
+        assert!(HERO_LEVELS.contains(&format!("within {XP_TILES} tiles")));
+        assert!(HERO_LEADS.contains(&format!("within {LEAD_TILES} tiles")));
+        assert_eq!(LEAD_TILES, FALL_TILES, "one radius in the text");
+        let first = REVIVE_PERCENT + REVIVE_LEVEL_PERCENT;
+        assert!(HERO_REVIVE.contains(&format!("{first}% of the hire")));
+        assert!(HERO_REVIVE.contains(&format!("{REVIVE_LEVEL_PERCENT}% more a level")));
+    }
 
     fn rosters() -> Vec<Roster> {
         EMBEDDED

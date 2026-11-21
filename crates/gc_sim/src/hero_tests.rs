@@ -280,7 +280,7 @@ fn a_fallen_hero_shakes_its_side_and_is_revived_at_its_level() {
     w.regiments.take_damage(i, 1000);
     w.tick(&[]);
     let hero = *w.heroes().next().unwrap();
-    assert!(hero.dead() && hero.fell.is_some());
+    assert!(hero.dead());
     assert!(w.regiments.morale[fi] < before, "its side lost heart");
     assert_eq!(w.bank(0).unwrap().supply_used, 2, "the dead take no supply");
     // Revived for its level's price.

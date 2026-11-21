@@ -2226,6 +2226,8 @@ impl World {
         // one for a forecast too.
         self.regiments.wear_powers();
         self.regiments.wear_orders();
+        // Generals and heroes mark the regiments they lead afresh.
+        self.regiments.led.fill(false);
         if let Some(generals) = &mut self.generals {
             generals.update(
                 &mut self.regiments,
@@ -2243,7 +2245,6 @@ impl World {
                 &self.units,
                 &c.units,
                 &self.stances,
-                self.tick,
             );
         }
         morale::update(
@@ -3207,7 +3208,7 @@ impl World {
                 .and_then(|stats| self.regiments.spawn(t.owner, t.unit, t.at, t.facing, stats));
             let Some(h) = spawned else {
                 // No room for it: what it cost comes back.
-                let (grub, marrow, _) = conquest.price(t.owner, t.unit);
+                let (grub, marrow) = conquest.price(t.owner, t.unit);
                 conquest.economy.refund(t.owner, grub, marrow);
                 continue;
             };
@@ -4203,8 +4204,10 @@ impl World {
     pub fn health_of(&self, h: RegimentHandle) -> Option<(u32, u32)> {
         let i = self.regiments.resolve(h)?;
         let stats = self.units.get(usize::from(self.regiments.unit[i]))?;
-        let base = i * MAX_MODELS as usize;
-        let left = (self.regiments.hp[base..][..usize::from(self.regiments.models[i])].iter())
+        let left = self
+            .regiments
+            .model_hp(h)?
+            .iter()
             .map(|&hp| u32::from(hp))
             .sum();
         Some((left, self.regiments.full_hp(i, stats)))
@@ -4218,8 +4221,7 @@ impl World {
     /// What `player` would pay now for a regiment of type `unit` (Grub,
     /// Marrow): a fallen hero's revive is priced by its level.
     pub fn price_of(&self, player: PlayerId, unit: UnitId) -> Option<(u32, u32)> {
-        let (g, m, _) = self.conquest.as_ref()?.price(player, unit);
-        Some((g, m))
+        Some(self.conquest.as_ref()?.price(player, unit))
     }
 }
 

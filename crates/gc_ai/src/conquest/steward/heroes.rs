@@ -45,7 +45,7 @@ impl Steward {
             self.ledger.saving = (u32::from(b.stats.cost_grub), u32::from(b.stats.cost_marrow));
             return;
         }
-        for m in look.mine.iter().filter(|m| m.finished()) {
+        for m in (look.mine.iter()).filter(|m| m.finished() && !self.is_busy(m.view.handle)) {
             for hero in s.kit.trained_at(s.world, m.view.building) {
                 if hero.unit.hero.is_none() {
                     continue;
