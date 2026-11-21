@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use gc_fixed::{Angle, Fx, FxVec2};
 
 use crate::combat::{Block, ELBOW_ROOM, OPEN_GROUND};
-use crate::formation::GROUP_GAP;
+use crate::formation::{GROUP_GAP, middle_of};
 use crate::hash::StateHasher;
 use crate::nav::{self, Nav};
 use crate::orders::Step;
@@ -187,8 +187,9 @@ pub struct BrigadeView {
     /// How far behind its place it is along the brigade's way, in tiles
     /// (ahead of it when negative).
     pub behind: Fx,
-    /// How it is steering: 1 at its lane, 2 at the middle of the way, 3
-    /// at the way just ahead, 4 finding its own way to the brigade.
+    /// How it is steering: 0 not yet taken up (marching as it was
+    /// ordered), 1 at its lane, 2 at the middle of the way, 3 at the way
+    /// just ahead, 4 finding its own way to the brigade.
     pub steering: u8,
 }
 
@@ -314,14 +315,21 @@ impl Brigade {
         true
     }
 
-    /// The point `arc` along the track and the way the track runs there;
-    /// past either end, straight on.
-    fn at(&self, arc: Fx) -> (FxVec2, FxVec2) {
+    /// The leg of the track `arc` along it lies on (the first or the last
+    /// past either end): the point it starts from.
+    fn leg(&self, arc: Fx) -> usize {
         let n = self.len as usize;
         let mut k = 0;
         while k + 2 < n && self.cum[k + 1] <= arc {
             k += 1;
         }
+        k
+    }
+
+    /// The point `arc` along the track and the way the track runs there;
+    /// past either end, straight on.
+    fn at(&self, arc: Fx) -> (FxVec2, FxVec2) {
+        let k = self.leg(arc);
         let len = self.cum[k + 1] - self.cum[k];
         let d = self.track[k + 1] - self.track[k];
         let dir = FxVec2::new(d.x / len, d.y / len);
@@ -341,7 +349,13 @@ impl Brigade {
     /// The place `side` to the right of the track at `arc`.
     fn lane(&self, arc: Fx, side: Fx) -> FxVec2 {
         let (p, dir) = self.at_smooth(arc);
-        p + FxVec2::new(-dir.y, dir.x) * side
+        p + right_of(dir) * side
+    }
+
+    /// How far to the right of the track at `arc` the point `p` is.
+    fn across(&self, arc: Fx, p: FxVec2) -> Fx {
+        let (at, dir) = self.at(arc);
+        (p - at).dot(right_of(dir))
     }
 
     /// How far along the track the point of it nearest `p` is, looking
@@ -437,16 +451,48 @@ impl Brigade {
 
     /// End the track at `arc` along it (between its ends).
     fn cut(&mut self, arc: Fx) {
-        let n = self.len as usize;
-        let mut k = 0;
-        while k + 2 < n && self.cum[k + 1] <= arc {
-            k += 1;
-        }
+        let k = self.leg(arc);
         let p = self.at(arc).0;
         self.track[k + 1] = p;
         self.cum[k + 1] = arc;
         self.len = k as u8 + 2;
     }
+}
+
+/// Bring those of `list` that `is` holds for to its front. How many.
+fn to_front(list: &mut [u32], mut is: impl FnMut(u32) -> bool) -> usize {
+    let mut kept = 0;
+    for k in 0..list.len() {
+        if is(list[k]) {
+            list.swap(kept, k);
+            kept += 1;
+        }
+    }
+    kept
+}
+
+/// Bring to the front of `list`, after its first `kept`, all that
+/// `joins` ties to one of those, all it ties to one of them, and so on.
+/// How many are at the front then.
+fn chain(list: &mut [u32], mut kept: usize, mut joins: impl FnMut(u32, u32) -> bool) -> usize {
+    let mut done = 0;
+    while done < kept {
+        let from = list[done];
+        done += 1;
+        let first = kept;
+        for k in first..list.len() {
+            if joins(from, list[k]) {
+                list.swap(kept, k);
+                kept += 1;
+            }
+        }
+    }
+    kept
+}
+
+/// The way to the right of one going `dir`.
+fn right_of(dir: FxVec2) -> FxVec2 {
+    FxVec2::new(-dir.y, dir.x)
 }
 
 /// The brigades on the march, and each regiment's place in its own.
@@ -456,42 +502,72 @@ pub(crate) struct Brigades {
     /// How many of them are in use.
     live: u16,
     /// Per regiment slot. The brigade it marches in: its place in `pool`
-    /// plus one, or 0 for none. The rest means nothing with none.
+    /// plus one, or 0 for none. (On its own, not in [`Member`]: every
+    /// brigade looks through all of these every tick.)
     of: Vec<u8>,
-    generation: Vec<u16>,
-    mode: Vec<Mode>,
-    /// Looks in a row it has seen nothing of the track.
-    lost: Vec<u8>,
-    /// Ticks in a row behind its place and not stepping.
-    stall: Vec<u8>,
-    /// Held up last tick by a member in its way: the anchor does not slow
-    /// for it (waiting would not bring it on; the one before it moving
-    /// does).
-    held: Vec<bool>,
-    /// Where its order sent it and how to face there.
-    end: Vec<FxVec2>,
-    facing: Vec<Option<Angle>>,
-    /// The pace its order gave it.
-    ordered: Vec<Fx>,
-    /// The target and pace the brigade last gave it: with any other, it
-    /// has had other orders.
-    set: Vec<FxVec2>,
-    paced: Vec<Fx>,
-    /// How far along the track it is.
-    arc: Vec<Fx>,
-    /// Its place: how far behind the anchor and how far to the right of
-    /// the track, now and where the last look at the ground put it.
-    station: Vec<Fx>,
-    side: Vec<Fx>,
-    want_station: Vec<Fx>,
-    want_side: Vec<Fx>,
-    /// The fewest files it narrows to (see [`Regiments::files_floor`]):
-    /// as many as the ground about the track has room for.
-    floor: Vec<u16>,
+    /// Per regiment slot: how it stands in its brigade. Means nothing
+    /// with none.
+    members: Vec<Member>,
     /// Room to work in, kept between ticks; not part of the state.
     list: Vec<u32>,
     room: Vec<[Fx; 2]>,
     leg: Vec<FxVec2>,
+}
+
+/// How a regiment stands in its brigade.
+#[derive(Clone, Copy)]
+struct Member {
+    generation: u16,
+    mode: Mode,
+    /// Looks in a row it has seen nothing of the track.
+    lost: u8,
+    /// Ticks in a row behind its place and not stepping.
+    stall: u8,
+    /// Held up last tick by a member in its way: the anchor does not slow
+    /// for it (waiting would not bring it on; the one before it moving
+    /// does).
+    held: bool,
+    /// Where its order sent it and how to face there.
+    end: FxVec2,
+    facing: Option<Angle>,
+    /// The pace its order gave it.
+    ordered: Fx,
+    /// The target and pace the brigade last gave it: with any other, it
+    /// has had other orders.
+    set: FxVec2,
+    paced: Fx,
+    /// How far along the track it is.
+    arc: Fx,
+    /// Its place: how far behind the anchor and how far to the right of
+    /// the track, now and where the last look at the ground put it.
+    station: Fx,
+    side: Fx,
+    want_station: Fx,
+    want_side: Fx,
+    /// The fewest files it narrows to (see [`Regiments::files_floor`]):
+    /// as many as the ground about the track has room for.
+    floor: u16,
+}
+
+impl Member {
+    const NONE: Member = Member {
+        generation: 0,
+        mode: Mode::Plain,
+        lost: 0,
+        stall: 0,
+        held: false,
+        end: FxVec2::ZERO,
+        facing: None,
+        ordered: Fx::ZERO,
+        set: FxVec2::ZERO,
+        paced: Fx::ZERO,
+        arc: Fx::ZERO,
+        station: Fx::ZERO,
+        side: Fx::ZERO,
+        want_station: Fx::ZERO,
+        want_side: Fx::ZERO,
+        floor: 0,
+    };
 }
 
 /// A member being placed in [`Brigades::pack`].
@@ -504,6 +580,8 @@ struct Placing {
     back: Fx,
     half_width: Fx,
     half_depth: Fx,
+    /// How far to the right of the track it stands now.
+    across: Fx,
     /// How far along the track it is (less how far off to the side of
     /// it), and the place it had: when its row files, each holds its turn
     /// unless one behind it in the file is clearly further along.
@@ -521,22 +599,7 @@ impl Brigades {
             pool: vec![Brigade::FREE; MAX_PARTIES * PER_PARTY],
             live: 0,
             of: vec![0; regiments],
-            generation: vec![0; regiments],
-            mode: vec![Mode::Plain; regiments],
-            lost: vec![0; regiments],
-            stall: vec![0; regiments],
-            held: vec![false; regiments],
-            end: vec![FxVec2::ZERO; regiments],
-            facing: vec![None; regiments],
-            ordered: vec![Fx::ZERO; regiments],
-            set: vec![FxVec2::ZERO; regiments],
-            paced: vec![Fx::ZERO; regiments],
-            arc: vec![Fx::ZERO; regiments],
-            station: vec![Fx::ZERO; regiments],
-            side: vec![Fx::ZERO; regiments],
-            want_station: vec![Fx::ZERO; regiments],
-            want_side: vec![Fx::ZERO; regiments],
-            floor: vec![0; regiments],
+            members: vec![Member::NONE; regiments],
             list: Vec::with_capacity(MAX_MEMBERS),
             room: vec![[Fx::ZERO; 2]; PROFILE],
             leg: vec![FxVec2::ZERO; nav::MAX_WAYPOINTS],
@@ -547,21 +610,21 @@ impl Brigades {
     /// it is going with it (not the point ahead it walks at now).
     pub(crate) fn of(&self, i: usize) -> Option<(u16, FxVec2)> {
         let slot = *self.of.get(i)?;
-        (slot != 0).then(|| (self.pool[usize::from(slot) - 1].number, self.end[i]))
+        (slot != 0).then(|| (self.pool[usize::from(slot) - 1].number, self.members[i].end))
     }
 
     /// How regiment slot `i` stands in its brigade, if it marches in one.
     pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
         let (number, goal) = self.of(i)?;
         let b = &self.pool[usize::from(self.of[i]) - 1];
-        let marching = b.phase == Phase::Marching && self.mode[i] != Mode::Plain;
+        let marching = b.phase == Phase::Marching && self.members[i].mode != Mode::Plain;
         Some(BrigadeView {
             number,
             goal,
-            place: marching.then(|| b.lane(b.arc - self.station[i], self.side[i])),
+            place: marching.then(|| b.lane(b.arc - self.members[i].station, self.members[i].side)),
             in_step: regs.step_with[i] & IN_STEP != 0,
-            behind: b.arc - self.station[i] - self.arc[i],
-            steering: self.mode[i] as u8,
+            behind: b.arc - self.members[i].station - self.members[i].arc,
+            steering: self.members[i].mode as u8,
         })
     }
 
@@ -572,12 +635,14 @@ impl Brigades {
     pub(crate) fn way(&self, i: usize) -> Option<&[FxVec2]> {
         let slot = usize::from(*self.of.get(i)?).checked_sub(1)?;
         let b = &self.pool[slot];
-        if b.phase != Phase::Marching || self.mode[i] == Mode::Plain {
+        if b.phase != Phase::Marching || self.members[i].mode == Mode::Plain {
             return None;
         }
         let n = b.len as usize;
         let last = if b.partial { n } else { n - 1 };
-        let first = (0..last).find(|&k| b.cum[k] > self.arc[i]).unwrap_or(last);
+        let first = (0..last)
+            .find(|&k| b.cum[k] > self.members[i].arc)
+            .unwrap_or(last);
         Some(&b.track[first..last])
     }
 
@@ -594,7 +659,7 @@ impl Brigades {
         self.of(i).is_some_and(|(n, end)| {
             let d = end - target;
             n == number
-                && self.facing[i] == facing
+                && self.members[i].facing == facing
                 && d.x.abs() < SAME_PLACE
                 && d.y.abs() < SAME_PLACE
         })
@@ -639,16 +704,16 @@ impl Brigades {
         b.changed = true;
         b.alone = 0;
         self.of[i] = tag;
-        self.generation[i] = regs.generation[i];
-        self.mode[i] = Mode::Plain;
-        self.lost[i] = 0;
-        self.stall[i] = 0;
-        self.held[i] = false;
-        self.end[i] = end;
-        self.facing[i] = regs.target_facing[i];
-        self.ordered[i] = regs.pace[i];
-        self.set[i] = end;
-        self.paced[i] = regs.pace[i];
+        self.members[i].generation = regs.generation[i];
+        self.members[i].mode = Mode::Plain;
+        self.members[i].lost = 0;
+        self.members[i].stall = 0;
+        self.members[i].held = false;
+        self.members[i].end = end;
+        self.members[i].facing = regs.target_facing[i];
+        self.members[i].ordered = regs.pace[i];
+        self.members[i].set = end;
+        self.members[i].paced = regs.pace[i];
     }
 
     /// Regiment slot `i` is of no brigade from now, keeping whatever
@@ -662,11 +727,11 @@ impl Brigades {
     /// Regiment slot `i` leaves its brigade and marches on alone to where
     /// its order sent it.
     fn release(&mut self, regs: &mut Regiments, i: usize) {
-        if self.mode[i] != Mode::Plain {
-            regs.target[i] = Some(self.end[i]);
-            regs.target_facing[i] = self.facing[i];
+        if self.members[i].mode != Mode::Plain {
+            regs.target[i] = Some(self.members[i].end);
+            regs.target_facing[i] = self.members[i].facing;
             regs.set_seeks_place(i, true);
-            regs.pace[i] = self.ordered[i];
+            regs.pace[i] = self.members[i].ordered;
         }
         self.leave(regs, i);
     }
@@ -711,41 +776,41 @@ impl Brigades {
             if self.of[i] == 0 {
                 continue;
             }
-            if !regs.alive[i] || regs.generation[i] != self.generation[i] {
+            if !regs.alive[i] || regs.generation[i] != self.members[i].generation {
                 self.leave(regs, i);
                 continue;
             }
             // It may get to the point it was given to walk at (coming
             // across to its lane, or at the end of a route of its own to
             // the track): it goes on from there.
-            let d = regs.position[i] - self.set[i];
+            let d = regs.position[i] - self.members[i].set;
             if regs.target[i].is_none()
-                && self.mode[i] != Mode::Plain
+                && self.members[i].mode != Mode::Plain
                 && d.x.abs() < Fx::ONE
                 && d.y.abs() < Fx::ONE
             {
-                if self.mode[i] == Mode::Astray {
-                    self.mode[i] = Mode::Short;
-                    self.lost[i] = 0;
+                if self.members[i].mode == Mode::Astray {
+                    self.members[i].mode = Mode::Short;
+                    self.members[i].lost = 0;
                 }
-                regs.target[i] = Some(self.set[i]);
+                regs.target[i] = Some(self.members[i].set);
             }
             // The anchor in and each making for its own place from the
             // end of the track, it may stop short of the point it was
             // given beside one already standing there: it goes to its
             // own place from where it is.
             if regs.target[i].is_none()
-                && self.mode[i] != Mode::Plain
+                && self.members[i].mode != Mode::Plain
                 && self.pool[usize::from(self.of[i]) - 1].arrived()
             {
                 self.release(regs, i);
                 continue;
             }
-            if regs.target[i] != Some(self.set[i]) || regs.on_wall[i] {
+            if regs.target[i] != Some(self.members[i].set) || regs.on_wall[i] {
                 // The pace was the brigade's unless whoever gave the new
                 // order set one.
-                if regs.pace[i] == self.paced[i] {
-                    regs.pace[i] = self.ordered[i];
+                if regs.pace[i] == self.members[i].paced {
+                    regs.pace[i] = self.members[i].ordered;
                 }
                 self.leave(regs, i);
             } else if regs.run_left[i] > 0 {
@@ -778,8 +843,9 @@ impl Brigades {
         if self.list.len() < 2 {
             // The first of a brigade may be alone for a moment: a
             // computer player's orders land one by one, not all on one
-            // tick as a player's do. It marches by its own order while
-            // the rest of them come.
+            // tick as a player's do, and regiments come to a queued leg
+            // as each ends the one before. It marches by its own order
+            // while the rest of them come.
             let b = &mut self.pool[slot];
             b.alone = b.alone.saturating_add(1);
             if self.list.is_empty() || b.phase != Phase::Gathering || b.alone > MUSTER {
@@ -788,15 +854,11 @@ impl Brigades {
             return;
         }
         if self.pool[slot].changed {
-            let (mut x, mut y, mut pace) = (0i64, 0i64, Fx::MAX);
-            for &i in &self.list {
-                let i = i as usize;
-                x += i64::from(self.end[i].x.raw());
-                y += i64::from(self.end[i].y.raw());
-                pace = pace.min(self.ordered[i]);
-            }
-            let n = self.list.len() as i64;
-            let centre = FxVec2::new(Fx::from_raw((x / n) as i32), Fx::from_raw((y / n) as i32));
+            let of = |i: &u32| &self.members[*i as usize];
+            let centre = middle_of(self.list.iter().map(|i| of(i).end));
+            let pace = (self.list.iter().map(|i| of(i).ordered))
+                .min()
+                .unwrap_or(Fx::MAX);
             let b = &mut self.pool[slot];
             b.changed = false;
             b.centre = centre;
@@ -823,11 +885,12 @@ impl Brigades {
         // from the anchor when the ground ahead has changed.
         let b = &self.pool[slot];
         let near_end = b.partial && b.arc + EXTEND > b.total();
-        let watch = (tick + slot as u32).is_multiple_of(WATCH_EVERY)
+        let watch = !*searched
+            && (tick + slot as u32).is_multiple_of(WATCH_EVERY)
             && b.arc > b.start()
             && b.arc < b.total()
             && !self.open_ahead(slot, owner, nav);
-        if (near_end || watch) && !*searched {
+        if (near_end && !*searched) || watch {
             *searched = true;
             if watch {
                 let arc = self.pool[slot].arc;
@@ -842,9 +905,10 @@ impl Brigades {
         let mut fresh = false;
         for k in 0..self.list.len() {
             let i = self.list[k] as usize;
-            if self.mode[i] == Mode::Plain {
+            if self.members[i].mode == Mode::Plain {
                 let b = &self.pool[slot];
-                self.arc[i] = b.project(regs.position[i], b.arc - LEFT_BEHIND, b.arc + JOIN_REACH);
+                self.members[i].arc =
+                    b.project(regs.position[i], b.arc - LEFT_BEHIND, b.arc + JOIN_REACH);
                 fresh = true;
             }
         }
@@ -861,11 +925,12 @@ impl Brigades {
             let b = &self.pool[slot];
             let (at, number) = (b.at(b.arc).0, b.number);
             self.pool[slot].halted = (0..regs.alive.len()).any(|j| {
+                if !regs.alive[j] || regs.owner[j] != owner {
+                    return false;
+                }
                 let plan = regs.plan(j);
                 let d = regs.position[j] - at;
-                regs.alive[j]
-                    && regs.owner[j] == owner
-                    && plan.diverted
+                plan.diverted
                     && matches!(plan.hunt, Some(Step::Move { brigade, .. }) if brigade == number)
                     && d.x.abs() < HUNT_NEAR
                     && d.y.abs() < HUNT_NEAR
@@ -889,15 +954,15 @@ impl Brigades {
             let tag = slot as u8 + 1;
             for k in 0..self.list.len() {
                 let i = self.list[k] as usize;
-                let place = b.total() + (self.end[i] - b.centre).dot(b.ahead).min(Fx::ZERO);
-                let behind = b.arc - self.station[i] - self.arc[i];
+                let place = b.total() + (self.members[i].end - b.centre).dot(b.ahead).min(Fx::ZERO);
+                let behind = b.arc - self.members[i].station - self.members[i].arc;
                 let here = regs.position[i];
                 let out = b.arrived()
                     && (!self.kept_up(regs, i, behind)
                         || ((tick + i as u32).is_multiple_of(SIGHT)
                             && nav.open_around(owner, here, ELBOW_ROOM)
-                            && nav.clear_line(owner, here, self.end[i])));
-                if self.arc[i] + LEAD >= place || out {
+                            && nav.clear_line(owner, here, self.members[i].end)));
+                if self.members[i].arc + LEAD >= place || out {
                     self.release(regs, i);
                 }
             }
@@ -923,45 +988,18 @@ impl Brigades {
         units: &[UnitStats],
         nav: &mut Nav,
     ) -> bool {
-        let (mut x, mut y) = (0i64, 0i64);
-        for &i in &self.list {
-            x += i64::from(regs.position[i as usize].x.raw());
-            y += i64::from(regs.position[i as usize].y.raw());
-        }
-        let n = self.list.len() as i64;
-        let mid = FxVec2::new(Fx::from_raw((x / n) as i32), Fx::from_raw((y / n) as i32));
+        let mid = middle_of(self.list.iter().map(|&i| regs.position[i as usize]));
         // The body is those within reach of the middle, all within
         // reach of one of them, and so on: a big army standing together
         // is one body however wide it stands.
-        let n = self.list.len();
         let near = |a: FxVec2, b: FxVec2| {
             let d = a - b;
             d.x.abs() <= JOIN_REACH && d.y.abs() <= JOIN_REACH
         };
-        let mut kept = 0;
-        for k in 0..n {
-            if near(mid, regs.position[self.list[k] as usize]) {
-                self.list.swap(kept, k);
-                kept += 1;
-            }
-        }
-        let mut done = 0;
-        while done < kept {
-            let from = regs.position[self.list[done] as usize];
-            done += 1;
-            for k in kept..n {
-                if near(from, regs.position[self.list[k] as usize]) {
-                    self.list.swap(kept, k);
-                    kept += 1;
-                }
-            }
-        }
-        for k in kept..n {
-            let i = self.list[k] as usize;
-            self.release(regs, i);
-        }
-        self.list.truncate(kept);
-        self.list.sort_unstable();
+        let at = |i: u32| regs.position[i as usize];
+        let kept = to_front(&mut self.list, |i| near(mid, at(i)));
+        let kept = chain(&mut self.list, kept, |a, b| near(at(a), at(b)));
+        self.keep(regs, kept);
         if kept < 2 {
             return false;
         }
@@ -971,53 +1009,26 @@ impl Brigades {
         // all, and of each other from there, are the body's.
         if nav.has_map() {
             let centre = self.pool[slot].centre;
-            let mut with = [false; MAX_MEMBERS];
-            let mut next = [0u8; MAX_MEMBERS];
-            let (mut done, mut found) = (0, 0);
-            for k in 0..kept {
-                if nav.clear_line(owner, centre, self.end[self.list[k] as usize]) {
-                    with[k] = true;
-                    next[found] = k as u8;
-                    found += 1;
-                }
-            }
+            let members = &self.members;
+            let end = |i: u32| members[i as usize].end;
+            let mut found = to_front(&mut self.list, |i| nav.clear_line(owner, centre, end(i)));
             if found == 0 {
                 // The middle itself is no ground to stand on (a building
                 // the army was sent at): from the place nearest it.
                 let nearest = (0..kept)
-                    .min_by_key(|&k| (self.end[self.list[k] as usize] - centre).length_sq_raw())
+                    .min_by_key(|&k| (end(self.list[k]) - centre).length_sq_raw())
                     .unwrap_or(0);
-                with[nearest] = true;
-                next[0] = nearest as u8;
+                self.list.swap(0, nearest);
                 found = 1;
             }
-            while done < found {
-                let from = self.end[self.list[next[done] as usize] as usize];
-                done += 1;
-                for k in 0..kept {
-                    if !with[k] && nav.clear_line(owner, from, self.end[self.list[k] as usize]) {
-                        with[k] = true;
-                        next[found] = k as u8;
-                        found += 1;
-                    }
-                }
-            }
+            let found = chain(&mut self.list, found, |a, b| {
+                nav.clear_line(owner, end(a), end(b))
+            });
             // (Where most are out of sight of each other the body is
             // being sent among buildings or broken ground, and nobody is
             // cut off from a body that is all together anywhere.)
-            if found * 2 > kept {
-                let mut kept = 0;
-                for k in 0..self.list.len() {
-                    let i = self.list[k] as usize;
-                    if with[k] {
-                        self.list[kept] = i as u32;
-                        kept += 1;
-                    } else {
-                        self.release(regs, i);
-                    }
-                }
-                self.list.truncate(kept);
-            }
+            let kept = if found * 2 > kept { found } else { kept };
+            self.keep(regs, kept);
         }
         let kept = self.list.len();
         if kept < 2 {
@@ -1056,11 +1067,22 @@ impl Brigades {
         for k in 0..self.list.len() {
             let i = self.list[k] as usize;
             let b = &self.pool[slot];
-            self.arc[i] = b.project(regs.position[i], -LEFT_BEHIND, LEFT_BEHIND);
-            front = front.max(self.arc[i]);
+            self.members[i].arc = b.project(regs.position[i], -LEFT_BEHIND, LEFT_BEHIND);
+            front = front.max(self.members[i].arc);
         }
         self.pool[slot].arc = front;
         true
+    }
+
+    /// Keep the first `kept` on the list as the body, in slot order, and
+    /// release the rest.
+    fn keep(&mut self, regs: &mut Regiments, kept: usize) {
+        for k in kept..self.list.len() {
+            let i = self.list[k] as usize;
+            self.release(regs, i);
+        }
+        self.list.truncate(kept);
+        self.list.sort_unstable();
     }
 
     /// Search the track of the brigade in `slot` on from its end toward
@@ -1167,9 +1189,10 @@ impl Brigades {
     ) -> bool {
         let b = self.pool[slot];
         let n = self.list.len();
-        let right = FxVec2::new(-b.ahead.y, b.ahead.x);
+        let right = right_of(b.ahead);
         let mut m = [Placing {
             slot: 0,
+            across: Fx::ZERO,
             lat: Fx::ZERO,
             back: Fx::ZERO,
             half_width: Fx::ZERO,
@@ -1183,21 +1206,19 @@ impl Brigades {
         let (mut front, mut reach) = (Fx::MAX, REACH);
         for (k, &i) in self.list.iter().enumerate() {
             let i = i as usize;
-            let rel = self.end[i] - b.centre;
+            let rel = self.members[i].end - b.centre;
             let now = Block::of(regs, units, i);
             let full = Block::drawn_up(regs, units, i, regs.position[i]);
             let lat = rel.dot(right);
             // Off to the side of the track, it has that far to come in
             // before it can go on: so much the later its turn.
-            let (at, dir) = b.at(self.arc[i]);
-            let off = (regs.position[i] - at)
-                .dot(FxVec2::new(-dir.y, dir.x))
-                .abs();
+            let across = b.across(self.members[i].arc, regs.position[i]);
             m[k] = Placing {
                 slot: i as u32,
                 lat,
-                arc: self.arc[i] - off,
-                was: self.want_station[i],
+                across,
+                arc: self.members[i].arc - across.abs(),
+                was: self.members[i].want_station,
                 tight: None,
                 back: -rel.dot(b.ahead),
                 half_width: full.half_width,
@@ -1379,19 +1400,20 @@ impl Brigades {
                     }
                     // Closed up about the track, or in the middle of a
                     // gap too narrow for one.
-                    let mut abreast = [m[0]; MAX_MEMBERS];
+                    let mut abreast = [0u8; MAX_MEMBERS];
                     let abreast = &mut abreast[..last - first];
-                    abreast.copy_from_slice(&m[first..last]);
-                    abreast.sort_unstable_by_key(|p| (p.lat.raw(), p.slot));
+                    for (k, a) in abreast.iter_mut().enumerate() {
+                        *a = (first + k) as u8;
+                    }
+                    abreast
+                        .sort_unstable_by_key(|&k| (m[k as usize].lat.raw(), m[k as usize].slot));
                     let mut x = if across > wide {
                         (r - l) / 2 - across / 2
                     } else {
                         (-across / 2).clamp(-l, r - across)
                     };
-                    for a in abreast.iter() {
-                        let p = (m[first..last].iter_mut())
-                            .find(|p| p.slot == a.slot)
-                            .expect("one of these");
+                    for &k in abreast.iter() {
+                        let p = &mut m[k as usize];
                         p.tight = (across > wide).then_some(wide);
                         p.side = x + p.half_width;
                         x += p.half_width * 2 + GROUP_GAP;
@@ -1418,18 +1440,18 @@ impl Brigades {
         // blocks, a big body that is not a deep one; and, setting off,
         // one drawn up so close before such a gap that the ground
         // closes in on a member before it could come in.
-        let setting_off = m.iter().all(|p| self.mode[p.slot as usize] == Mode::Plain);
+        let setting_off = m
+            .iter()
+            .all(|p| self.members[p.slot as usize].mode == Mode::Plain);
         if filing {
             let half = reach - EDGE - Fx::ONE;
-            if look < half || (squeezed && n > FILE_MOST && half > DEEP_BODY) {
+            if half > FAR_LOOK || (squeezed && n > FILE_MOST && half > DEEP_BODY) {
                 return false;
             }
             if squeezed && setting_off {
                 for p in m.iter() {
-                    let arc = self.arc[p.slot as usize];
-                    let (at, dir) = b.at(arc);
-                    let across =
-                        (regs.position[p.slot as usize] - at).dot(FxVec2::new(-dir.y, dir.x));
+                    let arc = self.members[p.slot as usize].arc;
+                    let across = p.across;
                     let come_in = (across - p.side).abs().max(look);
                     let [r, l] = width(arc, arc + come_in);
                     let room = if across > Fx::ZERO { r } else { l };
@@ -1441,12 +1463,12 @@ impl Brigades {
         }
         for p in m.iter() {
             let i = p.slot as usize;
-            self.want_station[i] = p.station;
-            self.want_side[i] = p.side;
+            self.members[i].want_station = p.station;
+            self.members[i].want_side = p.side;
             // It keeps its frontage where the ground about the track has
             // room for it, whatever lies beside where it happens to be
             // (a block waiting its turn by a cliff is not in a narrows).
-            self.floor[i] = p.tight.map_or(u16::MAX, |wide| {
+            self.members[i].floor = p.tight.map_or(u16::MAX, |wide| {
                 let files = units[regs.unit[i] as usize].spacing(regs.formation[i]).0;
                 (wide.raw() / files.raw().max(1)).clamp(1, i32::from(u16::MAX)) as u16
             });
@@ -1456,7 +1478,7 @@ impl Brigades {
         if setting_off {
             let mut arc = Fx::MIN;
             for p in m.iter() {
-                arc = arc.max(self.arc[p.slot as usize] + p.station);
+                arc = arc.max(self.members[p.slot as usize].arc + p.station);
             }
             self.pool[slot].arc = arc;
         }
@@ -1468,10 +1490,9 @@ impl Brigades {
         let anchor = self.pool[slot].arc;
         for p in m.iter() {
             let i = p.slot as usize;
-            if self.mode[i] == Mode::Plain {
-                let (at, dir) = b.at(self.arc[i]);
-                self.station[i] = anchor - self.arc[i];
-                self.side[i] = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x));
+            if self.members[i].mode == Mode::Plain {
+                self.members[i].station = anchor - self.members[i].arc;
+                self.members[i].side = p.across;
             }
         }
         true
@@ -1486,49 +1507,73 @@ impl Brigades {
         // Each place as it is now and the room its block takes; and where
         // each stands along and across the track, and whether it is
         // marching with the body.
-        let right = |dir: FxVec2| FxVec2::new(-dir.y, dir.x);
-        let mut places = [(Fx::ZERO, Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
-        let mut stands = [(Fx::ZERO, Fx::ZERO, Fx::ZERO, false); MAX_MEMBERS];
+        #[derive(Clone, Copy)]
+        struct Place {
+            station: Fx,
+            side: Fx,
+            half_width: Fx,
+            half_depth: Fx,
+        }
+        #[derive(Clone, Copy)]
+        struct Stand {
+            arc: Fx,
+            across: Fx,
+            half_width: Fx,
+            marching: bool,
+        }
+        let mut places = [Place {
+            station: Fx::ZERO,
+            side: Fx::ZERO,
+            half_width: Fx::ZERO,
+            half_depth: Fx::ZERO,
+        }; MAX_MEMBERS];
+        let mut stands = [Stand {
+            arc: Fx::ZERO,
+            across: Fx::ZERO,
+            half_width: Fx::ZERO,
+            marching: false,
+        }; MAX_MEMBERS];
         for (k, &i) in self.list.iter().enumerate() {
             let i = i as usize;
             let here = regs.position[i];
-            if self.mode[i] != Mode::Astray {
-                self.arc[i] = b.project(here, self.arc[i] - SAME_PLACE, self.arc[i] + LEAD);
+            if self.members[i].mode != Mode::Astray {
+                self.members[i].arc = b.project(
+                    here,
+                    self.members[i].arc - SAME_PLACE,
+                    self.members[i].arc + LEAD,
+                );
             }
-            let (at, dir) = b.at(self.arc[i]);
-            let behind = b.arc - self.station[i] - self.arc[i];
+            let behind = b.arc - self.members[i].station - self.members[i].arc;
             let block = Block::drawn_up(regs, units, i, here);
-            places[k] = (
-                self.station[i],
-                self.side[i],
-                block.half_width,
-                block.half_depth,
-            );
-            stands[k] = (
-                self.arc[i],
-                (here - at).dot(right(dir)),
-                Block::of(regs, units, i).half_width,
-                self.kept_up(regs, i, behind),
-            );
+            places[k] = Place {
+                station: self.members[i].station,
+                side: self.members[i].side,
+                half_width: block.half_width,
+                half_depth: block.half_depth,
+            };
+            stands[k] = Stand {
+                arc: self.members[i].arc,
+                across: b.across(self.members[i].arc, here),
+                half_width: Block::of(regs, units, i).half_width,
+                marching: self.kept_up(regs, i, behind),
+            };
         }
         let n = self.list.len();
         for k in 0..n {
             let i = self.list[k] as usize;
-            let (station, side, half_width, half_depth) = places[k];
-            let (arc, across, wide, _) = stands[k];
+            let (place, stand) = (places[k], stands[k]);
             // Its place is where the ground last put it, but never ahead
             // of a member marching in front of where it stands: it
             // follows that one until its own lane is clear, and does not
             // push through it to a place beyond.
-            let mut to = self.want_station[i];
-            for (&(theirs, their_across, width, marching), &(_, _, _, depth)) in
-                stands[..n].iter().zip(&places)
-            {
-                if marching
-                    && theirs > arc
-                    && (across - their_across).abs() < wide + width - QUARTER
+            let mut to = self.members[i].want_station;
+            for (other, theirs) in stands[..n].iter().zip(&places) {
+                if other.marching
+                    && other.arc > stand.arc
+                    && (stand.across - other.across).abs()
+                        < stand.half_width + other.half_width - QUARTER
                 {
-                    to = to.max(b.arc - theirs + depth + half_depth);
+                    to = to.max(b.arc - other.arc + theirs.half_depth + place.half_depth);
                 }
             }
             // Its place moves there gently: up the body as fast as it
@@ -1536,12 +1581,16 @@ impl Brigades {
             // another's place in its way than their blocks allow: a rear
             // rank closes up as those before it move aside, not through
             // them.
-            self.station[i] = if to < station {
+            let station = place.station;
+            self.members[i].station = if to < station {
                 let mut least = to;
-                for &(theirs, their_side, width, depth) in &places[..n] {
-                    if theirs < station && (side - their_side).abs() < half_width + width - QUARTER
+                for theirs in &places[..n] {
+                    if theirs.station < station
+                        && (place.side - theirs.side).abs()
+                            < place.half_width + theirs.half_width - QUARTER
                     {
-                        least = least.max(theirs + depth + half_depth + GROUP_GAP);
+                        least = least
+                            .max(theirs.station + theirs.half_depth + place.half_depth + GROUP_GAP);
                     }
                 }
                 let gain = if b.arrived() {
@@ -1553,31 +1602,31 @@ impl Brigades {
             } else {
                 (station + SLEW_BACK).min(to)
             };
-            let to = self.want_side[i];
-            let shift = (to - self.side[i]).clamp(-SLEW_SIDE, SLEW_SIDE);
-            self.side[i] += shift;
-            let behind = b.arc - self.station[i] - self.arc[i];
-            self.stall[i] = if behind > Fx::ONE && !regs.stepped(i) {
-                self.stall[i].saturating_add(1)
+            let to = self.members[i].want_side;
+            let shift = (to - self.members[i].side).clamp(-SLEW_SIDE, SLEW_SIDE);
+            self.members[i].side += shift;
+            let behind = b.arc - self.members[i].station - self.members[i].arc;
+            self.members[i].stall = if behind > Fx::ONE && !regs.stepped(i) {
+                self.members[i].stall.saturating_add(1)
             } else {
                 0
             };
-            let across = across - self.side[i];
+            let across = stand.across - self.members[i].side;
             // In step: at its place, and its place where the body has it
             // (places still on the move may cross each other's).
-            let in_step = self.mode[i] == Mode::Lane
-                && self.station[i] == self.want_station[i]
-                && self.side[i] == self.want_side[i]
+            let in_step = self.members[i].mode == Mode::Lane
+                && self.members[i].station == self.members[i].want_station
+                && self.members[i].side == self.members[i].want_side
                 && behind.abs() < IN_STEP_ALONG
                 && across.abs() < IN_STEP_ACROSS;
             regs.step_with[i] = if in_step { tag | IN_STEP } else { tag };
-            regs.files_floor[i] = self.floor[i];
-            regs.step_arc[i] = self.arc[i];
+            regs.files_floor[i] = self.members[i].floor;
+            regs.step_arc[i] = self.members[i].arc;
             if self.kept_up(regs, i, behind) {
-                if !self.held[i] {
+                if !self.members[i].held {
                     lag = lag.max(behind);
                 }
-                tail = tail.min(self.arc[i]);
+                tail = tail.min(self.members[i].arc);
             }
         }
         let slow = (Fx::ONE - (lag - LAG_FREE) / LAG_SPAN).clamp(CRAWL, Fx::ONE);
@@ -1596,8 +1645,8 @@ impl Brigades {
         regs.engaged[i].is_none()
             && regs.trapped_left[i] == 0
             && behind < LEFT_BEHIND
-            && self.stall[i] < STALLED
-            && self.mode[i] != Mode::Astray
+            && self.members[i].stall < STALLED
+            && self.members[i].mode != Mode::Astray
     }
 
     /// Give each member of the brigade in `slot` the point it walks at
@@ -1616,18 +1665,17 @@ impl Brigades {
         let mut stand = [(Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
         for (k, &i) in self.list.iter().enumerate() {
             let i = i as usize;
-            let (at, dir) = b.at(self.arc[i]);
-            let across = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x));
+            let across = b.across(self.members[i].arc, regs.position[i]);
             let block = Block::of(regs, units, i);
             stand[k] = (across, block.half_width, block.half_depth);
         }
         for k in 0..self.list.len() {
             let i = self.list[k] as usize;
             let here = regs.position[i];
-            let place = b.arc - self.station[i];
-            let near = self.arc[i] + MIN_LEAD;
+            let place = b.arc - self.members[i].station;
+            let near = self.members[i].arc + MIN_LEAD;
             let full = (place + LEAD).max(near);
-            let was = self.mode[i];
+            let was = self.members[i].mode;
             if was == Mode::Plain {
                 // Taken up: the brigade steers it from now.
                 regs.set_seeks_place(i, false);
@@ -1638,8 +1686,8 @@ impl Brigades {
             // as its place comes level: not all into the lane at once,
             // on top of each other.
             let (across, half_width, half_depth) = stand[k];
-            let ahead = (self.arc[i] - place).clamp(Fx::ZERO, FUNNEL);
-            let side = self.side[i] + (across - self.side[i]) * (ahead / FUNNEL);
+            let ahead = (self.members[i].arc - place).clamp(Fx::ZERO, FUNNEL);
+            let side = self.members[i].side + (across - self.members[i].side) * (ahead / FUNNEL);
             let lane = b.lane(full, side);
             if was == Mode::Plain || (tick + i as u32).is_multiple_of(SIGHT) {
                 let sees = |p: FxVec2| nav.clear_line(owner, here, p);
@@ -1656,34 +1704,35 @@ impl Brigades {
                     Some(mode) => {
                         if was == Mode::Astray {
                             // Back by the track, wherever along it.
-                            self.arc[i] = b.project(here, b.tail - LEFT_BEHIND, b.arc + JOIN_REACH);
+                            self.members[i].arc =
+                                b.project(here, b.tail - LEFT_BEHIND, b.arc + JOIN_REACH);
                         }
-                        self.mode[i] = mode;
-                        self.lost[i] = 0;
+                        self.members[i].mode = mode;
+                        self.members[i].lost = 0;
                     }
                     None if was == Mode::Astray => {}
                     None => {
-                        self.lost[i] = self.lost[i].saturating_add(1);
-                        if self.lost[i] >= LOST || was == Mode::Plain {
+                        self.members[i].lost = self.members[i].lost.saturating_add(1);
+                        if self.members[i].lost >= LOST || was == Mode::Plain {
                             // By a route of its own to where the body is
                             // (looked for afresh: its way so far led
                             // somewhere else).
-                            self.mode[i] = Mode::Astray;
-                            self.set[i] = b.at(place.clamp(b.start(), b.total())).0;
+                            self.members[i].mode = Mode::Astray;
+                            self.members[i].set = b.at(place.clamp(b.start(), b.total())).0;
                             nav.lost(i);
                         } else if was == Mode::Lane {
-                            self.mode[i] = Mode::Centre;
+                            self.members[i].mode = Mode::Centre;
                         }
                     }
                 }
             }
-            let target = match self.mode[i] {
+            let target = match self.members[i].mode {
                 Mode::Lane | Mode::Plain => lane,
                 Mode::Centre => b.at(full).0,
                 Mode::Short => b.at(near).0,
-                Mode::Astray => self.set[i],
+                Mode::Astray => self.members[i].set,
             };
-            let behind = place - self.arc[i];
+            let behind = place - self.members[i].arc;
             let pace = if self.kept_up(regs, i, behind) {
                 // So fast along the track: faster over the ground when it
                 // must also come across to its lane, or it would fall
@@ -1702,7 +1751,7 @@ impl Brigades {
                     along = along.max(behind);
                 }
                 let to = target - here;
-                let (run, far) = (to.dot(b.at(self.arc[i]).1), to.length());
+                let (run, far) = (to.dot(b.at(self.members[i].arc).1), to.length());
                 let slant = if run > Fx::ONE {
                     (far / run).min(SLANT)
                 } else {
@@ -1719,24 +1768,25 @@ impl Brigades {
             for (n, &j) in self.list.iter().enumerate() {
                 let j = j as usize;
                 let (theirs, their_width, their_depth) = stand[n];
-                if self.arc[j] > self.arc[i]
-                    && self.station[j] < self.station[i]
+                if self.members[j].arc > self.members[i].arc
+                    && self.members[j].station < self.members[i].station
                     && (across - theirs).abs() < half_width + their_width
                 {
                     let depths = half_depth + their_depth;
-                    let gap = self.arc[j] - self.arc[i] - depths;
+                    let gap = self.members[j].arc - self.members[i].arc - depths;
                     // No nearer than half the room their places leave.
-                    let least =
-                        (self.station[i] - self.station[j] - depths).clamp(Fx::ZERO, FOLLOW) / 2;
+                    let least = (self.members[i].station - self.members[j].station - depths)
+                        .clamp(Fx::ZERO, FOLLOW)
+                        / 2;
                     room = room.min(((gap - least) * FOLLOW_GAIN).max(Fx::ZERO));
                 }
             }
-            self.held[i] = room < pace;
+            self.members[i].held = room < pace;
             let pace = pace.min(room);
             regs.target[i] = Some(target);
             regs.pace[i] = pace;
-            self.set[i] = target;
-            self.paced[i] = pace;
+            self.members[i].set = target;
+            self.members[i].paced = pace;
         }
     }
 
@@ -1750,22 +1800,7 @@ impl Brigades {
                 continue;
             }
             self.of[i] = from.of[i];
-            self.generation[i] = from.generation[i];
-            self.mode[i] = from.mode[i];
-            self.lost[i] = from.lost[i];
-            self.stall[i] = from.stall[i];
-            self.held[i] = from.held[i];
-            self.end[i] = from.end[i];
-            self.facing[i] = from.facing[i];
-            self.ordered[i] = from.ordered[i];
-            self.set[i] = from.set[i];
-            self.paced[i] = from.paced[i];
-            self.arc[i] = from.arc[i];
-            self.station[i] = from.station[i];
-            self.side[i] = from.side[i];
-            self.want_station[i] = from.want_station[i];
-            self.want_side[i] = from.want_side[i];
-            self.floor[i] = from.floor[i];
+            self.members[i] = from.members[i];
         }
     }
 
@@ -1805,26 +1840,26 @@ impl Brigades {
             if self.of[i] == 0 {
                 continue;
             }
-            h.u16(self.generation[i]);
-            h.u8(self.mode[i] as u8);
-            h.u8(self.lost[i]);
-            h.u8(self.stall[i]);
-            h.u8(u8::from(self.held[i]));
-            vec(h, self.end[i]);
-            h.u32(self.facing[i].map_or(u32::MAX, |a| u32::from(a.0)));
-            vec(h, self.set[i]);
+            h.u16(self.members[i].generation);
+            h.u8(self.members[i].mode as u8);
+            h.u8(self.members[i].lost);
+            h.u8(self.members[i].stall);
+            h.u8(u8::from(self.members[i].held));
+            vec(h, self.members[i].end);
+            h.u32(self.members[i].facing.map_or(u32::MAX, |a| u32::from(a.0)));
+            vec(h, self.members[i].set);
             for v in [
-                self.ordered[i],
-                self.paced[i],
-                self.arc[i],
-                self.station[i],
-                self.side[i],
-                self.want_station[i],
-                self.want_side[i],
+                self.members[i].ordered,
+                self.members[i].paced,
+                self.members[i].arc,
+                self.members[i].station,
+                self.members[i].side,
+                self.members[i].want_station,
+                self.members[i].want_side,
             ] {
                 h.i32(v.raw());
             }
-            h.u16(self.floor[i]);
+            h.u16(self.members[i].floor);
             h.u8(regs.step_with[i]);
             h.u16(regs.files_floor[i]);
         }

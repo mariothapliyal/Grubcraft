@@ -7,7 +7,7 @@ use gc_fixed::Fx;
 use gc_sim::orders::Step;
 use gc_sim::{Command, PlayerCommand, TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, Real, WEST, centre, grid, move_to, of, put_up, spawn};
+use super::arena::{Arena, Real, WEST, centre, gated_wall, grid, move_to, of, spawn};
 use super::{Report, Scenario, seconds};
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -26,16 +26,8 @@ const LIMIT_SECONDS: u32 = 100;
 
 fn run(real: &Real, report: &mut Report) {
     let mut world = Arena::new(TILES).world(real, 13, 0);
-    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
-    let stats = &real.table.stats[usize::from(gate)];
-    let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
+    let span = gated_wall(real, &mut world, TILES, WALL_ROW, GATE_X);
     let middle = (span.start + span.end) / 2;
-    let mut wall: Vec<_> = (0..TILES as i32)
-        .filter(|x| !span.contains(x))
-        .map(|x| (palisade, (x, WALL_ROW), 0))
-        .collect();
-    wall.push((gate, (GATE_X, WALL_ROW), 1));
-    put_up(&mut world, 0, &wall);
 
     let [yari, katana, _] = real.ember_line();
     let army: Vec<_> = ([yari, katana, yari, katana].iter().enumerate())

@@ -247,7 +247,6 @@ fn a_member_given_another_order_leaves_and_the_rest_march_on() {
         w.tick(&[]);
     }
     let away = FxVec2::from_ints(200, 200);
-    let speed = fearless()[0].speed;
     w.tick(&[PlayerCommand {
         player: 0,
         command: Command::MoveTo {
@@ -269,14 +268,13 @@ fn a_member_given_another_order_leaves_and_the_rest_march_on() {
         .collect();
     let at = arrivals(&mut w, &rest, 150);
     assert!(spread(&at) <= 3, "{at:?}");
-    // The one sent away got there at its own pace, not the brigade's.
+    // The one sent away gets there too.
     let mut ticks = 0;
     while (w.regiments.get(who[0]).unwrap().position - away).length() > Fx::from_int(2) {
         w.tick(&[]);
         ticks += 1;
         assert!(ticks < 200 * TICKS_PER_SECOND);
     }
-    assert!(speed > Fx::ZERO);
 }
 
 #[test]

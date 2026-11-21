@@ -14,10 +14,10 @@
 //! 51 s). Those scenarios hold it to marching about as its regiments do
 //! apart.
 
-use gc_fixed::{Fx, FxVec2};
-use gc_sim::{Command, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World};
+use gc_fixed::FxVec2;
+use gc_sim::{TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, Real, WEST, grid, of, put_up, soldiers, spawn};
+use super::arena::{Arena, Real, WEST, gated_wall, grid, march_as, spawn};
 use super::{Report, Scenario, seconds};
 
 pub(super) const FORD: Scenario = Scenario {
@@ -57,8 +57,6 @@ pub(super) const BIG_GATE: Scenario = Scenario {
 
 const TILES: u32 = 128;
 const LIMIT: u32 = 200;
-/// How near its goal a regiment must stand to have arrived.
-const NEAR: Fx = Fx::from_int(3);
 /// What a brigade is held to against the same march apart.
 struct Limits {
     /// How much later its last regiment may arrive, percent of the time
@@ -82,67 +80,11 @@ const AS_APART: Limits = Limits {
     disorder: 125,
 };
 
-/// What one march measured.
-struct Run {
-    /// Ticks until the first and the last regiment stood at its goal.
-    first: Option<u32>,
-    last: Option<u32>,
-    /// Regiment-ticks in disorder (nobody fights, so all from crowding).
-    disorder: u32,
-    lost: bool,
-}
-
-/// Order `army` to `goals` as brigade `number` (0: separate moves) and
-/// tick until each stands at its goal.
-fn play(
-    world: &mut World,
-    report: &mut Report,
-    army: &[RegimentHandle],
-    goals: &[FxVec2],
-    number: u16,
-) -> Run {
-    let orders: Vec<_> = (army.iter().zip(goals))
-        .map(|(&regiment, &target)| PlayerCommand {
-            player: 0,
-            command: Command::MoveTo {
-                regiment,
-                target,
-                facing: None,
-                files: 0,
-                pace: Fx::ZERO,
-                brigade: number,
-            },
-        })
-        .collect();
-    let start = soldiers(world, army);
-    report.tick(world, &orders);
-    let mut arrived = vec![None; army.len()];
-    let mut disorder = 0;
-    for t in 1..=LIMIT * TICKS_PER_SECOND {
-        report.tick(world, &[]);
-        for v in of(world, army) {
-            let i = army.iter().position(|&r| r == v.handle).unwrap();
-            disorder += u32::from(v.disorder > 0);
-            let there = !v.moving && (goals[i] - v.position).length() <= NEAR;
-            arrived[i] = if there { arrived[i].or(Some(t)) } else { None };
-        }
-        if arrived.iter().all(Option::is_some) {
-            break;
-        }
-    }
-    let all = arrived.iter().all(Option::is_some);
-    Run {
-        first: arrived.iter().flatten().min().copied().filter(|_| all),
-        last: arrived.iter().flatten().max().copied().filter(|_| all),
-        disorder,
-        lost: soldiers(world, army) != start,
-    }
-}
-
 /// Play the march of `placed` (unit, where) to `goals` on the ground
 /// `build` makes, apart and then as a brigade, and hold the brigade to
 /// the march apart.
 fn compare(
+    real: &Real,
     report: &mut Report,
     build: impl Fn() -> World,
     placed: &[(u16, FxVec2)],
@@ -153,9 +95,18 @@ fn compare(
     for (name, number) in [("apart", 0), ("as a brigade", 1)] {
         let mut world = build();
         let army = spawn(&mut world, 0, placed, WEST);
-        let run = play(&mut world, report, &army, goals, number);
-        report.metric(format!("{name}: last regiment arrives"), seconds(run.last));
-        let spread = run.last.zip(run.first).map(|(last, first)| last - first);
+        let run = march_as(
+            real,
+            &mut world,
+            report,
+            &army,
+            goals,
+            number,
+            LIMIT,
+            |_, _| {},
+        );
+        report.metric(format!("{name}: last regiment arrives"), seconds(run.done));
+        let spread = run.done.zip(run.first).map(|(last, first)| last - first);
         report.metric(format!("{name}: first to last"), seconds(spread));
         report.metric(
             format!("{name}: regiment-seconds in disorder"),
@@ -163,15 +114,18 @@ fn compare(
         );
         report.check(
             format!("{name}: every regiment arrives within {LIMIT} s"),
-            run.last.is_some(),
+            run.done.is_some(),
         );
-        report.check(format!("{name}: no soldier lost"), !run.lost);
+        report.check(
+            format!("{name}: no soldier lost"),
+            run.soldiers.1 == run.soldiers.0,
+        );
         runs.push((run, spread));
     }
     let [(apart, wide), (together, close)] = &runs[..] else {
         unreachable!("two runs");
     };
-    if let (Some(a), Some(b)) = (apart.last, together.last) {
+    if let (Some(a), Some(b)) = (apart.done, together.done) {
         report.check(
             format!(
                 "the brigade's last arrives no more than {}% later than apart",
@@ -228,6 +182,7 @@ fn ford(real: &Real, report: &mut Report) {
         arena.world(real, 41, 0)
     };
     compare(
+        real,
         report,
         build,
         &army(real, 8, 4, (64, 96)),
@@ -245,6 +200,7 @@ fn corner(real: &Real, report: &mut Report) {
         arena.world(real, 42, 0)
     };
     compare(
+        real,
         report,
         build,
         &army(real, 8, 4, (40, 100)),
@@ -267,18 +223,11 @@ fn gate(
     const GATE_X: i32 = 62;
     let build = || {
         let mut world = Arena::new(TILES).world(real, 43, 0);
-        let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
-        let stats = &real.table.stats[usize::from(gate)];
-        let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
-        let mut wall: Vec<_> = (0..TILES as i32)
-            .filter(|x| !span.contains(x))
-            .map(|x| (palisade, (x, WALL_ROW), 0))
-            .collect();
-        wall.push((gate, (GATE_X, WALL_ROW), 1));
-        put_up(&mut world, 0, &wall);
+        gated_wall(real, &mut world, TILES, WALL_ROW, GATE_X);
         world
     };
     compare(
+        real,
         report,
         build,
         &army(real, count, abreast, (64, south)),

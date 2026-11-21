@@ -219,12 +219,18 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
 
 /// The middle of where the members stand now (`members` must not be empty).
 pub(crate) fn centre_of(members: &[GroupMember]) -> FxVec2 {
-    let n = i64::from(members.len().max(1) as u32);
-    let mut sum = (0i64, 0i64);
-    for m in members {
-        sum.0 += i64::from(m.position.x.raw());
-        sum.1 += i64::from(m.position.y.raw());
+    middle_of(members.iter().map(|m| m.position))
+}
+
+/// The middle of `points` (the origin of none).
+pub(crate) fn middle_of(points: impl Iterator<Item = FxVec2>) -> FxVec2 {
+    let (mut n, mut sum) = (0i64, (0i64, 0i64));
+    for p in points {
+        n += 1;
+        sum.0 += i64::from(p.x.raw());
+        sum.1 += i64::from(p.y.raw());
     }
+    let n = n.max(1);
     FxVec2::new(
         Fx::from_raw((sum.0 / n) as i32),
         Fx::from_raw((sum.1 / n) as i32),

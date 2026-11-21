@@ -224,6 +224,22 @@ fn new_orders(world: &World, out: &mut Vec<PlayerCommand>) {
     }
 }
 
+/// Side 0's regiments and side 1's, each with the middle of where they
+/// stand, while both sides have any.
+fn two_sides(world: &World) -> Option<[(Vec<gc_sim::RegimentView>, FxVec2); 2]> {
+    let side = |owner| {
+        let rs: Vec<_> = world
+            .regiments
+            .iter()
+            .filter(|r| r.owner == owner)
+            .collect();
+        let n = rs.len() as i32;
+        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
+        (n > 0).then(|| (rs, FxVec2::new(sum.x / n, sum.y / n)))
+    };
+    Some([side(0)?, side(1)?])
+}
+
 /// Side 1 only ever charges; side 0 advances on an attack-move to the far
 /// side of side 1's army, with a Shift-queued waypoint beyond it and,
 /// for its first regiment, a queued attack on the nearest enemy. A minute
@@ -231,17 +247,9 @@ fn new_orders(world: &World, out: &mut Vec<PlayerCommand>) {
 /// drop what they had queued (docs/29, "How battles play", item 6).
 fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
     charge_with(world, out, |p| p == 1);
-    let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
-    let theirs: Vec<_> = world.regiments.iter().filter(|r| r.owner == 1).collect();
-    if mine.is_empty() || theirs.is_empty() {
+    let Some([(mine, ours), (theirs, enemy)]) = two_sides(world) else {
         return;
-    }
-    let middle = |rs: &[gc_sim::RegimentView]| {
-        let n = rs.len() as i32;
-        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
-        FxVec2::new(sum.x / n, sum.y / n)
     };
-    let (ours, enemy) = (middle(&mine), middle(&theirs));
     let order = |command| PlayerCommand { player: 0, command };
     match world.tick_count() {
         2 => {
@@ -308,17 +316,9 @@ fn marching(world: &World, out: &mut Vec<PlayerCommand>) {
     if world.tick_count() >= 30 * gc_sim::TICKS_PER_SECOND {
         charge_with(world, out, |p| p == 1);
     }
-    let mine: Vec<_> = world.regiments.iter().filter(|r| r.owner == 0).collect();
-    let theirs: Vec<_> = world.regiments.iter().filter(|r| r.owner == 1).collect();
-    if mine.is_empty() || theirs.is_empty() {
+    let Some([(mine, ours), (_, enemy)]) = two_sides(world) else {
         return;
-    }
-    let middle = |rs: &[gc_sim::RegimentView]| {
-        let n = rs.len() as i32;
-        let sum = rs.iter().fold(FxVec2::ZERO, |a, r| a + r.position);
-        FxVec2::new(sum.x / n, sum.y / n)
     };
-    let (ours, enemy) = (middle(&mine), middle(&theirs));
     let order = |command| PlayerCommand { player: 0, command };
     match world.tick_count() {
         2 => {

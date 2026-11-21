@@ -319,18 +319,22 @@ As built (`gc_sim::brigades`; the numbers are its constants).
   is over.
 - **Leaving a brigade.** Any other order to a regiment takes it out. So
   does routing. The same order given again (the same number, the same
-  place within three tiles) changes nothing, so a player clicking twice
-  and a computer player repeating itself don't restart anything.
+  place within three tiles) changes nothing, so a computer player
+  repeating itself doesn't restart anything. A player's group order is
+  always a new brigade with the next number, so clicking twice on the
+  same spot forms the body up again from where it stands (it sets off
+  as it stands, so this costs little).
 - **Orders that land one by one.** A computer player's orders for one
   army land over several ticks, not all at once as a player's do. The
   first regiment of a brigade marches by its own order for up to three
   seconds while the rest join.
-- **Fighting on the way.** On an attack-move, while a member has turned
-  aside to fight within 25 tiles of the anchor, the body halts and the
-  rest stand in their places, each turning on any enemy that comes
-  within its own reach. When the fighting is over the members take their
-  places again and the brigade goes on. On a plain move the brigade
-  keeps marching.
+- **Fighting on the way.** On an attack-move, a member that turns
+  aside to fight leaves the brigade for the fight. While one of them
+  fights within 25 tiles of the anchor, the body halts and the rest
+  stand in their places, each turning on any enemy that comes within
+  its own reach. When its fight is over it takes up the march again,
+  joins the brigade again and takes its place, and the brigade goes on.
+  On a plain move the brigade keeps marching.
 - **Letting go.** Where a brigade would be slower than its regiments
   each by its own way, it is over on the spot and they march on as they
   did before there were brigades. See "What a brigade does not do yet".

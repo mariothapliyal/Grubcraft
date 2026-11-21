@@ -1369,10 +1369,7 @@ impl Nav {
         reach: Fx,
         wet: impl Fn(FxVec2) -> bool,
     ) -> Fx {
-        let Some(g) = self.grid_of(party) else {
-            return reach;
-        };
-        let [right, left] = Nav::room_each_side(g, p, facing, reach, &[Fx::ZERO], false, wet);
+        let [right, left] = self.room_sides(party, p, facing, reach, wet);
         (right + left) / 2
     }
 

@@ -214,6 +214,7 @@ macro_rules! regiment_fields {
                 self.why[i] = 0;
                 self.step_with[i] = 0;
                 self.files_floor[i] = 0;
+                self.step_arc[i] = Fx::ZERO;
                 $(self.$name[i] = $free;)*
             }
 
@@ -1111,7 +1112,6 @@ impl Regiments {
 
     /// Whether regiment `j` marches to a spot it was sent to stand at
     /// (see [`KEEP_PLACE`]).
-
     pub(crate) fn seeks_place(&self, j: usize) -> bool {
         self.keep[j] & KEEP_PLACE != 0
     }
