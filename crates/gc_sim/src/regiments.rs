@@ -1744,6 +1744,7 @@ impl Regiments {
             hold: self.hold[i],
             skirmish: self.skirmish[i],
             stepping_back: self.backing[i] > 0,
+            made_way: self.home[i],
             running: self.run_left[i] > 0,
             winded: self.winded_left[i] > 0,
             torches: self.torches[i],
@@ -2323,6 +2324,9 @@ pub struct RegimentView {
     /// stepping back from it just now.
     pub skirmish: bool,
     pub stepping_back: bool,
+    /// Stepped aside to make way for friends marching through, where it
+    /// stood before (see `Combat::make_way`): it steps back once they are by.
+    pub made_way: Option<FxVec2>,
     /// Running (see [`Regiments::run`]), or winded after a run.
     pub running: bool,
     pub winded: bool,

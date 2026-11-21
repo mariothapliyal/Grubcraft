@@ -170,6 +170,7 @@ mod field;
 #[cfg(test)]
 mod field_balance;
 mod fog;
+mod footprints;
 mod fx_demo;
 #[cfg(test)]
 mod goldens;

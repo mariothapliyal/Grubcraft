@@ -2034,7 +2034,10 @@ impl Combat {
                 && !regs.morale_state[j].broken()
                 && !self.civil(regs, j)
         };
-        let place = |j: usize| regs.target[j].unwrap_or(regs.position[j]);
+        // Where each stands: one stepped aside to make way stands where
+        // it steps back to (see `Combat::make_way`).
+        let stands = |j: usize| regs.home[j].unwrap_or(regs.position[j]);
+        let place = |j: usize| regs.target[j].unwrap_or_else(|| stands(j));
         let mut friends = [0usize; 256];
         let mut found = 0;
         {
@@ -2098,7 +2101,7 @@ impl Combat {
                     // for a foe has no place.
                     None if !near || regs.attack_target[j].is_some() => false,
                     None => {
-                        let them = Block::drawn_up(regs, units, j, regs.position[j]);
+                        let them = Block::drawn_up(regs, units, j, stands(j));
                         me.overlap_over(&them, deep).is_some()
                             || lane.is_some_and(|l| l.overlap_over(&them, CROWDING).is_some())
                     }
@@ -2203,33 +2206,38 @@ impl Combat {
                     return;
                 }
                 let them = &self.blocks[j];
-                let to_me = me.centre - them.centre;
-                let along = to_me.dot(them.forward);
-                let my_length = me.extent_along(them.forward);
-                // One sent to stand where it stands finds a place of its
-                // own (see `Combat::own_place`).
-                let target = regs.target[j].unwrap_or(them.centre);
-                if (target - me.centre).length_sq_raw() < (me.radius().raw() as u64).pow(2) {
+                // Its lane: from where it is to where it is sent, as wide
+                // as it is across the way. Only one that goes right through
+                // and on past counts: one coming to stand beside it, or
+                // where it stands, finds a place (see `Combat::own_place`).
+                let Some(target) = regs.target[j] else {
+                    return;
+                };
+                let way = target - them.centre;
+                let far = way.length();
+                if far.raw() <= 0 {
                     return;
                 }
-                // How far on it marches before it halts: to where it is
-                // sent, or the look ahead if that is nearer.
-                let on = (target - them.centre)
-                    .dot(them.forward)
-                    .clamp(Fx::ZERO, WAY_AHEAD);
-                if along + my_length <= Fx::ZERO - them.half_depth
-                    || along - my_length >= them.half_depth + on
+                let ahead = FxVec2::new(way.x / far, way.y / far);
+                let right = FxVec2::new(Fx::ZERO - ahead.y, ahead.x);
+                let (its_length, its_width) = (them.extent_along(ahead), them.extent_along(right));
+                let to_me = me.centre - them.centre;
+                let along = to_me.dot(ahead);
+                let my_length = me.extent_along(ahead);
+                if along - my_length >= its_length + WAY_AHEAD
+                    || along + my_length <= Fx::ZERO - its_length
+                    || along + my_length >= far - its_length
                 {
                     return;
                 }
-                let across = to_me.dot(them.right);
-                let depth = them.half_width + me.extent_along(them.right) - across.abs();
+                let across = to_me.dot(right);
+                let depth = its_width + me.extent_along(right) - across.abs();
                 if depth > deepest {
                     deepest = depth;
                     out = if across.raw() >= 0 {
-                        them.right
+                        right
                     } else {
-                        FxVec2::ZERO - them.right
+                        FxVec2::ZERO - right
                     };
                 }
             },
@@ -2240,31 +2248,39 @@ impl Combat {
             regs.home[i].get_or_insert(from);
             out * deepest.min(pace)
         } else if let Some(home) = regs.home[i] {
-            let back = home - from;
-            let (back, there) = if back.length() <= pace {
-                (back, true)
-            } else {
-                (back.normalized() * pace, false)
-            };
-            // Not into a friend still standing aside, or one it shoved
-            // that has yet to step back itself.
-            let then = Block {
-                centre: from + back,
-                ..me
-            };
-            let mut taken = false;
-            self.each_touching(regs, i, then.centre, slots, |j| {
-                let them = &self.blocks[j];
-                taken |= !stances.hostile(owner, regs.owner[j])
+            // A friend that has settled on the ground it stood on since
+            // keeps it: it stands where it is now, as one with no ground
+            // to step back to.
+            let at_home = Block { centre: home, ..me };
+            let mut lost = false;
+            self.each_touching(regs, i, home, slots, |j| {
+                lost |= !stances.hostile(owner, regs.owner[j])
                     && !regs.marching(j)
-                    && then
-                        .overlap_over(them, CROWDING)
-                        .is_some_and(|deep| me.overlap_over(them, deep).is_none());
+                    && regs.home[j].is_none()
+                    && at_home.overlap_over(&self.blocks[j], CROWDING).is_some();
             });
-            if taken {
+            if lost {
+                regs.home[i] = None;
                 return false;
             }
-            if there {
+            let whole = home - from;
+            let back = if whole.length() <= pace {
+                whole
+            } else {
+                whole.normalized() * pace
+            };
+            // Straight back, or where a friend is in the way of that, square
+            // along its front or its flank only.
+            let Some(back) = [
+                back,
+                me.right * back.dot(me.right),
+                me.forward * back.dot(me.forward),
+            ]
+            .into_iter()
+            .find(|&b| b != FxVec2::ZERO && self.clear_to_step(regs, stances, i, &me, b)) else {
+                return false;
+            };
+            if back == whole {
                 regs.home[i] = None;
             }
             back
@@ -2286,6 +2302,45 @@ impl Combat {
             regs.home[i] = None;
         }
         false
+    }
+
+    /// Whether regiment `i` (block `me`), stepping back to where it stood
+    /// after making way (see [`Combat::make_way`]), may step `step`: not if
+    /// it would go deeper than [`CROWDING`] into a friend (one going by,
+    /// one standing, or one standing aside itself with the lower slot,
+    /// which goes back first so two never wait on each other), nor deeper
+    /// than half of [`PUSHING`] into one standing aside with the higher
+    /// slot, which that shoves back in turn (see [`Combat::make_room`]).
+    fn clear_to_step(
+        &self,
+        regs: &Regiments,
+        stances: &Stances,
+        i: usize,
+        me: &Block,
+        step: FxVec2,
+    ) -> bool {
+        let owner = regs.owner[i];
+        let then = Block {
+            centre: me.centre + step,
+            ..*me
+        };
+        let mut clear = true;
+        let slots = stances.friend_slots(owner, OWNER_SLOTS);
+        self.each_touching(regs, i, then.centre, slots, |j| {
+            let them = &self.blocks[j];
+            if !clear || stances.hostile(owner, regs.owner[j]) {
+                return;
+            }
+            let limit = if regs.home[j].is_some() && j > i {
+                PUSHING / 2
+            } else {
+                CROWDING
+            };
+            clear = then
+                .overlap_over(them, limit)
+                .is_none_or(|deep| me.overlap_over(them, deep).is_some());
+        });
+        clear
     }
 
     /// How far regiment `i` sidesteps each time it looks (see
