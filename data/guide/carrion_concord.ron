@@ -5,7 +5,7 @@
         (
             name: "Counting House",
             blurb: "Your starting base: trains Ledger Clerks and Caravans, takes Marrow. Upgrade to the Exchange for heavies and cavalry.",
-            summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
+            summary: "Your starting base. It trains Ledger Clerks and Caravans, receives the Marrow your Clerks mine, and is where caravan routes start. It is Fortified. Upgrade it to the Exchange for undead heavies, cavalry, wraiths and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open. Damaged regiments refill near it.",
             notes: [
                 ("Exchange", "The mid game: Gravewardens, Debt Collectors, Lantern Wraiths and a second hero. It costs Marrow, so put Clerks on a vein first."),
             ],
@@ -86,7 +86,7 @@
         (
             name: "Guildhall",
             blurb: "Trains Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes.",
-            summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy.",
+            summary: "Trains your living troops: Crossbow Auditors and Debt Collectors. Build it beside the Ossuary so crossbows shoot over your undead pikes, and so cavalry can punish a stalled enemy. Damaged living regiments refill near it.",
             notes: [],
             tips: [
                 (icon: Heart, text: "Train living troops here to back your undead, which never rout but fight slowly."),

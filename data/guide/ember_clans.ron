@@ -13,7 +13,7 @@
         (
             name: "Clan Hall",
             blurb: "Your starting base: trains Hands and takes Grub and Marrow. Upgrade it to the Castle Keep for the mid game.",
-            summary: "Your starting base: Hands drop Grub and Marrow here, and it trains new Hands. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open.",
+            summary: "Your starting base: Hands drop Grub and Marrow here, and it trains new Hands. It is Fortified, so rams hit it for triple damage. Upgrade it to the Castle Keep once income allows; that opens samurai, cavalry, rocket carts and a second hero. Workers clear woods and scrub (S) to make room; cleared ground is open. Damaged regiments refill near it.",
             notes: [
                 ("Castle Keep", "The gate to the mid game: samurai, cavalry, rocket carts, War Kites and a second hero. It costs Marrow, so claim a Marrow vein first."),
             ],
@@ -50,7 +50,7 @@
         (
             name: "Outpost Hall",
             blurb: "A forward hall at a far seep or vein: a Grub and Marrow drop-off. Trains nothing.",
-            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer.",
+            summary: "A cheaper hall for expansions: a drop-off for Grub and Marrow beside a far seep or vein. It trains nothing and cannot be upgraded, so it is a forward base rather than a second home. Build it when home seeps run low or to claim Marrow. Woods and scrub are cleared first, which takes the worker longer. Damaged regiments refill near it.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Place it beside a far seep or Marrow vein to make a forward drop-off."),
@@ -85,7 +85,7 @@
         (
             name: "Dojo",
             blurb: "Trains Yari spears, Yumi archers and, at tier 2, Katana Samurai. Your first military building; raise it near the front.",
-            summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Raise it near the front so new regiments reach the fight sooner. It is your first military building and the one you will build most; without it you have no army.",
+            summary: "The infantry barracks: Yari spearmen and Yumi archers at tier 1, Katana Samurai at tier 2. Raise it near the front so new regiments reach the fight sooner. It is your first military building and the one you will build most; without it you have no army. Damaged regiments refill near it.",
             notes: [],
             tips: [
                 (icon: Flag, text: "Place it near the front: new regiments reach the fight sooner, and you will build it most."),
@@ -96,7 +96,7 @@
         (
             name: "Stables",
             blurb: "Trains Mounted Samurai and Yabusame Riders. Tier 2, needs Marrow. Cavalry ride down archers and routing troops.",
-            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse.",
+            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse. Damaged cavalry refill near it.",
             notes: [],
             tips: [
                 (icon: Spear, text: "Keep spear regiments nearby, since the enemy's own horse will come for your cavalry."),
