@@ -8,11 +8,14 @@
 //! - [`terrain_view`]: the float views of a map that deployment and the
 //!   computer players use.
 //! - [`play`]: a whole battle driven headless, tick by tick.
+//! - [`cover`]: the computer playing for people who dropped out of a
+//!   network match, until they are back.
 //! - [`Tables`]: the unit tables a battle is set out with.
 
 pub mod battle;
 #[cfg(test)]
 mod battle_tables;
+pub mod cover;
 #[cfg(test)]
 mod frontage_tests;
 #[cfg(test)]

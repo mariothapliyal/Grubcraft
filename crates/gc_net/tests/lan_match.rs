@@ -1273,3 +1273,52 @@ fn a_dropped_player_still_has_a_say_in_the_vote() {
         "Alex and Sam surrendered."
     ));
 }
+
+#[test]
+fn the_host_knows_which_sides_nobody_commands() {
+    let mut m = Match::start(&["Alex", "Sam"], &[], OnDrop::Wait);
+    m.run(&[], 100, Match::turns(100));
+    assert_eq!(m.lans[0].uncommanded(), []);
+    // Only the host keeps count.
+    assert_eq!(m.lans[1].uncommanded(), []);
+
+    // While the match waits for Alex, their side is still theirs.
+    m.run(
+        &[1],
+        u32::MAX,
+        gc_net::PLAYER_TIMEOUT + Duration::from_millis(500),
+    );
+    assert!(m.lans[0].paused_for_player());
+    assert_eq!(m.lans[0].uncommanded(), []);
+    // Once the host carries on without them, nobody commands it.
+    m.lans[0].carry_on();
+    assert_eq!(m.lans[0].uncommanded(), [1]);
+    m.run(&[1], 160, Match::turns(60));
+
+    // Alex's game restarts and they join again: still nobody's until their
+    // machine has replayed the match up to where it stood when they came
+    // back.
+    let net = m.net.clone();
+    let mut again = lan(&net);
+    join(&net, &mut again, "Alex", &mut m.lans[0]).unwrap();
+    again.poll();
+    again.loaded(Ok(()));
+    let old = std::mem::replace(&mut m.lans[1], again);
+    net.cut(old.port().unwrap(), true);
+    std::mem::forget(old);
+    let (mut worlds, mut recorders) = machines(1);
+    m.worlds[1] = worlds.pop().unwrap();
+    m.recorders[1] = recorders.pop().unwrap();
+    m.drills[1] = drill(4);
+    assert_eq!(m.lans[0].uncommanded(), [1]);
+    let back = m.ticks()[0];
+    // Halfway through the replay, still catching up.
+    m.run(&[], back / 2, Match::turns(back));
+    assert!(m.worlds[1].tick_count() < back);
+    assert_eq!(m.lans[0].uncommanded(), [1]);
+    m.run(&[], back + 40, Match::turns(back + 40));
+    m.settle();
+    assert_eq!(m.lans[0].uncommanded(), []);
+    assert!(m.same_worlds());
+    assert_eq!(m.desyncs(), []);
+}
