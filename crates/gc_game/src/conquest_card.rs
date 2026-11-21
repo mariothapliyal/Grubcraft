@@ -172,15 +172,17 @@ impl Running {
 
     /// What evolving the first selected regiment that can into `into` would
     /// take and give, or why none can: the first refusal. A refusal that is
-    /// the player's (tier, chamber, supply, price) holds for all of them,
-    /// so the rest aren't asked.
+    /// the player's (tier, chamber, supply) holds for all of them, so the
+    /// rest aren't asked.
     fn evolve_quote(&self, into: UnitId) -> Result<Evolution, Refusal> {
         let side = self.sandbox.side;
         let mut first = Refusal::Unknown;
         for (k, h) in self.evolvers(into).enumerate() {
             match self.world.can_evolve(side, h, into) {
                 Ok(e) => return Ok(e),
-                Err(e @ (Refusal::Busy | Refusal::Unknown)) => {
+                // These are the regiment's own (the price goes by its
+                // soldiers left): another selected one may yet do.
+                Err(e @ (Refusal::Busy | Refusal::Unknown | Refusal::Price)) => {
                     if k == 0 {
                         first = e;
                     }

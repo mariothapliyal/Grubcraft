@@ -2209,13 +2209,14 @@ impl World {
             if let Some(c) = &mut self.conquest {
                 c.tend_plans(&mut self.nav, &mut self.regiments, &self.terrain);
             }
+            // The tick's dead lie down and pay their Tithe, before the
+            // count is cleared, and before a regiment trained now can take
+            // the slot of one wiped out (which clears its count).
+            if let Some(c) = &mut self.conquest {
+                c.tithe
+                    .collect(&c.meters, &c.structures, &self.regiments, self.tick);
+            }
             self.raise_trained();
-        }
-        // The tick's dead lie down and pay their Tithe, before the count
-        // is cleared.
-        if let Some(c) = &mut self.conquest {
-            c.tithe
-                .collect(&c.meters, &c.structures, &self.regiments, self.tick);
         }
         // What powers left on regiments wears off in any world, a copy of
         // one for a forecast too.

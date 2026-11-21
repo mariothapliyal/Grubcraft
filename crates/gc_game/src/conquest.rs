@@ -1850,7 +1850,7 @@ mod tests {
             assert_eq!(meter_of(n as u8), meter, "{name}");
         }
         assert_eq!(Meter::from_u8(cq::METER_NAMES.len() as u8), None);
-        for effect in 0..=cq::POWER_SUMMON {
+        for effect in 0..=cq::POWER_HIRE {
             let p = gc_data::PowerRecord {
                 effect,
                 arg: 1,

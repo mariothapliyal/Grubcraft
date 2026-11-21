@@ -359,9 +359,8 @@ impl Conquest {
             })
         };
         (self.economy.posts().iter().copied())
-            .filter(|&post| (post - at).length_sq_raw() <= reach)
+            .filter(|&post| (post - at).length_sq_raw() <= reach && !held(post))
             .min_by_key(|&post| (post - at).length_sq_raw())
-            .filter(|&post| !held(post))
     }
 
     /// `player` hires a regiment of `unit` from the hamlet within `tiles`
@@ -399,13 +398,16 @@ fn facing_foe(regs: &Regiments, stances: &Stances, player: PlayerId, at: FxVec2)
 }
 
 impl Regiments {
-    /// Slot `i`'s last soldier crumbles away.
+    /// Slot `i`'s last soldier crumbles away: to dust, so not one of the
+    /// tick's dead (no corpse, no Tithe, no mending).
     pub(crate) fn crumble_one(&mut self, i: usize) {
         let last = usize::from(self.models[i]);
         if last == 0 {
             return;
         }
         let hp = self.hp[i * crate::MAX_MODELS as usize + last - 1];
+        let dead = self.deaths[i];
         self.take_damage(i, u32::from(hp.max(1)));
+        self.deaths[i] = dead;
     }
 }

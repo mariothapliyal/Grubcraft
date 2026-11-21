@@ -305,7 +305,7 @@ Tithe buys contracts (faction powers):
 ### Signature rule: **The dead don't rout**
 Concord undead regiments ignore morale entirely: they never rout, and Grub never refills them. Instead they have two rules of their own, both built (2026-11-21):
 
-- **Crumbling.** An undead regiment that is not summoned (so Indentured and trained undead, not the timed Bound Dead or militia) more than 30 tiles from every one of its owner's finished Reliquaries and main buildings loses a soldier every 60 seconds, and goes when none are left. Main buildings count, so an early Concord does not crumble at home.
+- **Crumbling.** An undead regiment that is not summoned (so Indentured and trained undead, not the timed Bound Dead or militia) more than 30 tiles from every one of its owner's finished Reliquaries and main buildings loses a soldier every 60 seconds, and goes when none are left. A crumbled soldier turns to dust: it leaves no corpse and pays no Tithe. Main buildings count, so an early Concord does not crumble at home.
 - **Refill with Tithe.** A hurt undead regiment standing quiet within 12 tiles of its own Reliquary is refilled one soldier at a time, paying Tithe per soldier: one eighth of its hit points, and at least 1.
 
 Their living units (crossbowmen, cavalry riders) do rout, and reinforce with Grub like any other regiment. Mixing reliable dead with fragile living is the faction's puzzle.

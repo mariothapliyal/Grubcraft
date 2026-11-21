@@ -164,20 +164,34 @@ impl Steward {
         let mix = self.mix(s);
         let heavy = spymaster::heavy_foes(s);
         let foes: Vec<Vec2> = spymaster::enemy_army(s).map(|r| r.pos).collect();
+        // What this pass's orders leave in the store: each is checked
+        // against the same bank, so the later ones mustn't count on what
+        // the earlier ones spend.
+        let Some(bank) = s.world.bank(s.party) else {
+            return;
+        };
+        let mut left = (bank.grub, bank.marrow);
         for r in idle {
             if foes.iter().any(|f| f.distance(r.pos) <= SAFE) {
                 continue;
             }
+            let fits = |u: UnitId| {
+                (s.world.can_evolve(s.party, r.handle, u))
+                    .is_ok_and(|e| e.grub <= left.0 && e.marrow <= left.1)
+            };
             let options: Vec<(UnitId, usize, bool)> = s
                 .kit
                 .evolutions(r.unit)
-                .filter(|u| s.world.can_evolve(s.party, r.handle, u.id).is_ok())
+                .filter(|u| fits(u.id))
                 .filter_map(|u| {
                     let info = s.view.units.get(usize::from(u.id))?;
                     Some((u.id, class_slot(info.class), info.stats.reach))
                 })
                 .collect();
             let Some(into) = pick_evolution(&options, heavy, mix, by_class) else {
+                continue;
+            };
+            let Ok(price) = s.world.can_evolve(s.party, r.handle, into) else {
                 continue;
             };
             if !clicks.give(
@@ -189,6 +203,7 @@ impl Steward {
             ) {
                 return;
             }
+            left = (left.0 - price.grub, left.1 - price.marrow);
             if let Some(info) = s.view.units.get(usize::from(into)) {
                 by_class[class_slot(info.class)] += 1;
             }

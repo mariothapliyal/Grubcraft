@@ -744,7 +744,8 @@ impl Marshal {
                     && !r.engaged
                     && r.morale == MoraleState::Steady
                     && self.out.contains(&r.handle)
-                    && s.world.can_reinforce(r.handle);
+                    && s.world.can_reinforce(r.handle)
+                    && s.world.refill_spot(r.handle).is_some();
                 if spent {
                     self.out.retain(|h| *h != r.handle);
                     self.set_out_with = self.set_out_with.saturating_sub(u32::from(r.full));
@@ -755,7 +756,10 @@ impl Marshal {
             army.iter()
                 .filter(|r| !self.out.contains(&r.handle))
                 .filter(|r| was.contains(&r.handle) || r.strength() < MEND_BELOW)
+                // Somewhere this one can refill: the undead only by a
+                // finished Reliquary.
                 .filter(|r| s.world.can_reinforce(r.handle))
+                .filter(|r| s.world.refill_spot(r.handle).is_some())
                 .map(|r| r.handle),
         );
     }
