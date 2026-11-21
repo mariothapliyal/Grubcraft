@@ -346,3 +346,34 @@ fn falling_back_lifts_a_brace() {
         "spears can't be set while backing away"
     );
 }
+
+#[test]
+fn a_slantwise_charge_glances_off_the_points() {
+    // From ahead and well off to the right, coming in more than 45 degrees
+    // off head-on: into the front, but past the points.
+    let (w, spears, chargers) = charge_into(true, ((150, 64), Angle(0x6000)));
+    let (s, c) = (view(&w, spears), view(&w, chargers));
+    assert!(c.charge > 0, "it hits home");
+    assert_eq!(c.disorder, 0, "unthrown");
+    assert_eq!(s.charge, 0, "the spears take none of its weight");
+}
+
+/// The charge bonus chargers set down `tiles` ahead of the spearmen, and
+/// facing them, hit home with.
+fn bonus_charged_from(tiles: i32) -> u8 {
+    let (w, _, chargers) = charge_into(false, ((100, 100 - tiles), SOUTH));
+    view(&w, chargers).charge_bonus
+}
+
+#[test]
+fn a_charge_from_a_standstill_hits_soft() {
+    // A short run-up against a long one: the charge hits home with the
+    // speed it has, not its full speed.
+    let (near, far) = (bonus_charged_from(10), bonus_charged_from(40));
+    let full = units()[CHARGERS as usize].charge_bonus;
+    assert!(
+        near * 3 < full * 2,
+        "a short run-up hit home with {near} of {full}"
+    );
+    assert!(far * 10 >= full * 9, "a long one with {far} of {full}");
+}

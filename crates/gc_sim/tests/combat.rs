@@ -174,11 +174,19 @@ fn charges_hit_harder_than_standing_fights() {
     let mut units = fearless();
     units[0].charge_bonus = 200;
     let world = || world_with(&units);
-    // Charge in from 14 tiles away, then fight for 3 s.
+    // Hit points, which count every blow (a model is several).
+    let hp_of = |w: &World, h| -> u32 {
+        w.regiments
+            .model_hp(h)
+            .map_or(0, |hp| hp.iter().copied().map(u32::from).sum())
+    };
+    let full_hp = u32::from(units[0].hp_per_model) * 24;
+    // Charge in from 30 tiles away (a long run-up, so it hits home at
+    // full speed), then fight for 3 s.
     let charge = {
         let mut w = world();
         let d = spawn(&mut w, 1, SPEARS, 50, 50, SOUTH);
-        let a = spawn(&mut w, 0, SPEARS, 50, 64, NORTH);
+        let a = spawn(&mut w, 0, SPEARS, 50, 80, NORTH);
         w.tick(&[PlayerCommand {
             player: 0,
             command: Command::Attack {
@@ -188,7 +196,7 @@ fn charges_hit_harder_than_standing_fights() {
         }]);
         until_engaged(&mut w, a);
         run(&mut w, 60);
-        24 - models(&w, d)
+        full_hp - hp_of(&w, d)
     };
     // The same blocks starting in contact.
     let standing = {
@@ -196,7 +204,7 @@ fn charges_hit_harder_than_standing_fights() {
         let d = spawn(&mut w, 1, SPEARS, 50, 50, SOUTH);
         let _a = spawn(&mut w, 0, SPEARS, 50, 53, NORTH);
         run(&mut w, 61);
-        24 - models(&w, d)
+        full_hp - hp_of(&w, d)
     };
     assert!(charge > standing, "charge {charge}, standing {standing}");
 }

@@ -394,6 +394,10 @@ regiment_fields! {
     /// Ticks it has stepped forward since it last halted or fought, up to
     /// [`crate::combat::RUN_UP_TICKS`]: only a run-up makes a charge.
     run_up: u8 = 0,
+    /// Its real forward speed, smoothed over about the last second, in
+    /// hundredths of a tile a second (see [`Regiments::step_movement`]):
+    /// what a charge hits home with (see `combat::impact_percent`).
+    momentum: u16 = 0,
     /// Ticks left standing while it faces about (see [`ABOUT_FACE`]).
     about_left: u8 = 0,
     /// How many times it has faced about, counting round: the screen turns
@@ -835,6 +839,14 @@ impl Regiments {
     /// it there.
     pub(crate) fn disorder(&mut self, i: usize) {
         self.disorder[i] = crate::combat::DISORDER_TICKS;
+    }
+
+    /// Throw slot `i` into disorder for `percent` of the usual time (a
+    /// charge stopped on braced points, by how hard it came), at least the
+    /// usual time and at most twice it.
+    pub(crate) fn disorder_for(&mut self, i: usize, percent: u64) {
+        let full = u64::from(crate::combat::DISORDER_TICKS);
+        self.disorder[i] = (full * percent / 100).clamp(full, 2 * full).min(255) as u8;
     }
 
     /// Give a move order. Routing regiments don't listen.
@@ -1679,6 +1691,7 @@ impl Regiments {
             still: self.still(i),
             engaged: self.engaged[i].is_some(),
             charge: self.charge[i],
+            charge_bonus: self.charge_bonus[i],
             morale: self.morale_state[i],
             morale_points: (self.morale[i].max(0) / morale::SCALE) as u8,
             break_at: morale::break_at_now(self, i),
@@ -1802,6 +1815,9 @@ impl Regiments {
             }
             let was = self.position[i];
             self.set_keep(i, KEEP_STEPPED, false);
+            // Its speed eases toward nothing unless it steps forward below.
+            let coasting = self.momentum[i];
+            self.momentum[i] = ease_momentum(coasting, 0);
             // Falling back ends when time runs out, wherever it got to.
             if self.falling_back[i] > 0 {
                 self.falling_back[i] -= 1;
@@ -2118,6 +2134,7 @@ impl Regiments {
                 }
                 let stepped = (self.position[i] - was).dot(dir).max(Fx::ZERO);
                 self.set_keep(i, KEEP_STEPPED, stepped > Fx::ZERO);
+                self.momentum[i] = ease_momentum(coasting, hundredths_per_second(stepped));
                 if ghost {
                     self.stuck[i] -= 1;
                     if self.stuck[i] < GHOST {
@@ -2153,6 +2170,19 @@ impl Regiments {
         }
     }
 
+    /// Slot `i`'s real forward speed over about the last second, in
+    /// hundredths of a tile a second (see [`Regiments::step_movement`]).
+    pub(crate) fn momentum(&self, i: usize) -> u16 {
+        self.momentum[i]
+    }
+
+    /// Slot `i`'s speed is spent: it has hit home (see
+    /// `Combat::before_move`), and must pull out and run up again to charge
+    /// at full weight.
+    pub(crate) fn spend_momentum(&mut self, i: usize) {
+        self.momentum[i] = 0;
+    }
+
     pub(crate) fn hash_into(&self, h: &mut StateHasher) {
         // No party past MAX_PARTIES ever gets a bonus.
         for bonus in &self.party_morale[..crate::MAX_PARTIES] {
@@ -2167,6 +2197,29 @@ impl Regiments {
             }
         }
     }
+}
+
+/// How a regiment's momentum follows its speed: it eases a
+/// [`MOMENTUM_EASE`]th of the way there each tick, so it is about two
+/// thirds there after two seconds and all but there after six.
+const MOMENTUM_EASE: u32 = 2 * crate::TICKS_PER_SECOND;
+
+/// Momentum `was`, eased a step toward `now` (both hundredths of a tile a
+/// second), rounding toward `now` so it settles on a steady speed exactly.
+fn ease_momentum(was: u16, now: u32) -> u16 {
+    let toward = if now > u32::from(was) {
+        MOMENTUM_EASE - 1
+    } else {
+        0
+    };
+    let eased = (u32::from(was) * (MOMENTUM_EASE - 1) + now + toward) / MOMENTUM_EASE;
+    eased.min(u32::from(u16::MAX)) as u16
+}
+
+/// A step of `stepped` tiles in one tick, as hundredths of a tile a second.
+fn hundredths_per_second(stepped: Fx) -> u32 {
+    let raw = u64::try_from(stepped.raw()).unwrap_or(0);
+    ((raw * u64::from(crate::TICKS_PER_SECOND) * 100) >> 16).min(u64::from(u16::MAX)) as u32
 }
 
 pub(crate) fn hash_handle(h: &mut StateHasher, handle: Option<RegimentHandle>) {
@@ -2208,6 +2261,9 @@ pub struct RegimentView {
     /// Ticks of charge bonus left: it hit home at speed within the last
     /// few seconds.
     pub charge: u16,
+    /// That charge's bonus, percent: its unit's own, scaled by how fast it
+    /// hit home (or for braced spears, the charge they turned back).
+    pub charge_bonus: u8,
     pub morale: MoraleState,
     /// Morale in points (0 to 100); meaningless for regiments that never rout.
     pub morale_points: u8,

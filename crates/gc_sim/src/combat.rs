@@ -191,9 +191,12 @@ const LOOK_AHEAD: Fx = Fx::from_int(2);
 /// exchange gives ground at up to this many tiles a tick (0.4 a second),
 /// and the enemies fighting it follow.
 pub const GIVE_GROUND: Fx = Fx::from_ratio(1, 50);
-/// Charges that plough in (docs/05-combat.md): a charger at the run
-/// weighs its mass's heft this many times over...
-pub const PLOUGH_SPEED: u64 = 2;
+/// Charges by weight and speed (docs/05-combat.md): a charger weighs its
+/// mass's heft once over for every this many hundredths of a tile a second
+/// it hits home at (its momentum, see [`impact_percent`]), so cavalry at
+/// the gallop (6.5 tiles a second) weighs 2.6 times its heft and infantry
+/// at a run of 3 about 1.2...
+pub const PLOUGH_AT: u64 = 250;
 /// ...against the heft of the ranks it hits: up to this many deep on its
 /// front, one on its flank or rear (nobody braces a side), weighed by how
 /// closely they stand (see [`ploughs`], [`Formation::hold_percent`]).
@@ -231,10 +234,11 @@ fn driven(regs: &Regiments, i: usize) -> u8 {
 /// or loose infantry but stalls on a deep, close block, and anyone hit on
 /// the flank or rear is easily bowled over.
 fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: bool) -> u8 {
+    // In hundredths of a heft, rounding no fast charge down to nothing.
     let weight = units[regs.unit[i] as usize].mass.heft()
-        * PLOUGH_SPEED
+        * u64::from(regs.momentum(i))
         * regs.formation[i].charge_percent()
-        / 100;
+        / PLOUGH_AT;
     let depth = if front {
         formation::ranks(regs.files[j], regs.models[j]).min(PLOUGH_DEPTH)
     } else {
@@ -243,8 +247,46 @@ fn ploughs(regs: &Regiments, units: &[UnitStats], i: usize, j: usize, front: boo
     let hold = units[regs.unit[j] as usize].mass.heft()
         * u64::from(depth)
         * regs.formation[j].hold_percent(front);
-    let over = (weight * 100).saturating_sub(hold) / 100;
+    let over = weight.saturating_sub(hold) / 100;
     (over * PLOUGH_TICKS_PER).min(u64::from(PLOUGH_TICKS)) as u8
+}
+
+/// The most a charge's speed can add to its unit's charge bonus, percent:
+/// running downhill or at the run, faster than it marches.
+const IMPACT_MAX_PERCENT: u64 = 150;
+/// A braced regiment stops a charge that comes at its points within this
+/// angle of head-on (45 degrees); one that comes in more slantwise glances
+/// off them into the ranks, as onto any other front.
+const BRACED_ARC: u16 = 0x2000;
+
+/// How hard regiment `i` hits home, in percent of its unit's charge: its
+/// real speed over the last second (its momentum) against its own marching
+/// speed. A charge from a standstill hits soft, one slowed by mud, woods
+/// or a climb softer, one at the run or downhill harder, up to
+/// [`IMPACT_MAX_PERCENT`].
+pub(crate) fn impact_percent(regs: &Regiments, i: usize) -> u64 {
+    // Marching speed is in tiles a tick: as hundredths of a tile a second.
+    let speed =
+        (u64::try_from(regs.speed[i].raw()).unwrap_or(0) * u64::from(TICKS_PER_SECOND) * 100) >> 16;
+    if speed == 0 {
+        return 0;
+    }
+    (u64::from(regs.momentum(i)) * 100 / speed).min(IMPACT_MAX_PERCENT)
+}
+
+/// `bonus` scaled by `percent`, as a stored charge bonus.
+fn scaled(bonus: u8, percent: u64) -> u8 {
+    (u64::from(bonus) * percent / 100).min(u64::from(u8::MAX)) as u8
+}
+
+/// Whether regiment `i`, facing as it does, comes at `j` head on: within
+/// [`BRACED_ARC`] of straight into `j`'s facing.
+fn head_on(regs: &Regiments, i: usize, j: usize) -> bool {
+    let off = regs.facing[i]
+        .0
+        .wrapping_sub(regs.facing[j].0)
+        .wrapping_sub(Angle::HALF.0) as i16;
+    off.unsigned_abs() <= BRACED_ARC
 }
 
 /// A skirmisher steps back when an enemy melee block comes within this
@@ -1607,13 +1649,17 @@ impl Combat {
                         && regs.formation[i].can_charge()
                         && regs.crowd[i] <= CROWDING;
                     let front = || self.blocks[j].side_facing(me.centre) == Side::Front;
-                    if charging && regs.braced[j] && front() {
+                    // How hard it hits home: its speed over the last
+                    // second against its marching speed.
+                    let impact = impact_percent(regs, i);
+                    if charging && regs.braced[j] && front() && head_on(regs, i, j) {
                         // Onto braced points: the charge is spent on them,
                         // its weight turned back on the charger, and the
                         // charger, stopped dead, loses its next blow and
-                        // its ranks are thrown into disorder. (The spears
-                        // strike at once, as long weapons do when a foe
-                        // comes at their points.)
+                        // its ranks are thrown into disorder, the longer
+                        // the faster it came. (The spears strike at once,
+                        // as long weapons do when a foe comes at their
+                        // points.)
                         let (mine, theirs) = (
                             terrain.charge_bonus(
                                 units[regs.unit[i] as usize].charge_bonus,
@@ -1623,20 +1669,21 @@ impl Combat {
                             units[regs.unit[j] as usize].charge_bonus,
                         );
                         regs.charge[j] = CHARGE_TICKS;
-                        regs.charge_bonus[j] = mine.max(theirs);
-                        regs.disorder(i);
+                        regs.charge_bonus[j] = scaled(mine, impact).max(theirs);
+                        regs.disorder_for(i, impact);
                         regs.strike[i] = Strike::Rest;
+                        regs.spend_momentum(i);
                     } else if charging {
                         regs.charge[i] = CHARGE_TICKS;
-                        // A wedge drives its point home harder.
+                        // A wedge drives its point home harder, and speed
+                        // harder still.
                         let bonus = terrain.charge_bonus(
                             units[regs.unit[i] as usize].charge_bonus,
                             regs.position[i],
                             regs.position[j],
                         );
                         regs.charge_bonus[i] =
-                            (u64::from(bonus) * regs.formation[i].charge_percent() / 100)
-                                .min(u64::from(u8::MAX)) as u8;
+                            scaled(bonus, regs.formation[i].charge_percent() * impact / 100);
                         // Heavy enough, it ploughs into the ranks: they are
                         // driven back from it, and the charger strikes the
                         // men it knocks aside at once. (Routers are only
@@ -1649,6 +1696,9 @@ impl Combat {
                         } else {
                             ploughs(regs, units, i, j, front())
                         };
+                        // The charge is spent: to charge again at full
+                        // weight it must pull out and run up again.
+                        regs.spend_momentum(i);
                         if ploughed > 0 {
                             regs.ploughed[j] = ploughed;
                             regs.ploughed_by[j] = Some(regs.handle(i));
