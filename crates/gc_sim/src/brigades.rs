@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 
 use gc_fixed::{Angle, Fx, FxVec2};
 
-use crate::combat::Block;
+use crate::combat::{Block, OPEN_GROUND};
 use crate::formation::GROUP_GAP;
 use crate::hash::StateHasher;
 use crate::nav::{self, Nav};
@@ -402,6 +402,10 @@ pub(crate) struct Brigades {
     lost: Vec<u8>,
     /// Ticks in a row behind its place and not stepping.
     stall: Vec<u8>,
+    /// Held up last tick by a member in its way: the anchor does not slow
+    /// for it (waiting would not bring it on; the one before it moving
+    /// does).
+    held: Vec<bool>,
     /// Where its order sent it and how to face there.
     end: Vec<FxVec2>,
     facing: Vec<Option<Angle>>,
@@ -459,6 +463,7 @@ impl Brigades {
             mode: vec![Mode::Plain; regiments],
             lost: vec![0; regiments],
             stall: vec![0; regiments],
+            held: vec![false; regiments],
             end: vec![FxVec2::ZERO; regiments],
             facing: vec![None; regiments],
             ordered: vec![Fx::ZERO; regiments],
@@ -575,6 +580,7 @@ impl Brigades {
         self.mode[i] = Mode::Plain;
         self.lost[i] = 0;
         self.stall[i] = 0;
+        self.held[i] = false;
         self.end[i] = end;
         self.facing[i] = regs.target_facing[i];
         self.ordered[i] = regs.pace[i];
@@ -1284,7 +1290,9 @@ impl Brigades {
             regs.files_floor[i] = self.floor[i];
             regs.step_arc[i] = self.arc[i];
             if self.kept_up(regs, i, behind) {
-                lag = lag.max(behind);
+                if !self.held[i] {
+                    lag = lag.max(behind);
+                }
                 tail = tail.min(self.arc[i]);
             }
         }
@@ -1392,7 +1400,14 @@ impl Brigades {
                 // So fast along the track: faster over the ground when it
                 // must also come across to its lane, or it would fall
                 // behind doing so and the whole body wait for it.
-                let along = (b.speed + GAIN * behind).max(Fx::ZERO);
+                let mut along = (b.speed + GAIN * behind).max(Fx::ZERO);
+                // Ahead of its place in a narrows, it does not wait there
+                // for its place to come up, stopping the way for all
+                // behind it: it goes on through (the one before it
+                // permitting) and waits beyond.
+                if behind < -Fx::ONE && !nav.open_around(owner, here, OPEN_GROUND) {
+                    along = along.max(b.pace);
+                }
                 let to = target - here;
                 let (run, far) = (to.dot(b.at(self.arc[i]).1), to.length());
                 let slant = if run > Fx::ONE { (far / run).min(SLANT) } else { Fx::ONE };
@@ -1419,6 +1434,7 @@ impl Brigades {
                 }
             }
             let (mut target, mut pace) = (target, pace);
+            self.held[i] = room < pace;
             if room < pace {
                 // Held up short of its place with its lane off to one
                 // side: it comes across to its lane where it is, to pass
@@ -1451,6 +1467,7 @@ impl Brigades {
             self.mode[i] = from.mode[i];
             self.lost[i] = from.lost[i];
             self.stall[i] = from.stall[i];
+            self.held[i] = from.held[i];
             self.end[i] = from.end[i];
             self.facing[i] = from.facing[i];
             self.ordered[i] = from.ordered[i];
@@ -1504,6 +1521,7 @@ impl Brigades {
             h.u8(self.mode[i] as u8);
             h.u8(self.lost[i]);
             h.u8(self.stall[i]);
+            h.u8(u8::from(self.held[i]));
             vec(h, self.end[i]);
             h.u32(self.facing[i].map_or(u32::MAX, |a| u32::from(a.0)));
             vec(h, self.set[i]);
