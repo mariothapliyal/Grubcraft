@@ -221,6 +221,7 @@ impl Drill {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 },
             });
 
@@ -237,6 +238,7 @@ impl Drill {
                         facing,
                         files,
                         pace: Fx::ZERO,
+                        brigade: 0,
                     },
                 });
             }

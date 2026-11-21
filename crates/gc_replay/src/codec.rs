@@ -263,13 +263,18 @@ impl Writer {
                 facing,
                 files,
                 pace,
+                brigade,
             } => {
-                self.u8(1);
+                // A move in no brigade is written as it always was.
+                self.u8(if brigade == 0 { 1 } else { 52 });
                 self.handle(regiment);
                 self.vec(target);
                 self.opt_angle(facing);
                 self.var(u64::from(files));
                 self.fx(pace);
+                if brigade != 0 {
+                    self.var(u64::from(brigade));
+                }
             }
             Command::Attack { regiment, target } => {
                 self.u8(2);
@@ -282,13 +287,17 @@ impl Writer {
                 facing,
                 files,
                 pace,
+                brigade,
             } => {
-                self.u8(41);
+                self.u8(if brigade == 0 { 41 } else { 53 });
                 self.handle(regiment);
                 self.vec(target);
                 self.opt_angle(facing);
                 self.var(u64::from(files));
                 self.fx(pace);
+                if brigade != 0 {
+                    self.var(u64::from(brigade));
+                }
             }
             Command::Then { regiment, step } => {
                 self.u8(42);
@@ -300,12 +309,18 @@ impl Writer {
                         files,
                         pace,
                         hunt,
+                        brigade,
                     } => {
-                        self.u8(u8::from(hunt));
+                        // 0 and 1 for a step in no brigade, as always; 3 and 4
+                        // with its brigade after.
+                        self.u8(u8::from(hunt) + if brigade == 0 { 0 } else { 3 });
                         self.vec(target);
                         self.opt_angle(facing);
                         self.var(u64::from(files));
                         self.fx(pace);
+                        if brigade != 0 {
+                            self.var(u64::from(brigade));
+                        }
                     }
                     Step::Attack { target } => {
                         self.u8(2);
@@ -960,33 +975,36 @@ impl<'a> Reader<'a> {
                 position: self.vec()?,
                 facing: Angle(self.var_as()?),
             },
-            1 => Command::MoveTo {
+            tag @ (1 | 52) => Command::MoveTo {
                 regiment: self.handle()?,
                 target: self.vec()?,
                 facing: self.opt_angle()?,
                 files: self.var_as()?,
                 pace: self.fx()?,
+                brigade: if tag == 52 { self.var_as()? } else { 0 },
             },
             2 => Command::Attack {
                 regiment: self.handle()?,
                 target: self.handle()?,
             },
-            41 => Command::AttackMove {
+            tag @ (41 | 53) => Command::AttackMove {
                 regiment: self.handle()?,
                 target: self.vec()?,
                 facing: self.opt_angle()?,
                 files: self.var_as()?,
                 pace: self.fx()?,
+                brigade: if tag == 53 { self.var_as()? } else { 0 },
             },
             42 => Command::Then {
                 regiment: self.handle()?,
                 step: match self.u8()? {
-                    hunt @ (0 | 1) => Step::Move {
+                    tag @ (0 | 1 | 3 | 4) => Step::Move {
                         target: self.vec()?,
                         facing: self.opt_angle()?,
                         files: self.var_as()?,
                         pace: self.fx()?,
-                        hunt: hunt == 1,
+                        hunt: tag % 3 == 1,
+                        brigade: if tag >= 3 { self.var_as()? } else { 0 },
                     },
                     2 => Step::Attack {
                         target: self.handle()?,

@@ -379,8 +379,18 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         .into_iter()
         .map(|command| PlayerCommand { player: 0, command })
         .collect();
+    let goals: Vec<(RegimentHandle, FxVec2)> = orders
+        .iter()
+        .filter_map(|c| match c.command {
+            Command::MoveTo {
+                regiment, target, ..
+            } => Some((regiment, target)),
+            _ => None,
+        })
+        .collect();
     w.tick(&orders);
     let mut out = March::default();
+    let mut trace = Trace::start(&field, &w, &units, &handles, &goals);
     let mut arrived = vec![None; handles.len()];
     let mut last_pos: Vec<FxVec2> = handles
         .iter()
@@ -389,6 +399,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     let (mut woods, mut all) = (0u64, 0u64);
     for t in 1..=LIMIT {
         w.tick(&[]);
+        trace.frame(&w, &units, &handles);
         let mut moving = 0;
         for (n, &h) in handles.iter().enumerate() {
             let r = w.regiments.get(h).unwrap();
@@ -482,6 +493,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             break;
         }
     }
+    trace.finish();
     if std::env::var("VERBOSE").is_ok() {
         for n in 0..handles.len() {
             println!(
@@ -503,6 +515,98 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     out.in_woods = (100 * woods / all.max(1)) as u32;
     out.ideal_woods = (ideal_woods.0 / ideal_woods.1.max(1)) as u32;
     Some(out)
+}
+
+/// A recording of one march for pictures (TRACE_JSON=file): the ground,
+/// each regiment's goal, and every regiment's block each tick.
+struct Trace {
+    out: Option<(String, String)>,
+}
+
+impl Trace {
+    fn start(
+        field: &Field,
+        w: &World,
+        units: &[UnitStats],
+        handles: &[RegimentHandle],
+        goals: &[(RegimentHandle, FxVec2)],
+    ) -> Trace {
+        let Ok(path) = std::env::var("TRACE_JSON") else {
+            return Trace { out: None };
+        };
+        let f = |v: Fx| f64::from(v.raw()) / 65536.0;
+        let mut s = String::new();
+        s.push_str(&format!("{{\"tiles\":{},\"ground\":\"", field.map.tiles));
+        for y in 0..field.map.tiles as i32 {
+            for x in 0..field.map.tiles as i32 {
+                let p = FxVec2::from_ints(x, y) + FxVec2::new(Fx::ONE / 2, Fx::ONE / 2);
+                let c = field.cell(p).unwrap();
+                s.push(if field.sim_nav[c] == BLOCKED {
+                    '#'
+                } else if w.terrain().cover(p) == Cover::Wood {
+                    'w'
+                } else if field.sim_nav[c] > 1 {
+                    '~'
+                } else {
+                    '.'
+                });
+            }
+        }
+        s.push_str("\",\"goals\":[");
+        for (n, h) in handles.iter().enumerate() {
+            let g = goals.iter().find(|g| g.0 == *h).map(|g| g.1).unwrap();
+            let r = w.regiments.get(*h).unwrap();
+            let u = &units[r.unit as usize];
+            s.push_str(&format!(
+                "{}[{:.2},{:.2},{},{:.2}]",
+                if n > 0 { "," } else { "" },
+                f(g.x),
+                f(g.y),
+                r.unit,
+                f(u.speed)
+            ));
+        }
+        s.push_str("],\"frames\":[");
+        Trace {
+            out: Some((path, s)),
+        }
+    }
+
+    fn frame(&mut self, w: &World, units: &[UnitStats], handles: &[RegimentHandle]) {
+        let Some((_, s)) = &mut self.out else { return };
+        let f = |v: Fx| f64::from(v.raw()) / 65536.0;
+        if !s.ends_with('[') {
+            s.push(',');
+        }
+        s.push('[');
+        for (n, &h) in handles.iter().enumerate() {
+            let r = w.regiments.get(h).unwrap();
+            let u = &units[r.unit as usize];
+            let (fs, rs) = u.spacing(r.formation);
+            let (wd, dp) = formation::block_size(r.files, r.models, fs, rs);
+            let v = r.facing.to_vec();
+            s.push_str(&format!(
+                "{}[{:.2},{:.2},{:.3},{:.3},{:.2},{:.2},{},{}]",
+                if n > 0 { "," } else { "" },
+                f(r.position.x),
+                f(r.position.y),
+                f(v.x),
+                f(v.y),
+                f(wd),
+                f(dp),
+                u8::from(r.disorder > 0),
+                u8::from(r.moving)
+            ));
+        }
+        s.push(']');
+    }
+
+    fn finish(self) {
+        if let Some((path, mut s)) = self.out {
+            s.push_str("]}");
+            std::fs::write(path, s).unwrap();
+        }
+    }
 }
 
 #[test]

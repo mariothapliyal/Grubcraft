@@ -300,6 +300,7 @@ pub fn arranged_move(
                 s.files
             },
             pace,
+            brigade: order.brigade,
         });
     }
 }

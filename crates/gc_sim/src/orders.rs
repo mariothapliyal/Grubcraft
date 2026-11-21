@@ -57,6 +57,8 @@ pub enum Step {
         /// Tiles per second; zero is the regiment's own speed.
         pace: Fx,
         hunt: bool,
+        /// The brigade it marches in (see [`crate::brigades`]); 0 for none.
+        brigade: u16,
     },
     /// Close with an enemy regiment and fight it, as
     /// [`crate::Command::Attack`].
@@ -116,6 +118,7 @@ impl State for Step {
                 files,
                 pace,
                 hunt,
+                brigade,
             } => {
                 1u8.write(out);
                 target.write(out);
@@ -123,6 +126,7 @@ impl State for Step {
                 files.write(out);
                 pace.write(out);
                 hunt.write(out);
+                brigade.write(out);
             }
             Step::Attack { target } => {
                 0u8.write(out);
@@ -139,6 +143,7 @@ impl State for Step {
                 files: u16::read(input)?,
                 pace: Fx::read(input)?,
                 hunt: bool::read(input)?,
+                brigade: u16::read(input)?,
             },
             0 => Step::Attack {
                 target: RegimentHandle::read(input)?,
@@ -155,6 +160,7 @@ impl State for Step {
                 files,
                 pace,
                 hunt,
+                brigade,
             } => {
                 1u8.hash(h);
                 target.hash(h);
@@ -162,6 +168,7 @@ impl State for Step {
                 files.hash(h);
                 pace.hash(h);
                 hunt.hash(h);
+                brigade.hash(h);
             }
             Step::Attack { target } => {
                 0u8.hash(h);

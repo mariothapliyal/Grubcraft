@@ -670,6 +670,10 @@ pub enum Command {
         files: u16,
         /// Tiles per second; zero means the regiment's own speed.
         pace: Fx,
+        /// The brigade it marches in (see [`brigades`]): the moves one
+        /// player gives with the same number keep together on the way.
+        /// 0 for none.
+        brigade: u16,
     },
     /// Close with an enemy regiment and fight it (melee), or move into range
     /// and shoot it (ranged). The target must be one the player's side can
@@ -687,6 +691,7 @@ pub enum Command {
         facing: Option<Angle>,
         files: u16,
         pace: Fx,
+        brigade: u16,
     },
     /// A Shift-queued order: carry out `step` once everything the regiment
     /// was ordered before is done, or at once if it has nothing to do.
@@ -972,12 +977,14 @@ impl Command {
                 files,
                 pace,
                 hunt: false,
+                brigade,
             } => Command::MoveTo {
                 regiment,
                 target,
                 facing,
                 files,
                 pace,
+                brigade,
             },
             orders::Step::Move {
                 target,
@@ -985,12 +992,14 @@ impl Command {
                 files,
                 pace,
                 hunt: true,
+                brigade,
             } => Command::AttackMove {
                 regiment,
                 target,
                 facing,
                 files,
                 pace,
+                brigade,
             },
             orders::Step::Attack { target } => Command::Attack { regiment, target },
         }
@@ -2227,6 +2236,7 @@ impl World {
                 facing,
                 files,
                 pace,
+                brigade,
             }
             | Command::AttackMove {
                 regiment,
@@ -2234,6 +2244,7 @@ impl World {
                 facing,
                 files,
                 pace,
+                brigade,
             } => {
                 if self.deploying() {
                     return self.place(pc.player, regiment, target, facing, files);
@@ -2242,18 +2253,18 @@ impl World {
                 if !self.commands(pc.player, regiment) {
                     return false;
                 }
-                let hunt = matches!(pc.command, Command::AttackMove { .. }).then_some(
-                    orders::Step::Move {
-                        target,
-                        facing,
-                        files,
-                        pace,
-                        hunt: true,
-                    },
-                );
-                let done = self.march(regiment, target, facing, files, pace);
+                let hunt = matches!(pc.command, Command::AttackMove { .. });
+                let step = orders::Step::Move {
+                    target,
+                    facing,
+                    files,
+                    pace,
+                    hunt,
+                    brigade,
+                };
+                let done = self.march(regiment, step);
                 if done {
-                    self.regiments.fresh(regiment, hunt);
+                    self.regiments.fresh(regiment, hunt.then_some(step));
                 }
                 done
             }
@@ -3090,15 +3101,20 @@ impl World {
                 .is_none_or(|c| !c.has_job(&self.regiments, i))
     }
 
-    /// Send regiment `h` marching; the caller has checked who may order it.
-    fn march(
-        &mut self,
-        h: RegimentHandle,
-        target: FxVec2,
-        facing: Option<Angle>,
-        files: u16,
-        pace: Fx,
-    ) -> bool {
+    /// Send regiment `h` on the march `step` (a [`orders::Step::Move`]);
+    /// the caller has checked who may order it.
+    fn march(&mut self, h: RegimentHandle, step: orders::Step) -> bool {
+        let orders::Step::Move {
+            target,
+            facing,
+            files,
+            pace,
+            brigade,
+            ..
+        } = step
+        else {
+            return false;
+        };
         let order = Order {
             target,
             facing,
@@ -3108,14 +3124,10 @@ impl World {
         if !self.regiments.order(h, order) {
             return false;
         }
-        stand_back(
-            &mut self.regiments,
-            &self.units,
-            &self.nav,
-            &self.combat,
-            h.index as usize,
-        );
+        let i = h.index as usize;
+        stand_back(&mut self.regiments, &self.units, &self.nav, &self.combat, i);
         self.leave_off(h);
+        let _ = brigade;
         true
     }
 
@@ -3141,13 +3153,7 @@ impl World {
     fn start_step(&mut self, i: usize, step: orders::Step) -> bool {
         let h = self.regiments.handle(i);
         let done = match step {
-            orders::Step::Move {
-                target,
-                facing,
-                files,
-                pace,
-                ..
-            } => self.march(h, target, facing, files, pace),
+            orders::Step::Move { .. } => self.march(h, step),
             orders::Step::Attack { target } => self.charge_at(h, target),
         };
         if done {

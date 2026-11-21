@@ -125,6 +125,10 @@ pub struct GroupOrder {
     /// frontage is refitted so the line spans about this much; `None` keeps
     /// every regiment's frontage.
     pub width: Option<Fx>,
+    /// The brigade the regiments march in (see [`crate::brigades`]): a
+    /// number of the ordering player's choosing, no other brigade of
+    /// theirs on the march has; 0 sends each on its own.
+    pub brigade: u16,
 }
 
 /// Turn a group order into one `MoveTo` per regiment: the regiments stand side
@@ -207,6 +211,7 @@ pub fn group_move(members: &mut [GroupMember], order: GroupOrder, out: &mut Vec<
                 facing: Some(facing),
                 files: if order.width.is_some() { m.files } else { 0 },
                 pace,
+                brigade: order.brigade,
             });
         }
     }
