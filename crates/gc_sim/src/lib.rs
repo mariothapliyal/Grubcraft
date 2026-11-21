@@ -3882,10 +3882,27 @@ impl World {
 
     /// Where a regiment is still headed: the waypoints ahead of it, ending
     /// at its destination. Empty when it is standing, or waiting for a route.
+    /// For one marching in a brigade (see [`brigades`]), the turns of the
+    /// brigade's way ahead of it; [`World::goal`] is where it goes from the
+    /// last of them.
     pub fn route(&self, h: RegimentHandle) -> &[FxVec2] {
         match self.regiments.resolve(h) {
-            Some(i) => self.nav.route_ahead(i, self.regiments.target[i]),
+            Some(i) => match self.brigades.way(i) {
+                Some(way) => way,
+                None => self.nav.route_ahead(i, self.regiments.target[i]),
+            },
             None => &[],
+        }
+    }
+
+    /// Where a regiment's march ends: the place its order sent it (marching
+    /// in a brigade, that is not the point it walks at now). `None` when it
+    /// has nowhere to go.
+    pub fn goal(&self, h: RegimentHandle) -> Option<FxVec2> {
+        let i = self.regiments.resolve(h)?;
+        match self.brigades.of(i) {
+            Some((_, end)) => Some(end),
+            None => self.regiments.target[i],
         }
     }
 

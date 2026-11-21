@@ -168,7 +168,11 @@ impl State for Step {
                 files.hash(h);
                 pace.hash(h);
                 hunt.hash(h);
-                brigade.hash(h);
+                // Only when it has one: a match without brigades hashes
+                // as it did before there were any.
+                if brigade != 0 {
+                    brigade.hash(h);
+                }
             }
             Step::Attack { target } => {
                 0u8.hash(h);

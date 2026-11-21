@@ -187,7 +187,7 @@ impl Orders {
                 last_distance: None,
                 retries,
             });
-            self.hands.push(now, command(w.regiment, &w.act));
+            self.hands.push(now, command(w.regiment, &w.act, brigade_of(w.group)));
         }
         self.paid_groups = paid_groups;
     }
@@ -425,7 +425,29 @@ fn same(a: &Act, b: &Act) -> bool {
     }
 }
 
-fn command(regiment: RegimentHandle, act: &Act) -> Command {
+/// Group numbers from here are brigades (see [`brigade_group`]).
+const BRIGADE_GROUPS: u32 = 0x4000_0000;
+
+/// The group number for moves that are not only given together but march
+/// as one body, brigade `n` of this player's (see [`gc_sim::brigades`]):
+/// they set off together, keep their shape and arrive together. The same
+/// `n` each time the same body is ordered, so an order sent again changes
+/// nothing.
+pub fn brigade_group(n: u8) -> u32 {
+    BRIGADE_GROUPS + u32::from(n) + 1
+}
+
+/// The brigade number the moves of `group` carry: none unless it is a
+/// [`brigade_group`]. A computer player's numbers lie above those a
+/// person's own orders take.
+fn brigade_of(group: u32) -> u16 {
+    match group.checked_sub(BRIGADE_GROUPS) {
+        Some(n @ 1..=256) => gc_sim::brigades::PLAYER_NUMBERS + n as u16,
+        _ => 0,
+    }
+}
+
+fn command(regiment: RegimentHandle, act: &Act, brigade: u16) -> Command {
     match *act {
         Act::Move {
             to,
@@ -440,7 +462,7 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
                 files: 0,
                 pace: to_fx(pace),
                 hunt,
-                brigade: 0,
+                brigade,
             },
             false,
         ),

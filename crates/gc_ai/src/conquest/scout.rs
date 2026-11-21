@@ -53,7 +53,8 @@ const STALE: f32 = 45.0;
 /// How much of the time a place would take to reach counts against it, as a
 /// share of the time since it was last seen.
 const TRAVEL_COST: f32 = 0.5;
-/// The group of the scout's orders (the army's are `u32::MAX - 1` to `- 3`).
+/// The group of the scout's orders (the army's are brigade groups, see
+/// `crate::orders::brigade_group`).
 const GROUP: u32 = u32::MAX - 9;
 
 /// A place on the map worth a look.

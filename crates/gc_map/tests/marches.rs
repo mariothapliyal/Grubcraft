@@ -225,7 +225,8 @@ impl Field {
     }
 }
 
-fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> RegimentHandle {
+/// `None` where the ground has no room for it.
+fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> Option<RegimentHandle> {
     let before: Vec<_> = w.regiments.iter().map(|r| r.handle).collect();
     w.tick(&[PlayerCommand {
         player: 0,
@@ -239,7 +240,6 @@ fn spawn(w: &mut World, unit: u16, at: FxVec2, facing: gc_fixed::Angle) -> Regim
         .iter()
         .map(|r| r.handle)
         .find(|h| !before.contains(h))
-        .unwrap()
 }
 
 #[derive(Debug, Default, Clone)]
@@ -266,6 +266,11 @@ pub struct March {
     /// Marching regiment-ticks by [full, slowed, stopped] x [in disorder,
     /// narrowed into a column, otherwise].
     pub ticks_by: [[u32; 3]; 3],
+    /// Cohesion (docs/42): ticks from the first regiment's arrival to the
+    /// last's, and regiment-ticks marching in disorder as a percent of all
+    /// regiment-ticks marching.
+    pub spread: u32,
+    pub disorder_share: u32,
 }
 
 /// Pick the `k`th march on a field: a start where the army fits and a goal
@@ -326,7 +331,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             let at = a + side * Fx::from_int((n % 3 - 1) * 9) - dir * Fx::from_int(n / 3 * 8);
             spawn(&mut w, unit, at, facing)
         })
-        .collect();
+        .collect::<Option<_>>()?;
     let mut members: Vec<GroupMember> = handles
         .iter()
         .map(|&h| {
@@ -398,6 +403,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         .map(|&h| w.regiments.get(h).unwrap().position)
         .collect();
     let (mut woods, mut all) = (0u64, 0u64);
+    let mut marching = 0u32;
     for t in 1..=LIMIT {
         w.tick(&[]);
         trace.frame(&w, &units, &handles);
@@ -406,6 +412,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             let r = w.regiments.get(h).unwrap();
             if r.moving {
                 moving += 1;
+                marching += 1;
                 all += u64::from(r.models);
                 if w.terrain().cover(r.position) == Cover::Wood {
                     woods += u64::from(r.models);
@@ -504,6 +511,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         }
     }
     out.stuck = arrived.iter().filter(|a| a.is_none()).count();
+    let first = arrived.iter().flatten().min().copied().unwrap_or(out.ticks);
+    out.spread = out.ticks - first;
+    out.disorder_share = 100 * out.disordered / marching.max(1);
     out.ideal = *ideal.iter().max().unwrap();
     let scores: Vec<u32> = (0..handles.len())
         .map(|n| {
@@ -630,6 +640,7 @@ fn report_marches() {
     let mut army = 0;
     let mut by = [[0u32; 3]; 3];
     let (mut sum, mut n, mut stuck, mut woods, mut dis, mut held) = (0, 0, 0, 0, 0, 0);
+    let (mut last, mut spread, mut share) = (0, 0, 0);
     let started = std::time::Instant::now();
     for kind in 0..3 {
         for seed in 1..=4u64 {
@@ -643,7 +654,10 @@ fn report_marches() {
                     continue;
                 };
                 println!(
-                    "{id:4}: score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) disordered {:5} held {:5}",
+                    "{id:4}: last {:5.1}s spread {:4.1}s disorder {:2}% | score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) disordered {:5} held {:5}",
+                    f64::from(m.ticks) / 20.0,
+                    f64::from(m.spread) / 20.0,
+                    m.disorder_share,
                     m.score,
                     m.army,
                     m.ticks,
@@ -655,6 +669,9 @@ fn report_marches() {
                     m.held
                 );
                 sum += m.score;
+                last += m.ticks;
+                spread += m.spread;
+                share += m.disorder_share;
                 army += m.army;
                 n += 1;
                 stuck += m.stuck;
@@ -669,6 +686,12 @@ fn report_marches() {
             }
         }
     }
+    println!(
+        "COHESION over {n} marches: last arrival {:.1}s, first to last {:.1}s, in disorder {}% of the march",
+        f64::from(last) / 20.0 / f64::from(n.max(1)),
+        f64::from(spread) / 20.0 / f64::from(n.max(1)),
+        share / n.max(1)
+    );
     println!(
         "MEAN score {}% army {}% over {n} marches, stuck {stuck}, woods {}%, disordered {}, held {} ({:.1}s)",
         sum / n.max(1),
@@ -703,7 +726,7 @@ fn debug_route() {
     let units = units();
     let mut w = field.world(&units);
     let (a, b) = pick(&field, &w, seed * 1000 + k).unwrap();
-    let h = spawn(&mut w, 0, a, gc_fixed::Angle::of_vec(b - a));
+    let h = spawn(&mut w, 0, a, gc_fixed::Angle::of_vec(b - a)).unwrap();
     w.tick(&[PlayerCommand {
         player: 0,
         command: Command::MoveTo {
