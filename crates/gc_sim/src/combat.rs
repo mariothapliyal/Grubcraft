@@ -2231,19 +2231,39 @@ impl Combat {
             },
         );
         let from = regs.position[i];
-        let pace =
-            Fx::from_raw((i64::from(regs.speed[i].raw()) * i64::from(CROWD_EVERY) * 3 / 4) as i32);
+        let pace = Self::way_pace(regs, i);
         let step = if deepest > Fx::ZERO {
             regs.home[i].get_or_insert(from);
             out * deepest.min(pace)
         } else if let Some(home) = regs.home[i] {
             let back = home - from;
-            if back.length() <= pace {
-                regs.home[i] = None;
-                back
+            let (back, there) = if back.length() <= pace {
+                (back, true)
             } else {
-                back.normalized() * pace
+                (back.normalized() * pace, false)
+            };
+            // Not into a friend still standing aside, or one it shoved
+            // that has yet to step back itself.
+            let then = Block {
+                centre: from + back,
+                ..me
+            };
+            let mut taken = false;
+            self.each_touching(regs, i, then.centre, slots, |j| {
+                let them = &self.blocks[j];
+                taken |= !stances.hostile(owner, regs.owner[j])
+                    && !regs.marching(j)
+                    && then
+                        .overlap_over(them, CROWDING)
+                        .is_some_and(|deep| me.overlap_over(them, deep).is_none());
+            });
+            if taken {
+                return false;
             }
+            if there {
+                regs.home[i] = None;
+            }
+            back
         } else {
             return false;
         };
@@ -2262,6 +2282,12 @@ impl Combat {
             regs.home[i] = None;
         }
         false
+    }
+
+    /// How far regiment `i` sidesteps each time it looks (see
+    /// [`CROWD_EVERY`]) while it makes way: three quarters of its pace.
+    fn way_pace(regs: &Regiments, i: usize) -> Fx {
+        Fx::from_raw((i64::from(regs.speed[i].raw()) * i64::from(CROWD_EVERY) * 3 / 4) as i32)
     }
 
     /// Regiment `i`, standing at ease in friends that stand too, makes
@@ -2329,8 +2355,14 @@ impl Combat {
         if length < ROOM_QUIET {
             return;
         }
-        let step = if length > ROOM_STEP {
-            push.normalized() * ROOM_STEP
+        // Shoved by one making way, it keeps up with it.
+        let most = if shoved {
+            Self::way_pace(regs, i).max(ROOM_STEP)
+        } else {
+            ROOM_STEP
+        };
+        let step = if length > most {
+            push.normalized() * most
         } else {
             push
         };
