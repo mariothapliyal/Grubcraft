@@ -6,14 +6,14 @@
       "--regiments-per-player",
       "150"
     ],
-    "instructions": 7970988448
+    "instructions": 8019945027
   },
   "pathing-storm": {
     "args": [],
-    "instructions": 2523160262
+    "instructions": 2538046375
   },
   "field-8000pt-2v2": {
     "args": [],
-    "instructions": 9519626756
+    "instructions": 9570004758
   }
 }

@@ -4211,8 +4211,12 @@ impl Running {
             let stats = &self.units.stats[r.unit as usize];
             let (file_spacing, rank_spacing) = stats.spacing(r.formation);
             let (file_spacing, rank_spacing) = (fx_to_f32(file_spacing), fx_to_f32(rank_spacing));
-            let (width, depth) = stats.block_size_in(r.formation, r.files, r.models);
-            let (width, depth) = (fx_to_f32(width), fx_to_f32(depth));
+            let size = stats.block_size_in(r.formation, r.files, r.models);
+            // Looked at where the block is drawn, so its ranks loosen as
+            // its drawn corners cross into the trees.
+            let under_trees =
+                terrain.under_trees(fx_vec(pos), gc_fixed::Angle::of_vec(fx_vec(facing)), size);
+            let (width, depth) = (fx_to_f32(size.0), fx_to_f32(size.1));
             // Marks of a regiment on a wall sit on the wall top.
             let up = self.mark_lift(&r);
             // No plate under the regiment we ride with: the eye is inside it
@@ -4247,6 +4251,7 @@ impl Running {
                 engaged: r.engaged,
                 routing: r.morale.broken(),
                 disorder: f32::from(r.disorder) / f32::from(gc_sim::combat::DISORDER_TICKS),
+                wooded: under_trees as f32 / gc_sim::terrain::BLOCK_POINTS as f32,
                 charge: r.charge,
                 ploughed: (f32::from(r.ploughed) / puppets::DENT_EASE_TICKS).min(1.0),
                 ploughed_by: r.ploughed_by,

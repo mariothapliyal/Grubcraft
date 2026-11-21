@@ -17,6 +17,7 @@ use gc_map::{FieldMap, Map};
 use gc_sim::formation::{self, GroupMember, GroupOrder};
 use gc_sim::nav::{BLOCKED, CELLS_PER_TILE};
 use gc_sim::scenario::DRILL_UNITS;
+use gc_sim::terrain::BLOCK_POINTS;
 use gc_sim::{
     Capacities, Command, Cover, Mass, MatchSetup, PlayerCommand, RegimentHandle, UnitStats, World,
 };
@@ -256,6 +257,10 @@ pub struct March {
     pub army: u32,
     /// Soldier-ticks in woods, percent of all soldier-ticks marching.
     pub in_woods: u32,
+    /// The share of marching soldiers under trees, percent: each block's
+    /// soldiers by the share of its points in woods (see
+    /// `Terrain::under_trees`), where `in_woods` goes by its middle.
+    pub under_trees: u32,
     /// Share of the ideal routes' soldier steps in woods, percent.
     pub ideal_woods: u32,
     /// Regiment-ticks in disorder.
@@ -405,7 +410,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
         .iter()
         .map(|&h| w.regiments.get(h).unwrap().position)
         .collect();
-    let (mut woods, mut all) = (0u64, 0u64);
+    let (mut woods, mut all, mut under_trees) = (0u64, 0u64, 0u64);
     let mut marching = 0u32;
     for t in 1..=LIMIT {
         w.tick(&[]);
@@ -423,6 +428,9 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                 if w.terrain().cover(r.position) == Cover::Wood {
                     woods += u64::from(r.models);
                 }
+                let size = units[r.unit as usize].block_size_in(r.formation, r.files, r.models);
+                let under = w.terrain().under_trees(r.position, r.facing, size);
+                under_trees += u64::from(r.models) * under as u64;
                 if r.disorder > 0 {
                     out.disordered += 1;
                 }
@@ -433,7 +441,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                 let moved = (r.position - last_pos[n]).length();
                 let u = &units[r.unit as usize];
                 let dir = r.position - last_pos[n];
-                let full = w.terrain().going(
+                let full = w.terrain().block_going(
                     pace_of[n] / 20,
                     last_pos[n],
                     if moved > Fx::ZERO {
@@ -442,6 +450,8 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
                         FxVec2::ZERO
                     },
                     u.mass,
+                    r.facing,
+                    u.block_size_in(r.formation, r.files, r.models),
                 );
                 let kind = if moved * 10 >= full * 9 {
                     0
@@ -530,6 +540,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
     out.score = scores.iter().sum::<u32>() / scores.len() as u32;
     out.army = 100 * out.ideal / out.ticks.max(1);
     out.in_woods = (100 * woods / all.max(1)) as u32;
+    out.under_trees = (100 * under_trees / (all * BLOCK_POINTS as u64).max(1)) as u32;
     out.ideal_woods = (ideal_woods.0 / ideal_woods.1.max(1)) as u32;
     Some(out)
 }
@@ -646,6 +657,7 @@ fn report_marches() {
     let mut army = 0;
     let mut by = [[0u32; 3]; 3];
     let (mut sum, mut n, mut stuck, mut woods, mut dis, mut held) = (0, 0, 0, 0, 0, 0);
+    let mut under = 0;
     let (mut last, mut spread, mut share) = (0, 0, 0);
     let started = std::time::Instant::now();
     for kind in 0..3 {
@@ -660,7 +672,7 @@ fn report_marches() {
                     continue;
                 };
                 println!(
-                    "{id:4}: last {:5.1}s spread {:4.1}s disorder {:2}% | score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) disordered {:5} held {:5}",
+                    "{id:4}: last {:5.1}s spread {:4.1}s disorder {:2}% | score {:3}% army {:3}% ticks {:5} ideal {:5} stuck {} woods {:2}% (ideal {:2}%) under trees {:2}% disordered {:5} held {:5}",
                     f64::from(m.ticks) / 20.0,
                     f64::from(m.spread) / 20.0,
                     m.disorder_share,
@@ -671,6 +683,7 @@ fn report_marches() {
                     m.stuck,
                     m.in_woods,
                     m.ideal_woods,
+                    m.under_trees,
                     m.disordered,
                     m.held
                 );
@@ -682,6 +695,7 @@ fn report_marches() {
                 n += 1;
                 stuck += m.stuck;
                 woods += m.in_woods;
+                under += m.under_trees;
                 dis += m.disordered;
                 held += m.held;
                 for (row, add) in by.iter_mut().zip(m.ticks_by) {
@@ -699,10 +713,11 @@ fn report_marches() {
         share / n.max(1)
     );
     println!(
-        "MEAN score {}% army {}% over {n} marches, stuck {stuck}, woods {}%, disordered {}, held {} ({:.1}s)",
+        "MEAN score {}% army {}% over {n} marches, stuck {stuck}, woods {}%, under trees {}%, disordered {}, held {} ({:.1}s)",
         sum / n.max(1),
         army / n.max(1),
         woods / n.max(1),
+        under / n.max(1),
         dis / n.max(1),
         held / n.max(1),
         started.elapsed().as_secs_f64()

@@ -1957,10 +1957,16 @@ impl Regiments {
                 } else {
                     FxVec2::ZERO
                 };
-                let mass = units[self.unit[i] as usize].mass;
-                let step = combat
-                    .air()
-                    .march(terrain.going(step, self.position[i], dir, mass));
+                let stats = &units[self.unit[i] as usize];
+                let size = stats.block_size_in(self.formation[i], self.files[i], self.models[i]);
+                let step = combat.air().march(terrain.block_going(
+                    step,
+                    self.position[i],
+                    dir,
+                    stats.mass,
+                    self.facing[i],
+                    size,
+                ));
                 let ghost = self.stuck[i] >= GHOST;
                 let full = step;
                 let step = if ghost {
