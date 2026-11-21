@@ -87,20 +87,21 @@ impl Conquest {
     /// How far from its edge building slot `i` reinforces, in tiles, if it
     /// is a reinforcement point: a finished reinforcing building
     /// ([`REINFORCE_REACH`]), a linked veins building (its veins' reach)
-    /// or a building powering a field (the field's). The one rule both
+    /// or a building powering a field (the field's), the furthest of
+    /// those that apply. The one rule both
     /// the refilling and [`Conquest::reinforce_spot`] go by.
     fn point_reach(&self, i: usize) -> Option<i32> {
         let st = &self.structures;
         if !st.stands(i) || !st.finished(i) {
             return None;
         }
-        if self.reinforcing[usize::from(st.kind_of(i))] {
-            return Some(REINFORCE_REACH);
-        }
         let b = st.stats_of(i);
         let field = b.flags & POWERS_FIELD != 0 && b.field > 0;
         let veins = st.links_veins(i).then(|| st.vein_reach(i)).flatten();
-        veins.or(field.then_some(b.field)).map(i32::from)
+        let spread = veins.or(field.then_some(b.field)).map(i32::from);
+        let post = self.reinforcing[usize::from(st.kind_of(i))].then_some(REINFORCE_REACH);
+        // A Hive is both: its veins reach further than a hall's 8 tiles.
+        post.max(spread)
     }
 
     /// Every reinforcement point standing, as (slot, reach), into `points`.
@@ -132,7 +133,9 @@ impl Conquest {
             if !regs.alive[i] {
                 continue;
             }
-            let quiet = regs.engaged[i].is_none() && !regs.morale_state[i].broken();
+            // Standing: not marching, fighting or running.
+            let quiet =
+                regs.still(i) && regs.engaged[i].is_none() && !regs.morale_state[i].broken();
             if !quiet || !self.short_of_men(regs, units, i) {
                 regs.refill[i] = 0;
                 continue;
@@ -450,7 +453,10 @@ mod tests {
         assert_eq!(models(&w, h), 24);
         let spot = w.reinforce_spot(0, FxVec2::from_ints(80, 21)).unwrap();
         let c = w.conquest.as_ref().unwrap();
-        assert!(c.reinforces_at(0, spot), "the spot is a reinforcement point");
+        assert!(
+            c.reinforces_at(0, spot),
+            "the spot is a reinforcement point"
+        );
         assert!(
             spot.x > FxVec2::from_ints(22, 0).x,
             "on the side facing the asker"

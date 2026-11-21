@@ -96,7 +96,7 @@
         (
             name: "Stables",
             blurb: "Trains Mounted Samurai and Yabusame Riders. Tier 2, needs Marrow. Cavalry ride down archers and routing troops.",
-            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse. Damaged cavalry refill near it.",
+            summary: "Trains Mounted Samurai (shock cavalry) and Yabusame Riders (horse archers). Tier 2 and needs Marrow. Cavalry ride down archers, artillery and routing troops; keep spears nearby for the enemy's own horse. Damaged regiments refill near it.",
             notes: [],
             tips: [
                 (icon: Spear, text: "Keep spear regiments nearby, since the enemy's own horse will come for your cavalry."),

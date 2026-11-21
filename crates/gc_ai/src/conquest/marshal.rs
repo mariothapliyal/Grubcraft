@@ -11,7 +11,7 @@
 
 use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
-use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND, Waiting};
+use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
 use glam::Vec2;
 
 use super::raider::Raider;
@@ -109,9 +109,6 @@ const WAITING: f32 = 20.0;
 const ABREAST: f32 = 7.0;
 /// A regiment at home below this share of its soldiers goes to reinforce.
 const MEND_BELOW: f32 = 0.85;
-/// The order group of regiments sent to reinforce (the army's marches are
-/// `u32::MAX - 1` to `- 3`).
-const MEND_GROUP: u32 = u32::MAX - 4;
 /// An attack falls back once the army is down to this share of the
 /// soldiers it set out with.
 const FALL_BACK_SHARE: f32 = 0.35;
@@ -726,6 +723,10 @@ impl Marshal {
     /// the walk. A threat at home sends them out with the rest.
     fn pick_mending(&mut self, s: &Sense, army: &[&Seen]) {
         let was = core::mem::take(&mut self.mending);
+        // With nowhere to refill, they stay with the army.
+        if (self.rally).is_none_or(|at| s.world.reinforce_spot(s.party, to_fx_vec(at)).is_none()) {
+            return;
+        }
         self.mending.extend(
             army.iter()
                 .filter(|r| !self.out.contains(&r.handle))
@@ -739,13 +740,7 @@ impl Marshal {
     /// point yet marches to the nearest one.
     fn send_to_reinforce(&mut self, s: &Sense, army: &[&Seen]) {
         for r in army.iter().filter(|r| self.mending.contains(&r.handle)) {
-            let refilling = (s.world.regiments.feedback(r.handle)).is_some_and(|f| {
-                matches!(
-                    f.waiting,
-                    Some(Waiting::Reinforcing | Waiting::ShortToReinforce)
-                )
-            });
-            if refilling {
+            if s.world.reinforces_at(s.party, to_fx_vec(r.pos)) {
                 continue;
             }
             let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
@@ -760,7 +755,8 @@ impl Marshal {
                     hunt: false,
                 },
                 priority: ROUTINE,
-                group: MEND_GROUP,
+                // Each to its own spot: an order of its own.
+                group: 0,
             });
         }
     }
