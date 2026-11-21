@@ -29,8 +29,8 @@ impl Steward {
         if look.mine.iter().any(|m| m.view.building == b.id) {
             return None;
         }
-        let trains = (look.mine.iter())
-            .any(|m| m.finished() && trains_fighters(s, m.view.building));
+        let trains =
+            (look.mine.iter()).any(|m| m.finished() && trains_fighters(s, m.view.building));
         (trains && look.army.len() >= ARMY_FIRST).then(|| (b, self.inner_spot(look)))
     }
 

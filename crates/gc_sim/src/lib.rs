@@ -4198,6 +4198,18 @@ impl World {
         self.conquest.iter().flat_map(|c| c.heroes.iter())
     }
 
+    /// Regiment `h`'s hit points left and at full strength (a hero's
+    /// with its level's).
+    pub fn health_of(&self, h: RegimentHandle) -> Option<(u32, u32)> {
+        let i = self.regiments.resolve(h)?;
+        let stats = self.units.get(usize::from(self.regiments.unit[i]))?;
+        let base = i * MAX_MODELS as usize;
+        let left = (self.regiments.hp[base..][..usize::from(self.regiments.models[i])].iter())
+            .map(|&hp| u32::from(hp))
+            .sum();
+        Some((left, self.regiments.full_hp(i, stats)))
+    }
+
     /// The hero regiment `h` is, if it is one.
     pub fn hero_of(&self, h: RegimentHandle) -> Option<&heroes::Hero> {
         self.conquest.as_ref()?.heroes.of_regiment(h)

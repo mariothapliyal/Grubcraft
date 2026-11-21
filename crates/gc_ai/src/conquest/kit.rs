@@ -115,7 +115,8 @@ impl Kit {
     /// Whether `id` is one of this faction's fighting regiment types, or
     /// one of its heroes, who march and fight with the army.
     pub fn is_fighter(&self, id: UnitId) -> bool {
-        self.unit(id).is_some_and(|u| u.fighter || u.unit.hero.is_some())
+        self.unit(id)
+            .is_some_and(|u| u.fighter || u.unit.hero.is_some())
     }
 
     /// The unit type that trades: the Concord's Caravan.
