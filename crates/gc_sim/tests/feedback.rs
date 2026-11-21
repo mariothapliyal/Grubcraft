@@ -65,6 +65,7 @@ fn a_regiment_shows_what_it_is_doing() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     let r = w.regiments.feedback(h).unwrap();
@@ -120,6 +121,7 @@ fn an_attack_move_shows_as_advancing() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(w.regiments.feedback(h).unwrap().doing, Doing::Advancing);

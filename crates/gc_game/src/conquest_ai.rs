@@ -326,6 +326,9 @@ mod tests {
         /// The first tick (checked each second) two sides' regiments
         /// fought in melee within [`CONTACT_TILES`] of each other.
         pub first_contact: Option<u32>,
+        /// Each side's most regiments marching in one brigade at once
+        /// (docs/42), checked each second.
+        pub brigaded: Vec<usize>,
     }
 
     /// How near two sides' regiments in melee count as having met.
@@ -504,6 +507,7 @@ mod tests {
         let mut noted = vec![0u32; factions.len()];
         let mut works = vec![Works::default(); factions.len()];
         let mut first_contact = None;
+        let mut brigaded = vec![0; factions.len()];
         let mut ledgers = vec![Ledger::default(); factions.len()];
         // The starting store isn't income.
         for (p, l) in ledgers.iter_mut().enumerate() {
@@ -565,6 +569,18 @@ mod tests {
                 l.last = (b.grub, b.marrow);
             }
             if t.is_multiple_of(TICKS_PER_SECOND) {
+                let mut marching: std::collections::HashMap<(PlayerId, u16), usize> =
+                    Default::default();
+                for r in world.regiments.iter() {
+                    if let Some(b) = world.brigade(r.handle) {
+                        *marching.entry((r.owner, b.number)).or_default() += 1;
+                    }
+                }
+                for ((owner, _), n) in marching {
+                    if let Some(most) = brigaded.get_mut(usize::from(owner)) {
+                        *most = (*most).max(n);
+                    }
+                }
                 // Workers never run, whatever comes at them (Mario,
                 // 2026-11-02): they work on and die where they stand, with
                 // no nerve to lose (no "bloodied" or other reasons shown).
@@ -668,6 +684,7 @@ mod tests {
             verdict: world.verdict(),
             ticks: world.tick_count(),
             first_contact,
+            brigaded,
             sides: factions
                 .iter()
                 .enumerate()
@@ -1433,6 +1450,26 @@ mod tests {
             let played = play(0, 0, factions, &[Difficulty::Veteran], seed, 60);
             assert!(played.winner().is_some(), "{}", played.report());
         }
+    }
+
+    /// A computer player's army marches as a brigade (docs/42): in a
+    /// one-on-one on Ribcage Pass the side that masses an army has had
+    /// at least six of its regiments marching in one brigade by thirty
+    /// minutes. (Its orders reach its regiments one by one, and it sends
+    /// armies at buildings, where the places it gives are out of sight
+    /// of each other: both once kept its brigades from forming.)
+    #[test]
+    #[ignore = "slow in debug builds: CI runs it with --release"]
+    fn ai_only_armies_march_as_brigades() {
+        let factions = [Faction::EmberClans, Faction::CarrionConcord];
+        let played = play(0, 0, &factions, &[Difficulty::Veteran], 7, 30);
+        println!("most regiments in one brigade: {:?}", played.brigaded);
+        assert!(
+            played.brigaded.iter().any(|&n| n >= 6),
+            "{:?}\n{}",
+            played.brigaded,
+            played.report()
+        );
     }
 
     #[test]

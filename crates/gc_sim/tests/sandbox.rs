@@ -76,6 +76,7 @@ fn tuned_speed_applies_to_regiments_on_the_field() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     let walked = |w: &mut World| {

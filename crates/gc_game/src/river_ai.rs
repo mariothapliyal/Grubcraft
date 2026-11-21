@@ -134,6 +134,7 @@ fn computer_players_clear_jams_off_their_bridges_and_mend_them() {
                     facing: None,
                     files: 0,
                     pace: gc_fixed::Fx::ZERO,
+                    brigade: 0,
                 },
             });
         }

@@ -416,6 +416,7 @@ fn a_worker_given_another_order_keeps_its_load() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     run(&mut w, 20 * TICKS_PER_SECOND);

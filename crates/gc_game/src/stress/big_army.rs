@@ -7,7 +7,9 @@
 use gc_fixed::FxVec2;
 use gc_sim::{RegimentHandle, TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, EAST, Real, WEST, centre, grid, move_to, of, put_up, soldiers, spawn};
+use super::arena::{
+    Arena, EAST, Real, WEST, centre, gated_wall, grid, move_to, of, put_up, soldiers, spawn,
+};
 use super::{Report, Scenario, seconds};
 
 pub(super) const GATE: Scenario = Scenario {
@@ -132,15 +134,7 @@ const GATE_LIMIT: u32 = 240;
 
 fn gate(real: &Real, report: &mut Report) {
     let mut world = Arena::new(GATE_TILES).world(real, 31, 0);
-    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
-    let stats = &real.table.stats[usize::from(gate)];
-    let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
-    let mut wall: Vec<_> = (0..GATE_TILES as i32)
-        .filter(|x| !span.contains(x))
-        .map(|x| (palisade, (x, WALL_ROW), 0))
-        .collect();
-    wall.push((gate, (GATE_X, WALL_ROW), 1));
-    put_up(&mut world, 0, &wall);
+    let span = gated_wall(real, &mut world, GATE_TILES, WALL_ROW, GATE_X);
     let middle = (span.start + span.end) / 2;
 
     // Eight abreast, four deep, south of the wall, to the same grid north

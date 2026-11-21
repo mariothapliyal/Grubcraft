@@ -56,8 +56,8 @@ const AVOID_NEAR: f32 = 25.0;
 const HOME: f32 = 12.0;
 /// The longest the run home is given before they count as home.
 const HOME_LIMIT: u32 = 90 * TICKS_PER_SECOND;
-/// The group of the raiders' moves (the army's are `u32::MAX - 1` to `- 3`,
-/// the scout's `- 9`).
+/// The group of the raiders' moves (the army's are brigade groups, see
+/// `crate::orders::brigade_group`; the scout's is `u32::MAX - 9`).
 const GROUP: u32 = u32::MAX - 10;
 
 /// A place worth a raid: where an enemy's workers are, or an expansion

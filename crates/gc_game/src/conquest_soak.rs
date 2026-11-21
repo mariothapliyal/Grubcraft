@@ -335,6 +335,7 @@ impl Soak {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 }
             }));
         }

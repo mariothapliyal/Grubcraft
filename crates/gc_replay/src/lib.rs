@@ -45,9 +45,11 @@ use codec::{Reader, Writer};
 pub const MAGIC: [u8; 4] = *b"GCRP";
 /// Bumped whenever the file layout changes. Older formats still read,
 /// each as the next one up without:
-/// - 54: Brood evolutions (the evolve command, tag 52; a unit's evolution,
+/// - 55: Brood evolutions (the evolve command, tag 54; a unit's evolution,
 ///   the building unlocking it and whether it is undead, read as none) and
 ///   the Concord's raising and hiring powers;
+/// - 54: the brigade a move belongs to (moves and attack-moves tagged 52
+///   and 53, queued steps tagged 3 and 4; read as moves in no brigade);
 /// - 53: the hold, skirmish and run orders (commands tagged 49 to 51) and
 ///   the column and wedge formations;
 /// - 51: felling into the river and dumping rafts (the fell and dump
@@ -114,7 +116,7 @@ pub const MAGIC: [u8; 4] = *b"GCRP";
 ///
 /// Anything older is refused with [`Error::Format`].
 // scripts/rules-bump.py reads and sets this line as written.
-pub const FORMAT: u16 = 53;
+pub const FORMAT: u16 = 54;
 /// The oldest format this build still reads.
 const OLDEST_FORMAT: u16 = 2;
 /// Replay files end in `.gcr`.

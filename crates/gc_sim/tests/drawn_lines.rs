@@ -351,6 +351,7 @@ fn a_full_army_crosses_a_curved_bridge_dry_shod() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             }
         ));
     }
@@ -459,6 +460,7 @@ fn a_gate_in_a_curved_wall_lets_its_army_through_and_keeps_others_out() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             }
         ));
     }
@@ -471,6 +473,7 @@ fn a_gate_in_a_curved_wall_lets_its_army_through_and_keeps_others_out() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut out = None;
@@ -680,6 +683,7 @@ fn a_wall_with_a_sharp_corner_seals_the_corner() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut out = false;

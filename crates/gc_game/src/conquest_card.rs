@@ -962,6 +962,7 @@ impl Running {
                 facing: None,
                 files: 0,
                 pace: gc_fixed::Fx::ZERO,
+                brigade: 0,
             },
             Job::Gather(node) => Command::Gather { regiment, node },
         };

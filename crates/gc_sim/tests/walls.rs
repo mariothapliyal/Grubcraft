@@ -253,6 +253,7 @@ fn crosses(w: &mut World, player: u8, r: RegimentHandle, goal: (i32, i32)) -> bo
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     for _ in 0..60 * TICKS_PER_SECOND {
@@ -359,6 +360,7 @@ fn a_diagonal_wall_stops_a_regiment_as_a_straight_one_does() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     for _ in 0..60 * TICKS_PER_SECOND {
@@ -391,6 +393,7 @@ fn a_diagonal_wall_stops_a_regiment_as_a_straight_one_does() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut across = false;
@@ -759,6 +762,7 @@ fn a_gate_on_its_owners_wall_replaces_that_stretch() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut through = false;
@@ -874,6 +878,7 @@ fn a_worker_on_the_plans_waits_while_its_side_cannot_pay() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     assert!(!w.works_plans(worker));

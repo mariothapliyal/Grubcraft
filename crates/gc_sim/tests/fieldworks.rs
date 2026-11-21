@@ -175,6 +175,7 @@ fn move_to(w: &mut World, player: u8, r: RegimentHandle, x: i32, y: i32) {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
 }

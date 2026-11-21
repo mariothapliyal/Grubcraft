@@ -3,7 +3,7 @@
 
 use gc_sim::{TICKS_PER_SECOND, World};
 
-use super::arena::{Arena, Real, WEST, grid, move_to, of, put_up, soldiers, spawn};
+use super::arena::{Arena, Real, WEST, gated_wall, grid, move_to, of, soldiers, spawn};
 use super::{Report, Scenario, seconds};
 
 pub(super) const SCENARIO: Scenario = Scenario {
@@ -22,16 +22,7 @@ const LIMIT_SECONDS: u32 = 75;
 
 fn run(real: &Real, report: &mut Report) {
     let mut world = Arena::new(TILES).world(real, 11, 0);
-    let (palisade, gate) = (real.building("Palisade"), real.building("Gate"));
-    // Turned a quarter, the Gate runs east to west along its long side.
-    let stats = &real.table.stats[usize::from(gate)];
-    let span = GATE_X..GATE_X + i32::from(stats.width.max(stats.depth));
-    let mut wall: Vec<_> = (0..TILES as i32)
-        .filter(|x| !span.contains(x))
-        .map(|x| (palisade, (x, WALL_ROW), 0))
-        .collect();
-    wall.push((gate, (GATE_X, WALL_ROW), 1));
-    put_up(&mut world, 0, &wall);
+    gated_wall(real, &mut world, TILES, WALL_ROW, GATE_X);
 
     // 4 x 28 spears, 3 x 16 swords, 2 x 16 bows and 8 horse: 200.
     let [yari, katana, yumi] = real.ember_line();

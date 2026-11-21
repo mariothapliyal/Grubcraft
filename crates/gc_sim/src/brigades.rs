@@ -1,0 +1,1906 @@
+//! Brigades: regiments ordered together march as one body (docs/42).
+//!
+//! A move order may carry a brigade number (see [`crate::Command::MoveTo`]).
+//! The regiments of one player sent with the same number are a brigade
+//! until they arrive: they share one way there (the track, searched once),
+//! each has a place in the body (how far behind the brigade's middle and
+//! how far to its side, from where its order sends it), and the brigade's
+//! middle (the anchor) walks the track no faster than its hindmost can
+//! keep up. So an army sets off together as it stands, forms its shape
+//! on the way, files through a narrows row by row and arrives together.
+//!
+//! A brigade only steers: each tick it gives every member a point a little
+//! ahead of its place to walk at (never the place itself, which it would
+//! overshoot and turn back for) and a pace, and the regiment marches there
+//! as on any move (see `Regiments::step_movement`). A member given any
+//! other order, routed or sent after a foe has a target the brigade did
+//! not set, and is a member no more. Where the ground is too narrow for a
+//! row abreast, the row marches as several, one behind the other (see
+//! [`Brigades::pack`]).
+//!
+//! Nothing here allocates once a match has started.
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+use gc_fixed::{Angle, Fx, FxVec2};
+
+use crate::combat::{Block, ELBOW_ROOM, OPEN_GROUND};
+use crate::formation::{GROUP_GAP, middle_of};
+use crate::hash::StateHasher;
+use crate::nav::{self, Nav};
+use crate::orders::Step;
+use crate::regiments::Regiments;
+use crate::{MAX_PARTIES, PlayerId, Terrain, UnitStats};
+
+/// Brigades each player may have on the march at once; a move sent with a
+/// brigade number when none is free marches alone.
+pub const PER_PARTY: usize = 8;
+/// The most regiments in one brigade; more march alone.
+pub const MAX_MEMBERS: usize = 64;
+/// A player's own group orders number their brigades from 1 to this,
+/// each order the next; a computer player commanding the same army
+/// numbers its own above it, so the two never share one.
+pub const PLAYER_NUMBERS: u16 = 0x7fff;
+/// Points kept of a brigade's track: the way ahead as far as it has been
+/// searched, and the way behind as far back as its tail.
+const TRACK: usize = 40;
+/// How far ahead of its place a member walks at, in tiles.
+const LEAD: Fx = Fx::from_int(6);
+/// ... and never nearer ahead of where it is now.
+const MIN_LEAD: Fx = Fx::from_int(2);
+/// An order to within this of where a member is already going, in tiles,
+/// is the same order sent again.
+const SAME_PLACE: Fx = Fx::from_int(3);
+/// ... to face within this of the way it was to face there (ten
+/// degrees, in [`Angle`] units).
+const SAME_FACING: u16 = 1820;
+/// Regiments further than this from the middle of those ordered, in
+/// tiles, march alone.
+const JOIN_REACH: Fx = Fx::from_int(20);
+/// A march shorter than this, in tiles, is each regiment's own.
+const SHORT: Fx = Fx::from_int(14);
+/// How much faster or slower than the anchor a member goes for each tile
+/// it is behind or ahead of its place, in tiles a tick.
+const GAIN: Fx = Fx::from_ratio(1, 20);
+/// The anchor walks at full pace while its hindmost member is no further
+/// behind its place than this, in tiles...
+const LAG_FREE: Fx = Fx::ONE;
+/// ... slows over this much more...
+const LAG_SPAN: Fx = Fx::from_int(6);
+/// ... down to this share of its pace, never to a stand: the body creeps
+/// on while it forms.
+const CRAWL: Fx = Fx::from_ratio(3, 8);
+/// A member this far behind its place, in tiles, is left behind: the
+/// anchor no longer waits for it.
+const LEFT_BEHIND: Fx = Fx::from_int(45);
+/// ... as is one that has made no headway for this many ticks.
+const STALLED: u8 = 100;
+/// Ticks between two looks at how the rows fit the ground.
+const REPACK: u32 = 5;
+/// The ground's width is measured every this many tiles along the track...
+const SAMPLE: Fx = Fx::from_int(2);
+/// ... at this many points, from ahead of the foremost row back.
+const PROFILE: usize = 48;
+/// A row narrows this far before a narrows, in tiles, and widens again
+/// once its rear is through.
+const LOOK: Fx = Fx::from_int(8);
+/// ... or as far as the body reaches to either side of the track, up to
+/// this (its flanks have that far to come in).
+const FAR_LOOK: Fx = Fx::from_int(24);
+/// The ground is measured as far either side of the track as the widest
+/// row reaches, between these, in tiles.
+const REACH: Fx = Fx::from_int(8);
+const MAX_REACH: Fx = Fx::from_int(30);
+/// Room kept between a row's end and the edge of the ground, in tiles.
+const EDGE: Fx = Fx::from_ratio(1, 2);
+/// Members whose places lie within this of a row's front, in tiles, are
+/// of that row.
+const ROW: Fx = Fx::from_ratio(3, 2);
+/// A member within this of its place along the track and across it, in
+/// tiles, is in step: it and its neighbours in step leave each other be
+/// (see [`Regiments::leaves_be`]).
+const IN_STEP_ALONG: Fx = Fx::from_ratio(3, 2);
+const IN_STEP_ACROSS: Fx = Fx::from_ratio(5, 4);
+/// How fast a place moves up the body when rows close up, in tiles a
+/// tick, at the least (else as fast as its member could gain on the
+/// anchor, so it can keep up), falls back when they file, and moves
+/// across.
+const SLEW_UP: Fx = Fx::from_ratio(1, 32);
+const SLEW_BACK: Fx = Fx::from_ratio(1, 8);
+const SLEW_SIDE: Fx = Fx::from_ratio(1, 16);
+/// Ticks between a member's looks at whether it can see where it walks.
+const SIGHT: u32 = 4;
+/// Looks in a row with nothing of the track in sight before a member
+/// finds its way to it by a route of its own.
+const LOST: u8 = 5;
+/// While any regiment of an attack-move brigade has turned aside to fight
+/// within this of the anchor, in tiles, the body halts.
+const HUNT_NEAR: Fx = Fx::from_int(25);
+/// How far ahead of the anchor the track is checked for ground that has
+/// changed, in tiles, and how often, in ticks.
+const WATCH: Fx = Fx::from_int(16);
+const WATCH_EVERY: u32 = 20;
+/// The track is searched on from its end when the anchor is this near
+/// it, in tiles.
+const EXTEND: Fx = Fx::from_int(30);
+
+/// A member ahead of its place folds in to its lane over the last this
+/// many tiles before its place comes level.
+const FUNNEL: Fx = Fx::from_int(6);
+
+/// A member comes no nearer behind the block of the member before it in
+/// its way than half the room their places leave, or half this, in
+/// tiles, slowing over the last of it (by this much pace, in tiles a
+/// tick, for each tile of room left).
+const FOLLOW: Fx = Fx::ONE;
+const FOLLOW_GAIN: Fx = Fx::from_ratio(1, 4);
+
+/// In [`Regiments::step_with`]: at its place, in step.
+pub(crate) const IN_STEP: u8 = 0x80;
+/// A member this much further back along the way than another, in tiles,
+/// is behind it (see [`Regiments::leaves_be`]).
+pub(crate) const STEP_BEHIND: Fx = Fx::from_int(2);
+
+/// When a row files, a member this much further along the track than
+/// the one before it in the file, in tiles, takes its turn.
+const OVERTAKE: Fx = Fx::from_int(2);
+
+/// A member coming across to its lane walks at most this many times as
+/// fast as one going straight along the track.
+const SLANT: Fx = Fx::from_int(2);
+
+/// How far behind where it was searched from a track begins, in tiles
+/// (see [`Brigade::lead_in`]).
+const LEAD_IN: Fx = Fx::from_int(30);
+
+/// How long the first member of a brigade waits for a second to join,
+/// in ticks, before it is no brigade.
+const MUSTER: u8 = 60;
+
+/// Where a brigade lets go, its regiments marching on each by its own
+/// way as they did before there were brigades (see [`Brigades::pack`]).
+/// A file through a gap that squeezes its blocks (a gate) is slow, and
+/// rows that reach far to the side are long coming in to it: a body of
+/// more than this many...
+const FILE_MOST: usize = 8;
+/// ... that reaches further to either side of the track than this, in
+/// tiles, lets go at such a gap. (Twelve in rows of four were 37% later
+/// through a Gate than apart; twelve in rows of two no later, in a third
+/// of the disorder.)
+const DEEP_BODY: Fx = Fx::from_int(10);
+/// A track that sets out more than a third of a turn from the way it
+/// comes in (this is the cosine) doubles back: the body would have to
+/// turn its whole order about on the way.
+const BACK_ON_ITSELF: Fx = Fx::from_ratio(-1, 2);
+const QUARTER: Fx = Fx::from_ratio(1, 4);
+
+/// How a regiment stands in its brigade (see [`crate::World::brigade`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BrigadeView {
+    /// The number its order gave.
+    pub number: u16,
+    /// Where its order sent it: where it will stand when the brigade
+    /// arrives.
+    pub goal: FxVec2,
+    /// Its place in the body now, once the brigade has found its way.
+    pub place: Option<FxVec2>,
+    /// At its place, in step with its neighbours.
+    pub in_step: bool,
+    /// How far behind its place it is along the brigade's way, in tiles
+    /// (ahead of it when negative).
+    pub behind: Fx,
+    /// How it is steering: 0 not yet taken up (marching as it was
+    /// ordered), 1 at its lane, 2 at the middle of the way, 3 at the way
+    /// just ahead, 4 finding its own way to the brigade.
+    pub steering: u8,
+}
+
+/// How a member is steering.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Mode {
+    /// Just joined: marching to where its order sent it until the brigade
+    /// takes it up.
+    Plain,
+    /// At a point ahead of its place.
+    Lane,
+    /// At the middle of the track ahead of its place (its own lane is out
+    /// of sight).
+    Centre,
+    /// At the middle of the track just ahead of where it is.
+    Short,
+    /// Nothing of the track in sight: on a route of its own to it.
+    Astray,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Phase {
+    /// No track yet.
+    Gathering,
+    Marching,
+}
+
+#[derive(Clone, Copy)]
+struct Brigade {
+    /// 0: free.
+    number: u16,
+    /// An attack-move.
+    hunt: bool,
+    phase: Phase,
+    /// Members have joined or been sent somewhere else since it last
+    /// looked.
+    changed: bool,
+    /// Standing while a member fights (see [`HUNT_NEAR`]).
+    halted: bool,
+    /// Ticks it has had one member only since the last joined.
+    alone: u8,
+    /// The middle of where its members were sent when the track was
+    /// searched for, and now.
+    goal: FxVec2,
+    centre: FxVec2,
+    /// The way it faces as it arrives: places are told off along and
+    /// across this.
+    ahead: FxVec2,
+    /// Tiles a tick: the slowest pace its members were ordered at.
+    pace: Fx,
+    /// How far along the track the anchor is, and how fast it went last
+    /// tick.
+    arc: Fx,
+    speed: Fx,
+    /// How far along the track its hindmost member is.
+    tail: Fx,
+    len: u8,
+    /// The track stops short of the goal.
+    partial: bool,
+    track: [FxVec2; TRACK],
+    /// How far along the track each point is.
+    cum: [Fx; TRACK],
+}
+
+impl Brigade {
+    const FREE: Brigade = Brigade {
+        number: 0,
+        hunt: false,
+        phase: Phase::Gathering,
+        changed: false,
+        halted: false,
+        alone: 0,
+        goal: FxVec2::ZERO,
+        centre: FxVec2::ZERO,
+        ahead: FxVec2::ZERO,
+        pace: Fx::ZERO,
+        arc: Fx::ZERO,
+        speed: Fx::ZERO,
+        tail: Fx::ZERO,
+        len: 0,
+        partial: false,
+        track: [FxVec2::ZERO; TRACK],
+        cum: [Fx::ZERO; TRACK],
+    };
+
+    fn total(&self) -> Fx {
+        self.cum[self.len as usize - 1]
+    }
+
+    /// Whether the anchor has come to the end of the track.
+    fn arrived(&self) -> bool {
+        // (A brigade waiting for its track to be searched again has none.)
+        self.len >= 2 && !self.partial && self.arc >= self.total()
+    }
+
+    /// Where the way that was found begins (what is left of it): before
+    /// that the track is only its lead-in.
+    fn start(&self) -> Fx {
+        self.cum[0].max(Fx::ZERO)
+    }
+
+    /// Add `p` to the end of the track (not a point on top of the last);
+    /// false when there is no room.
+    fn push(&mut self, p: FxVec2) -> bool {
+        let n = self.len as usize;
+        if n == 0 {
+            self.track[0] = p;
+            self.cum[0] = Fx::ZERO;
+            self.len = 1;
+            return true;
+        }
+        let d = (p - self.track[n - 1]).length();
+        if d < QUARTER {
+            return true;
+        }
+        if n == TRACK {
+            return false;
+        }
+        self.track[n] = p;
+        self.cum[n] = self.cum[n - 1] + d;
+        self.len += 1;
+        true
+    }
+
+    /// The leg of the track `arc` along it lies on (the first or the last
+    /// past either end): the point it starts from.
+    fn leg(&self, arc: Fx) -> usize {
+        let n = self.len as usize;
+        let mut k = 0;
+        while k + 2 < n && self.cum[k + 1] <= arc {
+            k += 1;
+        }
+        k
+    }
+
+    /// The point `arc` along the track and the way the track runs there;
+    /// past either end, straight on.
+    fn at(&self, arc: Fx) -> (FxVec2, FxVec2) {
+        let k = self.leg(arc);
+        let len = self.cum[k + 1] - self.cum[k];
+        let d = self.track[k + 1] - self.track[k];
+        let dir = FxVec2::new(d.x / len, d.y / len);
+        (self.track[k] + dir * (arc - self.cum[k]), dir)
+    }
+
+    /// The point `arc` along the track, and the way the track runs about
+    /// there (over a few tiles, so a row wheels round a corner instead of
+    /// snapping to the new way).
+    fn at_smooth(&self, arc: Fx) -> (FxVec2, FxVec2) {
+        let (p, dir) = self.at(arc);
+        let d = self.at(arc + MIN_LEAD).0 - self.at(arc - MIN_LEAD).0;
+        let run = d.normalized();
+        (p, if run == FxVec2::ZERO { dir } else { run })
+    }
+
+    /// The place `side` to the right of the track at `arc`.
+    fn lane(&self, arc: Fx, side: Fx) -> FxVec2 {
+        let (p, dir) = self.at_smooth(arc);
+        p + right_of(dir) * side
+    }
+
+    /// How far to the right of the track at `arc` the point `p` is.
+    fn across(&self, arc: Fx, p: FxVec2) -> Fx {
+        let (at, dir) = self.at(arc);
+        (p - at).dot(right_of(dir))
+    }
+
+    /// How far along the track the point of it nearest `p` is, looking
+    /// only between `lo` and `hi` along it (a track that doubles back
+    /// round a river has points near `p` that are a long way on).
+    fn project(&self, p: FxVec2, lo: Fx, hi: Fx) -> Fx {
+        let n = self.len as usize;
+        let mut best = (u64::MAX, lo.max(self.cum[0]));
+        for k in 0..n - 1 {
+            let (a0, a1) = (self.cum[k], self.cum[k + 1]);
+            let len = a1 - a0;
+            // Past either end the track runs straight on.
+            let t_lo = if k == 0 {
+                lo - a0
+            } else {
+                (lo - a0).max(Fx::ZERO)
+            };
+            let t_hi = if k + 2 == n {
+                hi - a0
+            } else {
+                (hi - a0).min(len)
+            };
+            if t_lo > t_hi {
+                continue;
+            }
+            let d = self.track[k + 1] - self.track[k];
+            let dir = FxVec2::new(d.x / len, d.y / len);
+            let t = (p - self.track[k]).dot(dir).clamp(t_lo, t_hi);
+            let off = (p - (self.track[k] + dir * t)).length_sq_raw();
+            if off < best.0 {
+                best = (off, a0 + t);
+            }
+        }
+        best.1
+    }
+
+    /// Face the way the track comes in to its end (over its last few
+    /// tiles), or from as far as it has been searched toward the goal.
+    fn set_frame(&mut self) {
+        let end = self.track[self.len as usize - 1];
+        let d = if self.partial {
+            self.centre - end
+        } else {
+            end - self.at((self.total() - LOOK).max(self.start())).0
+        };
+        let run = d.normalized();
+        self.ahead = if run == FxVec2::ZERO {
+            self.at(self.total()).1
+        } else {
+            run
+        };
+    }
+
+    /// Begin the track [`LEAD_IN`] behind where it was searched from, in
+    /// line with the way it sets out over its first few tiles: members
+    /// standing behind that one are on the track too (how far along it
+    /// they are is measured against the way the body is going, not the
+    /// first step of the search, which may be a step aside to clear a
+    /// bank).
+    fn lead_in(&mut self) {
+        let n = self.len as usize;
+        let start = self.track[0];
+        let run = (self.at(self.cum[0] + LOOK).0 - start).normalized();
+        if run == FxVec2::ZERO {
+            return;
+        }
+        if n == TRACK {
+            // No room: the far end is searched for again further on.
+            self.len -= 1;
+            self.partial = true;
+        }
+        let n = self.len as usize;
+        self.track.copy_within(0..n, 1);
+        self.cum.copy_within(0..n, 1);
+        self.track[0] = start - run * LEAD_IN;
+        self.cum[0] = self.cum[1] - LEAD_IN;
+        self.len += 1;
+    }
+
+    /// Forget the track behind `arc`, keeping a point before it.
+    fn drop_behind(&mut self, arc: Fx) {
+        let n = self.len as usize;
+        let mut k = 0;
+        while k + 2 < n && self.cum[k + 1] < arc {
+            k += 1;
+        }
+        if k > 0 {
+            self.track.copy_within(k..n, 0);
+            self.cum.copy_within(k..n, 0);
+            self.len -= k as u8;
+        }
+    }
+
+    /// End the track at `arc` along it (between its ends).
+    fn cut(&mut self, arc: Fx) {
+        let k = self.leg(arc);
+        if arc - self.cum[k] < QUARTER {
+            // At a point of the track (where it was cut before, the
+            // anchor not having moved since): it ends at that point,
+            // with no leg too short to run any way.
+            self.len = k as u8 + 1;
+            return;
+        }
+        let p = self.at(arc).0;
+        self.track[k + 1] = p;
+        self.cum[k + 1] = arc;
+        self.len = k as u8 + 2;
+    }
+}
+
+/// Bring those of `list` that `is` holds for to its front. How many.
+fn to_front(list: &mut [u32], mut is: impl FnMut(u32) -> bool) -> usize {
+    let mut kept = 0;
+    for k in 0..list.len() {
+        if is(list[k]) {
+            list.swap(kept, k);
+            kept += 1;
+        }
+    }
+    kept
+}
+
+/// Bring to the front of `list`, after its first `kept`, all that
+/// `joins` ties to one of those, all it ties to one of them, and so on.
+/// How many are at the front then.
+fn chain(list: &mut [u32], mut kept: usize, mut joins: impl FnMut(u32, u32) -> bool) -> usize {
+    let mut done = 0;
+    while done < kept {
+        let from = list[done];
+        done += 1;
+        let first = kept;
+        for k in first..list.len() {
+            if joins(from, list[k]) {
+                list.swap(kept, k);
+                kept += 1;
+            }
+        }
+    }
+    kept
+}
+
+/// The way to the right of one going `dir`.
+fn right_of(dir: FxVec2) -> FxVec2 {
+    FxVec2::new(-dir.y, dir.x)
+}
+
+/// The brigades on the march, and each regiment's place in its own.
+pub(crate) struct Brigades {
+    /// [`PER_PARTY`] for each party, in turn.
+    pool: Vec<Brigade>,
+    /// How many of them are in use.
+    live: u16,
+    /// Per regiment slot. The brigade it marches in: its place in `pool`
+    /// plus one, or 0 for none. (On its own, not in [`Member`]: every
+    /// brigade looks through all of these every tick.)
+    of: Vec<u8>,
+    /// Per regiment slot: how it stands in its brigade. Means nothing
+    /// with none.
+    members: Vec<Member>,
+    /// Room to work in, kept between ticks; not part of the state.
+    list: Vec<u32>,
+    room: Vec<[Fx; 2]>,
+    leg: Vec<FxVec2>,
+}
+
+/// How a regiment stands in its brigade.
+#[derive(Clone, Copy)]
+struct Member {
+    generation: u16,
+    mode: Mode,
+    /// Looks in a row it has seen nothing of the track.
+    lost: u8,
+    /// Ticks in a row behind its place and not stepping.
+    stall: u8,
+    /// Held up last tick by a member in its way: the anchor does not slow
+    /// for it (waiting would not bring it on; the one before it moving
+    /// does).
+    held: bool,
+    /// Where its order sent it and how to face there.
+    end: FxVec2,
+    facing: Option<Angle>,
+    /// The pace its order gave it.
+    ordered: Fx,
+    /// The target and pace the brigade last gave it: with any other, it
+    /// has had other orders.
+    set: FxVec2,
+    paced: Fx,
+    /// How far along the track it is.
+    arc: Fx,
+    /// Its place: how far behind the anchor and how far to the right of
+    /// the track, now and where the last look at the ground put it.
+    station: Fx,
+    side: Fx,
+    want_station: Fx,
+    want_side: Fx,
+    /// The fewest files it narrows to (see [`Regiments::files_floor`]):
+    /// as many as the ground about the track has room for.
+    floor: u16,
+}
+
+impl Member {
+    const NONE: Member = Member {
+        generation: 0,
+        mode: Mode::Plain,
+        lost: 0,
+        stall: 0,
+        held: false,
+        end: FxVec2::ZERO,
+        facing: None,
+        ordered: Fx::ZERO,
+        set: FxVec2::ZERO,
+        paced: Fx::ZERO,
+        arc: Fx::ZERO,
+        station: Fx::ZERO,
+        side: Fx::ZERO,
+        want_station: Fx::ZERO,
+        want_side: Fx::ZERO,
+        floor: 0,
+    };
+}
+
+/// A member being placed in [`Brigades::pack`].
+#[derive(Clone, Copy)]
+struct Placing {
+    slot: u32,
+    /// Where it stands in the body as it arrives: right of the middle and
+    /// behind it.
+    lat: Fx,
+    back: Fx,
+    half_width: Fx,
+    half_depth: Fx,
+    /// How far to the right of the track it stands now.
+    across: Fx,
+    /// How far along the track it is (less how far off to the side of
+    /// it), and the place it had: when its row files, each holds its turn
+    /// unless one behind it in the file is clearly further along.
+    arc: Fx,
+    was: Fx,
+    /// The width of ground it has when that is less than its block.
+    tight: Option<Fx>,
+    side: Fx,
+    station: Fx,
+}
+
+impl Brigades {
+    pub(crate) fn new(regiments: usize) -> Brigades {
+        Brigades {
+            pool: vec![Brigade::FREE; MAX_PARTIES * PER_PARTY],
+            live: 0,
+            of: vec![0; regiments],
+            members: vec![Member::NONE; regiments],
+            list: Vec::with_capacity(MAX_MEMBERS),
+            room: vec![[Fx::ZERO; 2]; PROFILE],
+            leg: vec![FxVec2::ZERO; nav::MAX_WAYPOINTS],
+        }
+    }
+
+    /// The number of the brigade regiment slot `i` marches in, and where
+    /// it is going with it (not the point ahead it walks at now).
+    pub(crate) fn of(&self, i: usize) -> Option<(u16, FxVec2)> {
+        let slot = *self.of.get(i)?;
+        (slot != 0).then(|| (self.pool[usize::from(slot) - 1].number, self.members[i].end))
+    }
+
+    /// How regiment slot `i` stands in its brigade, if it marches in one.
+    pub(crate) fn view(&self, regs: &Regiments, i: usize) -> Option<BrigadeView> {
+        let (number, goal) = self.of(i)?;
+        let b = &self.pool[usize::from(self.of[i]) - 1];
+        let marching = b.phase == Phase::Marching && self.members[i].mode != Mode::Plain;
+        Some(BrigadeView {
+            number,
+            goal,
+            place: marching.then(|| b.lane(b.arc - self.members[i].station, self.members[i].side)),
+            in_step: regs.step_with[i] & IN_STEP != 0,
+            behind: b.arc - self.members[i].station - self.members[i].arc,
+            steering: self.members[i].mode as u8,
+        })
+    }
+
+    /// The turns of its brigade's way still ahead of regiment slot `i`,
+    /// once the brigade steers it: not the way's end (the middle of where
+    /// the body will stand), from the last turn each goes to its own
+    /// place.
+    pub(crate) fn way(&self, i: usize) -> Option<&[FxVec2]> {
+        let slot = usize::from(*self.of.get(i)?).checked_sub(1)?;
+        let b = &self.pool[slot];
+        if b.phase != Phase::Marching || self.members[i].mode == Mode::Plain {
+            return None;
+        }
+        let n = b.len as usize;
+        let last = if b.partial { n } else { n - 1 };
+        let first = (0..last)
+            .find(|&k| b.cum[k] > self.members[i].arc)
+            .unwrap_or(last);
+        Some(&b.track[first..last])
+    }
+
+    /// Whether regiment slot `i` already marches in its owner's brigade
+    /// `number` to `target` (or near it) to face `facing` there (or
+    /// nearly), at `pace` (as [`Regiments::pace_for`] gives it), on an
+    /// attack-move or not as `hunt` says: the same order sent again,
+    /// which changes nothing. Not one that has been told to stand since.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn marching_to(
+        &self,
+        regs: &Regiments,
+        i: usize,
+        number: u16,
+        target: FxVec2,
+        facing: Option<Angle>,
+        pace: Fx,
+        hunt: bool,
+    ) -> bool {
+        self.of(i).is_some_and(|(n, end)| {
+            let d = end - target;
+            let faces = match (self.members[i].facing, facing) {
+                (None, None) => true,
+                (Some(a), Some(b)) => (a.0.wrapping_sub(b.0) as i16).unsigned_abs() < SAME_FACING,
+                _ => false,
+            };
+            n == number
+                && faces
+                && d.x.abs() < SAME_PLACE
+                && d.y.abs() < SAME_PLACE
+                && self.members[i].ordered == pace
+                && self.pool[usize::from(self.of[i]) - 1].hunt == hunt
+                && regs.target[i].is_some()
+        })
+    }
+
+    /// Whether a brigade steers regiment slot `i` now: it walks at the
+    /// point its brigade gives it, not to where its order sent it (it may
+    /// get to that point and stand a tick with nowhere to go, which is
+    /// not the end of its march).
+    pub(crate) fn steers(&self, i: usize) -> bool {
+        self.of.get(i).is_some_and(|&t| t != 0) && self.members[i].mode != Mode::Plain
+    }
+
+    /// Regiment slot `i` has just been sent on a move with brigade
+    /// `number` (`hunt`: an attack-move): it joins its owner's brigade of
+    /// that number, or starts it. With none free, or the brigade full, it
+    /// marches alone.
+    pub(crate) fn join(&mut self, regs: &mut Regiments, i: usize, number: u16, hunt: bool) {
+        let owner = usize::from(regs.owner[i]);
+        let Some(end) = regs.target[i] else {
+            return;
+        };
+        if owner >= MAX_PARTIES || number == 0 || i >= self.of.len() {
+            return;
+        }
+        let own = owner * PER_PARTY..(owner + 1) * PER_PARTY;
+        let Some(slot) = (own.clone().find(|&s| self.pool[s].number == number))
+            .or_else(|| own.clone().find(|&s| self.pool[s].number == 0))
+        else {
+            self.leave(regs, i);
+            return;
+        };
+        let tag = slot as u8 + 1;
+        if self.of[i] != tag {
+            let members = self.of.iter().filter(|&&t| t == tag).count();
+            self.leave(regs, i);
+            // (Nothing of a march it was on before comes with it.)
+            self.members[i] = Member::NONE;
+            if members >= MAX_MEMBERS {
+                return;
+            }
+        }
+        let b = &mut self.pool[slot];
+        if b.number == 0 {
+            *b = Brigade {
+                number,
+                ..Brigade::FREE
+            };
+            self.live += 1;
+        }
+        b.hunt = hunt;
+        b.changed = true;
+        b.alone = 0;
+        self.of[i] = tag;
+        self.members[i].generation = regs.generation[i];
+        self.members[i].mode = Mode::Plain;
+        self.members[i].lost = 0;
+        self.members[i].stall = 0;
+        self.members[i].held = false;
+        self.members[i].end = end;
+        self.members[i].facing = regs.target_facing[i];
+        self.members[i].ordered = regs.pace[i];
+        self.members[i].set = end;
+        self.members[i].paced = regs.pace[i];
+    }
+
+    /// Regiment slot `i` is of no brigade from now, keeping whatever
+    /// orders it has.
+    fn leave(&mut self, regs: &mut Regiments, i: usize) {
+        self.of[i] = 0;
+        regs.step_with[i] = 0;
+        regs.files_floor[i] = 0;
+    }
+
+    /// Regiment slot `i` leaves its brigade and marches on alone to where
+    /// its order sent it.
+    fn release(&mut self, regs: &mut Regiments, i: usize) {
+        if self.members[i].mode != Mode::Plain {
+            regs.target[i] = Some(self.members[i].end);
+            regs.target_facing[i] = self.members[i].facing;
+            regs.set_seeks_place(i, true);
+            regs.pace[i] = self.members[i].ordered;
+        }
+        self.leave(regs, i);
+    }
+
+    /// The brigade in `slot` is over: its members (in `self.list`) march
+    /// on alone.
+    fn disband(&mut self, regs: &mut Regiments, slot: usize) {
+        for k in 0..self.list.len() {
+            let i = self.list[k] as usize;
+            self.release(regs, i);
+        }
+        self.pool[slot].number = 0;
+        self.live -= 1;
+    }
+
+    /// Gather the members of the brigade in `slot` into `self.list`.
+    fn muster(&mut self, slot: usize) {
+        let tag = slot as u8 + 1;
+        self.list.clear();
+        for (i, &t) in self.of.iter().enumerate() {
+            if t == tag && self.list.len() < MAX_MEMBERS {
+                self.list.push(i as u32);
+            }
+        }
+    }
+
+    /// Steer every brigade for this tick: before the routes are planned
+    /// and the regiments step.
+    pub(crate) fn step(
+        &mut self,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+        terrain: &Terrain,
+        tick: u32,
+    ) {
+        if self.live == 0 {
+            return;
+        }
+        // Who has had other orders, or is no more.
+        for i in 0..self.of.len() {
+            if self.of[i] == 0 {
+                continue;
+            }
+            if !regs.alive[i] || regs.generation[i] != self.members[i].generation {
+                self.leave(regs, i);
+                continue;
+            }
+            // It may get to the point it was given to walk at (coming
+            // across to its lane, or at the end of a route of its own to
+            // the track): it goes on from there.
+            let d = regs.position[i] - self.members[i].set;
+            if regs.target[i].is_none()
+                && self.members[i].mode != Mode::Plain
+                && d.x.abs() < Fx::ONE
+                && d.y.abs() < Fx::ONE
+            {
+                if self.members[i].mode == Mode::Astray {
+                    self.members[i].mode = Mode::Short;
+                    self.members[i].lost = 0;
+                }
+                regs.target[i] = Some(self.members[i].set);
+            }
+            // The anchor in and each making for its own place from the
+            // end of the track, it may stop short of the point it was
+            // given beside one already standing there: it goes to its
+            // own place from where it is.
+            if regs.target[i].is_none()
+                && self.members[i].mode != Mode::Plain
+                && self.pool[usize::from(self.of[i]) - 1].arrived()
+            {
+                self.release(regs, i);
+                continue;
+            }
+            if regs.target[i] != Some(self.members[i].set) || regs.on_wall[i] {
+                // The pace was the brigade's unless whoever gave the new
+                // order set one (`step_with` is cleared by an order).
+                if regs.step_with[i] != 0 && regs.pace[i] == self.members[i].paced {
+                    regs.pace[i] = self.members[i].ordered;
+                }
+                self.leave(regs, i);
+            } else if regs.run_left[i] > 0 {
+                // Told to run, it runs on ahead.
+                self.release(regs, i);
+            }
+        }
+        // At most one search a tick, among all.
+        let mut searched = false;
+        for slot in 0..self.pool.len() {
+            if self.pool[slot].number != 0 {
+                self.march(slot, regs, units, nav, terrain, tick, &mut searched);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn march(
+        &mut self,
+        slot: usize,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+        terrain: &Terrain,
+        tick: u32,
+        searched: &mut bool,
+    ) {
+        let owner = (slot / PER_PARTY) as PlayerId;
+        self.muster(slot);
+        if self.list.len() < 2 {
+            // The first of a brigade may be alone for a moment: a
+            // computer player's orders land one by one, not all on one
+            // tick as a player's do, and regiments come to a queued leg
+            // as each ends the one before. It marches by its own order
+            // while the rest of them come.
+            let b = &mut self.pool[slot];
+            b.alone = b.alone.saturating_add(1);
+            if self.list.is_empty() || b.phase != Phase::Gathering || b.alone > MUSTER {
+                self.disband(regs, slot);
+            }
+            return;
+        }
+        if self.pool[slot].changed {
+            let of = |i: &u32| &self.members[*i as usize];
+            let centre = middle_of(self.list.iter().map(|i| of(i).end));
+            let pace = (self.list.iter().map(|i| of(i).ordered))
+                .min()
+                .unwrap_or(Fx::MAX);
+            let b = &mut self.pool[slot];
+            b.changed = false;
+            b.centre = centre;
+            b.pace = pace;
+            let moved = centre - b.goal;
+            if b.len < 2 || moved.x.abs() >= SAME_PLACE || moved.y.abs() >= SAME_PLACE {
+                b.len = 0;
+                b.phase = Phase::Gathering;
+            } else {
+                b.set_frame();
+            }
+        }
+        if self.pool[slot].phase == Phase::Gathering {
+            if *searched {
+                return;
+            }
+            *searched = true;
+            if !self.gather(slot, owner, regs, units, nav) {
+                self.disband(regs, slot);
+                return;
+            }
+        }
+        // The track: on from its end as the anchor nears it, and again
+        // from the anchor when the ground ahead has changed.
+        let b = &self.pool[slot];
+        let near_end = b.partial && b.arc + EXTEND > b.total();
+        let watch = !*searched
+            && (tick + slot as u32).is_multiple_of(WATCH_EVERY)
+            && b.arc > b.start()
+            && b.arc < b.total()
+            && !self.open_ahead(slot, owner, nav);
+        if (near_end && !*searched) || watch {
+            *searched = true;
+            if watch {
+                let arc = self.pool[slot].arc;
+                self.pool[slot].cut(arc);
+            }
+            if !self.extend(slot, owner, regs, units, nav) {
+                self.disband(regs, slot);
+                return;
+            }
+        }
+        // Members taken up since the last look.
+        let mut fresh = false;
+        for k in 0..self.list.len() {
+            let i = self.list[k] as usize;
+            if self.members[i].mode == Mode::Plain {
+                let b = &self.pool[slot];
+                self.members[i].arc =
+                    b.project(regs.position[i], b.arc - LEFT_BEHIND, b.arc + JOIN_REACH);
+                fresh = true;
+            }
+        }
+        if (fresh || (tick + slot as u32).is_multiple_of(REPACK))
+            && !self.pack(slot, owner, regs, units, nav, terrain)
+        {
+            self.disband(regs, slot);
+            return;
+        }
+        self.measure(slot, regs, units);
+        // An attack-move halts as a body while one of its own fights
+        // near by.
+        if self.pool[slot].hunt && (tick + slot as u32).is_multiple_of(SIGHT) {
+            let b = &self.pool[slot];
+            let (at, number) = (b.at(b.arc).0, b.number);
+            self.pool[slot].halted = (0..regs.alive.len()).any(|j| {
+                if !regs.alive[j] || regs.owner[j] != owner {
+                    return false;
+                }
+                let plan = regs.plan(j);
+                let d = regs.position[j] - at;
+                // (Not for one standing with no way to its quarry: the
+                // far side of a wall or deep water.)
+                let fights = regs.engaged[j].is_some() || regs.reload[j] > 0 || regs.stepped(j);
+                plan.diverted
+                    && matches!(plan.hunt, Some(Step::Move { brigade, .. }) if brigade == number)
+                    && d.x.abs() < HUNT_NEAR
+                    && d.y.abs() < HUNT_NEAR
+                    && fights
+            });
+        }
+        let b = &mut self.pool[slot];
+        b.arc += b.speed;
+        if !b.partial {
+            // The anchor stops at the end of the track, and each member
+            // walks the last of the way to its own place as it comes
+            // near where the body has it there, or near the end of the
+            // track (the way on from there is its own, not a lane of the
+            // track's). Those still filing through a narrows behind keep
+            // their turns until they are through, and do not all make
+            // for their places at once through each other: once the
+            // anchor is in, each goes as it comes out on to open ground
+            // in plain sight of its place (and one the body would not
+            // wait for goes on alone).
+            b.arc = b.arc.min(b.total());
+            let b = self.pool[slot];
+            let tag = slot as u8 + 1;
+            for k in 0..self.list.len() {
+                let i = self.list[k] as usize;
+                let place = b.total() + (self.members[i].end - b.centre).dot(b.ahead).min(Fx::ZERO);
+                let behind = b.arc - self.members[i].station - self.members[i].arc;
+                let here = regs.position[i];
+                let out = b.arrived()
+                    && (!self.kept_up(regs, i, behind)
+                        || ((tick + i as u32).is_multiple_of(SIGHT)
+                            && nav.open_around(owner, here, ELBOW_ROOM)
+                            && nav.clear_line(owner, here, self.members[i].end)));
+                if self.members[i].arc + LEAD >= place || out {
+                    self.release(regs, i);
+                }
+            }
+            let of = &self.of;
+            self.list.retain(|&i| of[i as usize] == tag);
+            if self.list.len() < 2 {
+                self.disband(regs, slot);
+                return;
+            }
+        }
+        self.steer(slot, owner, regs, units, nav, tick);
+    }
+
+    /// Find the brigade in `slot` its track, from the member nearest the
+    /// middle of them all, and tell off its places. Those too far from
+    /// the rest march alone. False when it is not to march as a brigade:
+    /// there is no way, the way is short or too few are left.
+    fn gather(
+        &mut self,
+        slot: usize,
+        owner: PlayerId,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+    ) -> bool {
+        let mid = middle_of(self.list.iter().map(|&i| regs.position[i as usize]));
+        // The body is those within reach of the middle, all within
+        // reach of one of them, and so on: a big army standing together
+        // is one body however wide it stands.
+        let near = |a: FxVec2, b: FxVec2| {
+            let d = a - b;
+            d.x.abs() <= JOIN_REACH && d.y.abs() <= JOIN_REACH
+        };
+        let at = |i: u32| regs.position[i as usize];
+        let kept = to_front(&mut self.list, |i| near(mid, at(i)));
+        let kept = chain(&mut self.list, kept, |a, b| near(at(a), at(b)));
+        self.keep(regs, kept);
+        if kept < 2 {
+            return false;
+        }
+        // Nor does one whose place the ground cuts off from the rest of
+        // the body's (the far side of a cliff from them, a march of its
+        // own to reach): the places in plain sight of the middle of them
+        // all, and of each other from there, are the body's.
+        if nav.has_map() {
+            let centre = self.pool[slot].centre;
+            let members = &self.members;
+            let end = |i: u32| members[i as usize].end;
+            let mut found = to_front(&mut self.list, |i| nav.clear_line(owner, centre, end(i)));
+            if found == 0 {
+                // The middle itself is no ground to stand on (a building
+                // the army was sent at): from the place nearest it.
+                let nearest = (0..kept)
+                    .min_by_key(|&k| (end(self.list[k]) - centre).length_sq_raw())
+                    .unwrap_or(0);
+                self.list.swap(0, nearest);
+                found = 1;
+            }
+            let found = chain(&mut self.list, found, |a, b| {
+                nav.clear_line(owner, end(a), end(b))
+            });
+            // (Where most are out of sight of each other the body is
+            // being sent among buildings or broken ground, and nobody is
+            // cut off from a body that is all together anywhere.)
+            let kept = if found * 2 > kept { found } else { kept };
+            self.keep(regs, kept);
+        }
+        let kept = self.list.len();
+        if kept < 2 {
+            return false;
+        }
+        let (mut lead, mut least) = (0, u64::MAX);
+        for &i in &self.list {
+            let i = i as usize;
+            let d = (regs.position[i] - mid).length_sq_raw();
+            if d < least {
+                (lead, least) = (i, d);
+            }
+        }
+        let b = &mut self.pool[slot];
+        b.len = 0;
+        b.partial = false;
+        b.goal = b.centre;
+        b.push(regs.position[lead]);
+        if !self.extend(slot, owner, regs, units, nav) {
+            return false;
+        }
+        let b = &mut self.pool[slot];
+        if b.len < 2 || (!b.partial && b.total() < SHORT) {
+            return false;
+        }
+        b.lead_in();
+        if b.at(b.start()).1.dot(b.ahead) < BACK_ON_ITSELF {
+            return false;
+        }
+        b.phase = Phase::Marching;
+        b.speed = Fx::ZERO;
+        b.halted = false;
+        // The anchor starts where nobody is ahead of its place (`pack`
+        // puts it there): the body forms as it moves off.
+        let mut front = Fx::MIN;
+        for k in 0..self.list.len() {
+            let i = self.list[k] as usize;
+            let b = &self.pool[slot];
+            self.members[i].arc = b.project(regs.position[i], -LEFT_BEHIND, LEFT_BEHIND);
+            front = front.max(self.members[i].arc);
+        }
+        self.pool[slot].arc = front;
+        true
+    }
+
+    /// Keep the first `kept` on the list as the body, in slot order, and
+    /// release the rest.
+    fn keep(&mut self, regs: &mut Regiments, kept: usize) {
+        for k in kept..self.list.len() {
+            let i = self.list[k] as usize;
+            self.release(regs, i);
+        }
+        self.list.truncate(kept);
+        self.list.sort_unstable();
+    }
+
+    /// Search the track of the brigade in `slot` on from its end toward
+    /// its goal. False when there is no way on.
+    fn extend(
+        &mut self,
+        slot: usize,
+        owner: PlayerId,
+        regs: &Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+    ) -> bool {
+        // A wide berth, so the way keeps to ground with room for a row
+        // where there is any.
+        let mut berth = nav::CLEARANCE;
+        for &i in &self.list {
+            berth = berth.max(regs.berth(units, i as usize));
+        }
+        let berth = berth.saturating_mul(2).min(nav::MAX_BERTH);
+        let b = &mut self.pool[slot];
+        b.drop_behind(b.tail.min(b.arc) - REACH);
+        let from = b.track[b.len as usize - 1];
+        let found = if nav.has_map() {
+            nav.track(owner, from, b.centre, berth, &mut self.leg)
+        } else {
+            self.leg[0] = b.centre;
+            Some((1, false))
+        };
+        let Some((n, partial)) = found else {
+            return false;
+        };
+        b.partial = partial;
+        for k in 0..n {
+            if !b.push(self.leg[k]) {
+                // No room for the rest: searched for again further on.
+                b.partial = true;
+                break;
+            }
+        }
+        if b.len < 2 {
+            return false;
+        }
+        b.goal = b.centre;
+        b.set_frame();
+        true
+    }
+
+    /// Whether the track of the brigade in `slot` is still open ground
+    /// for [`WATCH`] ahead of the anchor.
+    fn open_ahead(&self, slot: usize, owner: PlayerId, nav: &Nav) -> bool {
+        let b = &self.pool[slot];
+        let n = b.len as usize;
+        let mut from = b.at(b.arc).0;
+        for k in 1..n {
+            if b.cum[k] <= b.arc {
+                continue;
+            }
+            let last = b.cum[k] >= b.arc + WATCH;
+            let to = if last {
+                b.at(b.arc + WATCH).0
+            } else {
+                b.track[k]
+            };
+            if !nav.clear_line(owner, from, to) {
+                return false;
+            }
+            if last {
+                break;
+            }
+            from = to;
+        }
+        true
+    }
+
+    /// Tell off the places of the brigade in `slot` for the ground it is
+    /// on and coming to.
+    ///
+    /// Each member has a place in the body as it will stand on arriving:
+    /// so far right of its middle and so far behind, seen the way the
+    /// track comes in. Members about level are a row. A row marches
+    /// abreast, as it will stand, where the ground either side of the
+    /// track is wide enough for it from [`LOOK`] ahead of it back to its
+    /// rear (shifted across to fit, if it must be); where it is not, as
+    /// many of the row as fit side by side go first and the rest fall in
+    /// behind them, as many abreast again. Nobody is put closer behind a
+    /// member in its way than their blocks and [`GROUP_GAP`] allow, so
+    /// rows that file through a narrows string out behind each other and
+    /// close up again beyond it.
+    ///
+    /// Looking [`LOOK`] ahead, a row has filed before it reaches a
+    /// narrows, and it widens again once its rear is through.
+    ///
+    /// False where the brigade is to let go instead: filing here it would
+    /// be slower than its regiments each by its own way (see
+    /// [`FILE_MOST`]).
+    fn pack(
+        &mut self,
+        slot: usize,
+        owner: PlayerId,
+        regs: &Regiments,
+        units: &[UnitStats],
+        nav: &Nav,
+        terrain: &Terrain,
+    ) -> bool {
+        let b = self.pool[slot];
+        let n = self.list.len();
+        let right = right_of(b.ahead);
+        let mut m = [Placing {
+            slot: 0,
+            across: Fx::ZERO,
+            lat: Fx::ZERO,
+            back: Fx::ZERO,
+            half_width: Fx::ZERO,
+            half_depth: Fx::ZERO,
+            arc: Fx::ZERO,
+            was: Fx::ZERO,
+            tight: None,
+            side: Fx::ZERO,
+            station: Fx::ZERO,
+        }; MAX_MEMBERS];
+        let (mut front, mut reach) = (Fx::MAX, REACH);
+        for (k, &i) in self.list.iter().enumerate() {
+            let i = i as usize;
+            let rel = self.members[i].end - b.centre;
+            let now = Block::of(regs, units, i);
+            let full = Block::drawn_up(regs, units, i, regs.position[i]);
+            let lat = rel.dot(right);
+            // Off to the side of the track, it has that far to come in
+            // before it can go on: so much the later its turn.
+            let across = b.across(self.members[i].arc, regs.position[i]);
+            m[k] = Placing {
+                slot: i as u32,
+                lat,
+                across,
+                arc: self.members[i].arc - across.abs(),
+                was: self.members[i].want_station,
+                tight: None,
+                back: -rel.dot(b.ahead),
+                half_width: full.half_width,
+                half_depth: now.half_depth.max(full.half_depth),
+                side: Fx::ZERO,
+                station: Fx::ZERO,
+            };
+            front = front.min(m[k].back);
+            reach = reach.max(m[k].lat.abs() + m[k].half_width + EDGE + Fx::ONE);
+        }
+        let reach = reach.min(MAX_REACH);
+        // A wide body looks further ahead: its flanks have further to
+        // come in before a narrows.
+        let look = (reach - EDGE - Fx::ONE).clamp(LOOK, FAR_LOOK);
+        let m = &mut m[..n];
+        // From the front back, and each row from the left.
+        m.sort_unstable_by_key(|p| (p.back.raw(), p.lat.raw(), p.slot));
+
+        // The ground's width along the track, from ahead of the front.
+        let top = b.arc - front + look;
+        for k in 0..PROFILE {
+            // (Behind where the track was searched from, as there, and
+            // past its end as at its end: the lead-in and the line on
+            // from the end are lines, not ways anyone found.)
+            let arc = (top - SAMPLE * k as i32).max(Fx::ZERO);
+            let arc = if b.partial { arc } else { arc.min(b.total()) };
+            let (p, dir) = b.at_smooth(arc);
+            self.room[k] = nav.room_sides(owner, p, Angle::of_vec(dir), reach, |q| terrain.wet(q));
+        }
+        // The least room right and left of the track between two points
+        // along it.
+        let room = &self.room;
+        let width = |lo: Fx, hi: Fx| {
+            let k = |a: Fx| ((top - a).raw() / SAMPLE.raw()).clamp(0, PROFILE as i32 - 1) as usize;
+            let (first, last) = (k(hi), (k(lo) + 1).min(PROFILE - 1));
+            let mut least = [reach; 2];
+            for r in &room[first..=last] {
+                least = [least[0].min(r[0]), least[1].min(r[1])];
+            }
+            least
+        };
+
+        // The room right and left of the track for a row `station` behind
+        // the anchor, `deep` from front to rear: an edge within reach
+        // leaves a margin.
+        let room_at = |station: Fx, deep: Fx| {
+            let place = b.arc - station;
+            let [r, l] = width(place - deep * 2 - Fx::ONE, place + look);
+            let margin = |w: Fx| if w < reach { w - EDGE } else { w };
+            (margin(r), margin(l))
+        };
+        // How far behind the anchor the front of `m[first..last]` must be
+        // to be clear of those placed before them (`m[..first]`) in their
+        // way, at least `row_back`; `staggered`: each stands as far behind
+        // that front as it will on arriving, else all level.
+        let clear_of = |m: &[Placing], first: usize, last: usize, row_back: Fx, staggered: bool| {
+            let mut clear = row_back;
+            for p in &m[first..last] {
+                let own = if staggered {
+                    p.back - row_back
+                } else {
+                    Fx::ZERO
+                };
+                for q in &m[..first] {
+                    let beside = p.half_width + q.half_width + GROUP_GAP - QUARTER / 2;
+                    if (p.side - q.side).abs() < beside {
+                        let behind = q.station + q.half_depth + p.half_depth + GROUP_GAP;
+                        clear = clear.max(behind - own);
+                    }
+                }
+            }
+            clear
+        };
+
+        // How many go one behind the other where rows file.
+        let mut squeezed = false;
+        let mut filing = false;
+        let mut row = 0;
+        while row < n {
+            let mut end = row + 1;
+            while end < n && m[end].back - m[row].back <= ROW {
+                end += 1;
+            }
+            let row_back = m[row].back;
+            let deep = (m[row..end].iter())
+                .map(|p| p.half_depth + (p.back - row_back))
+                .max()
+                .unwrap_or(Fx::ZERO);
+            // Abreast, as they will stand, moved across to fit.
+            m[row..end].sort_unstable_by_key(|p| (p.lat.raw(), p.slot));
+            let (lo, hi) = (
+                m[row].lat - m[row].half_width,
+                m[end - 1].lat + m[end - 1].half_width,
+            );
+            let mut station = row_back;
+            let mut abreast = false;
+            // Twice: where it is put may not be where it was first
+            // measured for.
+            for _ in 0..2 {
+                let (r, l) = room_at(station, deep);
+                abreast = hi - lo <= r + l;
+                if !abreast {
+                    break;
+                }
+                let shift = (-l - lo).max(Fx::ZERO) + (r - hi).min(Fx::ZERO);
+                for p in &mut m[row..end] {
+                    p.side = p.lat + shift;
+                }
+                let clear = clear_of(m, row, end, row_back, true);
+                if clear == station {
+                    break;
+                }
+                station = clear;
+            }
+            if abreast {
+                for p in &mut m[row..end] {
+                    p.station = station + (p.back - row_back);
+                }
+                row = end;
+                continue;
+            }
+            // Filing: this row and each behind it that cannot march
+            // abreast either go through as one file, those furthest
+            // along first, as many as fit side by side.
+            let mut deep = m[row..end]
+                .iter()
+                .map(|p| p.half_depth)
+                .max()
+                .unwrap_or(Fx::ZERO);
+            while end < n {
+                let mut next = end + 1;
+                while next < n && m[next].back - m[end].back <= ROW {
+                    next += 1;
+                }
+                let (mut lo, mut hi, mut depth) = (Fx::MAX, Fx::MIN, Fx::ZERO);
+                for p in &m[end..next] {
+                    lo = lo.min(p.lat - p.half_width);
+                    hi = hi.max(p.lat + p.half_width);
+                    depth = depth.max(p.half_depth);
+                }
+                let (r, l) = room_at(m[end].back, depth);
+                if hi - lo <= r + l {
+                    break;
+                }
+                deep = deep.max(depth);
+                end = next;
+            }
+            // In the order they had, but one clearly further along than
+            // the one before it goes before it.
+            m[row..end].sort_unstable_by_key(|p| (p.was.raw(), p.lat.raw().abs(), p.slot));
+            for _ in row..end {
+                let mut swapped = false;
+                for k in row..end - 1 {
+                    if m[k + 1].arc > m[k].arc + OVERTAKE {
+                        m.swap(k, k + 1);
+                        swapped = true;
+                    }
+                }
+                if !swapped {
+                    break;
+                }
+            }
+            let mut first = row;
+            while first < end {
+                let mut station = row_back;
+                let mut last = first + 1;
+                for _ in 0..2 {
+                    let (r, l) = room_at(station, deep);
+                    let wide = r + l;
+                    let mut across = m[first].half_width * 2;
+                    last = first + 1;
+                    while last < end {
+                        let more = m[last].half_width * 2 + GROUP_GAP;
+                        if across + more > wide {
+                            break;
+                        }
+                        across += more;
+                        last += 1;
+                    }
+                    // Closed up about the track, or in the middle of a
+                    // gap too narrow for one.
+                    let mut abreast = [0u8; MAX_MEMBERS];
+                    let abreast = &mut abreast[..last - first];
+                    for (k, a) in abreast.iter_mut().enumerate() {
+                        *a = (first + k) as u8;
+                    }
+                    abreast
+                        .sort_unstable_by_key(|&k| (m[k as usize].lat.raw(), m[k as usize].slot));
+                    let mut x = if across > wide {
+                        (r - l) / 2 - across / 2
+                    } else {
+                        (-across / 2).clamp(-l, r - across)
+                    };
+                    for &k in abreast.iter() {
+                        let p = &mut m[k as usize];
+                        p.tight = (across > wide).then_some(wide);
+                        p.side = x + p.half_width;
+                        x += p.half_width * 2 + GROUP_GAP;
+                    }
+                    let clear = clear_of(m, first, last, row_back, false);
+                    if clear == station {
+                        break;
+                    }
+                    station = clear;
+                }
+                for p in &mut m[first..last] {
+                    p.station = station;
+                }
+                squeezed |= m[first].tight.is_some();
+                filing = true;
+                first = last;
+            }
+            row = end;
+        }
+        // Where a row must file, a body lets go that would be slower
+        // through than its regiments each by its own way: one whose
+        // flanks are further out than it looks ahead (they could not
+        // come in to the file in time); at a gap that squeezes its
+        // blocks, a big body that is not a deep one; and, setting off,
+        // one drawn up so close before such a gap that the ground
+        // closes in on a member before it could come in.
+        let setting_off = m
+            .iter()
+            .all(|p| self.members[p.slot as usize].mode == Mode::Plain);
+        if filing {
+            let half = reach - EDGE - Fx::ONE;
+            if half > FAR_LOOK || (squeezed && n > FILE_MOST && half > DEEP_BODY) {
+                return false;
+            }
+            if squeezed && setting_off {
+                for p in m.iter() {
+                    let arc = self.members[p.slot as usize].arc;
+                    let across = p.across;
+                    let come_in = (across - p.side).abs().max(look);
+                    let [r, l] = width(arc, arc + come_in);
+                    let room = if across > Fx::ZERO { r } else { l };
+                    if room < reach && room < across.abs() + p.half_width {
+                        return false;
+                    }
+                }
+            }
+        }
+        for p in m.iter() {
+            let i = p.slot as usize;
+            self.members[i].want_station = p.station;
+            self.members[i].want_side = p.side;
+            // It keeps its frontage where the ground about the track has
+            // room for it, whatever lies beside where it happens to be
+            // (a block waiting its turn by a cliff is not in a narrows).
+            self.members[i].floor = p.tight.map_or(u16::MAX, |wide| {
+                let files = units[regs.unit[i] as usize].spacing(regs.formation[i]).0;
+                (wide.raw() / files.raw().max(1)).clamp(1, i32::from(u16::MAX)) as u16
+            });
+        }
+        // A brigade setting off: the anchor starts where nobody is ahead
+        // of the place the body has for it.
+        if setting_off {
+            let mut arc = Fx::MIN;
+            for p in m.iter() {
+                arc = arc.max(self.members[p.slot as usize].arc + p.station);
+            }
+            self.pool[slot].arc = arc;
+        }
+        // A member just taken up has its place where it stands, and its
+        // place moves from there to where the body has it (see
+        // `measure`): the body sets off as it stands and grows into its
+        // shape on the way, with nobody pushing past the rest to form
+        // up first.
+        let anchor = self.pool[slot].arc;
+        for p in m.iter() {
+            let i = p.slot as usize;
+            if self.members[i].mode == Mode::Plain {
+                self.members[i].station = anchor - self.members[i].arc;
+                self.members[i].side = p.across;
+            }
+        }
+        true
+    }
+
+    /// Where each member of the brigade in `slot` is along the track and
+    /// against its place, and so how fast the anchor goes this tick.
+    fn measure(&mut self, slot: usize, regs: &mut Regiments, units: &[UnitStats]) {
+        let b = self.pool[slot];
+        let tag = slot as u8 + 1;
+        let (mut lag, mut tail) = (Fx::ZERO, b.arc);
+        // Each place as it is now and the room its block takes; and where
+        // each stands along and across the track, and whether it is
+        // marching with the body.
+        #[derive(Clone, Copy)]
+        struct Place {
+            station: Fx,
+            side: Fx,
+            half_width: Fx,
+            half_depth: Fx,
+        }
+        #[derive(Clone, Copy)]
+        struct Stand {
+            arc: Fx,
+            across: Fx,
+            half_width: Fx,
+            marching: bool,
+        }
+        let mut places = [Place {
+            station: Fx::ZERO,
+            side: Fx::ZERO,
+            half_width: Fx::ZERO,
+            half_depth: Fx::ZERO,
+        }; MAX_MEMBERS];
+        let mut stands = [Stand {
+            arc: Fx::ZERO,
+            across: Fx::ZERO,
+            half_width: Fx::ZERO,
+            marching: false,
+        }; MAX_MEMBERS];
+        for (k, &i) in self.list.iter().enumerate() {
+            let i = i as usize;
+            let here = regs.position[i];
+            if self.members[i].mode != Mode::Astray {
+                self.members[i].arc = b.project(
+                    here,
+                    self.members[i].arc - SAME_PLACE,
+                    self.members[i].arc + LEAD,
+                );
+            }
+            let behind = b.arc - self.members[i].station - self.members[i].arc;
+            let block = Block::drawn_up(regs, units, i, here);
+            places[k] = Place {
+                station: self.members[i].station,
+                side: self.members[i].side,
+                half_width: block.half_width,
+                half_depth: block.half_depth,
+            };
+            stands[k] = Stand {
+                arc: self.members[i].arc,
+                across: b.across(self.members[i].arc, here),
+                half_width: Block::of(regs, units, i).half_width,
+                marching: self.kept_up(regs, i, behind),
+            };
+        }
+        let n = self.list.len();
+        for k in 0..n {
+            let i = self.list[k] as usize;
+            let (place, stand) = (places[k], stands[k]);
+            // Its place is where the ground last put it, but never ahead
+            // of a member marching in front of where it stands: it
+            // follows that one until its own lane is clear, and does not
+            // push through it to a place beyond.
+            let mut to = self.members[i].want_station;
+            for (other, theirs) in stands[..n].iter().zip(&places) {
+                if other.marching
+                    && other.arc > stand.arc
+                    && (stand.across - other.across).abs()
+                        < stand.half_width + other.half_width - QUARTER
+                {
+                    to = to.max(b.arc - other.arc + theirs.half_depth + place.half_depth);
+                }
+            }
+            // Its place moves there gently: up the body as fast as it
+            // could itself gain on the anchor. It comes no nearer behind
+            // another's place in its way than their blocks allow: a rear
+            // rank closes up as those before it move aside, not through
+            // them.
+            let station = place.station;
+            self.members[i].station = if to < station {
+                let mut least = to;
+                for theirs in &places[..n] {
+                    if theirs.station < station
+                        && (place.side - theirs.side).abs()
+                            < place.half_width + theirs.half_width - QUARTER
+                    {
+                        least = least
+                            .max(theirs.station + theirs.half_depth + place.half_depth + GROUP_GAP);
+                    }
+                }
+                let gain = if b.arrived() {
+                    regs.speed[i]
+                } else {
+                    (regs.speed[i] - b.speed) * 3 / 4
+                };
+                (station - gain.max(SLEW_UP)).max(least).min(station)
+            } else {
+                (station + SLEW_BACK).min(to)
+            };
+            let to = self.members[i].want_side;
+            let shift = (to - self.members[i].side).clamp(-SLEW_SIDE, SLEW_SIDE);
+            self.members[i].side += shift;
+            let behind = b.arc - self.members[i].station - self.members[i].arc;
+            self.members[i].stall = if behind > Fx::ONE && !regs.stepped(i) {
+                self.members[i].stall.saturating_add(1)
+            } else {
+                0
+            };
+            let across = stand.across - self.members[i].side;
+            // In step: at its place, and its place where the body has it
+            // (places still on the move may cross each other's).
+            let in_step = self.members[i].mode == Mode::Lane
+                && self.members[i].station == self.members[i].want_station
+                && self.members[i].side == self.members[i].want_side
+                && behind.abs() < IN_STEP_ALONG
+                && across.abs() < IN_STEP_ACROSS;
+            regs.step_with[i] = if in_step { tag | IN_STEP } else { tag };
+            regs.files_floor[i] = self.members[i].floor;
+            regs.step_arc[i] = self.members[i].arc;
+            if self.kept_up(regs, i, behind) {
+                if !self.members[i].held {
+                    lag = lag.max(behind);
+                }
+                tail = tail.min(self.members[i].arc);
+            }
+        }
+        let slow = (Fx::ONE - (lag - LAG_FREE) / LAG_SPAN).clamp(CRAWL, Fx::ONE);
+        let b = &mut self.pool[slot];
+        b.tail = tail;
+        b.speed = if b.halted || b.arrived() {
+            Fx::ZERO
+        } else {
+            b.pace * slow
+        };
+    }
+
+    /// Whether the anchor waits for member `i`, `behind` its place: not
+    /// for one fighting, trapped, left far behind or making no headway.
+    fn kept_up(&self, regs: &Regiments, i: usize, behind: Fx) -> bool {
+        regs.engaged[i].is_none()
+            && regs.trapped_left[i] == 0
+            && behind < LEFT_BEHIND
+            && self.members[i].stall < STALLED
+            && self.members[i].mode != Mode::Astray
+    }
+
+    /// Give each member of the brigade in `slot` the point it walks at
+    /// this tick and its pace.
+    fn steer(
+        &mut self,
+        slot: usize,
+        owner: PlayerId,
+        regs: &mut Regiments,
+        units: &[UnitStats],
+        nav: &mut Nav,
+        tick: u32,
+    ) {
+        let b = self.pool[slot];
+        // Where each stands across the track, and its block.
+        let mut stand = [(Fx::ZERO, Fx::ZERO, Fx::ZERO); MAX_MEMBERS];
+        for (k, &i) in self.list.iter().enumerate() {
+            let i = i as usize;
+            let across = b.across(self.members[i].arc, regs.position[i]);
+            let block = Block::of(regs, units, i);
+            stand[k] = (across, block.half_width, block.half_depth);
+        }
+        for k in 0..self.list.len() {
+            let i = self.list[k] as usize;
+            let here = regs.position[i];
+            let place = b.arc - self.members[i].station;
+            let near = self.members[i].arc + MIN_LEAD;
+            let full = (place + LEAD).max(near);
+            let was = self.members[i].mode;
+            if was == Mode::Plain {
+                // Taken up: the brigade steers it from now.
+                regs.set_seeks_place(i, false);
+                regs.target_facing[i] = None;
+            }
+            // Ahead of its place (the rows are filing), it keeps to where
+            // it is across the track and waits, and folds in to its lane
+            // as its place comes level: not all into the lane at once,
+            // on top of each other.
+            let (across, half_width, half_depth) = stand[k];
+            let ahead = (self.members[i].arc - place).clamp(Fx::ZERO, FUNNEL);
+            let side = self.members[i].side + (across - self.members[i].side) * (ahead / FUNNEL);
+            let lane = b.lane(full, side);
+            if was == Mode::Plain || (tick + i as u32).is_multiple_of(SIGHT) {
+                let sees = |p: FxVec2| nav.clear_line(owner, here, p);
+                let found = if sees(lane) {
+                    Some(Mode::Lane)
+                } else if sees(b.at(full).0) {
+                    Some(Mode::Centre)
+                } else if sees(b.at(near).0) {
+                    Some(Mode::Short)
+                } else {
+                    None
+                };
+                match found {
+                    Some(mode) => {
+                        if was == Mode::Astray {
+                            // Back by the track, wherever along it.
+                            self.members[i].arc =
+                                b.project(here, b.tail - LEFT_BEHIND, b.arc + JOIN_REACH);
+                        }
+                        self.members[i].mode = mode;
+                        self.members[i].lost = 0;
+                    }
+                    None if was == Mode::Astray => {}
+                    None => {
+                        self.members[i].lost = self.members[i].lost.saturating_add(1);
+                        if self.members[i].lost >= LOST || was == Mode::Plain {
+                            // By a route of its own to where the body is
+                            // (looked for afresh: its way so far led
+                            // somewhere else).
+                            self.members[i].mode = Mode::Astray;
+                            self.members[i].set = b.at(place.clamp(b.start(), b.total())).0;
+                            nav.lost(i);
+                        } else if was == Mode::Lane {
+                            self.members[i].mode = Mode::Centre;
+                        }
+                    }
+                }
+            }
+            let target = match self.members[i].mode {
+                Mode::Lane | Mode::Plain => lane,
+                Mode::Centre => b.at(full).0,
+                Mode::Short => b.at(near).0,
+                Mode::Astray => self.members[i].set,
+            };
+            let behind = place - self.members[i].arc;
+            let pace = if self.kept_up(regs, i, behind) {
+                // So fast along the track: faster over the ground when it
+                // must also come across to its lane, or it would fall
+                // behind doing so and the whole body wait for it.
+                let mut along = (b.speed + GAIN * behind).max(Fx::ZERO);
+                // Ahead of its place in a narrows, it does not wait there
+                // for its place to come up, stopping the way for all
+                // behind it: it goes on through (the one before it
+                // permitting) and waits beyond.
+                if behind < -Fx::ONE && !nav.open_around(owner, here, OPEN_GROUND) {
+                    along = along.max(b.pace);
+                }
+                // The anchor in, it closes up to its place as fast as it
+                // can.
+                if b.arrived() {
+                    along = along.max(behind);
+                }
+                let to = target - here;
+                let (run, far) = (to.dot(b.at(self.members[i].arc).1), to.length());
+                let slant = if run > Fx::ONE {
+                    (far / run).min(SLANT)
+                } else {
+                    Fx::ONE
+                };
+                (along * slant).min(regs.speed[i])
+            } else {
+                regs.speed[i]
+            };
+            // It comes no nearer behind a member in its way than they
+            // march (a file held up at a ford closes up no tighter), and
+            // no nearer than touching behind any other.
+            let mut room = Fx::MAX;
+            for (n, &j) in self.list.iter().enumerate() {
+                let j = j as usize;
+                let (theirs, their_width, their_depth) = stand[n];
+                if self.members[j].arc > self.members[i].arc
+                    && self.members[j].station < self.members[i].station
+                    && (across - theirs).abs() < half_width + their_width
+                {
+                    let depths = half_depth + their_depth;
+                    let gap = self.members[j].arc - self.members[i].arc - depths;
+                    // No nearer than half the room their places leave.
+                    let least = (self.members[i].station - self.members[j].station - depths)
+                        .clamp(Fx::ZERO, FOLLOW)
+                        / 2;
+                    room = room.min(((gap - least) * FOLLOW_GAIN).max(Fx::ZERO));
+                }
+            }
+            self.members[i].held = room < pace;
+            let pace = pace.min(room);
+            regs.target[i] = Some(target);
+            regs.pace[i] = pace;
+            self.members[i].set = target;
+            self.members[i].paced = pace;
+        }
+    }
+
+    /// Bring in the brigades of `from` (a world on the same map) with the
+    /// regiments `copied` says were copied here, slot for slot.
+    pub(crate) fn copy_from(&mut self, from: &Brigades, copied: impl Fn(usize) -> bool) {
+        self.pool.clone_from(&from.pool);
+        self.live = from.live;
+        for i in 0..self.of.len().min(from.of.len()) {
+            if !copied(i) {
+                continue;
+            }
+            self.of[i] = from.of[i];
+            self.members[i] = from.members[i];
+        }
+    }
+
+    /// Nothing while no brigade is on the march, so a match without any
+    /// hashes as it did before there were brigades.
+    pub(crate) fn hash_into(&self, regs: &Regiments, h: &mut StateHasher) {
+        if self.live == 0 {
+            return;
+        }
+        let vec = |h: &mut StateHasher, v: FxVec2| {
+            h.i32(v.x.raw());
+            h.i32(v.y.raw());
+        };
+        for b in &self.pool {
+            h.u16(b.number);
+            if b.number == 0 {
+                continue;
+            }
+            h.u8(u8::from(b.hunt) | u8::from(b.changed) << 1 | u8::from(b.halted) << 2);
+            h.u8(b.phase as u8);
+            h.u8(b.alone);
+            vec(h, b.goal);
+            vec(h, b.centre);
+            vec(h, b.ahead);
+            for v in [b.pace, b.arc, b.speed, b.tail] {
+                h.i32(v.raw());
+            }
+            h.u8(b.len);
+            h.u8(u8::from(b.partial));
+            for k in 0..b.len as usize {
+                vec(h, b.track[k]);
+                h.i32(b.cum[k].raw());
+            }
+        }
+        for i in 0..self.of.len() {
+            h.u8(self.of[i]);
+            if self.of[i] == 0 {
+                continue;
+            }
+            h.u16(self.members[i].generation);
+            h.u8(self.members[i].mode as u8);
+            h.u8(self.members[i].lost);
+            h.u8(self.members[i].stall);
+            h.u8(u8::from(self.members[i].held));
+            vec(h, self.members[i].end);
+            h.u32(self.members[i].facing.map_or(u32::MAX, |a| u32::from(a.0)));
+            vec(h, self.members[i].set);
+            for v in [
+                self.members[i].ordered,
+                self.members[i].paced,
+                self.members[i].arc,
+                self.members[i].station,
+                self.members[i].side,
+                self.members[i].want_station,
+                self.members[i].want_side,
+            ] {
+                h.i32(v.raw());
+            }
+            h.u16(self.members[i].floor);
+            h.u8(regs.step_with[i]);
+            h.u16(regs.files_floor[i]);
+        }
+    }
+}

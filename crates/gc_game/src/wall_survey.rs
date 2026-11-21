@@ -198,7 +198,7 @@ impl Marches {
                 self.stuck[k].seconds += 1;
                 continue;
             }
-            let goal = world.route(r.handle).last().copied();
+            let goal = world.goal(r.handle);
             self.open.insert(r.handle, self.stuck.len());
             self.stuck.push(Stuck {
                 since: world.tick_count() / TICKS_PER_SECOND,

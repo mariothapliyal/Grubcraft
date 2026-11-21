@@ -118,6 +118,7 @@ fn move_to(w: &mut World, player: u8, regiment: RegimentHandle, x: Fx, y: Fx) {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     ));
 }
@@ -574,6 +575,7 @@ fn copies_of_the_field_keep_who_has_seen_whom() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }];
     w.tick(&walk);

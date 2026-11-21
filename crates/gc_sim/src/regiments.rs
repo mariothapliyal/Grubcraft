@@ -168,6 +168,22 @@ macro_rules! regiment_fields {
             /// hash and snapshots (a loaded game shows no reasons until the
             /// next knock or check).
             pub(crate) why: Vec<u16>,
+            /// The brigade steering it (see [`crate::brigades`]), as a
+            /// tag, or 0; with [`crate::brigades::IN_STEP`] set while it
+            /// is at its place in it. Set by its brigade each tick it
+            /// marches and hashed with it (see `Brigades::hash_into`), not
+            /// with the regiment: a match without brigades hashes as it
+            /// did before there were any. An order to move, attack or
+            /// fall back clears it: the pace is that order's from then,
+            /// not its brigade's.
+            pub(crate) step_with: Vec<u8>,
+            /// The fewest files a brigade lets it narrow to in tight
+            /// ground (see [`Regiments::squeeze`]), or 0 for no say; set
+            /// each tick like `step_with`.
+            pub(crate) files_floor: Vec<u16>,
+            /// How far along its brigade's way it is, in tiles (see
+            /// [`Regiments::leaves_be`]); set each tick like `step_with`.
+            pub(crate) step_arc: Vec<Fx>,
             $($(#[$doc])* pub(crate) $name: Vec<$ty>,)*
             /// Free slot indices, popped from the back. Initialised so slot
             /// 0 is used first.
@@ -185,6 +201,9 @@ macro_rules! regiment_fields {
                     plan: vec![NO_PLAN; n],
                     plans: Plans::with_capacity(n),
                     why: vec![0; n],
+                    step_with: vec![0; n],
+                    files_floor: vec![0; n],
+                    step_arc: vec![Fx::ZERO; n],
                     $($name: vec![$free; n],)*
                     free: (0..capacity).rev().collect(),
                 }
@@ -195,6 +214,9 @@ macro_rules! regiment_fields {
                 self.hp[i * MAX_MODELS as usize..][..MAX_MODELS as usize].fill(0);
                 self.plans.release(&mut self.plan[i]);
                 self.why[i] = 0;
+                self.step_with[i] = 0;
+                self.files_floor[i] = 0;
+                self.step_arc[i] = Fx::ZERO;
                 $(self.$name[i] = $free;)*
             }
 
@@ -668,6 +690,11 @@ impl Regiments {
         self.free.pop();
         self.alive[i] = true;
         self.copy_slot(from, i);
+        // What its brigade told it last tick, read again before the
+        // brigade next steers (see `Brigades::copy_from`).
+        self.step_with[i] = from.step_with[i];
+        self.files_floor[i] = from.files_floor[i];
+        self.step_arc[i] = from.step_arc[i];
         true
     }
 
@@ -833,13 +860,21 @@ impl Regiments {
         if order.files != 0 {
             self.set_frontage(i, order.files);
         }
-        let pace = Fx::from_raw(order.pace.raw() / TICKS_PER_SECOND as i32);
-        self.pace[i] = if pace.raw() <= 0 {
+        self.pace[i] = self.pace_for(i, order.pace);
+        self.step_with[i] = 0;
+        true
+    }
+
+    /// The pace slot `i` marches at, in tiles a tick, on an order to
+    /// march at `pace` tiles a second (its own when zero or more than
+    /// it can do).
+    pub(crate) fn pace_for(&self, i: usize, pace: Fx) -> Fx {
+        let pace = Fx::from_raw(pace.raw() / TICKS_PER_SECOND as i32);
+        if pace.raw() <= 0 {
             self.speed[i]
         } else {
             pace.min(self.speed[i])
-        };
-        true
+        }
     }
 
     /// Slot `i` has nothing to carry out: no march, no enemy to attack.
@@ -1029,7 +1064,10 @@ impl Regiments {
             // bridge's deck): it narrows to fit on the way up to it, so it
             // files in as a column instead of jamming the mouth broadside.
             // (Open all round there, it is no narrows.)
+            // (Not a regiment a brigade steers: what it walks at is a
+            // point just ahead of it, not a turn of its route.)
             let ahead = (self.target[i])
+                .filter(|_| self.step_with[i] == 0)
                 .and_then(|t| nav.steer(i, t))
                 .and_then(|(w, _)| {
                     let d = w - at;
@@ -1047,7 +1085,8 @@ impl Regiments {
         let fit = (1..=frontage)
             .rev()
             .find(|&f| fits(f, Fx::ZERO))
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(self.files_floor[i].min(frontage));
         if fit < files {
             // Halve the gap each step: a sudden narrows closes quickly.
             let narrower = files - (files - fit).div_ceil(2);
@@ -1092,6 +1131,19 @@ impl Regiments {
     /// [`crate::combat::PUSHING`] (see [`KEEP_CROWDED`]).
     pub(crate) fn crowded(&self, j: usize) -> bool {
         self.keep[j] & KEEP_CROWDED != 0
+    }
+
+    /// Whether slot `i` keeps no room from slot `j` because they march in
+    /// one brigade and either both are in step, each at its place, or `j`
+    /// is behind `i` on their way: the one behind keeps its distance, and
+    /// the one ahead does not step aside for it (stepping away from a
+    /// friend at its heels, it would never get across to its own lane).
+    pub(crate) fn leaves_be(&self, i: usize, j: usize) -> bool {
+        use crate::brigades::{IN_STEP, STEP_BEHIND};
+        let (a, b) = (self.step_with[i], self.step_with[j]);
+        a != 0
+            && a & !IN_STEP == b & !IN_STEP
+            && (a & b & IN_STEP != 0 || self.step_arc[j] + STEP_BEHIND < self.step_arc[i])
     }
 
     /// Whether regiment `j` marches to a spot it was sent to stand at
@@ -1222,6 +1274,7 @@ impl Regiments {
         self.held[i] = 0;
         self.clear[i] = 0;
         self.pace[i] = self.speed[i];
+        self.step_with[i] = 0;
         true
     }
 
@@ -1258,6 +1311,7 @@ impl Regiments {
         self.clear[i] = 0;
         // Backing steps are half steps (see `step_movement`).
         self.pace[i] = self.speed[i];
+        self.step_with[i] = 0;
         true
     }
 
@@ -2371,6 +2425,7 @@ mod tests {
             files: 0,
             pace: Fx::ZERO,
             hunt: true,
+            brigade: 0,
         };
         let mut queued = Plan::NONE;
         queued.queue.push(step);

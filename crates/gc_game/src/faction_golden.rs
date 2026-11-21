@@ -206,6 +206,7 @@ impl Script {
                         target: at,
                         facing: None,
                         files: 0,
+                        brigade: 0,
                         pace: Fx::ZERO,
                     }
                 };

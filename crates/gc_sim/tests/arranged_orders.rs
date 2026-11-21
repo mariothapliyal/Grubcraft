@@ -82,6 +82,7 @@ fn run(preset: Preset) {
             target: FxVec2::from_ints(128, 90),
             facing: Some(NORTH),
             width: None,
+            brigade: 0,
         },
         Arrangement::Preset(preset),
         &mut moves,

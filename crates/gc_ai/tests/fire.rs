@@ -215,6 +215,7 @@ fn a_general_smokes_out_an_army_in_the_woods_rather_than_go_in() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
         })
         .collect();
