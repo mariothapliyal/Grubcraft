@@ -54,6 +54,7 @@ fn run(real: &Real, report: &mut Report) {
             files: 0,
             pace: Fx::ZERO,
             hunt: false,
+            brigade: 0,
         };
         for step in [through, Step::Attack { target: foe }] {
             orders.push(PlayerCommand {

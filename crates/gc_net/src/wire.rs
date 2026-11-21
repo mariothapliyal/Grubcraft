@@ -968,6 +968,7 @@ mod tests {
                 facing: Some(Angle(0)),
                 files: 12,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
             Command::MoveTo {
                 regiment: h(0, 0),
@@ -975,6 +976,7 @@ mod tests {
                 facing: None,
                 files: 0,
                 pace: Fx::from_raw(77),
+                brigade: 0,
             },
             Command::Attack {
                 regiment: h(4, 1),
@@ -986,6 +988,7 @@ mod tests {
                 facing: Some(Angle(65_535)),
                 files: 7,
                 pace: Fx::ZERO,
+                brigade: 0,
             },
             Command::Then {
                 regiment: h(3, 1),
@@ -995,6 +998,7 @@ mod tests {
                     files: 0,
                     pace: Fx::from_raw(5),
                     hunt: true,
+                    brigade: 0,
                 },
             },
             Command::Then {

@@ -342,6 +342,7 @@ mod tests {
                     facing: None,
                     files: 0,
                     pace: gc_fixed::Fx::ZERO,
+                    brigade: 0,
                 },
             })
             .collect();

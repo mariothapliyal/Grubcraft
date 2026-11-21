@@ -1272,6 +1272,7 @@ mod tests {
                 facing: Some(Angle(77)),
                 files: 6,
                 pace: Fx::from_raw(9),
+                brigade: 0,
             },
             Command::Then {
                 regiment: h,
@@ -1281,6 +1282,7 @@ mod tests {
                     files: 0,
                     pace: Fx::ZERO,
                     hunt: false,
+                    brigade: 0,
                 },
             },
             Command::Then {

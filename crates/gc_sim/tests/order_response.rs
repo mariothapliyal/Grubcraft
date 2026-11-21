@@ -48,6 +48,7 @@ fn ordered(nav: &[u8], unit: u16, from: (i32, i32), to: (i32, i32)) -> (World, R
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     assert_eq!(stats.commands_applied, 1);

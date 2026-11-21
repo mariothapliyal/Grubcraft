@@ -2928,6 +2928,7 @@ impl Running {
                 facing,
                 files,
                 pace,
+                brigade,
             } = command
             else {
                 self.human_orders.push(PlayerCommand {
@@ -2943,6 +2944,7 @@ impl Running {
                 files,
                 pace,
                 hunt,
+                brigade,
             };
             let command = gc_sim::Command::of_step(regiment, step, queue);
             self.human_orders.push(PlayerCommand {
@@ -3185,6 +3187,7 @@ impl Running {
             target: fx_vec((start + end) * 0.5),
             facing: Some(gc_fixed::Angle::of_vec(fx_vec(facing))),
             width: Some(to_fx(line.length())),
+            brigade: 0,
         })
     }
 
@@ -8430,6 +8433,7 @@ impl Running {
                             facing: Some(gc_fixed::Angle::of_vec(fx_vec(Vec2::X))),
                             files: 0,
                             pace: gc_fixed::Fx::ZERO,
+                            brigade: 0,
                         },
                     });
                     self.bridge_scene = None;
@@ -8520,6 +8524,7 @@ impl Running {
                                 facing: Some(north),
                                 files: 0,
                                 pace: gc_fixed::Fx::ZERO,
+                                brigade: 0,
                             },
                         }
                     });

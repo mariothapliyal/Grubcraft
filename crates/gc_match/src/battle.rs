@@ -996,6 +996,7 @@ pub(crate) mod tests {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         });
         shift_into_zone(&world, 0, &mut line);
         let [a, b] = line.map(|c| match c {

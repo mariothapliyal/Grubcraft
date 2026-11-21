@@ -406,6 +406,7 @@ fn a_mind_remembers_enemies_it_lost_sight_of() {
             facing: None,
             files: 0,
             pace: gc_fixed::Fx::ZERO,
+            brigade: 0,
         },
     });
     let mut view = Perception::new();

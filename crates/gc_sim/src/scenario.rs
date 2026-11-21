@@ -274,6 +274,7 @@ impl Drill {
                 target,
                 facing: None,
                 width: None,
+                brigade: 0,
             };
             formation::group_move(&mut members[..count], order, &mut self.group_commands);
             out.extend(

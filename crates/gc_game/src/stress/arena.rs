@@ -383,6 +383,7 @@ pub(crate) fn move_to(player: PlayerId, regiment: RegimentHandle, to: FxVec2) ->
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }
 }

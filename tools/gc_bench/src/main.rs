@@ -432,6 +432,7 @@ fn storm(opts: &Options, nav: &[u8], storm: &Storm) -> bool {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 },
             }
         })

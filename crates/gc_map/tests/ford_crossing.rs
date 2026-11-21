@@ -180,6 +180,7 @@ fn cross(seed: u64, ford: usize, army: &[u16]) -> Crossing {
             target: FxVec2::from_ints(x, mid - BACK),
             facing: Some(NORTH),
             width: None,
+            brigade: 0,
         },
         &mut cmds,
     );

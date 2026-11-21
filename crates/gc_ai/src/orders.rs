@@ -440,6 +440,7 @@ fn command(regiment: RegimentHandle, act: &Act) -> Command {
                 files: 0,
                 pace: to_fx(pace),
                 hunt,
+                brigade: 0,
             },
             false,
         ),

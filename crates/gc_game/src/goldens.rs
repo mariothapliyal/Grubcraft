@@ -253,6 +253,7 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                     facing: None,
                     files: 0,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 })
             }));
         }
@@ -267,6 +268,7 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                         files: 0,
                         pace: Fx::ZERO,
                         hunt: true,
+                        brigade: 0,
                     },
                 })
             }));
@@ -289,6 +291,7 @@ fn ordering(world: &World, out: &mut Vec<PlayerCommand>) {
                         facing: None,
                         files: 0,
                         pace: Fx::ZERO,
+                        brigade: 0,
                     })
                 }),
         ),
@@ -355,6 +358,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
             facing: None,
             files: 10,
             pace: Fx::from_int(2),
+            brigade: 0,
         }));
         return;
     }
@@ -370,6 +374,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
         facing: None,
         files: 0,
         pace: Fx::ZERO,
+        brigade: 0,
     };
     // What each batch should do is in DEPLOY_ORDERS; `record` checks it.
     match tick {
@@ -382,6 +387,7 @@ fn deploying(world: &World, out: &mut Vec<PlayerCommand>) {
                 facing: Some(Angle(0x2000)),
                 files: 6,
                 pace: Fx::ZERO,
+                brigade: 0,
             }),
             order(plain_move(second.handle, outside)),
             order(plain_move(enemy.handle, inside)),

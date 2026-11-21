@@ -819,6 +819,7 @@ mod tests {
                     facing: Some(Angle(9)),
                     files: 8,
                     pace: Fx::ZERO,
+                    brigade: 0,
                 },
             }],
         });

@@ -298,6 +298,7 @@ fn a_regiment_a_singing_wall_slowed_walks_slower() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             }
         ));
         for _ in 0..3 * TICKS_PER_SECOND {

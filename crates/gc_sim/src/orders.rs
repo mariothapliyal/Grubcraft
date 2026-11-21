@@ -334,6 +334,7 @@ mod tests {
             files: 0,
             pace: Fx::ZERO,
             hunt: false,
+            brigade: 0,
         }
     }
 

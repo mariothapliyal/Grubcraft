@@ -2296,6 +2296,7 @@ mod tests {
             files: 0,
             pace: Fx::ZERO,
             hunt: true,
+            brigade: 0,
         };
         let mut queued = Plan::NONE;
         queued.queue.push(step);

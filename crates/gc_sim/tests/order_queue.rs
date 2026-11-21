@@ -54,6 +54,7 @@ fn to(x: i32, y: i32) -> Step {
         files: 0,
         pace: Fx::ZERO,
         hunt: false,
+        brigade: 0,
     }
 }
 
@@ -64,6 +65,7 @@ fn move_to(regiment: RegimentHandle, x: i32, y: i32) -> Command {
         facing: None,
         files: 0,
         pace: Fx::ZERO,
+        brigade: 0,
     }
 }
 
@@ -214,6 +216,7 @@ fn an_attack_move_fights_what_it_meets_then_marches_on() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     assert!(view(&w, r).hunting);
@@ -265,6 +268,7 @@ fn a_fight_on_an_attack_move_keeps_every_queued_step() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     for k in 0..QUEUE_LEN as i32 {

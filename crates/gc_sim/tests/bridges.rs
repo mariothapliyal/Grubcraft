@@ -275,6 +275,7 @@ fn a_worker_builds_it_out_from_the_bank_and_troops_cross_it() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut dry = true;
@@ -494,6 +495,7 @@ fn a_block_crossing_a_bridge_over_a_ford_keeps_to_the_deck() {
                 facing: None,
                 files: 0,
                 pace: Fx::ZERO,
+                brigade: 0,
             }
         ));
         let stats = DRILL_UNITS[0];
@@ -543,6 +545,7 @@ fn a_block_passing_the_foot_of_a_bridge_on_the_bank_keeps_its_width() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         }
     ));
     let mut narrowest = wide;

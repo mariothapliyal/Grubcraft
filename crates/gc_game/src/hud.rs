@@ -42,6 +42,7 @@ pub fn move_order(p: Vec2) -> GroupOrder {
         target: fx_vec(p),
         facing: None,
         width: None,
+        brigade: 0,
     }
 }
 

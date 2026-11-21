@@ -315,6 +315,7 @@ mod tests {
                     facing,
                     files,
                     pace,
+                    ..
                 } => (regiment.index, target, facing, files, pace),
                 _ => unreachable!(),
             })
@@ -330,6 +331,7 @@ mod tests {
             target: FxVec2::from_ints(30, 10),
             facing: None,
             width: None,
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let north = Some(Angle(0xC000));
@@ -354,6 +356,7 @@ mod tests {
             target: FxVec2::from_ints(50, 50),
             facing: Some(Angle::ZERO),
             width: Some(Fx::from_int(25)),
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let got = moves(&out);
@@ -390,6 +393,7 @@ mod tests {
             target: FxVec2::from_ints(100, 20),
             facing: Some(Angle(0xC000)),
             width: None,
+            brigade: 0,
         };
         group_move(&mut members, order, &mut out);
         let got = moves(&out);

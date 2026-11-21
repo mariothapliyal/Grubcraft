@@ -814,6 +814,7 @@ mod tests {
             target: TARGET,
             facing: Some(NORTH),
             width: width.map(Fx::from_int),
+            brigade: 0,
         }
     }
 

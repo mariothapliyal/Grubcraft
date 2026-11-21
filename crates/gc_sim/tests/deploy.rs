@@ -52,6 +52,7 @@ fn place(regiment: RegimentHandle, x: i32, y: i32) -> Command {
         facing: Some(NORTH),
         files: 6,
         pace: Fx::ZERO,
+        brigade: 0,
     }
 }
 
@@ -192,6 +193,7 @@ fn the_battle_starts_when_everyone_is_ready() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     )]);
     for _ in 0..20 {

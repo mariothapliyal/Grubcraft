@@ -341,6 +341,7 @@ pub fn march(kind: usize, seed: u64, k: u64) -> Option<March> {
             target: b,
             facing: Some(facing),
             width: None,
+            brigade: 0,
         },
         &mut cmds,
     );
@@ -698,6 +699,7 @@ fn debug_route() {
             facing: None,
             files: 0,
             pace: Fx::ZERO,
+            brigade: 0,
         },
     }]);
     for _ in 0..3 {
