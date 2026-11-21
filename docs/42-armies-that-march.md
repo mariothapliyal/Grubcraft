@@ -195,7 +195,7 @@ Built (Mario chose it, 22 November 2026, 6:44 am NZDT):
     woods (70% heavy) by the share of its block under the trees, not by
     its middle alone (soft ground the same way), and its ranks loosen on
     screen by that share. Routes price the ground under the whole block.
-    Built, `SIM_VERSION` 92.
+    Built, `SIM_VERSION` 93.
 
 Not built, and not needed on what was measured:
 
