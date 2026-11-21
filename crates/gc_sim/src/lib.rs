@@ -1275,8 +1275,15 @@ impl World {
         let (Some(c), Some(i)) = (&self.conquest, self.regiments.resolve(h)) else {
             return false;
         };
-        self.regiments.models[i] < self.regiments.full_models[i]
-            && c.refills(&self.regiments, &self.units, i)
+        c.short_of_men(&self.regiments, &self.units, i)
+    }
+
+    /// Whether `at` is in reach of one of player `p`'s reinforcement
+    /// points (see [`reinforce`]; Conquest only).
+    pub fn reinforces_at(&self, p: PlayerId, at: FxVec2) -> bool {
+        self.conquest
+            .as_ref()
+            .is_some_and(|c| c.reinforces_at(p, at))
     }
 
     /// Where a regiment of player `p`'s at `from` might stand to

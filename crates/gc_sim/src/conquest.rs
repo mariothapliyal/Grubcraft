@@ -223,9 +223,10 @@ pub(crate) struct Conquest {
     /// Which building types are reinforcement points, by building id (see
     /// [`crate::reinforce`]).
     pub(crate) reinforcing: Vec<bool>,
-    /// Scratch for [`Conquest::reinforce`]: the reinforcing building slots
-    /// standing, room for every slot kept so a tick never allocates.
-    pub(crate) posts: Vec<u32>,
+    /// Scratch for [`Conquest::reinforce`]: the reinforcement points
+    /// standing and their reach, room for every slot kept so a tick never
+    /// allocates.
+    pub(crate) points: Vec<(u32, i32)>,
 }
 
 /// Whether the footprints `a` and `b` (`[x, y, w, d]`) share a tile.
@@ -250,7 +251,7 @@ impl Conquest {
         Conquest {
             units: setup.units.to_vec(),
             reinforcing: crate::reinforce::reinforcing_types(&structures, setup.units),
-            posts: Vec::with_capacity(setup.structures as usize),
+            points: Vec::with_capacity(setup.structures as usize),
             structures,
             economy: Economy::new(setup, regiments),
             production: Production::new(setup.structures as usize, setup.build_percent),

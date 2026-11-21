@@ -11,7 +11,7 @@
 
 use gc_sim::economy::SUPPLY_LIMIT;
 use gc_sim::structures::{Role, StructureHandle};
-use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND};
+use gc_sim::{PlayerId, RegimentHandle, TICKS_PER_SECOND, Waiting};
 use glam::Vec2;
 
 use super::raider::Raider;
@@ -109,8 +109,9 @@ const WAITING: f32 = 20.0;
 const ABREAST: f32 = 7.0;
 /// A regiment at home below this share of its soldiers goes to reinforce.
 const MEND_BELOW: f32 = 0.85;
-/// Near enough its reinforcement spot, in tiles, to stand where it is.
-const MEND_NEAR: f32 = 3.0;
+/// The order group of regiments sent to reinforce (the army's marches are
+/// `u32::MAX - 1` to `- 3`).
+const MEND_GROUP: u32 = u32::MAX - 4;
 /// An attack falls back once the army is down to this share of the
 /// soldiers it set out with.
 const FALL_BACK_SHARE: f32 = 0.35;
@@ -643,12 +644,15 @@ impl Marshal {
             }
             Goal::Defend(_) => {}
         }
+        // Those short of soldiers at home refill first, and neither wait at
+        // the rally point nor join an attack till they are full.
+        self.pick_mending(s, army);
         // Those out march on the goal; the rest wait at the rally point,
         // and join an attack once there are enough of them.
         let waiting: Vec<&Seen> = army
             .iter()
             .copied()
-            .filter(|r| !self.out.contains(&r.handle))
+            .filter(|r| !self.out.contains(&r.handle) && !self.mending.contains(&r.handle))
             .collect();
         if matches!(self.goal, Goal::Attack(_) | Goal::Heart(_))
             && waiting.len() >= REINFORCE
@@ -660,10 +664,10 @@ impl Marshal {
         self.man_walls(s, army, home);
         let (going, staying): (Vec<&Seen>, Vec<&Seen>) = army
             .iter()
-            .filter(|r| !self.mans(r.handle))
+            .filter(|r| !self.mans(r.handle) && !self.mending.contains(&r.handle))
             .partition(|r| self.out.contains(&r.handle));
         let face = home.map_or(Vec2::Y, |h| (rally - h).normalize_or(Vec2::Y));
-        let staying = self.send_to_reinforce(s, staying);
+        self.send_to_reinforce(s, army);
         march(s, &staying, rally, face, &mut self.wants, 1, false);
         if !matches!(self.goal, Goal::Heart(_)) {
             self.holders.clear();
@@ -716,42 +720,49 @@ impl Marshal {
         }
     }
 
-    /// Of the regiments staying at home, those short of soldiers go to
-    /// stand by the nearest reinforcement point until they are full again
-    /// (from below [`MEND_BELOW`] of their strength, so one soldier short
-    /// isn't worth the walk); the rest are returned, for the rally point.
-    fn send_to_reinforce<'a>(&mut self, s: &Sense, staying: Vec<&'a Seen>) -> Vec<&'a Seen> {
-        let short = |r: &Seen| r.models < r.full && s.world.can_reinforce(r.handle);
-        self.mending
-            .retain(|h| staying.iter().any(|r| r.handle == *h && short(r)));
-        let (mending, staying): (Vec<&Seen>, Vec<&Seen>) = staying.into_iter().partition(|r| {
-            self.mending.contains(&r.handle)
-                || short(r) && (r.models as f32) < MEND_BELOW * r.full as f32
-        });
-        for r in mending {
+    /// The regiments at home (not out) short of soldiers that go to stand
+    /// by a reinforcement point until they are full again: from below
+    /// [`MEND_BELOW`] of their strength, so one soldier short isn't worth
+    /// the walk. A threat at home sends them out with the rest.
+    fn pick_mending(&mut self, s: &Sense, army: &[&Seen]) {
+        let was = core::mem::take(&mut self.mending);
+        self.mending.extend(
+            army.iter()
+                .filter(|r| !self.out.contains(&r.handle))
+                .filter(|r| was.contains(&r.handle) || r.strength() < MEND_BELOW)
+                .filter(|r| s.world.can_reinforce(r.handle))
+                .map(|r| r.handle),
+        );
+    }
+
+    /// Each regiment refilling that isn't in reach of a reinforcement
+    /// point yet marches to the nearest one.
+    fn send_to_reinforce(&mut self, s: &Sense, army: &[&Seen]) {
+        for r in army.iter().filter(|r| self.mending.contains(&r.handle)) {
+            let refilling = (s.world.regiments.feedback(r.handle)).is_some_and(|f| {
+                matches!(
+                    f.waiting,
+                    Some(Waiting::Reinforcing | Waiting::ShortToReinforce)
+                )
+            });
+            if refilling {
+                continue;
+            }
             let Some(spot) = s.world.reinforce_spot(s.party, to_fx_vec(r.pos)) else {
                 continue;
             };
-            if !self.mending.contains(&r.handle) {
-                self.mending.push(r.handle);
-            }
-            let spot = v2(spot);
-            if r.pos.distance(spot) <= MEND_NEAR {
-                continue;
-            }
             self.wants.push(Want {
                 regiment: r.handle,
                 act: Act::Move {
-                    to: s.terrain.clamp(spot, 2.0),
+                    to: s.terrain.clamp(v2(spot), 2.0),
                     facing: None,
                     pace: s.view.pace(r),
                     hunt: false,
                 },
                 priority: ROUTINE,
-                group: u32::MAX - 4,
+                group: MEND_GROUP,
             });
         }
-        staying
     }
 
     /// Where to attack: the enemy building it knows of nearest `from`,

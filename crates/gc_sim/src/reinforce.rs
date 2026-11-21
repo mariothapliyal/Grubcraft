@@ -32,7 +32,7 @@ use gc_fixed::{Fx, FxVec2};
 
 use crate::conquest::{Conquest, ConquestUnit};
 use crate::regiments::Regiments;
-use crate::structures::{POWERS_FIELD, Role, Structures, VEINS};
+use crate::structures::{POWERS_FIELD, Role, Structures, nearest_point};
 use crate::veins::within;
 use crate::{PlayerId, UnitStats};
 
@@ -42,10 +42,9 @@ pub const REINFORCE_SECONDS: u8 = 3;
 pub const TOWN_REINFORCE_SECONDS: u8 = 2;
 /// How far from a reinforcing building's edge its reach goes, in tiles.
 pub const REINFORCE_REACH: i32 = 8;
-/// The bit of `Regiments::refill` saying its owner can't pay for the next
-/// soldier; the rest count its seconds.
-pub(crate) const REFILL_SHORT: u8 = 0x80;
-const REFILL_SECONDS: u8 = !REFILL_SHORT;
+/// `Regiments::refill` while its owner can't pay for the next soldier
+/// (otherwise it counts the seconds towards him).
+pub(crate) const REFILL_SHORT: u8 = u8::MAX;
 /// How far out from a reinforcement point's edge a regiment sent to
 /// reinforce stands (see [`Conquest::reinforce_spot`]), in tiles.
 const SPOT_OUT: i32 = 3;
@@ -74,67 +73,76 @@ fn share(cost: u16, models: u16, full: u16) -> u32 {
 }
 
 impl Conquest {
-    /// Whether regiment slot `i`'s type reinforces at all: something
-    /// trains it, and it can rout (the undead wait for Tithe).
-    pub(crate) fn refills(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> bool {
+    /// Whether regiment slot `i` is short of soldiers and of a type that
+    /// reinforces: something trains it, it isn't summoned, and it can rout
+    /// (the undead wait for Tithe).
+    pub(crate) fn short_of_men(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> bool {
         let unit = regs.unit[i];
-        self.unit(unit).trained_at.is_some()
+        regs.models[i] < regs.full_models[i]
+            && self.unit(unit).trained_at.is_some()
             && units.get(usize::from(unit)).is_some_and(|s| s.morale > 0)
             && regs.summoned_left[i] == 0
     }
 
-    /// Whether regiment slot `i` is short of soldiers and could reinforce
-    /// now, as far as it is concerned: not fighting or broken.
-    fn wants_men(&self, regs: &Regiments, units: &[UnitStats], i: usize) -> bool {
-        regs.models[i] < regs.full_models[i]
-            && regs.engaged[i].is_none()
-            && !regs.morale_state[i].broken()
-            && self.refills(regs, units, i)
+    /// How far from its edge building slot `i` reinforces, in tiles, if it
+    /// is a reinforcement point: a finished reinforcing building
+    /// ([`REINFORCE_REACH`]), a linked veins building (its veins' reach)
+    /// or a building powering a field (the field's). The one rule both
+    /// the refilling and [`Conquest::reinforce_spot`] go by.
+    fn point_reach(&self, i: usize) -> Option<i32> {
+        let st = &self.structures;
+        if !st.stands(i) || !st.finished(i) {
+            return None;
+        }
+        if self.reinforcing[usize::from(st.kind_of(i))] {
+            return Some(REINFORCE_REACH);
+        }
+        let b = st.stats_of(i);
+        let field = b.flags & POWERS_FIELD != 0 && b.field > 0;
+        let veins = st.links_veins(i).then(|| st.vein_reach(i)).flatten();
+        veins.or(field.then_some(b.field)).map(i32::from)
     }
 
-    /// Whether `point` is in reach of one of `owner`'s reinforcement
-    /// points; `posts` lists the reinforcing building slots standing
-    /// finished.
-    fn in_reach(&self, posts: &[u32], owner: PlayerId, point: FxVec2) -> bool {
-        let st = &self.structures;
-        posts.iter().any(|&p| {
-            let p = p as usize;
-            st.owner_of(p) == owner && within(st.footprint(p), point, REINFORCE_REACH)
-        }) || st.on_veins(owner, point)
-            || st.power_at(owner, point)
-    }
-
-    /// The reinforcing building slots standing finished, into `posts`.
-    fn list_posts(&self, posts: &mut Vec<u32>) {
-        let st = &self.structures;
-        posts.clear();
-        posts.extend(
-            st.standing()
-                .filter(|&i| st.finished(i) && self.reinforcing[usize::from(st.kind_of(i))])
-                .map(|i| i as u32),
+    /// Every reinforcement point standing, as (slot, reach), into `points`.
+    fn list_points(&self, points: &mut Vec<(u32, i32)>) {
+        points.clear();
+        points.extend(
+            (0..self.structures.slots()).filter_map(|i| Some((i as u32, self.point_reach(i)?))),
         );
     }
 
+    /// Whether `point` is in reach of one of `owner`'s reinforcement
+    /// `points` (as [`Conquest::list_points`] lists them).
+    fn in_reach(&self, points: &[(u32, i32)], owner: PlayerId, point: FxVec2) -> bool {
+        let st = &self.structures;
+        points.iter().any(|&(p, reach)| {
+            let p = p as usize;
+            st.owner_of(p) == owner && within(st.footprint(p), point, reach)
+        })
+    }
+
     /// Once a second: every regiment short of soldiers in reach of its
-    /// side's reinforcement points counts a second, and takes on a soldier
-    /// when its time is up and its owner can pay.
+    /// side's reinforcement points, out of the fight, counts a second, and
+    /// takes on a soldier when its time is up and its owner can pay.
     pub(crate) fn reinforce(&mut self, regs: &mut Regiments, units: &[UnitStats]) {
-        let mut posts = core::mem::take(&mut self.posts);
+        let mut points = core::mem::take(&mut self.points);
+        // Listed the first time a regiment needs them.
         let mut listed = false;
         for i in 0..regs.alive.len() {
             if !regs.alive[i] {
                 continue;
             }
-            if !self.wants_men(regs, units, i) {
+            let quiet = regs.engaged[i].is_none() && !regs.morale_state[i].broken();
+            if !quiet || !self.short_of_men(regs, units, i) {
                 regs.refill[i] = 0;
                 continue;
             }
             if !listed {
-                self.list_posts(&mut posts);
+                self.list_points(&mut points);
                 listed = true;
             }
             let owner = regs.owner[i];
-            if !self.in_reach(&posts, owner, regs.position[i]) {
+            if !self.in_reach(&points, owner, regs.position[i]) {
                 regs.refill[i] = 0;
                 continue;
             }
@@ -143,7 +151,8 @@ impl Conquest {
             } else {
                 REINFORCE_SECONDS
             };
-            let counted = (regs.refill[i] & REFILL_SECONDS).saturating_add(1);
+            // Short of pay already counts past `need`, so it tries again.
+            let counted = regs.refill[i].saturating_add(1);
             if counted <= need {
                 regs.refill[i] = counted;
                 continue;
@@ -153,41 +162,40 @@ impl Conquest {
             let grub = share(u.cost_grub, models, full);
             let marrow = share(u.cost_marrow, models, full);
             if !self.economy.spend(owner, grub, marrow) {
-                regs.refill[i] = need | REFILL_SHORT;
+                regs.refill[i] = REFILL_SHORT;
                 continue;
             }
-            let hp = units[usize::from(regs.unit[i])].hp_per_model;
-            regs.add_soldier(i, hp);
+            regs.add_soldier(i, units[usize::from(regs.unit[i])].hp_per_model);
             // Still counting for the next one, so the screen shows it
             // reinforcing throughout.
-            regs.refill[i] = if regs.models[i] < full { 1 } else { 0 };
+            regs.refill[i] = u8::from(models + 1 < full);
         }
-        self.posts = posts;
+        self.points = points;
+    }
+
+    /// Whether `point` is in reach of one of `owner`'s reinforcement
+    /// points now.
+    pub(crate) fn reinforces_at(&self, owner: PlayerId, point: FxVec2) -> bool {
+        let st = &self.structures;
+        st.finished_of(owner).any(|i| {
+            self.point_reach(i)
+                .is_some_and(|reach| within(st.footprint(i), point, reach))
+        })
     }
 
     /// Where a regiment of `owner`'s at `from` might stand to reinforce:
     /// a little way out from the edge of the nearest of `owner`'s
-    /// reinforcement points (a reinforcing building, a linked veins
-    /// building or a field of power), on the side facing `from`. `None`
-    /// when `owner` has none.
+    /// reinforcement points, on the side facing `from`. `None` when
+    /// `owner` has none.
     pub(crate) fn reinforce_spot(&self, owner: PlayerId, from: FxVec2) -> Option<FxVec2> {
         let st = &self.structures;
-        // Each candidate's slot and how far its reach goes from its edge.
-        let reach_of = |i: usize| {
-            let b = st.stats_of(i);
-            if self.reinforcing[usize::from(st.kind_of(i))] {
-                REINFORCE_REACH
-            } else if b.flags & VEINS != 0 && st.rooted(i) || b.flags & POWERS_FIELD != 0 {
-                i32::from(b.field)
-            } else {
-                0
-            }
-        };
         let (i, reach) = st
             .finished_of(owner)
-            .map(|i| (i, reach_of(i)))
-            .filter(|&(_, reach)| reach > 0)
-            .min_by_key(|&(i, _)| ((st.centre(i) - from).length_sq_raw(), i))?;
+            .filter_map(|i| Some((i, self.point_reach(i)?)))
+            .min_by_key(|&(i, _)| {
+                let foot = st.footprint(i);
+                ((nearest_point(foot, from) - from).length_sq_raw(), i)
+            })?;
         let [_, _, w, d] = st.footprint(i);
         let centre = st.centre(i);
         let dir = match (from - centre).normalized() {
@@ -442,12 +450,7 @@ mod tests {
         assert_eq!(models(&w, h), 24);
         let spot = w.reinforce_spot(0, FxVec2::from_ints(80, 21)).unwrap();
         let c = w.conquest.as_ref().unwrap();
-        let mut posts = Vec::new();
-        c.list_posts(&mut posts);
-        assert!(
-            c.in_reach(&posts, 0, spot),
-            "the spot is a reinforcement point"
-        );
+        assert!(c.reinforces_at(0, spot), "the spot is a reinforcement point");
         assert!(
             spot.x > FxVec2::from_ints(22, 0).x,
             "on the side facing the asker"

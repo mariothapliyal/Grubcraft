@@ -458,7 +458,7 @@ regiment_fields! {
     in_town: bool = false,
     /// Reinforcing (see [`crate::reinforce`]): the seconds it has stood
     /// quiet within reach of its side's reinforcement points since its
-    /// last new soldier, and [`crate::reinforce::REFILL_SHORT`] while its
+    /// last new soldier, or [`crate::reinforce::REFILL_SHORT`] while its
     /// owner can't pay for the next one; 0 when it isn't reinforcing.
     refill: u8 = 0,
     /// Standing on a wall's walkway (see [`crate::manning`]): off the
@@ -1438,20 +1438,26 @@ impl Regiments {
     /// its full strength (see [`crate::reinforce`]). A rank that was short
     /// only for want of men widens back towards its frontage, and a wedge
     /// stays three deep.
-    pub(crate) fn add_soldier(&mut self, i: usize, hp: u16) -> bool {
+    pub(crate) fn add_soldier(&mut self, i: usize, hp: u16) {
         let k = self.models[i];
-        if k >= self.full_models[i] || k >= MAX_MODELS {
-            return false;
+        debug_assert!(k < self.full_models[i].min(MAX_MODELS), "a full regiment");
+        if k >= self.full_models[i].min(MAX_MODELS) {
+            return;
         }
         self.hp[i * MAX_MODELS as usize + usize::from(k)] = hp;
         self.models[i] = k + 1;
-        if self.formation[i] == Formation::Wedge {
-            let files = Formation::Wedge.files(0, k + 1);
-            (self.files[i], self.frontage[i]) = (files, files);
-        } else if self.files[i] == k && self.files[i] < self.frontage[i] {
+        if self.files[i] == k && self.files[i] < self.frontage[i] {
             self.files[i] = k + 1;
         }
-        true
+        self.keep_wedge(i);
+    }
+
+    /// A wedge stays a wedge, three deep, as its riders fall or join.
+    fn keep_wedge(&mut self, i: usize) {
+        if self.formation[i] == Formation::Wedge {
+            let files = Formation::Wedge.files(0, self.models[i]);
+            (self.files[i], self.frontage[i]) = (files, files);
+        }
     }
 
     /// The last `count` soldiers of slot `i` lose `amount` hit points
@@ -1563,11 +1569,7 @@ impl Regiments {
 
     /// Books `bled` hit points and `lost` soldiers taken off regiment `i`.
     fn bleed(&mut self, i: usize, bled: u16, lost: u16) {
-        // A wedge stays a wedge, three deep, as its riders fall.
-        if self.formation[i] == Formation::Wedge {
-            let files = Formation::Wedge.files(0, self.models[i]);
-            (self.files[i], self.frontage[i]) = (files, files);
-        }
+        self.keep_wedge(i);
         self.files[i] = self.files[i].min(self.models[i]).max(1);
         self.bled[i] = self.bled[i].saturating_add(bled);
         self.losses[i] = self.losses[i].saturating_add(lost);
@@ -1687,7 +1689,7 @@ impl Regiments {
             Some(Waiting::FilingThrough)
         } else if self.winded_left[i] > 0 {
             Some(Waiting::Winded)
-        } else if self.refill[i] & crate::reinforce::REFILL_SHORT != 0 {
+        } else if self.refill[i] == crate::reinforce::REFILL_SHORT {
             Some(Waiting::ShortToReinforce)
         } else if self.refill[i] > 0 {
             Some(Waiting::Reinforcing)
