@@ -89,7 +89,7 @@ fn crossing(offset: i32) -> Crossing {
             }
         }
         ticks = t;
-        if t > 40 && all.iter().all(|r| !r.moving) {
+        if t > 40 && all.iter().all(|r| !r.moving && r.made_way.is_none()) {
             break;
         }
     }

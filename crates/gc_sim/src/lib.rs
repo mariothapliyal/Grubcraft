@@ -2070,6 +2070,7 @@ impl World {
             &self.terrain,
             &self.vision,
             &self.nav,
+            &self.brigades,
             self.conquest.as_ref(),
             self.tick,
         );

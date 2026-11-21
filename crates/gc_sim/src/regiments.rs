@@ -896,15 +896,20 @@ impl Regiments {
         // faces, sidestepping or backing, not turning round to walk and
         // turning back (see `SHUFFLE_DISTANCE`).
         // (A lone body, a worker or a beast, just turns and walks.)
+        // (Standing, or already that near where it was sent: the same
+        // short order given again is still one.)
+        let near = |p: FxVec2| {
+            (p - self.position[i]).length_sq_raw() <= (SHUFFLE_DISTANCE.raw() as u64).pow(2)
+        };
         let short = self.is_block(i)
-            && self.target[i].is_none()
+            && self.target[i].is_none_or(near)
             && self.attack_target[i].is_none()
-            && (order.target - self.position[i]).length_sq_raw()
-                <= (SHUFFLE_DISTANCE.raw() as u64).pow(2);
+            && near(order.target);
         self.target[i] = Some(order.target);
         self.target_facing[i] = order.facing.or(short.then_some(self.facing[i]));
         self.set_seeks_place(i, false);
         self.home[i] = None;
+        self.way_wait[i] = 0;
         self.attack_target[i] = None;
         self.braced[i] = false;
         self.hold[i] = false;
@@ -1745,9 +1750,7 @@ impl Regiments {
             frontage: self.frontage[i].clamp(1, self.models[i].max(1)),
             formation: self.formation[i],
             models: self.models[i],
-            moving: self.target[i].is_some()
-                || self.target_facing[i].is_some()
-                || self.home[i].is_some(),
+            moving: self.target[i].is_some() || self.target_facing[i].is_some(),
             still: self.still(i),
             engaged: self.engaged[i].is_some(),
             charge: self.charge[i],
@@ -2316,8 +2319,8 @@ pub struct RegimentView {
     pub formation: Formation,
     /// Soldiers still standing.
     pub models: u16,
-    /// Walking or turning to an ordered facing, or stepping aside to make
-    /// way and back (see `made_way`).
+    /// Walking or turning to an ordered facing (not stepping aside to make
+    /// way and back: see `made_way`).
     pub moving: bool,
     /// Not marching: standing, turning or fighting. Formation discipline
     /// goes by this, not `moving` (see [`Regiments::still`]).

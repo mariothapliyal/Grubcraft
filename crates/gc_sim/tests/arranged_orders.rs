@@ -94,7 +94,11 @@ fn run(preset: Preset) {
     w.tick(&orders);
 
     let limit = 120 * TICKS_PER_SECOND;
-    while w.regiments.iter().any(|r| r.moving || r.disorder > 0) {
+    while w
+        .regiments
+        .iter()
+        .any(|r| r.moving || r.made_way.is_some() || r.disorder > 0)
+    {
         assert!(
             w.tick_count() < limit,
             "{preset:?}: still moving or in disorder"
