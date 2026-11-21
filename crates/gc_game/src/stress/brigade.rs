@@ -1,15 +1,18 @@
 //! A group order marches as a brigade (docs/42-armies-that-march.md):
 //! eight regiments over a ford, round the corner of a thicket and through
-//! a Gate. Each march is played twice on the same ground, as separate
-//! moves and as one brigade, and the brigade is held to what it is for:
-//! everyone arrives, no later than apart (but for a margin), closer
-//! together and in less disorder.
+//! a Gate, and twelve and twenty-four through a Gate. Each march is played twice on
+//! the same ground, as separate moves and as one brigade, and the brigade
+//! is held to what it is for: everyone arrives, no later than apart (but
+//! for a margin), closer together and in less disorder.
 //!
-//! Round a sharp corner a brigade is not there yet: the body turns its
-//! whole order about on the way and jams at the corner, so it is later
-//! than apart and in more disorder (74 s against 58 s when this was
-//! written). That scenario holds what it does today so it gets no worse;
-//! docs/42 has corners under stage 3.
+//! Two of them a brigade cannot yet march better than its regiments do
+//! apart, so it lets go and they march as they did before there were
+//! brigades (docs/42 has both under stage 3): a way that doubles back
+//! round a corner (the body would turn its whole order about on the way:
+//! 74 s against 58 s apart when it tried), and a big army in wide rows
+//! at one Gate (its rows are long coming in to the file: 85 s against
+//! 51 s). Those scenarios hold it to marching about as its regiments do
+//! apart.
 
 use gc_fixed::{Fx, FxVec2};
 use gc_sim::{Command, PlayerCommand, RegimentHandle, TICKS_PER_SECOND, World};
@@ -26,7 +29,7 @@ pub(super) const FORD: Scenario = Scenario {
 
 pub(super) const CORNER: Scenario = Scenario {
     name: "brigade-corner",
-    about: "8 regiments ordered as one group march round the corner of a thicket",
+    about: "8 regiments ordered as one group march back round the corner of a thicket",
     budget_ms: 6_000,
     run: corner,
 };
@@ -35,7 +38,21 @@ pub(super) const GATE: Scenario = Scenario {
     name: "brigade-gate",
     about: "8 regiments ordered as one group march through one Gate",
     budget_ms: 8_000,
-    run: gate,
+    run: |real, report| gate(real, report, 8, 4, 96, BETTER),
+};
+
+pub(super) const COLUMN_GATE: Scenario = Scenario {
+    name: "brigade-column-gate",
+    about: "12 regiments ordered as one group, two abreast, march through one Gate",
+    budget_ms: 8_000,
+    run: |real, report| gate(real, report, 12, 2, 80, BETTER),
+};
+
+pub(super) const BIG_GATE: Scenario = Scenario {
+    name: "brigade-big-gate",
+    about: "24 regiments ordered as one group, eight abreast, march through one Gate",
+    budget_ms: 12_000,
+    run: |real, report| gate(real, report, 24, 8, 96, AS_APART),
 };
 
 const TILES: u32 = 128;
@@ -47,18 +64,22 @@ struct Limits {
     /// How much later its last regiment may arrive, percent of the time
     /// apart.
     later: u32,
-    /// Its regiment-seconds in disorder, percent of those apart.
+    /// Its time from the first regiment arriving to the last, and its
+    /// regiment-seconds in disorder, percent of those apart.
+    spread: u32,
     disorder: u32,
 }
 
 const BETTER: Limits = Limits {
     later: 15,
+    spread: 100,
     disorder: 100,
 };
-/// Round a sharp corner (see the module's notes).
-const CORNER_TODAY: Limits = Limits {
-    later: 30,
-    disorder: 200,
+/// Where a brigade lets go (see the module's notes).
+const AS_APART: Limits = Limits {
+    later: 10,
+    spread: 125,
+    disorder: 125,
 };
 
 /// What one march measured.
@@ -159,35 +180,38 @@ fn compare(
             b * 100 <= a * (100 + limits.later),
         );
     }
+    let within = |what: &str, percent: u32| {
+        if percent <= 100 {
+            format!("the brigade {what} than apart")
+        } else {
+            format!("the brigade {what} than apart, within {}%", percent - 100)
+        }
+    };
     report.check(
-        "the brigade arrives closer together than apart",
-        close.zip(*wide).is_some_and(|(close, wide)| close <= wide),
+        within("arrives no further apart", limits.spread),
+        (close.zip(*wide)).is_some_and(|(close, wide)| close * 100 <= wide * limits.spread),
     );
     report.check(
-        if limits.disorder <= 100 {
-            "the brigade marches in no more disorder than apart".to_string()
-        } else {
-            format!(
-                "the brigade marches in no more than {}% of the disorder apart",
-                limits.disorder
-            )
-        },
+        within("marches in no more disorder", limits.disorder),
         together.disorder * 100 <= apart.disorder * limits.disorder,
     );
 }
 
-/// Eight regiments, four abreast and two deep, about `at`.
-fn eight(real: &Real, at: (i32, i32)) -> Vec<(u16, FxVec2)> {
-    let [yari, katana, yumi] = real.ember_line();
-    let kinds = [yari, katana, yumi, yari, katana, yari, yumi, katana];
-    (0..8)
-        .map(|i| (kinds[i], grid((at.0 - 15, at.1), 4, (10, 8), i)))
+/// Where `count` regiments stand `abreast` to a row, the rows going
+/// south from `at`, the middle of the front one.
+fn places(count: usize, abreast: usize, at: (i32, i32)) -> Vec<FxVec2> {
+    let west = at.0 - 5 * (abreast as i32 - 1);
+    (0..count)
+        .map(|i| grid((west, at.1), abreast, (10, 8), i))
         .collect()
 }
 
-fn goals(at: (i32, i32)) -> Vec<FxVec2> {
-    (0..8)
-        .map(|i| grid((at.0 - 15, at.1), 4, (10, 8), i))
+/// `count` regiments of the Ember line standing so.
+fn army(real: &Real, count: usize, abreast: usize, at: (i32, i32)) -> Vec<(u16, FxVec2)> {
+    let [yari, katana, yumi] = real.ember_line();
+    let kinds = [yari, katana, yumi, yari, katana, yari, yumi, katana];
+    (places(count, abreast, at).into_iter().enumerate())
+        .map(|(i, at)| (kinds[i % kinds.len()], at))
         .collect()
 }
 
@@ -206,8 +230,8 @@ fn ford(real: &Real, report: &mut Report) {
     compare(
         report,
         build,
-        &eight(real, (64, 96)),
-        &goals((64, 24)),
+        &army(real, 8, 4, (64, 96)),
+        &places(8, 4, (64, 24)),
         BETTER,
     );
 }
@@ -223,13 +247,22 @@ fn corner(real: &Real, report: &mut Report) {
     compare(
         report,
         build,
-        &eight(real, (40, 100)),
-        &goals((40, 20)),
-        CORNER_TODAY,
+        &army(real, 8, 4, (40, 100)),
+        &places(8, 4, (40, 20)),
+        AS_APART,
     );
 }
 
-fn gate(real: &Real, report: &mut Report) {
+/// `count` regiments, `abreast` to a row, their front row at `south`,
+/// through one Gate to the north of the map.
+fn gate(
+    real: &Real,
+    report: &mut Report,
+    count: usize,
+    abreast: usize,
+    south: i32,
+    limits: Limits,
+) {
     const WALL_ROW: i32 = 60;
     const GATE_X: i32 = 62;
     let build = || {
@@ -248,8 +281,8 @@ fn gate(real: &Real, report: &mut Report) {
     compare(
         report,
         build,
-        &eight(real, (64, 96)),
-        &goals((64, 24)),
-        BETTER,
+        &army(real, count, abreast, (64, south)),
+        &places(count, abreast, (64, 8)),
+        limits,
     );
 }

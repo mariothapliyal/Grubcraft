@@ -6,8 +6,8 @@
 //! each has a place in the body (how far behind the brigade's middle and
 //! how far to its side, from where its order sends it), and the brigade's
 //! middle (the anchor) walks the track no faster than its hindmost can
-//! keep up. So an army sets off together, keeps its shape on the way,
-//! files through a narrows row by row and arrives together.
+//! keep up. So an army sets off together as it stands, forms its shape
+//! on the way, files through a narrows row by row and arrives together.
 //!
 //! A brigade only steers: each tick it gives every member a point a little
 //! ahead of its place to walk at (never the place itself, which it would
@@ -80,7 +80,7 @@ const SAMPLE: Fx = Fx::from_int(2);
 /// ... at this many points, from ahead of the foremost row back.
 const PROFILE: usize = 48;
 /// A row narrows this far before a narrows, in tiles, and widens again
-/// only once the ground has been wide for as long.
+/// once its rear is through.
 const LOOK: Fx = Fx::from_int(8);
 /// ... or as far as the body reaches to either side of the track, up to
 /// this (its flanks have that far to come in).
@@ -99,9 +99,10 @@ const ROW: Fx = Fx::from_ratio(3, 2);
 /// (see [`Regiments::leaves_be`]).
 const IN_STEP_ALONG: Fx = Fx::from_ratio(3, 2);
 const IN_STEP_ACROSS: Fx = Fx::from_ratio(5, 4);
-/// How fast a place moves up the body when rows close up, in tiles a tick
-/// (slower than a regiment marches, so it can keep up), falls back when
-/// they file, and moves across.
+/// How fast a place moves up the body when rows close up, in tiles a
+/// tick, at the least (else as fast as its member could gain on the
+/// anchor, so it can keep up), falls back when they file, and moves
+/// across.
 const SLEW_UP: Fx = Fx::from_ratio(1, 32);
 const SLEW_BACK: Fx = Fx::from_ratio(1, 8);
 const SLEW_SIDE: Fx = Fx::from_ratio(1, 16);
@@ -154,6 +155,21 @@ const LEAD_IN: Fx = Fx::from_int(30);
 /// in ticks, before it is no brigade.
 const MUSTER: u8 = 60;
 
+/// Where a brigade lets go, its regiments marching on each by its own
+/// way as they did before there were brigades (see [`Brigades::pack`]).
+/// A file through a gap that squeezes its blocks (a gate) is slow, and
+/// rows that reach far to the side are long coming in to it: a body of
+/// more than this many...
+const FILE_MOST: usize = 8;
+/// ... that reaches further to either side of the track than this, in
+/// tiles, lets go at such a gap. (Twelve in rows of four were 37% later
+/// through a Gate than apart; twelve in rows of two no later, in a third
+/// of the disorder.)
+const DEEP_BODY: Fx = Fx::from_int(10);
+/// A track that sets out more than a third of a turn from the way it
+/// comes in (this is the cosine) doubles back: the body would have to
+/// turn its whole order about on the way.
+const BACK_ON_ITSELF: Fx = Fx::from_ratio(-1, 2);
 const QUARTER: Fx = Fx::from_ratio(1, 4);
 
 /// How a regiment stands in its brigade (see [`crate::World::brigade`]).
@@ -832,8 +848,11 @@ impl Brigades {
                 fresh = true;
             }
         }
-        if fresh || (tick + slot as u32).is_multiple_of(REPACK) {
-            self.pack(slot, owner, regs, units, nav, terrain);
+        if (fresh || (tick + slot as u32).is_multiple_of(REPACK))
+            && !self.pack(slot, owner, regs, units, nav, terrain)
+        {
+            self.disband(regs, slot);
+            return;
         }
         self.measure(slot, regs, units);
         // An attack-move halts as a body while one of its own fights
@@ -859,12 +878,12 @@ impl Brigades {
             // walks the last of the way to its own place as it comes
             // near where the body has it there, or near the end of the
             // track (the way on from there is its own, not a lane of the
-            // track's). Those still filing
-            // through a narrows behind keep their turns until they are
-            // through, and do not all make for their places at once
-            // through each other: once the anchor is in, each goes as it
-            // comes out on to open ground in plain sight of its place
-            // (and one the body would not wait for goes on alone).
+            // track's). Those still filing through a narrows behind keep
+            // their turns until they are through, and do not all make
+            // for their places at once through each other: once the
+            // anchor is in, each goes as it comes out on to open ground
+            // in plain sight of its place (and one the body would not
+            // wait for goes on alone).
             b.arc = b.arc.min(b.total());
             let b = self.pool[slot];
             let tag = slot as u8 + 1;
@@ -911,21 +930,38 @@ impl Brigades {
         }
         let n = self.list.len() as i64;
         let mid = FxVec2::new(Fx::from_raw((x / n) as i32), Fx::from_raw((y / n) as i32));
-        let far = |p: FxVec2| {
-            let d = p - mid;
-            d.x.abs() > JOIN_REACH || d.y.abs() > JOIN_REACH
+        // The body is those within reach of the middle, all within
+        // reach of one of them, and so on: a big army standing together
+        // is one body however wide it stands.
+        let n = self.list.len();
+        let near = |a: FxVec2, b: FxVec2| {
+            let d = a - b;
+            d.x.abs() <= JOIN_REACH && d.y.abs() <= JOIN_REACH
         };
         let mut kept = 0;
-        for k in 0..self.list.len() {
-            let i = self.list[k] as usize;
-            if far(regs.position[i]) {
-                self.release(regs, i);
-            } else {
-                self.list[kept] = i as u32;
+        for k in 0..n {
+            if near(mid, regs.position[self.list[k] as usize]) {
+                self.list.swap(kept, k);
                 kept += 1;
             }
         }
+        let mut done = 0;
+        while done < kept {
+            let from = regs.position[self.list[done] as usize];
+            done += 1;
+            for k in kept..n {
+                if near(from, regs.position[self.list[k] as usize]) {
+                    self.list.swap(kept, k);
+                    kept += 1;
+                }
+            }
+        }
+        for k in kept..n {
+            let i = self.list[k] as usize;
+            self.release(regs, i);
+        }
         self.list.truncate(kept);
+        self.list.sort_unstable();
         if kept < 2 {
             return false;
         }
@@ -1008,6 +1044,9 @@ impl Brigades {
             return false;
         }
         b.lead_in();
+        if b.at(b.start()).1.dot(b.ahead) < BACK_ON_ITSELF {
+            return false;
+        }
         b.phase = Phase::Marching;
         b.speed = Fx::ZERO;
         b.halted = false;
@@ -1123,7 +1162,7 @@ impl Brigades {
         units: &[UnitStats],
         nav: &Nav,
         terrain: &Terrain,
-    ) {
+    ) -> bool {
         let b = self.pool[slot];
         let n = self.list.len();
         let right = FxVec2::new(-b.ahead.y, b.ahead.x);
@@ -1231,6 +1270,9 @@ impl Brigades {
             clear
         };
 
+        // How many go one behind the other where rows file.
+        let mut squeezed = false;
+        let mut filing = false;
         let mut row = 0;
         while row < n {
             let mut end = row + 1;
@@ -1361,9 +1403,39 @@ impl Brigades {
                 for p in &mut m[first..last] {
                     p.station = station;
                 }
+                squeezed |= m[first].tight.is_some();
+                filing = true;
                 first = last;
             }
             row = end;
+        }
+        // Where a row must file, a body lets go that would be slower
+        // through than its regiments each by its own way: one whose
+        // flanks are further out than it looks ahead (they could not
+        // come in to the file in time); at a gap that squeezes its
+        // blocks, a big body that is not a deep one; and, setting off,
+        // one drawn up so close before such a gap that the ground
+        // closes in on a member before it could come in.
+        let setting_off = m.iter().all(|p| self.mode[p.slot as usize] == Mode::Plain);
+        if filing {
+            let half = reach - EDGE - Fx::ONE;
+            if look < half || (squeezed && n > FILE_MOST && half > DEEP_BODY) {
+                return false;
+            }
+            if squeezed && setting_off {
+                for p in m.iter() {
+                    let arc = self.arc[p.slot as usize];
+                    let (at, dir) = b.at(arc);
+                    let across =
+                        (regs.position[p.slot as usize] - at).dot(FxVec2::new(-dir.y, dir.x));
+                    let come_in = (across - p.side).abs().max(look);
+                    let [r, l] = width(arc, arc + come_in);
+                    let room = if across > Fx::ZERO { r } else { l };
+                    if room < reach && room < across.abs() + p.half_width {
+                        return false;
+                    }
+                }
+            }
         }
         for p in m.iter() {
             let i = p.slot as usize;
@@ -1379,7 +1451,7 @@ impl Brigades {
         }
         // A brigade setting off: the anchor starts where nobody is ahead
         // of the place the body has for it.
-        if m.iter().all(|p| self.mode[p.slot as usize] == Mode::Plain) {
+        if setting_off {
             let mut arc = Fx::MIN;
             for p in m.iter() {
                 arc = arc.max(self.arc[p.slot as usize] + p.station);
@@ -1400,6 +1472,7 @@ impl Brigades {
                 self.side[i] = (regs.position[i] - at).dot(FxVec2::new(-dir.y, dir.x));
             }
         }
+        true
     }
 
     /// Where each member of the brigade in `slot` is along the track and

@@ -1414,7 +1414,7 @@ impl Hud {
                     name: format!("Army shape: {}", chip.label),
                     key: "O".to_string(),
                     text: chip.tip.to_string(),
-                    note: String::new(),
+                    note: SHAPE_NOTE.to_string(),
                 });
             }
             let state = if chip.on {
@@ -1537,6 +1537,10 @@ impl Hud {
 /// Height of the army shape chips' row.
 const SHAPE_CHIP_H: i32 = 20;
 const SHAPE_LABEL: &str = "Army shape";
+/// Under every army shape's tooltip: what ordering regiments together
+/// does (docs/42).
+const SHAPE_NOTE: &str = "Regiments ordered together march as one body: they form up on the way, \
+     take narrow ground in turn and arrive together.";
 
 /// Where the army shape chips sit along `strip`, and where the "Army shape"
 /// label goes, if there is room for it. Tries the roomy way first, then

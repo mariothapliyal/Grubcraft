@@ -165,7 +165,7 @@ impl Arena {
     }
 
     /// The map as painted.
-    pub(super) fn map(&self) -> &Map {
+    fn map(&self) -> &Map {
         self.map.get_or_init(|| {
             let mut map = Map::from_def(&self.def);
             if let Some(way) = self.flowing {

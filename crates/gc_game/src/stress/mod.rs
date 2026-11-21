@@ -87,6 +87,8 @@ const SCENARIOS: &[Scenario] = &[
     brigade::FORD,
     brigade::CORNER,
     brigade::GATE,
+    brigade::COLUMN_GATE,
+    brigade::BIG_GATE,
 ];
 
 /// What one scenario found: its checks, its metrics and its tick times.
